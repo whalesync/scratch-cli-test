@@ -3,7 +3,7 @@ import { Alert, Box, Center, Group, Loader, Modal, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { Workspace } from '@spinner/shared-types';
 import { isConnectionError as isServerConnectionError } from '@spinner/shared-types/api-client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ButtonPrimaryLight } from '../components/base/buttons';
 import { Text13Regular, TextMono12Regular } from '../components/base/text';
@@ -174,6 +174,20 @@ export function WorkspacePage() {
       setSelectedFolderPathInner(null);
     }
   }, [showSettingsPanel]);
+  // The currently-focused folder as a workspace-relative, POSIX path (no leading
+  // slash), or null when nothing folder-scoped is selected (connections/publish/
+  // validation/settings panels, or the workspace root itself). Its first segment
+  // is the connection/service directory the user opened. Used to scope the
+  // "Open in Claude/Codex" deep-link prompt to the right service folder
+  // (DEV-10502).
+  const selectedFolderRelativePathWithinWorkspace = useMemo(() => {
+    if (!selectedFolderPath || !localPath) return null;
+    const normalizedWorkspaceRootPath = normalizeFsPath(localPath);
+    const normalizedSelectedFolderPath = normalizeFsPath(selectedFolderPath);
+    if (normalizedSelectedFolderPath === normalizedWorkspaceRootPath) return null;
+    if (!normalizedSelectedFolderPath.startsWith(`${normalizedWorkspaceRootPath}/`)) return null;
+    return normalizedSelectedFolderPath.slice(normalizedWorkspaceRootPath.length + 1);
+  }, [selectedFolderPath, localPath]);
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
   const [workspaceLevelDataInvalidationCounter, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);
@@ -757,6 +771,7 @@ export function WorkspacePage() {
       <WorkspaceHeader
         workspace={workspace}
         localPath={localPath}
+        selectedFolderRelativePath={selectedFolderRelativePathWithinWorkspace}
         isDownloaded={localPath !== null}
         downloading={downloading}
         reDownloading={reDownloading}

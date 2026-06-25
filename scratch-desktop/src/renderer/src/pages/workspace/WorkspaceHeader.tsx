@@ -20,6 +20,13 @@ import { useDevTools } from '../../hooks/use-dev-tools';
 interface WorkspaceHeaderProps {
   workspace: Workspace;
   localPath: string | null;
+  /**
+   * The folder the user is currently focused on, as a workspace-relative POSIX
+   * path (no leading slash). Its first segment is the connection/service
+   * directory. Null when nothing folder-scoped is selected. Used to scope the
+   * "Open in Claude/Codex" deep-link prompt to the right service folder.
+   */
+  selectedFolderRelativePath: string | null;
   isDownloaded: boolean;
   downloading: boolean;
   reDownloading: boolean;
@@ -42,6 +49,7 @@ const PUBLISH_ALL_TOOLTIP = 'Publish all pending local changes to connected serv
 export function WorkspaceHeader({
   workspace,
   localPath,
+  selectedFolderRelativePath,
   isDownloaded,
   downloading,
   reDownloading,
@@ -114,7 +122,7 @@ export function WorkspaceHeader({
           case 'claude-cowork':
           case 'claude-code': {
             const product = id === 'claude-cowork' ? 'cowork' : 'code';
-            const prompt = buildAgentPrompt(workspace.name, localPath, 'CLAUDE.md');
+            const prompt = buildAgentPrompt(workspace.name, localPath, 'CLAUDE.md', selectedFolderRelativePath);
             const claudeUrl = `claude://${product}/new?q=${encodeURIComponent(prompt)}&folder=${encodeURIComponent(localPath)}`;
             void window.scratchAuth.openExternal(claudeUrl).catch(() => {
               void window.scratchAuth.openExternal('https://claude.ai/download');
@@ -124,7 +132,7 @@ export function WorkspaceHeader({
 
           case 'codex': {
             // TODO: There's also originUrl that can be used to try to match an existing workspace.
-            const prompt = buildAgentPrompt(workspace.name, localPath, 'AGENTS.md');
+            const prompt = buildAgentPrompt(workspace.name, localPath, 'AGENTS.md', selectedFolderRelativePath);
             const codexUrl = `codex://new?prompt=${encodeURIComponent(prompt)}&path=${encodeURIComponent(localPath)}`;
             void window.scratchAuth.openExternal(codexUrl).catch(() => {
               void window.scratchAuth.openExternal('https://openai.com/codex/');
@@ -263,6 +271,25 @@ export function WorkspaceHeader({
   );
 }
 
-function buildAgentPrompt(workspaceName: string | null, localPath: string, agentFile: string): string {
-  return `I'm working on my Scratch workspace, "${workspaceName ?? ''}". It is described at \`${localPath}/${agentFile}\`.  `;
+function buildAgentPrompt(
+  workspaceName: string | null,
+  localPath: string,
+  agentFile: string,
+  selectedFolderRelativePath: string | null,
+): string {
+  let prompt = `I'm working on my Scratch workspace, "${workspaceName ?? ''}". It is described at \`${localPath}/${agentFile}\`.  `;
+
+  // When the user opened the agent from a specific folder, scope it to that
+  // service folder so it works on the Scratch files there instead of drifting
+  // out of scope (e.g. reaching for the browser). The first path segment is the
+  // connection/service directory; the full relative path is the table/folder.
+  if (selectedFolderRelativePath) {
+    const serviceFolderName = selectedFolderRelativePath.split('/')[0];
+    prompt +=
+      `I opened this from the \`${serviceFolderName}\` service — specifically the \`${selectedFolderRelativePath}\` folder ` +
+      `(at \`${localPath}/${selectedFolderRelativePath}\`). Please focus your work on the Scratch files in that folder and ` +
+      `stay scoped to the \`${serviceFolderName}\` service unless I tell you otherwise.`;
+  }
+
+  return prompt;
 }
