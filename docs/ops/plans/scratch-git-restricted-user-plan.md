@@ -23,10 +23,12 @@ Add a **restricted, read-only access tier** that lets an operator (or an agent) 
 
 The restricted tier is built from two independent pieces:
 
-1. **IAM decides the landing tier.** A new low-privilege Google group is granted only `roles/compute.osLogin` (note: **not** `osAdminLogin`). Such a principal lands as a **non-sudo** OS Login user, not in the `docker` group — they can't talk to the Docker socket or `sudo` anything by default.
+1. **IAM decides the landing tier.** The existing read-only identity — `role_readonly_sa@whalesync.com`, the per-dev "gcp-ro" service accounts that a developer laptop or AI agent already authenticates as by default (DEV-10397/DEV-10401) — is granted **instance-scoped** `roles/compute.osLogin` on the scratch-git VM (note: **not** `osAdminLogin`). Such a principal lands as a **non-sudo** OS Login user, not in the `docker` group — they can't talk to the Docker socket or `sudo` anything by default. Because OS Login into a VM with an attached service account also requires `roles/iam.serviceAccountUser` (`actAs`) on that SA, the group is granted `actAs` on `scratch-git-service-account` too — exactly the trio the Cloud SQL bastion already uses for read-only DB inspection.
 2. **A tightly-scoped `sudoers` allowlist of root-owned wrapper scripts** grants exactly four read-only inspection commands. This is necessary because raw Docker access is root-equivalent (`docker run -v /:/host …` escapes to host root), so we can neither add the user to the `docker` group nor allow `sudo docker`. The wrappers only ever run read-only `docker`/`git` subcommands with validated arguments.
 
 No VM metadata change and no change to the existing OS Login / IAP / firewall setup is required.
+
+> **Why the existing gcp-ro group, not a new one.** The whole point of the ticket (Agent + Workstation Safety) is that an AI agent on a dev's workstation must be able to *look at* the box read-only. That agent runs as the `gcp-ro` read-only SA. Granting the restricted tier to a brand-new `role_git_operators@` group would not reach that SA, so the access would not work for the identity it exists to serve. Reusing `role_readonly_sa@` mirrors the Cloud SQL read-only DB tier these SAs already have, needs no new Workspace group, and keeps "read-only by default for laptops + agents" coherent across the DB and the git VM.
 
 ## Architecture
 
@@ -46,8 +48,8 @@ No VM metadata change and no change to the existing OS Login / IAP / firewall se
    │                                                              │
    │  ┌────────────────────────────┐  ┌────────────────────────┐ │
    │  │ RESTRICTED                 │  │ BREAK-GLASS (unchanged)│ │
-   │  │ role_git_operators         │  │ role_operations        │ │
-   │  │ roles/compute.osLogin      │  │ roles/compute.admin +  │ │
+   │  │ role_readonly_sa@ (gcp-ro) │  │ role_operations        │ │
+   │  │ compute.osLogin (instance) │  │ roles/compute.admin +  │ │
    │  │ (NO osAdminLogin)          │  │ osAdminLogin           │ │
    │  │ → non-sudo user            │  │ → google-sudoers root  │ │
    │  │ → NOT in docker group      │  │ → full root            │ │
@@ -81,15 +83,18 @@ No VM metadata change and no change to the existing OS Login / IAP / firewall se
 ## Key decisions
 
 1. **Non-admin OS Login tier, not a shared local user.** Access is gated by the caller's own Google identity (`roles/compute.osLogin`), preserving per-person Cloud Audit logs and avoiding a shared SSH key to store and rotate. (The alternative — a fixed `gitops` local user with a key in Secret Manager, mirroring `connect_to_gcp_db_readonly.sh` — was rejected for weaker auditability and more moving parts.)
-2. **Strictly read-only.** The restricted tier can only *inspect*. Docker cleanup and disk-space *fixes* (the mutating items originally listed on the ticket) stay break-glass. Disk-usage *reporting* is included because it is read-only.
-3. **Additive only.** This adds the restricted tier and makes it the documented entry point; it does **not** remove or downgrade `role_operations`' existing root access, which remains the break-glass path. Forcing routine access off root entirely is a larger IAM change left for a follow-up.
-4. **Wrappers + `sudoers`, not docker-group or `sudo docker *`.** Docker socket access is root. A `sudoers` wildcard (`sudo docker logs *`) is flag-injection fragile and can't constrain the subcommand surface. Root-owned wrappers with validated, allowlisted arguments keep the command surface minimal and auditable.
+2. **Grant to the existing `role_readonly_sa@` (gcp-ro), not a new group.** The identity that actually needs this — an agent/laptop — already runs as the read-only `gcp-ro` SA. Reusing that group is what makes the access *work for the intended caller*, and it mirrors the read-only DB-bastion tier these SAs already hold. The grants are **instance-scoped** (`google_compute_instance_iam_member` + `google_iap_tunnel_instance_iam_member` on the scratch-git VM only) plus narrow `actAs` on the one attached SA — never project-wide osLogin/IAP — so reusing this broad group does not widen its reach beyond this single VM.
+3. **Strictly read-only.** The restricted tier can only *inspect*. Docker cleanup and disk-space *fixes* (the mutating items originally listed on the ticket) stay break-glass. Disk-usage *reporting* is included because it is read-only.
+4. **Additive only.** This adds the restricted tier and makes it the documented entry point; it does **not** remove or downgrade `role_operations`' existing root access, which remains the break-glass path. Forcing routine access off root entirely is a larger IAM change left for a follow-up.
+5. **Wrappers + `sudoers`, not docker-group or `sudo docker *`.** Docker socket access is root. A `sudoers` wildcard (`sudo docker logs *`) is flag-injection fragile and can't constrain the subcommand surface. Root-owned wrappers with validated, allowlisted arguments keep the command surface minimal and auditable. The `sudoers` rule grants the four wrappers to `ALL` users specifically because a service account's OS Login username isn't known ahead of time; the real gate stays IAM (who gets osLogin + IAP).
 
 ## Implementation
 
 ### 1. VM tooling — `terraform/modules/scratch_git_gce/scripts/startup.sh`
 
 Append one **idempotent, self-contained** block (safe to re-run, and hand-runnable as break-glass) after the containers start. It installs four wrappers under `/opt/gitops/bin/` as `root:root` mode `0755` and a validated `sudoers` drop-in. Validate the sudoers file with `visudo -cf` before installing it.
+
+> **Required companion change — `scratch_git_gce/main.tf` lifecycle.** Because `metadata_startup_script` is ForceNew (see [Activation & rollout](#activation--rollout)), this `startup.sh` edit must be paired with adding `metadata_startup_script` to the instance's `lifecycle.ignore_changes` — otherwise `terraform apply` replaces the VM. Without it the change is destructive; with it the plan is non-destructive.
 
 ```bash
 # ---------- restricted read-only ops tooling (DEV-10366) ----------
@@ -171,27 +176,43 @@ Core safety properties: wrappers are root-owned (caller can't edit them) and har
 
 ### 2. IAM — `terraform/modules/env/main.tf`
 
-Add a low-privilege role set and bind it to a new group. This reuses the existing `principals_to_roles` → `flatten` → `google_project_iam_member.roles` machinery, so **no new resource type** is needed:
+Grant the restricted tier to the **existing** `role_readonly_sa@whalesync.com` (gcp-ro) group, mirroring the Cloud SQL bastion block already in this file. Two **instance-scoped** bindings on the scratch-git VM, plus `actAs` on its attached service account. No new role list and **no new Workspace group**:
 
 ```hcl
-# Restricted, read-only access to the scratch-git VM (DEV-10366).
-git_operator_roles = [
-  "roles/compute.osLogin",            # SSH in as a NON-admin (no sudo) OS Login user
-  "roles/iap.tunnelResourceAccessor", # reach the VM through the IAP TCP tunnel
-  "roles/logging.viewer",             # read container logs in Logs Explorer (gcplogs)
-  "roles/compute.viewer",             # see the instance (read-only)
-]
-```
+# Instance-scoped: SSH in as a NON-admin (no sudo) OS Login user, through the IAP TCP tunnel.
+resource "google_iap_tunnel_instance_iam_member" "readonly_sa_scratch_git_tunnel" {
+  count    = var.enable_scratch_git ? 1 : 0
+  project  = var.gcp_project_id
+  zone     = var.gcp_zone
+  instance = module.scratch_git_gce[0].instance_name
+  role     = "roles/iap.tunnelResourceAccessor"
+  member   = "group:role_readonly_sa@whalesync.com"
+}
 
-```hcl
-principals_to_roles = {
-  "group:role_operations@whalesync.com" : [local.terraform_roles, local.operations_roles],
-  "group:role_developers@whalesync.com" : local.developer_roles,
-  "group:role_git_operators@whalesync.com" : local.git_operator_roles,  # NEW
+resource "google_compute_instance_iam_member" "readonly_sa_scratch_git_oslogin" {
+  count         = var.enable_scratch_git ? 1 : 0
+  project       = var.gcp_project_id
+  zone          = var.gcp_zone
+  instance_name = module.scratch_git_gce[0].instance_name
+  role          = "roles/compute.osLogin"
+  member        = "group:role_readonly_sa@whalesync.com"
 }
 ```
 
-**Non-Terraform prerequisite:** create the Google Workspace group `role_git_operators@whalesync.com` at the org level (the same way the existing two `whalesync.com` groups are managed) and add the intended members — including any agent identity that should have restricted VM access. `role_operations` is left untouched as the break-glass admin path.
+The **third, essential** piece is `actAs` on the attached SA — without it OS Login SSH fails with `Permission denied (publickey)`. Add it to the `scratch-git-service-account` entry in the `service_accounts` local (the module turns this into an authoritative `roles/iam.serviceAccountUser` binding):
+
+```hcl
+{
+  name        = "scratch-git-service-account"
+  # ...
+  service_account_users = ["group:role_readonly_sa@whalesync.com"]  # NEW — actAs for OS Login SSH
+  roles = ["roles/artifactregistry.reader", "roles/logging.logWriter", "roles/monitoring.metricWriter"]
+}
+```
+
+`role_readonly_sa@` already holds project-wide `compute.viewer` + `logging.viewer` (see `readonly_sa_roles`), so it can already see the instance and read the gcplogs container logs — nothing to add there.
+
+**No non-Terraform prerequisite.** The `role_readonly_sa@whalesync.com` group already exists and already contains the per-dev `<alias>-readonly` (gcp-ro) SAs (DEV-10397); members are managed in Workspace as today. `role_operations` is left untouched as the break-glass admin path.
 
 ### 3. Connect script — `terraform/tools/connect_to_git_service_ssh.sh` (new)
 
@@ -211,22 +232,27 @@ It prints a short banner listing the four allowed `sudo gitops-*` commands. The 
 
 ## Activation & rollout
 
-The IAM module is shared, so the group binding lands in every env that instantiates it. Roll out to **test first**, verify, then production.
+The IAM bindings are instance-scoped and gated on `var.enable_scratch_git`, so they land in every env that actually provisions the scratch-git VM. Roll out to **test first**, verify, then production.
 
-**Startup-script activation caveat:** editing `metadata_startup_script` updates instance metadata but does **not** re-run on a live instance — the wrappers/`sudoers` appear on the next boot. To activate without waiting for a reboot, re-run the startup script in place (the same mechanism the deploy job uses):
+**Startup-script activation caveat — `metadata_startup_script` is ForceNew.** This is the one non-obvious hazard, confirmed by an actual refreshed `terraform plan` in eu-test: the google provider treats `metadata_startup_script` as ForceNew, so editing it (the script is inlined into it) would **destroy and recreate the scratch-git VM** — a full service outage (the data disk is a separate resource and survives the reattach, but the service does not). An early draft of this plan wrongly claimed apply would just update metadata with "no disk replacement"; the plan output instead showed `# google_compute_instance.scratch_git must be replaced`.
+
+The fix is to add `metadata_startup_script` to the instance's `lifecycle.ignore_changes` (in `scratch_git_gce/main.tf`). With that in place, the refreshed plan drops to exactly the four IAM changes — **2 to add, 2 to change, 0 to destroy** — and the VM is never replaced. Because `ignore_changes` only suppresses *updates* (not create-time values), a freshly-built instance still bakes in the current `startup.sh`, so the wrappers stay durable across rebuilds.
+
+The flip side: terraform no longer pushes startup-script edits to a *live* instance, so the wrappers must be activated out-of-band on the current VM (an admin / break-glass action):
 
 ```bash
-# on the VM, as an admin (break-glass)
+# on the VM, as an admin (break-glass) — paste just the idempotent
+# "restricted read-only ops tooling" block for zero container disruption,
+# OR re-run the whole startup script (note: this also re-pulls the image
+# and recreates the blue/green/proxy containers — a brief blip):
 sudo google_metadata_script_runner startup
 ```
 
-Because the install block is idempotent and self-contained, an admin can alternatively paste just that block to activate it with zero container disruption. Note `replace_triggered_by` only fires on data-disk id change and `metadata["ssh-keys"]` is ignored, so a `terraform apply` causes **no disk replacement** — confirm in the plan output.
-
 **Suggested sequence:**
 
-1. Merge the Terraform + script + docs changes; create the `role_git_operators@whalesync.com` group and add members.
-2. `terraform apply` in `eu-test`; expect only new `google_project_iam_member.roles[…]` entries and an update to `scratch_git`'s `metadata_startup_script` (no disk replacement).
-3. Activate on the test VM (`google_metadata_script_runner startup` or run the block by hand); verify (below).
+1. Merge the Terraform + script + docs changes. No Workspace group to create — `role_readonly_sa@` already exists and already holds the gcp-ro SAs.
+2. `terraform apply` in `eu-test`; confirm the plan is **2 to add, 2 to change, 0 to destroy** — the two instance-scoped IAM members (`google_compute_instance_iam_member` + `google_iap_tunnel_instance_iam_member`) and the two `scratch-git-service-account` binding updates (`serviceAccountUser` + the inert `serviceAccountTokenCreator`). **No instance replacement** (thanks to the `ignore_changes`); if you see `scratch_git must be replaced`, stop — the `ignore_changes` is missing.
+3. Activate the wrappers on the test VM out-of-band (paste the block, or `google_metadata_script_runner startup`); verify (below).
 4. Repeat for `eu-production`.
 
 ## Out of scope / break-glass
@@ -238,19 +264,19 @@ Cleanup (`docker … prune`, `journalctl --vacuum`), disk-space fixes, deleting 
 **Static / local:**
 
 - `terraform fmt -check` + `terraform validate` in `terraform/envs/eu-test` and `eu-production`.
-- `terraform plan` (eu-test): only new IAM members + a `metadata_startup_script` update; **no disk replacement**.
+- `terraform plan` (eu-test): **2 to add, 2 to change, 0 to destroy** — the two instance-scoped IAM members + the two `scratch-git-service-account` binding updates. There must be **no `google_compute_instance.scratch_git must be replaced`**; if there is, the `metadata_startup_script` `ignore_changes` is missing (verified against a real refreshed plan in eu-test, 2026-06-24).
 - `shellcheck` the four wrappers, the modified `startup.sh` (keep its `# shellcheck shell=bash disable=SC1091` header), and `connect_to_git_service_ssh.sh`; `visudo -cf` a local copy of the sudoers file.
 
-**On-VM (test first), as a `role_git_operators` (osLogin-only) identity:**
+**On-VM (test first), as a `role_readonly_sa@` "gcp-ro" (osLogin-only) identity** — i.e. authenticated as the read-only SA the laptop/agent uses by default (`gcp-ro` gcloud config). The critical check is that SSH **connects at all**: it only does once the `actAs` (`iam.serviceAccountUser`) grant on `scratch-git-service-account` lands — without it, expect `Permission denied (publickey)`.
 
-1. `sudo -l` lists **only** the four `/opt/gitops/bin/gitops-*` commands (NOPASSWD).
-2. Capabilities work: `sudo gitops-ps`; `sudo gitops-logs scratch-git-proxy 50`; `sudo gitops-disk`; `sudo gitops-git org_…/wkb_…/coa_… log -n 5`.
-3. Denials all fail: `docker ps` (socket denied — not in docker group); `sudo docker ps` (not in sudoers); `sudo rm -rf /mnt/disks/data`; `sudo gitops-logs evil 10` (name allowlist); `sudo gitops-git ../../etc/passwd log` (path containment); `sudo gitops-git org_…/… push` (write subcommand).
-4. As a `role_operations` (osAdminLogin) identity: confirm break-glass still works — `sudo docker ps`, `sudo docker exec …`, manual `rm` all succeed.
-5. `connect_to_git_service.sh test` still port-forwards 3100 (unchanged).
+1. SSH succeeds as the gcp-ro SA via `connect_to_git_service_ssh.sh test` (proves osLogin + IAP + actAs are all in place).
+2. `sudo -l` lists **only** the four `/opt/gitops/bin/gitops-*` commands (NOPASSWD).
+3. Capabilities work: `sudo gitops-ps`; `sudo gitops-logs scratch-git-proxy 50`; `sudo gitops-disk`; `sudo gitops-git org_…/wkb_…/coa_… log -n 5`.
+4. Denials all fail: `docker ps` (socket denied — not in docker group); `sudo docker ps` (not in sudoers); `sudo rm -rf /mnt/disks/data`; `sudo gitops-logs evil 10` (name allowlist); `sudo gitops-git ../../etc/passwd log` (path containment); `sudo gitops-git org_…/… push` (write subcommand).
+5. As a `role_operations` (osAdminLogin) identity: confirm break-glass still works — `sudo docker ps`, `sudo docker exec …`, manual `rm` all succeed.
+6. `connect_to_git_service.sh test` still port-forwards 3100 (unchanged).
 
 ## Open questions
 
-- **Group vs. existing identities.** This plan creates a dedicated `role_git_operators@whalesync.com`. An alternative is to grant `git_operator_roles` to the existing `role_developers@whalesync.com` (who currently can't SSH at all), avoiding a new group at the cost of widening who can reach the prod VM. Confirm which is preferred.
-- **Logging viewer scope.** `roles/logging.viewer` is project-wide read of logs. If that is broader than desired for this tier, drop it and rely on the on-VM `gitops-logs` wrapper for container logs.
+- **Group vs. existing identities — resolved.** The restricted tier is granted to the existing `role_readonly_sa@whalesync.com` (gcp-ro) group, because the agent/laptop that needs to inspect the VM already runs as that read-only SA — granting a separate new group would not reach it. The grants are instance-scoped to the scratch-git VM only (plus narrow `actAs` on its one SA), so reusing this group does not widen its reach elsewhere. (The earlier draft created a dedicated `role_git_operators@`; that was dropped.)
 - **Closing the default footgun.** This issue is additive and does not move routine access off root. A follow-up could downgrade `role_operations`' default OS Login to non-admin with a separate break-glass admin group — the higher-impact safety change deferred here.

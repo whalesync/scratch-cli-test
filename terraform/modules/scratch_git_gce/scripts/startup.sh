@@ -163,3 +163,84 @@ docker run -d \
   -v "$DEPLOY_DIR/nginx.conf:/etc/nginx/nginx.conf:ro" \
   -v "$DEPLOY_DIR/upstream.conf:/etc/nginx/upstream.conf:ro" \
   nginx:alpine
+
+# ---------- restricted read-only ops tooling (DEV-10366) ----------
+# Installs four root-owned wrapper scripts and a tightly-scoped sudoers drop-in so a
+# NON-admin OS Login user (the per-dev "gcp-ro" read-only SAs in role_readonly_sa@,
+# granted only instance-scoped roles/compute.osLogin) can inspect the VM — docker
+# state/logs, disk usage, and read-only git on a repo — without any ability to mutate.
+# The sudoers rule grants to ALL precisely because the OS Login username of a service
+# account is not known ahead of time; the real gate is IAM (who gets osLogin + IAP at
+# all). Raw docker/sudo stays break-glass (role_operations@). This block is idempotent
+# and self-contained: safe to re-run, and hand-runnable as break-glass via
+# `sudo google_metadata_script_runner startup` (or by pasting it).
+install -o root -g root -m 0755 -d /opt/gitops/bin
+
+# gitops-ps — docker state (no user args)
+cat > /opt/gitops/bin/gitops-ps <<'WRAP'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "=== docker ps -a ==="; /usr/bin/docker ps -a
+echo; echo "=== docker stats (snapshot) ==="; /usr/bin/docker stats --no-stream
+WRAP
+
+# gitops-logs <scratch-git-blue|green|proxy> [lines]
+cat > /opt/gitops/bin/gitops-logs <<'WRAP'
+#!/usr/bin/env bash
+set -euo pipefail
+container="${1:-}"; lines="${2:-200}"
+case "$container" in
+  scratch-git-blue|scratch-git-green|scratch-git-proxy) ;;
+  *) echo "error: container must be scratch-git-{blue,green,proxy}" >&2; exit 2 ;;
+esac
+[[ "$lines" =~ ^[0-9]{1,5}$ ]] || { echo "error: lines must be numeric" >&2; exit 2; }
+exec /usr/bin/docker logs --tail "$lines" -- "$container"
+WRAP
+
+# gitops-disk — read-only disk report (fixed paths)
+cat > /opt/gitops/bin/gitops-disk <<'WRAP'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "=== df -h ==="; df -h
+echo; echo "=== docker system df ==="; /usr/bin/docker system df
+echo; echo "=== du /mnt/disks/data (top 40) ==="
+du -xh --max-depth=2 /mnt/disks/data 2>/dev/null | sort -h | tail -40
+WRAP
+
+# gitops-git <org_../wkb_../coa_..> <read-only-subcommand> [args...]
+cat > /opt/gitops/bin/gitops-git <<'WRAP'
+#!/usr/bin/env bash
+set -euo pipefail
+export GIT_PAGER=cat PAGER=cat
+REPO_ROOT=/mnt/disks/data/repos
+repo_id="${1:-}"; sub="${2:-}"; shift 2 2>/dev/null || { echo "usage: gitops-git <repo_id> <subcommand> [args]" >&2; exit 2; }
+[[ "$repo_id" =~ ^org_[A-Za-z0-9]+/wkb_[A-Za-z0-9]+/coa_[A-Za-z0-9]+$ ]] \
+  || { echo "error: repo id must be org_.../wkb_.../coa_..." >&2; exit 2; }
+real="$(readlink -f -- "$REPO_ROOT/$repo_id.git" 2>/dev/null || true)"
+case "$real" in "$REPO_ROOT"/*.git) ;; *) echo "error: path escapes $REPO_ROOT" >&2; exit 2 ;; esac
+[ -d "$real" ] || { echo "error: repo not found: $repo_id" >&2; exit 2; }
+case "$sub" in
+  log|show|diff|status|ls-files|ls-tree|cat-file|rev-parse|rev-list|for-each-ref|show-ref|count-objects|fsck|shortlog|describe) ;;
+  *) echo "error: subcommand '$sub' not allowed (read-only only)" >&2; exit 2 ;;
+esac
+for a in "$@"; do case "$a" in
+  -o|--output|--output=*|--output-directory=*|--ext-diff|--upload-pack=*|--exec=*|--exec-path=*)
+    echo "error: flag '$a' not allowed" >&2; exit 2 ;;
+esac; done
+exec /usr/bin/git --no-pager -C "$real" "$sub" "$@"
+WRAP
+
+chmod 0755 /opt/gitops/bin/gitops-*
+
+# sudoers: only the four wrappers, NOPASSWD. Granting to ALL is safe — the
+# command surface is four read-only wrappers; the real gate is IAM (who gets
+# osLogin + IAP at all). Admins keep their separate google-sudoers root grant.
+cat > /tmp/gitops.sudoers <<'SUDO'
+Cmnd_Alias GITOPS_RO = /opt/gitops/bin/gitops-ps, /opt/gitops/bin/gitops-logs, \
+                       /opt/gitops/bin/gitops-disk, /opt/gitops/bin/gitops-git
+Defaults!GITOPS_RO env_reset, !requiretty, secure_path="/usr/sbin:/usr/bin:/sbin:/bin"
+ALL ALL=(root) NOPASSWD: GITOPS_RO
+SUDO
+visudo -cf /tmp/gitops.sudoers && install -o root -g root -m 0440 /tmp/gitops.sudoers /etc/sudoers.d/gitops
+rm -f /tmp/gitops.sudoers
+# ---------- end restricted read-only ops tooling ----------

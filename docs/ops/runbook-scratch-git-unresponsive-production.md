@@ -140,7 +140,19 @@ On boot, the instance runs its startup script: it mounts the data disk, ensures 
 
 ### 2. SSH and verify Docker
 
-SSH in (same command as above). Docker commands require `sudo` when using OS Login with a service account user:
+You can verify Docker from either access tier; pick the lowest-privilege one that does the job.
+
+**Restricted (read-only) — preferred for inspection.** As a member of `role_readonly_sa@whalesync.com` (the per-dev "gcp-ro" read-only SAs — what your laptop/agent uses by default; OS Login, no sudo), use the read-only wrappers — no `docker` group or root needed (see [the restricted-access plan](plans/scratch-git-restricted-user-plan.md)):
+
+```bash
+terraform/tools/connect_to_git_service_ssh.sh production
+# then, on the VM:
+sudo gitops-ps                          # docker ps -a + docker stats
+sudo gitops-logs scratch-git-proxy 200  # recent proxy logs
+sudo gitops-disk                        # df -h + docker system df + du
+```
+
+**Break-glass (root) — for the restart/cleanup steps in this runbook.** As a `role_operations@whalesync.com` admin you land as root via OS Login, so Docker commands work directly with `sudo`:
 
 ```bash
 sudo docker ps

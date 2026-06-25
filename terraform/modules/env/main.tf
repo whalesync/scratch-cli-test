@@ -63,6 +63,16 @@ locals {
       name        = "scratch-git-service-account"
       account_id  = "scratch-git-service-account"
       description = "Service account for the scratch-git GCE instance"
+      # role_readonly_sa@ (the per-dev "gcp-ro" read-only SAs) needs actAs on this SA to SSH the scratch-git VM via OS
+      # Login for restricted, read-only inspection (DEV-10366) — exactly as it does for the Cloud SQL bastion above. OS
+      # Login SSH into a VM with an attached SA returns "Permission denied (publickey)" without
+      # roles/iam.serviceAccountUser on that attached SA, even with compute.osLogin granted. Granted HERE through the
+      # module's authoritative serviceAccountUser binding (not a standalone google_service_account_iam_member, which the
+      # authoritative binding would keep removing — thrashing every apply). The pairing — instance-scoped compute.osLogin
+      # + iap.tunnelResourceAccessor on the scratch-git VM — is in the "Scratch Git VM" section below. NB: the module
+      # also confers serviceAccountTokenCreator on this SA to these members; accepted as inert — on-VM access is gated to
+      # four read-only `sudo gitops-*` wrappers and the SA itself only reads images/writes logs+metrics.
+      service_account_users = ["group:role_readonly_sa@whalesync.com"]
       roles = [
         "roles/artifactregistry.reader",
         "roles/logging.logWriter",
@@ -180,7 +190,8 @@ locals {
     "group:role_operations@whalesync.com" : [local.terraform_roles, local.operations_roles],
     "group:role_developers@whalesync.com" : local.developer_roles,
     # Per-dev "<alias>-readonly" laptop service accounts (members managed in Workspace, not here; SAs minted in whalesync
-    # DEV-10397). Read-only by default for laptops + AI agents.
+    # DEV-10397). Read-only by default for laptops + AI agents. Also get restricted, read-only scratch-git VM SSH access
+    # (DEV-10366) via the instance-scoped grants in the "Scratch Git VM" section below.
     "group:role_readonly_sa@whalesync.com" : local.readonly_sa_roles,
   }
   principal_role_pairs = flatten([for principal, roles in local.principals_to_roles : [for role in distinct(flatten(roles)) : { principal : principal, role : role }]])
@@ -400,6 +411,38 @@ module "scratch_git_gce" {
   labels                  = merge(local.default_labels, local.vanta_user_data_labels)
 
   depends_on = [module.vpc, module.iam-sa]
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Restricted, read-only SSH inspection of the scratch-git VM (DEV-10366)
+## ---------------------------------------------------------------------------------------------------------------------
+# Let the per-dev read-only service accounts ("gcp-ro", members of role_readonly_sa@) SSH the scratch-git VM to inspect
+# it read-only — view Docker state/logs, disk usage, and read repos via the four `sudo gitops-*` wrappers the startup
+# script installs. This is the scratch-git analogue of the Cloud SQL bastion grants above and is the WHOLE POINT of the
+# ticket: an AI agent on a dev's workstation runs as this read-only SA, so the restricted tier must be reachable BY that
+# SA. Both bindings are scoped to THIS instance (not the project) and are connect/login-only — neither can modify any
+# infrastructure. SSH lands a NON-privileged shell (roles/compute.osLogin, NOT osAdminLogin → no sudo, not in the docker
+# group), and on-VM the user can only run the read-only gitops wrappers. The third piece — actAs (iam.serviceAccountUser)
+# on the attached scratch-git-service-account, without which OS Login SSH fails with "Permission denied (publickey)" — is
+# granted via that SA's service_account_users in the service_accounts local above. role_readonly_sa@ already holds
+# project-wide compute.viewer + logging.viewer (see readonly_sa_roles), so it can already see the instance and read the
+# gcplogs container logs. Any mutation/cleanup stays break-glass via role_operations@'s existing osAdminLogin root path.
+resource "google_iap_tunnel_instance_iam_member" "readonly_sa_scratch_git_tunnel" {
+  count    = var.enable_scratch_git ? 1 : 0
+  project  = var.gcp_project_id
+  zone     = var.gcp_zone
+  instance = module.scratch_git_gce[0].instance_name
+  role     = "roles/iap.tunnelResourceAccessor"
+  member   = "group:role_readonly_sa@whalesync.com"
+}
+
+resource "google_compute_instance_iam_member" "readonly_sa_scratch_git_oslogin" {
+  count         = var.enable_scratch_git ? 1 : 0
+  project       = var.gcp_project_id
+  zone          = var.gcp_zone
+  instance_name = module.scratch_git_gce[0].instance_name
+  role          = "roles/compute.osLogin"
+  member        = "group:role_readonly_sa@whalesync.com"
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------

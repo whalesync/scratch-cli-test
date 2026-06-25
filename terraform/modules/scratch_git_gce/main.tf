@@ -165,7 +165,15 @@ resource "google_compute_instance" "scratch_git" {
   }
 
   lifecycle {
-    ignore_changes       = [metadata["ssh-keys"]]
+    # `metadata_startup_script` is ForceNew in the google provider — editing it (the script is inlined here) would
+    # DESTROY AND RECREATE this VM on apply, a full scratch-git outage (the data disk is a separate resource and
+    # survives, but the service does not). We don't want a script tweak (e.g. the DEV-10366 gitops wrappers) to trigger
+    # that. Ignoring it means: a freshly-created instance still bakes in the current script (ignore_changes only
+    # suppresses UPDATES, not create-time values), so the wrappers are durable across rebuilds; an EXISTING instance is
+    # never replaced by a script change. The tradeoff: terraform no longer pushes startup/deploy-script edits to a live
+    # instance — activate those out-of-band (`sudo google_metadata_script_runner startup`, or paste the idempotent
+    # block). Routine deploys are unaffected (blue/green happens over SSH via deploy.sh, never touching this resource).
+    ignore_changes       = [metadata["ssh-keys"], metadata_startup_script]
     replace_triggered_by = [google_compute_disk.data.id]
   }
 }
