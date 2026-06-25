@@ -92,6 +92,7 @@ import {
   type ConstantValue,
   type FieldMapping,
   type FolderPair,
+  type UnmatchedDestinationPolicyChoice,
 } from './sync-editor-model';
 import { SyncJsonReferencePanel } from './SyncJsonReferencePanel';
 import { SyncToolbar } from './SyncToolbar';
@@ -938,20 +939,24 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const handleDestinationPolicyChange = (
     pairIndex: number,
     setting: 'unmatchedWithMatchKey' | 'unmatchedWithoutMatchKey',
-    value: 'ignore' | 'apply',
+    value: UnmatchedDestinationPolicyChoice,
   ) => {
     const pair = folderPairs[pairIndex];
     if (!pair) return;
-    const isFirstEnable = value === 'apply' && pair[setting] === 'ignore' && !isNew && !!existingSync?.lastSyncTime;
-    const flipKey = `${pair.id}:${setting}`;
-    if (isFirstEnable && !confirmedPolicyFlips.current.has(flipKey)) {
+    // Confirm the first time an active policy ('apply' or the destructive 'delete')
+    // is enabled on a sync that has already run. 'delete' gets a danger-styled prompt.
+    const isEnabling = value !== 'ignore' && value !== pair[setting] && !isNew && !!existingSync?.lastSyncTime;
+    const isDelete = value === 'delete';
+    const flipKey = `${pair.id}:${setting}:${value}`;
+    if (isEnabling && !confirmedPolicyFlips.current.has(flipKey)) {
       openConfirmDialog({
-        title: 'Enable unmatched-destination handling?',
-        message:
-          'Saving with this setting means the next sync run will apply these rules to destination records that have no source counterpart. You can review and reject these changes in publish review before they go live.',
-        confirmLabel: 'Enable',
+        title: isDelete ? 'Enable deletion of orphaned records?' : 'Enable unmatched-destination handling?',
+        message: isDelete
+          ? 'The next sync run will DELETE destination records that have no source counterpart. Deletions go through publish review before they go live, but this is a destructive action — the destination records will be removed.'
+          : 'Saving with this setting means the next sync run will apply these rules to destination records that have no source counterpart. You can review and reject these changes in publish review before they go live.',
+        confirmLabel: isDelete ? 'Enable deletion' : 'Enable',
         cancelLabel: 'Keep ignore',
-        variant: 'primary',
+        variant: isDelete ? 'danger' : 'primary',
         onConfirm: () => {
           confirmedPolicyFlips.current.add(flipKey);
           updatePair(pairIndex, { [setting]: value });
@@ -1616,7 +1621,22 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                           <Accordion variant="separated" chevronPosition="left" defaultValue={null}>
                             <Accordion.Item value="unmatched-handling">
                               <Accordion.Control>
-                                <Text13Medium>Unmatched record handling — advanced</Text13Medium>
+                                <Group gap="xs">
+                                  <Text13Medium>Unmatched record handling — advanced</Text13Medium>
+                                  {/* Visualize an active destination policy at a glance (collapsed). */}
+                                  {(activePair.unmatchedWithMatchKey === 'delete' ||
+                                    activePair.unmatchedWithoutMatchKey === 'delete') && (
+                                    <Badge size="xs" variant="light" color="red">
+                                      Deletes orphans
+                                    </Badge>
+                                  )}
+                                  {(activePair.unmatchedWithMatchKey === 'apply' ||
+                                    activePair.unmatchedWithoutMatchKey === 'apply') && (
+                                    <Badge size="xs" variant="light" color="blue">
+                                      Archives orphans
+                                    </Badge>
+                                  )}
+                                </Group>
                               </Accordion.Control>
                               <Accordion.Panel>
                                 <Stack gap="lg">
@@ -1651,17 +1671,19 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                             handleDestinationPolicyChange(
                                               activePairIndex,
                                               'unmatchedWithMatchKey',
-                                              val as 'ignore' | 'apply',
+                                              val as UnmatchedDestinationPolicyChoice,
                                             )
                                           }
                                           data={[
                                             { value: 'apply', label: 'Apply' },
+                                            { value: 'delete', label: 'Delete' },
                                             { value: 'ignore', label: 'Ignore' },
                                           ]}
                                         />
                                         <Text12Regular c="var(--fg-secondary)" fs="italic" mt={4}>
                                           Records previously created by this sync whose source has been deleted.
-                                          Typically: yes, archive them.
+                                          Typically: archive them, or <strong>delete</strong> to remove the destination
+                                          record too.
                                         </Text12Regular>
                                       </Box>
                                       <Box>
@@ -1674,11 +1696,12 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                             handleDestinationPolicyChange(
                                               activePairIndex,
                                               'unmatchedWithoutMatchKey',
-                                              val as 'ignore' | 'apply',
+                                              val as UnmatchedDestinationPolicyChoice,
                                             )
                                           }
                                           data={[
                                             { value: 'apply', label: 'Apply' },
+                                            { value: 'delete', label: 'Delete' },
                                             { value: 'ignore', label: 'Ignore' },
                                           ]}
                                         />
@@ -1688,8 +1711,8 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                         </Text12Regular>
                                       </Box>
                                     </Stack>
-                                    {(activePair.unmatchedWithMatchKey === 'apply' ||
-                                      activePair.unmatchedWithoutMatchKey === 'apply') &&
+                                    {(activePair.unmatchedWithMatchKey !== 'ignore' ||
+                                      activePair.unmatchedWithoutMatchKey !== 'ignore') &&
                                       !(activePair.matchingSourceField && activePair.matchingDestinationField) && (
                                         <Text12Regular c="var(--mantine-color-orange-7)" mt={6}>
                                           Configure record matching above — unmatched-destination rules only run when a

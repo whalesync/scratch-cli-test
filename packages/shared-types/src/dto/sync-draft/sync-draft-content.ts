@@ -120,6 +120,31 @@ export const draftRecordMatchingSchema = z.object({
 });
 export type DraftRecordMatching = z.infer<typeof draftRecordMatchingSchema>;
 
+// ── Unmatched-record policies (carried verbatim onto the resulting sync) ───────
+//
+// Mirror the v2 sync `UnmatchedSourcePolicy` / `UnmatchedDestinationPolicy` shapes
+// (packages/shared-types/src/sync-mapping.ts). Apply threads these straight onto
+// the `TableMappingV2` it builds; the editor / CRM Mirror set them on the draft.
+
+/** What to do with source records that have no destination match. */
+export const draftUnmatchedSourcePolicySchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('create') }).strict(),
+  z.object({ type: z.literal('ignore') }).strict(),
+]);
+export type DraftUnmatchedSourcePolicy = z.infer<typeof draftUnmatchedSourcePolicySchema>;
+
+/** What to do with an unmatched destination record, per bucket: ignore / apply / delete. */
+export const draftUnmatchedDestinationActionSchema = z.enum(['ignore', 'apply', 'delete']);
+
+/** What to do with destination records that have no source match, per bucket. */
+export const draftUnmatchedDestinationPolicySchema = z
+  .object({
+    withMatchKey: draftUnmatchedDestinationActionSchema,
+    withoutMatchKey: draftUnmatchedDestinationActionSchema,
+  })
+  .strict();
+export type DraftUnmatchedDestinationPolicy = z.infer<typeof draftUnmatchedDestinationPolicySchema>;
+
 // ── A single table mapping ────────────────────────────────────────────────────
 
 export const draftTableMappingSchema = z
@@ -133,6 +158,20 @@ export const draftTableMappingSchema = z
     fieldAdditions: z.array(draftFieldAdditionSchema).optional(),
     columnMappings: z.array(draftColumnMappingSchema),
     recordMatching: draftRecordMatchingSchema.optional(),
+    /**
+     * What to do with source records that have no destination match. Defaults to
+     * `{ type: 'create' }` (today's behavior) when omitted. Apply threads it onto
+     * the resulting sync's `TableMappingV2.unmatchedSourcePolicy`.
+     */
+    unmatchedSourcePolicy: draftUnmatchedSourcePolicySchema.optional(),
+    /**
+     * What to do with destination records that have no source match, per bucket.
+     * Defaults to `{ withMatchKey: 'ignore', withoutMatchKey: 'ignore' }` when
+     * omitted. Apply threads it onto `TableMappingV2.unmatchedDestinationPolicy`.
+     * `'delete'` removes the orphaned destination record; only meaningful when
+     * `recordMatching` is set.
+     */
+    unmatchedDestinationPolicy: draftUnmatchedDestinationPolicySchema.optional(),
   })
   .superRefine((table, ctx) => {
     // Field additions only apply to an existing destination table.

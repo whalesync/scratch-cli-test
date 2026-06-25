@@ -214,6 +214,7 @@ describe('SyncService - v1 compatibility regression gate', () => {
       withoutMatchKey: 0,
       archived: 0,
       unarchived: 0,
+      deleted: 0,
     });
     expect(writtenFiles).toHaveLength(2);
     const contents = writtenFiles.map((f) => JSON.parse(f.content) as Record<string, unknown>);
@@ -258,6 +259,7 @@ describe('SyncService - v1 compatibility regression gate', () => {
       withoutMatchKey: 0,
       archived: 0,
       unarchived: 0,
+      deleted: 0,
     });
 
     const file1 = writtenFiles.find((f) => f.path === 'dest/item1.json');
@@ -295,6 +297,7 @@ describe('SyncService - v1 compatibility regression gate', () => {
       withoutMatchKey: 0,
       archived: 0,
       unarchived: 0,
+      deleted: 0,
     });
   });
 

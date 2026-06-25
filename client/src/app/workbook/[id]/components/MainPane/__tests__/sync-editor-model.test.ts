@@ -163,6 +163,46 @@ describe('v2ToFolderPairs round-trip', () => {
     expect(pair.unmatchedWithMatchKey).toBe('ignore');
     expect(pair.unmatchedWithoutMatchKey).toBe('ignore');
   });
+
+  it('round-trips the delete policy (preserves it, does not downgrade to ignore)', () => {
+    const v2: SyncMappingV2 = {
+      version: 2,
+      tableMappings: [
+        {
+          sourceDataFolderId: SRC,
+          destinationDataFolderId: DST,
+          columnMappings: [{ destinationColumnId: 'name', source: { kind: 'column', columnId: 'Title' } }],
+          recordMatching: { sourceColumnId: 'Title', destinationColumnId: 'name' },
+          unmatchedDestinationPolicy: { withMatchKey: 'delete', withoutMatchKey: 'ignore' },
+        },
+      ],
+    };
+
+    const pairs = v2ToFolderPairs(v2, []);
+    expect(pairs[0].unmatchedWithMatchKey).toBe('delete');
+    expect(pairs[0].unmatchedWithoutMatchKey).toBe('ignore');
+
+    // model -> v2 is byte-identical: the 'delete' action survives a save round-trip.
+    expect(folderPairsToV2(pairs)).toEqual(v2);
+  });
+});
+
+describe('folderPairsToV2 delete policy', () => {
+  it('persists unmatchedDestinationPolicy when a bucket is set to delete', () => {
+    const pair = createFolderPair({
+      sourceId: SRC,
+      destId: DST,
+      fieldMappings: [createFieldMapping({ destField: 'name', kind: 'column', sourceField: 'Title' })],
+      matchingSourceField: 'Title',
+      matchingDestinationField: 'name',
+      unmatchedWithMatchKey: 'delete',
+      unmatchedWithoutMatchKey: 'ignore',
+    });
+    expect(folderPairsToV2([pair]).tableMappings[0].unmatchedDestinationPolicy).toEqual({
+      withMatchKey: 'delete',
+      withoutMatchKey: 'ignore',
+    });
+  });
 });
 
 describe('storedMappingToV2', () => {

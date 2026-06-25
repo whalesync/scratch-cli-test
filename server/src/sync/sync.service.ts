@@ -35,6 +35,7 @@ import {
   TransformerConfig,
   TransformerTypes,
   transformV1ToV2,
+  UnmatchedDestinationAction,
   ValidateSyncMappingTypesResponse,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -104,8 +105,12 @@ export interface SyncTableMappingResult {
   recordsCreated: number;
   recordsUpdated: number;
   recordsSkipped: number;
+  /** Destination record files deleted by Pass 3's `'delete'` policy. */
+  recordsDeleted: number;
   createdPaths: string[];
   updatedPaths: string[];
+  /** Destination record paths deleted by Pass 3's `'delete'` policy. */
+  deletedPaths: string[];
   errors: Array<{ sourceRemoteId: string; error: string }>;
   warnings: Array<{ sourceRemoteId: string; warning: string }>;
   /**
@@ -128,6 +133,12 @@ export interface SyncTableMappingResult {
      * Upper bound, not exact (a record already at the constant value still counts).
      */
     unarchived: number;
+    /**
+     * Destination record files deleted by Pass 3 — the count of unmatched
+     * records whose bucket policy resolved to `'delete'`. The source record is
+     * gone, so its destination counterpart was removed from the dirty branch.
+     */
+    deleted: number;
   };
 }
 
@@ -1036,11 +1047,13 @@ export class SyncService {
       recordsCreated: 0,
       recordsUpdated: 0,
       recordsSkipped: 0,
+      recordsDeleted: 0,
       createdPaths: [],
       updatedPaths: [],
+      deletedPaths: [],
       errors: [],
       warnings: [],
-      unmatchedDestinationCounts: { withMatchKey: 0, withoutMatchKey: 0, archived: 0, unarchived: 0 },
+      unmatchedDestinationCounts: { withMatchKey: 0, withoutMatchKey: 0, archived: 0, unarchived: 0, deleted: 0 },
     };
 
     // 1. Fetch source and destination DataFolders with their schemas
@@ -1235,6 +1248,9 @@ export class SyncService {
 
     // Accumulated files to write across all source pages
     const filesToWrite: Array<{ path: string; content: string }> = [];
+    // Pass 3 'delete' policy collects orphaned destination record paths here;
+    // committed as a batch deletion after the writes land (see step 8).
+    const filesToDelete: string[] = [];
 
     // Page through source files again for transformation
     let sourceCursor: string | undefined;
@@ -1437,8 +1453,8 @@ export class SyncService {
       onlySourceFilePath === undefined &&
       tableMapping.recordMatching !== undefined &&
       tableMapping.unmatchedDestinationPolicy !== undefined &&
-      (tableMapping.unmatchedDestinationPolicy.withMatchKey === 'apply' ||
-        tableMapping.unmatchedDestinationPolicy.withoutMatchKey === 'apply')
+      (tableMapping.unmatchedDestinationPolicy.withMatchKey !== 'ignore' ||
+        tableMapping.unmatchedDestinationPolicy.withoutMatchKey !== 'ignore')
     ) {
       const matchColPath = tableMapping.recordMatching.destinationColumnId;
       const matchSchema = destinationTableSpec ? getSchemaAtPath(destinationTableSpec.schema, matchColPath) : undefined;
@@ -1506,14 +1522,30 @@ export class SyncService {
             continue;
           }
 
+          // Resolve the per-bucket action for this unmatched record.
+          let action: UnmatchedDestinationAction;
           if (classification === 'unmatchedWithMatchKey') {
             result.unmatchedDestinationCounts.withMatchKey++;
-            if (policy.withMatchKey !== 'apply') continue;
+            action = policy.withMatchKey;
           } else {
             result.unmatchedDestinationCounts.withoutMatchKey++;
-            if (policy.withoutMatchKey !== 'apply') continue;
+            action = policy.withoutMatchKey;
           }
 
+          if (action === 'ignore') continue;
+
+          if (action === 'delete') {
+            // The source record is gone — remove its destination counterpart.
+            // No column mappings are applied; the file is deleted outright.
+            // Committed as a batch in step 9 (after the Pass 2/3 writes land).
+            result.unmatchedDestinationCounts.deleted++;
+            result.recordsDeleted++;
+            result.deletedPaths.push(destPath);
+            filesToDelete.push(destPath);
+            continue;
+          }
+
+          // action === 'apply' — apply the unmatched-bucket constant mappings.
           try {
             const transformResult = await applyColumnMappings({
               bucket: 'unmatched',
@@ -1592,10 +1624,47 @@ export class SyncService {
         result.recordsUpdated = 0;
         // Pass 3 writes were rolled back too — zero the archive/unarchive counts.
         // The classification visited-counts (withMatchKey, withoutMatchKey) stay
-        // since the work happened even if no file landed.
+        // since the work happened even if no file landed. The 'delete' batch has
+        // not been committed yet (it runs below), so zero it: nothing was removed.
         result.unmatchedDestinationCounts.archived = 0;
         result.unmatchedDestinationCounts.unarchived = 0;
+        result.unmatchedDestinationCounts.deleted = 0;
+        result.recordsDeleted = 0;
+        result.deletedPaths = [];
         return result;
+      }
+    }
+
+    // 9. Delete orphaned destination records (Pass 3 'delete' policy) as a batch.
+    // Runs after the writes land so a failed write never strands a deletion, and
+    // deletions are skipped entirely if the writes failed (early return above).
+    if (filesToDelete.length > 0) {
+      WSLogger.info({
+        source: 'SyncService.syncTableMapping',
+        message: `Deleting orphaned destination records`,
+        syncId,
+        files: filesToDelete.length,
+      });
+      try {
+        await this.scratchGitService.deleteFilesFromBranch(
+          destinationRepoId,
+          DIRTY_BRANCH,
+          filesToDelete,
+          'Sync: delete orphaned destination records',
+        );
+      } catch (error) {
+        // Deletion failed — surface per path and zero the delete counters so the
+        // run summary doesn't claim records were removed when none were.
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        for (const path of filesToDelete) {
+          result.errors.push({
+            sourceRemoteId: path,
+            error: `Batch delete failed: ${errorMessage}`,
+          });
+        }
+        result.unmatchedDestinationCounts.deleted = 0;
+        result.recordsDeleted = 0;
+        result.deletedPaths = [];
       }
     }
 

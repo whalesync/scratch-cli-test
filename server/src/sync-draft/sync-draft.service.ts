@@ -342,6 +342,12 @@ export class SyncDraftService {
         destinationDataFolderId: destinationDataFolderId as DataFolderId,
         columnMappings,
         ...(recordMatching ? { recordMatching } : {}),
+        // Carry the unmatched-record policies (incl. withMatchKey: 'delete') verbatim
+        // onto the sync. Omitted-on-draft → omitted-on-sync → today's default behavior.
+        ...(tableMapping.unmatchedSourcePolicy ? { unmatchedSourcePolicy: tableMapping.unmatchedSourcePolicy } : {}),
+        ...(tableMapping.unmatchedDestinationPolicy
+          ? { unmatchedDestinationPolicy: tableMapping.unmatchedDestinationPolicy }
+          : {}),
       });
     }
 
@@ -888,17 +894,6 @@ export class SyncDraftService {
   }
 
   private convertTableMappingToDraft(tm: TableMappingV2, index: number, syncId: SyncId): DraftTableMapping {
-    if (tm.unmatchedSourcePolicy && tm.unmatchedSourcePolicy.type !== 'create') {
-      throw this.unsupportedEditError(syncId, 'a non-default unmatched-source policy');
-    }
-    if (
-      tm.unmatchedDestinationPolicy &&
-      (tm.unmatchedDestinationPolicy.withMatchKey !== 'ignore' ||
-        tm.unmatchedDestinationPolicy.withoutMatchKey !== 'ignore')
-    ) {
-      throw this.unsupportedEditError(syncId, 'a non-default unmatched-destination policy');
-    }
-
     const columnMappings = tm.columnMappings.map((cm) => {
       if (cm.source.kind !== 'column') {
         throw this.unsupportedEditError(syncId, 'a constant column mapping');
@@ -930,6 +925,10 @@ export class SyncDraftService {
             },
           }
         : {}),
+      // Round-trip the unmatched-record policies (incl. withMatchKey: 'delete') back
+      // onto the draft so an edit re-applies them rather than silently dropping them.
+      ...(tm.unmatchedSourcePolicy ? { unmatchedSourcePolicy: tm.unmatchedSourcePolicy } : {}),
+      ...(tm.unmatchedDestinationPolicy ? { unmatchedDestinationPolicy: tm.unmatchedDestinationPolicy } : {}),
     };
   }
 

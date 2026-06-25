@@ -355,6 +355,8 @@ export class PostHogService implements OnModuleDestroy {
       unmatchedWithoutKeyCount?: number;
       archiveWritesCount?: number;
       unarchiveWritesCount?: number;
+      /** Destination records deleted by Pass 3's `'delete'` policy, summed across tables. */
+      deleteCount?: number;
     },
   ): void {
     this.captureEvent(PostHogEventName.SYNC_COMPLETED, actor, properties);

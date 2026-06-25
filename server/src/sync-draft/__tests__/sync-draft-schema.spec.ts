@@ -161,4 +161,28 @@ describe('draftTableMappingSchema', () => {
     );
     expect(result.success).toBe(true);
   });
+
+  it('accepts an unmatchedDestinationPolicy with a delete action', () => {
+    const result = draftTableMappingSchema.safeParse(
+      existingMapping({
+        recordMatching: { source: { columnId: 'email' }, destination: { kind: 'existing', columnId: 'email' } },
+        unmatchedDestinationPolicy: { withMatchKey: 'delete', withoutMatchKey: 'ignore' },
+      }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an unmatchedSourcePolicy', () => {
+    const result = draftTableMappingSchema.safeParse(existingMapping({ unmatchedSourcePolicy: { type: 'ignore' } }));
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unknown unmatchedDestinationPolicy action', () => {
+    const result = draftTableMappingSchema.safeParse(
+      existingMapping({
+        unmatchedDestinationPolicy: { withMatchKey: 'nuke', withoutMatchKey: 'ignore' } as never,
+      }),
+    );
+    expect(result.success).toBe(false);
+  });
 });

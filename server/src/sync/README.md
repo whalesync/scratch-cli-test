@@ -115,11 +115,14 @@ syncTableMapping(tableMapping, phase)
 │      key ← deriveCanonicalMatchKey(record, destMatchCol)   (same reducer as Pass 1)
 │      classifyDestinationRecord(key, sourceMatchKeySet):
 │        matched                  → skip (Pass 2 handled it)
-│        unmatchedWithMatchKey    → if policy.withMatchKey === 'apply':
-│                                     applyColumnMappings(bucket='unmatched', sourceFields=null)
-│        unmatchedWithoutMatchKey → if policy.withoutMatchKey === 'apply': (same)
+│        unmatchedWithMatchKey    → action = policy.withMatchKey
+│        unmatchedWithoutMatchKey → action = policy.withoutMatchKey
+│          action === 'ignore'    → skip
+│          action === 'apply'     → applyColumnMappings(bucket='unmatched', sourceFields=null)
+│          action === 'delete'    → collect path for batch deletion (no column mappings)
 │
-└─ commit Pass 2 + Pass 3 file changes to DIRTY_BRANCH (single batch, Prettier-formatted JSON)
+├─ commit Pass 2 + Pass 3 writes to DIRTY_BRANCH (single batch, Prettier-formatted JSON)
+└─ delete Pass 3 'delete' paths from DIRTY_BRANCH (batch; after writes land)
 ```
 
 ### Pass 1: build caches
@@ -142,16 +145,20 @@ Pass 3 visits the **destination crescent** — records in the destination that h
 - `phase === 'DATA'`
 - `onlySourceFilePath` is **not** set (the `syncOneRecord` single-record path skips Pass 3 — it can't enumerate the whole destination folder),
 - `recordMatching` is configured,
-- `unmatchedDestinationPolicy` has at least one `'apply'` value, **and**
+- `unmatchedDestinationPolicy` has at least one non-`'ignore'` value (`'apply'` or `'delete'`), **and**
 - the match-key column exists in the current destination schema (if missing, log a warning and skip — never crash).
 
 For each destination record, `classifyDestinationRecord(record, sourceMatchKeySet, matchCol)` returns one of:
 
 - **`matched`** — its match key is in the source set → skipped (Pass 2 already wrote it).
-- **`unmatchedWithMatchKey`** — match-key field populated but no source counterpart → typically a record this sync previously wrote whose source was deleted. Acted on when `policy.withMatchKey === 'apply'`.
-- **`unmatchedWithoutMatchKey`** — no canonical match key (empty/null/whitespace, or a non-primitive value with no extraction transformer; see [Record matching](#record-matching)) → hand-authored or pre-existing content this sync never managed. Acted on when `policy.withoutMatchKey === 'apply'`.
+- **`unmatchedWithMatchKey`** — match-key field populated but no source counterpart → typically a record this sync previously wrote whose source was deleted. Acted on per `policy.withMatchKey`.
+- **`unmatchedWithoutMatchKey`** — no canonical match key (empty/null/whitespace, or a non-primitive value with no extraction transformer; see [Record matching](#record-matching)) → hand-authored or pre-existing content this sync never managed. Acted on per `policy.withoutMatchKey`.
 
-When acted on, `applyColumnMappings({ bucket: 'unmatched', sourceFields: null, ... })` applies the `when: 'unmatched'` / `when: 'always'` rules (the archive case writes `archived: true`). The `isEqual` no-op skip is inherited, so unchanged records produce no write. Pass 3 file changes are appended to the same batch as Pass 2 and committed together.
+The bucket's action is one of:
+
+- **`'ignore'`** (default) — the record is visited and counted but not touched.
+- **`'apply'`** (archive) — `applyColumnMappings({ bucket: 'unmatched', sourceFields: null, ... })` applies the `when: 'unmatched'` / `when: 'always'` rules (e.g. writes `archived: true`). The `isEqual` no-op skip is inherited, so unchanged records produce no write. These writes are appended to the same batch as Pass 2 and committed together.
+- **`'delete'`** — the destination record file is **deleted** from the dirty branch. No column mappings are applied; the source is gone, so its counterpart is removed. Deletions are collected and committed as a separate batch _after_ the Pass 2 + Pass 3 writes land (so a failed write never strands a deletion), and are surfaced to the user through publish review like any other change. The typical config is `{ withMatchKey: 'delete', withoutMatchKey: 'ignore' }` — delete only the records this sync owns, leave hand-authored content alone.
 
 **Defensive runtime behaviors:** if a `{ kind: 'constant' }` mapping somehow targets the match-key column (save-time validation already rejects this — see [Validation](#schema-validation)), the executor omits that write and warns rather than destroying the record's identifier.
 
@@ -167,7 +174,7 @@ This two-phase approach is necessary because destination records must exist (cre
 
 ### Finalization
 
-On success, the `Sync` record's `lastSyncTime` is updated. The worker emits a PostHog `sync_completed` event and, when Pass 3 acted on any unmatched-destination record, a single `AuditLog` entry with summary counts (`archived` / `unarchived` / `withMatchKey` / `withoutMatchKey`) and a SHA of the active v2 mappings, so a later reviewer can correlate an archive to the exact config that produced it.
+On success, the `Sync` record's `lastSyncTime` is updated. The worker emits a PostHog `sync_completed` event and, when Pass 3 acted on any unmatched-destination record, a single `AuditLog` entry with summary counts (`archived` / `unarchived` / `deleted` / `withMatchKey` / `withoutMatchKey`) and a SHA of the active v2 mappings, so a later reviewer can correlate an archive or deletion to the exact config that produced it.
 
 ### Pure executor helpers
 

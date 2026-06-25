@@ -187,6 +187,37 @@ describe('SyncDraftService', () => {
       });
     });
 
+    it('carries an unmatched-destination delete policy back onto the draft (round-trips)', async () => {
+      syncService.getSync.mockResolvedValue({
+        id: SYNC_ID,
+        workbookId: WORKBOOK_ID,
+        displayName: 'Contacts → Airtable',
+        mappings: {
+          version: 2,
+          tableMappings: [
+            {
+              sourceDataFolderId: 'dfd_src1',
+              destinationDataFolderId: 'dfd_dst1',
+              columnMappings: [{ destinationColumnId: 'name', source: { kind: 'column', columnId: 'title' } }],
+              recordMatching: { sourceColumnId: 'email', destinationColumnId: 'Email' },
+              unmatchedSourcePolicy: { type: 'ignore' },
+              unmatchedDestinationPolicy: { withMatchKey: 'delete', withoutMatchKey: 'ignore' },
+            },
+          ],
+        },
+      } as never);
+      (dbService.client.schedule.findFirst as jest.Mock).mockResolvedValue(null);
+      (dbService.client.syncDraft.create as jest.Mock).mockImplementation(
+        ({ data }: { data: Record<string, unknown> }) => makeDraftRow(data),
+      );
+
+      const draft = await service.getOrCreate(WORKBOOK_ID, { fromSyncId: SYNC_ID } as never, ACTOR);
+
+      const tm = draft.tableMappings[0];
+      expect(tm.unmatchedSourcePolicy).toEqual({ type: 'ignore' });
+      expect(tm.unmatchedDestinationPolicy).toEqual({ withMatchKey: 'delete', withoutMatchKey: 'ignore' });
+    });
+
     it('rejects a sync that uses a constant column mapping with 422', async () => {
       syncService.getSync.mockResolvedValue({
         id: SYNC_ID,
@@ -654,6 +685,37 @@ describe('SyncDraftService', () => {
       expect(archiveData.appliedSyncId).toBe('syn_new');
       expect(archiveData.archivedAt).toBeInstanceOf(Date);
       expect(sync.id).toBe('syn_new');
+    });
+
+    it('threads the unmatched-destination delete policy onto the created sync', async () => {
+      const row = makeDraftRow({
+        tableMappings: [
+          {
+            ref: 'tm1',
+            source: { dataFolderId: 'dfd_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_dst' },
+            columnMappings: [{ source: { columnId: 'title' }, destination: { kind: 'existing', columnId: 'name' } }],
+            recordMatching: {
+              source: { columnId: 'email' },
+              destination: { kind: 'existing', columnId: 'Email' },
+            },
+            unmatchedDestinationPolicy: { withMatchKey: 'delete', withoutMatchKey: 'ignore' },
+          },
+        ],
+      });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
+      (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync('syn_new'));
+
+      await service.apply(DRAFT_ID, ACTOR);
+
+      const createSyncCalls = (syncService.createSync as jest.Mock).mock.calls as Array<
+        [unknown, { mappings: { tableMappings: Array<{ unmatchedDestinationPolicy?: unknown }> } }]
+      >;
+      expect(createSyncCalls[0][1].mappings.tableMappings[0].unmatchedDestinationPolicy).toEqual({
+        withMatchKey: 'delete',
+        withoutMatchKey: 'ignore',
+      });
     });
 
     it('threads a draft column mapping transformer pipeline onto the created sync (CRM Mirror into Notion)', async () => {

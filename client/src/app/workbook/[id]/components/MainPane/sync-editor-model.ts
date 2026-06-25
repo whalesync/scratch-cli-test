@@ -47,7 +47,13 @@ export interface FieldMapping {
 }
 
 export type UnmatchedSourcePolicyChoice = 'create' | 'ignore';
-export type UnmatchedDestinationPolicyChoice = 'ignore' | 'apply';
+/**
+ * Per-bucket action for an unmatched destination record:
+ * - 'ignore' — leave it (default)
+ * - 'apply'  — apply the column's unmatched-side constant rules (archive)
+ * - 'delete' — delete the orphaned destination record outright
+ */
+export type UnmatchedDestinationPolicyChoice = 'ignore' | 'apply' | 'delete';
 
 /** One source→destination DataFolder pairing (a single table mapping) in editor form. */
 export interface FolderPair {
@@ -142,7 +148,9 @@ export function folderPairsToV2(pairs: FolderPair[]): SyncMappingV2 {
     tableMappings: validPairs.map((pair): TableMappingV2 => {
       const columnMappings = pair.fieldMappings.filter(isFieldMappingComplete).map(fieldMappingToColumnMappingV2);
 
-      const hasDestinationPolicy = pair.unmatchedWithMatchKey === 'apply' || pair.unmatchedWithoutMatchKey === 'apply';
+      // Any non-'ignore' action ('apply' or 'delete') means the policy must be persisted.
+      const hasDestinationPolicy =
+        pair.unmatchedWithMatchKey !== 'ignore' || pair.unmatchedWithoutMatchKey !== 'ignore';
 
       return {
         sourceDataFolderId: pair.sourceId as TableMappingV2['sourceDataFolderId'],
@@ -203,8 +211,9 @@ export function v2ToFolderPairs(mapping: SyncMappingV2, allFolders: DataFolder[]
       matchingDestinationField: tm.recordMatching?.destinationColumnId ?? '',
       matchingSourceField: tm.recordMatching?.sourceColumnId ?? '',
       unmatchedSourcePolicy: tm.unmatchedSourcePolicy?.type === 'ignore' ? 'ignore' : 'create',
-      unmatchedWithMatchKey: tm.unmatchedDestinationPolicy?.withMatchKey === 'apply' ? 'apply' : 'ignore',
-      unmatchedWithoutMatchKey: tm.unmatchedDestinationPolicy?.withoutMatchKey === 'apply' ? 'apply' : 'ignore',
+      // Preserve the stored action verbatim ('apply' / 'delete'); default to 'ignore'.
+      unmatchedWithMatchKey: tm.unmatchedDestinationPolicy?.withMatchKey ?? 'ignore',
+      unmatchedWithoutMatchKey: tm.unmatchedDestinationPolicy?.withoutMatchKey ?? 'ignore',
     });
   });
 }

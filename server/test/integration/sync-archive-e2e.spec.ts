@@ -256,6 +256,7 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
       withoutMatchKey: 1, // d4 (visited + counted, but ignored)
       archived: 1, // d3 written
       unarchived: 1, // d1 written in Pass 2 with a matched constant present
+      deleted: 0,
     });
   });
 
@@ -281,6 +282,7 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
       withoutMatchKey: 1,
       archived: 2, // d3 + d4
       unarchived: 1,
+      deleted: 0,
     });
   });
 
@@ -304,6 +306,7 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
       withoutMatchKey: 0,
       archived: 0,
       unarchived: 1,
+      deleted: 0,
     });
   });
 
@@ -405,6 +408,7 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
       withoutMatchKey: 0,
       archived: 0,
       unarchived: 0,
+      deleted: 0,
     });
   });
 

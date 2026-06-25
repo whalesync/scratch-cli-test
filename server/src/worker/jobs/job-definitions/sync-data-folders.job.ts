@@ -178,7 +178,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
 
     // Aggregate Pass 3 (unmatched-destination) counts across table mappings.
     // Surfaces in the per-run PostHog event, audit log entry, and metrics.
-    const unmatchedDestinationTotals = { withMatchKey: 0, withoutMatchKey: 0, archived: 0, unarchived: 0 };
+    const unmatchedDestinationTotals = { withMatchKey: 0, withoutMatchKey: 0, archived: 0, unarchived: 0, deleted: 0 };
 
     // Process each table mapping
     for (let i = 0; i < tableMappings.length; i++) {
@@ -232,6 +232,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         unmatchedDestinationTotals.withoutMatchKey += result.unmatchedDestinationCounts.withoutMatchKey;
         unmatchedDestinationTotals.archived += result.unmatchedDestinationCounts.archived;
         unmatchedDestinationTotals.unarchived += result.unmatchedDestinationCounts.unarchived;
+        unmatchedDestinationTotals.deleted += result.unmatchedDestinationCounts.deleted;
 
         // Store warnings in dedicated warnings array
         if (result.warnings.length > 0) {
@@ -479,6 +480,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         unmatchedWithoutKeyCount: unmatchedDestinationTotals.withoutMatchKey,
         archiveWritesCount: unmatchedDestinationTotals.archived,
         unarchiveWritesCount: unmatchedDestinationTotals.unarchived,
+        deleteCount: unmatchedDestinationTotals.deleted,
       });
     } catch (err) {
       WSLogger.warn({
@@ -495,13 +497,14 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       unmatchedDestinationTotals.withMatchKey > 0 ||
       unmatchedDestinationTotals.withoutMatchKey > 0 ||
       unmatchedDestinationTotals.archived > 0 ||
-      unmatchedDestinationTotals.unarchived > 0;
+      unmatchedDestinationTotals.unarchived > 0 ||
+      unmatchedDestinationTotals.deleted > 0;
     if (visitedAny) {
       try {
         await this.auditLogService.logEvent({
           actor,
           eventType: 'update',
-          message: `Sync "${sync.displayName ?? data.syncId}" applied unmatched-destination rules: ${unmatchedDestinationTotals.archived} archived, ${unmatchedDestinationTotals.unarchived} unarchived`,
+          message: `Sync "${sync.displayName ?? data.syncId}" applied unmatched-destination rules: ${unmatchedDestinationTotals.archived} archived, ${unmatchedDestinationTotals.unarchived} unarchived, ${unmatchedDestinationTotals.deleted} deleted`,
           entityId: data.syncId,
           context: {
             syncId: data.syncId,
@@ -510,6 +513,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
             withoutMatchKey: unmatchedDestinationTotals.withoutMatchKey,
             archived: unmatchedDestinationTotals.archived,
             unarchived: unmatchedDestinationTotals.unarchived,
+            deleted: unmatchedDestinationTotals.deleted,
             mappingsSnapshotHash: hashV2Mappings(v2Mappings),
           },
         });

@@ -277,10 +277,12 @@ const unmatchedSourcePolicySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ignore') }).strict(),
 ]);
 
+const unmatchedDestinationActionSchema = z.enum(['ignore', 'apply', 'delete']);
+
 const unmatchedDestinationPolicySchema = z
   .object({
-    withMatchKey: z.enum(['ignore', 'apply']),
-    withoutMatchKey: z.enum(['ignore', 'apply']),
+    withMatchKey: unmatchedDestinationActionSchema,
+    withoutMatchKey: unmatchedDestinationActionSchema,
   })
   .strict();
 

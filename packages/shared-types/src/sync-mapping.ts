@@ -157,11 +157,23 @@ export type UnmatchedSourcePolicy =
   | { type: 'create' } // DEFAULT — today's behavior
   | { type: 'ignore' };
 
+/**
+ * What to do with an unmatched destination record, per bucket.
+ *
+ * - 'ignore' — leave the record untouched (default).
+ * - 'apply'  — apply the table's `when: 'unmatched'` constant column mappings to
+ *              the record (the archive case — e.g. flip `archived` to `true`).
+ * - 'delete' — delete the destination record file outright. The source record is
+ *              gone, so its destination counterpart is removed. Unlike 'apply'
+ *              this needs no column mappings; it removes the file.
+ */
+export type UnmatchedDestinationAction = 'ignore' | 'apply' | 'delete';
+
 export interface UnmatchedDestinationPolicy {
   /** Records that claim to be synced — destination match-key field is populated. */
-  withMatchKey: 'ignore' | 'apply';
+  withMatchKey: UnmatchedDestinationAction;
   /** Records that were never managed by this sync — match-key field is empty/null. */
-  withoutMatchKey: 'ignore' | 'apply';
+  withoutMatchKey: UnmatchedDestinationAction;
 }
 
 // ============================================================================
