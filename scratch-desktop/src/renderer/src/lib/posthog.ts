@@ -35,6 +35,9 @@ export enum PostHogEvents {
   ADD_WORKSPACE_PERMISSION = 'add_workspace_permission',
   REMOVE_WORKSPACE_PERMISSION = 'remove_workspace_permission',
   REMOVE_WORKSPACE_INVITE = 'remove_workspace_invite',
+  OPEN_SETTINGS = 'open_settings',
+  BILLING_START_CHECKOUT = 'billing_start_checkout',
+  BILLING_MANAGE_SUBSCRIPTION = 'billing_manage_subscription',
 }
 
 export type CloudSyncSurface = 'open' | 'create';
@@ -266,6 +269,20 @@ export async function trackRemoveWorkspaceInvite(workbookId: string): Promise<vo
 
 export async function trackFirstRunDownload(workspaceId: string): Promise<void> {
   await captureEvent(PostHogEvents.FIRST_RUN_DOWNLOAD, { workspaceId });
+}
+
+export async function trackOpenSettings(subSection: string, source: 'user_menu' | 'deep_link'): Promise<void> {
+  await captureEvent(PostHogEvents.OPEN_SETTINGS, { subSection, source });
+}
+
+/** The user started a Stripe checkout from desktop billing — opens the system browser, leaving the app. */
+export async function trackBillingStartCheckout(planType: string): Promise<void> {
+  await captureEvent(PostHogEvents.BILLING_START_CHECKOUT, { planType });
+}
+
+/** The user opened the Stripe customer portal to manage their subscription — leaves the app. */
+export async function trackBillingManageSubscription(): Promise<void> {
+  await captureEvent(PostHogEvents.BILLING_MANAGE_SUBSCRIPTION);
 }
 
 export async function identifyUser(user: User, email: string | undefined): Promise<void> {

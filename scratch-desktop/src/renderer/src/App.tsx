@@ -1,7 +1,7 @@
 import { Alert, Center, Loader, Stack } from '@mantine/core';
 import { isConnectionError as isServerConnectionError } from '@spinner/shared-types/api-client';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
-import { HashRouter, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { SWRConfig } from 'swr';
 import { ButtonPrimaryLight } from './components/base/buttons';
 import { DeepLinkBridge } from './components/DeepLinkBridge';
@@ -31,6 +31,18 @@ const PublishHistoryPage = React.lazy(() =>
 );
 const PublishPlanDetailPage = React.lazy(() =>
   import('./pages/PublishPlanDetailPage').then((m) => ({ default: m.PublishPlanDetailPage })),
+);
+const SettingsLayout = React.lazy(() =>
+  import('./pages/settings/SettingsLayout').then((m) => ({ default: m.SettingsLayout })),
+);
+const ApplicationSettingsPage = React.lazy(() =>
+  import('./pages/settings/ApplicationSettingsPage').then((m) => ({ default: m.ApplicationSettingsPage })),
+);
+const UserSettingsPage = React.lazy(() =>
+  import('./pages/settings/UserSettingsPage').then((m) => ({ default: m.UserSettingsPage })),
+);
+const BillingSettingsPage = React.lazy(() =>
+  import('./pages/settings/billing/BillingSettingsPage').then((m) => ({ default: m.BillingSettingsPage })),
 );
 
 function PageLoader() {
@@ -198,6 +210,13 @@ function AppRoutes() {
               }
             />
             <Route path="/welcome" element={<WelcomePage />} />
+            <Route path="/settings" element={<SettingsLayout />}>
+              <Route index element={<Navigate to="/settings/billing" replace />} />
+              {/* Application is hidden from the nav for now (DEV-10538) but kept routable for easy re-enable. */}
+              <Route path="application" element={<ApplicationSettingsPage />} />
+              <Route path="user" element={<UserSettingsPage />} />
+              <Route path="billing" element={<BillingSettingsPage />} />
+            </Route>
             <Route element={<Layout />}>
               <Route path="/" element={<HomePage />} />
               <Route path="/workspace/:id" element={<WorkspacePageRoute />} />

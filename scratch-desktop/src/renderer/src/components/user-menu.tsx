@@ -1,14 +1,22 @@
 import { Text13Regular } from '@/components/base/text';
 import { Group, Menu, UnstyledButton } from '@mantine/core';
-import { LogOut, TerminalSquare, UserRound } from 'lucide-react';
+import { LogOut, Settings, TerminalSquare, UserRound } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useCurrentUser } from '../hooks/use-current-user';
 import { useDevTools } from '../hooks/use-dev-tools';
+import { trackOpenSettings } from '../lib/posthog';
 import { useAuth } from '../providers/AuthProvider';
 
 export function UserMenu() {
   const { logout } = useAuth();
   const { user } = useCurrentUser();
   const { isDevToolsEnabled } = useDevTools();
+  const navigate = useNavigate();
+
+  const openSettings = (): void => {
+    void trackOpenSettings('billing', 'user_menu');
+    void navigate('/settings/billing');
+  };
 
   return (
     <Menu shadow="md" width={200} position="top-start">
@@ -25,6 +33,9 @@ export function UserMenu() {
       <Menu.Dropdown>
         <Menu.Label>{user?.email}</Menu.Label>
         <Menu.Divider />
+        <Menu.Item leftSection={<Settings size={14} color="var(--fg-secondary)" />} onClick={openSettings}>
+          Settings
+        </Menu.Item>
         {isDevToolsEnabled && (
           <Menu.Item
             leftSection={<TerminalSquare size={14} color="var(--mantine-color-devTool-9)" />}

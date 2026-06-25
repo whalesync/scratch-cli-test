@@ -179,7 +179,9 @@ export class StripePaymentService {
 
     const portalSessionConfig: Stripe.BillingPortal.SessionCreateParams = {
       customer: stripeCustomerId.v,
-      return_url: `${ScratchConfigService.getClientBaseUrl()}${PORTAL_RETURN_PATH}`,
+      // Honor a caller-supplied return path (e.g. the desktop app's bounce page that redirects back into
+      // the desktop app); fall back to the web billing page for the web client, which sends no returnPath.
+      return_url: `${ScratchConfigService.getClientBaseUrl()}${dto.returnPath ?? PORTAL_RETURN_PATH}`,
     };
 
     if (dto.portalType === 'update_subscription') {
@@ -241,6 +243,7 @@ export class StripePaymentService {
     planType: ScratchPlanType,
     createTrialSubscription: boolean = false,
     returnPath: string = DEFAULT_SUCCESS_PATH,
+    cancelPath: string = DEFAULT_CANCEL_PATH,
   ): AsyncResult<string> {
     WSLogger.info({
       source: StripePaymentService.name,
@@ -304,7 +307,7 @@ export class StripePaymentService {
           // In event of either success or failure, send them back to the dashboard root page to sort things
           // out. It has logic to redirect to an appropriate sub-view afterwards.
           success_url: `${clientBaseUrl}${returnPath}`,
-          cancel_url: `${clientBaseUrl}${DEFAULT_CANCEL_PATH}`,
+          cancel_url: `${clientBaseUrl}${cancelPath}`,
           allow_promotion_codes: true,
 
           // Allows the customer to enter their tax ID number.

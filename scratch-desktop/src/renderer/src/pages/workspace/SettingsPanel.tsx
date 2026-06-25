@@ -35,7 +35,7 @@ export function SettingsPanel({ workbookId }: SettingsPanelProps) {
       >
         <Group gap={8} align="center">
           <StyledLucideIcon Icon={SettingsIcon} size={16} c="var(--fg-secondary)" />
-          <Text16Medium c="var(--fg-primary)">Settings</Text16Medium>
+          <Text16Medium c="var(--fg-primary)">Workspace Settings</Text16Medium>
         </Group>
       </Group>
 

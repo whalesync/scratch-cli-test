@@ -79,7 +79,13 @@ export class StripePaymentController {
       });
     }
 
-    const result = await this.stripePaymentService.generateCheckoutUrl(req.user, planTypeEnum, false, dto.returnPath);
+    const result = await this.stripePaymentService.generateCheckoutUrl(
+      req.user,
+      planTypeEnum,
+      false,
+      dto.returnPath,
+      dto.cancelPath,
+    );
     if (isErr(result)) {
       throw new InternalServerErrorException({
         userFacingMessage: STRIPE_PAGE_ERROR_USER_FACING_MESSAGE,

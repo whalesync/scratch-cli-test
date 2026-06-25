@@ -11,6 +11,12 @@ import { z } from 'zod';
  */
 export const createCheckoutSessionSchema = z.object({
   returnPath: z.string().optional(),
+  /**
+   * Path (relative to the web client base URL) Stripe returns to when the user CANCELS checkout.
+   * Defaults server-side to the web billing page. The desktop app passes its bounce-page path here so a
+   * cancelled checkout redirects back into the desktop app instead of stranding the user on the web client.
+   */
+  cancelPath: z.string().optional(),
 });
 
 export type CreateCheckoutSessionBody = z.infer<typeof createCheckoutSessionSchema>;

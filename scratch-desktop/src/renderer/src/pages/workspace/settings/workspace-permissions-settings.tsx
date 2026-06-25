@@ -77,7 +77,7 @@ export function WorkspacePermissionsSettings({ workbookId }: WorkspacePermission
 
   return (
     <Stack gap="md" px="md">
-      <TextTitle4>Workspace Permissions</TextTitle4>
+      <TextTitle4>Permissions</TextTitle4>
       <Group align="flex-start" gap="sm">
         <TextInput
           placeholder="user@example.com"

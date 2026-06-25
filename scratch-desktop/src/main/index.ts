@@ -146,7 +146,13 @@ function parseScratchDeepLink(url: string): { route: string; query: string } | n
       return null;
     }
     const route = `${parsed.hostname}${parsed.pathname}`.replace(/\/+$/, '');
-    if (!route.startsWith('workbook/') && route !== 'open' && route !== 'oauth-callback') {
+    const isAllowedRoute =
+      route.startsWith('workbook/') ||
+      route === 'open' ||
+      route === 'oauth-callback' ||
+      route === 'settings' ||
+      route.startsWith('settings/');
+    if (!isAllowedRoute) {
       return null;
     }
     if (route.includes('..')) {

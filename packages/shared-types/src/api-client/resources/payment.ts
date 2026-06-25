@@ -8,7 +8,8 @@ import type { Http } from '../http';
 
 /**
  * Billing/payment operations — Stripe customer-portal links, checkout sessions, and the plan
- * catalog. CLIENT-ONLY: there is no desktop counterpart. Reached as `client.payment.*`.
+ * catalog. Reached as `client.payment.*` from both the web client and the desktop app (DEV-10538);
+ * the desktop opens the returned Stripe URL in the system browser and is sent back via a deep link.
  */
 export function createPaymentApi(http: Http) {
   return {

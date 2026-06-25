@@ -111,6 +111,24 @@ export async function mapDeepLinkToDesktopRoute(route: string, query: string): P
     return `/oauth-callback?${nextParams.toString()}`;
   }
 
+  if (segments[0] === 'settings') {
+    // scratch://settings[/billing|user] → /settings/<sub>. Used by the UserMenu deep link and, critically, by the
+    // Stripe billing return flow (the web bounce page redirects to scratch://settings/billing). Application is
+    // hidden for now, so it's not an allowed target and the bare/unknown case falls back to billing.
+    const allowedSubSections = new Set(['user', 'billing']);
+    const requestedSubSection = segments[1];
+    const subSection =
+      requestedSubSection && allowedSubSections.has(requestedSubSection) ? requestedSubSection : 'billing';
+    const params = new URLSearchParams(query);
+    const nextParams = new URLSearchParams();
+    const status = params.get('status');
+    if (status === 'success' || status === 'cancel') {
+      nextParams.set('status', status);
+    }
+    nextParams.set('_dl', String(Date.now()));
+    return `/settings/${subSection}?${nextParams.toString()}`;
+  }
+
   const workbookRoute = mapWebWorkbookPathToDesktopRoute(route);
   if (workbookRoute === '/') {
     return workbookRoute;

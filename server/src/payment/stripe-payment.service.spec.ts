@@ -386,6 +386,38 @@ describe('StripePaymentService', () => {
       );
     });
 
+    it('should use the supplied returnPath and cancelPath (desktop billing return flow)', async () => {
+      const user = createMockUser({
+        stripeCustomerId: 'cus_desktop123',
+        organization: { id: 'org_123', subscriptions: [] },
+      });
+
+      const mockSession = {
+        id: 'cs_desktop123',
+        url: 'https://checkout.stripe.com/pay/cs_desktop123',
+      } as Stripe.Checkout.Session;
+
+      mockStripeInstance.checkout.sessions.create = jest.fn().mockResolvedValue(mockSession);
+      jest.spyOn(ScratchConfigService, 'getClientBaseUrl').mockReturnValue('https://app.scratch.md');
+
+      const result = await service.generateCheckoutUrl(
+        user,
+        ScratchPlanType.PRO_PLAN,
+        false,
+        '/billing/desktop-return?status=success',
+        '/billing/desktop-return?status=cancel',
+      );
+
+      expect(isOk(result)).toBe(true);
+      expect(mockStripeInstance.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success_url: 'https://app.scratch.md/billing/desktop-return?status=success',
+          cancel_url: 'https://app.scratch.md/billing/desktop-return?status=cancel',
+        }),
+        expect.objectContaining({ apiVersion: expect.any(String) }),
+      );
+    });
+
     it('should generate checkout URL without trial when createTrialSubscription is false', async () => {
       const user = createMockUser({
         stripeCustomerId: 'cus_notrial123',
@@ -552,6 +584,42 @@ describe('StripePaymentService', () => {
         expect.objectContaining({
           apiVersion: expect.any(String),
         }),
+      );
+    });
+
+    it('should use the supplied returnPath (desktop billing return flow)', async () => {
+      const futureDate = new Date(Date.now() + 86400000);
+      const user = createMockUser({
+        stripeCustomerId: 'cus_portaldesktop',
+        organization: {
+          id: 'org_123',
+          subscriptions: [
+            {
+              id: 'sub_active',
+              userId: 'usr_test123',
+              expiration: futureDate,
+              stripeStatus: 'active',
+            },
+          ],
+        },
+      });
+
+      const mockPortalSession = {
+        url: 'https://billing.stripe.com/session/desktop',
+      } as Stripe.BillingPortal.Session;
+
+      mockStripeInstance.billingPortal.sessions.create = jest.fn().mockResolvedValue(mockPortalSession);
+      jest.spyOn(ScratchConfigService, 'getClientBaseUrl').mockReturnValue('https://app.scratch.md');
+
+      const result = await service.createCustomerPortalUrl(user, { returnPath: '/billing/desktop-return' });
+
+      expect(isOk(result)).toBe(true);
+      expect(mockStripeInstance.billingPortal.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customer: 'cus_portaldesktop',
+          return_url: 'https://app.scratch.md/billing/desktop-return',
+        }),
+        expect.objectContaining({ apiVersion: expect.any(String) }),
       );
     });
 

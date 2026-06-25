@@ -264,7 +264,7 @@ export function WorkspaceSidebar({
 
         {onToggleSettingsPanel && (
           <MenuButton
-            title="Settings"
+            title="Workspace Settings"
             Icon={SettingsIcon}
             isSelected={settingsPanelOpen}
             onClick={onToggleSettingsPanel}
