@@ -20,7 +20,7 @@ interface OAuthCallbackState {
 /**
  * Returns true if the given OAuth `redirectPrefix` points at a Whalesync (dusky) origin that we're
  * willing to forward an OAuth result back to. Whalesync drives the Scratch OAuth endpoints directly
- * (e.g. from its CRM Bridge connect flow) and passes a query-free callback URL on its own origin as
+ * (e.g. from its CRM Mirror connect flow) and passes a query-free callback URL on its own origin as
  * the `redirectPrefix`; we forward `code`/`state` (and `realmId`/`error` where present) there the
  * same way we forward to the scratch desktop app.
  *

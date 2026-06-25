@@ -45,8 +45,8 @@ export const WorkspaceEntity = {
       // Workspace-level total, summed from the per-folder counts. Undefined when folders
       // aren't loaded — we don't fabricate a total without them.
       recordCount: dataFolders?.reduce((sum, folder) => sum + folder.recordCount, 0),
-      // Whalesync-plan-eligible count: the larger of the two connection sides for a CRM-bridge
-      // workspace (counting each synced record once), 0 for a non-CRM-bridge workspace. Same
+      // Whalesync-plan-eligible count: the larger of the two connection sides for a CRM-mirror
+      // workspace (counting each synced record once), 0 for a non-CRM-mirror workspace. Same
       // load-dependent semantics as `recordCount` — undefined when folders aren't loaded.
       whalesyncEligibleRecordCount: !workbook.dataFolders
         ? undefined

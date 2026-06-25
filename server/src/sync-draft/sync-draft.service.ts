@@ -850,7 +850,7 @@ export class SyncDraftService {
    * Converts an existing sync into blank-slate draft form: its v2 table mappings
    * become all-`existing`, zero-placeholder draft mappings. A source column's
    * transformer pipeline is carried back onto the draft mapping, so a transform-
-   * bearing sync (e.g. one built by CRM Bridge into Notion) round-trips through the
+   * bearing sync (e.g. one built by CRM Mirror into Notion) round-trips through the
    * editor instead of being locked out. Constructs the draft model still can't
    * represent — a constant column source, a per-column `when` other than `matched`,
    * or a non-default unmatched-source/-destination policy — are rejected with a 422

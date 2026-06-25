@@ -107,7 +107,7 @@ export const draftColumnMappingSchema = z.object({
   destination: draftColumnDestinationSchema,
   /**
    * Optional transformer pipeline copied verbatim from the create plan
-   * (CRM Bridge), applied to the source value before it is written to the
+   * (CRM Mirror), applied to the source value before it is written to the
    * destination column. Apply moves this onto `ColumnMappingSource.transformers`.
    */
   transformers: z.array(draftColumnTransformerSchema).min(1).optional(),

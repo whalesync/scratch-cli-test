@@ -102,7 +102,7 @@ describe('validateSchemaMapping', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('flags string -> object when no transformer bridges it (the CRM-Bridge-into-Notion failure)', () => {
+  it('flags string -> object when no transformer bridges it (the CRM-Mirror-into-Notion failure)', () => {
     const columnMappings: ColumnMapping[] = [{ sourceColumnId: 'name', destinationColumnId: 'meta' }];
     const errors = validateSchemaMapping(sourceSchema, destSchema, columnMappings);
     expect(errors).toHaveLength(1);

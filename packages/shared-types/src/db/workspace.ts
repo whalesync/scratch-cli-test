@@ -22,7 +22,7 @@ export interface Workspace {
   version: number;
   isPendingDelete: boolean;
   // Which external app owns and manages this workspace, if any. `null` means a
-  // standalone Scratch workbook; `ws_crm` means it is managed by Whalesync's CRM Bridge.
+  // standalone Scratch workbook; `ws_crm` means it is managed by Whalesync's CRM Mirror.
   managedBy: WorkbookManager | null;
   // Arbitrary client-supplied config metadata as a flat key/value map. Updated via a
   // merge patch (PATCH /workbook/:id/settings); null values in a patch delete the key.
@@ -44,9 +44,9 @@ export interface Workspace {
 
   /**
    * Computed by the REST API (NOT a persisted Workbook column): the record count attributed to the
-   * Whalesync plan for this workspace. For a CRM-bridge workspace (`managedBy === ws_crm`) it is the
-   * LARGER of the two connection sides — a CRM bridge syncs the same records across both connections,
-   * so each record exists on both sides and is counted once (the bigger side). `0` for a non-CRM-bridge
+   * Whalesync plan for this workspace. For a CRM-mirror workspace (`managedBy === ws_crm`) it is the
+   * LARGER of the two connection sides — a CRM mirror syncs the same records across both connections,
+   * so each record exists on both sides and is counted once (the bigger side). `0` for a non-CRM-mirror
    * workspace. Present only when `dataFolders` are loaded; `undefined` otherwise (same as `recordCount`).
    */
   whalesyncEligibleRecordCount?: number;

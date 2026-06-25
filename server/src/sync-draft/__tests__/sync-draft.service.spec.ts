@@ -656,7 +656,7 @@ describe('SyncDraftService', () => {
       expect(sync.id).toBe('syn_new');
     });
 
-    it('threads a draft column mapping transformer pipeline onto the created sync (CRM Bridge into Notion)', async () => {
+    it('threads a draft column mapping transformer pipeline onto the created sync (CRM Mirror into Notion)', async () => {
       const transformers = [
         { type: 'wrap_object', options: { template: { content: '$value' } } },
         { type: 'wrap_object', options: { template: { type: 'text', text: '$value' } } },

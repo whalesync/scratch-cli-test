@@ -51,7 +51,7 @@ enum SyncState {
 
 /// The external app that owns and manages a workbook, if any. A null
 /// `Workbook.managedBy` means a standalone Scratch workbook (not managed by any
-/// app); `ws_crm` means it is managed by Whalesync's CRM Bridge (via dusky),
+/// app); `ws_crm` means it is managed by Whalesync's CRM Mirror (via dusky),
 /// which constrains its config.
 enum WorkbookManager {
   ws_crm
@@ -196,7 +196,7 @@ model Workbook {
 
   // Which external app owns and manages this workbook, if any. `null` means a
   // standalone Scratch workbook (not managed by any app). `ws_crm` means it is
-  // managed by Whalesync's CRM Bridge (via dusky), which constrains its config.
+  // managed by Whalesync's CRM Mirror (via dusky), which constrains its config.
   managedBy WorkbookManager?
 
   // Arbitrary client-supplied config metadata as a flat key/value map. Patched via a

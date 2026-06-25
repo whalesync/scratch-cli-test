@@ -94,11 +94,11 @@ export class DataFolderService {
   }
 
   /**
-   * The record count Whalesync attributes to an organization's plan: summed across every CRM-bridge
+   * The record count Whalesync attributes to an organization's plan: summed across every CRM-mirror
    * workspace (`managedBy === ws_crm`) it owns, taking the LARGER of each workspace's two connection
-   * sides rather than the sum. A CRM bridge keeps the same records synced across both connections, so
+   * sides rather than the sum. A CRM mirror keeps the same records synced across both connections, so
    * each record exists as a file on both sides; the user thinks of it as one record, so we count it
-   * once per workspace by taking the bigger side. Non-CRM-bridge workspaces are ignored entirely.
+   * once per workspace by taking the bigger side. Non-CRM-mirror workspaces are ignored entirely.
    *
    * Prisma can sum per (workbook, connector account) in one grouped query but can't express
    * "max-per-workbook then sum", so we reduce the grouped rows in memory (mirrors the per-folder max
