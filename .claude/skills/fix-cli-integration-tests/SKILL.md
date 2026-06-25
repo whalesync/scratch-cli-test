@@ -212,11 +212,12 @@ Tie the verdict back to the step-5 commit correlation where possible
 ("`publish.spec.ts` fails because <hash> changed the accepted-patches JSON shape;
 the test still expects the old key — test bug").
 
-### 7. Present the fix plan and offer a worktree/branch
+### 7. Present the fix plan and set up the working environment
 
 Lay out a concrete plan: for each failure, the verdict, the file(s) to change
 (test vs product code), and the specific change. Order by severity — real system
-bugs first.
+bugs first. **Wait for the user to approve the plan before editing anything** —
+this skill investigates first and only edits once the user has signed off.
 
 Then handle the working environment. Determine whether you're already on a
 dedicated branch/worktree:
@@ -233,14 +234,34 @@ the fix before any edits — and let them choose. Suggest a descriptive name suc
 as `fix-cli-integration-tests-<YYYY-MM-DD>`. Do not create the branch/worktree
 or start editing until the user has answered.
 
+### 8. Implement the approved fixes
+
+Once the plan is approved AND you're on a safe branch/worktree, make the edits:
+
+- Apply each fix from the plan — update test source for test bugs, product code
+  (`scratch-git-2/`, `server/`) for real system bugs.
+- Respect the project's product principles when touching product code: preserve
+  round-trip data fidelity, keep operations idempotent/resumable, and never
+  silently strip or swallow — see [`CLAUDE.md`](/CLAUDE.md).
+- For test-only changes, mind the CLI argument-syntax rules at the bottom of
+  [`scratch-cli-tests/README.md`](/scratch-cli-tests/README.md) so the updated
+  assertions match real CLI behavior.
+- After editing, tell the user how to verify locally with the per-suite
+  `npx jest --runInBand --forceExit <suite> -t "<name>"` commands from step 4
+  (these need a running Scratch server, scratch-git, Postgres, and a configured
+  `.env.integration`). Note that you generally can't run the integration suite to
+  completion yourself without that live stack — surface what you could and could
+  not verify honestly rather than claiming a green run you didn't observe.
+- Do not commit or push unless the user asks — leave the changes in the working
+  tree for review.
+
 ## Important guidelines
 
 - **Read before concluding.** Always open the failing test source and the
   implicated product code before declaring test-bug vs system-bug. A name-based
   guess is not a verdict.
-- **Don't edit anything in this skill's investigation phase.** This skill
-  investigates and plans; it stops to confirm the working environment before
-  making changes.
+- **Don't edit during the investigation phase.** This skill investigates and
+  plans; it stops for plan approval and a safe working environment before editing.
 - **Surface environment failures honestly.** If the whole run died in global
   setup or the server was down, say the tests likely never ran — don't
   manufacture per-test verdicts from a setup failure.

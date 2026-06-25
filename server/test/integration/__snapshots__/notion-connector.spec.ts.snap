@@ -1,4 +1,4 @@
-// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+// Jest Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures the v3 fetchJsonTableSpec shape as the upgrade contract 1`] = `
 {
@@ -262,7 +262,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
     ],
     "wsId": "scratch_integration_test",
   },
-  "idColumnRemoteId": "id",
+  "idPath": "id",
   "name": "scratch_integration_test",
   "remoteWebUrl": "https://www.notion.so/36b81e58179480d889a4d65d5dd08119",
   "schema": {
@@ -1501,9 +1501,6 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
     "type": "object",
   },
   "slug": "scratch_integration_test",
-  "titleColumnRemoteId": [
-    "properties",
-    "Name",
-  ],
+  "titlePath": "properties.Name",
 }
 `;

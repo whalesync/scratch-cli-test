@@ -35,7 +35,9 @@
       "mcp__plugin_linear_linear__get_issue",
       "mcp__plugin_linear_linear__list_comments",
       "mcp__plugin_linear_linear__list_issue_statuses",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Skill(fix-server-integration-tests)",
+      "Skill(fix-server-integration-tests:*)"
     ]
   }
 }

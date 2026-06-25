@@ -28,6 +28,7 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
   getServiceDisplayName: (service: string) => service,
 }));
 
+import { toPath } from 'lodash';
 import { NotionConnector } from 'src/remote-service/connectors/library/notion/notion-connector';
 import {
   BaseJsonTableSpec,
@@ -659,11 +660,13 @@ async function fetchById(
 
 /** Find the Notion title property name (every database has exactly one). */
 function findTitlePropertyName(spec: BaseJsonTableSpec): string {
-  const remoteId = spec.titlePath;
-  if (!remoteId || remoteId.length < 2) {
+  // titlePath is a branded DotPath (a lodash dot string, e.g. "properties.Name"),
+  // not a segment array — split it with toPath before reading the leaf segment.
+  const segments = toPath(spec.titlePath ?? '');
+  if (segments.length < 2) {
     throw new Error('Spec is missing titlePath — seed database must have a title-typed property.');
   }
-  return remoteId[1];
+  return segments[1];
 }
 
 function readTitle(page: Record<string, unknown>, propName: string): string {

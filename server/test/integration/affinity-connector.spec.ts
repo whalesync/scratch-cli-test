@@ -15,6 +15,7 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
 }));
 
 import { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import { toPath } from 'lodash';
 import { AffinityApiClient } from 'src/remote-service/connectors/library/affinity/affinity-api-client';
 import { AffinityConnector } from 'src/remote-service/connectors/library/affinity/affinity-connector';
 import { BaseJsonTableSpec, ConnectorFile, TablePreview } from 'src/remote-service/connectors/types';
@@ -181,9 +182,11 @@ describeIfKey('AffinityConnector — live API', () => {
     });
 
     it('points titlePath at a real entity field', () => {
-      const path = listSpec.titlePath;
-      expect(path?.[0]).toBe('entity');
-      expect(['name', 'firstName']).toContain(path?.[1]);
+      // titlePath is a branded DotPath (a lodash dot string, e.g. "entity.name"),
+      // not a segment array — split it with toPath before inspecting segments.
+      const segments = toPath(listSpec.titlePath ?? '');
+      expect(segments[0]).toBe('entity');
+      expect(['name', 'firstName']).toContain(segments[1]);
     });
 
     it('mounts list-specific fields under entity.fields keyed by remote id', () => {
