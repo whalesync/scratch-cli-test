@@ -42,6 +42,7 @@ export const WorkspaceEntity = {
 - Regularly run `yarn run typecheck` after changes to unit tests, integration tests and generating code for prisma schemas
 - Prefer running single tests, and not the whole test suite, for performance
 - Run the integration tests with `yarn run test:integration` when you're done making a series of code changes.
+- **When you change publish, pull, or sync logic, also keep the CLI integration suite in sync.** The `scratchmd` CLI drives these server flows end-to-end and is covered by [`/scratch-cli-tests`](../scratch-cli-tests/) (the `publish`, `driver-publish`, `files`, `linked-folders`, and `workspace-sync` suites). A server-side change to the publish/pull/sync round-trip — endpoint shape, plan/phase files, reconciliation behavior, `accepted-patches.json`, watermarks — can break that suite. Review the affected suites (see its [README.md](../scratch-cli-tests/README.md)) and update them (or add coverage for new behavior) rather than letting them silently regress or be skipped.
 
 # Analytics and Tracking
 

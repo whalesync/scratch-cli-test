@@ -2,6 +2,8 @@
 
 Black-box integration tests for the `scratchmd` Rust CLI binary (`scratch-git-2/`). Tests are written in TypeScript with Jest and exercise the CLI by shelling out to the compiled binary, parsing its `--json` output.
 
+> **Keep these tests in sync with the CLI.** When you change `scratchmd` behavior — command flags/arguments, `--json` output shape, exit codes, or the publish/pull/sync round-trip — review the affected suites here and update them (or add coverage for new behavior) as part of the same change. Don't `it.skip` a failing suite to land a CLI change.
+
 ## What It Validates
 
 | Suite              | What it tests                                                                            |

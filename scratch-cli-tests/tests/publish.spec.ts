@@ -65,6 +65,21 @@ interface AcceptedPatchesFile {
   patches: AcceptedPatch[];
 }
 
+/**
+ * `failed-patches.json` entry (the publish redesign, DEV-10048). Same envelope
+ * as an accepted patch plus entry-level connector rejection detail: a
+ * record-level `error` message and optional per-field `fieldErrors` keyed by
+ * RFC 6902 JSON Pointer. See `scratch-git-2/src/shared/failed_patches.rs`.
+ */
+interface FailedPatch extends AcceptedPatch {
+  error?: string;
+  fieldErrors?: Record<string, string>;
+}
+
+interface FailedPatchesFile {
+  patches: FailedPatch[];
+}
+
 /** Read .scratch/.scratchmd workspace marker. */
 function readMarker(workspaceDir: string): WorkspaceMarker {
   const markerPath = path.join(workspaceDir, ".scratch", ".scratchmd");
@@ -87,6 +102,24 @@ function readAcceptedPatches(
   const raw = fs.readFileSync(patchPath, "utf-8");
   if (!raw.trim()) return { patches: [] };
   return JSON.parse(raw) as AcceptedPatchesFile;
+}
+
+/** Read failed-patches.json for a given connection dir name (DEV-10048). */
+function readFailedPatches(
+  workspaceDir: string,
+  connDirName: string,
+): FailedPatchesFile {
+  const patchPath = path.join(
+    workspaceDir,
+    ".scratch",
+    "connections",
+    connDirName,
+    "failed-patches.json",
+  );
+  if (!fs.existsSync(patchPath)) return { patches: [] };
+  const raw = fs.readFileSync(patchPath, "utf-8");
+  if (!raw.trim()) return { patches: [] };
+  return JSON.parse(raw) as FailedPatchesFile;
 }
 
 /** Absolute path to accepted-patches.json for a connection. */
@@ -642,11 +675,18 @@ describeIfPostgres(
     // Quirk worth knowing: the Postgres connector SWALLOWS per-row constraint
     // violations rather than failing the run-job. So a publish that hits a
     // VARCHAR(20) overflow comes back with exit code 0 — `main` does not
-    // advance, the patch does not drop from `accepted-patches.json`, and the
-    // Postgres row is unchanged. As of DEV-10243 the publish no longer reports
-    // a clean `"published"`: the run-job's `failedCount` is surfaced to the CLI
-    // as a `phase: "run-job"` entry in `warnings[]` (exit stays 0), and
-    // `files unpublished` still reports the path as still-pending.
+    // advance and the Postgres row is unchanged. As of DEV-10243 the publish no
+    // longer reports a clean `"published"`: the run-job's `failedCount` is
+    // surfaced to the CLI as a `phase: "run-job"` entry in `warnings[]` (exit
+    // stays 0), and `files unpublished` still reports the path as still-pending.
+    //
+    // As of the publish redesign (DEV-10048) the rejected edit no longer stays
+    // in `accepted-patches.json`. The post-publish reconcile demotes a
+    // connector-rejected record approved → local (needs approval): its entry
+    // MOVES from `accepted-patches.json` to `failed-patches.json` (carrying the
+    // run-job's record-level `error`), and the worktree file is re-materialized
+    // as `apply(new_main, failed_patch)` so the user's value re-surfaces as a
+    // needs-approval edit. `accepted-patches.json` ends empty for the path.
     //
     // This describe block locks in that behavior so a future change to the
     // connector (e.g. flipping the per-row failure to a non-zero exit) will
@@ -853,30 +893,49 @@ describeIfPostgres(
       }
     }, 180_000);
 
-    it("silent drop preserves the patch in accepted-patches.json (DEV-10175 + re-anchor no-op detection)", () => {
+    it("silent drop moves the rejected patch to failed-patches.json (DEV-10048)", () => {
       try {
-        // The DEV-10175 fix says: a dropped row must NOT clear pending edits.
-        // The dropped-row variant reaches the correct outcome via re-anchor:
+        // The publish redesign (DEV-10048) demotes a connector-rejected record
+        // approved → local (needs approval) rather than leaving it accepted:
         // `reconcile_accepted_after_publish` DOES run (the run-job reported
-        // `completed`, so `poll_job` returned Ok — the new DEV-10243 warning is
-        // raised only after reconcile), but `re_anchor_patches` sees that the
-        // patch's intended outcome still differs from `new_main`'s blob (the
-        // connector didn't actually write the new value) and preserves the
-        // entry. `files unpublished` is the user-visible signal that something
-        // didn't land.
-        const afterFail = readAcceptedPatches(workspaceDir, connDirName);
+        // `completed`, so `poll_job` returned Ok — the DEV-10243 warning is
+        // raised only after reconcile), and `partition_reanchored_after_publish`
+        // sees the path in the run-job's `failedOperations` and routes its
+        // re-anchored patch to `failed-patches.json` (with the record-level
+        // connector `error`), clearing it from `accepted-patches.json`. The
+        // worktree file is re-materialized as `apply(new_main, failed_patch)`,
+        // so the user's value re-surfaces as a needs-approval edit (the
+        // user-visible "this didn't land" signal is now `files unreviewed`).
+        const accepted = readAcceptedPatches(workspaceDir, connDirName);
+        expect(accepted.patches).toHaveLength(0);
+
+        const afterFail = readFailedPatches(workspaceDir, connDirName);
         expect(afterFail.patches).toHaveLength(1);
         const entry = afterFail.patches[0];
+        expect(entry.path).toBe(aliceWorkspacePath);
         expect(entry.kind).toBe("update");
         expect(entry.patch).toEqual([
           { op: "add", path: "/name", value: longName },
         ]);
+        // The connector's rejection message rides at the entry level (never on
+        // the RFC 6902 ops). Postgres reports a VARCHAR(20) overflow.
+        expect(entry.error).toBeDefined();
+        expect(entry.error).toContain("value too long");
 
+        // The failed edit re-surfaces as a needs-approval (unreviewed) change,
+        // not as a still-accepted one — `files unpublished` reads only
+        // `accepted-patches.json`, so it now reports 0.
         const unpublished = cli.json<{ count: number }>(
           ["files", "unpublished"],
           { cwd: workspaceDir },
         );
-        expect(unpublished.count).toBe(1);
+        expect(unpublished.count).toBe(0);
+
+        const unreviewed = cli.json<{ count: number }>(
+          ["files", "unreviewed"],
+          { cwd: workspaceDir },
+        );
+        expect(unreviewed.count).toBe(1);
       } catch (err) {
         hasFailed = true;
         throw err;
@@ -904,11 +963,12 @@ describeIfPostgres(
 
     it("silent drop leaves the worktree file with the user's pending edit", () => {
       try {
-        // Bug B's rematerialize runs `materialize_local_repo(approved_map_new, ...)`,
-        // and `approved_map_new` is `apply(new_main, surviving_patch)`. Since
-        // the patch survived re-anchor (the previous test proves this), the
-        // rematerialize writes the user's intended bytes — same content the
-        // user originally typed, normalized to canonical formatting.
+        // The reconcile rematerializes the worktree from `new_main` + the
+        // surviving accepted patches + the just-failed patches (DEV-10048): the
+        // failed entry is applied as `apply(new_main, failed_patch)` so the
+        // record re-surfaces on disk as a needs-approval edit. The bytes are the
+        // user's intended value (the prior test proves the failed patch carries
+        // `add /name longName`), normalized to canonical formatting.
         const onDisk = JSON.parse(
           fs.readFileSync(aliceAbsPath, "utf-8"),
         ) as Record<string, unknown>;
