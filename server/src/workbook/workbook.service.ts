@@ -227,6 +227,18 @@ export class WorkbookService {
       });
     }
 
+    // Delete scratch repo (standalone connector-less files, DEV-10424) — best-effort
+    try {
+      await this.workbookRepoService.deleteScratchRepo(workbook.organizationId, id);
+    } catch (err) {
+      WSLogger.error({
+        source: 'WorkbookService.executeHardDeleteWorkbook',
+        message: 'Failed to delete scratch git repo',
+        error: err,
+        workbookId: id,
+      });
+    }
+
     // Cleanup index and references
     await emit({ phase: 'cleaning_indices' });
     await this.fileIndexService.deleteForWorkbook(id);

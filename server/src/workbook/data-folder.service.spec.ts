@@ -278,6 +278,7 @@ describe('DataFolderService dotfile filtering', () => {
     mockScratchGitService = {
       getRepoFilesPaginated: jest.fn(),
       resolveConnectionRepoPath: jest.fn().mockResolvedValue('resolved-repo-id'),
+      resolveRepoPathForFolder: jest.fn().mockResolvedValue('resolved-repo-id'),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     // Create service with only the dependencies these methods use
@@ -422,6 +423,7 @@ describe('DataFolderService.deleteFolder', () => {
     mockScratchGitService = {
       removeDataFolder: jest.fn().mockResolvedValue(undefined),
       resolveConnectionRepoPath: jest.fn().mockResolvedValue(RESOLVED_REPO_ID),
+      resolveRepoPathForFolder: jest.fn().mockResolvedValue(RESOLVED_REPO_ID),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     mockWorkbookService = {
@@ -472,20 +474,23 @@ describe('DataFolderService.deleteFolder', () => {
     );
   });
 
-  it('should resolve connector account repo path when folder has connectorAccountId', async () => {
+  it('should resolve the connector repo when folder has connectorAccountId', async () => {
     await service.deleteFolder(FOLDER_ID, ACTOR);
 
-    expect(mockScratchGitService.resolveConnectionRepoPath).toHaveBeenCalledWith(CONNECTOR_ACCOUNT_ID);
+    // Folder-aware resolution (connector account + workbook) → connector repo.
+    expect(mockScratchGitService.resolveRepoPathForFolder).toHaveBeenCalledWith(CONNECTOR_ACCOUNT_ID, WORKBOOK_ID);
     expect(mockScratchGitService.removeDataFolder).toHaveBeenCalledWith(RESOLVED_REPO_ID, '/Companies');
   });
 
-  it('should fall back to workbookId as repo ID when folder has no connectorAccountId', async () => {
+  it('should resolve the scratch repo when folder has no connectorAccountId (DEV-10424)', async () => {
     (mockDb.client.dataFolder.findUnique as jest.Mock).mockResolvedValue(makeDataFolder({ connectorAccountId: null }));
 
     await service.deleteFolder(FOLDER_ID, ACTOR);
 
-    expect(mockScratchGitService.resolveConnectionRepoPath).not.toHaveBeenCalled();
-    expect(mockScratchGitService.removeDataFolder).toHaveBeenCalledWith(WORKBOOK_ID, '/Companies');
+    // Previously this fell back to the bare workbookId (the deleteFolder:522 bug); now it resolves the
+    // per-workbook scratch repo and removes the folder from the correct repo.
+    expect(mockScratchGitService.resolveRepoPathForFolder).toHaveBeenCalledWith(null, WORKBOOK_ID);
+    expect(mockScratchGitService.removeDataFolder).toHaveBeenCalledWith(RESOLVED_REPO_ID, '/Companies');
   });
 
   it('should gracefully handle ScratchGitNotFoundError (folder never pulled)', async () => {

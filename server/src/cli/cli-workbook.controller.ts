@@ -31,9 +31,9 @@ import { PublishPlanCrudService } from 'src/publish-plan/publish-plan-crud.servi
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { PushRoutineFilesDto } from 'src/routine/dto/push-routine-files.dto';
 import { RoutineService } from 'src/routine/routine.service';
-import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { getScratchRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { userToActor } from 'src/users/types';
-import { WorkbookRepoService, getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
+import { getWorkbookRepoPath, WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
@@ -148,7 +148,8 @@ export class CliWorkbookController {
     }));
 
     const configGitUrl = `${baseUrl}/cli/v1/workbooks/${id}/config/git`;
-    return this.toCliResponse(workbook, baseUrl, connectorAccounts, configGitUrl);
+    const scratchGitUrl = `${baseUrl}/cli/v1/workbooks/${id}/scratch/git`;
+    return this.toCliResponse(workbook, baseUrl, connectorAccounts, configGitUrl, scratchGitUrl);
   }
 
   /**
@@ -421,6 +422,7 @@ export class CliWorkbookController {
     baseUrl?: string,
     connectorAccounts?: CliConnectorAccountDto[],
     configGitUrl?: string,
+    scratchGitUrl?: string,
   ): CliWorkbookResponseDto {
     return {
       id: workbook.id,
@@ -431,6 +433,7 @@ export class CliWorkbookController {
       version: workbook.version ?? 2,
       connectorAccounts,
       configGitUrl,
+      scratchGitUrl,
     };
   }
 
@@ -711,6 +714,33 @@ export class CliWorkbookController {
     WSLogger.info({
       source: 'CliWorkbookController.configGitProxy',
       message: 'Proxying config git request',
+      method: req.method,
+      targetUrl,
+      workbookId: id,
+    });
+
+    await this.proxyToGitBackend(targetUrl, id as WorkbookId, req, res);
+  }
+
+  /**
+   * Git HTTP proxy for the per-workbook scratch repo (standalone connector-less files, DEV-10424).
+   * Mirrors the config-repo proxy so the CLI can `git clone/fetch/push` the scratch repo.
+   */
+  @All(':id/scratch/git/*path')
+  async scratchGitProxy(
+    @Req() req: RequestWithUser & Request,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    const workbook = await this.workbookService.assertReadableWorkbook(actor, id as WorkbookId);
+    const repoId = getScratchRepoPath(workbook.organizationId, id as WorkbookId);
+    const gitPath = req.url.replace(`/cli/v1/workbooks/${id}/scratch/git`, '');
+    const targetUrl = `${this.gitBackendUrl}/${repoId}.git${gitPath}`;
+
+    WSLogger.info({
+      source: 'CliWorkbookController.scratchGitProxy',
+      message: 'Proxying scratch git request',
       method: req.method,
       targetUrl,
       workbookId: id,

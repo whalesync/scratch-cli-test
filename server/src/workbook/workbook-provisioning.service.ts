@@ -3,7 +3,7 @@ import { createWorkbookId, createWorkspacePermissionId, WorkbookManager } from '
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
-import { ScratchGitService } from '../scratch-git/scratch-git.service';
+import { getScratchRepoPath, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { getWorkbookRepoPath } from './workbook-repo.service';
 
 export interface CreateWorkbookWithConfigRepoParams {
@@ -81,6 +81,22 @@ export class WorkbookProvisioningService {
       await this.db.client.workbook.delete({ where: { id: workbookId } });
 
       throw new InternalServerErrorException('Failed to initialize workbook config repo');
+    }
+
+    // Eagerly init the per-workbook scratch repo (standalone connector-less files, DEV-10424) so it
+    // exists for the desktop clone and the first scratch write. Non-critical: unlike the config repo
+    // we do NOT roll back the workbook on failure — the `init-scratch-repos` backfill migration and
+    // the self-healing `ensureScratchRepo` on the write path repair any missing repo.
+    try {
+      await this.scratchGitService.initRepo(getScratchRepoPath(organizationId, workbookId));
+    } catch (error) {
+      WSLogger.error({
+        source: 'WorkbookProvisioningService.createWorkbookWithConfigRepo',
+        message: 'Failed to initialize scratch repo (will be repaired by init-scratch-repos backfill)',
+        workbookId,
+        organizationId,
+        error,
+      });
     }
 
     return newWorkbook;

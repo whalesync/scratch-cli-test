@@ -94,6 +94,14 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'Safe to run multiple times — workbooks that already have a repo are skipped by scratch-git.',
   },
   {
+    name: 'init-scratch-repos',
+    supportsDryRun: false,
+    description:
+      'Initializes the per-workbook scratch repo for standalone connector-less files (DEV-10424) for ' +
+      'workbooks created before scratch-repo auto-init was added. Safe to run multiple times — ' +
+      'workbooks that already have a scratch repo are skipped by scratch-git.',
+  },
+  {
     name: 'notion-data-source-backfill',
     supportsDryRun: false,
     description:
@@ -207,6 +215,8 @@ export class CodeMigrationsController {
     switch (dto.migration) {
       case 'init-workbook-repos':
         return this.initWorkbookRepos(dto);
+      case 'init-scratch-repos':
+        return this.initScratchRepos(dto);
       case 'notion-data-source-backfill':
         return this.runNotionDataSourceBackfill(dto);
       case 'sync-mapping-v2-backfill':
@@ -256,6 +266,47 @@ export class CodeMigrationsController {
       migratedIds,
       remainingCount: totalCount - migratedIds.length,
       migrationName: 'init-workbook-repos',
+      dryRun: false,
+    };
+  }
+
+  /**
+   * Initialize per-workbook scratch repos (standalone connector-less files, DEV-10424) for
+   * workbooks created before scratch-repo auto-init was added. Batched via `qty` and resumable
+   * (oldest-first); idempotent — scratch-git skips an already-initialized repo.
+   */
+  private async initScratchRepos(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
+    let workbooks;
+
+    if (dto.ids && dto.ids.length > 0) {
+      workbooks = await this.db.client.workbook.findMany({
+        where: { id: { in: dto.ids } },
+        select: { id: true, organizationId: true },
+      });
+    } else {
+      workbooks = await this.db.client.workbook.findMany({
+        select: { id: true, organizationId: true },
+        take: dto.qty,
+        orderBy: { createdAt: 'asc' },
+      });
+    }
+
+    const migratedIds: string[] = [];
+    for (const wb of workbooks) {
+      try {
+        await this.workbookRepoService.initScratchRepo(wb.organizationId, wb.id as WorkbookId);
+        migratedIds.push(wb.id);
+      } catch (error) {
+        this.logger.error(`Failed to init scratch repo for ${wb.id}: ${String(error)}`);
+      }
+    }
+
+    const totalCount = await this.db.client.workbook.count();
+
+    return {
+      migratedIds,
+      remainingCount: totalCount - migratedIds.length,
+      migrationName: 'init-scratch-repos',
       dryRun: false,
     };
   }

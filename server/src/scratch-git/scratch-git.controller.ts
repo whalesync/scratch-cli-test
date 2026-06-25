@@ -15,7 +15,7 @@ import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { GitIndexDump, RepoFileRef, ScratchGitNotFoundError } from './scratch-git.client';
-import { ScratchGitService } from './scratch-git.service';
+import { getScratchRepoPath, ScratchGitService } from './scratch-git.service';
 
 @Controller('scratch-git')
 @UseGuards(ScratchAuthGuard)
@@ -62,14 +62,17 @@ export class ScratchGitController {
     @Query('folder') folder = '',
     @Query('connectorAccountId') connectorAccountId: string | undefined,
     @Query('useConfigRepo') useConfigRepo: string | undefined,
+    @Query('useScratchRepo') useScratchRepo: string | undefined,
     @Req() req: RequestWithUser,
   ): Promise<RepoFileRef[]> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     const repoId =
-      useConfigRepo === 'true'
-        ? getWorkbookRepoPath(actor.organizationId, workbookId)
-        : await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+      useScratchRepo === 'true'
+        ? getScratchRepoPath(actor.organizationId, workbookId)
+        : useConfigRepo === 'true'
+          ? getWorkbookRepoPath(actor.organizationId, workbookId)
+          : await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
     return this.scratchGitService.listRepoFiles(repoId, branch, folder);
   }
 
@@ -80,14 +83,17 @@ export class ScratchGitController {
     @Query('path') path: string,
     @Query('connectorAccountId') connectorAccountId: string | undefined,
     @Query('useConfigRepo') useConfigRepo: string | undefined,
+    @Query('useScratchRepo') useScratchRepo: string | undefined,
     @Req() req: RequestWithUser,
   ): Promise<{ content: string } | null> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     const repoId =
-      useConfigRepo === 'true'
-        ? getWorkbookRepoPath(actor.organizationId, workbookId)
-        : await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+      useScratchRepo === 'true'
+        ? getScratchRepoPath(actor.organizationId, workbookId)
+        : useConfigRepo === 'true'
+          ? getWorkbookRepoPath(actor.organizationId, workbookId)
+          : await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
     return this.scratchGitService.getRepoFile(repoId, branch, path);
   }
 

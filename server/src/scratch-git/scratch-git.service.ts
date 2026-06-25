@@ -89,6 +89,25 @@ function normalizeStoredSchemaPathFields(parsed: Record<string, unknown>): { leg
   return { legacyFieldsFound };
 }
 
+/**
+ * Repo ID for the per-workbook "scratch" repo that holds standalone, connector-less user files and
+ * folders (DEV-10424). Sibling of the workbook config repo; the literal `scratch` segment cannot
+ * collide (connector repos key on a cuid, the config repo keys on workbookId). Scratch repos are
+ * MAIN-only — edits commit straight to `main` with no review ladder.
+ */
+export function getScratchRepoPath(orgId: string, workbookId: WorkbookId): RepoId {
+  return [orgId, workbookId, 'scratch'].join('/') as RepoId;
+}
+
+/**
+ * The working branch for a folder's repo. Connector folders stage edits on `dirty` (the
+ * published/approved/local review ladder); scratch folders (no connector) commit straight to `main`
+ * — there is no external service to publish to, so nothing is ever "pending".
+ */
+export function workingBranchForConnector(connectorAccountId: string | null | undefined): string {
+  return connectorAccountId ? DIRTY_BRANCH : MAIN_BRANCH;
+}
+
 function stripGeneratedAt(spec: Record<string, unknown>): Record<string, unknown> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { generatedAt, ...rest } = spec as Record<string, unknown> & { generatedAt?: unknown };
@@ -119,6 +138,44 @@ export class ScratchGitService {
       throw new BadRequestException(`Connector account ${connectorAccountId} has no repoPath`);
     }
     return account.repoPath as RepoId;
+  }
+
+  /**
+   * Resolves the repo ID for a data folder, regardless of whether it is connector-backed or a
+   * standalone scratch folder (DEV-10424). A folder with no connector account lives in the
+   * per-workbook scratch repo; everything else resolves through the connector account's repoPath.
+   * This is the single entry point browse/edit code uses so a connector-less folder never trips
+   * the connector-required guard in `resolveConnectionRepoPath`.
+   */
+  async resolveRepoPathForFolder(
+    connectorAccountId: string | null | undefined,
+    workbookId: WorkbookId,
+  ): Promise<RepoId> {
+    if (connectorAccountId) {
+      return this.resolveConnectionRepoPath(connectorAccountId);
+    }
+    const workbook = await this.db.client.workbook.findUnique({
+      where: { id: workbookId },
+      select: { organizationId: true },
+    });
+    if (!workbook) {
+      throw new BadRequestException(`Workbook ${workbookId} not found`);
+    }
+    return getScratchRepoPath(workbook.organizationId, workbookId);
+  }
+
+  /**
+   * Resolve the per-workbook scratch repo and create it if it does not exist yet (DEV-10424).
+   * `initRepo` is idempotent (scratch-git skips an already-initialized repo), so this is safe to call
+   * on every scratch write. It makes scratch creates self-healing on workbooks that predate the
+   * eager init in `WorkbookService.create` (and never ran the `init-scratch-repos` backfill) — without
+   * it, the scratch-git backend's `commit_files` would `GitRepo::open` a missing repo and throw an
+   * opaque NotFound on the first folder/file write.
+   */
+  async ensureScratchRepo(workbookId: WorkbookId): Promise<RepoId> {
+    const repoId = await this.resolveRepoPathForFolder(null, workbookId);
+    await this.initRepo(repoId);
+    return repoId;
   }
 
   async initRepo(repoId: string): Promise<void> {
@@ -355,12 +412,18 @@ export class ScratchGitService {
     return this.scratchGitClient.readBlobsByOid(repoId, oids);
   }
 
-  async commitFile(repoId: string, path: string, content: string, message: string): Promise<void> {
-    await this.scratchGitClient.commitFiles(repoId, 'dirty', [{ path, content }], message);
+  async commitFile(
+    repoId: string,
+    path: string,
+    content: string,
+    message: string,
+    branch: string = DIRTY_BRANCH,
+  ): Promise<void> {
+    await this.scratchGitClient.commitFiles(repoId, branch, [{ path, content }], message);
   }
 
-  async deleteFile(repoId: string, paths: string[], message: string): Promise<void> {
-    await this.deleteFilesFromBranch(repoId, DIRTY_BRANCH, paths, message);
+  async deleteFile(repoId: string, paths: string[], message: string, branch: string = DIRTY_BRANCH): Promise<void> {
+    await this.deleteFilesFromBranch(repoId, branch, paths, message);
   }
 
   async deleteFilesFromBranch(repoId: string, branch: string, paths: string[], message: string): Promise<void> {

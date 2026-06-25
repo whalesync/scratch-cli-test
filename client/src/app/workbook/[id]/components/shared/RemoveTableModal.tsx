@@ -19,6 +19,10 @@ export function RemoveTableModal({ opened, onClose, folder, workbookId, onSucces
   const syncs = useSyncStore((state) => state.syncs);
   const [loading, setLoading] = useState(false);
 
+  // A standalone "scratch" folder (DEV-10424) has no connector — deleting it is permanent (the
+  // files are local-only, there is nothing remote to "unlink" from).
+  const isScratch = folder.connectorAccountId == null;
+
   const linkedSyncs = useMemo(
     () =>
       syncs.filter((sync) =>
@@ -43,12 +47,21 @@ export function RemoveTableModal({ opened, onClose, folder, workbookId, onSucces
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Unlink Table" size="sm" centered>
+    <Modal opened={opened} onClose={onClose} title={isScratch ? 'Delete Folder' : 'Unlink Table'} size="sm" centered>
       <Stack gap="md">
         <Text size="sm">
-          Are you sure you want to unlink &quot;{folder.name}&quot; from this workspace? This table and any pending
-          changes will be removed, but the remote files will not be affected. You can relink this table in the future if
-          needed.
+          {isScratch ? (
+            <>
+              Are you sure you want to delete &quot;{folder.name}&quot;? This folder and all of its files will be
+              permanently deleted. This cannot be undone.
+            </>
+          ) : (
+            <>
+              Are you sure you want to unlink &quot;{folder.name}&quot; from this workspace? This table and any pending
+              changes will be removed, but the remote files will not be affected. You can relink this table in the
+              future if needed.
+            </>
+          )}
         </Text>
         {linkedSyncs.length > 0 && (
           <Alert color="orange" variant="light">
@@ -64,7 +77,7 @@ export function RemoveTableModal({ opened, onClose, folder, workbookId, onSucces
             Cancel
           </Button>
           <Button color="red" onClick={handleRemove} loading={loading}>
-            Unlink
+            {isScratch ? 'Delete' : 'Unlink'}
           </Button>
         </Group>
       </Stack>

@@ -7,7 +7,7 @@ import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
-import type { ConnectorAccount, FileDiffStatus, Workspace } from '@spinner/shared-types';
+import { SCRATCH_GROUP_NAME, type ConnectorAccount, type FileDiffStatus, type Workspace } from '@spinner/shared-types';
 import { RefreshCwIcon } from 'lucide-react';
 import { useEffect, useMemo, useRef } from 'react';
 import { ReviewConnectionNode } from './ReviewTreeNode';
@@ -20,8 +20,6 @@ interface FileTreeProps {
   workbook: Workspace;
   mode?: FileTreeMode;
 }
-
-const SCRATCH_GROUP_NAME = 'Scratch';
 
 const EMPTY_DIRTY_PATHS: ReadonlyMap<string, FileDiffStatus> = new Map();
 

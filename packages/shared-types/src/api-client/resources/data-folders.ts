@@ -141,6 +141,18 @@ export function createDataFoldersApi(http: Http) {
       return res.data;
     },
 
+    /**
+     * POST `/data-folder/:folderId/scratch-subfolders` — create a nested subdirectory inside a
+     * standalone scratch folder (DEV-10424). `path` is relative to the folder root (e.g. "drafts").
+     */
+    createScratchSubfolder: async (folderId: string, path: string, workbookId: string): Promise<void> => {
+      await http.post(
+        `/data-folder/${folderId}/scratch-subfolders`,
+        { path, workbookId },
+        { fallbackMessage: 'Failed to create subfolder' },
+      );
+    },
+
     /** GET `/data-folder/:folderId/schema-paths` — flattened schema paths + suggested transformers (source-side and destination-side). */
     getSchemaPaths: async (
       folderId: string,

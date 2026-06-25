@@ -18,6 +18,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
   IncrementalPullSupport,
+  SCRATCH_GROUP_NAME,
   type ConnectorAccount,
   type DataFolder,
   type DataFolderGroup,
@@ -43,6 +44,7 @@ import {
   FlaskRoundIcon,
   FolderIcon,
   FolderLockIcon,
+  FolderPlusIcon,
   ImageIcon,
   InfoIcon,
   MoreHorizontalIcon,
@@ -70,13 +72,13 @@ import { DataFolderInfoModal } from '../shared/DataFolderInfoModal';
 import { DataFolderSchemaModal } from '../shared/DataFolderSchemaModal';
 import { DeleteAllRecordsModal } from '../shared/DeleteAllRecordsModal';
 import { NewFileModal } from '../shared/NewFileModal';
+import { NewFolderModal } from '../shared/NewFolderModal';
 import { PullAssetsModal } from '../shared/PullAssetsModal';
 import { RemoveFileModal } from '../shared/RemoveFileModal';
 import { RemoveTableModal } from '../shared/RemoveTableModal';
 import { RenameFileModal } from '../shared/RenameFileModal';
 import { ActiveDataFolderJobIndicator } from './ActiveDataFolderJobIndicator';
 
-const SCRATCH_GROUP_NAME = 'Scratch';
 const FILE_LIMIT = 200;
 const INDENT_PX = 10;
 
@@ -340,6 +342,9 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
+  // "New Folder" modal for the Scratch group (DEV-10424)
+  const [newFolderModalOpened, { open: openNewFolderModal, close: closeNewFolderModal }] = useDisclosure(false);
+
   // Publish V2 modal state
   const [publishV2ModalOpened, { close: closePublishV2Modal }] = useDisclosure(false);
 
@@ -466,6 +471,32 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
 
           {/* Right side items */}
           <Group gap={6} wrap="nowrap">
+            {/* New Folder button - for the Scratch group (DEV-10424) */}
+            {isScratch && (
+              <Tooltip label="New folder" position="left">
+                <Box
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openNewFolderModal();
+                  }}
+                  style={{
+                    padding: 2,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    opacity: 0.5,
+                  }}
+                  onMouseOver={(e) => {
+                    (e.currentTarget as HTMLElement).style.opacity = '1';
+                  }}
+                  onMouseOut={(e) => {
+                    (e.currentTarget as HTMLElement).style.opacity = '0.5';
+                  }}
+                >
+                  <StyledLucideIcon Icon={FolderPlusIcon} size="sm" c="var(--fg-secondary)" />
+                </Box>
+              </Tooltip>
+            )}
             {/* Three dots menu - for non-Scratch connections */}
             {!isScratch && connectorAccount && (
               <Box
@@ -585,6 +616,11 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
           dataFolders={group.dataFolders}
         />
       )}
+
+      {/* New Folder modal — Scratch group only (DEV-10424) */}
+      {isScratch && (
+        <NewFolderModal opened={newFolderModalOpened} onClose={closeNewFolderModal} workbookId={workbookId} />
+      )}
     </>
   );
 }
@@ -629,6 +665,9 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const isSelected = pathname === urlFolderPath;
 
   const showHidden = folder.connectorAccountId ? showHiddenConnections.has(folder.connectorAccountId) : false;
+
+  // A connector-less "scratch" folder (DEV-10424): no pull/schema/publish actions apply.
+  const isScratchFolder = folder.connectorAccountId == null;
 
   // Lazy-load: only fetch file list when expanded
   const {
@@ -901,45 +940,61 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
           opened={true}
           onClose={() => setContextMenu(null)}
           position={contextMenu}
-          items={[
-            ...buildTablePullMenuItems(
-              folder.incrementalPullSupport,
-              CloudDownloadIcon,
-              handlePullTableIncremental,
-              handlePullTableFull,
-            ),
-            { label: 'Download folder', icon: DownloadIcon, onClick: handleDownloadAll },
-            {
-              label: 'New File',
-              icon: FilePlusIcon,
-              onClick: () => {
-                openNewFileModal();
-                setContextMenu(null);
-              },
-            },
-            { label: 'Get Info', icon: InfoIcon, onClick: openInfoModal },
-            // Deep link to this table in the external service's own web UI. Only
-            // shown for services that provide a constructible link (remoteWebUrl).
-            ...(folder.remoteWebUrl
+          items={
+            isScratchFolder
               ? [
+                  // Scratch folders have no connector — only file create + folder delete apply.
                   {
-                    label: `View in ${getServiceName(connectorsMetadata, folder.connectorService)}`,
-                    icon: ExternalLinkIcon,
-                    onClick: () => window.open(folder.remoteWebUrl ?? undefined, '_blank', 'noopener,noreferrer'),
+                    label: 'New File',
+                    icon: FilePlusIcon,
+                    onClick: () => {
+                      openNewFileModal();
+                      setContextMenu(null);
+                    },
                   },
+                  { type: 'divider' },
+                  { label: 'Delete folder', icon: Trash2Icon, onClick: openRemoveModal, delete: true },
                 ]
-              : []),
-            { label: 'View Schema', icon: FileJsonIcon, onClick: openSchemaModal },
-            { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
-            { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
-            { label: 'Pull Assets', icon: ImageIcon, onClick: openPullAssets },
-            ...(isDevToolsEnabled
-              ? [{ label: 'Asset Index', icon: ImageIcon, onClick: openAssetIndex, devtool: true }]
-              : []),
-            { type: 'divider' },
-            { label: 'Unlink this table', icon: UnlinkIcon, onClick: openRemoveModal, delete: true },
-            { label: 'Delete all records', icon: Trash2Icon, onClick: openDeleteAllModal, delete: true },
-          ]}
+              : [
+                  ...buildTablePullMenuItems(
+                    folder.incrementalPullSupport,
+                    CloudDownloadIcon,
+                    handlePullTableIncremental,
+                    handlePullTableFull,
+                  ),
+                  { label: 'Download folder', icon: DownloadIcon, onClick: handleDownloadAll },
+                  {
+                    label: 'New File',
+                    icon: FilePlusIcon,
+                    onClick: () => {
+                      openNewFileModal();
+                      setContextMenu(null);
+                    },
+                  },
+                  { label: 'Get Info', icon: InfoIcon, onClick: openInfoModal },
+                  // Deep link to this table in the external service's own web UI. Only
+                  // shown for services that provide a constructible link (remoteWebUrl).
+                  ...(folder.remoteWebUrl
+                    ? [
+                        {
+                          label: `View in ${getServiceName(connectorsMetadata, folder.connectorService)}`,
+                          icon: ExternalLinkIcon,
+                          onClick: () => window.open(folder.remoteWebUrl ?? undefined, '_blank', 'noopener,noreferrer'),
+                        },
+                      ]
+                    : []),
+                  { label: 'View Schema', icon: FileJsonIcon, onClick: openSchemaModal },
+                  { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
+                  { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
+                  { label: 'Pull Assets', icon: ImageIcon, onClick: openPullAssets },
+                  ...(isDevToolsEnabled
+                    ? [{ label: 'Asset Index', icon: ImageIcon, onClick: openAssetIndex, devtool: true }]
+                    : []),
+                  { type: 'divider' },
+                  { label: 'Unlink this table', icon: UnlinkIcon, onClick: openRemoveModal, delete: true },
+                  { label: 'Delete all records', icon: Trash2Icon, onClick: openDeleteAllModal, delete: true },
+                ]
+          }
         />
       )}
 

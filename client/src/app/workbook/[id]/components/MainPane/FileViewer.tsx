@@ -3,7 +3,8 @@
 import { Text13Regular, TextMono12Regular } from '@/app/components/base/text';
 import { useFileByPath } from '@/hooks/use-file-path';
 import { json } from '@codemirror/lang-json';
-import { EditorState } from '@codemirror/state';
+import { markdown } from '@codemirror/lang-markdown';
+import { EditorState, Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { Badge, Box, Button, Group, Stack, useMantineColorScheme } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
@@ -15,6 +16,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 interface FileViewerProps {
   workbookId: WorkbookId;
   filePath: string;
+}
+
+/**
+ * Pick a CodeMirror language by file extension so scratch files (markdown, JSON, plain text) get the
+ * right highlighting. The frontend stays connector-agnostic — this keys only on the filename, never
+ * on any connector. Unknown/CSV/text extensions fall back to no language (plain text).
+ */
+function languageExtensionForFilename(fileName: string): Extension | null {
+  const extension = fileName.split('.').pop()?.toLowerCase();
+  switch (extension) {
+    case 'json':
+      return json();
+    case 'md':
+    case 'markdown':
+      return markdown();
+    default:
+      return null;
+  }
 }
 
 export function FileViewer({ workbookId, filePath }: FileViewerProps) {
@@ -91,12 +110,16 @@ export function FileViewer({ workbookId, filePath }: FileViewerProps) {
   }, [handleSave, isHiddenFile]);
 
   const extensions = useMemo(() => {
-    const exts = [json(), EditorView.lineWrapping];
+    const exts: Extension[] = [EditorView.lineWrapping];
+    const language = languageExtensionForFilename(fileName);
+    if (language) {
+      exts.unshift(language);
+    }
     if (isHiddenFile) {
       exts.push(EditorView.editable.of(false), EditorState.readOnly.of(true));
     }
     return exts;
-  }, [isHiddenFile]);
+  }, [isHiddenFile, fileName]);
 
   // Determine if file is modified (check dirty flag from endpoint)
   const isModified = fileResponse?.file?.ref?.dirty === true;

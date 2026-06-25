@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { formatRecordJson, TableMappingV1, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { ScratchGitClient } from 'src/scratch-git/scratch-git.client';
+import { getScratchRepoPath } from 'src/scratch-git/scratch-git.service';
 import { parseStoredMappings } from 'src/sync/sync-mapping.schema';
 import { Actor } from 'src/users/types';
 
@@ -34,6 +35,25 @@ export class WorkbookRepoService {
 
   async deleteWorkbookRepo(orgId: string, workbookId: WorkbookId): Promise<void> {
     const repoId = getWorkbookRepoPath(orgId, workbookId);
+    // Best-effort delete — ignore if repo doesn't exist
+    try {
+      await this.scratchGitClient.deleteRepo(repoId);
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Initialize the per-workbook scratch repo (standalone connector-less files, DEV-10424).
+   * Idempotent — scratch-git skips an already-initialized repo.
+   */
+  async initScratchRepo(orgId: string, workbookId: WorkbookId): Promise<void> {
+    const repoId = getScratchRepoPath(orgId, workbookId);
+    await this.scratchGitClient.initRepo(repoId);
+  }
+
+  async deleteScratchRepo(orgId: string, workbookId: WorkbookId): Promise<void> {
+    const repoId = getScratchRepoPath(orgId, workbookId);
     // Best-effort delete — ignore if repo doesn't exist
     try {
       await this.scratchGitClient.deleteRepo(repoId);

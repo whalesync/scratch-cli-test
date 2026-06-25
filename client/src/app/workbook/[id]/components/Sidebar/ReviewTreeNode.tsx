@@ -7,20 +7,20 @@ import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { fileMatchesFolder } from '@/utils/data-folder-helpers';
 import { RouteUrls } from '@/utils/route-urls';
 import { Box, Collapse, Group, Stack, Tooltip } from '@mantine/core';
-import type {
-  ConnectorAccount,
-  DataFolder,
-  DataFolderGroup,
-  DataFolderOptions,
-  FileDiffStatus,
-  WorkbookId,
+import {
+  SCRATCH_GROUP_NAME,
+  type ConnectorAccount,
+  type DataFolder,
+  type DataFolderGroup,
+  type DataFolderOptions,
+  type FileDiffStatus,
+  type WorkbookId,
 } from '@spinner/shared-types';
 import { FolderIcon, FolderLockIcon, StickyNoteIcon } from 'lucide-react';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
 import { ChevronToggle, DirtyBadge, FileNameCell, INDENT_PX, TreeRow } from './tree-node-primitives';
 
-const SCRATCH_GROUP_NAME = 'Scratch';
 const REVIEW_FILES_PER_PAGE = 50;
 
 // ============================================================================

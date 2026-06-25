@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { MigrationLockService } from 'src/migration-lock/migration-lock.service';
@@ -39,16 +39,21 @@ describe('FilesService', () => {
           findUnique: jest.fn().mockResolvedValue({
             id: FOLDER_ID,
             path: '/my-folder',
-            connectorAccountId: null,
+            connectorAccountId: 'conn-123',
           }),
+          findFirst: jest.fn().mockResolvedValue(null),
         },
       },
     } as unknown as jest.Mocked<DbService>;
 
     scratchGitService = {
       resolveConnectionRepoPath: jest.fn().mockResolvedValue('repo-123'),
+      resolveRepoPathForFolder: jest.fn().mockResolvedValue('repo-123'),
+      ensureScratchRepo: jest.fn().mockResolvedValue('repo-123'),
       listRepoFilesPaginated: jest.fn().mockResolvedValue({ files: [], nextCursor: undefined }),
       getFolderDiff: jest.fn().mockResolvedValue([]),
+      getRepoFile: jest.fn().mockResolvedValue({ content: '' }),
+      commitFile: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     posthogService = {} as unknown as jest.Mocked<PostHogService>;
@@ -98,6 +103,28 @@ describe('FilesService', () => {
       await expect(service.listByFolderId(WORKBOOK_ID, FOLDER_ID, ACTOR)).rejects.toThrow(NotFoundException);
     });
 
+    it('lists a connector-less scratch folder from main and skips the dirty diff (DEV-10424)', async () => {
+      (dbService.client.dataFolder.findUnique as jest.Mock).mockResolvedValue({
+        id: FOLDER_ID,
+        path: '/my-scratch',
+        connectorAccountId: null,
+      });
+
+      const result = await service.listByFolderId(WORKBOOK_ID, FOLDER_ID, ACTOR);
+
+      // Scratch repos are main-only — read from `main`, never the dirty working branch.
+      expect(scratchGitService.listRepoFilesPaginated).toHaveBeenCalledWith(
+        'repo-123',
+        'main',
+        'my-scratch',
+        200,
+        undefined,
+      );
+      // No review ladder for scratch → the dirty-vs-main diff is skipped and nothing is "pending".
+      expect(scratchGitService.getFolderDiff).not.toHaveBeenCalled();
+      expect(result.dirtyCount).toBe(0);
+    });
+
     it('includes dotfiles like .schema.json in the file list', async () => {
       (scratchGitService.listRepoFilesPaginated as jest.Mock).mockResolvedValue({
         files: [
@@ -112,6 +139,46 @@ describe('FilesService', () => {
 
       expect(result.items).toHaveLength(3);
       expect(result.items.map((f) => f.name)).toEqual(['record-1.json', '.schema.json', 'record-2.json']);
+    });
+  });
+
+  describe('getFileByPathGit (scratch nested)', () => {
+    it('resolves a nested scratch file to the scratch repo on main (DEV-10424)', async () => {
+      // A nested file's parent dir ("/Notes/drafts") is a git subdirectory, not a DataFolder, so the
+      // lookup returns null → the path resolves to the per-workbook scratch repo, read on `main`.
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue(null);
+      (scratchGitService.getRepoFile as jest.Mock).mockResolvedValue({ content: 'hello' });
+
+      const res = await service.getFileByPathGit(WORKBOOK_ID, '/Notes/drafts/post.md', ACTOR);
+
+      // Folder-aware resolver called with no connector account → scratch repo.
+      expect(scratchGitService.resolveRepoPathForFolder).toHaveBeenCalledWith(undefined, WORKBOOK_ID);
+      // Read from main only; scratch has no dirty working copy and no diff.
+      expect(scratchGitService.getRepoFile).toHaveBeenCalledWith('repo-123', 'main', '/Notes/drafts/post.md');
+      expect(scratchGitService.getFolderDiff).not.toHaveBeenCalled();
+      expect(res.file.content).toBe('hello');
+      expect(res.file.ref.dirty).toBe(false);
+    });
+  });
+
+  describe('createFile (scratch)', () => {
+    it('rejects a duplicate scratch file instead of silently overwriting it (DEV-10424)', async () => {
+      // Parent is a connector-less scratch folder.
+      (dbService.client.dataFolder.findUnique as jest.Mock).mockResolvedValue({
+        id: FOLDER_ID,
+        path: '/notes',
+        workbookId: WORKBOOK_ID,
+        connectorAccountId: null,
+      });
+      // A file already exists at the target path on main.
+      (scratchGitService.getRepoFile as jest.Mock).mockResolvedValue({ content: 'existing' });
+
+      await expect(
+        service.createFile(WORKBOOK_ID, { name: 'post.md', parentFolderId: FOLDER_ID }, ACTOR),
+      ).rejects.toThrow(BadRequestException);
+
+      // The collision is caught before any write — no overwrite.
+      expect(scratchGitService.commitFile).not.toHaveBeenCalled();
     });
   });
 });

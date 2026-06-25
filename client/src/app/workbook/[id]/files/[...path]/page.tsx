@@ -38,6 +38,7 @@ export default function FileDetailPage() {
         folderId={matchedFolder.id}
         folderName={matchedFolder.name}
         connectorAccountId={matchedFolder.connectorAccountId ?? undefined}
+        folderPath={matchedFolder.path ?? undefined}
       />
     );
   }

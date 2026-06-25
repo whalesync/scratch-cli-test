@@ -15,16 +15,19 @@ interface NewFileModalProps {
 }
 
 export function NewFileModal({ opened, onClose, folder, workbookId, onSuccess }: NewFileModalProps) {
+  // Standalone "scratch" folders (DEV-10424) have no connector and no schema, so there is no
+  // template to apply — the file is created as raw, empty bytes.
+  const isScratch = folder.connectorAccountId == null;
   const [fileName, setFileName] = useState('');
-  const [useTemplate, setUseTemplate] = useState(true);
+  const [useTemplate, setUseTemplate] = useState(!isScratch);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (opened) {
       setFileName('');
-      setUseTemplate(true);
+      setUseTemplate(!isScratch);
     }
-  }, [opened]);
+  }, [opened, isScratch]);
 
   const handleCreate = async () => {
     if (!fileName.trim()) return;
@@ -55,16 +58,18 @@ export function NewFileModal({ opened, onClose, folder, workbookId, onSuccess }:
       <Stack gap="md">
         <TextInput
           label="Name"
-          placeholder="e.g., config.json"
+          placeholder={isScratch ? 'e.g., post.md' : 'e.g., config.json'}
           value={fileName}
           onChange={(e) => setFileName(e.currentTarget.value)}
           data-autofocus
         />
-        <Checkbox
-          label="Use Template"
-          checked={useTemplate}
-          onChange={(e) => setUseTemplate(e.currentTarget.checked)}
-        />
+        {!isScratch && (
+          <Checkbox
+            label="Use Template"
+            checked={useTemplate}
+            onChange={(e) => setUseTemplate(e.currentTarget.checked)}
+          />
+        )}
         <Group justify="flex-end" gap="sm">
           <Button variant="subtle" color="gray" onClick={onClose}>
             Cancel

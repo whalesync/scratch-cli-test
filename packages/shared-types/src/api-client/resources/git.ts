@@ -34,9 +34,16 @@ export function createGitApi(http: Http) {
       folder = '',
       connectorAccountId?: string,
       useConfigRepo?: boolean,
+      useScratchRepo?: boolean,
     ): Promise<GitFile[]> => {
       const res = await http.get<GitFile[]>(`/scratch-git/${workbookId}/list`, {
-        params: { branch, folder, connectorAccountId, useConfigRepo: useConfigRepo ? 'true' : undefined },
+        params: {
+          branch,
+          folder,
+          connectorAccountId,
+          useConfigRepo: useConfigRepo ? 'true' : undefined,
+          useScratchRepo: useScratchRepo ? 'true' : undefined,
+        },
         fallbackMessage: 'Failed to list repository files',
       });
       return res.data;

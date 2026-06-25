@@ -71,6 +71,12 @@ export class CliWorkbookResponseDto {
   readonly version?: number;
   readonly connectorAccounts?: CliConnectorAccountDto[];
   readonly configGitUrl?: string;
+  /**
+   * Git URL for the per-workbook "scratch" repo holding standalone connector-less files (DEV-10424).
+   * The CLI clones this like the config repo (non-connector, materialized on `main`) so scratch
+   * folders/files appear in the desktop workspace. Empty/undefined ⇒ the workbook has no scratch repo.
+   */
+  readonly scratchGitUrl?: string;
 }
 
 /**

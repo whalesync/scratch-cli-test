@@ -75,6 +75,9 @@ export const SWR_KEYS = {
       ['files', 'resolve-references', workbookId, path, branch] as const,
     repoFile: (workbookId: WorkbookId, filePath: string, connectorAccountId?: string, useConfigRepo?: boolean) =>
       ['files', 'repo-file', workbookId, filePath, connectorAccountId, useConfigRepo ? 'config' : undefined] as const,
+    // Browse a path within a standalone scratch repo (DEV-10424): files + subdirectories on `main`.
+    scratchBrowse: (workbookId: WorkbookId, gitFolderPath: string) =>
+      ['files', 'scratch-browse', workbookId, gitFolderPath] as const,
   },
   jobs: {
     activeByWorkbook: (workbookId: WorkbookId) => ['jobs', 'active-by-workbook', workbookId] as const,

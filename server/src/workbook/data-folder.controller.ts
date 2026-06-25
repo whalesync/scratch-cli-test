@@ -92,6 +92,17 @@ export class DataFolderController {
     );
   }
 
+  @Post(':id/scratch-subfolders')
+  async createScratchSubfolder(
+    @Param('id') id: DataFolderId,
+    @Body() body: { path: string; workbookId: string },
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, body.workbookId as WorkbookId);
+    await this.dataFolderService.createScratchSubfolder(body.workbookId as WorkbookId, id, body.path);
+  }
+
   @Post(':id/pull-files')
   async pullFiles(
     @Param('id') id: DataFolderId,

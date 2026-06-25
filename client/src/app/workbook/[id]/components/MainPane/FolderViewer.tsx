@@ -10,6 +10,7 @@ import type { DataFolderId, FileRefEntity, WorkbookId } from '@spinner/shared-ty
 import { FileIcon, SearchIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { ScratchFolderBrowser } from './ScratchFolderBrowser';
 
 const PAGE_SIZE = 200;
 const COLUMN_COUNT = 3;
@@ -20,6 +21,8 @@ interface FolderViewerProps {
   folderName?: string;
   mode?: 'files' | 'review';
   connectorAccountId?: string;
+  /** DataFolder.path — present for scratch folders, which use a nested path browser (DEV-10424). */
+  folderPath?: string;
 }
 
 export function FolderViewer({
@@ -28,7 +31,38 @@ export function FolderViewer({
   folderName,
   mode = 'files',
   connectorAccountId,
+  folderPath,
 }: FolderViewerProps) {
+  // Standalone scratch folders (no connector) browse files AND subdirectories from the scratch repo;
+  // connector folders keep the flat record-grid view below.
+  if (!connectorAccountId && folderPath && mode !== 'review') {
+    return (
+      <ScratchFolderBrowser
+        workbookId={workbookId}
+        folderId={folderId}
+        folderPath={folderPath}
+        folderName={folderName}
+      />
+    );
+  }
+  return (
+    <FolderRecordGrid
+      workbookId={workbookId}
+      folderId={folderId}
+      folderName={folderName}
+      mode={mode}
+      connectorAccountId={connectorAccountId}
+    />
+  );
+}
+
+function FolderRecordGrid({
+  workbookId,
+  folderId,
+  folderName,
+  mode = 'files',
+  connectorAccountId,
+}: Omit<FolderViewerProps, 'folderPath'>) {
   const {
     files: allFiles,
     isLoading,

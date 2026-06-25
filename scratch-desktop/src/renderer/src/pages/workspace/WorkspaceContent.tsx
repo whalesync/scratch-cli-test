@@ -330,6 +330,7 @@ export function WorkspaceContent({
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={handleSelectFolder}
         workspacePath={localPath}
+        invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
         onRequestFolderPull={onRequestFolderPull}
         onOpenConnectionsPanel={handleOpenConnectionsPanel}
         connectionsPanelOpen={showConnectionsPanel}

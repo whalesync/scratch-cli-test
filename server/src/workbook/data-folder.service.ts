@@ -7,6 +7,7 @@ import {
   DataFolderOptions,
   formatRecordJson,
   IncrementalPullSupport,
+  SCRATCH_GROUP_NAME,
   Service,
   TableView,
   ValidatedCreateDataFolderDto,
@@ -37,10 +38,11 @@ import {
 } from '../remote-service/connectors/connector-registry';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, dotPath } from '../remote-service/connectors/types';
-import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
+import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { escapeConnectorFolderPathSegment } from './connector-folder-path.util';
 import { DataFolderEntity, DataFolderGroupEntity } from './entities/data-folder.entity';
 import { FilesService } from './files.service';
+import { validateScratchRelativePath, validateScratchSegmentName } from './scratch-path-validation';
 import { WorkbookEventService } from './workbook-event.service';
 import { WorkbookService } from './workbook.service';
 
@@ -275,6 +277,9 @@ export class DataFolderService {
       }
     >();
 
+    // Connector-less (scratch) folders are collected separately into the "Scratch" group (DEV-10424).
+    const scratchFolders: DataFolderCluster.DataFolder[] = [];
+
     for (const folder of dataFolders) {
       if (folder.connectorAccountId && folder.connectorAccount) {
         const accountId = folder.connectorAccountId;
@@ -288,11 +293,30 @@ export class DataFolderService {
           connectorAccountGroups.set(accountId, group);
         }
         group.folders.push(folder);
+      } else if (!folder.connectorAccountId) {
+        scratchFolders.push(folder);
       }
     }
 
-    // Build the result array with Scratch group first
+    // Build the result array with the Scratch group first (the client also sorts it first). The
+    // Scratch group is emitted unconditionally — even when empty — so the user always has a place to
+    // create the first standalone folder (DEV-10424).
     const groups: DataFolderGroupEntity[] = [];
+
+    groups.push(
+      new DataFolderGroupEntity(
+        SCRATCH_GROUP_NAME,
+        null,
+        scratchFolders.map(
+          (f) =>
+            new DataFolderEntity(
+              f,
+              schedulesByEntityId.get(f.id) ?? [],
+              incrementalPullSupportByFolderId.get(f.id) ?? IncrementalPullSupport.NOT_SUPPORTED,
+            ),
+        ),
+      ),
+    );
 
     // Add connector account groups
     for (const [, group] of connectorAccountGroups) {
@@ -360,7 +384,15 @@ export class DataFolderService {
     }
 
     if (!connectorAccountId) {
-      throw new BadRequestException('Connector account is required to create a data folder');
+      // Connector-less "scratch" folder (DEV-10424): a standalone folder of raw user files with no
+      // connector, schema, or pull. Top-level only; nested subfolders are git subdirectories.
+      return this.createScratchFolder({
+        name,
+        workbookId,
+        organizationId: workbook.organizationId,
+        parentFolderId,
+        actor,
+      });
     }
 
     if (!dto.tableId || dto.tableId.length === 0) {
@@ -560,6 +592,130 @@ export class DataFolderService {
     return new DataFolderEntity(createdDataFolder, [], await this.computeIncrementalPullSupport(createdDataFolder));
   }
 
+  /**
+   * Create a standalone "scratch" folder (DEV-10424): a top-level DataFolder with no connector,
+   * schema, or pull. Files inside are raw bytes committed straight to `main`; nested subfolders are
+   * git subdirectories (not their own DataFolder rows). An empty `.gitkeep` keeps the folder in git
+   * so it round-trips to the desktop clone.
+   */
+  private async createScratchFolder(params: {
+    name: string;
+    workbookId: WorkbookId;
+    organizationId: string;
+    parentFolderId: string | undefined;
+    actor: Actor;
+  }): Promise<DataFolderEntity> {
+    const { name, workbookId, organizationId, parentFolderId, actor } = params;
+
+    if (parentFolderId) {
+      // Nested folders inside a scratch folder are git subdirectories, not DataFolder rows.
+      throw new BadRequestException('Nested scratch folders are created as subdirectories, not data folders');
+    }
+
+    validateScratchSegmentName(name);
+    const folderPath = `/${name}`; // DataFolder.path keeps a leading slash
+
+    // Reject a collision with any existing folder path in this workbook (connector or scratch).
+    const existing = await this.db.client.dataFolder.findFirst({
+      where: { workbookId, path: folderPath },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new BadRequestException(`A folder named "${name}" already exists`);
+    }
+
+    // Ensure the scratch repo exists BEFORE creating the row (idempotent). This self-heals workbooks
+    // that predate the eager init / the init-scratch-repos backfill: surfacing an init failure here is
+    // better than creating a DB row whose repo is missing and then throwing an opaque NotFound on the
+    // first file write.
+    const repoId = await this.scratchGitService.ensureScratchRepo(workbookId);
+
+    const dataFolderId = createDataFolderId();
+    const createdDataFolder = await this.db.client.dataFolder.create({
+      data: {
+        id: dataFolderId,
+        name,
+        workbookId,
+        connectorAccountId: null,
+        connectorService: null,
+        path: folderPath,
+        tableId: [],
+      },
+      include: { connectorAccount: true },
+    });
+
+    // Persist the (empty) folder in git with a hidden placeholder so it survives commit/clone and
+    // appears on the desktop after a pull. The repo is ensured above, so this normally succeeds; the
+    // row is the source of truth on web regardless, so a placeholder failure stays non-fatal.
+    try {
+      await this.scratchGitService.commitFile(
+        repoId,
+        `${name}/.gitkeep`,
+        '',
+        `Create scratch folder ${name}`,
+        MAIN_BRANCH,
+      );
+    } catch (error) {
+      WSLogger.error({
+        source: 'DataFolderService.createScratchFolder',
+        message: 'Failed to write .gitkeep for scratch folder',
+        error,
+        workbookId,
+        dataFolderId,
+      });
+    }
+
+    this.workbookEventService.sendWorkbookEvent(workbookId, {
+      type: 'folder-created',
+      data: { source: 'user', entityId: dataFolderId, message: 'Folder created' },
+    });
+
+    this.posthogService.trackAddDataFolder(actor, createdDataFolder);
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'create',
+      message: `Created folder ${name}`,
+      entityId: dataFolderId,
+      organizationId,
+      context: { workbookId, folderName: name },
+    });
+
+    return new DataFolderEntity(createdDataFolder, [], IncrementalPullSupport.NOT_SUPPORTED);
+  }
+
+  /**
+   * Create an (empty) nested subdirectory inside a scratch folder (DEV-10424). `subPath` is relative
+   * to the scratch folder root (e.g. "drafts" or "drafts/2026"). Persisted with a hidden `.gitkeep`
+   * so the empty directory survives git. Scratch-only — connector folders reject this.
+   */
+  async createScratchSubfolder(workbookId: WorkbookId, folderId: DataFolderId, subPath: string): Promise<void> {
+    const folder = await this.db.client.dataFolder.findUnique({
+      where: { id: folderId },
+      select: { workbookId: true, path: true, connectorAccountId: true },
+    });
+    if (!folder || folder.workbookId !== workbookId) {
+      throw new NotFoundException('Data folder not found');
+    }
+    if (folder.connectorAccountId) {
+      throw new BadRequestException('Subfolders are only supported in scratch folders');
+    }
+    if (!folder.path) {
+      throw new InternalServerErrorException(`Path missing from DataFolder ${folderId}`);
+    }
+
+    const segments = validateScratchRelativePath(subPath);
+    const folderGitPath = folder.path.replace(/^\//, '');
+    const gitkeepPath = `${folderGitPath}/${segments.join('/')}/.gitkeep`;
+    // Init-if-absent so the write self-heals even if the scratch repo was never created (idempotent).
+    const repoId = await this.scratchGitService.ensureScratchRepo(workbookId);
+    await this.scratchGitService.commitFile(repoId, gitkeepPath, '', `Create scratch folder ${subPath}`, MAIN_BRANCH);
+
+    this.workbookEventService.sendWorkbookEvent(workbookId, {
+      type: 'folder-contents-changed',
+      data: { source: 'user', entityId: folderId, message: 'Subfolder created', path: gitkeepPath },
+    });
+  }
+
   async deleteFolder(id: DataFolderId, actor: Actor): Promise<void> {
     // Fetch the data folder
     const dataFolder = await this.db.client.dataFolder.findUnique({
@@ -578,9 +734,13 @@ export class DataFolderService {
     // Note: dataFolder.path includes leading slash, which is handled by service
     if (dataFolder.path) {
       try {
-        const repoId = dataFolder.connectorAccountId
-          ? await this.scratchGitService.resolveConnectionRepoPath(dataFolder.connectorAccountId)
-          : (dataFolder.workbookId as WorkbookId);
+        // Folder-aware: connector folders resolve to the connector repo; a connector-less scratch
+        // folder resolves to the per-workbook scratch repo. (Previously this fell back to the bare
+        // `workbookId`, which is not a valid repo path and pointed deletes at the wrong repo.)
+        const repoId = await this.scratchGitService.resolveRepoPathForFolder(
+          dataFolder.connectorAccountId,
+          dataFolder.workbookId as WorkbookId,
+        );
         await this.scratchGitService.removeDataFolder(repoId, dataFolder.path);
       } catch (err) {
         // Git repo/folder may not exist yet (e.g., table linked but never pulled) — safe to ignore
@@ -756,18 +916,29 @@ export class DataFolderService {
     dto: { name: string; useTemplate?: boolean },
     actor: Actor,
   ) {
-    let content = formatRecordJson({});
+    const folder = await this.db.client.dataFolder.findUnique({
+      where: { id },
+      select: { connectorAccountId: true },
+    });
+    const isScratch = !folder?.connectorAccountId;
 
-    if (dto.useTemplate) {
-      try {
-        const template = await this.getNewFileTemplate(id, actor);
-        content = formatRecordJson(template);
-      } catch (e) {
-        WSLogger.warn({
-          source: 'DataFolderService.createFile',
-          message: 'Failed to fetch template for new file',
-          error: e,
-        });
+    let content: string;
+    if (isScratch) {
+      // Scratch files are byte-passthrough: a new file starts empty and is never JSON-wrapped.
+      content = '';
+    } else {
+      content = formatRecordJson({});
+      if (dto.useTemplate) {
+        try {
+          const template = await this.getNewFileTemplate(id, actor);
+          content = formatRecordJson(template);
+        } catch (e) {
+          WSLogger.warn({
+            source: 'DataFolderService.createFile',
+            message: 'Failed to fetch template for new file',
+            error: e,
+          });
+        }
       }
     }
 
@@ -809,12 +980,14 @@ export class DataFolderService {
     const allFiles: { folderId: DataFolderId; path: string; content: string }[] = [];
     let cursor: string | undefined;
 
-    const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
+    const repoId = await this.scratchGitService.resolveRepoPathForFolder(folder.connectorAccountId, workbookId);
+    // Scratch folders are main-only; ignore a caller-requested dirty branch for them.
+    const effectiveBranch = folder.connectorAccountId ? branch : MAIN_BRANCH;
 
     do {
       const page = await this.scratchGitService.getRepoFilesPaginated(
         repoId,
-        branch,
+        effectiveBranch,
         folderPath,
         PAGINATED_FILE_BATCH_SIZE,
         cursor,
@@ -855,10 +1028,12 @@ export class DataFolderService {
 
     const folderPath = folder.path.replace(/^\//, ''); // remove preceding / for git paths
 
-    const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
+    const repoId = await this.scratchGitService.resolveRepoPathForFolder(folder.connectorAccountId, workbookId);
+    // Scratch folders are main-only; ignore a caller-requested dirty branch for them.
+    const effectiveBranch = folder.connectorAccountId ? branch : MAIN_BRANCH;
     const page = await this.scratchGitService.getRepoFilesPaginated(
       repoId,
-      branch,
+      effectiveBranch,
       folderPath,
       PAGINATED_FILE_BATCH_SIZE,
       cursor,
@@ -912,6 +1087,8 @@ export class DataFolderService {
     folderPath: string | null,
   ): Promise<BaseJsonTableSpec | null> {
     if (!folderPath) return null;
+    // Scratch (connector-less) folders have no schema by design.
+    if (!connectorAccountId) return null;
     try {
       const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
       const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
@@ -948,6 +1125,8 @@ export class DataFolderService {
     viewName: string,
   ): Promise<TableView | null> {
     if (!folderPath) return null;
+    // Scratch (connector-less) folders have no stored view by design.
+    if (!connectorAccountId) return null;
     try {
       const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
       return await this.scratchGitService.readViewFromGit(repoId, folderPath, viewName);

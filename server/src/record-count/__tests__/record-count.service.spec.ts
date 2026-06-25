@@ -29,6 +29,10 @@ function makeDeps(params: { folders: FolderRow[]; countsByRepo: Record<string, M
   const resolveConnectionRepoPath = jest.fn((connectorAccountId: string) =>
     Promise.resolve(`repo-${connectorAccountId}`),
   );
+  // Folder-aware resolver (DEV-10424): connector folders → repo-<ca>, scratch (null) → scratch-<wb>.
+  const resolveRepoPathForFolder = jest.fn((connectorAccountId: string | null, workbookId: string) =>
+    Promise.resolve(connectorAccountId ? `repo-${connectorAccountId}` : `scratch-${workbookId}`),
+  );
   const countRecordFilesByFolder = jest.fn((repoId: string) => {
     const entry = params.countsByRepo[repoId];
     if (entry === undefined || entry === 'not-found') {
@@ -36,7 +40,11 @@ function makeDeps(params: { folders: FolderRow[]; countsByRepo: Record<string, M
     }
     return Promise.resolve(entry);
   });
-  const scratchGit = { resolveConnectionRepoPath, countRecordFilesByFolder } as unknown as ScratchGitService;
+  const scratchGit = {
+    resolveConnectionRepoPath,
+    resolveRepoPathForFolder,
+    countRecordFilesByFolder,
+  } as unknown as ScratchGitService;
 
   const sendWorkbookEvent = jest.fn();
   const events = { sendWorkbookEvent } as unknown as WorkbookEventService;
@@ -183,12 +191,19 @@ describe('RecordCountService.recomputeRecordCountForFolder', () => {
     const db = { client: { dataFolder: { findUnique, update } } } as unknown as DbService;
 
     const resolveConnectionRepoPath = jest.fn((id: string) => Promise.resolve(`repo-${id}`));
+    const resolveRepoPathForFolder = jest.fn((connectorAccountId: string | null, workbookId: string) =>
+      Promise.resolve(connectorAccountId ? `repo-${connectorAccountId}` : `scratch-${workbookId}`),
+    );
     const countRecordFilesInFolder = jest.fn(() =>
       count === 'not-found'
         ? Promise.reject(new ScratchGitNotFoundError('/count-folder', 'repo not found'))
         : Promise.resolve(count),
     );
-    const scratchGit = { resolveConnectionRepoPath, countRecordFilesInFolder } as unknown as ScratchGitService;
+    const scratchGit = {
+      resolveConnectionRepoPath,
+      resolveRepoPathForFolder,
+      countRecordFilesInFolder,
+    } as unknown as ScratchGitService;
 
     const sendWorkbookEvent = jest.fn();
     const events = { sendWorkbookEvent } as unknown as WorkbookEventService;

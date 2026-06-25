@@ -12,6 +12,8 @@ export interface UseDataFoldersReturn {
   error: Error | undefined;
   refresh: () => Promise<void>;
   deleteFolder: (dataFolderId: DataFolderId) => Promise<void>;
+  /** Create a standalone (connector-less) "scratch" folder (DEV-10424). */
+  createScratchFolder: (name: string) => Promise<DataFolder>;
 }
 
 /**
@@ -50,6 +52,19 @@ export const useDataFolders = (overrideWorkbookId?: WorkbookId): UseDataFoldersR
     [workbookId, mutate],
   );
 
+  const createScratchFolder = useCallback(
+    async (name: string): Promise<DataFolder> => {
+      if (!workbookId) {
+        throw new Error('workbookId is required');
+      }
+      // Omitting connectorAccountId/tableId tells the server to create a standalone scratch folder.
+      const folder = await scratchApiClient.dataFolders.create({ name, workbookId });
+      await mutate();
+      return folder;
+    },
+    [workbookId, mutate],
+  );
+
   // Generate a flat list of folders from the group
   const folders = useMemo(() => {
     const temp: DataFolder[] = [];
@@ -69,5 +84,6 @@ export const useDataFolders = (overrideWorkbookId?: WorkbookId): UseDataFoldersR
     error,
     refresh,
     deleteFolder,
+    createScratchFolder,
   };
 };

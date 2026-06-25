@@ -55,13 +55,14 @@ export async function recomputeRecordCountsForWorkbook(
   });
   type FolderRow = (typeof folders)[number];
 
-  // Group folders by their connector account so each repo is walked exactly once. Folders
-  // with no connector account have no git repo and are counted as 0.
+  // Group folders by their connector account so each repo is walked exactly once. Connector-less
+  // (scratch) folders share the per-workbook scratch repo and are counted together below (DEV-10424).
   const foldersByConnectorAccountId = new Map<string, FolderRow[]>();
+  const scratchFolders: FolderRow[] = [];
   const desiredCountByFolderId = new Map<string, number>();
   for (const folder of folders) {
     if (!folder.connectorAccountId) {
-      desiredCountByFolderId.set(folder.id, 0);
+      scratchFolders.push(folder);
       continue;
     }
     const group = foldersByConnectorAccountId.get(folder.connectorAccountId) ?? [];
@@ -90,6 +91,30 @@ export async function recomputeRecordCountsForWorkbook(
     for (const folder of accountFolders) {
       // DataFolder.path is POSIX with a leading slash (e.g. "/Airtable/Table"); git folder
       // keys have none. Strip exactly one. A null path has no git location → 0.
+      const gitFolderPath = folder.path == null ? null : folder.path.replace(/^\//, '');
+      const count = gitFolderPath == null ? 0 : (countByGitFolderPath.get(gitFolderPath) ?? 0);
+      desiredCountByFolderId.set(folder.id, count);
+    }
+  }
+
+  // Count scratch (connector-less) folders from the per-workbook scratch repo (main branch).
+  if (scratchFolders.length > 0) {
+    let countByGitFolderPath = new Map<string, number>();
+    try {
+      const repoId = await scratchGit.resolveRepoPathForFolder(null, workbookId);
+      countByGitFolderPath = await scratchGit.countRecordFilesByFolder(repoId, MAIN_BRANCH);
+    } catch (error) {
+      // No scratch repo yet (never initialized) → count its folders as 0. Log unexpected failures.
+      if (!(error instanceof ScratchGitNotFoundError)) {
+        WSLogger.warn({
+          source: LOG_SOURCE,
+          message: 'Failed to count record files for scratch repo; treating its folders as 0',
+          workbookId,
+          error,
+        });
+      }
+    }
+    for (const folder of scratchFolders) {
       const gitFolderPath = folder.path == null ? null : folder.path.replace(/^\//, '');
       const count = gitFolderPath == null ? 0 : (countByGitFolderPath.get(gitFolderPath) ?? 0);
       desiredCountByFolderId.set(folder.id, count);
@@ -162,13 +187,18 @@ export class RecordCountService {
       where: { id: folderId },
       select: { id: true, workbookId: true, path: true, connectorAccountId: true, recordCount: true },
     });
-    if (!folder || !folder.connectorAccountId || folder.path == null) {
+    if (!folder || folder.path == null) {
       return;
     }
 
     let count = 0;
     try {
-      const repoId = await this.scratchGit.resolveConnectionRepoPath(folder.connectorAccountId);
+      // Folder-aware: connector folders resolve to the connector repo, scratch folders to the
+      // per-workbook scratch repo (DEV-10424). Both count on main.
+      const repoId = await this.scratchGit.resolveRepoPathForFolder(
+        folder.connectorAccountId,
+        folder.workbookId as WorkbookId,
+      );
       count = await this.scratchGit.countRecordFilesInFolder(repoId, folder.path.replace(/^\//, ''), MAIN_BRANCH);
     } catch (error) {
       if (!(error instanceof ScratchGitNotFoundError)) {

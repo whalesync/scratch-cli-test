@@ -51,3 +51,10 @@ export interface DataFolderGroup {
   service: Service | null;
   dataFolders: DataFolder[];
 }
+
+/**
+ * Name of the group that holds standalone, connector-less "scratch" folders (DEV-10424). Shared so
+ * the server (which emits the group) and the frontends (which sort it first and render it) agree on
+ * the literal string.
+ */
+export const SCRATCH_GROUP_NAME = 'Scratch';
