@@ -31,7 +31,7 @@ Source files are read in paginated batches from the dirty branch. Each batch is 
 
 For each batch:
 
-- **Fill sync caches** — If the table mapping has `recordMatching` configured, inserts match keys (the value of the matching field) into the `SyncMatchKeys` table for the source side. If there's no `recordMatching`, inserts `SyncRemoteIdMapping` entries directly with `null` destination (every source record will be a create).
+- **Fill sync caches** — If the table mapping has `recordMatching` configured, reduces each matching-field value to a [canonical match key](/server/src/sync/README.md#record-matching) (using the field's own extraction transformer, so matching is direction-independent) and inserts it into the `SyncMatchKeys` table for the source side. If there's no `recordMatching`, inserts `SyncRemoteIdMapping` entries directly with `null` destination (every source record will be a create).
 
 - **Collect foreign key values** — Scans column mappings for any `lookup_field` transformers. For each one, extracts the FK values from the source records and accumulates them in a `Map<DataFolderId, Set<string>>` keyed by the referenced folder. These values are used later to pre-fetch referenced records.
 

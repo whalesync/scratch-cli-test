@@ -313,24 +313,18 @@ export type DestinationRecordClassification = 'matched' | 'unmatchedWithMatchKey
  * built in Pass 1. Pure — no Nest deps. See `DestinationRecordClassification`
  * for bucket semantics.
  *
- * The match-key normalization rules mirror `insertMatchKeys` exactly: only
- * string or number values count, and they are `String()`-coerced + trimmed.
- * Anything else (null, undefined, arrays, objects, booleans, whitespace-only
- * strings) is treated as no match key — preventing accidental matches via a
- * coerced object representation like `"[object Object]"`.
+ * Takes the destination record's already-canonicalized match key
+ * (`deriveCanonicalMatchKey`), or `null` when the field can't serve as a match
+ * key for this record (non-primitive with no extraction transformer, or
+ * empty/missing). Both sides are canonicalized by the same reducer, so equal
+ * keys here mean the same `matchId` the Pass 2 join compared.
  */
 export function classifyDestinationRecord(
-  destRecord: SyncRecord,
+  destinationMatchKey: string | null,
   sourceMatchKeySet: ReadonlySet<string>,
-  destinationMatchColumnId: string,
 ): DestinationRecordClassification {
-  const raw = get(destRecord.fields, destinationMatchColumnId);
-  if (typeof raw !== 'string' && typeof raw !== 'number') {
+  if (destinationMatchKey === null) {
     return 'unmatchedWithoutMatchKey';
   }
-  const key = String(raw).trim();
-  if (key === '') {
-    return 'unmatchedWithoutMatchKey';
-  }
-  return sourceMatchKeySet.has(key) ? 'matched' : 'unmatchedWithMatchKey';
+  return sourceMatchKeySet.has(destinationMatchKey) ? 'matched' : 'unmatchedWithMatchKey';
 }

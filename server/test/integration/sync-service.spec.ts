@@ -1486,11 +1486,35 @@ describe('SyncService - syncTableMapping', () => {
     expect(scratchGitService.commitFilesToBranch).not.toHaveBeenCalled();
   });
 
-  it('should apply DATA-phase transformer to source match key values for record matching', async () => {
-    // Source records have a complex object in the match field (e.g. Notion rich text blocks).
-    // Without a transformer, the raw object value would fail the type check and the record
-    // would be excluded from matching. A JSONPath transformer on the match column should
-    // extract the scalar value so that matching works correctly.
+  it('matches an object-valued match field via its own extraction transformer', async () => {
+    // The source match field `title` holds a complex object (e.g. Notion rich-text blocks).
+    // Record matching reduces each side to a canonical primitive using the FIELD's own
+    // connector-declared extraction transformer (x-scratch-suggested-transformer) — never the
+    // column-mapping copy transformers — so an object-valued field still matches a plain
+    // destination value. Here the source schema declares a JSONPath extractor on `title`.
+    gitSchemasByPath['/src'] = {
+      idColumnRemoteId: 'id',
+      schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: {
+            type: 'array',
+            'x-scratch-suggested-transformer': { type: 'jsonpath', options: { expression: '$[0].text.content' } },
+          },
+          name: { type: 'string' },
+        },
+      },
+    };
+    // Folders carry a connectorService — the reducer needs it to run the extraction transformer.
+    (dataFolderService.findOne as jest.Mock).mockImplementation((folderId: DataFolderId) =>
+      Promise.resolve(
+        folderId === destFolderId
+          ? { path: '/dest', connectorService: 'POSTGRES' }
+          : { path: '/src', connectorService: 'POSTGRES' },
+      ),
+    );
+
     const sourceFiles = [
       {
         folderId: sourceFolderId,
@@ -1539,11 +1563,10 @@ describe('SyncService - syncTableMapping', () => {
       return Promise.resolve([]);
     });
 
-    // Decoy mapping: same sourceColumnId as the match column but different destinationColumnId
-    // and no transformer. Placed first to verify that insertSourceMatchKeys selects the column
-    // mapping matching both source AND destination (not just the first source match).
-    // Without the fix, the code picks this decoy (no jsonpath transformer), so the raw rich-text
-    // object is used as the match key, and John fails to match his destination record.
+    // The `title -> slug` copy still uses its own JSONPath transformer to write the scalar slug.
+    // Matching is independent of these copy mappings — it's driven by the schema's extraction
+    // transformer above — so the first `title -> raw_title` copy (no transformer) is irrelevant
+    // to whether John matches.
     const columnMappings: ColumnMapping[] = [
       { sourceColumnId: 'title', destinationColumnId: 'raw_title' },
       {
@@ -1586,6 +1609,84 @@ describe('SyncService - syncTableMapping', () => {
     // Verify new files (jane, bob) use generated paths
     const newFiles = writtenFiles.filter((f) => f.path.startsWith('dest/scratch_pending_publish_'));
     expect(newFiles).toHaveLength(2);
+  });
+
+  it('matches when the DESTINATION match field is object-valued (reverse direction)', async () => {
+    // The exact bug this feature fixes: a plain source value (e.g. Postgres string) syncing
+    // into a destination whose match field is an object envelope (e.g. Notion). Matching
+    // reduces the DESTINATION side through ITS field's extraction transformer too, so the two
+    // sides meet on the same canonical key. Before the fix the destination object was compared
+    // raw and never matched.
+    gitSchemasByPath['/dest'] = {
+      idColumnRemoteId: 'id',
+      schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          code: {
+            type: 'object',
+            'x-scratch-suggested-transformer': { type: 'jsonpath', options: { expression: '$.value' } },
+          },
+          name: { type: 'string' },
+        },
+      },
+    };
+    (dataFolderService.findOne as jest.Mock).mockImplementation((folderId: DataFolderId) =>
+      Promise.resolve(
+        folderId === destFolderId
+          ? { path: '/dest', connectorService: 'NOTION' }
+          : { path: '/src', connectorService: 'POSTGRES' },
+      ),
+    );
+
+    // Source match field `id` is a plain string.
+    const sourceFiles = [
+      { folderId: sourceFolderId, path: 'src/a.json', content: '{"id": "shared-1", "name": "Alice"}' },
+      { folderId: sourceFolderId, path: 'src/b.json', content: '{"id": "shared-2", "name": "Bob"}' },
+    ];
+    // Destination match field `code` is an object; the first reduces to "shared-1" (a match),
+    // the second to "shared-9" (no source counterpart).
+    const destFiles = [
+      {
+        folderId: destFolderId,
+        path: 'dest/alice.json',
+        content: '{"id": "dst1", "code": {"value": "shared-1"}, "name": "Old Alice"}',
+      },
+      {
+        folderId: destFolderId,
+        path: 'dest/other.json',
+        content: '{"id": "dst2", "code": {"value": "shared-9"}, "name": "Unrelated"}',
+      },
+    ];
+
+    (dataFolderService.getAllFileContentsByFolderId as jest.Mock).mockImplementation((_workbookIdArg, folderIdArg) => {
+      if (folderIdArg === sourceFolderId) return Promise.resolve(sourceFiles);
+      if (folderIdArg === destFolderId) return Promise.resolve(destFiles);
+      return Promise.resolve([]);
+    });
+
+    const tableMapping: TableMapping = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: [{ sourceColumnId: 'name', destinationColumnId: 'name' }],
+      recordMatching: { sourceColumnId: 'id', destinationColumnId: 'code' },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    // Alice matched her destination record (despite its object-valued match field);
+    // Bob has no destination counterpart and is created.
+    expect(result.errors).toHaveLength(0);
+    expect(result.recordsUpdated).toBe(1);
+    expect(result.recordsCreated).toBe(1);
+
+    const aliceFile = writtenFiles.find((f) => f.path === 'dest/alice.json');
+    expect(aliceFile).toBeDefined();
+    const aliceContent = JSON.parse(aliceFile!.content) as Record<string, unknown>;
+    expect(aliceContent.name).toBe('Alice');
+    expect(aliceContent.id).toBe('dst1');
+    // The object-valued match field is preserved verbatim — matching never rewrites it.
+    expect(aliceContent.code).toEqual({ value: 'shared-1' });
   });
 });
 

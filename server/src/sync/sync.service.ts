@@ -49,6 +49,7 @@ import { BaseJsonTableSpec, IdPath, idPath, readRecordIdAsString } from 'src/rem
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { deriveCanonicalMatchKey, getFieldUnpackTransformer } from 'src/sync/record-matching';
 import { findConstantTypeMismatches, getSchemaAtPath, validateSchemaMapping } from 'src/sync/schema-validator';
 import {
   applyColumnMappings,
@@ -67,7 +68,6 @@ import {
 import {
   applyTransformerPipeline,
   createLookupTools,
-  getColumnMappingPhase,
   getTransformerConfigs,
   LookupTools,
   SyncPhase,
@@ -1188,7 +1188,7 @@ export class SyncService {
 
       if (phase === 'DATA') {
         // Only need to fill the caches in the first phase
-        await this.fillSyncCachesBatch(syncId, tableMapping, [], batchRecords);
+        await this.fillSyncCachesBatch(syncId, tableMapping, [], batchRecords, matchKeyTransformContext);
       }
 
       destCursor = page.nextCursor;
@@ -1477,9 +1477,23 @@ export class SyncService {
           policy: tableMapping.unmatchedDestinationPolicy,
         });
 
+        // Resolve the destination field's extraction transformer once; reused to
+        // canonicalize every destination record's match key the same way Pass 1
+        // built the stored keys (so classification stays consistent with the join).
+        const destinationMatchKeyUnpackTransformer = getFieldUnpackTransformer(destinationTableSpec, matchColPath);
+
         const policy = tableMapping.unmatchedDestinationPolicy;
         for (const [destPath, destRecord] of destinationRecordsByPath) {
-          const classification = classifyDestinationRecord(destRecord, sourceMatchKeySet, matchColPath);
+          const destinationMatchKey = await deriveCanonicalMatchKey(
+            {
+              record: destRecord,
+              fieldPath: matchColPath,
+              tableSpec: destinationTableSpec,
+              service: destinationFolder.connectorService as Service,
+            },
+            destinationMatchKeyUnpackTransformer,
+          );
+          const classification = classifyDestinationRecord(destinationMatchKey, sourceMatchKeySet);
           if (classification === 'matched') {
             continue;
           }
@@ -1669,7 +1683,7 @@ export class SyncService {
       await this.insertSourceMatchKeys(syncId, tableMapping, sourceRecords, transformContext);
     }
     if (destinationRecords.length > 0) {
-      await this.insertDestinationMatchKeys(syncId, tableMapping, destinationRecords);
+      await this.insertDestinationMatchKeys(syncId, tableMapping, destinationRecords, transformContext);
     }
   }
 
@@ -1960,36 +1974,56 @@ export class SyncService {
   // ============================================================================
 
   /**
-   * Inserts match keys for a batch of SyncRecords.
-   * Extracts the value from the specified column and stores it as the matchId,
-   * along with the record's remote ID for efficient lookup later.
+   * Inserts canonical match keys for a batch of SyncRecords on one side.
+   *
+   * Each record's value at `matchColumnId` is reduced to a canonical primitive by
+   * `deriveCanonicalMatchKey` — using the field's OWN connector-declared extraction
+   * transformer (never the sync's copy transformers), so the same logical value
+   * reduces to the same `matchId` regardless of which side it came from. Records
+   * whose value can't be reduced (non-primitive with no extraction transformer,
+   * empty, or missing) are skipped.
    *
    * @param syncId - The sync ID
    * @param dataFolderId - The DataFolder ID (source or destination)
    * @param records - The SyncRecords to extract match keys from
    * @param matchColumnId - The column ID to extract match values from
+   * @param fieldReduction - The schema + service for this side, used to resolve and
+   *   apply the field's extraction transformer. Omitted (or specless) → primitive-only.
    */
   private async insertMatchKeys(
     syncId: SyncId,
     dataFolderId: DataFolderId,
     records: SyncRecord[],
     matchColumnId: string,
+    fieldReduction?: { tableSpec: BaseJsonTableSpec | null; service: Service },
   ): Promise<void> {
-    const matchKeys = records
-      .map((record) => {
-        const matchValue = get(record.fields, matchColumnId);
-        if ((typeof matchValue !== 'string' && typeof matchValue !== 'number') || String(matchValue).trim() === '') {
-          return null;
-        }
-        return {
-          syncId,
-          dataFolderId,
-          matchId: String(matchValue),
-          remoteId: record.id,
-          filePath: record.filePath,
-        };
-      })
-      .filter((key): key is NonNullable<typeof key> => key !== null);
+    const suggestedUnpackTransformer = fieldReduction
+      ? getFieldUnpackTransformer(fieldReduction.tableSpec, matchColumnId)
+      : undefined;
+
+    const matchKeys: Array<{
+      syncId: SyncId;
+      dataFolderId: DataFolderId;
+      matchId: string;
+      remoteId: string;
+      filePath: string;
+    }> = [];
+
+    for (const record of records) {
+      const matchId = await deriveCanonicalMatchKey(
+        {
+          record,
+          fieldPath: matchColumnId,
+          tableSpec: fieldReduction?.tableSpec ?? null,
+          service: fieldReduction?.service,
+        },
+        suggestedUnpackTransformer,
+      );
+      if (matchId === null) {
+        continue;
+      }
+      matchKeys.push({ syncId, dataFolderId, matchId, remoteId: record.id, filePath: record.filePath });
+    }
 
     if (matchKeys.length === 0) {
       return;
@@ -2014,139 +2048,15 @@ export class SyncService {
     if (!tableMapping.recordMatching) {
       throw new Error('TableMapping must have recordMatching configured');
     }
-
-    // Check if the source match column has DATA-phase transformers configured.
-    // The match-key column must be a `kind: 'column'` source with `when: 'matched'`
-    // (or undefined); constant sources can't carry the match value and are excluded
-    // by save-time validation (D10/OV8).
-    if (transformContext) {
-      const matchColumnId = tableMapping.recordMatching.sourceColumnId;
-      const matchDestColumnId = tableMapping.recordMatching.destinationColumnId;
-      const matchMappingV2 = tableMapping.columnMappings?.find(
-        (m) =>
-          (m.when ?? 'matched') === 'matched' &&
-          m.source.kind === 'column' &&
-          m.source.columnId === matchColumnId &&
-          m.destinationColumnId === matchDestColumnId,
-      );
-      const matchMapping = matchMappingV2 ? v2ColumnAsV1(matchMappingV2) : null;
-      if (matchMapping) {
-        const allConfigs = getTransformerConfigs(matchMapping);
-        const dataConfigs = allConfigs.filter((c) => {
-          // Build a temporary mapping with just this config to check its phase
-          const tempMapping: ColumnMapping = { ...matchMapping, transformer: c, transformers: undefined };
-          return getColumnMappingPhase(tempMapping) === 'DATA';
-        });
-
-        if (dataConfigs.length > 0) {
-          await this.insertTransformedMatchKeys(syncId, tableMapping, records, dataConfigs, transformContext);
-          return;
-        }
-      }
-    }
-
     await this.insertMatchKeys(
       syncId,
       tableMapping.sourceDataFolderId,
       records,
       tableMapping.recordMatching.sourceColumnId,
+      transformContext
+        ? { tableSpec: transformContext.sourceTableSpec, service: transformContext.sourceService }
+        : undefined,
     );
-  }
-
-  /**
-   * Inserts match keys for source records after applying DATA-phase transformers
-   * from the matching column's ColumnMapping.
-   */
-  private async insertTransformedMatchKeys(
-    syncId: SyncId,
-    tableMapping: TableMappingV2,
-    records: SyncRecord[],
-    transformerConfigs: TransformerConfig[],
-    ctx: MatchKeyTransformContext,
-  ): Promise<void> {
-    const recordMatching = tableMapping.recordMatching;
-    if (!recordMatching) {
-      throw new Error(
-        `insertTransformedMatchKeys called for table mapping (sync ${syncId}) without recordMatching configured`,
-      );
-    }
-    const matchColumnId = recordMatching.sourceColumnId;
-    const destColumnId = recordMatching.destinationColumnId;
-
-    const noopLookupTools: LookupTools = {
-      getDestinationMappingForSourceFk: () => Promise.resolve(null),
-      lookupFieldFromFkRecord: () => Promise.resolve(undefined),
-      getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Not available during match key insertion')),
-      matchDestinationAssetByHash: () => Promise.resolve([]),
-    };
-
-    const matchKeys: Array<{
-      syncId: SyncId;
-      dataFolderId: DataFolderId;
-      matchId: string;
-      remoteId: string;
-      filePath: string;
-    }> = [];
-
-    for (const record of records) {
-      const rawValue = get(record.fields, matchColumnId);
-
-      try {
-        const result = await applyTransformerPipeline(transformerConfigs, rawValue, {
-          sourceRecord: record,
-          sourceFieldPath: matchColumnId,
-          sourceTableSpec: ctx.sourceTableSpec,
-          sourceService: ctx.sourceService,
-          destinationFieldPath: destColumnId,
-          destinationTableSpec: ctx.destinationTableSpec,
-          destinationService: ctx.destinationService,
-          lookupTools: noopLookupTools,
-          phase: 'DATA',
-        });
-
-        if (!result.success) {
-          WSLogger.warn({
-            source: 'SyncService.insertTransformedMatchKeys',
-            message: `Transformer failed for match key, skipping record`,
-            syncId,
-            remoteId: record.id,
-            error: result.error,
-          });
-          continue;
-        }
-
-        const matchValue = result.value;
-        if ((typeof matchValue !== 'string' && typeof matchValue !== 'number') || String(matchValue).trim() === '') {
-          continue;
-        }
-
-        matchKeys.push({
-          syncId,
-          dataFolderId: tableMapping.sourceDataFolderId,
-          matchId: String(matchValue),
-          remoteId: record.id,
-          filePath: record.filePath,
-        });
-      } catch (err) {
-        WSLogger.warn({
-          source: 'SyncService.insertTransformedMatchKeys',
-          message: `Unexpected error transforming match key, skipping record`,
-          syncId,
-          remoteId: record.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        continue;
-      }
-    }
-
-    if (matchKeys.length === 0) {
-      return;
-    }
-
-    await this.db.client.syncMatchKeys.createMany({
-      data: matchKeys,
-      skipDuplicates: true,
-    });
   }
 
   /**
@@ -2156,6 +2066,7 @@ export class SyncService {
     syncId: SyncId,
     tableMapping: TableMappingV2,
     records: SyncRecord[],
+    transformContext?: MatchKeyTransformContext,
   ): Promise<void> {
     if (!tableMapping.recordMatching) {
       throw new Error('TableMapping must have recordMatching configured');
@@ -2165,6 +2076,9 @@ export class SyncService {
       tableMapping.destinationDataFolderId,
       records,
       tableMapping.recordMatching.destinationColumnId,
+      transformContext
+        ? { tableSpec: transformContext.destinationTableSpec, service: transformContext.destinationService }
+        : undefined,
     );
   }
 
@@ -2297,18 +2211,28 @@ export class SyncService {
       });
     }
 
-    // Validate record matching field if configured — use the transformed value to match sync behaviour
+    // Validate the record matching field if configured. Matching reduces the
+    // source value to a canonical primitive via the source field's OWN extraction
+    // transformer (not the copy transformers applied above), so mirror that here
+    // rather than validating the copy-transformed value.
     let recordMatchingWarning: string | undefined;
     const recordMatching = body.recordMatching;
     if (recordMatching) {
-      const matchField = fields.find(
-        (f) =>
-          f.sourceField === recordMatching.sourceColumnId && f.destinationField === recordMatching.destinationColumnId,
+      const sourceMatchKey = await deriveCanonicalMatchKey(
+        {
+          record,
+          fieldPath: recordMatching.sourceColumnId,
+          tableSpec: sourceTableSpec,
+          service: sourceFolder.connectorService as Service,
+        },
+        getFieldUnpackTransformer(sourceTableSpec, recordMatching.sourceColumnId),
       );
-      const sourceMatchValue = matchField
-        ? matchField.transformedValue
-        : get(record.fields, recordMatching.sourceColumnId);
-      recordMatchingWarning = validateMatchFieldValue(sourceMatchValue, recordMatching.sourceColumnId, 'source');
+      if (sourceMatchKey === null) {
+        recordMatchingWarning = describeUnusableMatchValue(
+          get(record.fields, recordMatching.sourceColumnId),
+          recordMatching.sourceColumnId,
+        );
+      }
     }
 
     return { recordId: record.id, fields, recordMatchingWarning };
@@ -2534,20 +2458,18 @@ function serializeRecord(fields: Record<string, unknown>): string {
 }
 
 /**
- * Validates that a match field value is suitable for record matching.
- * Returns a warning string if the value is invalid, or undefined if it's valid.
+ * Explains why a source match-field value can't be used for record matching —
+ * called only when `deriveCanonicalMatchKey` has already returned null for it.
+ * Mirrors the reducer's rejection cases: missing, empty, or a non-primitive shape
+ * with no extraction transformer to pull a plain value out of.
  */
-function validateMatchFieldValue(
-  value: unknown,
-  fieldPath: string,
-  side: 'source' | 'destination',
-): string | undefined {
-  if (value === undefined || value === null) {
-    return `${side === 'source' ? 'Source' : 'Destination'} record is missing the record matching field "${fieldPath}". This record will not be matched during sync.`;
+function describeUnusableMatchValue(rawValue: unknown, fieldPath: string): string {
+  const suffix = 'This record will not be matched during sync.';
+  if (rawValue === undefined || rawValue === null) {
+    return `Source record is missing the record matching field "${fieldPath}". ${suffix}`;
   }
-  if ((typeof value !== 'string' && typeof value !== 'number') || String(value).trim() === '') {
-    const typeDesc = typeof value === 'string' ? 'empty' : `of type ${typeof value}`;
-    return `${side === 'source' ? 'Source' : 'Destination'} record has an invalid value (${typeDesc}) for the record matching field "${fieldPath}". This record will not be matched during sync.`;
+  if (typeof rawValue === 'string' && rawValue.trim() === '') {
+    return `Source record has an empty value for the record matching field "${fieldPath}". ${suffix}`;
   }
-  return undefined;
+  return `Source record's value for the record matching field "${fieldPath}" can't be reduced to a plain text or number for matching. ${suffix}`;
 }

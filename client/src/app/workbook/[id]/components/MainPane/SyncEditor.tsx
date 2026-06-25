@@ -49,7 +49,12 @@ import type {
   TransformerConfig,
   WorkbookId,
 } from '@spinner/shared-types';
-import { getTransformerLabel, pickMappingTransformers, ScheduleAction } from '@spinner/shared-types';
+import {
+  getMatchFieldCompatibility,
+  getTransformerLabel,
+  pickMappingTransformers,
+  ScheduleAction,
+} from '@spinner/shared-types';
 import { getHumanReadableErrorMessage } from '@spinner/shared-types/api-client';
 import CodeMirror from '@uiw/react-codemirror';
 import {
@@ -1544,11 +1549,29 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                               placeholder="Select matching pair"
                               data={activePair.fieldMappings
                                 .filter((m) => m.sourceField && m.destField)
-                                .reduce<{ value: string; label: string }[]>((acc, m) => {
+                                .reduce<{ value: string; label: string; disabled?: boolean }[]>((acc, m) => {
                                   const value = `${m.sourceField}::${m.destField}`;
-                                  if (!acc.some((item) => item.value === value)) {
-                                    acc.push({ value, label: `${m.sourceField} <-> ${m.destField}` });
+                                  if (acc.some((item) => item.value === value)) {
+                                    return acc;
                                   }
+                                  // Matching reduces each side to a canonical primitive via the field's own
+                                  // extraction transformer; a field with no extractable primitive can't be a
+                                  // match key. Only disable a side once we positively know it's incompatible —
+                                  // an unloaded schema (missing hints) must not disable the option.
+                                  const sourceHints = schemaCache[activePair.sourceId]?.find(
+                                    (f) => f.path === m.sourceField,
+                                  );
+                                  const destHints = schemaCache[activePair.destId]?.find((f) => f.path === m.destField);
+                                  const incompatible =
+                                    (!!sourceHints && !getMatchFieldCompatibility(sourceHints).usable) ||
+                                    (!!destHints && !getMatchFieldCompatibility(destHints).usable);
+                                  acc.push({
+                                    value,
+                                    label: incompatible
+                                      ? `${m.sourceField} <-> ${m.destField} — can't be used to match records`
+                                      : `${m.sourceField} <-> ${m.destField}`,
+                                    disabled: incompatible,
+                                  });
                                   return acc;
                                 }, [])}
                               value={

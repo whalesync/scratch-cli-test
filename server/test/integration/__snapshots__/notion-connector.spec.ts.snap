@@ -1,4 +1,4 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
 exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures the v3 fetchJsonTableSpec shape as the upgrade contract 1`] = `
 {

@@ -53,6 +53,37 @@ All reads flow through **`SyncService.getSync()` / `getMappings()`**, which retu
 | `SyncRemoteIdMapping`  | Persists source→destination record ID mappings                                                                   |
 | `SyncForeignKeyRecord` | Caches referenced records for `lookup_field` transformers (keyed by `syncId`, `dataFolderId`, `foreignKeyValue`) |
 
+## Record matching
+
+A sync that updates existing destination records (rather than only creating new ones) needs to know **which destination record corresponds to which source record**. That correspondence is configured per table mapping as `recordMatching: { sourceColumnId, destinationColumnId }` — the **record matching field** (a.k.a. match key). Two records match when their match-field values are equal.
+
+### Canonical match keys (direction-independent)
+
+The comparison can only compare **primitives** (string/number), but a connector may store a field's value as a non-primitive envelope. The canonical example is a Notion `rich_text` field, whose value is `{ type: 'rich_text', rich_text: [{ text: { content: '…' }, … }] }`, not a bare string.
+
+So each side's match value is first reduced to a **canonical match key** by `deriveCanonicalMatchKey` (`record-matching.ts`). The rule is applied **independently to each side**, using the field's _own_ connector-declared extraction transformer — **never the sync's copy transformers**:
+
+1. **Primitive** (string/number) → use it directly (`String(v).trim()`).
+2. **Non-primitive with an extraction transformer** → apply the field's `x-scratch-suggested-transformer` (the "unpack" hint, e.g. a Notion `rich_text` array → plain text), then require a primitive.
+3. **Neither** → the field can't serve as a match key for that record (warn + skip).
+
+This is deliberately **direction-independent**. Earlier the source value was run through the column-mapping _copy_ transformers (which reshape a value _into_ the other side's shape) while the destination was compared raw — so matching only worked one way. By reducing each side through its own extraction transformer instead, a plain Postgres string and a Notion `rich_text` envelope wrapping the same string both reduce to the same key, and matching works in **both** directions.
+
+> Why not the copy transformers? They are intentionally direction-specific (Notion→Postgres unpacks; Postgres→Notion packs the string _into_ an object, which can't be a key). Matching needs the opposite: a stable canonical primitive per field, regardless of copy direction.
+
+### Where it runs (three call sites, one reducer)
+
+All three derive keys through the same `deriveCanonicalMatchKey`, so they always agree:
+
+- **Source keys** — `insertSourceMatchKeys` → `SyncMatchKeys` (source rows).
+- **Destination keys** — `insertDestinationMatchKeys` → `SyncMatchKeys` (dest rows).
+- **The join** — `buildRecordMatchingMappings` self-joins `SyncMatchKeys` on `matchId`, producing the real source↔destination correspondence in `SyncRemoteIdMapping`.
+- **Pass 3 classification** — `classifyDestinationRecord` takes a record's already-derived canonical key and checks membership in the source key set.
+
+### Compatibility in the editor
+
+The sync editor disables a candidate match field whose value is non-primitive with no extraction transformer, using the shared `getMatchFieldCompatibility(FieldTransformHints)` helper in `@spinner/shared-types` (the static, schema-only mirror of the runtime reducer). It is a _necessary_ check, not _sufficient_ — a field may declare an extraction transformer whose runtime output is still non-primitive, which the executor catches and skips at sync time.
+
 ## Sync Execution Flow
 
 When `POST /workbooks/:workbookId/syncs/:syncId/run` is called a background job is enqueued (BullMQ). The job calls `syncTableMapping(tableMapping, phase)` once per **phase**:
@@ -81,7 +112,8 @@ syncTableMapping(tableMapping, phase)
 ├─ Pass 3 — unmatched-destination write   [DATA phase only; gated, see below]
 │    sourceMatchKeySet ← SELECT matchId FROM SyncMatchKeys WHERE dataFolderId = <source>
 │    for each (path, record) in destinationRecordsByPath:
-│      classifyDestinationRecord(record, sourceMatchKeySet, matchCol):
+│      key ← deriveCanonicalMatchKey(record, destMatchCol)   (same reducer as Pass 1)
+│      classifyDestinationRecord(key, sourceMatchKeySet):
 │        matched                  → skip (Pass 2 handled it)
 │        unmatchedWithMatchKey    → if policy.withMatchKey === 'apply':
 │                                     applyColumnMappings(bucket='unmatched', sourceFields=null)
@@ -92,7 +124,7 @@ syncTableMapping(tableMapping, phase)
 
 ### Pass 1: build caches
 
-Files are read and parsed from both source and destination DataFolders into `ConnectorRecord` objects. Match-column values are inserted into `SyncMatchKeys` for both sides; a SQL LEFT JOIN then creates `SyncRemoteIdMapping` entries for all source records (null destination for unmatched). For `lookup_field` transformers, records from each referenced DataFolder are fetched and cached in `SyncForeignKeyRecord` (grouped by referenced folder so each `(dataFolderId, foreignKeyValue)` pair is stored once). The destination records are also retained in an in-memory `destinationRecordsByPath` map for the lifetime of the call — Pass 3 reuses it with no extra query.
+Files are read and parsed from both source and destination DataFolders into `ConnectorRecord` objects. Match-column values are reduced to **canonical match keys** (see [Record matching](#record-matching)) and inserted into `SyncMatchKeys` for both sides; a SQL LEFT JOIN then creates `SyncRemoteIdMapping` entries for all source records (null destination for unmatched). For `lookup_field` transformers, records from each referenced DataFolder are fetched and cached in `SyncForeignKeyRecord` (grouped by referenced folder so each `(dataFolderId, foreignKeyValue)` pair is stored once). The destination records are also retained in an in-memory `destinationRecordsByPath` map for the lifetime of the call — Pass 3 reuses it with no extra query.
 
 ### Pass 2: source-driven write
 
@@ -117,7 +149,7 @@ For each destination record, `classifyDestinationRecord(record, sourceMatchKeySe
 
 - **`matched`** — its match key is in the source set → skipped (Pass 2 already wrote it).
 - **`unmatchedWithMatchKey`** — match-key field populated but no source counterpart → typically a record this sync previously wrote whose source was deleted. Acted on when `policy.withMatchKey === 'apply'`.
-- **`unmatchedWithoutMatchKey`** — match-key field empty/null/whitespace (or a non-string/number value) → hand-authored or pre-existing content this sync never managed. Acted on when `policy.withoutMatchKey === 'apply'`.
+- **`unmatchedWithoutMatchKey`** — no canonical match key (empty/null/whitespace, or a non-primitive value with no extraction transformer; see [Record matching](#record-matching)) → hand-authored or pre-existing content this sync never managed. Acted on when `policy.withoutMatchKey === 'apply'`.
 
 When acted on, `applyColumnMappings({ bucket: 'unmatched', sourceFields: null, ... })` applies the `when: 'unmatched'` / `when: 'always'` rules (the archive case writes `archived: true`). The `isEqual` no-op skip is inherited, so unchanged records produce no write. Pass 3 file changes are appended to the same batch as Pass 2 and committed together.
 
@@ -142,7 +174,7 @@ On success, the `Sync` record's `lastSyncTime` is updated. The worker emits a Po
 The pass logic above leans on three pure, Nest-free helpers in [sync-execution.ts](sync-execution.ts) (easy to unit-test, no DB):
 
 - `transformV1ToV2(mapping)` — re-exported from shared-types; applied at the executor entry.
-- `classifyDestinationRecord(record, sourceMatchKeySet, matchCol)` — the three-way bucket classifier above.
+- `classifyDestinationRecord(canonicalMatchKey, sourceMatchKeySet)` — the three-way bucket classifier above (takes the record's already-derived canonical key; `null` → `unmatchedWithoutMatchKey`).
 - `applyColumnMappings({ bucket, sourceFields, baseFields, mappings, ... })` — filters mappings to the bucket-applicable subset (`when` ∈ `{bucket, 'always'}`), dispatches `kind: 'column'` (via `transformRecordAsync`) vs `kind: 'constant'` (literal write), and returns the merged fields.
 
 ## Unmatched-record policies
