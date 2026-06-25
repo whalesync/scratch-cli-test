@@ -82,6 +82,20 @@ const CONTACTS_PAGE_LIMIT = 100;
 const OPPORTUNITIES_PAGE_LIMIT = 100;
 const OBJECT_RECORDS_PAGE_LIMIT = 100;
 
+/**
+ * How many contacts' sub-entities (notes/tasks/appointments) to deep-fetch at
+ * once when a Contacts advanced-settings toggle is enabled. Each enabled
+ * sub-entity costs one extra request per contact, so a naive one-contact-at-a-time
+ * pass turns a 100-contact page into 100+ serial round-trips and crawls
+ * (DEV-10499: a 1,300-contact pull stalled a live onboarding). Fetching several
+ * contacts concurrently keeps the pull moving; the shared RateLimiter throttles
+ * the actual request rate (HighLevel allows 100 req / 10s ≈ 10 req/s) and retries
+ * 429s, so this constant only bounds how many requests are queued in flight, never
+ * the request rate itself. Sized to the per-second budget so we comfortably
+ * saturate it without piling up unbounded in-flight work.
+ */
+const CONTACT_SUB_ENTITY_DEEP_FETCH_CONCURRENCY = 10;
+
 /** Reason shown in the table picker for the (not-yet-implemented) write actions. */
 const WRITES_DISABLED_REASON = 'Publishing is not implemented yet — HighLevel is read-only for now.';
 
@@ -94,6 +108,48 @@ interface GoHighLevelContactPullOptions extends PullRecordFilesOptions {
   includeNotes?: boolean;
   includeTasks?: boolean;
   includeAppointments?: boolean;
+}
+
+/**
+ * Map an async function over `items` with at most `maxConcurrentTasks` running at
+ * once, returning the results in input order and rejecting with the first error
+ * encountered. On error, workers stop pulling new items and any already-in-flight
+ * tasks settle first (no unhandled rejections), then the first error is thrown —
+ * mirroring the fail-fast semantics of the previous sequential `await` loop while
+ * fanning the work out. Used to deep-fetch many contacts' sub-entities at once
+ * instead of one contact at a time (DEV-10499).
+ */
+export async function mapWithBoundedConcurrency<Item, Result>(
+  items: Item[],
+  maxConcurrentTasks: number,
+  mapItemToResult: (item: Item, index: number) => Promise<Result>,
+): Promise<Result[]> {
+  const resultsInInputOrder = new Array<Result>(items.length);
+  let nextItemIndexToProcess = 0;
+  let firstErrorEncountered: unknown;
+  let hasErrorBeenEncountered = false;
+
+  const runWorker = async (): Promise<void> => {
+    while (!hasErrorBeenEncountered) {
+      const currentItemIndex = nextItemIndexToProcess;
+      nextItemIndexToProcess += 1;
+      if (currentItemIndex >= items.length) return;
+      try {
+        resultsInInputOrder[currentItemIndex] = await mapItemToResult(items[currentItemIndex], currentItemIndex);
+      } catch (error) {
+        if (!hasErrorBeenEncountered) {
+          hasErrorBeenEncountered = true;
+          firstErrorEncountered = error;
+        }
+        return;
+      }
+    }
+  };
+
+  const workerCount = Math.min(maxConcurrentTasks, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  if (hasErrorBeenEncountered) throw firstErrorEncountered;
+  return resultsInInputOrder;
 }
 
 /**
@@ -164,21 +220,24 @@ export class GoHighLevelConnector extends Connector {
       key: 'includeNotes',
       type: 'boolean',
       label: 'Include contact notes',
-      description: "Fetch and embed each contact's notes. Slower — one extra request per contact.",
+      description:
+        "Fetch and embed each contact's notes. Slower — one extra request per contact (fetched in parallel).",
       forTableWsIds: [CONTACTS_TABLE_WS_ID],
     },
     {
       key: 'includeTasks',
       type: 'boolean',
       label: 'Include contact tasks',
-      description: "Fetch and embed each contact's tasks. Slower — one extra request per contact.",
+      description:
+        "Fetch and embed each contact's tasks. Slower — one extra request per contact (fetched in parallel).",
       forTableWsIds: [CONTACTS_TABLE_WS_ID],
     },
     {
       key: 'includeAppointments',
       type: 'boolean',
       label: 'Include contact appointments',
-      description: "Fetch and embed each contact's appointments. Slower — one extra request per contact.",
+      description:
+        "Fetch and embed each contact's appointments. Slower — one extra request per contact (fetched in parallel).",
       forTableWsIds: [CONTACTS_TABLE_WS_ID],
     },
   ];
@@ -595,14 +654,18 @@ export class GoHighLevelConnector extends Connector {
     const { idToShortKey } = this.buildCustomFieldKeyMaps(await this.client.getContactCustomFieldDefinitions());
 
     for await (const page of this.client.searchContacts(CONTACTS_PAGE_LIMIT, resumeSearchAfter)) {
-      const files: ConnectorFile[] = [];
-      for (const contact of page.contacts) {
+      const files: ConnectorFile[] = page.contacts.map((contact) => {
         const record = this.stripPaginationCursor(contact);
         this.reshapeCustomFieldsArrayToObject(record, idToShortKey, 'value');
-        if (deepFetch) {
-          await this.attachContactSubEntities(record, includeNotes, includeTasks, includeAppointments);
-        }
-        files.push(record);
+        return record;
+      });
+      // Deep-fetch the opted-in sub-entities for the whole page concurrently
+      // rather than one contact at a time — see DEV-10499. The RateLimiter caps
+      // the real request rate, so this just keeps the request pipe full.
+      if (deepFetch) {
+        await mapWithBoundedConcurrency(files, CONTACT_SUB_ENTITY_DEEP_FETCH_CONCURRENCY, (record) =>
+          this.attachContactSubEntities(record, includeNotes, includeTasks, includeAppointments),
+        );
       }
       const connectorProgress: JsonSafeObject = page.searchAfter ? { searchAfter: page.searchAfter } : {};
       await callback({ files, connectorProgress });
@@ -610,8 +673,10 @@ export class GoHighLevelConnector extends Connector {
   }
 
   /**
-   * Deep-fetch the opted-in contact sub-entities (one request each) and embed
-   * them on the record in-place, mirroring how Notion embeds `page_content`.
+   * Deep-fetch the opted-in contact sub-entities and embed them on the record
+   * in-place, mirroring how Notion embeds `page_content`. The (independent)
+   * sub-entity requests for a single contact are issued together so an opted-in
+   * contact costs one round-trip's latency, not one per enabled sub-entity.
    */
   private async attachContactSubEntities(
     record: ConnectorFile,
@@ -621,9 +686,14 @@ export class GoHighLevelConnector extends Connector {
   ): Promise<void> {
     const contactId = typeof record.id === 'string' ? record.id : undefined;
     if (!contactId) return;
-    if (includeNotes) record.notes = await this.client.getContactNotes(contactId);
-    if (includeTasks) record.tasks = await this.client.getContactTasks(contactId);
-    if (includeAppointments) record.appointments = await this.client.getContactAppointments(contactId);
+    const [notes, tasks, appointments] = await Promise.all([
+      includeNotes ? this.client.getContactNotes(contactId) : Promise.resolve(undefined),
+      includeTasks ? this.client.getContactTasks(contactId) : Promise.resolve(undefined),
+      includeAppointments ? this.client.getContactAppointments(contactId) : Promise.resolve(undefined),
+    ]);
+    if (notes !== undefined) record.notes = notes;
+    if (tasks !== undefined) record.tasks = tasks;
+    if (appointments !== undefined) record.appointments = appointments;
   }
 
   private async pullOpportunities(

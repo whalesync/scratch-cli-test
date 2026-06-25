@@ -65,6 +65,7 @@ Living checklist of known pending tasks (complements Milestones + Open issues). 
   - [ ] **Include contact notes** — toggle on → each contact's notes are fetched + embedded on pull (one extra request/contact); verify `notes[]` populates (and is read-only — already marked).
   - [ ] **Include contact tasks** — same for `tasks[]`.
   - [ ] **Include contact appointments** — same for `calendarEvents[]` / appointments.
+  - **PERF (DEV-10499, fixed):** the deep-fetch used to run **one contact at a time**, so a 100-contact page = 100+ serial round-trips and a 1,300-contact pull crawled on a live onboarding call. It now fans the per-contact sub-entity fetches out across the page with bounded concurrency (`CONTACT_SUB_ENTITY_DEEP_FETCH_CONCURRENCY = 10`, sized to GHL's 100-req/10s ≈ 10-req/s budget; the shared RateLimiter still caps the real rate + retries 429s), and a single contact's notes/tasks/appointments now fire together via `Promise.all`. The default fast path (no toggle on, 100 contacts/call, no sub-entity calls) is unchanged. **When testing, confirm the toggle-on pull is fast _and_ that records still carry `notes`/`tasks`/`appointments`.**
 
 ### Connector facts (read before testing)
 - Base host `https://services.leadconnectorhq.com`; **mandatory header `Version: 2021-07-28` on every request**.
