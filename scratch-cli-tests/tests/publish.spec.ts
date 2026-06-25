@@ -912,7 +912,14 @@ describeIfPostgres(
         const afterFail = readFailedPatches(workspaceDir, connDirName);
         expect(afterFail.patches).toHaveLength(1);
         const entry = afterFail.patches[0];
-        expect(entry.path).toBe(aliceWorkspacePath);
+        // `path` in the patch file is connection-relative (same envelope as
+        // accepted-patches.json — see the accept test above), not the
+        // workspace-relative `aliceWorkspacePath`.
+        const expectedConnectionRelativePath = path.relative(
+          path.join(workspaceDir, connDirName),
+          aliceAbsPath,
+        );
+        expect(entry.path).toBe(expectedConnectionRelativePath);
         expect(entry.kind).toBe("update");
         expect(entry.patch).toEqual([
           { op: "add", path: "/name", value: longName },
