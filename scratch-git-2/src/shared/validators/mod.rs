@@ -41,6 +41,11 @@ pub struct RecordValidationContext {
 /// Only failures are returned; clean fields produce no entry.
 pub struct RecordValidationResult {
     pub field_path: String,
+    /// The violated field's path as exact key SEGMENTS (e.g. `["location","lat"]`).
+    /// This is the dedup identity, so a literal-dot top-level key `"a.b"` (`["a.b"]`)
+    /// stays distinct from a nested `a`→`b` (`["a","b"]`) (DEV-10495). `field_path` is
+    /// just these segments joined with `.` for display. A whole-record error is `[]`.
+    pub field_path_segments: Vec<String>,
     pub level: ValidationLevel,
     pub message: Option<String>,
     pub description: Option<String>,

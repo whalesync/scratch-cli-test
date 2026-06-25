@@ -141,12 +141,15 @@ fn invalid_length_params() -> Option<ValidationResult> {
 /// read-only. Both are advisory — the push code drops the rejected values.
 ///
 /// Both the readonly and write-once checks recurse into nested object `properties`
-/// (e.g. `location.lat`), matching the desktop grid which locks nested cells
-/// (DEV-10437). Scope: only DIRECT object `properties` are walked. Fast-follows
-/// tracked separately: `anyOf`/`oneOf` nullable-object members (DEV-10494), array
-/// `items`/`$ref` (no static name to annotate), literal-dot key disambiguation
-/// (DEV-10495), and severity precedence vs JSONSchema errors at the same dot-path
-/// (DEV-10493). All are latent until a connector annotates a nested subfield.
+/// (e.g. `location.lat`) AND into the non-null object member of an `anyOf`/`oneOf`
+/// nullable-object union (DEV-10437 + DEV-10494), matching the desktop grid which
+/// locks those nested cells. Array `items`/`$ref` are still not walked (no static
+/// property name to annotate).
+///
+/// Results are deduplicated by path SEGMENT VECTOR, so a literal-dot top-level key
+/// `"a.b"` stays distinct from a nested `a`→`b` (DEV-10495); at a shared path an
+/// `Error` beats a `Warning` (DEV-10493), and equal severities keep the last
+/// (hand-rolled) message. Results are advisory only — nothing here gates publishing.
 ///
 /// Returns one `RecordValidationResult` per violated field. Clean records return an
 /// empty Vec — no rows are written to the DB.
@@ -247,13 +250,21 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
                 {
                     continue;
                 }
-                let field_path = if pointer.is_empty() {
+                // Derive BOTH the dedup identity (segments) and the display string
+                // from the same decoded JSON Pointer, so a JSONSchema error and a
+                // hand-rolled readonly/write-once result at the same path agree on
+                // identity (they dedup) AND on display. For ordinary keys this is
+                // byte-identical to the old `trim('/').replace('/', ".")`; only keys
+                // literally containing `/` or `~` now display their decoded form.
+                let field_path_segments = json_pointer_to_segments(&pointer);
+                let field_path = if field_path_segments.is_empty() {
                     "(record)".to_string()
                 } else {
-                    pointer.trim_start_matches('/').replace('/', ".")
+                    field_path_segments.join(".")
                 };
                 results.push(RecordValidationResult {
                     field_path,
+                    field_path_segments,
                     level: ValidationLevel::Error,
                     message: Some(error.to_string()),
                     description: None,
@@ -303,6 +314,7 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
             if is_missing {
                 results.push(RecordValidationResult {
                     field_path: field_name.to_string(),
+                    field_path_segments: vec![field_name.to_string()],
                     level: ValidationLevel::Error,
                     message: Some(format!(
                         "field '{}' is required but missing or null",
@@ -351,6 +363,7 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
                 if working != master_val {
                     results.push(RecordValidationResult {
                         field_path: field_path.clone(),
+                        field_path_segments: path.clone(),
                         level: ValidationLevel::Warning,
                         message: Some("Updated read-only field".to_string()),
                         description: Some(format!(
@@ -372,6 +385,7 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
                 if is_set {
                     results.push(RecordValidationResult {
                         field_path: field_path.clone(),
+                        field_path_segments: path.clone(),
                         level: ValidationLevel::Warning,
                         message: Some("Updated read-only field".to_string()),
                         description: Some(format!(
@@ -406,6 +420,7 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
         if working != master_val {
             results.push(RecordValidationResult {
                 field_path: field_path.clone(),
+                field_path_segments: path.clone(),
                 level: ValidationLevel::Warning,
                 message: Some("Updated write-once field".to_string()),
                 description: Some(format!(
@@ -419,17 +434,74 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
         }
     }
 
-    // Deduplicate by field_path: hand-rolled checks run last and take precedence
-    // over JSONSchema errors for the same field (better messages, null/empty-string
-    // awareness). Reverse so retain keeps the last occurrence of each field_path.
+    // Deduplicate by the path SEGMENT VECTOR (not the joined string), so a literal
+    // top-level key "a.b" (segments ["a.b"]) stays distinct from a nested a→b
+    // (["a","b"]) (DEV-10495). When two results share a key, keep the higher
+    // SEVERITY — an Error always beats a Warning (DEV-10493), independent of push
+    // order — and on EQUAL severity keep the LAST pushed, preserving the prior
+    // behaviour where a hand-rolled readonly/write-once/required message overrides
+    // the raw JSONSchema message for the same field.
+    //
+    // This dedup is what the in-memory `validate-record` dry-run returns. The
+    // persisted `validation_results` table keys on the DISPLAY `field_path` string
+    // (PK incl. field_path, validator_kind), so a literal-dot vs nested collision
+    // still collapses to one row there; fully disambiguating the persisted index
+    // would need a PK migration and is out of scope.
+    //
+    // Ordering: the FIRST occurrence of each key keeps its slot, so for the common
+    // no-collision case the result order is identical to insertion order; only a
+    // genuine same-key collision (rare, and latent until a connector annotates such
+    // a field) moves a survivor.
     {
-        let mut seen = std::collections::HashSet::new();
-        results.reverse();
-        results.retain(|r| seen.insert(r.field_path.clone()));
-        results.reverse();
+        let mut deduped: Vec<RecordValidationResult> = Vec::with_capacity(results.len());
+        let mut output_index_by_segments: std::collections::HashMap<Vec<String>, usize> =
+            std::collections::HashMap::new();
+        for incoming in std::mem::take(&mut results) {
+            match output_index_by_segments.get(&incoming.field_path_segments) {
+                None => {
+                    output_index_by_segments
+                        .insert(incoming.field_path_segments.clone(), deduped.len());
+                    deduped.push(incoming);
+                }
+                Some(&existing_index) => {
+                    if severity_rank(incoming.level) >= severity_rank(deduped[existing_index].level)
+                    {
+                        deduped[existing_index] = incoming;
+                    }
+                }
+            }
+        }
+        results = deduped;
     }
 
     results
+}
+
+/// Severity ordering for dedup: higher wins. An `Error` always outranks a `Warning`
+/// at the same path (DEV-10493), regardless of the order they were pushed.
+fn severity_rank(level: ValidationLevel) -> u8 {
+    match level {
+        ValidationLevel::Error => 1,
+        ValidationLevel::Warning => 0,
+    }
+}
+
+/// Splits an RFC-6901 JSON Pointer into its decoded path segments. `/a/b` →
+/// `["a","b"]`; a literal key `"a.b"` arrives as `/a.b` → `["a.b"]` (so it stays
+/// distinct from a nested `a`→`b`); the escapes `~1`→`/` then `~0`→`~` are decoded
+/// in that RFC-mandated order. An empty pointer (whole-record error) → `[]`. Used
+/// both as the dedup identity and (joined with `.`) as the display `field_path`, so
+/// the JSONSchema producer and the hand-rolled producers agree on identity AND
+/// display for the same field.
+fn json_pointer_to_segments(pointer: &str) -> Vec<String> {
+    if pointer.is_empty() {
+        return Vec::new();
+    }
+    pointer
+        .split('/')
+        .skip(1)
+        .map(|segment| segment.replace("~1", "/").replace("~0", "~"))
+        .collect()
 }
 
 fn format_validation_value(value: Option<&serde_json::Value>) -> String {
@@ -551,12 +623,44 @@ fn container_failure_is_only_nested_blanks(
 /// hand-authored schema so the recursion always terminates.
 const MAX_SCHEMA_PROPERTY_RECURSION_DEPTH: usize = 32;
 
+/// Resolves the non-null object member of an `anyOf`/`oneOf` nullable-object union —
+/// the shape `anyOf: [{ "type": "object", "properties": {…} }, { "type": "null" }]`
+/// that Shopify and others use for nullable nested objects. Returns the FIRST union
+/// member that has `"type": "object"` AND an object `properties` map (so `null` and
+/// non-object branches are skipped), else `None`. Mirrors the desktop column
+/// builder's `resolveObjectMember` EXACTLY — first-object-member-wins, and the
+/// `type: "object"` requirement is deliberate: a branch carrying `properties` but no
+/// explicit `type: "object"`, or a second object branch, is ignored so the validator
+/// and the desktop grid agree on which subfields exist.
+fn resolve_nullable_object_member(node: &serde_json::Value) -> Option<&serde_json::Value> {
+    for union_key in ["anyOf", "oneOf"] {
+        if let Some(branches) = node.get(union_key).and_then(|value| value.as_array()) {
+            for member in branches {
+                let member_is_object_type =
+                    member.get("type").and_then(|value| value.as_str()) == Some("object");
+                let member_has_properties_object = member
+                    .get("properties")
+                    .map(|value| value.is_object())
+                    .unwrap_or(false);
+                if member_is_object_type && member_has_properties_object {
+                    return Some(member);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Walks a JSON-Schema `properties` map and collects every property node at every
-/// depth, paired with its path segments from the schema root. Descends into a
-/// node's DIRECT object `properties` only — `anyOf`/`oneOf` nullable-object members
-/// are not yet walked (DEV-10494), and array `items` / `$ref` have no static
-/// property name to annotate. Yields the parent object node too, preserving the
-/// pre-existing behaviour where a top-level object can itself be annotated.
+/// depth, paired with its path segments from the schema root. Descends into a node's
+/// DIRECT object `properties`, and — when a node has none — into the non-null object
+/// member of an `anyOf`/`oneOf` nullable-object union (see
+/// `resolve_nullable_object_member`), so a subfield inside the Shopify-style
+/// `anyOf: [{type:object, properties:{…}}, {type:null}]` shape is collected exactly
+/// as the desktop grid locks it (DEV-10494). Array `items` / `$ref` are still not
+/// walked (no static property name to annotate). Yields the parent object node too,
+/// preserving the pre-existing behaviour where a top-level object can itself be
+/// annotated.
 ///
 /// Path *segments* are carried (a `Vec<String>`), not a pre-joined dotted string,
 /// so callers navigate values by the exact keys and only join for display.
@@ -571,8 +675,21 @@ fn collect_schema_properties<'a>(
         path.push(field_name.clone());
         out.push((path.clone(), node));
         if depth_budget > 0 {
-            if let Some(child) = node.get("properties").and_then(|v| v.as_object()) {
-                collect_schema_properties(child, &path, depth_budget - 1, out);
+            // Direct object `properties` win; only when a node has none do we descend
+            // into a nullable-object union member's `properties` — mirroring desktop's
+            // directContainer-before-unionMember ordering in `walkProperties`. The
+            // union recursion shares the same decremented `depth_budget`, so a chain
+            // of unions is still bounded by MAX_SCHEMA_PROPERTY_RECURSION_DEPTH.
+            let child_properties = node
+                .get("properties")
+                .and_then(|value| value.as_object())
+                .or_else(|| {
+                    resolve_nullable_object_member(node)
+                        .and_then(|member| member.get("properties"))
+                        .and_then(|value| value.as_object())
+                });
+            if let Some(child_properties) = child_properties {
+                collect_schema_properties(child_properties, &path, depth_budget - 1, out);
             }
         }
     }
@@ -1490,12 +1607,13 @@ mod tests {
         assert!(enforce_schema(&ctx).is_empty());
     }
 
+    // ── DEV-10494: anyOf/oneOf nullable-object recursion ──────────────────────
+
     #[test]
-    fn write_once_inside_nullable_anyof_object_is_not_enforced_yet() {
-        // Scope boundary (DEV-10494): subfields inside an `anyOf`/`oneOf`
-        // nullable-object union are not yet walked, even though the desktop grid
-        // DOES lock them. Locks the current boundary so closing it later is a
-        // deliberate, tested change.
+    fn write_once_inside_nullable_anyof_object_is_enforced() {
+        // DEV-10494: subfields inside an `anyOf` nullable-object union ARE walked, so
+        // a write-once annotation on `seo.title` warns when it changes on an existing
+        // record — matching the desktop grid, which locks the same cell.
         let schema = json!({ "schema": { "properties": {
             "seo": { "anyOf": [
                 { "type": "object", "properties": {
@@ -1509,7 +1627,306 @@ mod tests {
             Some(json!({ "seo": { "title": "old" } })),
             schema,
         );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "seo.title");
+        assert_eq!(results[0].field_path_segments, vec!["seo", "title"]);
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("Updated write-once field")
+        );
+    }
+
+    #[test]
+    fn readonly_inside_nullable_oneof_object_is_enforced() {
+        // Companion to the write-once case (DEV-10494): a readonly subfield inside a
+        // `oneOf` nullable-object union also warns when changed on an existing record.
+        // Uses `oneOf` (not `anyOf`) to cover both union keywords.
+        let schema = json!({ "schema": { "properties": {
+            "seo": { "oneOf": [
+                { "type": "object", "properties": {
+                    "title": { "type": "string", "x-scratch-readonly": true }
+                }},
+                { "type": "null" }
+            ]}
+        }}});
+        let ctx = record_ctx(
+            json!({ "seo": { "title": "new" } }),
+            Some(json!({ "seo": { "title": "old" } })),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "seo.title");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("Updated read-only field")
+        );
+    }
+
+    #[test]
+    fn anyof_object_branch_without_type_keyword_is_not_walked() {
+        // Desktop parity (DEV-10494): `resolveObjectMember` requires the member to
+        // carry `type: "object"`. A union branch with `properties` but NO explicit
+        // `type` is not a recognised object member, so its subfields stay unenforced —
+        // matching the grid exactly (no over-eager recursion).
+        let schema = json!({ "schema": { "properties": {
+            "seo": { "anyOf": [
+                { "properties": {
+                    "title": { "type": "string", "x-scratch-write-once": true }
+                }},
+                { "type": "null" }
+            ]}
+        }}});
+        let ctx = record_ctx(
+            json!({ "seo": { "title": "new" } }),
+            Some(json!({ "seo": { "title": "old" } })),
+            schema,
+        );
         assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn anyof_uses_first_object_member_like_desktop() {
+        // Desktop parity (DEV-10494): the FIRST `type:"object"` member with
+        // `properties` wins; a second object branch is ignored. So the annotation on
+        // the first branch's subfield is enforced and the second branch's is not.
+        let schema = json!({ "schema": { "properties": {
+            "seo": { "anyOf": [
+                { "type": "object", "properties": {
+                    "first": { "type": "string", "x-scratch-readonly": true }
+                }},
+                { "type": "object", "properties": {
+                    "second": { "type": "string", "x-scratch-readonly": true }
+                }}
+            ]}
+        }}});
+        let ctx = record_ctx(
+            json!({ "seo": { "first": "B", "second": "B" } }),
+            Some(json!({ "seo": { "first": "A", "second": "A" } })),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "seo.first");
+    }
+
+    #[test]
+    fn nested_anyof_union_recursion_reaches_deeper_leaf() {
+        // The union recursion shares the depth budget with direct-properties recursion,
+        // so a union nested inside a direct object still reaches its leaf with the full
+        // dot-path.
+        let schema = json!({ "schema": { "properties": {
+            "outer": { "type": "object", "properties": {
+                "seo": { "anyOf": [
+                    { "type": "object", "properties": {
+                        "title": { "type": "string", "x-scratch-write-once": true }
+                    }},
+                    { "type": "null" }
+                ]}
+            }}
+        }}});
+        let ctx = record_ctx(
+            json!({ "outer": { "seo": { "title": "new" } } }),
+            Some(json!({ "outer": { "seo": { "title": "old" } } })),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "outer.seo.title");
+        assert_eq!(
+            results[0].field_path_segments,
+            vec!["outer", "seo", "title"]
+        );
+    }
+
+    // ── DEV-10493 / DEV-10495: severity-aware, segment-keyed dedup ─────────────
+
+    #[test]
+    fn jsonschema_error_beats_readonly_warning_at_same_nested_path() {
+        // DEV-10493: a nested field that is BOTH readonly (Warning) AND fails
+        // JSONSchema conformance (Error) at the same path keeps exactly one result —
+        // the Error — instead of the old "last push wins" which kept the Warning and
+        // silently dropped the Error. Relies on JSONSchema errors carrying real
+        // segments (`["location","lat"]`) so they dedup against the readonly result.
+        let schema = json!({ "schema": { "properties": {
+            "location": { "type": "object", "properties": {
+                "lat": { "type": "number", "x-scratch-readonly": true }
+            }}
+        }}});
+        let ctx = record_ctx(
+            json!({ "location": { "lat": "not-a-number" } }),
+            Some(json!({ "location": { "lat": 1 } })),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(
+            results.len(),
+            1,
+            "Error and Warning at the same path must collapse to one: {:?}",
+            results
+                .iter()
+                .map(|r| (r.field_path.clone(), r.level))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(results[0].field_path, "location.lat");
+        assert_eq!(
+            results[0].level,
+            ValidationLevel::Error,
+            "the Error must win, not the readonly Warning"
+        );
+    }
+
+    #[test]
+    fn jsonschema_error_beats_readonly_warning_at_top_level() {
+        // Top-level counterpart (DEV-10493): inverts the previous "hand-rolled readonly
+        // message beats the JSONSchema error" behaviour for the Error-vs-Warning case.
+        let schema = json!({ "schema": { "properties": {
+            "score": { "type": "number", "x-scratch-readonly": true }
+        }}});
+        let ctx = record_ctx(
+            json!({ "score": "not-a-number" }),
+            Some(json!({ "score": 1 })),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "score");
+        assert_eq!(results[0].level, ValidationLevel::Error);
+    }
+
+    #[test]
+    fn equal_severity_dedup_keeps_last_pushed_message() {
+        // DEV-10493 tie-break: on EQUAL severity the last-pushed result still wins, so
+        // a field that is both readonly AND write-once (both Warning, write-once pushed
+        // after readonly) keeps the write-once message — preserving the prior
+        // last-wins-within-severity behaviour.
+        let schema = json!({ "schema": { "properties": {
+            "code": { "type": "string", "x-scratch-readonly": true, "x-scratch-write-once": true }
+        }}});
+        let ctx = record_ctx(
+            json!({ "code": "new" }),
+            Some(json!({ "code": "old" })),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "code");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("Updated write-once field")
+        );
+    }
+
+    #[test]
+    fn literal_dot_key_and_nested_path_both_survive_dedup() {
+        // DEV-10495: a literal top-level key named "a.b" (segments ["a.b"]) and a
+        // nested `a`→`b` (segments ["a","b"]) BOTH display as "a.b" but are distinct
+        // identities, so both survive the in-memory dedup instead of one being lost.
+        // NOTE: the persisted `validation_results` table keys on the display string,
+        // so it still collapses these to one row — the dry-run path surfaces both.
+        let schema = json!({ "schema": { "properties": {
+            "a.b": { "type": "string", "x-scratch-readonly": true },
+            "a": { "type": "object", "properties": {
+                "b": { "type": "string", "x-scratch-readonly": true }
+            }}
+        }}});
+        let ctx = record_ctx(
+            json!({ "a.b": "new1", "a": { "b": "new2" } }),
+            Some(json!({ "a.b": "old1", "a": { "b": "old2" } })),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(
+            results.len(),
+            2,
+            "literal-dot key and nested path must both survive"
+        );
+        let segments: std::collections::HashSet<Vec<String>> = results
+            .iter()
+            .map(|r| r.field_path_segments.clone())
+            .collect();
+        assert!(segments.contains(&vec!["a.b".to_string()]));
+        assert!(segments.contains(&vec!["a".to_string(), "b".to_string()]));
+        // Both display identically — the ambiguity the persisted index can't tell apart.
+        assert!(results.iter().all(|r| r.field_path == "a.b"));
+    }
+
+    #[test]
+    fn compose_all_three_fixes_in_one_record() {
+        // Integration proof that DEV-10493/10494/10495 compose: one record+schema that
+        // exercises (a) Error-beats-Warning at a nested path, (b) literal-dot vs nested
+        // both surviving, and (c) a write-once subfield inside an anyOf nullable object.
+        let schema = json!({ "schema": { "properties": {
+            "location": { "type": "object", "properties": {
+                "lat": { "type": "number", "x-scratch-readonly": true }
+            }},
+            "x.y": { "type": "string", "x-scratch-readonly": true },
+            "x": { "type": "object", "properties": {
+                "y": { "type": "string", "x-scratch-readonly": true }
+            }},
+            "seo": { "anyOf": [
+                { "type": "object", "properties": {
+                    "title": { "type": "string", "x-scratch-write-once": true }
+                }},
+                { "type": "null" }
+            ]}
+        }}});
+        let ctx = record_ctx(
+            json!({ "location": { "lat": "nan" }, "x.y": "n1", "x": { "y": "n2" }, "seo": { "title": "new" } }),
+            Some(
+                json!({ "location": { "lat": 1 }, "x.y": "o1", "x": { "y": "o2" }, "seo": { "title": "old" } }),
+            ),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        let by_segments: std::collections::HashMap<Vec<String>, ValidationLevel> = results
+            .iter()
+            .map(|r| (r.field_path_segments.clone(), r.level))
+            .collect();
+        assert_eq!(
+            results.len(),
+            4,
+            "got: {:?}",
+            results
+                .iter()
+                .map(|r| (r.field_path.clone(), r.field_path_segments.clone(), r.level))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            by_segments.get(&vec!["location".to_string(), "lat".to_string()]),
+            Some(&ValidationLevel::Error)
+        );
+        assert_eq!(
+            by_segments.get(&vec!["x.y".to_string()]),
+            Some(&ValidationLevel::Warning)
+        );
+        assert_eq!(
+            by_segments.get(&vec!["x".to_string(), "y".to_string()]),
+            Some(&ValidationLevel::Warning)
+        );
+        assert_eq!(
+            by_segments.get(&vec!["seo".to_string(), "title".to_string()]),
+            Some(&ValidationLevel::Warning)
+        );
+    }
+
+    #[test]
+    fn json_pointer_to_segments_decodes_rfc6901() {
+        assert_eq!(json_pointer_to_segments(""), Vec::<String>::new());
+        assert_eq!(
+            json_pointer_to_segments("/location/lat"),
+            vec!["location", "lat"]
+        );
+        // A literal dot in a key stays one segment (the DEV-10495 disambiguator).
+        assert_eq!(json_pointer_to_segments("/a.b"), vec!["a.b"]);
+        // `~1` → '/', `~0` → '~', applied in that RFC-6901 order (mixed key "a~/b").
+        assert_eq!(json_pointer_to_segments("/a~1b"), vec!["a/b"]);
+        assert_eq!(json_pointer_to_segments("/x~0y"), vec!["x~y"]);
+        assert_eq!(json_pointer_to_segments("/a~0~1b"), vec!["a~/b"]);
     }
 
     #[test]

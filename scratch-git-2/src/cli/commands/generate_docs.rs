@@ -674,9 +674,10 @@ the following checks:
 The read-only and write-once checks (2 and 3) also apply to **nested object
 subfields** — an `x-scratch-readonly`/`x-scratch-write-once` annotation inside a
 nested object's `properties` is enforced, and the violation's `field_path` is the
-dot-path to the leaf (e.g. `location.lat`). Only direct object `properties` are
-walked; annotations inside array `items` or `anyOf`/`oneOf` union members are not
-yet enforced server-side.
+dot-path to the leaf (e.g. `location.lat`). Subfields inside a nullable-object
+`anyOf`/`oneOf` union (`[{type:object, properties:{…}}, {type:null}]`) are walked
+too, matching the desktop grid; annotations inside array `items` are not yet
+enforced server-side.
 
 A verbatim "no value" is tolerated elsewhere: a `null` or empty-string value never
 produces a JSON-Schema conformance error (type / format / `anyOf`), the same way a
