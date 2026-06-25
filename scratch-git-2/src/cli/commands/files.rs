@@ -397,6 +397,10 @@ struct WorkspaceSyncResult {
     connections_added: Vec<String>,
     connections_removed: Vec<String>,
     connections_detached: Vec<String>,
+    /// Connections already present in the marker whose missing/corrupt local
+    /// bare repo was re-cloned during this sync (download self-heal). See
+    /// `sync_workspace_structure`.
+    connections_repaired: Vec<String>,
 }
 
 #[derive(Default)]
@@ -681,7 +685,8 @@ async fn run_download(
 
     let has_sync_changes = !sync_result.connections_added.is_empty()
         || !sync_result.connections_removed.is_empty()
-        || !sync_result.connections_detached.is_empty();
+        || !sync_result.connections_detached.is_empty()
+        || !sync_result.connections_repaired.is_empty();
 
     if contexts.is_empty() && !has_sync_changes {
         anyhow::bail!(
@@ -974,12 +979,33 @@ async fn sync_workspace_structure(
         .filter(|c| !server_ids.contains(c.id.as_str()))
         .collect();
 
+    let layout = WorkspaceLayout::for_cli(workspace_dir);
+
+    // Download self-heal: connections present in BOTH the marker and the server
+    // whose local bare repo is missing or corrupt. `init` writes the marker with
+    // every connector account *before* running the per-connection clones, and a
+    // single `git clone --bare` failure is only warn-and-continue (init still
+    // succeeds as long as one connection clones), so the marker can permanently
+    // list a connection whose `.repos/<repo>.git` never materialized. Without
+    // this, every later `files download` does `git fetch --git-dir=<missing>` and
+    // aborts with "git fetch failed ... not a git repository" — the failure
+    // mode this recovers from. Re-cloning via `repair_connection_local_repo`
+    // converges the workspace without a full re-init.
+    let connections_to_repair: Vec<&ConnectorAccount> = wb
+        .connector_accounts
+        .iter()
+        .filter(|ca| local_ids.contains(ca.id.as_str()))
+        .filter(|ca| !ca.repo_path.is_empty())
+        .filter(|ca| {
+            !super::workspaces::bare_repo_is_initialized(&layout.bare_repo_path(&ca.repo_path))
+        })
+        .collect();
+
     // If nothing changed, return early
-    if added.is_empty() && removed.is_empty() {
+    if added.is_empty() && removed.is_empty() && connections_to_repair.is_empty() {
         return Ok(WorkspaceSyncResult::default());
     }
 
-    let layout = WorkspaceLayout::for_cli(workspace_dir);
     let mut result = WorkspaceSyncResult::default();
 
     // If the workspace was initialized with the legacy "<Service> - <DisplayName>"
@@ -1004,6 +1030,46 @@ async fn sync_workspace_structure(
             Ok(_) => result.connections_added.push(dir_name),
             Err(e) => eprintln!(
                 "  Warning: failed to set up connection {}: {e}",
+                ca.display_name
+            ),
+        }
+    }
+
+    // Re-clone connections whose local bare repo went missing/corrupt (see
+    // `connections_to_repair` above). Reuse the directory name already recorded
+    // in the marker so a legacy-named workspace keeps its on-disk folder name —
+    // `dir_name_for` would recompute it under the *current* naming scheme and
+    // could orphan the existing folder.
+    let marker_dir_name_by_connection_id: HashMap<&str, &str> = workspace_marker
+        .connections
+        .iter()
+        .map(|c| (c.id.as_str(), c.dir_name.as_str()))
+        .collect();
+    for ca in &connections_to_repair {
+        let dir_name = marker_dir_name_by_connection_id
+            .get(ca.id.as_str())
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| dir_name_for(ca));
+        if !json {
+            println!(
+                "Repairing connection (local repository missing): {}...",
+                dir_name
+            );
+        }
+        match super::workspaces::repair_connection_local_repo(ca, &dir_name, &layout, token) {
+            Ok(salvaged_worktree_to) => {
+                if let Some(salvaged_to) = &salvaged_worktree_to {
+                    if !json {
+                        println!(
+                            "  Note: preserved this connection's previous local files at {} before re-cloning.",
+                            salvaged_to.display()
+                        );
+                    }
+                }
+                result.connections_repaired.push(dir_name);
+            }
+            Err(e) => eprintln!(
+                "  Warning: failed to repair connection {}: {e}",
                 ca.display_name
             ),
         }
@@ -5274,6 +5340,21 @@ fn download_single_repo(
     // re-surface the failed edits in the worktree as needs-approval.
     post_publish_failed_ops: Option<&[crate::api::JobFailedOperation]>,
 ) -> anyhow::Result<DownloadResult> {
+    // The bare repo must exist before we can fetch into it. It's normally cloned
+    // at `init` (and `sync_workspace_structure`'s self-heal re-clones a connection
+    // whose local repo went missing). If we still don't have a usable repo here —
+    // e.g. the self-heal's re-clone failed transiently — fail with an actionable
+    // message naming the connection instead of letting `git --git-dir=<missing>
+    // fetch` abort with the cryptic, path-only "fatal: not a git repository". A
+    // one-off clone failure clears on retry, so point the user at that first.
+    if !super::workspaces::bare_repo_is_initialized(&ctx.bare_repo) {
+        anyhow::bail!(
+            "Connection \"{}\" has no local repository at {} — its initial download did not complete (a clone likely failed). Re-run the download to retry; if it persists, re-initialize the workspace.",
+            ctx.conn_dir_name,
+            ctx.bare_repo.display()
+        );
+    }
+
     // Fetch first, then short-circuit if `main` didn't move. Connections that
     // haven't advanced server-side pay only the (incremental, ~50ms) fetch —
     // not the multi-second `read_main_branch_contents` + `read_worktree_files_and_scratch_state` tree
@@ -6749,7 +6830,8 @@ fn print_download_result(
 ) -> anyhow::Result<()> {
     let has_sync_changes = !sync.connections_added.is_empty()
         || !sync.connections_removed.is_empty()
-        || !sync.connections_detached.is_empty();
+        || !sync.connections_detached.is_empty()
+        || !sync.connections_repaired.is_empty();
 
     if json {
         let mut output = serde_json::json!({
@@ -6769,6 +6851,7 @@ fn print_download_result(
             output["connectionsAdded"] = serde_json::json!(sync.connections_added);
             output["connectionsRemoved"] = serde_json::json!(sync.connections_removed);
             output["connectionsDetached"] = serde_json::json!(sync.connections_detached);
+            output["connectionsRepaired"] = serde_json::json!(sync.connections_repaired);
         }
         // DEV-10523: non-blocking stashed conflicts (single-record pull where an
         // edit to some OTHER record couldn't be re-applied). Present only when
@@ -6826,6 +6909,12 @@ fn print_download_result(
         parts.push(format!(
             "{} connection(s) detached",
             sync.connections_detached.len()
+        ));
+    }
+    if !sync.connections_repaired.is_empty() {
+        parts.push(format!(
+            "{} connection(s) repaired",
+            sync.connections_repaired.len()
         ));
     }
     if result.files_created > 0 {

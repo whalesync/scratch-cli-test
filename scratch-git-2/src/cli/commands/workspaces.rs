@@ -854,6 +854,110 @@ pub fn setup_connection(
     Ok(count_files(&worktree_dir))
 }
 
+/// Whether a connection's bare repo on disk is present and usable.
+///
+/// A usable bare repo is what `git --git-dir=<repo> fetch` needs: the directory
+/// exists and carries the git internals a `git clone --bare` lays down (the
+/// `HEAD` file and the `objects/` store). Returns `false` when the directory is
+/// missing entirely OR exists but is missing those internals (a half-written /
+/// corrupted clone) — both of which make a later `fetch` abort with
+/// "fatal: not a git repository". Cheap (≤ 2 stat calls) so the download path
+/// can probe every marker connection on each run.
+pub fn bare_repo_is_initialized(bare_repo: &Path) -> bool {
+    bare_repo.join("HEAD").is_file() && bare_repo.join("objects").is_dir()
+}
+
+/// Recover a connection whose local git infrastructure is missing or broken by
+/// clearing the broken remnants and re-running [`setup_connection`] from a clean
+/// slate.
+///
+/// Used by the download self-heal (see `sync_workspace_structure`) when the
+/// workspace marker lists a connection whose bare repo never cloned — `init`
+/// writes the marker with every connector account *before* running the
+/// per-connection clones, and a single clone failure is only warn-and-continue,
+/// so the marker can permanently reference a `.repos/<repo>.git` that doesn't
+/// exist. Every later `files download` then `git fetch`es that missing repo and
+/// aborts with "git fetch failed ... not a git repository".
+///
+/// Non-destructive (the "default to non-destructive, reversible" principle):
+/// with the bare repo missing/corrupt we cannot diff the worktree to separate
+/// reviewed content from unreviewed local edits (the DEV-10523 stash-and-reapply
+/// path the normal download uses needs the bare repo), so a *populated* worktree
+/// is moved aside to a salvage backup rather than deleted — bounding any data
+/// loss to the case where there is genuinely nothing on disk. The reported case
+/// (init's clone failed before any worktree materialized) hits exactly that path:
+/// no worktree, clean re-clone. The remaining removed paths hold no un-uploaded
+/// user data — the bare repo is broken/missing (nothing committed to lose) and
+/// the index db + schema cache are regenerable. Accepted-but-unpublished edits
+/// live in `accepted-patches.json` under the connection root (untouched here),
+/// so they also survive.
+///
+/// Returns where the previous worktree was preserved (`Some`), or `None` when it
+/// was absent/empty and there was nothing to save (the reported failure mode).
+pub fn repair_connection_local_repo(
+    ca: &ConnectorAccount,
+    dir_name: &str,
+    layout: &WorkspaceLayout,
+    token: &str,
+) -> anyhow::Result<Option<PathBuf>> {
+    let bare_repo = layout.bare_repo_path(&ca.repo_path);
+
+    // Preserve, never destroy, a worktree that still holds files. Clears only an
+    // absent/empty worktree so the re-clone below has a clean destination.
+    let salvaged_worktree_to =
+        salvage_worktree_if_populated(&layout.worktree_path(dir_name), dir_name, layout)?;
+
+    // Clear the broken/partial git plumbing so the re-clone starts clean.
+    prune_worktrees(&bare_repo);
+    remove_path(&bare_repo);
+    remove_path(&layout.index_db_path(&ca.repo_path));
+    remove_path(&layout.connection_scratch_path(dir_name));
+
+    setup_connection(ca, dir_name, layout, token)?;
+    Ok(salvaged_worktree_to)
+}
+
+/// Move a populated worktree aside to a non-colliding salvage backup under
+/// `.scratch/salvaged/` and return its path; return `None` (removing any empty
+/// shell) when the worktree is absent or empty and there's nothing to preserve.
+///
+/// Backs [`repair_connection_local_repo`]'s non-destructive guarantee. The
+/// backup lives under `.scratch/` so it stays out of the user-facing
+/// data-folder tree (the desktop renders that tree from a disk scan) while
+/// remaining recoverable on disk. An atomic `rename` preserves the worktree's
+/// record files (including any unreviewed local edits) wholesale.
+fn salvage_worktree_if_populated(
+    worktree_dir: &Path,
+    dir_name: &str,
+    layout: &WorkspaceLayout,
+) -> anyhow::Result<Option<PathBuf>> {
+    let is_populated = std::fs::read_dir(worktree_dir)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false);
+    if !is_populated {
+        remove_path(worktree_dir);
+        return Ok(None);
+    }
+
+    let salvage_dir = layout.scratch_root().join("salvaged");
+    std::fs::create_dir_all(&salvage_dir)?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let mut salvage_path = salvage_dir.join(format!("{dir_name}-{stamp}"));
+    let mut counter = 1;
+    while salvage_path.exists() {
+        salvage_path = salvage_dir.join(format!("{dir_name}-{stamp}-{counter}"));
+        counter += 1;
+    }
+    std::fs::rename(worktree_dir, &salvage_path).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to preserve worktree at {} (move to {}): {e}",
+            worktree_dir.display(),
+            salvage_path.display()
+        )
+    })?;
+    Ok(Some(salvage_path))
+}
+
 /// Remove all local artifacts for a connection (bare repo, worktree, index DB,
 /// connection scratch cache).
 ///

@@ -554,6 +554,26 @@ fn run_git(cwd: &Path, args: &[&str]) {
     );
 }
 
+#[test]
+fn bare_repo_is_initialized_detects_missing_and_corrupt_repos() {
+    let tmp = TempDir::new().unwrap();
+
+    // Missing entirely — the reported failure mode (the marker lists a
+    // connection whose `git clone --bare` never ran), where a later
+    // `git fetch --git-dir=<missing>` aborts with "not a git repository".
+    let missing = tmp.path().join("missing.git");
+    assert!(!bare_repo_is_initialized(&missing));
+
+    // Directory exists but carries no git internals (a half-written clone).
+    let corrupt = tmp.path().join("corrupt.git");
+    std::fs::create_dir_all(&corrupt).unwrap();
+    assert!(!bare_repo_is_initialized(&corrupt));
+
+    // A real bare repo, exactly what `git clone --bare` lays down, is usable.
+    run_git(tmp.path(), &["init", "--bare", "healthy.git"]);
+    assert!(bare_repo_is_initialized(&tmp.path().join("healthy.git")));
+}
+
 /// Helper: build a bare remote with a single record on `main`. Returns the
 /// bare repo path the workbook should point to.
 fn make_remote_with_record(tmp_root: &Path, slug: &str, record_path: &str) -> PathBuf {
@@ -691,6 +711,109 @@ fn init_v2_continues_when_one_connection_fails() {
     assert!(
         workspace_dir.join("Good/Posts/rec_good.json").exists(),
         "the good connection's worktree should be populated",
+    );
+}
+
+/// Shared fixture: a connection whose server-side repo holds one record, plus a
+/// CLI workspace layout to repair it into.
+fn webflow_repair_fixture(tmp: &TempDir) -> (ConnectorAccount, WorkspaceLayout, &'static str) {
+    let workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_dir).unwrap();
+    let remote_bare = make_remote_with_record(tmp.path(), "wf", "Collections/rec_item.json");
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+    let ca = ConnectorAccount {
+        id: "coa_missing".to_string(),
+        display_name: "Webflow".to_string(),
+        service: "WEBFLOW".to_string(),
+        repo_path: "org_test/wkb_test/coa_missing".to_string(),
+        git_url: remote_bare.to_str().unwrap().to_string(),
+        version: 2,
+        data_folders: vec![],
+    };
+    (ca, layout, "Webflow")
+}
+
+/// Download self-heal, the reported prod failure: `init` warn-and-continued past
+/// a failed clone, so the marker permanently lists a connection with **no**
+/// `.repos/<repo>.git` and no worktree, and a later `git fetch` aborts with "not
+/// a git repository". `repair_connection_local_repo` must re-clone it from the
+/// still-healthy server-side repo and restore the worktree — with nothing on
+/// disk to preserve.
+#[test]
+fn repair_reclones_when_bare_repo_and_worktree_absent() {
+    let tmp = TempDir::new().unwrap();
+    let (ca, layout, dir_name) = webflow_repair_fixture(&tmp);
+
+    // The init-clone-failed state: setup_connection bails at the clone, so
+    // neither the bare repo nor the worktree ever materialized.
+    let bare_repo = layout.bare_repo_path(&ca.repo_path);
+    assert!(!bare_repo_is_initialized(&bare_repo));
+    assert!(!layout.worktree_path(dir_name).exists());
+
+    let salvaged_worktree_to =
+        repair_connection_local_repo(&ca, dir_name, &layout, "fake-token").unwrap();
+
+    assert!(
+        bare_repo_is_initialized(&bare_repo),
+        "repair should re-clone a usable bare repo",
+    );
+    assert!(
+        layout
+            .worktree_path(dir_name)
+            .join("Collections/rec_item.json")
+            .exists(),
+        "repair should restore the worktree record from the re-cloned repo",
+    );
+    assert!(
+        salvaged_worktree_to.is_none(),
+        "nothing was on disk, so nothing should be salvaged",
+    );
+}
+
+/// Non-destructive guarantee (review follow-up): if the bare repo goes
+/// missing/corrupt *after* the worktree was populated, repair must NOT delete
+/// the worktree (it may hold unreviewed local edits that can't be diffed without
+/// the bare repo). It moves the worktree aside to a `.scratch/salvaged/` backup
+/// and re-clones fresh, so no on-disk content is lost.
+#[test]
+fn repair_preserves_populated_worktree_instead_of_deleting_it() {
+    let tmp = TempDir::new().unwrap();
+    let (ca, layout, dir_name) = webflow_repair_fixture(&tmp);
+
+    // Establish the connection, then add an unreviewed local edit to the
+    // worktree before knocking out only the bare repo.
+    setup_connection(&ca, dir_name, &layout, "fake-token").unwrap();
+    let worktree = layout.worktree_path(dir_name);
+    let edited_record = worktree.join("Collections/rec_item.json");
+    std::fs::write(&edited_record, "{\"local\":\"unreviewed edit\"}").unwrap();
+    let bare_repo = layout.bare_repo_path(&ca.repo_path);
+    std::fs::remove_dir_all(&bare_repo).unwrap();
+    assert!(!bare_repo_is_initialized(&bare_repo));
+
+    let salvaged_worktree_to =
+        repair_connection_local_repo(&ca, dir_name, &layout, "fake-token").unwrap();
+
+    assert!(
+        bare_repo_is_initialized(&bare_repo),
+        "repair should re-clone a usable bare repo",
+    );
+    let salvaged_to =
+        salvaged_worktree_to.expect("a populated worktree must be preserved, not deleted");
+    assert_eq!(
+        std::fs::read_to_string(salvaged_to.join("Collections/rec_item.json")).unwrap(),
+        "{\"local\":\"unreviewed edit\"}",
+        "the user's unreviewed edit must survive verbatim in the salvage backup",
+    );
+    assert!(
+        salvaged_to.starts_with(layout.scratch_root().join("salvaged")),
+        "salvage backup must live under .scratch/ so it stays out of the data tree, got {}",
+        salvaged_to.display(),
+    );
+    // The re-cloned worktree is fresh server content (the edit is in the backup).
+    assert_ne!(
+        std::fs::read_to_string(worktree.join("Collections/rec_item.json")).unwrap(),
+        "{\"local\":\"unreviewed edit\"}",
+        "the re-cloned worktree should hold the server's record, not the stale edit",
     );
 }
 
