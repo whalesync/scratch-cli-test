@@ -20,6 +20,7 @@ import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
+import { RunCountService } from 'src/run-count/run-count.service';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { Actor } from 'src/users/types';
 import { getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
@@ -86,6 +87,7 @@ export class RoutineExecutorService {
     private readonly parser: RoutineParserService,
     private readonly referenceValidator: RoutineReferenceValidatorService,
     private readonly auditLogService: AuditLogService,
+    private readonly runCountService: RunCountService,
   ) {}
 
   /**
@@ -273,7 +275,17 @@ export class RoutineExecutorService {
       if (outcome.kind === 'failed') {
         await this.failStep(step.id, outcome.error);
         // `error` keeps the prefixed message (deprecated); `resultSummary` gets the clean step error.
-        await this.failRun(runId, `Step ${index} (${step.action}) failed: ${outcome.error}`, outcome.error);
+        const failed = await this.failRun(
+          runId,
+          `Step ${index} (${step.action}) failed: ${outcome.error}`,
+          outcome.error,
+        );
+        // A failed routine counts as one Routine run (per product decision: include failures,
+        // exclude cancellations). Guarded on the transition so a reaper-resumed re-drive can't
+        // double-count. Non-fatal — never breaks the run.
+        if (failed) {
+          await this.runCountService.recordRoutineRun({ workbookId });
+        }
         await this.skipStepsFrom(runId, index + 1);
         return;
       }
@@ -292,7 +304,12 @@ export class RoutineExecutorService {
       });
     }
 
-    await this.markRunCompleted(runId);
+    const completed = await this.markRunCompleted(runId);
+    // A completed routine counts as one Routine run. Guarded on the transition so a reaper-resumed
+    // re-drive can't double-count. Non-fatal — never breaks the run.
+    if (completed) {
+      await this.runCountService.recordRoutineRun({ workbookId });
+    }
   }
 
   // ── step execution ─────────────────────────────────────────────────────────────
@@ -673,11 +690,13 @@ export class RoutineExecutorService {
     });
   }
 
-  private async failRun(runId: string, error: string, resultSummary: string): Promise<void> {
-    await this.db.client.routineRun.updateMany({
+  /** Returns true iff THIS call transitioned the run into `failed` (so a run is counted at most once). */
+  private async failRun(runId: string, error: string, resultSummary: string): Promise<boolean> {
+    const res = await this.db.client.routineRun.updateMany({
       where: { id: runId, status: 'running' },
       data: { status: 'failed', error, resultSummary, finishedAt: new Date(), updatedAt: new Date() },
     });
+    return res.count === 1;
   }
 
   private async markRunCancelled(runId: string): Promise<void> {
@@ -687,7 +706,8 @@ export class RoutineExecutorService {
     });
   }
 
-  private async markRunCompleted(runId: string): Promise<void> {
+  /** Returns true iff THIS call transitioned the run into `completed` (so a run is counted at most once). */
+  private async markRunCompleted(runId: string): Promise<boolean> {
     // Surface the first step that finished "completed with a warning" (a completed step whose `error`
     // holds a warning, e.g. a publish with connector-rejected records) at the run level, so a consumer
     // can tell a clean completion from one with warnings without walking the steps. We read the
@@ -698,7 +718,7 @@ export class RoutineExecutorService {
       where: { runId, status: 'completed', error: { not: null } },
       orderBy: { stepIndex: 'asc' },
     });
-    await this.db.client.routineRun.updateMany({
+    const res = await this.db.client.routineRun.updateMany({
       where: { id: runId, status: 'running' },
       data: {
         status: 'completed',
@@ -707,6 +727,7 @@ export class RoutineExecutorService {
         updatedAt: new Date(),
       },
     });
+    return res.count === 1;
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────

@@ -39,6 +39,7 @@ export enum IdPrefixes {
   MCP_CLIENT = 'mcc_', // MCP OAuth client
   ROUTINE_RUN = 'rrn_', // Routine run (execution history)
   ROUTINE_RUN_STEP = 'rrs_', // Routine run step
+  ORGANIZATION_MONTHLY_RUN_COUNT = 'omr_', // Per-organization monthly run-count bucket
 }
 
 type PrefixedId<T extends IdPrefixes> = `${T}${string}`;
@@ -179,6 +180,17 @@ export function isActionId(id: unknown): id is ActionId {
 
 export function createActionId(): ActionId {
   return createId(IdPrefixes.ACTION) as ActionId;
+}
+
+// ------- OrganizationMonthlyRunCount -------
+export type OrganizationMonthlyRunCountId = PrefixedId<IdPrefixes.ORGANIZATION_MONTHLY_RUN_COUNT>;
+
+export function isOrganizationMonthlyRunCountId(id: unknown): id is OrganizationMonthlyRunCountId {
+  return isId(id, IdPrefixes.ORGANIZATION_MONTHLY_RUN_COUNT);
+}
+
+export function createOrganizationMonthlyRunCountId(): OrganizationMonthlyRunCountId {
+  return createId(IdPrefixes.ORGANIZATION_MONTHLY_RUN_COUNT) as OrganizationMonthlyRunCountId;
 }
 
 // ------- DataFolder -------

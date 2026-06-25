@@ -21,4 +21,21 @@ export interface OrganizationUsageSummaryResponseDto {
    */
   whalesyncEligibleRecordCount: number;
   connectorServices: Service[];
+  /**
+   * Run executions for the organization in the current calendar month (UTC), tracked as a
+   * monetization lever. `total` is the sum of the per-type counts. A routine and the pull/sync/
+   * publish steps it runs are each counted in their own type bucket AND in `routine`, so `total`
+   * deliberately counts a routine and its steps as distinct runs (the per-type slices overlap).
+   * Counts roll over each month; this field reflects only the current month.
+   */
+  monthlyRunCounts: OrganizationMonthlyRunCounts;
+}
+
+/** Current-month run-execution counts for an organization, by type, plus their sum. */
+export interface OrganizationMonthlyRunCounts {
+  total: number;
+  pull: number;
+  publish: number;
+  sync: number;
+  routine: number;
 }

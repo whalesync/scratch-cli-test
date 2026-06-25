@@ -10,6 +10,7 @@ import { PosthogModule } from 'src/posthog/posthog.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { RedisModule } from 'src/redis/redis.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
+import { RunCountModule } from 'src/run-count/run-count.module';
 import { UserModule } from 'src/users/users.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
 import { PublishPlanModule } from '../publish-plan/publish-plan.module';
@@ -49,6 +50,7 @@ import { WorkspacePermissionsService } from './workspace-permissions.service';
     EmailModule,
     MigrationLockModule,
     WorkbookProvisioningModule,
+    RunCountModule,
   ],
   controllers: [WorkbookController, FilesController, FilesPublicController, DataFolderController],
   providers: [

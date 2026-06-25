@@ -27,6 +27,7 @@ import type {
   WorkspaceInviteId,
   WorkspacePermissionId,
 } from '@spinner/shared-types';
+import { RunCountService } from 'src/run-count/run-count.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
@@ -61,6 +62,7 @@ export class WorkbookController {
     private readonly usersService: UsersService,
     private readonly workspacePermissionsService: WorkspacePermissionsService,
     private readonly configService: ScratchConfigService,
+    private readonly runCountService: RunCountService,
   ) {}
 
   @Post()
@@ -128,13 +130,15 @@ export class WorkbookController {
   @Get('organization-usage-summary')
   async getOrganizationUsageSummary(@Req() req: RequestWithUser): Promise<OrganizationUsageSummaryResponseDto> {
     const { organizationId } = userToActor(req.user);
-    const [workbookCount, recordCount, whalesyncEligibleRecordCount, connectorServices] = await Promise.all([
-      this.service.countForOrganization(organizationId),
-      this.dataFolderService.sumRecordCountForOrganization(organizationId),
-      this.dataFolderService.sumWhalesyncEligibleRecordCountForOrganization(organizationId),
-      this.dataFolderService.listConnectorServicesForOrganization(organizationId),
-    ]);
-    return { workbookCount, recordCount, whalesyncEligibleRecordCount, connectorServices };
+    const [workbookCount, recordCount, whalesyncEligibleRecordCount, connectorServices, monthlyRunCounts] =
+      await Promise.all([
+        this.service.countForOrganization(organizationId),
+        this.dataFolderService.sumRecordCountForOrganization(organizationId),
+        this.dataFolderService.sumWhalesyncEligibleRecordCountForOrganization(organizationId),
+        this.dataFolderService.listConnectorServicesForOrganization(organizationId),
+        this.runCountService.getCurrentMonthRunCounts(organizationId),
+      ]);
+    return { workbookCount, recordCount, whalesyncEligibleRecordCount, connectorServices, monthlyRunCounts };
   }
 
   /** Total record count for a single workbook (sum of its folders' counts). */

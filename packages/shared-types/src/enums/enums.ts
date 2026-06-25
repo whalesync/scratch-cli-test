@@ -91,6 +91,19 @@ export enum RoutineAction {
   PUBLISH = 'publish',
 }
 
+/**
+ * The high-level run-execution categories tracked per organization for monthly usage/billing
+ * (see {@link OrganizationMonthlyRunCount} on the server and the Billing Usage panel). One bucket
+ * per type per calendar month. Distinct from {@link RoutineAction}, which names a routine *step*:
+ * a routine's pull/sync/publish steps are counted in BOTH their own type bucket and `ROUTINE`.
+ */
+export enum RunType {
+  PULL = 'pull',
+  PUBLISH = 'publish',
+  SYNC = 'sync',
+  ROUTINE = 'routine',
+}
+
 export enum TableDiscoveryMode {
   LIST = 'LIST',
   SEARCH = 'SEARCH',

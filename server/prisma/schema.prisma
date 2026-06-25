@@ -462,12 +462,13 @@ model Organization {
   name      String
   deleted   Boolean  @default(false) // a soft delete flag for orgs to allow for async cleanup
 
-  users          User[]
-  workbooks      Workbook[]
-  subscriptions  Subscription[]
-  invoiceResults InvoiceResult[]
-  actions        Action[]
-  schedules      Schedule[]
+  users                       User[]
+  workbooks                   Workbook[]
+  subscriptions               Subscription[]
+  invoiceResults              InvoiceResult[]
+  actions                     Action[]
+  schedules                   Schedule[]
+  organizationMonthlyRunCounts OrganizationMonthlyRunCount[]
 }
 
 ///
@@ -514,6 +515,32 @@ model Action {
   @@index([organizationId, actionType, createdAt])
   @@index([organizationId, createdAt])
   @@index([userId, createdAt])
+}
+
+/// Monthly per-organization tally of high-level run executions, by type — a monetization lever
+/// (parent epic DEV-10520). One row per (organization, calendar-month-UTC, runType). Counts roll
+/// over by month (a new month = new rows) and past months are retained as history. Incremented
+/// atomically when a run reaches a terminal, non-cancelled state (completed or failed); user
+/// cancellations are not counted. A routine and the pull/sync/publish step jobs it runs each count
+/// in their own type bucket AND in `routine` (the per-type slices intentionally overlap).
+///
+/// Deliberately NOT the `Action` table, which is row-per-action and slated for deprecation. These
+/// counts are org-scoped and survive workbook deletion; only organization deletion cascades them
+/// away. `runType` holds a RunType enum value ('pull' | 'publish' | 'sync' | 'routine').
+model OrganizationMonthlyRunCount {
+  id             String       @id // type: OrganizationMonthlyRunCountId
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// First instant of the calendar month in UTC (e.g. 2026-06-01T00:00:00.000Z).
+  periodStart    DateTime
+  /// RunType enum value: 'pull' | 'publish' | 'sync' | 'routine'.
+  runType        String
+  count          Int          @default(0)
+
+  @@unique([organizationId, periodStart, runType])
+  @@index([organizationId, periodStart])
 }
 
 // Tracks mapping between Git files and External Service IDs

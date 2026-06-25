@@ -9,6 +9,7 @@ import { PosthogModule } from 'src/posthog/posthog.module';
 import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ConnectorsModule } from 'src/remote-service/connectors/connectors.module';
+import { RunCountModule } from 'src/run-count/run-count.module';
 import { SyncModule } from 'src/sync/sync.module';
 import { UserModule } from 'src/users/users.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
@@ -39,6 +40,7 @@ import { WorkersController } from './test/workers.controller';
     MetricsModule,
     ExperimentsModule,
     AuditLogModule,
+    RunCountModule,
   ],
   controllers: [WorkersController],
   providers: [WorkerPoolService, QueueService, QueueTestService, JobHandlerService],

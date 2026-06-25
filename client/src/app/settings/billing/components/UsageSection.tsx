@@ -3,7 +3,7 @@ import { ConfigSection } from '@/app/components/ConfigSection';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useOrganizationUsageSummary } from '@/hooks/use-organization-usage-summary';
-import { Box, Group, Skeleton, Stack, Tooltip } from '@mantine/core';
+import { Box, Divider, Group, Skeleton, Stack, Tooltip } from '@mantine/core';
 
 // The usage columns are bottom-aligned (see the Group below) so their labels line up even when the
 // connector icons wrap onto multiple rows. VALUE_ROW_HEIGHT keeps the value row a consistent height
@@ -38,6 +38,7 @@ export const UsageSection = () => {
   const { summary, isLoading } = useOrganizationUsageSummary();
   const { metadata } = useConnectorsMetadata();
   const connectorServices = summary?.connectorServices ?? [];
+  const runCounts = summary?.monthlyRunCounts;
 
   return (
     <ConfigSection title="Usage" description="Your usage across all Scratch workspaces">
@@ -74,6 +75,17 @@ export const UsageSection = () => {
           <Text13Book c="dimmed">Connectors Used</Text13Book>
         </Stack>
       </Group>
+      <Divider c="var(--mantine-color-gray-3)" />
+      <Stack px="12px" py="10px" gap={8}>
+        <Text13Book c="dimmed">Runs this month</Text13Book>
+        <Group gap="48px" align="flex-end">
+          <UsageStat label="Total" value={runCounts?.total} isLoading={isLoading} />
+          <UsageStat label="Pulls" value={runCounts?.pull} isLoading={isLoading} />
+          <UsageStat label="Publishes" value={runCounts?.publish} isLoading={isLoading} />
+          <UsageStat label="Syncs" value={runCounts?.sync} isLoading={isLoading} />
+          <UsageStat label="Routines" value={runCounts?.routine} isLoading={isLoading} />
+        </Group>
+      </Stack>
     </ConfigSection>
   );
 };

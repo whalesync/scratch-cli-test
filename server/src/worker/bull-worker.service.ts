@@ -11,6 +11,7 @@ import {
   JOB_STALLED_METRIC,
 } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
+import { RunCountService } from 'src/run-count/run-count.service';
 import { JobService } from '../job/job.service';
 import { JobCanceledError } from './job-errors';
 import { JobHandlerService } from './job-handler.service';
@@ -30,6 +31,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     private readonly jobService: JobService,
     private readonly configService: ScratchConfigService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
+    private readonly runCountService: RunCountService,
   ) {}
 
   private getRedis(): IORedis {
@@ -83,6 +85,18 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       if (jobType && jobType in JOB_COMPLETED_METRIC) {
         this.metricsService.logValue(JOB_COMPLETED_METRIC[jobType], 1);
       }
+      // Count this as a per-org monthly run execution (Pull/Publish/Sync). Fired here in the
+      // once-per-final-completion event listener (not in processJob, which re-runs on stall
+      // re-dispatch) so a stalled-then-resumed job is counted exactly once. Self-filters to counted
+      // job types; non-fatal (never throws).
+      if (jobType) {
+        const data = job.data as { workbookId?: string; organizationId?: string };
+        void this.runCountService.recordJobRun({
+          jobType,
+          workbookId: data.workbookId,
+          organizationId: data.organizationId,
+        });
+      }
       // Clean up the abort controller when job completes
       if (job.id) {
         this.activeJobToAbortCtrl.delete(job.id.toString());
@@ -105,6 +119,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         } else {
           this.metricsService.logValue(JOB_FAILED_METRIC[jobType], 1);
         }
+      }
+      // Count failed runs toward the per-org monthly run execution totals, but NOT user
+      // cancellations (a cancelled run is not a billable execution). Non-fatal.
+      if (job && jobType && !(err instanceof JobCanceledError)) {
+        const data = job.data as { workbookId?: string; organizationId?: string };
+        void this.runCountService.recordJobRun({
+          jobType,
+          workbookId: data.workbookId,
+          organizationId: data.organizationId,
+        });
       }
       // Clean up the abort controller when job fails
       if (job?.id) {

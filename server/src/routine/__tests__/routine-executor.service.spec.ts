@@ -5,6 +5,7 @@ import { RoutineAction, RoutineRunId, RoutineStepOptions, WorkbookId } from '@sp
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
+import { RunCountService } from 'src/run-count/run-count.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { RoutineExecutorService } from '../routine-executor.service';
@@ -198,6 +199,7 @@ function makeService(deps: {
     {} as RoutineParserService,
     referenceValidator,
     { logEvent: jest.fn() } as unknown as AuditLogService,
+    { recordRoutineRun: jest.fn() } as unknown as RunCountService,
   );
 }
 
@@ -895,6 +897,7 @@ describe('RoutineExecutorService.triggerRun', () => {
       parser,
       referenceValidator,
       auditLog,
+      { recordRoutineRun: jest.fn() } as unknown as RunCountService,
     );
   }
 

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditLogModule } from 'src/audit/audit-log.module';
 import { DbModule } from 'src/db/db.module';
 import { JobModule } from 'src/job/job.module';
+import { RunCountModule } from 'src/run-count/run-count.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
 import { RoutineExecutorService } from './routine-executor.service';
@@ -16,7 +17,7 @@ import { RoutineReferenceValidatorService } from './routine-reference-validator.
  * this for the parser/validator + executor; ScheduleModule and CronModule import it for the executor.
  */
 @Module({
-  imports: [DbModule, ScratchGitModule, WorkerEnqueuerModule, JobModule, AuditLogModule],
+  imports: [DbModule, ScratchGitModule, WorkerEnqueuerModule, JobModule, AuditLogModule, RunCountModule],
   providers: [RoutineParserService, RoutineReferenceValidatorService, RoutineExecutorService],
   exports: [RoutineParserService, RoutineReferenceValidatorService, RoutineExecutorService],
 })
