@@ -1,4 +1,5 @@
 pub mod accepted_patches;
+pub mod atomic_json_state;
 pub mod failed_patches;
 pub mod folder_index;
 pub mod git_exec;

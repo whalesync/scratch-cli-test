@@ -240,4 +240,74 @@ describeIfPostgres("Files", () => {
       expect(afterDownload.publish_status).toBe("published");
     });
   });
+
+  describe("accepted-patches.json corruption recovery", () => {
+    /** Locate the single accepted-patches.json under .scratch/connections. */
+    function findAcceptedPatchesFile(): string {
+      const connectionsDir = path.join(workspaceDir, ".scratch", "connections");
+      const stack = [connectionsDir];
+      while (stack.length > 0) {
+        const dir = stack.pop()!;
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            stack.push(full);
+          } else if (entry.name === "accepted-patches.json") {
+            return full;
+          }
+        }
+      }
+      throw new Error(
+        `accepted-patches.json not found under ${connectionsDir}`,
+      );
+    }
+
+    it("tolerates trailing NUL bytes and rewrites the file clean on the next write", () => {
+      // Reproduces the reported corruption: a complete, valid JSON document
+      // followed by NUL bytes (left by an out-of-band edit, a cloud-sync
+      // placeholder, or power-loss zero-fill). A review op must recover rather
+      // than failing with "failed to parse accepted patches", and the next write
+      // must rewrite the file without the padding.
+      const target = findJsonFiles(workspaceDir)[0];
+      const relPath = path.relative(workspaceDir, target);
+
+      // Make an edit and accept it so accepted-patches.json exists with an entry.
+      const before = JSON.parse(fs.readFileSync(target, "utf-8"));
+      fs.writeFileSync(
+        target,
+        JSON.stringify({ ...before, author: "Corruption Tester" }, null, 2),
+      );
+      expect(
+        cli.run(["files", "accept", relPath], { cwd: workspaceDir }).exitCode,
+      ).toBe(0);
+
+      // Corrupt it: valid JSON + trailing NUL padding.
+      const acceptedPatchesPath = findAcceptedPatchesFile();
+      const cleanBytes = fs.readFileSync(acceptedPatchesPath);
+      expect(cleanBytes.includes(0)).toBe(false); // sanity: clean to start
+      fs.writeFileSync(
+        acceptedPatchesPath,
+        Buffer.concat([cleanBytes, Buffer.from([0, 0, 0, 0])]),
+      );
+
+      // A new edit + accept reads the corrupted accepted-patches.json. Before the
+      // fix this exited non-zero ("failed to parse"); now it must recover.
+      const editAgain = JSON.parse(fs.readFileSync(target, "utf-8"));
+      fs.writeFileSync(
+        target,
+        JSON.stringify(
+          { ...editAgain, author: "Corruption Tester 2" },
+          null,
+          2,
+        ),
+      );
+      const recoverResult = cli.run(["files", "accept", relPath], {
+        cwd: workspaceDir,
+      });
+      expect(recoverResult.exitCode).toBe(0);
+
+      // The write path rewrote the file clean — no NUL bytes survive.
+      expect(fs.readFileSync(acceptedPatchesPath).includes(0)).toBe(false);
+    });
+  });
 });

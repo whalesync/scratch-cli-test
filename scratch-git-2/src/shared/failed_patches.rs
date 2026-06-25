@@ -130,14 +130,15 @@ pub fn path(connection_dir: &Path) -> PathBuf {
 /// and "no file yet" are the same state. Fails loud on a newer on-disk format.
 pub fn load(connection_dir: &Path) -> anyhow::Result<FailedPatchesFile> {
     let p = path(connection_dir);
-    if !p.exists() {
+    // Missing, empty, or all NUL/whitespace padding == "no failed patches yet";
+    // otherwise trailing NUL/whitespace padding is stripped so a complete
+    // document followed by zero-fill parses while a truncated one still fails
+    // loud below (mirrors accepted-patches.json).
+    let Some(bytes) =
+        crate::shared::atomic_json_state::read_json_state_file_tolerating_trailing_padding(&p)?
+    else {
         return Ok(FailedPatchesFile::default());
-    }
-    let bytes = fs::read(&p)
-        .with_context(|| format!("failed to read failed patches at {}", p.display()))?;
-    if bytes.is_empty() {
-        return Ok(FailedPatchesFile::default());
-    }
+    };
     let envelope: VersionedEnvelope = serde_json::from_slice(&bytes)
         .with_context(|| format!("failed to parse failed patches at {}", p.display()))?;
     if envelope.version > FORMAT_VERSION {
@@ -191,6 +192,9 @@ pub fn save_atomic(connection_dir: &Path, file: &FailedPatchesFile) -> anyhow::R
     }
     fs::rename(&tmp_path, &final_path)
         .with_context(|| format!("failed to rename to {}", final_path.display()))?;
+    // Flush the rename itself so the freshly-written file survives a crash
+    // (the temp's contents were already fsynced above).
+    crate::shared::atomic_json_state::fsync_parent_directory_best_effort(&final_path);
     Ok(())
 }
 
@@ -309,5 +313,17 @@ mod tests {
         fs::write(path(dir.path()), br#"{"version":999,"patches":[]}"#).unwrap();
         let err = load(dir.path()).unwrap_err();
         assert!(err.to_string().contains("newer scratchmd"), "got: {err}");
+    }
+
+    #[test]
+    fn load_tolerates_trailing_nul_padding() {
+        // A complete document followed by NUL zero-fill must load, not fail.
+        let dir = tempdir().unwrap();
+        let mut bytes = br#"{"version":1,"patches":[{"path":"Contacts/bobby.json","kind":"update","patch":{"x":1},"error":"boom"}]}"#.to_vec();
+        bytes.extend_from_slice(b"\n\0\0\0");
+        fs::write(path(dir.path()), &bytes).unwrap();
+        let loaded = load(dir.path()).unwrap();
+        assert_eq!(loaded.patches.len(), 1);
+        assert_eq!(loaded.patches[0].error.as_deref(), Some("boom"));
     }
 }

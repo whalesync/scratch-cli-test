@@ -81,16 +81,16 @@ pub fn path(connection_dir: &Path) -> PathBuf {
 /// "no stashed conflicts" and "no file yet" are the same state.
 pub fn load(connection_dir: &Path) -> anyhow::Result<UnreviewedChangesFile> {
     let p = path(connection_dir);
-    if !p.exists() {
+    // Missing, empty, or entirely NUL/whitespace padding all mean "no stashed
+    // conflicts yet" (the latter two are known crash / out-of-band-corruption
+    // artifacts). Otherwise trailing NUL/whitespace padding is stripped so a
+    // complete document followed by zero-fill parses, while a genuinely
+    // truncated one still fails loud below (mirrors accepted-patches.json).
+    let Some(bytes) =
+        crate::shared::atomic_json_state::read_json_state_file_tolerating_trailing_padding(&p)?
+    else {
         return Ok(UnreviewedChangesFile::default());
-    }
-    let bytes = fs::read(&p)
-        .with_context(|| format!("failed to read unreviewed changes at {}", p.display()))?;
-    if bytes.is_empty() {
-        // A zero-byte file from a previous crash between create + write —
-        // treat as empty rather than failing parse.
-        return Ok(UnreviewedChangesFile::default());
-    }
+    };
     // Refuse a file written by a newer scratchmd rather than mis-reconstruct
     // its patch bodies (mirrors accepted-patches.json's guard).
     let envelope: VersionedEnvelope = serde_json::from_slice(&bytes)
@@ -138,6 +138,9 @@ pub fn save_atomic(connection_dir: &Path, file: &UnreviewedChangesFile) -> anyho
     }
     fs::rename(&tmp_path, &final_path)
         .with_context(|| format!("failed to rename to {}", final_path.display()))?;
+    // Flush the rename itself so the freshly-written file survives a crash
+    // (the temp's contents were already fsynced above).
+    crate::shared::atomic_json_state::fsync_parent_directory_best_effort(&final_path);
     Ok(())
 }
 
@@ -238,5 +241,16 @@ mod tests {
             load(dir.path()).is_ok(),
             "legacy (versionless) file must load"
         );
+    }
+
+    #[test]
+    fn load_tolerates_trailing_nul_padding() {
+        // A complete document followed by NUL zero-fill must load, not fail.
+        let dir = tempdir().unwrap();
+        let mut bytes = br#"{"version":2,"patches":[{"path":"Companies/rec_1.json","kind":"create","patch":{"name":"Acme"}}]}"#.to_vec();
+        bytes.extend_from_slice(b"\0\0\0");
+        fs::write(path(dir.path()), &bytes).unwrap();
+        let loaded = load(dir.path()).unwrap();
+        assert_eq!(loaded.patches.len(), 1);
     }
 }

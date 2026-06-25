@@ -77,16 +77,17 @@ pub fn path(connection_dir: &Path) -> PathBuf {
 /// "no accepted patches" and "no file yet" are the same state.
 pub fn load(connection_dir: &Path) -> anyhow::Result<AcceptedPatchesFile> {
     let p = path(connection_dir);
-    if !p.exists() {
+    // Missing, empty, or entirely NUL/whitespace padding all mean "no accepted
+    // patches yet" (the latter two are known crash / out-of-band-corruption
+    // artifacts). Otherwise we get the bytes with any trailing NUL/whitespace
+    // padding already stripped — so a complete document followed by zero-fill
+    // (a manual edit, cloud-sync placeholder, or power-loss) parses, while a
+    // genuinely truncated document still fails loud below.
+    let Some(bytes) =
+        crate::shared::atomic_json_state::read_json_state_file_tolerating_trailing_padding(&p)?
+    else {
         return Ok(AcceptedPatchesFile::default());
-    }
-    let bytes = fs::read(&p)
-        .with_context(|| format!("failed to read accepted patches at {}", p.display()))?;
-    if bytes.is_empty() {
-        // A zero-byte file from a previous crash between create + write —
-        // treat as empty rather than failing parse.
-        return Ok(AcceptedPatchesFile::default());
-    }
+    };
     // Fail loud rather than silently mis-reconstruct. A file written by a *newer*
     // scratchmd carries `Update` bodies this build can't interpret (a future
     // on-disk format), and reconstructing them would corrupt records — e.g. an
@@ -142,6 +143,9 @@ pub fn save_atomic(connection_dir: &Path, file: &AcceptedPatchesFile) -> anyhow:
     }
     fs::rename(&tmp_path, &final_path)
         .with_context(|| format!("failed to rename to {}", final_path.display()))?;
+    // Flush the rename itself so the freshly-written file survives a crash
+    // (the temp's contents were already fsynced above).
+    crate::shared::atomic_json_state::fsync_parent_directory_best_effort(&final_path);
     Ok(())
 }
 
@@ -153,14 +157,11 @@ pub fn save_atomic(connection_dir: &Path, file: &AcceptedPatchesFile) -> anyhow:
 /// whole patch list.
 pub fn peek_format_version(connection_dir: &Path) -> anyhow::Result<u32> {
     let p = path(connection_dir);
-    if !p.exists() {
+    let Some(bytes) =
+        crate::shared::atomic_json_state::read_json_state_file_tolerating_trailing_padding(&p)?
+    else {
         return Ok(FORMAT_VERSION);
-    }
-    let bytes = fs::read(&p)
-        .with_context(|| format!("failed to read accepted patches at {}", p.display()))?;
-    if bytes.is_empty() {
-        return Ok(FORMAT_VERSION);
-    }
+    };
     let envelope: VersionedEnvelope = serde_json::from_slice(&bytes).with_context(|| {
         format!(
             "failed to parse accepted patches version at {}",
@@ -447,5 +448,43 @@ mod tests {
         assert_eq!(loaded.patches[0].kind, PatchKind::Update);
         // A 6902 op-array body survives the round trip as a JSON array.
         assert!(loaded.patches[0].patch.is_array());
+    }
+
+    #[test]
+    fn load_tolerates_trailing_nul_padding_after_a_complete_document() {
+        // The reported corruption: a complete, valid JSON document followed by
+        // NUL bytes (left by an out-of-band edit, a cloud-sync placeholder, or
+        // power-loss zero-fill). It must load rather than failing to parse.
+        let dir = tempdir().unwrap();
+        let mut bytes = br#"{"version":2,"patches":[{"path":"Companies/rec_1.json","kind":"update","patch":{"industry":"SaaS"}}]}"#.to_vec();
+        bytes.extend_from_slice(b"\n\0\0\0\0");
+        fs::write(path(dir.path()), &bytes).unwrap();
+        let loaded = load(dir.path()).unwrap();
+        assert_eq!(loaded.patches.len(), 1);
+        assert_eq!(loaded.patches[0].path, "Companies/rec_1.json");
+    }
+
+    #[test]
+    fn load_treats_an_all_nul_file_as_empty() {
+        // A wholly zero-filled file (e.g. a power-loss artifact) reads as "no
+        // accepted patches", matching the zero-byte crash-recovery behavior.
+        let dir = tempdir().unwrap();
+        fs::write(path(dir.path()), b"\0\0\0\0\0").unwrap();
+        assert_eq!(load(dir.path()).unwrap(), AcceptedPatchesFile::default());
+    }
+
+    #[test]
+    fn load_still_fails_loud_on_a_truncated_document_with_nul_padding() {
+        // Trimming trailing padding must NOT rescue genuinely truncated JSON: an
+        // incomplete value does not parse even after the NULs are stripped, so
+        // fail-loud is preserved for real mid-data corruption.
+        let dir = tempdir().unwrap();
+        let mut bytes = br#"{"version":2,"patches":[{"path":"a"#.to_vec();
+        bytes.extend_from_slice(b"\0\0\0\0");
+        fs::write(path(dir.path()), &bytes).unwrap();
+        assert!(
+            load(dir.path()).is_err(),
+            "a truncated document must still fail to parse"
+        );
     }
 }

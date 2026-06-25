@@ -154,7 +154,11 @@ Per connection, at `<workspace>/.scratch/connections/<conn>/accepted-patches.jso
 
 The file IS the wire format. `files upload` ships it verbatim to `/upload-patch` — no diff computation at upload time. All the per-field diff logic happens at accept time, in `re_anchor::compute_entry`.
 
-It's safe to `cat` and inspect; it's a normal JSON file. Mutating callers acquire the workspace lock at `<workspace>/.scratch/lock` first, and writes are atomic (`<file>.tmp.<pid>` → fsync → rename).
+It's safe to `cat` and inspect; it's a normal JSON file. Mutating callers acquire the workspace lock at `<workspace>/.scratch/lock` first, and writes are atomic (`<file>.tmp.<pid>` → fsync → rename, then an fsync of the containing directory so the rename itself survives a crash).
+
+> **Don't hand-edit `accepted-patches.json`** (or its siblings). An external write — a manual edit, a Python `json.dump`, an editor — bypasses the `.scratch/lock` and the atomic temp→rename path, and can leave the file in a partially-written state (the classic symptom is **trailing NUL bytes after the closing `}`**, from a non-truncating write, a cloud-sync placeholder, or a power-loss). To drop unwanted patches, use `scratchmd files reject` / `discard`, which mutate the file safely. Relatedly, keep the workspace **out of a cloud-synced folder** (iCloud Drive, Dropbox, OneDrive) — those clients can momentarily expose a zero-filled placeholder for a file mid-sync.
+>
+> **Read-side resilience:** `load` tolerates a complete document followed by trailing NUL/whitespace padding — it strips the padding, parses, and warns (the file self-cleans on the next mutating write). Genuinely truncated or structurally-broken JSON still fails loud rather than risk mis-reconstructing the user's edits.
 
 ### `failed-patches.json` (post-publish connector rejections, DEV-10048)
 
