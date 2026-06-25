@@ -1657,6 +1657,16 @@ struct ValidationStateRow {
     validated_mtime_validator: Option<i64>,
 }
 
+/// Maximum number of filenames bound into a single `WHERE filename IN (...)` query.
+///
+/// SQLite caps the number of bound parameters in one statement at
+/// `SQLITE_MAX_VARIABLE_NUMBER` (999 on legacy builds, 32766 on modern ones). A folder
+/// with tens of thousands of stale records — e.g. a Stripe `Charges` table after seeding —
+/// would otherwise build a single `IN (?, ?, … 40k times)` clause and fail with
+/// "too many SQL variables". 900 stays under even the legacy limit and leaves headroom for
+/// an extra leading bind (see `query_page_errors`).
+const SQL_IN_CLAUSE_FILENAME_CHUNK_SIZE: usize = 900;
+
 fn load_validation_state(
     conn: &Connection,
     table: &str,
@@ -1666,30 +1676,39 @@ fn load_validation_state(
         return Ok(HashMap::new());
     }
     let tq = quote_ident(table);
-    let placeholders = filenames.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-    let sql = format!(
-        "SELECT filename, working_mtime, master_mtime,
-                validated_mtime_working, validated_mtime_master, validated_mtime_validator
-         FROM {tq}
-         WHERE filename IN ({placeholders})"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let params_ref: Vec<&dyn ToSql> = filenames.iter().map(|s| s as &dyn ToSql).collect();
-    let rows = stmt
-        .query_map(params_ref.as_slice(), |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                ValidationStateRow {
-                    working_mtime: row.get(1)?,
-                    master_mtime: row.get(2)?,
-                    validated_mtime_working: row.get(3)?,
-                    validated_mtime_master: row.get(4)?,
-                    validated_mtime_validator: row.get(5)?,
-                },
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows.into_iter().collect())
+    let mut filename_to_validation_state_row: HashMap<String, ValidationStateRow> = HashMap::new();
+    // Chunk the `IN (...)` lookup so we never bind more placeholders than SQLite allows.
+    for filename_chunk in filenames.chunks(SQL_IN_CLAUSE_FILENAME_CHUNK_SIZE) {
+        let placeholders = filename_chunk
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT filename, working_mtime, master_mtime,
+                    validated_mtime_working, validated_mtime_master, validated_mtime_validator
+             FROM {tq}
+             WHERE filename IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let params_ref: Vec<&dyn ToSql> = filename_chunk.iter().map(|s| s as &dyn ToSql).collect();
+        let rows = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    ValidationStateRow {
+                        working_mtime: row.get(1)?,
+                        master_mtime: row.get(2)?,
+                        validated_mtime_working: row.get(3)?,
+                        validated_mtime_master: row.get(4)?,
+                        validated_mtime_validator: row.get(5)?,
+                    },
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        filename_to_validation_state_row.extend(rows);
+    }
+    Ok(filename_to_validation_state_row)
 }
 
 fn is_validation_stale(row: &ValidationStateRow, current_validator_mtime: Option<i64>) -> bool {
@@ -1724,36 +1743,48 @@ fn query_page_errors(
     if filenames.is_empty() {
         return Ok(HashMap::new());
     }
-    let placeholders = filenames.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let vr_tq = quote_ident(&validation_results_table());
-    let sql = format!(
-        "SELECT filename, field_path, validator_kind, level, message, description, fixable
-         FROM {vr_tq}
-         WHERE folder_path = ? AND filename IN ({placeholders})
-         ORDER BY filename, field_path, validator_kind"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut params_ref: Vec<&dyn ToSql> = vec![&folder as &dyn ToSql];
-    params_ref.extend(filenames.iter().map(|s| s as &dyn ToSql));
-    let rows = stmt
-        .query_map(params_ref.as_slice(), |row| {
-            let filename: String = row.get(0)?;
-            let err = ValidationError {
-                field_path: row.get(1)?,
-                validator_kind: row.get(2)?,
-                level: row.get(3)?,
-                message: row.get(4)?,
-                description: row.get(5)?,
-                fixable: row.get::<_, i64>(6).map(|v| v != 0)?,
-            };
-            Ok((filename, err))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut map: HashMap<String, Vec<ValidationError>> = HashMap::new();
-    for (filename, error) in rows {
-        map.entry(filename).or_default().push(error);
+    let mut filename_to_validation_errors: HashMap<String, Vec<ValidationError>> = HashMap::new();
+    // Chunk the `IN (...)` lookup to stay under SQLite's bound-parameter limit; see
+    // `SQL_IN_CLAUSE_FILENAME_CHUNK_SIZE`. The leading `folder_path` bind takes one slot,
+    // which the chunk size already accounts for.
+    for filename_chunk in filenames.chunks(SQL_IN_CLAUSE_FILENAME_CHUNK_SIZE) {
+        let placeholders = filename_chunk
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT filename, field_path, validator_kind, level, message, description, fixable
+             FROM {vr_tq}
+             WHERE folder_path = ? AND filename IN ({placeholders})
+             ORDER BY filename, field_path, validator_kind"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params_ref: Vec<&dyn ToSql> = vec![&folder as &dyn ToSql];
+        params_ref.extend(filename_chunk.iter().map(|s| s as &dyn ToSql));
+        let rows = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                let filename: String = row.get(0)?;
+                let err = ValidationError {
+                    field_path: row.get(1)?,
+                    validator_kind: row.get(2)?,
+                    level: row.get(3)?,
+                    message: row.get(4)?,
+                    description: row.get(5)?,
+                    fixable: row.get::<_, i64>(6).map(|v| v != 0)?,
+                };
+                Ok((filename, err))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        for (filename, error) in rows {
+            filename_to_validation_errors
+                .entry(filename)
+                .or_default()
+                .push(error);
+        }
     }
-    Ok(map)
+    Ok(filename_to_validation_errors)
 }
 
 /// Validate records on the current page whose validation state is stale.
@@ -1821,10 +1852,17 @@ fn validate_page_records(
                 .ok()
                 .and_then(|bytes| serde_json::from_slice(&bytes).ok());
         let workspace_dir = resolve_workspace_dir(workspace);
-        // Master content comes from refs/heads/main post-Slice-F. Load once
-        // and reuse across the stale_filenames loop.
+        // Master content comes from refs/heads/main post-Slice-F. Read only the blobs for
+        // this page's stale records — the map is consulted solely inside the stale_filenames
+        // loop below. The unfiltered read pulls the WHOLE folder's main content into a
+        // folder-sized map, which is both wasted work on a small page and, now that
+        // `validate_files` batches its pages, a full main-tree read per batch. Filtering keeps
+        // the read and the allocation proportional to the batch (mirrors `reindex_files`).
+        let stale_filename_filter: std::collections::HashSet<String> =
+            stale_filenames.iter().cloned().collect();
         let file_name_to_contents_map_in_main_branch_for_folder =
-            read_main_blobs_for_folder(workspace, folder).unwrap_or_default();
+            read_main_blobs_for_folder_filtered(workspace, folder, &stale_filename_filter)
+                .unwrap_or_default();
         let total = stale_filenames.len();
         let mut done = 0usize;
         let vr_tq = quote_ident(&validation_results_table());
@@ -2833,6 +2871,13 @@ pub fn reindex_files(
 
 /// Run validators for specific files and update `has_errors` + `validation_results`.
 /// Intended to be called after `reindex_files` when immediate validation feedback is needed.
+///
+/// Validates in bounded batches (`INDEX_FIELD_BATCH_SIZE`), each committed in its own
+/// `validate_page_records` transaction. A folder with tens of thousands of stale records
+/// (e.g. a Stripe `Charges` table after seeding) otherwise validates in a single giant
+/// transaction; batching keeps memory bounded and makes the work resumable — validation is
+/// mtime-idempotent, so a crashed run re-checks only the files in batches that hadn't yet
+/// committed.
 pub fn validate_files(
     workspace: &Path,
     folder: &str,
@@ -2848,9 +2893,24 @@ pub fn validate_files(
     let table = table_name_from_folder(folder);
     let mut conn = open_conn(&db_path)?;
     ensure_schema(&conn, &table)?;
-    validate_page_records(
-        &mut conn, &table, filenames, &paths, workspace, folder, true, debug,
-    )?;
+    let total = filenames.len();
+    let mut done = 0usize;
+    for filename_batch in filenames.chunks(INDEX_FIELD_BATCH_SIZE) {
+        validate_page_records(
+            &mut conn,
+            &table,
+            filename_batch,
+            &paths,
+            workspace,
+            folder,
+            true,
+            debug,
+        )?;
+        done += filename_batch.len();
+        if debug {
+            eprintln!("[validate] batch {done}/{total}");
+        }
+    }
     Ok(())
 }
 
@@ -3720,6 +3780,76 @@ mod tests {
             "unchanged schema is a no-op"
         );
         assert_eq!(count_kind("required"), 1);
+    }
+
+    #[test]
+    fn test_validation_state_and_errors_chunk_past_sqlite_variable_limit() {
+        use rusqlite::params;
+
+        // Regression for "too many SQL variables": a folder with far more stale
+        // records than SQLite's bound-parameter limit (32766 on modern builds, 999
+        // on legacy) must not build a single `WHERE filename IN (?, ?, …)` clause.
+        // load_validation_state / query_page_errors now chunk the lookup.
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let folder = "conn/charges";
+        let db_path = resolve_db_path(&ws, folder, None);
+        let table = table_name_from_folder(folder);
+
+        let conn = open_conn(&db_path).unwrap();
+        ensure_schema(&conn, &table).unwrap();
+        let tq = quote_ident(&table);
+        let vrq = quote_ident(&validation_results_table());
+
+        // Two real rows present in the index; one carries a validation error.
+        conn.execute(
+            &format!(
+                "INSERT INTO {tq} (filename, working_mtime, validated_mtime_working, has_errors)
+                 VALUES ('present_a.json', 11, 11, 1)"
+            ),
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            &format!(
+                "INSERT INTO {tq} (filename, working_mtime, validated_mtime_working, has_errors)
+                 VALUES ('present_b.json', 22, 22, 0)"
+            ),
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            &format!(
+                "INSERT INTO {vrq} (folder_path, filename, field_path, validator_kind, level, message, description, fixable)
+                 VALUES (?1, 'present_a.json', 'fields.amount', 'enforce_schema', 'error', 'bad', NULL, 0)"
+            ),
+            params![folder],
+        )
+        .unwrap();
+
+        // A filename slice well above the parameter limit: the two present rows plus
+        // tens of thousands of absent ones (mirrors the 40k-record Charges crash).
+        let mut filenames: Vec<String> =
+            vec!["present_a.json".to_string(), "present_b.json".to_string()];
+        filenames.extend((0..40_000).map(|i| format!("absent_{i:05}.json")));
+        assert!(filenames.len() > SQL_IN_CLAUSE_FILENAME_CHUNK_SIZE);
+
+        // Pre-fix this errored with "too many SQL variables".
+        let state = load_validation_state(&conn, &table, &filenames).unwrap();
+        assert_eq!(state.len(), 2, "only the present rows come back");
+        assert_eq!(state.get("present_a.json").unwrap().working_mtime, Some(11));
+        assert_eq!(
+            state.get("present_b.json").unwrap().validated_mtime_working,
+            Some(22)
+        );
+
+        let errors = query_page_errors(&conn, folder, &filenames).unwrap();
+        assert_eq!(errors.len(), 1, "only present_a has an error row");
+        assert_eq!(errors.get("present_a.json").unwrap().len(), 1);
+        assert_eq!(
+            errors.get("present_a.json").unwrap()[0].validator_kind,
+            "enforce_schema"
+        );
     }
 
     #[test]
@@ -4903,6 +5033,125 @@ mod tests {
         assert_eq!(result.validated, 1);
         assert_eq!(count_validation_results(&ws, "conn/posts"), 1);
         assert_eq!(count_has_errors(&ws, "conn/posts"), 1);
+    }
+
+    #[test]
+    fn test_revalidate_spanning_multiple_batches() {
+        // validate_files processes filenames in batches of INDEX_FIELD_BATCH_SIZE, each
+        // committed in its own transaction. A folder larger than one batch must still have
+        // every record validated — nothing dropped at a batch boundary. Records with an
+        // empty title violate the `required` rule; the rest pass.
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let folder = "conn/posts";
+        let posts_dir = ws.join("conn").join("posts");
+
+        let record_count = INDEX_FIELD_BATCH_SIZE * 2 + 7; // spans 3 batches
+        let mut expected_error_count = 0i64;
+        for i in 0..record_count {
+            let fails_required = i % 2 == 0;
+            if fails_required {
+                expected_error_count += 1;
+            }
+            let title = if fails_required { "" } else { "ok" };
+            write_json(
+                &posts_dir,
+                &format!("rec{i:05}.json"),
+                &format!(r#"{{"title":"{title}"}}"#),
+            );
+        }
+        write_validation_json(&ws, folder, r#"[{"validator":"required","field":"title"}]"#);
+
+        // Pre-fix the whole folder validated in one transaction; here it spans 3 batches.
+        let result = revalidate_folder(&ws, folder, false).unwrap();
+        assert_eq!(
+            result.validated, record_count,
+            "every record across all batches must be validated"
+        );
+        assert_eq!(count_validation_results(&ws, folder), expected_error_count);
+        assert_eq!(count_has_errors(&ws, folder), expected_error_count);
+
+        // Re-running is a no-op (mtime-idempotent) — nothing is re-validated.
+        let again = revalidate_folder(&ws, folder, false).unwrap();
+        assert_eq!(
+            count_has_errors(&ws, folder),
+            expected_error_count,
+            "error count is stable across reruns"
+        );
+        // revalidate_folder forces a re-check of every live record, so `validated` counts
+        // them all again — what matters is the result set is unchanged.
+        assert_eq!(again.validated, record_count);
+    }
+
+    #[test]
+    fn test_validate_filtered_main_read_surfaces_master_content() {
+        // The validate path reads published (main-branch) content via the FILTERED helper,
+        // scoped to the page's stale records, to bound per-batch memory. This must still
+        // surface a stale file's master blob: the `enforce_schema` readonly check compares
+        // the working value against master and only fires when master is present. Guards
+        // against the filter dropping content the validators depend on.
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let folder = "conn/posts";
+
+        // Working record: the readonly `id` field changed away from its published value.
+        write_json(
+            &ws.join("conn").join("posts"),
+            "rec.json",
+            r#"{"id":"CHANGED","title":"Hello"}"#,
+        );
+        // Published (refs/heads/main) content via the `_test_main` escape hatch.
+        write_json(
+            &test_main_dir(&ws, "conn", "posts"),
+            "rec.json",
+            r#"{"id":"original","title":"Hello"}"#,
+        );
+
+        // schema.json marks `id` readonly; validation.json enables enforce_schema.
+        let schema_path = resolve_folder_schema_path(&ws, folder);
+        fs::create_dir_all(schema_path.parent().unwrap()).unwrap();
+        fs::write(
+            &schema_path,
+            r#"{"schema":{"type":"object","properties":{"id":{"type":"string","x-scratch-readonly":true},"title":{"type":"string"}}}}"#,
+        )
+        .unwrap();
+        write_validation_json(
+            &ws,
+            folder,
+            r#"[{"validator":"enforce_schema","params":{}}]"#,
+        );
+
+        revalidate_folder(&ws, folder, false).unwrap();
+
+        // Exactly one violation: a readonly warning on `id`, reachable only if the filtered
+        // main read returned rec.json's published content.
+        assert_eq!(count_validation_results(&ws, folder), 1);
+        assert_eq!(count_has_errors(&ws, folder), 1);
+
+        let conn_name = conn_name_from_folder(folder);
+        let db_path = ws.join(".repos").join(format!("{conn_name}.db"));
+        let conn = Connection::open(&db_path).unwrap();
+        let vrt = validation_results_table();
+        let (field_path, level, message): (String, String, String) = conn
+            .query_row(
+                &format!(
+                    "SELECT field_path, level, COALESCE(message, '') FROM {vrt} \
+                     WHERE folder_path = ?1 AND filename = 'rec.json'"
+                ),
+                params![folder],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            field_path, "id",
+            "readonly violation is on the changed field"
+        );
+        assert_eq!(level, "warning", "readonly violations are warnings");
+        assert!(
+            message.to_lowercase().contains("readonly")
+                || message.to_lowercase().contains("read-only"),
+            "expected readonly mention in message, got: {message}"
+        );
     }
 
     #[test]
