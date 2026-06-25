@@ -5110,7 +5110,17 @@ fn reconcile_published_record(
 
     // At most one re-anchored entry (this record), and only if the publish
     // failed and the patch is still meaningful against the new `main`.
-    let surviving_patch = re_anchored.patches.first().cloned();
+    //
+    // Drop a publish-no-op survivor (e.g. a removed key / connector-normalized
+    // value the server's `computeChangedFields` never advanced `main` for) the
+    // same way the workspace-wide `partition_reanchored_after_publish` does
+    // (DEV-10572). Without this guard the accepted-patches entry — and thus the
+    // review dot derived from its presence — would persist forever after a
+    // successful single-record publish, so the edit never converges.
+    let surviving_patch = match re_anchored.patches.first().cloned() {
+        Some(patch) if is_publish_no_op_survivor(&patch, &new_main_map)? => None,
+        other => other,
+    };
     let patch_dropped = !matches!((&existing_entry, &surviving_patch), (Some(_), Some(_)));
 
     // Surgical single-file write — only this record, NEVER materialize_local_repo

@@ -5031,3 +5031,86 @@ fn reconcile_published_record_is_idempotent_when_record_already_reconciled() {
     );
     assert_eq!(outcome.conflicts, 0);
 }
+
+#[test]
+fn reconcile_published_record_drops_removed_key_no_op_survivor() {
+    // DEV-10572: a removed-key edit is a publish no-op (the server's
+    // computeChangedFields never advances `main` for a removed key), so
+    // re_anchor keeps it as a surviving residual against the unchanged `main`.
+    // The single-record reconcile must drop it — the same way the workspace-wide
+    // `reconcile_drops_removed_key_no_op_survivor` does — so the accepted-patches
+    // entry (and the review dot derived from its presence) converges instead of
+    // sticking forever after a successful single-record publish.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    let main_hash = seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_x.json",
+        "{\n  \"a\": 1,\n  \"b\": 2\n}\n",
+    );
+
+    // The user removed key `b` and accepted it. `main` does NOT advance for the
+    // removal (it's a publish no-op), so this is the survivor the guard must drop.
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
+            path: "posts/rec_x.json".to_string(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!([{"op": "remove", "path": "/b"}]),
+            revert: false,
+        }],
+    };
+    let connection_dir = accepted_patches_dir(&ctx);
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // Materialize the approved value (b removed) into a real worktree so the
+    // surgical-write branch fires and the worktree matches the approved bytes.
+    setup_detached_worktree(&ctx, &main_hash);
+    let old_map = read_git_tree(&ctx.bare_repo, &main_hash).unwrap();
+    let approved_x = approved_bytes_for_path(&old_map, &accepted, "posts/rec_x.json")
+        .unwrap()
+        .unwrap();
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_x.json"),
+        std::str::from_utf8(&approved_x).unwrap(),
+    );
+
+    // Publish is a no-op for the connector — `main` is NOT advanced server-side.
+    let outcome =
+        reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+
+    assert!(
+        outcome.patch_dropped,
+        "removed-key publish no-op must converge (patch dropped), not stick as accepted"
+    );
+    assert_eq!(outcome.conflicts, 0);
+
+    // The accepted-patches entry is gone (so the review dot clears) and it was
+    // not misfiled as a failure.
+    let accepted_after = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert!(
+        accepted_after.patches.is_empty(),
+        "removed-key publish no-op must be dropped, not left stuck as accepted"
+    );
+    let failed_after = crate::shared::failed_patches::load(&connection_dir).unwrap();
+    assert!(failed_after.patches.is_empty());
+
+    // The working file converges to the published `main` value (key `b` restored),
+    // identical to what the workspace-wide materialize would have produced.
+    let working_x: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec_x.json")).unwrap())
+            .unwrap();
+    assert_eq!(working_x["a"], 1);
+    assert_eq!(
+        working_x["b"], 2,
+        "main's removed key must be restored on disk"
+    );
+}
