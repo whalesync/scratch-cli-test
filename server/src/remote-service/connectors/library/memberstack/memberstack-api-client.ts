@@ -94,6 +94,31 @@ export class MemberstackApiClient {
   }
 
   /**
+   * Sample the custom-field keys configured for this app by scanning a single page
+   * of members and taking the union of their `customFields` keys.
+   *
+   * Memberstack's Admin API exposes no custom-field-definitions endpoint, so the only
+   * way to discover which custom fields exist is to read them off member records. Custom
+   * fields are defined at the app level and present on most/all members, so one page is
+   * almost always enough; a key that appears only on members beyond the sampled page is
+   * picked up on the next schema refresh. Keys are returned sorted for a deterministic
+   * schema (so `schema.json` doesn't churn between pulls).
+   */
+  async fetchSampleCustomFieldKeys(sampleSize = 200): Promise<string[]> {
+    const keys = new Set<string>();
+    for await (const batch of this.listMembers(sampleSize)) {
+      for (const member of batch.data) {
+        for (const key of Object.keys(member.customFields ?? {})) {
+          keys.add(key);
+        }
+      }
+      // One page is sufficient for app-level custom fields; stop after the first.
+      break;
+    }
+    return [...keys].sort();
+  }
+
+  /**
    * Get a member by ID or email.
    * @returns The member, or null if not found.
    */

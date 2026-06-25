@@ -1,0 +1,28 @@
+{
+  "slug": "members",
+  "name": "Members",
+  "titleColumnRemoteId": ["auth", "email"],
+  "schema": {
+    "$id": "memberstack/members",
+    "title": "Members",
+    "type": "object",
+    "properties": {
+      "id": { "type": "string", "x-scratch-readonly": true },
+      "auth": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "format": "email" }
+        }
+      },
+      "customFields": {
+        "type": "object",
+        "description": "Custom fields defined in Memberstack",
+        "additionalProperties": { "type": "string" },
+        "properties": {
+          "first-name": { "type": "string" },
+          "company": { "type": "string" }
+        }
+      }
+    }
+  }
+}

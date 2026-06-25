@@ -1,6 +1,7 @@
 import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { randomUUID } from 'crypto';
+import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -20,7 +21,7 @@ import {
   TablePreview,
 } from '../../types';
 import { MemberstackApiClient, MemberstackError } from './memberstack-api-client';
-import { buildMemberstackJsonTableSpec } from './memberstack-json-schema';
+import { buildMemberstackJsonTableSpec, isPathSafeCustomFieldKey } from './memberstack-json-schema';
 
 /**
  * Connector for the Memberstack membership platform.
@@ -80,12 +81,40 @@ export class MemberstackConnector extends Connector {
     ];
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     if (id.wsId !== 'members' || !id.remoteId.includes('members')) {
       throw new MemberstackError(`Table '${id.wsId}' not found. Memberstack only supports the 'Members' table.`, 404);
     }
-    return buildMemberstackJsonTableSpec(id);
+    // Discover the app's custom-field keys by sampling members so each becomes its own
+    // editable column. Memberstack has no custom-field-definitions endpoint, so this is
+    // the only discovery path. Degrade gracefully: if sampling fails, fall back to an
+    // open `customFields` record (the prior behavior) rather than failing schema fetch.
+    let customFieldKeys: string[] = [];
+    try {
+      customFieldKeys = await this.client.fetchSampleCustomFieldKeys();
+    } catch (error) {
+      WSLogger.warn({
+        source: 'MemberstackConnector',
+        message: 'Failed to sample custom-field keys; falling back to an open customFields record',
+        error,
+      });
+    }
+
+    // A key containing '.' collides with the frontends' dot-path column engine, so the
+    // schema builder keeps customFields as a single JSON field instead of expanding it.
+    // Surface that here so it's diagnosable rather than a silent non-expansion.
+    const unsafeCustomFieldKeys = customFieldKeys.filter((key) => !isPathSafeCustomFieldKey(key));
+    if (unsafeCustomFieldKeys.length > 0) {
+      WSLogger.warn({
+        source: 'MemberstackConnector',
+        message:
+          "Custom-field key(s) contain '.', which collides with the dot-path column engine; " +
+          'keeping customFields as a single JSON field instead of expanding into columns',
+        unsafeCustomFieldKeys,
+      });
+    }
+
+    return buildMemberstackJsonTableSpec(id, customFieldKeys);
   }
 
   async pullRecordFiles(

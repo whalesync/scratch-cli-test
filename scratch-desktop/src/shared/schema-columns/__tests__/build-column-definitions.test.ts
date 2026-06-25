@@ -107,6 +107,24 @@ describe('buildColumnDefinitions — edge cases', () => {
     expect(columns[0].attributes.nested).toBe(false);
   });
 
+  // DEV-10469: Memberstack expands its `customFields` object into per-key string
+  // properties (while staying open via `additionalProperties`) so each renders as its
+  // own editable column instead of one JSON blob. Verifies the generic engine drills
+  // an open-but-keyed object — the inverse of the leaf case above.
+  it('expands a customFields object with properties into per-key columns (not one blob)', () => {
+    const columns = buildColumnDefinitions(loadFixture('memberstack-members.schema.json'));
+    const ids = columns.map((c) => c.id);
+
+    // The parent object is drilled, not emitted as a single leaf column.
+    expect(ids).not.toContain('customFields');
+    expect(ids).toContain('customFields.first-name');
+    expect(ids).toContain('customFields.company');
+
+    expect(byId(columns, 'customFields.first-name').dataType).toBe('string');
+    expect(byId(columns, 'customFields.first-name').attributes.nested).toBe(true);
+    expect(byId(columns, 'customFields.first-name').attributes.readOnly).toBe(false);
+  });
+
   it('treats arrays of objects as leaf array columns', () => {
     const columns = buildColumnDefinitions(loadFixture('array-of-objects.schema.json'));
     expect(columns).toHaveLength(1);

@@ -132,7 +132,7 @@ Max records (or fields) per API request, **per operation** — services often di
 |---|---|---|---|
 | `<Entity>` | list | `<GET /…>` | `<pagination / limit cap>` |
 | `<Entity>` | get / create / update / delete | `<GET/POST/PUT/DELETE /…[/{id}]>` | `<scoping-param / value-key / required-on-create>` |
-| `<schema discovery>` | discover | `<GET /…>` | `<custom-field defs / object schema source>` |
+| custom-field keys | discover | `GET /members` (limit 200) | No custom-field-defs endpoint exists → sample members and union their `customFields` keys (DEV-10469) |
 
 <Cross-cutting: base host, mandatory headers, auth model, any global write quirks — one line each.>
 
@@ -148,7 +148,9 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - (none yet — see SKILL.md → Stage E for what to hunt for)
 
 ## Gotchas
-- (connector-specific operational notes)
+- **Custom fields are expanded into per-key editable columns (DEV-10469).** Memberstack returns `customFields` as a flat `{ key: value }` object of strings. The Admin API has **no custom-field-definitions endpoint**, so `fetchJsonTableSpec` discovers the keys by **sampling one page of members** (`MemberstackApiClient.fetchSampleCustomFieldKeys`, limit 200, sorted union) and emits one `Type.Optional(Type.String())` property per key under `customFields` — while keeping the object **open** via `additionalProperties: Type.String()` so a custom field added after the last schema refresh still validates and round-trips. The frontends then render each as its own editable column (generic `build-column-definitions` recursion — no connector knowledge in the UI). The record is **never reshaped**; only the schema describes the seen keys. Sampling degrades gracefully: on error it logs a warning and falls back to an open record (the prior single-blob behavior). A key that appears only on members beyond the sampled page is picked up on the next schema refresh.
+- **Dot-in-key guard (all-or-nothing expansion).** The frontends address columns by dot-delimited paths (`customFields.<key>`) with no way to escape a literal `.`, so a key like `plan.tier` would emit a `customFields.plan.tier` column that reads/writes the wrong *nested* location (`record.customFields.plan.tier`) and silently corrupts data on save. So expansion happens **only when every discovered key is path-safe** (`isPathSafeCustomFieldKey` = no `.`); if any key contains a `.`, `customFields` stays a single open `Type.Record` (no `properties`) — the blob — so the dotted field remains visible/editable rather than vanishing, and the connector logs a warning naming the offending keys. (An object with an *empty* `properties` map expands to **zero** columns and hides `customFields`, so the no-keys / unsafe-keys fallback deliberately uses a `properties`-less record, not `Type.Object({})`.)
+- **Publish payload is unchanged by the expansion.** `computeChangedFields` sparse-diffs nested objects, so editing one custom field sends `{ customFields: { <key>: value } }` whether the user edited the JSON blob or an individual column — identical to before. (Whether Memberstack PATCH *merges* vs *replaces* `customFields` is a separate, pre-existing question to confirm during live CRUD testing.)
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
