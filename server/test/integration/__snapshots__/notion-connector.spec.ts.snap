@@ -758,9 +758,14 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "x-scratch-remote-field-id": "~Uxu",
             "x-scratch-suggested-in-transformer": {
               "options": {
+                "emptyTemplate": {
+                  "rich_text": [],
+                  "type": "rich_text",
+                },
                 "template": {
                   "rich_text": [
                     {
+                      "plain_text": "$value",
                       "text": {
                         "content": "$value",
                       },
@@ -889,6 +894,10 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "x-scratch-remote-field-id": "QHsk",
             "x-scratch-suggested-in-transformer": {
               "options": {
+                "emptyTemplate": {
+                  "date": null,
+                  "type": "date",
+                },
                 "template": {
                   "date": {
                     "start": "$value",
@@ -930,6 +939,10 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "x-scratch-remote-field-id": "D%3A%3EQ",
             "x-scratch-suggested-in-transformer": {
               "options": {
+                "emptyTemplate": {
+                  "number": null,
+                  "type": "number",
+                },
                 "template": {
                   "number": "$value",
                   "type": "number",
@@ -970,6 +983,10 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "x-scratch-remote-field-id": "IlY%60",
             "x-scratch-suggested-in-transformer": {
               "options": {
+                "emptyTemplate": {
+                  "type": "url",
+                  "url": null,
+                },
                 "template": {
                   "type": "url",
                   "url": "$value",
@@ -1131,9 +1148,14 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "x-scratch-remote-field-id": "title",
             "x-scratch-suggested-in-transformer": {
               "options": {
+                "emptyTemplate": {
+                  "title": [],
+                  "type": "title",
+                },
                 "template": {
                   "title": [
                     {
+                      "plain_text": "$value",
                       "text": {
                         "content": "$value",
                       },
@@ -1191,6 +1213,10 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "x-scratch-remote-field-id": "RD%5D%3E",
             "x-scratch-suggested-in-transformer": {
               "options": {
+                "emptyTemplate": {
+                  "email": null,
+                  "type": "email",
+                },
                 "template": {
                   "email": "$value",
                   "type": "email",
@@ -1246,6 +1272,10 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "x-scratch-remote-field-id": "uHj%7B",
             "x-scratch-suggested-in-transformer": {
               "options": {
+                "emptyTemplate": {
+                  "select": null,
+                  "type": "select",
+                },
                 "template": {
                   "select": {
                     "name": "$value",
