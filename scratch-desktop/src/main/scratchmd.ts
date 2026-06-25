@@ -296,6 +296,15 @@ export function getScratchmdBinaryPath(): string {
   // `target/debug/scratchmd.exe`.
   const binaryName = process.platform === 'win32' ? 'scratchmd.exe' : 'scratchmd';
   if (!app.isPackaged) {
+    // Test/dev seam: an explicit binary path override. Honored only in unpackaged
+    // builds so a packaged app can never be pointed at an arbitrary binary. The
+    // e2e suite launches `out/main/index.js` directly, where `app.getAppPath()`
+    // doesn't line up with the repo checkout, so the app-path-relative default
+    // below would miss the built CLI.
+    const overridePath = process.env.SCRATCH_DESKTOP_SCRATCHMD_BINARY;
+    if (overridePath && overridePath.length > 0) {
+      return overridePath;
+    }
     // Dev mode: resolve from the repo root (app.getAppPath() points to src/main in dev)
     const repoRoot = resolve(app.getAppPath(), '..');
     return join(repoRoot, 'scratch-git-2', 'target', 'debug', binaryName);

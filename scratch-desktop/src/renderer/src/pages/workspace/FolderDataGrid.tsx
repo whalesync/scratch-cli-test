@@ -125,6 +125,13 @@ interface DiffGridResult {
   filterCounts: { unreviewed: number; unpublished: number; errors: number };
   focusColumnIds: { unreviewed: string[]; unpublished: string[]; errors: string[] };
   invalidJsonFiles: InvalidJsonFileListEntry[];
+  /**
+   * Human-readable names for foreign-key (reference) cells (DEV-10530): column id
+   * -> raw referenced id -> the linked record's display name. A column appears
+   * only when its reference target resolves to a folder in this workspace; an id
+   * appears only when its linked record was found. Missing entries render the raw id.
+   */
+  referenceLabels?: Record<string, Record<string, string>>;
   staleCount: number;
   validationByCell: Record<string, CellValidationEntry[]>;
   totalErrorCount: number;
@@ -380,6 +387,29 @@ function toDisplayString(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return JSON.stringify(value);
+}
+
+/**
+ * Format a foreign-key (reference) cell for display: swap each referenced id for
+ * the linked record's name when known, joining multi-references with commas
+ * (DEV-10530). `labels` maps a raw id string -> name; ids absent from it fall
+ * back to the raw id. The raw value is still used for `data`/`copyData`, so
+ * editing and copy operate on the verbatim id.
+ */
+function formatReferenceDisplay(value: unknown, labels: Record<string, string>): string {
+  const labelForId = (id: string): string => labels[id] ?? id;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (typeof entry === 'string') return labelForId(entry);
+        if (typeof entry === 'number') return labelForId(String(entry));
+        return toDisplayString(entry);
+      })
+      .join(', ');
+  }
+  if (typeof value === 'string') return labelForId(value);
+  if (typeof value === 'number') return labelForId(String(value));
+  return toDisplayString(value);
 }
 
 /** Immutably sets a value at a dot-separated path, returning a shallow clone of the affected objects. */
@@ -2146,6 +2176,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   // ── Cell content ──
 
+  const referenceLabels = diffData?.referenceLabels ?? null;
+
   const getCellContent = useCallback(
     ([col, row]: Item) => {
       const r = pagedRows[row] as DiffRow | undefined;
@@ -2189,6 +2221,25 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const themeOverride = { ...rowTheme, ...diffTheme, ...readOnlyTheme };
       const allowOverlay =
         !isReadOnly && status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';
+
+      // Foreign-key (reference) cell: show the linked record's name(s) instead of
+      // the raw id when we resolved them (DEV-10530). The reference target lives
+      // in another folder, so the id->name map is computed in the main process and
+      // handed in via referenceLabels; the renderer stays connector-agnostic.
+      // Render as text (even for numeric ids) so the name shows; raw id stays in
+      // data/copyData so editing, copy, and publish use the verbatim value.
+      const referenceLabelsForCol = referenceLabels?.[colId];
+      if (referenceLabelsForCol) {
+        const raw = toDisplayString(val);
+        return {
+          kind: GridCellKind.Text as const,
+          data: raw,
+          displayData: formatReferenceDisplay(val, referenceLabelsForCol),
+          allowOverlay,
+          copyData: raw,
+          themeOverride,
+        };
+      }
 
       const colType = resolveEffectiveType(viewCol);
       const kind = inferCellKind(val, colType);
@@ -2242,7 +2293,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         themeOverride,
       };
     },
-    [viewColMap, pagedRows, columns],
+    [viewColMap, pagedRows, columns, referenceLabels],
   );
 
   const onHeaderClicked = useCallback(

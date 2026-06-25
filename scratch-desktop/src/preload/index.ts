@@ -493,6 +493,7 @@ const scratchFiles = {
       error: string;
       workingFilePath: string;
     }>;
+    referenceLabels: Record<string, Record<string, string>>;
   }> => invoke('files:read-diff-grid-data', folderPath, workspacePath, opts ?? {}),
   readDiffRecordData: (
     folderPath: string,

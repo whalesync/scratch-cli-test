@@ -452,6 +452,7 @@ interface ScratchFilesAPI {
       error: string;
       workingFilePath: string;
     }>;
+    referenceLabels: Record<string, Record<string, string>>;
     staleCount: number;
     totalErrorCount: number;
     totalProblemsStaleCount: number;

@@ -19,7 +19,12 @@ import {
   type SchemaLeafHint,
 } from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
-import { buildColumnDefinitions, createFallbackTableView, tableViewColumnPaths } from '../shared/schema-columns';
+import {
+  buildColumnDefinitions,
+  createFallbackTableView,
+  getByPath,
+  tableViewColumnPaths,
+} from '../shared/schema-columns';
 import {
   acceptCellField,
   discardCellField,
@@ -27,6 +32,13 @@ import {
   readFolderBlobsFiltered,
   rejectCellField,
 } from './native/scratchmd-native';
+import {
+  buildIdToNameMap,
+  collectReferencedIds,
+  extractFolderReferenceInfo,
+  resolveLinkedFolder,
+  type FolderReferenceInfo,
+} from './reference-labels';
 import {
   listUnpublishedChanges,
   listUnreviewedChanges,
@@ -420,6 +432,17 @@ export interface DiffGridResult {
     errors: string[];
   };
   invalidJsonFiles: InvalidJsonFileEntry[];
+  /**
+   * Human-readable names for foreign-key (reference) cells, so the grid can show
+   * the referenced record's name instead of its raw id (DEV-10530).
+   *
+   * Keyed by column id, then by the raw referenced id string ->the linked
+   * record's display name. Only resolvable reference columns appear as keys;
+   * within a column, only ids whose linked record was found appear (unresolved
+   * ids fall back to the raw value at render time). Empty when there are no
+   * reference columns or none resolved.
+   */
+  referenceLabels: Record<string, Record<string, string>>;
   /** Number of records on the current page whose validation was stale before this call (0 when validate=false). */
   staleCount: number;
   /** Per-record validation errors keyed by filename. Empty when validate=false. */
@@ -1192,6 +1215,164 @@ function buildInvalidJsonFileEntries(folderPath: string, rows: DiffRow[]): Inval
  * Replaced the earlier in-memory V1 path that walked every record's three
  * versions on each page load.
  */
+// ── Reference (foreign-key) name resolution (DEV-10530) ──
+
+/**
+ * Don't resolve reference names for a linked folder larger than this many
+ * records — building its id->name map reads every record file, so above this we
+ * fall back to the raw id to keep the main thread responsive. Reference/lookup
+ * tables are typically small; this only spares the rare giant linked table.
+ */
+const REFERENCE_NAME_FOLDER_RECORD_CAP = 2000;
+/** Concurrency for reading a linked folder's record files while building its id->name map. */
+const REFERENCE_NAME_READ_CONCURRENCY = 24;
+/** How long a cached folder-reference-info list / linked-folder id->name map stays valid (ms). */
+const REFERENCE_CACHE_TTL_MS = 30_000;
+
+const folderReferenceInfoCache = new Map<string, { builtAt: number; infos: FolderReferenceInfo[] }>();
+const idToNameMapCache = new Map<string, { builtAt: number; mtime: number; map: Map<string, string> }>();
+const referenceFolderCapWarned = new Set<string>();
+
+/**
+ * Distil every folder's `schema.json` wrapper into the metadata needed to match
+ * a `linkedTableId` and read record ids/names. Cached per workspace with a short
+ * TTL — schemas rarely change, and this runs on every grid (re)load.
+ */
+async function getFolderReferenceInfos(workspacePath: string): Promise<FolderReferenceInfo[]> {
+  const cached = folderReferenceInfoCache.get(workspacePath);
+  if (cached && Date.now() - cached.builtAt < REFERENCE_CACHE_TTL_MS) {
+    return cached.infos;
+  }
+  const folders = await listFolders(workspacePath);
+  const infos: FolderReferenceInfo[] = [];
+  await Promise.all(
+    folders.map(async (folder) => {
+      const schema = await readConnectionSchema(workspacePath, relative(workspacePath, folder.path));
+      const info = extractFolderReferenceInfo(folder.path, schema);
+      if (info) infos.push(info);
+    }),
+  );
+  folderReferenceInfoCache.set(workspacePath, { builtAt: Date.now(), infos });
+  return infos;
+}
+
+/**
+ * Build (or read from cache) a linked folder's `referenced-id -> name` map from
+ * its working-tree records. Returns null when the folder has no name field, is
+ * over the record cap, or can't be read. Cached per folder by directory mtime +
+ * TTL.
+ */
+async function getLinkedFolderIdToNameMap(info: FolderReferenceInfo): Promise<Map<string, string> | null> {
+  if (!info.titlePath) return null;
+
+  let mtime: number;
+  try {
+    mtime = (await stat(info.folderPath)).mtimeMs;
+  } catch {
+    return null;
+  }
+
+  const cached = idToNameMapCache.get(info.folderPath);
+  if (cached && cached.mtime === mtime && Date.now() - cached.builtAt < REFERENCE_CACHE_TTL_MS) {
+    return cached.map;
+  }
+
+  let recordCount: number;
+  try {
+    recordCount = await countRecordFilesInFolder(info.folderPath);
+  } catch {
+    return null;
+  }
+  if (recordCount > REFERENCE_NAME_FOLDER_RECORD_CAP) {
+    if (!referenceFolderCapWarned.has(info.folderPath)) {
+      referenceFolderCapWarned.add(info.folderPath);
+      console.debug(
+        `[reference-labels] Skipping name resolution for ${info.folderPath}: ${recordCount} records exceeds cap ${REFERENCE_NAME_FOLDER_RECORD_CAP}`,
+      );
+    }
+    return null;
+  }
+
+  const filenames = (await getCachedFileNames(info.folderPath)).filter((n) => extname(n).toLowerCase() === '.json');
+  const records: Record<string, unknown>[] = [];
+  for (let i = 0; i < filenames.length; i += REFERENCE_NAME_READ_CONCURRENCY) {
+    const chunk = filenames.slice(i, i + REFERENCE_NAME_READ_CONCURRENCY);
+    const snapshots = await Promise.all(chunk.map((name) => readJsonFileSnapshot(join(info.folderPath, name))));
+    for (const snapshot of snapshots) {
+      if (snapshot.kind === 'ok') records.push(snapshot.raw);
+    }
+  }
+
+  const map = buildIdToNameMap(records, info.idPath, info.titlePath);
+  idToNameMapCache.set(info.folderPath, { builtAt: Date.now(), mtime, map });
+  return map;
+}
+
+/**
+ * Compute the {@link DiffGridResult.referenceLabels} payload for one page:
+ * resolve each FK column's `linkedTableId` to a folder, then map the page's
+ * referenced ids to the linked records' names. Fully fail-open — any error
+ * leaves a column's cells showing the raw id.
+ */
+async function resolveReferenceLabels(
+  workspacePath: string,
+  rows: readonly DiffRow[],
+  schemaColumns: readonly ColumnDefinition[],
+): Promise<Record<string, Record<string, string>>> {
+  const fkColumns = schemaColumns
+    .map((col) => ({ colId: col.id, linkedTableId: col.attributes.foreignKey?.linkedTableId }))
+    .filter((col): col is { colId: string; linkedTableId: string } => Boolean(col.linkedTableId));
+  if (fkColumns.length === 0 || rows.length === 0) return {};
+
+  const folderInfos = await getFolderReferenceInfos(workspacePath);
+
+  // Resolve each distinct linkedTableId to a folder once.
+  const linkedFolderByTableId = new Map<string, FolderReferenceInfo | null>();
+  for (const { linkedTableId } of fkColumns) {
+    if (!linkedFolderByTableId.has(linkedTableId)) {
+      linkedFolderByTableId.set(linkedTableId, resolveLinkedFolder(linkedTableId, folderInfos));
+    }
+  }
+
+  // Collect the referenced ids present on this page, per column.
+  const referencedIdsByColumn = new Map<string, Set<string>>();
+  for (const { colId } of fkColumns) {
+    const ids = new Set<string>();
+    for (const row of rows) {
+      for (const id of collectReferencedIds(getByPath(row.__raw, colId))) ids.add(id);
+    }
+    referencedIdsByColumn.set(colId, ids);
+  }
+
+  const idToNameByTableId = new Map<string, Map<string, string> | null>();
+  const referenceLabels: Record<string, Record<string, string>> = {};
+  for (const { colId, linkedTableId } of fkColumns) {
+    const linkedFolder = linkedFolderByTableId.get(linkedTableId) ?? null;
+    if (!linkedFolder) continue; // Points outside this workspace — leave the raw id untouched.
+
+    // A resolvable reference column always gets an entry (possibly empty): the
+    // renderer keys off its presence to format multi-references and to swap ids
+    // for names where available.
+    const labels: Record<string, string> = {};
+    referenceLabels[colId] = labels;
+
+    if (!idToNameByTableId.has(linkedTableId)) {
+      idToNameByTableId.set(linkedTableId, await getLinkedFolderIdToNameMap(linkedFolder));
+    }
+    const idToName = idToNameByTableId.get(linkedTableId) ?? null;
+    if (!idToName) continue;
+
+    const referencedIds = referencedIdsByColumn.get(colId);
+    if (!referencedIds) continue;
+    referencedIds.forEach((id) => {
+      const name = idToName.get(id);
+      if (name !== undefined) labels[id] = name;
+    });
+  }
+
+  return referenceLabels;
+}
+
 export async function readDiffGridDataPage(
   folderPath: string,
   workspacePath: string,
@@ -1361,6 +1542,13 @@ export async function readDiffGridDataPage(
 
   const invalidJsonFiles = buildInvalidJsonFileEntries(workingPath, rows);
 
+  // Resolve foreign-key cells to the referenced records' names (DEV-10530).
+  // Fail-open: any error leaves the affected cells showing the raw id.
+  const referenceLabels = await resolveReferenceLabels(workspacePath, filteredRows, schemaColumns).catch((err) => {
+    console.debug('[reference-labels] resolution failed:', err);
+    return {} as Record<string, Record<string, string>>;
+  });
+
   return {
     rows: filteredRows,
     columns,
@@ -1369,6 +1557,7 @@ export async function readDiffGridDataPage(
     filterCounts,
     focusColumnIds,
     invalidJsonFiles,
+    referenceLabels,
     staleCount: cliResult.stale_count,
     validationByCell: cliResult.row_errors,
     totalErrorCount: cliResult.total_error_count,

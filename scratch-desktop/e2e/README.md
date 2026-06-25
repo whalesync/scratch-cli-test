@@ -23,6 +23,17 @@ the login-bypass seam works:
   first two server calls are mocked at the network layer, so the result doesn't depend on which
   backend the build targets).
 
+`reference-labels.spec.ts` is also **hermetic** (no backend) and covers foreign-key
+reference-name resolution in the grid (DEV-10530). It builds a marker-less fixture workspace on
+disk (a `Posts` folder with single- and multi-reference fields pointing at `Authors`/`Tags`
+folders), then drives the real main-process pipeline by calling
+`window.scratchFiles.readDiffGridData(...)` via `page.evaluate` and asserts the returned
+`referenceLabels` map turns referenced ids into the linked records' names. It asserts the data
+the main process hands the grid rather than the canvas-rendered cell text (glide-data-grid paints
+to a `<canvas>`, so there's no DOM node to read). Because the desktop shells out to the
+`scratchmd` CLI for record pagination, this test **skips** (it does not fail) when the binary
+isn't built — run `cargo build --bin scratchmd` in `scratch-git-2/` first.
+
 ## How auth is bypassed
 
 The desktop normally logs in via interactive **device-code OAuth** — a flow that happens in the
@@ -33,6 +44,7 @@ a test-only seam:
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SCRATCH_DESKTOP_TEST_CREDENTIALS_JSON` | JSON credentials seeded into the auth store at startup, so the renderer's auth gate finds a valid token and skips `LoginPage`. Also points `SCRATCH_URL` (the scratchmd CLI + napi) and syncs the CLI's stored credentials. **Honored only in unpackaged/dev builds.** Source: `src/main/test-credentials.ts`. |
 | `SCRATCH_DESKTOP_USER_DATA_DIR`         | Per-run throwaway Electron profile, so tests are isolated from each other and from your own dev app. Source: `src/main/setup-userdata.ts`.                                                                                                                                                                     |
+| `SCRATCH_DESKTOP_SCRATCHMD_BINARY`      | Absolute path to the `scratchmd` CLI binary. **Honored only in unpackaged/dev builds.** Lets `reference-labels.spec.ts` point the app at the repo's built CLI, since `app.getAppPath()` doesn't line up with the checkout when Playwright launches `out/main/index.js` directly. Source: `src/main/scratchmd.ts`. |
 
 The credentials JSON shape mirrors what the app stores after a real login:
 
