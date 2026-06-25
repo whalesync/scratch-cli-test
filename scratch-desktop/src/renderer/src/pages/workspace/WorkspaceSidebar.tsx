@@ -23,6 +23,7 @@ import { useDevTools } from '../../hooks/use-dev-tools';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
 import { FolderTree } from './FolderTree';
+import type { StartPullOptions } from './use-pull-tracker';
 import { LocalFolder } from './WorkspaceContent';
 
 interface WorkspaceSidebarProps {
@@ -37,7 +38,8 @@ interface WorkspaceSidebarProps {
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string) => void;
   workspacePath: string | null;
-  invalidateWorkspaceLevelData: () => void;
+  /** Start a folder-scoped pull via the workspace's background tracker (DEV-10501). */
+  onRequestFolderPull?: (options: StartPullOptions) => void;
   onOpenConnectionsPanel?: () => void;
   connectionsPanelOpen?: boolean;
   onTogglePublishHistoryPanel?: () => void;
@@ -64,7 +66,7 @@ export function WorkspaceSidebar({
   selectedFolderPath,
   onSelectFolder,
   workspacePath,
-  invalidateWorkspaceLevelData,
+  onRequestFolderPull,
   onOpenConnectionsPanel,
   connectionsPanelOpen,
   onTogglePublishHistoryPanel,
@@ -167,7 +169,7 @@ export function WorkspaceSidebar({
               onSelectFolder={onSelectFolder}
               workspacePath={workspacePath}
               isDevToolsEnabled={isDevToolsEnabled}
-              invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
+              onRequestFolderPull={onRequestFolderPull}
               validationByFolder={validateEnabled ? validationByFolder : undefined}
               reviewByFolder={reviewByFolder}
               onRerunValidation={onRerunValidation}

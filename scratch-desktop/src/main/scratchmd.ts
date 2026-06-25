@@ -190,7 +190,7 @@ export interface DownloadWorkspaceSuccess {
    * Raw CLI stderr. The download JSON goes to stdout; warn-and-skip notices
    * (e.g. DEV-10421's "failed to set up connection" for a not-yet-clonable new
    * connection) still print to stderr even under `--json`, and
-   * `PullInProgressModal` scans this to detect them.
+   * `usePullTracker` scans this to detect them.
    */
   stderr?: string;
 }

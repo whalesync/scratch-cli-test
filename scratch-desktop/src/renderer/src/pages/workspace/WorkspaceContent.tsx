@@ -18,6 +18,7 @@ import { FolderDataGrid } from './FolderDataGrid';
 import { PublishHistoryPanel } from './PublishHistoryPanel';
 import { ResizeHandle } from './ResizeHandle';
 import { SettingsPanel } from './SettingsPanel';
+import type { StartPullOptions } from './use-pull-tracker';
 import { ValidationPanel } from './ValidationPanel';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
 
@@ -38,6 +39,8 @@ interface WorkspaceContentProps {
   onConnectionsChanged?: () => void;
   /** Show pull/download progress after a connection-flow save starts pull jobs (DEV-10421). */
   onPullJobsStarted?: () => void;
+  /** Start a folder-scoped pull via the workspace's background tracker (DEV-10501). */
+  onRequestFolderPull?: (options: StartPullOptions) => void;
   onPublishFile?: (relativePath: string) => void;
   activateGlobalFilter?: { kind: 'unreviewed' | 'unpublished' | 'has-problems'; trigger: number } | null;
   onActivateGlobalFilterConsumed?: () => void;
@@ -86,6 +89,7 @@ export function WorkspaceContent({
   invalidateWorkspaceLevelData,
   onConnectionsChanged,
   onPullJobsStarted,
+  onRequestFolderPull,
   onPublishFile,
   activateGlobalFilter,
   onActivateGlobalFilterConsumed,
@@ -326,7 +330,7 @@ export function WorkspaceContent({
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={handleSelectFolder}
         workspacePath={localPath}
-        invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
+        onRequestFolderPull={onRequestFolderPull}
         onOpenConnectionsPanel={handleOpenConnectionsPanel}
         connectionsPanelOpen={showConnectionsPanel}
         onTogglePublishHistoryPanel={() => setShowPublishHistoryPanel(!showPublishHistoryPanel)}

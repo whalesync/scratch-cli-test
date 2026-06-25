@@ -13,7 +13,7 @@ import type { WorkspaceConnection } from '../../types/local-files';
 import { ColumnDefinitionsModal } from './ColumnDefinitionsModal';
 import { DataFolderInfoModal } from './DataFolderInfoModal';
 import classes from './FolderTree.module.css';
-import { PullFoldersModal } from './PullFoldersModal';
+import type { StartPullOptions } from './use-pull-tracker';
 import { LocalFolder } from './WorkspaceContent';
 
 // ── Tree data structure ──
@@ -584,7 +584,8 @@ interface FolderTreeProps {
   onSelectFolder: (folderPath: string) => void;
   workspacePath: string | null;
   isDevToolsEnabled: boolean;
-  invalidateWorkspaceLevelData: () => void;
+  /** Start a folder-scoped pull via the workspace's background tracker (DEV-10501). */
+  onRequestFolderPull?: (options: StartPullOptions) => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
   reviewByFolder?: Map<string, { unreviewed: number; approved: number }>;
   onRerunValidation?: (scope: RerunValidationScope) => void;
@@ -599,7 +600,7 @@ export function FolderTree({
   onSelectFolder,
   workspacePath,
   isDevToolsEnabled,
-  invalidateWorkspaceLevelData,
+  onRequestFolderPull,
   validationByFolder,
   reviewByFolder,
   onRerunValidation,
@@ -607,7 +608,6 @@ export function FolderTree({
   const tree = useMemo(() => buildTree(localFolders), [localFolders]);
   const rootChildren = useMemo(() => Array.from(tree.children.values()), [tree]);
   const [columnDefsFolder, setColumnDefsFolder] = useState<string | null>(null);
-  const [pullRequest, setPullRequest] = useState<PullRequest | null>(null);
   const [folderInfoRequest, setFolderInfoRequest] = useState<FolderInfoRequest | null>(null);
   const connectionDirNameById = useMemo(
     () => new Map(workspaceConnections.map((connection) => [connection.id, connection.dirName])),
@@ -664,9 +664,16 @@ export function FolderTree({
       if (request.dataFolderIds.length === 1) {
         void trackPullTable(workspaceId, request.dataFolderIds[0], request.mode ?? 'full');
       }
-      setPullRequest(request);
+      // Hand off to the workspace-level background tracker so the pull runs
+      // non-blocking, surfaced by the shared progress modal + header pill.
+      onRequestFolderPull?.({
+        title: request.title,
+        dataFolderIds: request.dataFolderIds,
+        pullMode: request.mode,
+        emptyStateMessage: request.emptyStateMessage,
+      });
     },
-    [workspaceId],
+    [onRequestFolderPull, workspaceId],
   );
 
   const { confirm, confirmModal } = useConfirmModal();
@@ -732,20 +739,6 @@ export function FolderTree({
           folderPath={columnDefsFolder}
           workspacePath={workspacePath}
           onClose={() => setColumnDefsFolder(null)}
-        />
-      )}
-
-      {pullRequest && (
-        <PullFoldersModal
-          opened={true}
-          onClose={() => setPullRequest(null)}
-          localPath={workspacePath}
-          workspaceId={workspaceId}
-          title={pullRequest.title}
-          dataFolderIds={pullRequest.dataFolderIds}
-          emptyStateMessage={pullRequest.emptyStateMessage}
-          pullMode={pullRequest.mode}
-          invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
         />
       )}
 

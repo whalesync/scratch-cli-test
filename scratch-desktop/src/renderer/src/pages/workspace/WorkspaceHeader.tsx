@@ -4,6 +4,7 @@ import { Group, Loader, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
 import { Workspace } from '@spinner/shared-types';
 import {
+  Check,
   ChevronDown,
   CloudDownload,
   CloudUpload,
@@ -11,11 +12,14 @@ import {
   HardDriveDownload as DownloadIcon,
   EllipsisVertical,
   ExternalLink,
+  TriangleAlert,
 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
 import { useDevTools } from '../../hooks/use-dev-tools';
+import type { PullTracker } from './use-pull-tracker';
 
 interface WorkspaceHeaderProps {
   workspace: Workspace;
@@ -30,8 +34,11 @@ interface WorkspaceHeaderProps {
   isDownloaded: boolean;
   downloading: boolean;
   reDownloading: boolean;
-  pullingAll: boolean;
   publishingAll: boolean;
+  /** Background pull tracker — drives the non-blocking pull-progress pill (DEV-10501). */
+  pull: PullTracker;
+  /** Reopen the pull-progress detail modal. */
+  onShowPullProgress: () => void;
   onDownload: () => void;
   onReDownload: () => void;
   onPublishAll: () => void;
@@ -53,8 +60,9 @@ export function WorkspaceHeader({
   isDownloaded,
   downloading,
   reDownloading,
-  pullingAll,
   publishingAll,
+  pull,
+  onShowPullProgress,
   onDownload,
   onReDownload,
   onPublishAll,
@@ -67,6 +75,7 @@ export function WorkspaceHeader({
   const compact = width > 0 && width < 800;
   const { isDevToolsEnabled } = useDevTools();
 
+  const pullingAll = pull.isActive;
   const anyRunning = reDownloading || pullingAll || publishingAll;
 
   const handleDevMenu = () => {
@@ -164,6 +173,7 @@ export function WorkspaceHeader({
 
       {/* Action buttons */}
       <Group gap="xs">
+        {pull.phase !== 'idle' && <PullProgressPill pull={pull} onClick={onShowPullProgress} />}
         {localPath &&
           (compact ? (
             <Tooltip label="Open in...">
@@ -292,4 +302,39 @@ function buildAgentPrompt(
   }
 
   return prompt;
+}
+
+/**
+ * Ambient, non-blocking indicator that a pull is running (or just finished /
+ * failed) in the background. Clicking it reopens the detail modal. (DEV-10501)
+ */
+function PullProgressPill({ pull, onClick }: { pull: PullTracker; onClick: () => void }) {
+  const { phase, completedCount, totalCount } = pull;
+
+  let leftSection: ReactNode;
+  let label: string;
+  let colorProps: { c?: string; color?: string } = {};
+  let tooltip = 'Show pull progress';
+
+  if (phase === 'done') {
+    leftSection = <Check size={12} />;
+    label = 'Pull complete';
+    colorProps = { c: 'green.7', color: 'green.7' };
+  } else if (phase === 'error' || phase === 'download-error') {
+    leftSection = <TriangleAlert size={12} />;
+    label = 'Pull failed';
+    colorProps = { c: 'red.6', color: 'red.6' };
+    tooltip = 'Show pull error';
+  } else {
+    leftSection = <Loader size={12} />;
+    label = totalCount > 0 ? `Pulling… ${completedCount}/${totalCount}` : 'Pulling…';
+  }
+
+  return (
+    <Tooltip label={tooltip}>
+      <ButtonSecondaryGhost size="compact-xs" leftSection={leftSection} onClick={onClick} {...colorProps}>
+        {label}
+      </ButtonSecondaryGhost>
+    </Tooltip>
+  );
 }

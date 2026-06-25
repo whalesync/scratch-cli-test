@@ -23,13 +23,13 @@ import { setScratchApiActiveWorkspacePath } from '../lib/scratch-api-client';
 import { useWorkspaceUiStore } from '../stores/workspace-ui-store';
 import { CloudSyncWarningBanner } from './workspace/CloudSyncWarningBanner';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
-import { PullAllModal } from './workspace/PullAllModal';
-import { PullInProgressModal } from './workspace/PullInProgressModal';
+import { PullProgressModal } from './workspace/PullProgressModal';
 import { ReinitWorkspaceModal } from './workspace/ReinitWorkspaceModal';
 import {
   resolveSingleRecordPublishTarget,
   type SingleRecordPublishTarget,
 } from './workspace/single-record-publish-target';
+import { usePullTracker, type StartPullOptions } from './workspace/use-pull-tracker';
 import { WorkspaceContent } from './workspace/WorkspaceContent';
 import { WorkspaceHeader } from './workspace/WorkspaceHeader';
 
@@ -101,9 +101,10 @@ export function WorkspacePage() {
   // DEV-10413: when set, the publish modal opens in single-record mode for this
   // record. Null = the workspace-wide "Publish all" flow.
   const [singleRecordPublish, setSingleRecordPublish] = useState<SingleRecordPublishTarget | null>(null);
-  // The "Pull all" mode also serves as the modal's open state (null = closed).
-  const [pullAllMode, setPullAllMode] = useState<'full' | 'incremental' | null>(null);
-  const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
+  // Whether the pull-progress detail modal is open. The pull itself is tracked by
+  // `pullTracker` (below) independently of this, so closing the modal never stops
+  // the pull — the user can keep working while it runs. (DEV-10501)
+  const [pullModalOpen, setPullModalOpen] = useState(false);
   const [reinitModalOpen, setReinitModalOpen] = useState(false);
   const [reinitReason, setReinitReason] = useState<string | undefined>(undefined);
   // selectedFolderPath lives in component state (not the Zustand store) so it
@@ -321,6 +322,52 @@ export function WorkspacePage() {
     setDataRefreshKey((current) => current + 1);
   }, []);
 
+  // Background pull tracker: owns the poll → local-download → refresh lifecycle so
+  // it keeps running even when the progress modal is closed. The user can browse
+  // and edit records while a pull works in the background. (DEV-10501)
+  const pullTracker = usePullTracker({
+    workbookId: id ?? '',
+    localPath,
+    invalidateWorkspaceLevelData: handleDataRefresh,
+  });
+  const { startPull: startPullTracking, watchActivePulls: watchActivePullJobs, phase: pullPhase } = pullTracker;
+  // Latest-tracker ref so the focus effect can attach to active pulls without
+  // re-subscribing every render.
+  const pullTrackerRef = useRef(pullTracker);
+  pullTrackerRef.current = pullTracker;
+
+  // Start a pull and surface its progress modal. The modal is dismissible — the
+  // pull continues in the background once it's open.
+  const handleStartPull = useCallback(
+    (options: StartPullOptions) => {
+      // Don't abandon an in-flight pull: starting a new one would clear the
+      // tracked jobs and skip the running pull's post-completion local download.
+      // The header "Pull all" button is already disabled while a pull runs; this
+      // also gates the folder-tree "Pull this table" context-menu action (which
+      // isn't disabled), surfacing the in-flight pull instead of replacing it.
+      if (pullTrackerRef.current.isActive) {
+        setPullModalOpen(true);
+        notifications.show({
+          title: 'Pull already in progress',
+          message: 'Wait for the current pull to finish before starting another.',
+          color: 'yellow',
+        });
+        return;
+      }
+      setPullModalOpen(true);
+      void startPullTracking(options);
+    },
+    [startPullTracking],
+  );
+
+  // Once the tracker resets to idle (auto-dismiss after completion, or an explicit
+  // dismiss), close the detail modal too.
+  useEffect(() => {
+    if (pullPhase === 'idle') {
+      setPullModalOpen(false);
+    }
+  }, [pullPhase]);
+
   // Ensure schema validation always runs by seeding an `enforce_schema` validator into every folder,
   // so a read-only field edited by the user surfaces as a warning in the Validation panel before they
   // publish. Best-effort, fire-and-forget; writes only under `.scratch/` so it never gates publish.
@@ -482,20 +529,15 @@ export function WorkspacePage() {
           return;
         }
 
-        // If a pull lock exists, verify there are actual active jobs before showing the modal.
-        // Pull locks can be stale (job finished but lock wasn't cleared).
+        // If a pull lock exists, attach the background tracker to any active pull
+        // jobs. This surfaces the ambient progress pill (not a blocking modal), so
+        // the user can keep working. Pull locks can be stale (job finished but lock
+        // wasn't cleared), so `watchActivePulls` is a no-op when there are no real
+        // active jobs — in which case we fall through to the normal focus sync.
         if (snapshot.hasPullLock) {
-          try {
-            const activeJobs = await scratchApiClient.job.getActiveJobsByWorkbook(workspaceId);
-            const activePullJobs = activeJobs.filter(
-              (j) => j.type === 'RefreshRecords' || j.type === 'pull-linked-folder-files',
-            );
-            if (activePullJobs.length > 0) {
-              setPullInProgressModalOpen(true);
-              return;
-            }
-          } catch {
-            // If we can't check jobs, skip the modal rather than showing a false positive
+          const attached = await pullTrackerRef.current.watchActivePulls();
+          if (attached) {
+            return;
           }
         }
 
@@ -731,24 +773,18 @@ export function WorkspacePage() {
           setGridFilterActivation({ kind: 'has-problems', trigger: gridFilterTriggerRef.current });
         }}
       />
-      <PullAllModal
-        opened={pullAllMode !== null}
-        onClose={() => setPullAllMode(null)}
-        workspaceName={workspace.name}
-        localPath={localPath}
-        workspaceId={workspace.id}
-        pullMode={pullAllMode ?? undefined}
-        invalidateWorkspaceLevelData={handleDataRefresh}
+      <PullProgressModal
+        opened={pullModalOpen}
+        onClose={() => {
+          setPullModalOpen(false);
+          // Closing while errored clears the failed state (and the header pill);
+          // an in-flight or completed pull is left untouched.
+          if (pullTracker.phase === 'error' || pullTracker.phase === 'download-error') {
+            pullTracker.dismiss();
+          }
+        }}
+        tracker={pullTracker}
       />
-      {localPath && (
-        <PullInProgressModal
-          opened={pullInProgressModalOpen}
-          onClose={() => setPullInProgressModalOpen(false)}
-          workbookId={workspace.id}
-          localPath={localPath}
-          invalidateWorkspaceLevelData={handleDataRefresh}
-        />
-      )}
       {localPath && (
         <ReinitWorkspaceModal
           opened={reinitModalOpen}
@@ -775,8 +811,9 @@ export function WorkspacePage() {
         isDownloaded={localPath !== null}
         downloading={downloading}
         reDownloading={reDownloading}
-        pullingAll={pullAllMode !== null}
         publishingAll={publishModalOpen}
+        pull={pullTracker}
+        onShowPullProgress={() => setPullModalOpen(true)}
         onDownload={() => void handleDownload()}
         onReDownload={() => void handleReDownload()}
         onPublishAll={() => {
@@ -787,7 +824,12 @@ export function WorkspacePage() {
         }}
         onPullAll={(mode) => {
           void trackPullAll(workspace.id, mode);
-          setPullAllMode(mode);
+          const modeLabel = mode === 'full' ? ' (Full)' : ' (Incremental)';
+          handleStartPull({
+            title: `Pull all${modeLabel} — ${workspace.name ?? 'workspace'}`,
+            pullMode: mode,
+            emptyStateMessage: 'No linked tables found in this workspace.',
+          });
         }}
         watchingEnabled={watchingEnabled}
         onToggleWatching={() => void handleToggleWatching()}
@@ -818,12 +860,16 @@ export function WorkspacePage() {
         invalidateWorkspaceLevelData={handleDataRefresh}
         onConnectionsChanged={() => void handlePullAndRefresh()}
         onPullJobsStarted={() => {
-          // DEV-10421: a connection-flow save kicked off pull jobs. Surface the
-          // pull-in-progress modal so the user sees download progress instead of
-          // it running silently. The modal downloads files locally on completion,
-          // which needs a local workspace; without one there is nothing to show.
-          if (localPath) setPullInProgressModalOpen(true);
+          // DEV-10421: a connection-flow save kicked off pull jobs. Attach the
+          // background tracker so the user sees download progress instead of it
+          // running silently, and open the detail modal once we've confirmed there
+          // are jobs to show. Materializing files locally needs a local workspace.
+          if (!localPath) return;
+          void watchActivePullJobs().then((attached) => {
+            if (attached) setPullModalOpen(true);
+          });
         }}
+        onRequestFolderPull={handleStartPull}
         onPublishFile={(cliPath) => {
           // DEV-10413: open the publish modal scoped to just this record.
           void handlePublishSingleRecord(cliPath);
