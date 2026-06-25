@@ -97,8 +97,10 @@ function OAuthCallbackContent() {
             return;
           }
 
-          // Check if user cancelled/denied the OAuth authorization
-          const isDeniedError = error === 'access_denied' || error === 'user_cancelled_login';
+          // Check if user cancelled/denied the OAuth authorization.
+          // Pipedrive sends `user_denied` when the user clicks Cancel on its consent screen.
+          const isDeniedError =
+            error === 'access_denied' || error === 'user_cancelled_login' || error === 'user_denied';
 
           setState({
             status: isDeniedError ? 'denied' : 'error',

@@ -19,6 +19,7 @@ import {
 } from '@spinner/shared-types';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { capitalize } from 'lodash';
+import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { WSLogger } from 'src/logger';
 import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
@@ -42,6 +43,7 @@ import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
 import { GoHighLevelOAuthProvider } from './providers/gohighlevel-oauth.provider';
 import { LinearOAuthProvider } from './providers/linear-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
+import { PipedriveOAuthProvider } from './providers/pipedrive-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
 import { ShopifyOAuthProvider } from './providers/shopify-oauth.provider';
 import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
@@ -81,9 +83,11 @@ export class OAuthService {
     private readonly quickbooksProvider: QuickBooksOAuthProvider,
     private readonly linearProvider: LinearOAuthProvider,
     private readonly zohoProvider: ZohoOAuthProvider,
+    private readonly pipedriveProvider: PipedriveOAuthProvider,
     private readonly posthogService: PostHogService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly config: ScratchConfigService,
   ) {
     // Register OAuth providers
     this.providers.set('AIRTABLE', this.airtableProvider);
@@ -97,6 +101,7 @@ export class OAuthService {
     this.providers.set('QUICKBOOKS', this.quickbooksProvider);
     this.providers.set('LINEAR', this.linearProvider);
     this.providers.set('ZOHO', this.zohoProvider);
+    this.providers.set('PIPEDRIVE', this.pipedriveProvider);
   }
 
   /**
@@ -110,6 +115,14 @@ export class OAuthService {
     actor: Actor,
     options: ValidatedOAuthInitiateOptionsDto,
   ): Promise<OAuthInitiateResponse> {
+    // Pipedrive OAuth is wired for the private TEST app only; the public prod app
+    // isn't live yet. The connect UI already hides OAuth for Pipedrive in production
+    // (connectors-metadata.controller); refuse to initiate it here too as a backstop
+    // against a crafted request.
+    if (service.toUpperCase() === Service.PIPEDRIVE && this.config.isProductionEnvironment()) {
+      throw new BadRequestException('Pipedrive OAuth is not available in production');
+    }
+
     const provider = this.providers.get(service);
     if (!provider) {
       throw new BadRequestException(`Unsupported OAuth service: ${service}`);

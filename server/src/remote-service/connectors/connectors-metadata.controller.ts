@@ -24,6 +24,19 @@ export class ConnectorsMetadataController {
       };
     }
 
+    // Pipedrive OAuth is wired up for the private TEST app only; the public prod app
+    // (marketplace install flow + review) is a follow-up. Hide OAuth as a connect
+    // option in production so only API key (user_provided_params) is selectable there.
+    if (this.config.isProductionEnvironment() && metadata[Service.PIPEDRIVE]) {
+      const pipedrive = metadata[Service.PIPEDRIVE];
+      metadata[Service.PIPEDRIVE] = {
+        ...pipedrive,
+        oauth: undefined,
+        supportedAuthMethods: pipedrive.supportedAuthMethods.filter((m) => m !== 'oauth'),
+        defaultAuthMethod: 'user_provided_params',
+      };
+    }
+
     return metadata;
   }
 
