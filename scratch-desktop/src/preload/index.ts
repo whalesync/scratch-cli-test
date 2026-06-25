@@ -1,6 +1,7 @@
 import { electronAPI } from '@electron-toolkit/preload';
 import type { TableView } from '@spinner/shared-types';
 import { contextBridge, ipcRenderer } from 'electron';
+import { AUTO_DOWNLOAD_COMPLETED_CHANNEL, type AutoDownloadCompletedEvent } from '../shared/auto-download-events';
 import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-install-events';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import {
@@ -34,6 +35,8 @@ function invoke(channel: string, ...args: unknown[]): Promise<any> {
 
 export interface WorkbookSettings {
   validateEnabled?: boolean;
+  /** DEV-10470: scheduled daily auto-download of this workspace (default ON; absent = ON). */
+  autoDownloadEnabled?: boolean;
 }
 
 type ScratchCommandEvent =
@@ -349,6 +352,16 @@ const scratchDesktop = {
     ipcRenderer.on(WORKSPACE_NEEDS_REINIT_CHANNEL, listener);
     return () => {
       ipcRenderer.removeListener(WORKSPACE_NEEDS_REINIT_CHANNEL, listener);
+    };
+  },
+  /** DEV-10470: a scheduled background re-download finished for some workspace. */
+  onAutoDownloadCompleted: (callback: (event: AutoDownloadCompletedEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: AutoDownloadCompletedEvent): void => {
+      callback(payload);
+    };
+    ipcRenderer.on(AUTO_DOWNLOAD_COMPLETED_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(AUTO_DOWNLOAD_COMPLETED_CHANNEL, listener);
     };
   },
 };

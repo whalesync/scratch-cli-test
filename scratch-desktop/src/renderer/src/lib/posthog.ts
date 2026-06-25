@@ -9,6 +9,8 @@ export enum PostHogEvents {
   CREATE_WORKSPACE = 'create_workspace',
   CANCEL_PICK_PARENT_FOLDER = 'cancel_pick_parent_folder',
   REDOWNLOAD_WORKSPACE = 'redownload_workspace',
+  AUTO_DOWNLOAD_SETTING_CHANGED = 'auto_download_setting_changed',
+  AUTO_DOWNLOAD_COMPLETED = 'auto_download_completed',
   PULL_ALL = 'pull_all',
   PULL_TABLE = 'pull_table',
   PUBLISH_ALL = 'publish_all',
@@ -124,6 +126,19 @@ export async function trackCancelPickParentFolder(workspaceId: string, flow: Pic
 
 export async function trackRedownloadWorkspace(workspaceId: string): Promise<void> {
   await captureEvent(PostHogEvents.REDOWNLOAD_WORKSPACE, { workspaceId });
+}
+
+/** DEV-10470: the user toggled scheduled daily auto-download for a workspace. */
+export async function trackAutoDownloadSettingChanged(workspaceId: string, enabled: boolean): Promise<void> {
+  await captureEvent(PostHogEvents.AUTO_DOWNLOAD_SETTING_CHANGED, { workspaceId, enabled });
+}
+
+/** DEV-10470: a scheduled background auto-download finished for the open workspace. */
+export async function trackAutoDownloadCompleted(
+  workspaceId: string,
+  props: { status: string; filesChanged: number; conflictCount: number },
+): Promise<void> {
+  await captureEvent(PostHogEvents.AUTO_DOWNLOAD_COMPLETED, { workspaceId, ...props });
 }
 
 export async function trackWorkspaceCloudSyncDetected(

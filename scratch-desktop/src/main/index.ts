@@ -11,6 +11,7 @@ import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-i
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import { UPDATER_EVENT_CHANNEL, UpdaterEvent } from '../shared/updater-events';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
+import { initAutoDownloadScheduler, type AutoDownloadSchedulerController } from './auto-download-scheduler';
 import { detectCloudSync, type CloudSyncDetection } from './cloud-sync';
 import { installScratchmdToPath, isCliSymlinkInstalled, uninstallScratchmdFromPath } from './install-cli';
 import {
@@ -40,6 +41,7 @@ import {
 import {
   getCurrentWorkspaceId,
   getWorkbookSettings,
+  isAutoDownloadEnabled,
   setCurrentWorkspaceId,
   setWorkbookSetting,
   type WorkbookSettings,
@@ -71,6 +73,7 @@ import {
   startScratchmdLiveCommand,
   syncCredentialsToScratchmdCli,
   uploadWorkspaceChanges,
+  type DownloadWorkspaceResult,
   type ScratchmdResult,
 } from './scratchmd';
 import { configureBundledGitEnvironment } from './setup-git-env';
@@ -121,6 +124,7 @@ const PROTOCOL = 'scratch';
 let mainWindow: BrowserWindow | null = null;
 let pendingDeepLink: { route: string; query: string } | null = null;
 let updaterController: ReturnType<typeof initAutoUpdater> = null;
+let autoDownloadController: AutoDownloadSchedulerController | null = null;
 const workspaceFileWatchService = new WorkspaceFileWatchService();
 
 // Review-state dots derive live from git + `accepted-patches.json` on every
@@ -520,6 +524,37 @@ async function seedSchemaValidatorsAndPopulateProblems(workspacePath: string): P
   }
 }
 
+/**
+ * Pull the latest server `main` into a workspace, the single choke point shared
+ * by the manual "Re-download files" IPC handler and the scheduled background
+ * auto-download (DEV-10470).
+ *
+ * `files download` reindexes the affected folders itself (per-path, scoped to
+ * the actually-changed records, plus a master diff for connections whose
+ * published state advanced) — no follow-up CLI call. `opts.filePath`
+ * (DEV-10413/DEV-10523) scopes only the single-record "Download and publish"
+ * failure decision to that record; the whole workspace still pulls.
+ *
+ * Re-seeds schema validators after every pull: a pull can materialize folders
+ * for a connection that was not on disk when the workspace was first seeded on
+ * load (a newly-connected service, or a connection still being pulled when the
+ * mount-time seed ran). Seeding here guarantees schema validation is present for
+ * those late-arriving folders and populates the problems table so validation
+ * counts surface without waiting for the grid to open. The writes land inside
+ * the internal-mutation window, so they do not provoke a spurious file-watch
+ * refresh.
+ */
+async function performWorkspaceDownload(
+  workspacePath: string,
+  opts?: { onDelete?: string; filePath?: string },
+): Promise<DownloadWorkspaceResult> {
+  return withWorkspaceInternalMutation(workspacePath, async () => {
+    const downloadResult = await pullWorkspaceChanges(workspacePath, opts);
+    await seedSchemaValidatorsAndPopulateProblems(workspacePath);
+    return downloadResult;
+  });
+}
+
 // Per-(workspace, connection) async queue for folder-index reads. The CLI stores one SQLite
 // file per connection (workspace/.repos/{conn}.db), so two concurrent paginate-records calls
 // against any folders within the same connection race on the same DB. During a large lazy
@@ -880,27 +915,8 @@ ipcMain.handle(
 );
 ipcMain.handle(
   'scratch:pull-workspace-changes',
-  async (_, workspacePath: string, opts?: { onDelete?: string; filePath?: string }) => {
-    // `files download` reindexes the affected folders itself (per-path, scoped
-    // to the actually-changed records, plus a master diff for connections whose
-    // published state advanced). No follow-up CLI call. `opts.filePath`
-    // (DEV-10413/DEV-10523) scopes only the single-record "Download and publish"
-    // failure decision to that record — the whole workspace still pulls.
-    return withWorkspaceInternalMutation(workspacePath, async () => {
-      const downloadResult = await pullWorkspaceChanges(workspacePath, opts);
-      // Re-seed schema validators after every pull. A pull can materialize folders for a
-      // connection that was not on disk when the workspace was first seeded on load — e.g. a
-      // newly-connected service, or a connection still being pulled when the mount-time seed ran.
-      // Seeding here, the single choke point every pull path flows through (connection-change pull,
-      // focus-sync pull, re-download), guarantees schema validation is present for those
-      // late-arriving folders instead of relying on each renderer pull handler to re-trigger it.
-      // It also populates the problems table for the just-seeded folders so their validation counts
-      // surface in the panel/sidebar without waiting for the grid to be opened. The writes land
-      // inside this internal-mutation window, so they do not provoke a spurious file-watch refresh.
-      await seedSchemaValidatorsAndPopulateProblems(workspacePath);
-      return downloadResult;
-    });
-  },
+  async (_, workspacePath: string, opts?: { onDelete?: string; filePath?: string }) =>
+    performWorkspaceDownload(workspacePath, opts),
 );
 ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
 ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>
@@ -1413,6 +1429,17 @@ void app.whenReady().then(() => {
 
   updaterController = initAutoUpdater({ getMainWindow: () => mainWindow });
 
+  // DEV-10470: re-download each enabled workspace's latest server data on app
+  // open and hourly, so files are fresh when the user sits down — the automated
+  // analogue of clicking "Re-download files" every morning.
+  autoDownloadController = initAutoDownloadScheduler({
+    getMainWindow: () => mainWindow,
+    listWorkspaces: async () => pruneStaleWorkspaceRegistryEntries(await readWorkspaceRegistry()),
+    isEnabledForWorkbook: isAutoDownloadEnabled,
+    hasValidCredentials: () => Boolean(getCredentials().apiToken) && !isTokenExpired(),
+    performDownload: (workspacePath) => performWorkspaceDownload(workspacePath, { onDelete: 'keep' }),
+  });
+
   const deepLinkArg = process.argv.find((arg) => typeof arg === 'string' && arg.startsWith(`${PROTOCOL}://`));
   if (deepLinkArg) {
     handleDeepLink(deepLinkArg);
@@ -1458,5 +1485,7 @@ app.on('before-quit', (event) => {
 });
 
 app.on('window-all-closed', () => {
+  autoDownloadController?.dispose();
+  autoDownloadController = null;
   app.quit();
 });

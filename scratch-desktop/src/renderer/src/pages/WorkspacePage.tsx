@@ -13,6 +13,7 @@ import { useValidation } from '../hooks/use-validation';
 import { CloudSyncWarning, listLocalWorkspaces } from '../lib/local-workspaces';
 import { parentDirectoryPath } from '../lib/parent-path';
 import {
+  trackAutoDownloadCompleted,
   trackDeepLinkProcessed,
   trackPublishAll,
   trackPublishSingleRecord,
@@ -668,6 +669,50 @@ export function WorkspacePage() {
       console.debug('[workspace] failed to reconcile workspace file watch roots:', error);
     });
   }, [workspaceLevelDataInvalidationCounter, localPath, watchingEnabled]);
+
+  // DEV-10470: when the scheduled background auto-download finishes for the
+  // workspace currently on screen, refresh the data under the user (and surface
+  // conflicts) so the view reflects the freshly-downloaded data without a manual
+  // "Re-download files" click. Other workspaces' events are ignored.
+  useEffect(() => {
+    if (!id) return;
+    const unsubscribe = window.scratchDesktop.onAutoDownloadCompleted((event) => {
+      if (event.workbookId !== id) return;
+      void trackAutoDownloadCompleted(id, {
+        status: event.status,
+        filesChanged: event.filesChanged,
+        conflictCount: event.conflictCount,
+      });
+      if (event.status === 'error') {
+        // Stay quiet on background failures (network/auth) — a transient miss is
+        // retried on the next hourly tick and shouldn't nag the user.
+        console.debug('[workspace] scheduled auto-download failed:', event.message);
+        return;
+      }
+      if (event.filesChanged === 0 && event.conflictCount === 0) {
+        // `up_to_date` — the common hourly outcome. Nothing changed on disk, so
+        // don't refetch the grid/validation/review-stats (or reconcile file-watch
+        // roots) under the user; that would interrupt their work for no reason.
+        return;
+      }
+      handleDataRefresh();
+      if (event.conflictCount > 0) {
+        notifications.show({
+          title: 'Updated, with conflicts to resolve',
+          message: `${event.conflictCount} local edit(s) conflict with newer server changes and were saved to unreviewed-changes.json.`,
+          color: 'yellow',
+          autoClose: false,
+        });
+      } else {
+        notifications.show({
+          title: 'Workspace updated',
+          message: 'Automatically downloaded the latest data from Scratch.',
+          color: 'green',
+        });
+      }
+    });
+    return unsubscribe;
+  }, [id, handleDataRefresh]);
 
   useEffect(() => {
     if (!workspaceId) return;

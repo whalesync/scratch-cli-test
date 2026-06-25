@@ -1,5 +1,6 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
 import type { TableView } from '@spinner/shared-types';
+import type { AutoDownloadCompletedEvent } from '../shared/auto-download-events';
 import type { CliInstallEvent } from '../shared/cli-install-events';
 import type { AppWillQuitPayload } from '../shared/lifecycle-events';
 import type { ReviewStatsMayHaveChangedEvent } from '../shared/review-stats-events';
@@ -60,6 +61,8 @@ interface ScratchAuthAPI {
 
 interface WorkbookSettings {
   validateEnabled?: boolean;
+  /** DEV-10470: scheduled daily auto-download of this workspace (default ON; absent = ON). */
+  autoDownloadEnabled?: boolean;
 }
 
 type CloudSyncProvider = 'icloud' | 'dropbox' | 'onedrive' | 'googledrive' | 'box' | 'cloudstorage-other';
@@ -310,6 +313,7 @@ interface ScratchDesktopAPI {
   onConnectionFileChanged: (callback: (event: ConnectionFileChangedEvent) => void) => () => void;
   onGridProgress: (callback: (line: string) => void) => () => void;
   onWorkspaceNeedsReinit: (callback: (event: WorkspaceNeedsReinitEvent) => void) => () => void;
+  onAutoDownloadCompleted: (callback: (event: AutoDownloadCompletedEvent) => void) => () => void;
   cliInstall: {
     subscribe: (callback: (event: CliInstallEvent) => void) => () => void;
   };
