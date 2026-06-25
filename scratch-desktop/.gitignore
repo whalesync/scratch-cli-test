@@ -24,3 +24,6 @@ test-results/
 playwright-report/
 blob-report/
 .playwright/
+
+# Storybook build output
+storybook-static/

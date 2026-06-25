@@ -61,4 +61,12 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Storybook CSF files export a meta default + story objects (not components), which trips
+    // react-refresh/only-export-components. Stories are never part of the app's Fast Refresh graph.
+    files: ['**/*.stories.ts', '**/*.stories.tsx'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 );
