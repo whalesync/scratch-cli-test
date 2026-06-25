@@ -2141,6 +2141,83 @@ fn reconcile_preserves_non_empty_unknown_dirs() {
 }
 
 #[test]
+fn reconcile_prunes_unknown_dir_holding_only_hidden_cruft() {
+    // A table deselected on macOS leaves its folder containing only a `.DS_Store`
+    // once its record files are gone. The folder must still be pruned, otherwise
+    // it lingers on disk and keeps showing in the desktop tree (DEV-10500).
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let stale = root.join("Deselected");
+    std::fs::create_dir(&stale).unwrap();
+    std::fs::write(stale.join(".DS_Store"), b"\x00\x01").unwrap();
+
+    reconcile_data_folder_dirs(root, &[]).unwrap();
+
+    assert!(
+        !stale.exists(),
+        "unknown dir holding only hidden cruft should be pruned"
+    );
+}
+
+#[test]
+fn reconcile_keeps_wanted_dir_holding_only_hidden_cruft() {
+    // A still-linked table whose only on-disk content is a `.DS_Store` (e.g. an
+    // empty table) must NOT be pruned just because it has no record files yet.
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let kept = root.join("Empty");
+    std::fs::create_dir(&kept).unwrap();
+    std::fs::write(kept.join(".DS_Store"), b"\x00\x01").unwrap();
+
+    let folders = vec![df("e", "Empty", Some("/Empty"))];
+    reconcile_data_folder_dirs(root, &folders).unwrap();
+
+    assert!(kept.is_dir(), "wanted dir must survive prune");
+    assert!(
+        kept.join(".DS_Store").exists(),
+        ".DS_Store inside a wanted dir is left alone"
+    );
+}
+
+#[test]
+fn reconcile_keeps_unknown_dir_with_a_real_file_alongside_cruft() {
+    // Non-destructive by default: a deselected dir that still holds a real
+    // (non-hidden) file is preserved, even with hidden cruft beside it.
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let stale = root.join("HasRealFile");
+    std::fs::create_dir(&stale).unwrap();
+    std::fs::write(stale.join(".DS_Store"), b"\x00\x01").unwrap();
+    std::fs::write(stale.join("record.json"), b"{}").unwrap();
+
+    reconcile_data_folder_dirs(root, &[]).unwrap();
+
+    assert!(stale.is_dir(), "dir with a real file must be kept");
+    assert!(stale.join("record.json").exists());
+}
+
+#[test]
+fn reconcile_keeps_unknown_dir_whose_only_entry_is_a_hidden_subdirectory() {
+    // A hidden subdirectory (e.g. `.git`/`.vscode`) can hold real, non-hidden
+    // files, so a stale folder whose only entry is one must NOT be
+    // `remove_dir_all`'d — that would silently destroy its contents
+    // (non-destructive by default).
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let stale = root.join("HasHiddenDir");
+    std::fs::create_dir_all(stale.join(".vscode")).unwrap();
+    std::fs::write(stale.join(".vscode/settings.json"), b"{}").unwrap();
+
+    reconcile_data_folder_dirs(root, &[]).unwrap();
+
+    assert!(
+        stale.is_dir(),
+        "dir holding a hidden subdirectory must be kept"
+    );
+    assert!(stale.join(".vscode/settings.json").exists());
+}
+
+#[test]
 fn reconcile_leaves_dotfiles_alone() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();

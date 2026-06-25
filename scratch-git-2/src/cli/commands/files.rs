@@ -5292,6 +5292,20 @@ fn download_single_repo(
     };
     let old_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
     if old_main_hash.as_deref() == Some(new_main_hash.as_str()) {
+        // `main` didn't move, so file CONTENT is unchanged. The on-disk folder
+        // STRUCTURE can still be stale, though: a table deselected in an earlier
+        // session leaves an (effectively empty) folder behind, and because the
+        // re-anchor/materialize path below is skipped here, nothing else
+        // reconciles it. Converge the directory layout to the server's
+        // data-folder set so re-running `files download` ("Pull all") removes
+        // folders the server no longer lists, even when no content changed
+        // (DEV-10500). Guarded on a non-empty server folder list so a transient
+        // server-state fetch failure (which reaches us as an empty slice) can't
+        // prune legitimately-empty wanted folders. The content-bearing case stays
+        // handled below, after materialize.
+        if !data_folders.is_empty() {
+            reconcile_data_folder_dirs(&ctx.worktree_dir, data_folders)?;
+        }
         return Ok(DownloadResult {
             status: "up_to_date".to_string(),
             ..Default::default()
@@ -6486,15 +6500,57 @@ fn prune_empty_unknown_dirs(dir: &Path, wanted: &HashSet<PathBuf>) -> anyhow::Re
         if wanted.contains(&path) {
             continue;
         }
-        let is_empty = std::fs::read_dir(&path)
-            .map(|mut it| it.next().is_none())
-            .unwrap_or(false);
-        if is_empty {
-            std::fs::remove_dir(&path)
-                .with_context(|| format!("remove empty dir {}", path.display()))?;
+        // The server no longer lists this directory as a data folder, so remove
+        // it once it holds no tracked content. `materialize_local_repo` has
+        // already deleted every record file the worktree tracks, but it never
+        // tracks hidden non-JSON files (e.g. a macOS `.DS_Store`), so those can
+        // linger and keep the directory technically non-empty — which previously
+        // left a deselected table's folder on disk (and therefore still showing
+        // in the desktop folder tree) indefinitely (DEV-10500). Treat a directory
+        // holding only such hidden cruft files as prunable; `remove_dir_all`
+        // clears the cruft along with it. A directory that still holds a real
+        // (non-hidden) file, or any subdirectory (which may hold real content),
+        // is left untouched, per the non-destructive-by-default principle.
+        if directory_contains_only_ignorable_hidden_files(&path)? {
+            std::fs::remove_dir_all(&path)
+                .with_context(|| format!("remove stale data folder dir {}", path.display()))?;
         }
     }
     Ok(())
+}
+
+/// Returns `true` when every entry in `dir` is a hidden (dot-prefixed) *file* —
+/// i.e. the directory holds nothing that `materialize_local_repo` would ever
+/// track and no subdirectories at all. An empty directory also qualifies. Such a
+/// directory is safe to `remove_dir_all` when the server no longer lists it as a
+/// data folder, because only OS/editor cruft files like `.DS_Store` remain.
+///
+/// Any subdirectory makes this return `false`. A non-hidden one would already
+/// have been pruned by the caller's recursion if it were empty, so a surviving
+/// one holds real content; and a hidden one (e.g. `.git`, `.vscode`) may hold
+/// real, non-hidden files we must not silently delete.
+fn directory_contains_only_ignorable_hidden_files(dir: &Path) -> anyhow::Result<bool> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(false),
+    };
+    for entry in entries {
+        let entry = entry.with_context(|| format!("read entry in {}", dir.display()))?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("read file type of {}", entry.path().display()))?;
+        let is_hidden = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with('.'));
+        // Only a hidden, non-directory entry is ignorable cruft. Any directory —
+        // or any non-hidden file — means the folder still holds content we must
+        // not destroy.
+        if file_type.is_dir() || !is_hidden {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn is_scratch_path(path: &str) -> bool {
