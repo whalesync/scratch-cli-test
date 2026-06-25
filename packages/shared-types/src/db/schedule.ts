@@ -17,6 +17,12 @@ export interface Schedule {
   action: ScheduleAction;
   entityId: string;
   cronExpression: string;
+  /**
+   * IANA timezone (e.g. "America/New_York") the cron's wall-clock time is interpreted in,
+   * or null for UTC. Only set for time-based frequencies (daily/weekly/monthly); interval
+   * and manual schedules are timezone-invariant and leave this null.
+   */
+  timezone: string | null;
   enabled: boolean;
   lastTriggeredAt: string | null;
   nextRunAt: string | null;

@@ -392,6 +392,9 @@ export const saveSyncBodySchema = z
     mappings: saveSyncBodyMappingsSchema,
     validateMappings: z.boolean().optional(),
     schedule: z.string().optional(),
+    // IANA timezone for the sync schedule's wall-clock time (null/omitted = UTC). Must be
+    // declared here because the object is `.strict()` — an undeclared key would be rejected.
+    scheduleTimezone: z.string().nullable().optional(),
     publishAfterSync: z.boolean().optional(),
   })
   .strict();

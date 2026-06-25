@@ -380,6 +380,7 @@ export class SyncService {
           action: ScheduleAction.SYNC,
           entityId: syncId,
           cronExpression: body.schedule,
+          timezone: body.scheduleTimezone ?? null,
           enabled: true,
         },
         actor,
@@ -534,8 +535,13 @@ export class SyncService {
           await this.scheduleService.delete(workbookId, existingSchedule.id);
         }
       } else if (existingSchedule) {
-        // Update existing schedule's cron expression
-        await this.scheduleService.update(workbookId, existingSchedule.id, { cronExpression: body.schedule });
+        // Update existing schedule's cron expression. Only forward the timezone when the
+        // caller actually sent one (`!== undefined`) so a client that omits it — e.g. an
+        // older scratchmd CLI re-importing a sync — preserves the stored timezone.
+        await this.scheduleService.update(workbookId, existingSchedule.id, {
+          cronExpression: body.schedule,
+          ...(body.scheduleTimezone !== undefined && { timezone: body.scheduleTimezone }),
+        });
       } else {
         // Create a new schedule
         await this.scheduleService.create(
@@ -545,6 +551,7 @@ export class SyncService {
             action: ScheduleAction.SYNC,
             entityId: syncId,
             cronExpression: body.schedule,
+            timezone: body.scheduleTimezone ?? null,
             enabled: true,
           },
           actor,
@@ -652,6 +659,7 @@ export class SyncService {
         mappings: v1Mappings,
         validateMappings: false,
         schedule: schedule?.cronExpression ?? '',
+        scheduleTimezone: schedule?.timezone ?? null,
         publishAfterSync: sync.publishAfterSync,
         _metadata: {
           syncState: sync.syncState,

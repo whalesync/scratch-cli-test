@@ -83,8 +83,10 @@ export class SchedulerService {
           continue;
         }
 
-        // Compute the next run time before claiming
-        const nextRunAt = this.scheduleService.computeNextRunAt(schedule.cronExpression);
+        // Compute the next run time before claiming. Pass the schedule's timezone so a
+        // time-based (daily/weekly/monthly) schedule keeps firing at its local wall-clock time
+        // instead of drifting back to UTC after its first fire.
+        const nextRunAt = this.scheduleService.computeNextRunAt(schedule.cronExpression, schedule.timezone);
 
         // Atomic claim — prevents double-firing across instances
         const claimed = await this.scheduleService.atomicClaim(schedule.id, nextRunAt);
@@ -326,7 +328,7 @@ export class SchedulerService {
    * 409 (routine already running) or 404 (file deleted) is logged and treated as "not triggered".
    */
   private async evaluateRoutineSchedule(schedule: Schedule): Promise<boolean> {
-    const nextRunAt = this.scheduleService.computeNextRunAt(schedule.cronExpression);
+    const nextRunAt = this.scheduleService.computeNextRunAt(schedule.cronExpression, schedule.timezone);
     const claimed = await this.scheduleService.atomicClaim(schedule.id, nextRunAt);
     if (!claimed) {
       return false;

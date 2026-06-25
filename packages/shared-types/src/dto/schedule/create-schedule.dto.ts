@@ -6,6 +6,8 @@ export const createScheduleSchema = z.object({
   action: z.enum(ScheduleAction),
   entityId: z.string(),
   cronExpression: z.string(),
+  /** IANA timezone for the cron's wall-clock time, or null/omitted for UTC. */
+  timezone: z.string().nullable().optional(),
   enabled: z.boolean().optional(),
 });
 

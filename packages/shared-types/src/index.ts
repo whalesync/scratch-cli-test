@@ -20,6 +20,7 @@ export * from './format';
 export * from './ids';
 export * from './job-types';
 export * from './match-field';
+export * from './schedule/schedule-frequency';
 export * from './subscription';
 export * from './sync-mapping';
 export * from './transform-picker';

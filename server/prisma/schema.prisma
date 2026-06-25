@@ -902,6 +902,12 @@ model Schedule {
   /// Cron expression (standard 5-field: minute hour dom month dow)
   cronExpression String
 
+  /// IANA timezone (e.g. "America/New_York") the cron's wall-clock time is interpreted in,
+  /// or null for UTC. Only set for time-based frequencies (daily/weekly/monthly); interval
+  /// and manual schedules are timezone-invariant and leave this null. Passed to cron-parser's
+  /// `tz` option when computing nextRunAt so the schedule tracks DST (DEV-10569).
+  timezone String?
+
   /// Whether this schedule is active. Disabled schedules are not evaluated.
   enabled Boolean @default(true)
 

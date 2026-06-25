@@ -36,10 +36,11 @@ export class ScheduleService {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
     }
 
-    this.validateCronExpression(dto.cronExpression, dto.action);
+    this.validateCronExpression(dto.cronExpression, dto.action, dto.timezone);
     await this.validateEntityId(workbookId, dto.action, dto.entityId);
 
-    const nextRunAt = this.computeNextRunAt(dto.cronExpression);
+    const timezone = dto.timezone ?? null;
+    const nextRunAt = this.computeNextRunAt(dto.cronExpression, timezone);
 
     const schedule = await this.db.client.schedule.create({
       data: {
@@ -51,6 +52,7 @@ export class ScheduleService {
         action: dto.action,
         entityId: dto.entityId,
         cronExpression: dto.cronExpression,
+        timezone,
         enabled: dto.enabled ?? true,
         nextRunAt,
       },
@@ -108,29 +110,34 @@ export class ScheduleService {
   async update(workbookId: WorkbookId, scheduleId: string, dto: ValidatedUpdateScheduleDto): Promise<ScheduleEntity> {
     const existing = await this.findOne(workbookId, scheduleId);
 
+    // A timezone change can arrive without a cron change (and vice versa); resolve the
+    // effective cron + timezone so validation and nextRunAt recompute agree. An omitted
+    // `dto.timezone` (undefined) leaves the stored timezone untouched; an explicit null clears it.
+    const effectiveCronExpression = dto.cronExpression ?? existing.cronExpression;
+    const effectiveTimezone = dto.timezone !== undefined ? dto.timezone : existing.timezone;
+
     if (dto.cronExpression) {
-      this.validateCronExpression(dto.cronExpression, existing.action);
+      this.validateCronExpression(dto.cronExpression, existing.action, effectiveTimezone);
     }
 
-    const nextRunAt =
-      dto.cronExpression && dto.cronExpression !== existing.cronExpression
-        ? this.computeNextRunAt(dto.cronExpression)
-        : undefined;
-
-    // If re-enabling a disabled schedule, also recompute nextRunAt
+    const cronExpressionChanged = dto.cronExpression !== undefined && dto.cronExpression !== existing.cronExpression;
+    const timezoneChanged = dto.timezone !== undefined && dto.timezone !== existing.timezone;
     const reEnabling = dto.enabled === true && !existing.enabled;
-    const recomputedNextRunAt = reEnabling
-      ? this.computeNextRunAt(dto.cronExpression ?? existing.cronExpression)
-      : undefined;
+    // Recompute the next fire time whenever the cron, the timezone, or the enabled→true edge
+    // changes — any of these can move when the schedule next runs.
+    const nextRunAt =
+      cronExpressionChanged || timezoneChanged || reEnabling
+        ? this.computeNextRunAt(effectiveCronExpression, effectiveTimezone)
+        : undefined;
 
     const schedule = await this.db.client.schedule.update({
       where: { id: scheduleId },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.cronExpression !== undefined && { cronExpression: dto.cronExpression }),
+        ...(dto.timezone !== undefined && { timezone: dto.timezone }),
         ...(dto.enabled !== undefined && { enabled: dto.enabled }),
         ...(nextRunAt && { nextRunAt }),
-        ...(recomputedNextRunAt && { nextRunAt: recomputedNextRunAt }),
       },
     });
     return new ScheduleEntity(schedule);
@@ -181,10 +188,10 @@ export class ScheduleService {
    * pipeline. Outside production that floor is relaxed to {@link SCHEDULE_MIN_INTERVAL_MINUTES} so routines
    * can be tested on a tight cadence (see {@link routineScheduleMinIntervalMinutes}).
    */
-  private validateCronExpression(cronExpression: string, action: ScheduleAction): void {
+  private validateCronExpression(cronExpression: string, action: ScheduleAction, timezone?: string | null): void {
     let parsed;
     try {
-      parsed = CronExpressionParser.parse(cronExpression);
+      parsed = CronExpressionParser.parse(cronExpression, { tz: timezone ?? undefined });
     } catch {
       throw new BadRequestException(`Invalid cron expression: ${cronExpression}`);
     }
@@ -293,7 +300,7 @@ export class ScheduleService {
         data: {
           enabled: true,
           disabledForMigrationAt: null,
-          nextRunAt: this.computeNextRunAt(schedule.cronExpression),
+          nextRunAt: this.computeNextRunAt(schedule.cronExpression, schedule.timezone),
         },
       });
     }
@@ -394,9 +401,14 @@ export class ScheduleService {
     }
   }
 
-  /** Computes the next run time from a cron expression. */
-  computeNextRunAt(cronExpression: string): Date {
-    const parsed = CronExpressionParser.parse(cronExpression);
+  /**
+   * Computes the next run time from a cron expression, interpreting its wall-clock fields in
+   * the given IANA timezone (null/undefined = the server's local time, i.e. UTC in production).
+   * cron-parser converts the next matching wall-clock time in that zone to an absolute UTC
+   * instant, so the result tracks DST and is directly comparable against `nextRunAt <= NOW()`.
+   */
+  computeNextRunAt(cronExpression: string, timezone?: string | null): Date {
+    const parsed = CronExpressionParser.parse(cronExpression, { tz: timezone ?? undefined });
     return parsed.next().toDate();
   }
 

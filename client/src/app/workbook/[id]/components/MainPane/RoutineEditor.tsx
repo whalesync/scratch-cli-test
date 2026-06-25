@@ -362,7 +362,7 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
                 leftSection={<ClockIcon size={12} />}
                 onClick={() => setIsScheduleModalOpen(true)}
               >
-                {getRoutineScheduleLabel(routineSchedule?.cronExpression ?? '')}
+                {getRoutineScheduleLabel(routineSchedule?.cronExpression ?? '', routineSchedule?.timezone)}
               </Button>
             </Tooltip>
           )}

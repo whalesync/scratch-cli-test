@@ -43,7 +43,8 @@ interface SyncToolbarProps {
   syncNamePlaceholder: string;
   onSyncNameChange: (name: string) => void;
   schedule: string;
-  onScheduleChange: (schedule: string) => void;
+  scheduleTimezone: string | null;
+  onScheduleChange: (schedule: string, timezone: string | null) => void;
   onSave: () => Promise<void>;
   saving: boolean;
   hasUnsavedChanges: boolean;
@@ -70,6 +71,7 @@ export function SyncToolbar({
   syncNamePlaceholder,
   onSyncNameChange,
   schedule,
+  scheduleTimezone,
   onScheduleChange,
   onSave,
   saving,
@@ -318,7 +320,7 @@ export function SyncToolbar({
 
         <Box mx={4} style={{ flexShrink: 0 }}>
           <DottedUnderlineButton size="xs" onClick={openScheduleModal}>
-            {getScheduleLabel(schedule, 'toolbar')}
+            {getScheduleLabel(schedule, 'toolbar', scheduleTimezone)}
           </DottedUnderlineButton>
         </Box>
 

@@ -312,6 +312,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const [selectedPairIndex, setSelectedPairIndex] = useState(0);
   const [syncName, setSyncName] = useState('');
   const [schedule, setSchedule] = useState('');
+  const [scheduleTimezone, setScheduleTimezone] = useState<string | null>(null);
   const [autoPublish, setAutoPublish] = useState(false);
   const [enableValidation, setEnableValidation] = useState(false);
   const [folderMappingModalOpen, setFolderMappingModalOpen] = useState(false);
@@ -366,8 +367,8 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   // Track unsaved changes — snapshot the last-saved state
   const [lastSavedState, setLastSavedState] = useState<string>('');
   const getCurrentStateSnapshot = useCallback(() => {
-    return JSON.stringify({ syncName, schedule, folderPairs, editorMode, jsonContent, autoPublish });
-  }, [syncName, schedule, folderPairs, editorMode, jsonContent, autoPublish]);
+    return JSON.stringify({ syncName, schedule, scheduleTimezone, folderPairs, editorMode, jsonContent, autoPublish });
+  }, [syncName, schedule, scheduleTimezone, folderPairs, editorMode, jsonContent, autoPublish]);
 
   const hasUnsavedChanges = isNew ? true : getCurrentStateSnapshot() !== lastSavedState;
 
@@ -454,6 +455,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       setFolderPairs([]);
       setSyncName('');
       setSchedule('');
+      setScheduleTimezone(null);
       setAutoPublish(false);
       setEnableValidation(false);
       setEditorMode('visual');
@@ -473,9 +475,11 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       .findByEntity(workbookId, ScheduleAction.SYNC, syncId)
       .then((syncSchedule) => {
         setSchedule(syncSchedule?.cronExpression ?? '');
+        setScheduleTimezone(syncSchedule?.timezone ?? null);
       })
       .catch(() => {
         setSchedule('');
+        setScheduleTimezone(null);
       });
     setJsonContent('');
     setJsonError(null);
@@ -701,6 +705,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         mappings,
         validateMappings: enableValidation,
         schedule,
+        scheduleTimezone,
         ...(!isNew && { publishAfterSync: autoPublish }),
       };
 
@@ -1022,7 +1027,11 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         syncNamePlaceholder={syncNamePlaceholder}
         onSyncNameChange={setSyncName}
         schedule={schedule}
-        onScheduleChange={setSchedule}
+        scheduleTimezone={scheduleTimezone}
+        onScheduleChange={(cron, timezone) => {
+          setSchedule(cron);
+          setScheduleTimezone(timezone);
+        }}
         onSave={handleSave}
         saving={saving}
         hasUnsavedChanges={hasUnsavedChanges}

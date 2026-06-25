@@ -21,6 +21,11 @@ export interface SaveSyncBody {
   validateMappings: boolean;
   /** Optional cron expression for a sync schedule. Empty string means "no schedule". */
   schedule?: string;
+  /**
+   * IANA timezone for the sync schedule's wall-clock time, or null for UTC. Omitted leaves
+   * the stored timezone unchanged on update; on create, omitted/null stores UTC.
+   */
+  scheduleTimezone?: string | null;
   /** Whether to automatically trigger publish after a successful sync. Defaults to false when omitted. */
   publishAfterSync?: boolean;
 }
@@ -111,6 +116,8 @@ export interface ExportSyncConfig {
   validateMappings: boolean;
   /** Cron expression for sync schedule, or empty string if none */
   schedule: string;
+  /** IANA timezone for the sync schedule's wall-clock time, or null for UTC / no schedule. */
+  scheduleTimezone: string | null;
   publishAfterSync: boolean;
   /** Read-only metadata — ignored by create/update endpoints */
   _metadata: {

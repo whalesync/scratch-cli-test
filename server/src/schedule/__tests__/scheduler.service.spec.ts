@@ -30,6 +30,7 @@ function makeSchedule(overrides: Partial<Schedule> = {}): Schedule {
     action: 'SYNC',
     entityId: ENTITY_ID,
     cronExpression: '0 * * * *',
+    timezone: null,
     enabled: true,
     disabledForMigrationAt: null,
     nextRunAt: new Date('2025-01-01T00:00:00Z'),
@@ -138,6 +139,37 @@ describe('SchedulerService', () => {
     expect(scheduleService.entityExists).toHaveBeenCalledWith(WORKBOOK_ID, 'SYNC', ENTITY_ID);
     expect(scheduleService.disableSchedule).not.toHaveBeenCalled();
     expect(bullEnqueuerService.enqueueSyncDataFoldersJob).toHaveBeenCalled();
+  });
+
+  it('recomputes nextRunAt in the schedule timezone so a time-based schedule does not drift back to UTC', async () => {
+    const schedule = makeSchedule({
+      action: 'FULL_PULL',
+      entityId: 'fol_test-folder',
+      cronExpression: '0 8 * * *',
+      timezone: 'America/New_York',
+    });
+    scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+    scheduleService.atomicClaim.mockResolvedValue(schedule);
+    scheduleService.entityExists.mockResolvedValue(true);
+
+    await service.evaluateSchedules();
+
+    expect(scheduleService.computeNextRunAt).toHaveBeenCalledWith('0 8 * * *', 'America/New_York');
+  });
+
+  it('passes the timezone when recomputing a due ROUTINE schedule', async () => {
+    const schedule = makeSchedule({
+      action: 'ROUTINE',
+      entityId: 'routines/daily.yaml',
+      cronExpression: '0 6 * * *',
+      timezone: 'Europe/Paris',
+    });
+    scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+    scheduleService.atomicClaim.mockResolvedValue(schedule);
+
+    await service.evaluateSchedules();
+
+    expect(scheduleService.computeNextRunAt).toHaveBeenCalledWith('0 6 * * *', 'Europe/Paris');
   });
 
   it('does not check entity existence if claim fails', async () => {

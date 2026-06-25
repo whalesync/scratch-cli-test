@@ -9,18 +9,12 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useSchedules } from '@/hooks/use-schedules';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
-import type { ComboboxItem } from '@mantine/core';
-import { Group, SegmentedControl, Select, Stack } from '@mantine/core';
+import { Group, SegmentedControl, Stack } from '@mantine/core';
 import type { ConnectorAccount, DataFolder, Schedule, WorkbookId } from '@spinner/shared-types';
 import { ScheduleAction } from '@spinner/shared-types';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  applyScheduleRow,
-  DEV_ONLY_OPTION,
-  EVERY_MINUTE,
-  MANUAL_ONLY,
-  PULL_SCHEDULE_OPTIONS,
-} from './pull-schedule-helpers';
+import { applyScheduleRow, MANUAL_ONLY } from './pull-schedule-helpers';
+import { ScheduleFrequencyPicker } from './ScheduleFrequencyPicker';
 
 interface ConnectionPullScheduleModalProps {
   opened: boolean;
@@ -32,36 +26,6 @@ interface ConnectionPullScheduleModalProps {
 }
 
 type ScheduleMode = 'connection' | 'tables';
-
-/** A single frequency dropdown, with the dev-only "Every minute" option highlighted. */
-function FrequencySelect(props: {
-  label: string;
-  description?: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: ComboboxItem[];
-  disabled: boolean;
-}) {
-  const { label, description, value, onChange, options, disabled } = props;
-  return (
-    <Select
-      label={label}
-      description={description}
-      data={options}
-      value={value}
-      onChange={(val) => onChange(val ?? MANUAL_ONLY)}
-      disabled={disabled}
-      allowDeselect={false}
-      renderOption={({ option }) =>
-        option.value === EVERY_MINUTE ? (
-          <span style={{ color: 'var(--mantine-color-violet-6)' }}>{option.label}</span>
-        ) : (
-          <span>{option.label}</span>
-        )
-      }
-    />
-  );
-}
 
 /**
  * Connection-level pull schedule dialog (DEV-10396). A switch between two mutually
@@ -94,10 +58,15 @@ export function ConnectionPullScheduleModal({
 
   const supportsIncrementalPull = Boolean(metadata?.[connectorAccount.service]?.incrementalPull);
 
-  const scheduleOptions = useMemo<ComboboxItem[]>(
-    () => (isDevToolsEnabled ? [...PULL_SCHEDULE_OPTIONS, DEV_ONLY_OPTION] : PULL_SCHEDULE_OPTIONS),
-    [isDevToolsEnabled],
-  );
+  // The timezone the chosen wall-clock times are interpreted in (shown to the user and stored
+  // on time-based schedules). Captured once from the browser.
+  const browserTimezone = useMemo<string | null>(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const folderIdSet = useMemo<Set<string>>(() => new Set(dataFolders.map((folder) => folder.id)), [dataFolders]);
 
@@ -318,21 +287,23 @@ export function ConnectionPullScheduleModal({
               One schedule for the whole connection — covers every table, including ones you add later. Replaces any
               per-table pull schedules.
             </Text12Regular>
-            <FrequencySelect
+            <ScheduleFrequencyPicker
               label="Full pull frequency"
               description="Full pulls scan every record and detect deletions."
               value={connectionFullValue}
               onChange={setConnectionFullValue}
-              options={scheduleOptions}
+              timezone={browserTimezone}
+              showDevOption={isDevToolsEnabled}
               disabled={loading}
             />
             {supportsIncrementalPull && (
-              <FrequencySelect
+              <ScheduleFrequencyPicker
                 label="Incremental pull frequency"
                 description="Incremental pulls fetch only records modified since the previous run (no deletions)."
                 value={connectionIncrementalValue}
                 onChange={setConnectionIncrementalValue}
-                options={scheduleOptions}
+                timezone={browserTimezone}
+                showDevOption={isDevToolsEnabled}
                 disabled={loading}
               />
             )}
@@ -349,21 +320,23 @@ export function ConnectionPullScheduleModal({
                 <Stack key={folder.id} gap={6}>
                   <Text13Medium>{folder.name}</Text13Medium>
                   <Group grow align="flex-start" wrap="nowrap">
-                    <FrequencySelect
+                    <ScheduleFrequencyPicker
                       label="Full pull"
                       value={tableFullValueByFolderId[folder.id] ?? MANUAL_ONLY}
                       onChange={(value) => setTableFullValueByFolderId((prev) => ({ ...prev, [folder.id]: value }))}
-                      options={scheduleOptions}
+                      timezone={browserTimezone}
+                      showDevOption={isDevToolsEnabled}
                       disabled={loading}
                     />
                     {supportsIncrementalPull && (
-                      <FrequencySelect
+                      <ScheduleFrequencyPicker
                         label="Incremental pull"
                         value={tableIncrementalValueByFolderId[folder.id] ?? MANUAL_ONLY}
                         onChange={(value) =>
                           setTableIncrementalValueByFolderId((prev) => ({ ...prev, [folder.id]: value }))
                         }
-                        options={scheduleOptions}
+                        timezone={browserTimezone}
+                        showDevOption={isDevToolsEnabled}
                         disabled={loading}
                       />
                     )}

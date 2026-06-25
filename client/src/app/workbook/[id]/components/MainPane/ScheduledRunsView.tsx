@@ -236,7 +236,7 @@ function ScheduleRow({
         )}
       </Table.Td>
       <Table.Td>
-        <Text12Regular>{getScheduleLabel(schedule.cronExpression)}</Text12Regular>
+        <Text12Regular>{getScheduleLabel(schedule.cronExpression, undefined, schedule.timezone)}</Text12Regular>
       </Table.Td>
       <Table.Td>
         {schedule.lastTriggeredAt ? (

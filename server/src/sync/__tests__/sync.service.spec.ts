@@ -458,6 +458,20 @@ describe('SyncService', () => {
 
       expect(scheduleService.create).not.toHaveBeenCalled();
     });
+
+    it('forwards the schedule timezone when creating a scheduled sync', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
+      (dbService.client.sync.create as jest.Mock).mockResolvedValue({ id: SYNC_ID, syncTablePairs: [] });
+
+      const body = makeSaveSyncBody({ schedule: CRON_HOURLY, scheduleTimezone: 'America/New_York' });
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
+
+      expect(scheduleService.create).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        expect.objectContaining({ cronExpression: CRON_HOURLY, timezone: 'America/New_York' }),
+        ACTOR,
+      );
+    });
   });
 
   // ===========================================================================
@@ -688,6 +702,22 @@ describe('SyncService', () => {
       });
       expect(scheduleService.create).not.toHaveBeenCalled();
       expect(scheduleService.delete).not.toHaveBeenCalled();
+    });
+
+    it('forwards the schedule timezone when updating an existing sync schedule', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      (dbService.client.$transaction as jest.Mock).mockResolvedValue({ id: SYNC_ID, syncTablePairs: [] });
+      const existingSchedule = { id: 'sched_existing123' };
+      (dbService.client.schedule.findFirst as jest.Mock).mockResolvedValue(existingSchedule);
+
+      const body = makeSaveSyncBody({ schedule: CRON_EVERY_TWO_HOURS, scheduleTimezone: 'Europe/Paris' });
+      await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
+
+      expect(scheduleService.update).toHaveBeenCalledWith(WORKBOOK_ID, existingSchedule.id, {
+        cronExpression: CRON_EVERY_TWO_HOURS,
+        timezone: 'Europe/Paris',
+      });
     });
 
     it('removes the schedule when updating sync with empty schedule and one exists', async () => {

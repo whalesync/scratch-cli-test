@@ -12,6 +12,7 @@ export class ScheduleEntity implements Schedule {
   action: ScheduleAction;
   entityId: string;
   cronExpression: string;
+  timezone: string | null;
   enabled: boolean;
   lastTriggeredAt: string | null;
   nextRunAt: string | null;
@@ -27,6 +28,7 @@ export class ScheduleEntity implements Schedule {
     this.action = schedule.action as ScheduleAction;
     this.entityId = schedule.entityId;
     this.cronExpression = schedule.cronExpression;
+    this.timezone = schedule.timezone;
     this.enabled = schedule.enabled;
     this.lastTriggeredAt = schedule.lastTriggeredAt ? schedule.lastTriggeredAt.toISOString() : null;
     this.nextRunAt = schedule.nextRunAt ? schedule.nextRunAt.toISOString() : null;

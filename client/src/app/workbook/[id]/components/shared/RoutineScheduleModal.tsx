@@ -4,18 +4,25 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { Text13Book } from '@/app/components/base/text';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
-import { Select, Stack, Switch } from '@mantine/core';
+import { Stack, Switch } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { ScheduleAction, type Schedule, type UpdateScheduleDto, type WorkbookId } from '@spinner/shared-types';
-import { useState } from 'react';
-import { MANUAL_ONLY, PULL_SCHEDULE_OPTIONS } from './pull-schedule-helpers';
+import {
+  describeScheduleCron,
+  ScheduleAction,
+  type Schedule,
+  type UpdateScheduleDto,
+  type WorkbookId,
+} from '@spinner/shared-types';
+import { useMemo, useState } from 'react';
+import { getScheduleTimezone, MANUAL_ONLY } from './pull-schedule-helpers';
+import { ScheduleFrequencyPicker } from './ScheduleFrequencyPicker';
 
-/** Toolbar label for a routine's cron value, using the routine frequency options. '' → "No scheduled runs". */
-export function getRoutineScheduleLabel(cronExpression: string): string {
+/** Toolbar label for a routine's cron value. '' → "No scheduled runs". */
+export function getRoutineScheduleLabel(cronExpression: string, timezone?: string | null): string {
   if (!cronExpression || cronExpression === MANUAL_ONLY) {
     return 'No scheduled runs';
   }
-  return PULL_SCHEDULE_OPTIONS.find((option) => option.value === cronExpression)?.label ?? cronExpression;
+  return describeScheduleCron(cronExpression, timezone);
 }
 
 interface RoutineScheduleModalProps {
@@ -50,6 +57,14 @@ export function RoutineScheduleModal({
   const [prevOpened, setPrevOpened] = useState(opened);
   const [isSaving, setIsSaving] = useState(false);
 
+  const browserTimezone = useMemo<string | null>(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // Re-seed the form from the latest schedule each time the modal opens.
   if (opened && !prevOpened) {
     setSelectedValue(existingSchedule?.cronExpression ?? MANUAL_ONLY);
@@ -72,12 +87,16 @@ export function RoutineScheduleModal({
           action: ScheduleAction.ROUTINE,
           entityId: routineFilePath,
           cronExpression: selectedValue,
+          timezone: getScheduleTimezone(selectedValue),
           enabled,
         });
       } else {
         // Only send the fields that actually changed; keep the schedule name in sync with the routine.
         const patch: UpdateScheduleDto = {};
-        if (existingSchedule.cronExpression !== selectedValue) patch.cronExpression = selectedValue;
+        if (existingSchedule.cronExpression !== selectedValue) {
+          patch.cronExpression = selectedValue;
+          patch.timezone = getScheduleTimezone(selectedValue);
+        }
         if (existingSchedule.enabled !== enabled) patch.enabled = enabled;
         if (existingSchedule.name !== routineName) patch.name = routineName;
         if (Object.keys(patch).length > 0) {
@@ -116,12 +135,11 @@ export function RoutineScheduleModal({
         <Text13Book>
           Choose when this routine runs. The schedule is managed separately from the routine file.
         </Text13Book>
-        <Select
+        <ScheduleFrequencyPicker
           label="Frequency"
-          data={PULL_SCHEDULE_OPTIONS}
           value={selectedValue}
-          onChange={(val) => setSelectedValue(val ?? MANUAL_ONLY)}
-          allowDeselect={false}
+          onChange={setSelectedValue}
+          timezone={browserTimezone}
         />
         {selectedValue !== MANUAL_ONLY && (
           <Switch
