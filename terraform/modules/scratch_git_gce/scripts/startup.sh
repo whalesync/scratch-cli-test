@@ -172,12 +172,20 @@ docker run -d \
 # The sudoers rule grants to ALL precisely because the OS Login username of a service
 # account is not known ahead of time; the real gate is IAM (who gets osLogin + IAP at
 # all). Raw docker/sudo stays break-glass (role_operations@). This block is idempotent
-# and self-contained: safe to re-run, and hand-runnable as break-glass via
-# `sudo google_metadata_script_runner startup` (or by pasting it).
-install -o root -g root -m 0755 -d /opt/gitops/bin
+# and self-contained: safe to re-run. On an EXISTING VM the metadata copy of this script
+# is frozen by the instance's lifecycle.ignore_changes, so activate by running THIS block
+# directly as root (pipe it over SSH to `sudo bash`, or paste it); a freshly-built VM
+# bakes it in at boot.
+#
+# Wrappers live in /usr/local/sbin, which is already on sudo's secure_path, so a bare
+# `sudo gitops-ps` resolves to the allowed path and matches the NOPASSWD rule. (A dedicated
+# dir like /opt/gitops/bin is NOT on secure_path — bare names there fall through to a
+# password prompt — so we install to /usr/local/sbin and clean up that earlier location.)
+rm -f /opt/gitops/bin/gitops-* 2>/dev/null || true
+rmdir /opt/gitops/bin 2>/dev/null || true
 
 # gitops-ps — docker state (no user args)
-cat > /opt/gitops/bin/gitops-ps <<'WRAP'
+cat > /usr/local/sbin/gitops-ps <<'WRAP'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "=== docker ps -a ==="; /usr/bin/docker ps -a
@@ -185,7 +193,7 @@ echo; echo "=== docker stats (snapshot) ==="; /usr/bin/docker stats --no-stream
 WRAP
 
 # gitops-logs <scratch-git-blue|green|proxy> [lines]
-cat > /opt/gitops/bin/gitops-logs <<'WRAP'
+cat > /usr/local/sbin/gitops-logs <<'WRAP'
 #!/usr/bin/env bash
 set -euo pipefail
 container="${1:-}"; lines="${2:-200}"
@@ -198,7 +206,7 @@ exec /usr/bin/docker logs --tail "$lines" -- "$container"
 WRAP
 
 # gitops-disk — read-only disk report (fixed paths)
-cat > /opt/gitops/bin/gitops-disk <<'WRAP'
+cat > /usr/local/sbin/gitops-disk <<'WRAP'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "=== df -h ==="; df -h
@@ -208,7 +216,7 @@ du -xh --max-depth=2 /mnt/disks/data 2>/dev/null | sort -h | tail -40
 WRAP
 
 # gitops-git <org_../wkb_../coa_..> <read-only-subcommand> [args...]
-cat > /opt/gitops/bin/gitops-git <<'WRAP'
+cat > /usr/local/sbin/gitops-git <<'WRAP'
 #!/usr/bin/env bash
 set -euo pipefail
 export GIT_PAGER=cat PAGER=cat
@@ -230,14 +238,14 @@ esac; done
 exec /usr/bin/git --no-pager -C "$real" "$sub" "$@"
 WRAP
 
-chmod 0755 /opt/gitops/bin/gitops-*
+chmod 0755 /usr/local/sbin/gitops-ps /usr/local/sbin/gitops-logs /usr/local/sbin/gitops-disk /usr/local/sbin/gitops-git
 
 # sudoers: only the four wrappers, NOPASSWD. Granting to ALL is safe — the
 # command surface is four read-only wrappers; the real gate is IAM (who gets
 # osLogin + IAP at all). Admins keep their separate google-sudoers root grant.
 cat > /tmp/gitops.sudoers <<'SUDO'
-Cmnd_Alias GITOPS_RO = /opt/gitops/bin/gitops-ps, /opt/gitops/bin/gitops-logs, \
-                       /opt/gitops/bin/gitops-disk, /opt/gitops/bin/gitops-git
+Cmnd_Alias GITOPS_RO = /usr/local/sbin/gitops-ps, /usr/local/sbin/gitops-logs, \
+                       /usr/local/sbin/gitops-disk, /usr/local/sbin/gitops-git
 Defaults!GITOPS_RO env_reset, !requiretty, secure_path="/usr/sbin:/usr/bin:/sbin:/bin"
 ALL ALL=(root) NOPASSWD: GITOPS_RO
 SUDO

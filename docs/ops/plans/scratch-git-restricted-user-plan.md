@@ -61,7 +61,7 @@ No VM metadata change and no change to the existing OS Login / IAP / firewall se
    │  │  sudo gitops-git <id> <ro> │  │                        │ │
    │  └────────────────────────────┘  └────────────────────────┘ │
    │                                                              │
-   │   /opt/gitops/bin/*  (root:root 0755)                        │
+   │   /usr/local/sbin/*  (root:root 0755)                        │
    │   /etc/sudoers.d/gitops  (NOPASSWD, the 4 wrappers only)     │
    │                                                              │
    │   /mnt/disks/data  ── all user repos (read via gitops-git)   │
@@ -92,16 +92,20 @@ No VM metadata change and no change to the existing OS Login / IAP / firewall se
 
 ### 1. VM tooling — `terraform/modules/scratch_git_gce/scripts/startup.sh`
 
-Append one **idempotent, self-contained** block (safe to re-run, and hand-runnable as break-glass) after the containers start. It installs four wrappers under `/opt/gitops/bin/` as `root:root` mode `0755` and a validated `sudoers` drop-in. Validate the sudoers file with `visudo -cf` before installing it.
+Append one **idempotent, self-contained** block (safe to re-run, and hand-runnable as break-glass) after the containers start. It installs four wrappers under `/usr/local/sbin/` as `root:root` mode `0755` and a validated `sudoers` drop-in. Validate the sudoers file with `visudo -cf` before installing it.
+
+> **Install location matters — use `/usr/local/sbin`, not a dedicated dir.** `/usr/local/sbin` is already on sudo's default `secure_path`, so a bare `sudo gitops-ps` resolves to the allowed path and matches the NOPASSWD rule. An earlier iteration installed to `/opt/gitops/bin` (not on `secure_path`); there, bare `sudo gitops-ps` couldn't be resolved to the allowlisted full path, so sudo fell through to a password prompt (which a service account has no password for) — caught during eu-test validation, 2026-06-25.
 
 > **Required companion change — `scratch_git_gce/main.tf` lifecycle.** Because `metadata_startup_script` is ForceNew (see [Activation & rollout](#activation--rollout)), this `startup.sh` edit must be paired with adding `metadata_startup_script` to the instance's `lifecycle.ignore_changes` — otherwise `terraform apply` replaces the VM. Without it the change is destructive; with it the plan is non-destructive.
 
 ```bash
 # ---------- restricted read-only ops tooling (DEV-10366) ----------
-install -o root -g root -m 0755 -d /opt/gitops/bin
+# /usr/local/sbin already exists and is on secure_path; clean up any wrappers
+# left in the earlier /opt/gitops/bin location (not on secure_path).
+rm -f /opt/gitops/bin/gitops-* 2>/dev/null || true; rmdir /opt/gitops/bin 2>/dev/null || true
 
 # gitops-ps — docker state (no user args)
-cat > /opt/gitops/bin/gitops-ps <<'WRAP'
+cat > /usr/local/sbin/gitops-ps <<'WRAP'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "=== docker ps -a ==="; /usr/bin/docker ps -a
@@ -109,7 +113,7 @@ echo; echo "=== docker stats (snapshot) ==="; /usr/bin/docker stats --no-stream
 WRAP
 
 # gitops-logs <scratch-git-blue|green|proxy> [lines]
-cat > /opt/gitops/bin/gitops-logs <<'WRAP'
+cat > /usr/local/sbin/gitops-logs <<'WRAP'
 #!/usr/bin/env bash
 set -euo pipefail
 container="${1:-}"; lines="${2:-200}"
@@ -122,7 +126,7 @@ exec /usr/bin/docker logs --tail "$lines" -- "$container"
 WRAP
 
 # gitops-disk — read-only disk report (fixed paths)
-cat > /opt/gitops/bin/gitops-disk <<'WRAP'
+cat > /usr/local/sbin/gitops-disk <<'WRAP'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "=== df -h ==="; df -h
@@ -132,7 +136,7 @@ du -xh --max-depth=2 /mnt/disks/data 2>/dev/null | sort -h | tail -40
 WRAP
 
 # gitops-git <org_../wkb_../coa_..> <read-only-subcommand> [args...]
-cat > /opt/gitops/bin/gitops-git <<'WRAP'
+cat > /usr/local/sbin/gitops-git <<'WRAP'
 #!/usr/bin/env bash
 set -euo pipefail
 export GIT_PAGER=cat PAGER=cat
@@ -154,14 +158,14 @@ esac; done
 exec /usr/bin/git --no-pager -C "$real" "$sub" "$@"
 WRAP
 
-chmod 0755 /opt/gitops/bin/gitops-*
+chmod 0755 /usr/local/sbin/gitops-ps /usr/local/sbin/gitops-logs /usr/local/sbin/gitops-disk /usr/local/sbin/gitops-git
 
 # sudoers: only the four wrappers, NOPASSWD. Granting to ALL is safe — the
 # command surface is four read-only wrappers; the real gate is IAM (who gets
 # osLogin + IAP at all). Admins keep their separate google-sudoers root grant.
 cat > /tmp/gitops.sudoers <<'SUDO'
-Cmnd_Alias GITOPS_RO = /opt/gitops/bin/gitops-ps, /opt/gitops/bin/gitops-logs, \
-                       /opt/gitops/bin/gitops-disk, /opt/gitops/bin/gitops-git
+Cmnd_Alias GITOPS_RO = /usr/local/sbin/gitops-ps, /usr/local/sbin/gitops-logs, \
+                       /usr/local/sbin/gitops-disk, /usr/local/sbin/gitops-git
 Defaults!GITOPS_RO env_reset, !requiretty, secure_path="/usr/sbin:/usr/bin:/sbin:/bin"
 ALL ALL=(root) NOPASSWD: GITOPS_RO
 SUDO
@@ -270,7 +274,7 @@ Cleanup (`docker … prune`, `journalctl --vacuum`), disk-space fixes, deleting 
 **On-VM (test first), as a `role_readonly_sa@` "gcp-ro" (osLogin-only) identity** — i.e. authenticated as the read-only SA the laptop/agent uses by default (`gcp-ro` gcloud config). The critical check is that SSH **connects at all**: it only does once the `actAs` (`iam.serviceAccountUser`) grant on `scratch-git-service-account` lands — without it, expect `Permission denied (publickey)`.
 
 1. SSH succeeds as the gcp-ro SA via `connect_to_git_service_ssh.sh test` (proves osLogin + IAP + actAs are all in place).
-2. `sudo -l` lists **only** the four `/opt/gitops/bin/gitops-*` commands (NOPASSWD).
+2. `sudo -l` lists **only** the four `/usr/local/sbin/gitops-*` commands (NOPASSWD).
 3. Capabilities work: `sudo gitops-ps`; `sudo gitops-logs scratch-git-proxy 50`; `sudo gitops-disk`; `sudo gitops-git org_…/wkb_…/coa_… log -n 5`.
 4. Denials all fail: `docker ps` (socket denied — not in docker group); `sudo docker ps` (not in sudoers); `sudo rm -rf /mnt/disks/data`; `sudo gitops-logs evil 10` (name allowlist); `sudo gitops-git ../../etc/passwd log` (path containment); `sudo gitops-git org_…/… push` (write subcommand).
 5. As a `role_operations` (osAdminLogin) identity: confirm break-glass still works — `sudo docker ps`, `sudo docker exec …`, manual `rm` all succeed.
