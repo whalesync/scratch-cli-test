@@ -12,6 +12,7 @@ describe('buildShopifyDefaultView', () => {
       vendor: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       productType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      descriptionHtml: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       tags: Type.Optional(Type.Array(Type.String())),
       createdAt: Type.Optional(
         Type.Union([Type.String({ format: 'date-time' }), Type.Null()], { [X_SCRATCH_READONLY]: true }),
@@ -87,6 +88,7 @@ describe('buildShopifyDefaultView', () => {
     const vendorIdx = paths.indexOf('vendor');
     const productTypeIdx = paths.indexOf('productType');
     const descriptionIdx = paths.indexOf('description');
+    const descriptionHtmlIdx = paths.indexOf('descriptionHtml');
     const tagsIdx = paths.indexOf('tags');
 
     expect(titleIdx).toBe(0);
@@ -95,7 +97,8 @@ describe('buildShopifyDefaultView', () => {
     expect(statusIdx).toBeLessThan(vendorIdx);
     expect(vendorIdx).toBeLessThan(productTypeIdx);
     expect(productTypeIdx).toBeLessThan(descriptionIdx);
-    expect(descriptionIdx).toBeLessThan(tagsIdx);
+    expect(descriptionIdx).toBeLessThan(descriptionHtmlIdx);
+    expect(descriptionHtmlIdx).toBeLessThan(tagsIdx);
   });
 
   it('should place non-priority fields after priority fields alphabetically', () => {

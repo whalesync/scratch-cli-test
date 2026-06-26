@@ -11,7 +11,7 @@ import {
 // ── Priority fields per entity type ──
 // Fields listed here appear first, in this order. Anything not listed goes after alphabetically.
 const PRIORITY_FIELDS: Record<string, string[]> = {
-  products: ['title', 'id', 'handle', 'status', 'vendor', 'productType', 'description', 'tags'],
+  products: ['title', 'id', 'handle', 'status', 'vendor', 'productType', 'description', 'descriptionHtml', 'tags'],
   product_variants: ['title', 'id', 'displayName', 'sku', 'price', 'compareAtPrice', 'inventoryQuantity'],
   product_media: ['id', 'alt', 'mediaContentType', 'status', 'mimeType'],
   collections: ['title', 'id', 'handle', 'description', 'descriptionHtml'],

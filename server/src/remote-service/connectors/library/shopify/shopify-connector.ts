@@ -30,6 +30,7 @@ import {
   TablePreview,
 } from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, EntityType, getEntityConfig, isChildEntity } from './graphql';
+import { applyShopifyAgentFieldInstructions } from './shopify-agent-instructions';
 import { SEO_METAFIELD_ENTITIES, ShopifyApiClient, ShopifyError } from './shopify-api-client';
 import { buildShopifyDefaultView } from './shopify-default-view';
 import { ShopifyCredentials } from './shopify-types';
@@ -226,6 +227,9 @@ export class ShopifyConnector extends Connector {
         resolvedSchema.$id || resolvedSchema.title ? { $id: resolvedSchema.$id, title: resolvedSchema.title } : {},
       );
     }
+
+    // Attach agent instructions (hand-maintained; the generated schemas can't carry them — codegen overwrites).
+    resolvedSchema = applyShopifyAgentFieldInstructions(resolvedSchema, entityType);
 
     const spec: BaseJsonTableSpec = {
       id,
