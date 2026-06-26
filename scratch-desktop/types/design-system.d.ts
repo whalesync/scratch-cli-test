@@ -16,6 +16,29 @@ import type { ComponentPropsWithoutRef, FC, ReactNode } from 'react';
 /** Props shared by every button-family component: Mantine ButtonProps plus native button attrs. */
 type DSButtonProps = ButtonProps & Omit<ComponentPropsWithoutRef<'button'>, keyof ButtonProps>;
 
+// Declared only so /design-sync's converter recognizes `cfg.provider`'s MantineProvider as a bundle
+// export (it derives the export set from this .d.ts). Has no story, so it is NOT a Design System card —
+// it just lets the converter wrap every preview in the Mantine theme provider.
+export declare const MantineProvider: FC<{ children?: ReactNode; defaultColorScheme?: string; theme?: unknown }>;
+
+// ── Composed screens (faithful reproductions of whole app surfaces) ──────────────
+/**
+ * The main workspace screen — the desktop app's hero surface: the top toolbar, the connector folder
+ * tree, and the data grid for the selected folder, with rows mid-review showing the review-state
+ * coloring (needs-review / approved) and word-diffed changed cells. Self-contained; takes no props.
+ */
+export declare const WorkspaceShell: FC;
+/** The Connections right-rail panel: connected services and their synced folders. No props. */
+export declare const ConnectionsPanel: FC;
+/** The Validation right-rail panel: per-folder enforce_schema problems, Problems/Rules tabs. No props. */
+export declare const ValidationPanel: FC;
+/** The Publish History right-rail panel: the log of publish plans/runs (empty state). No props. */
+export declare const PublishHistoryPanel: FC;
+/** The Workspace Settings right-rail panel: auto-update toggle + workspace permissions. No props. */
+export declare const SettingsPanel: FC;
+/** The single-record inspector overlay: record navigator + FIELD/CURRENT/NEW field table. No props. */
+export declare const RecordDetailView: FC;
+
 // ── Icon buttons (square, icon-only; pass an icon element as children) ───────────
 /** Icon-only primary action. Square, yellow fill + highlight border. */
 export declare const IconButtonPrimaryOutline: FC<DSButtonProps>;
