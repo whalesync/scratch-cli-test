@@ -1,0 +1,86 @@
+// Hand-authored declaration surface for /design-sync's converter. Our design-system components
+// are `Button.withProps(...)` wrappers with no built .d.ts, so this file declares each public
+// component with a clean props type the converter can read (export list + prop contracts for the
+// generated <Name>.d.ts / <Name>.prompt.md). Names MUST match the runtime exports in
+// .storybook/ds-entry.ts and the story titles' last segment.
+import type {
+  ButtonProps,
+  CheckboxProps,
+  SelectProps,
+  SwitchProps,
+  TextareaProps,
+  TextInputProps,
+} from '@mantine/core';
+import type { ComponentPropsWithoutRef, FC, ReactNode } from 'react';
+
+/** Props shared by every button-family component: Mantine ButtonProps plus native button attrs. */
+type DSButtonProps = ButtonProps & Omit<ComponentPropsWithoutRef<'button'>, keyof ButtonProps>;
+
+// ── Icon buttons (square, icon-only; pass an icon element as children) ───────────
+/** Icon-only primary action. Square, yellow fill + highlight border. */
+export declare const IconButtonPrimaryOutline: FC<DSButtonProps>;
+/** Icon-only neutral action. Square, outlined with the corner-bracket border. */
+export declare const IconButtonOutline: FC<DSButtonProps>;
+/** Icon-only low-emphasis action. Square, subtle/ghost. */
+export declare const IconButtonGhost: FC<DSButtonProps>;
+/** Icon-only inline action. Borderless, transparent; for dense rows. */
+export declare const IconButtonInline: FC<DSButtonProps>;
+/** Icon-only toolbar action (24px). Hairline border on a base surface. */
+export declare const IconButtonToolbar: FC<DSButtonProps>;
+
+// ── Form controls (themed Mantine components) ────────────────────────────────────
+/** Checkbox. Square; checked state uses the yellow highlight fill + border. */
+export declare const Checkbox: FC<CheckboxProps>;
+/** Switch. On state uses the yellow highlight fill + border. */
+export declare const Switch: FC<SwitchProps>;
+/** Single-line text input. Square corners, neutral border, yellow focus ring. */
+export declare const TextInput: FC<TextInputProps>;
+/** Multi-line text input. Same styling as TextInput; auto-sizing optional. */
+export declare const Textarea: FC<TextareaProps>;
+/** Select dropdown. Square corners, neutral border, yellow focus ring. */
+export declare const Select: FC<SelectProps>;
+
+// ── Primary ───────────────────────────────────────────────────────────────────
+/** Primary action. Solid yellow-highlight fill with a 1.5px highlight border; near-black label. */
+export declare const ButtonPrimarySolid: FC<DSButtonProps>;
+/** Primary action, lighter weight. Yellow fill with the corner-bracket border. */
+export declare const ButtonPrimaryLight: FC<DSButtonProps>;
+
+// ── Secondary ─────────────────────────────────────────────────────────────────
+/** Secondary action, high emphasis. Dark (gray-9) fill with a light label. */
+export declare const ButtonSecondarySolid: FC<DSButtonProps>;
+/** Secondary action. Neutral, outlined with the signature corner-bracket border on a base surface. */
+export declare const ButtonSecondaryOutline: FC<DSButtonProps>;
+/** Secondary action, low emphasis. Subtle/ghost — no fill or border until hover. */
+export declare const ButtonSecondaryGhost: FC<DSButtonProps>;
+/** Secondary action, inline. Compact, borderless; for use within text or dense rows. */
+export declare const ButtonSecondaryInline: FC<DSButtonProps>;
+
+// ── Danger ────────────────────────────────────────────────────────────────────
+/** Destructive action. Light red fill with red label; use for discard/remove/delete. */
+export declare const ButtonDangerLight: FC<DSButtonProps>;
+
+// ── Compact (toolbars & sidebars, 22px) ─────────────────────────────────────────
+/** Compact primary action (22px, 11px label). Yellow fill + highlight border, for dense chrome. */
+export declare const ButtonCompactPrimary: FC<DSButtonProps>;
+/** Compact secondary action (22px). Neutral selected-surface fill. */
+export declare const ButtonCompactSecondary: FC<DSButtonProps>;
+/** Compact destructive action (22px). Light red fill. */
+export declare const ButtonCompactDanger: FC<DSButtonProps>;
+
+// ── Developer tools (always violet) ─────────────────────────────────────────────
+/** Developer-tool action. Always violet and carries the CPU glyph; fenced off from user actions. */
+export declare const DevToolButton: FC<DSButtonProps>;
+/** Developer-tool action, low emphasis. Violet subtle/ghost with the CPU glyph. */
+export declare const DevToolButtonGhost: FC<DSButtonProps>;
+
+// ── Composite ───────────────────────────────────────────────────────────────────
+/** A larger secondary-outline button stacking a bold title over a muted description, optional leading icon. */
+export declare const ButtonWithDescription: FC<{
+  /** Bold title line. */
+  title: string;
+  /** Muted description line beneath the title. */
+  description: string;
+  /** Optional leading icon element. */
+  icon?: ReactNode;
+}>;

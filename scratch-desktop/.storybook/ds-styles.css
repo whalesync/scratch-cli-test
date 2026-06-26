@@ -1,0 +1,6 @@
+/* CSS entry for /design-sync. Ships the full styling closure that rendered designs receive:
+   Mantine's base component styles + Scratch's globals (the --highlight-*, --fg-*, --bg-*, and
+   review-state token DEFINITIONS). The --mantine-color-* scale is injected at runtime by
+   MantineProvider (the provider designs wrap in), so it is intentionally not defined statically. */
+@import '@mantine/core/styles.css';
+@import '../src/renderer/src/theme/globals.css';

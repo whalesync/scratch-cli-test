@@ -1,0 +1,20 @@
+{
+  "projectId": "7b1662a2-9756-4c83-9df8-54b7c7ed1dc8",
+  "shape": "storybook",
+  "pkg": "scratch-desktop",
+  "globalName": "ScratchDS",
+  "storybookStatic": ".design-sync/sb-reference",
+  "storybookConfigDir": "scratch-desktop/.storybook",
+  "cssEntry": ".storybook/ds-styles.built.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "provider": {
+    "component": "MantineProvider",
+    "props": {
+      "defaultColorScheme": "light",
+      "theme": { "$ref": "SCRATCH_MANTINE_THEME" }
+    }
+  },
+  "storyImports": {
+    "shim": ["renderer/src/components/base", "@mantine/core"]
+  }
+}
