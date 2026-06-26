@@ -154,6 +154,103 @@ fn invalid_length_params() -> Option<ValidationResult> {
 /// Returns one `RecordValidationResult` per violated field. Clean records return an
 /// empty Vec — no rows are written to the DB.
 pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResult> {
+    enforce_schema_inner(ctx)
+}
+
+/// Accepts a value the JSON Schema `format: "uri"` keyword should treat as a URI for
+/// Scratch's purposes. We deliberately accept MORE than RFC 3986's absolute-URI grammar
+/// (which the jsonschema crate's built-in `uri` checker enforces, requiring a scheme):
+/// many connectors map a "link/website/url" service field to `format: "uri"`, and those
+/// services (e.g. Webflow's CMS Link field) store and return SCHEMELESS host strings
+/// verbatim — `usecaucus.com`, `www.arcadia.solutions`. Per "preserve external data
+/// fidelity" we must not flag a value the service legitimately returns, so a schemeless
+/// host-shaped string is accepted as a valid `uri`.
+///
+/// We do NOT collapse to "any non-empty string": a value with whitespace, control
+/// characters, or a literal `…`/`[…]` ellipsis (truncated-URL bad data we've seen in
+/// real Webflow records) is still rejected, so genuine garbage keeps surfacing rather
+/// than being silently masked ("surface failures; never silently succeed").
+///
+/// Accepts: any string with an explicit `scheme:` prefix (delegated to the standard
+/// absolute-URI grammar via the crate's default behaviour — see below), AND any
+/// schemeless string that is host-shaped: a dot-separated host (each label
+/// alphanumeric or `-`, at least one dot) optionally followed by `:port`, a `/path`,
+/// `?query`, or `#fragment`, with no whitespace, control chars, or non-URL characters.
+fn scratch_uri_format_is_valid(value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    // No whitespace or control characters anywhere — rejects "hello world" and any
+    // value carrying a stray newline/tab. The `…` (U+2026) and other non-ASCII URL
+    // junk are rejected by the ASCII gate below.
+    if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+
+    // A value with an explicit scheme (`scheme:rest`) is validated against the
+    // standard absolute-URI grammar. We detect a scheme as RFC 3986 does
+    // (`ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` before the first `:`, and that
+    // `:` must come before any `/`, `?`, or `#` so a path like `foo.io/a:b` is NOT
+    // read as the scheme `foo.io/a`).
+    if let Some(colon_index) = value.find(':') {
+        let candidate_scheme = &value[..colon_index];
+        let scheme_ends_before_path_or_query = value[..colon_index].find(['/', '?', '#']).is_none();
+        let is_valid_scheme = scheme_ends_before_path_or_query
+            && !candidate_scheme.is_empty()
+            && candidate_scheme
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+            && candidate_scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+        if is_valid_scheme {
+            // A value with a valid scheme is a URI for our purposes: the no-whitespace /
+            // no-control gate above already rejected the truncated/garbage cases, and we
+            // require something after the `scheme:` so a bare `http:` is rejected. We do
+            // not re-derive the full RFC 3986 hier-part grammar — the crate doesn't expose
+            // its built-in `uri` checker publicly, and the goal here is to WIDEN what `uri`
+            // accepts (schemeless hosts), not to tighten the scheme-prefixed case.
+            let part_after_scheme = &value[colon_index + 1..];
+            return !part_after_scheme.is_empty() && value.is_ascii();
+        }
+    }
+
+    // Schemeless: require a host-shaped prefix (dot-separated labels, at least one dot)
+    // before any optional `:port` / `/path` / `?query` / `#fragment`. This accepts
+    // `usecaucus.com`, `www.arcadia.solutions`, `foo.io/path?q=1` and rejects a bare
+    // word, a single label, or anything with disallowed characters.
+    let host_authority_end = value.find(['/', '?', '#', ':']).unwrap_or(value.len());
+    let host_authority = &value[..host_authority_end];
+    let host_labels: Vec<&str> = host_authority.split('.').collect();
+    let host_is_dotted_and_well_formed = host_labels.len() >= 2
+        && host_labels.iter().all(|label| {
+            !label.is_empty() && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        });
+    if !host_is_dotted_and_well_formed {
+        return false;
+    }
+    // Everything after the host (path/query/fragment/port) must be printable ASCII
+    // with no characters outside the unreserved/reserved/percent-encoding set we'd
+    // expect in a URL — the no-whitespace/no-control gate above plus an ASCII check
+    // is sufficient to reject the embedded-`…` truncated URLs.
+    value.is_ascii()
+}
+
+/// Builds the JSON Schema validator used by `enforce_schema`, registering Scratch's
+/// custom `uri` format (see `scratch_uri_format_is_valid`) so schemeless connector
+/// links validate everywhere `format: "uri"` appears. `should_validate_formats(true)`
+/// is required for ANY format — built-in or custom — to run.
+fn build_validator_with_scratch_formats(
+    schema: &serde_json::Value,
+) -> Result<jsonschema::Validator, jsonschema::ValidationError<'static>> {
+    jsonschema::options()
+        .should_validate_formats(true)
+        .with_format("uri", scratch_uri_format_is_valid)
+        .build(schema)
+}
+
+fn enforce_schema_inner(ctx: &RecordValidationContext) -> Vec<RecordValidationResult> {
     let mut results = Vec::new();
 
     let schema_obj = match ctx.schema.get("schema") {
@@ -190,10 +287,7 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
         };
         let effective: &serde_json::Value = modified.as_ref().unwrap_or(schema_obj);
 
-        if let Ok(validator) = jsonschema::options()
-            .should_validate_formats(true)
-            .build(effective)
-        {
+        if let Ok(validator) = build_validator_with_scratch_formats(effective) {
             for error in validator.iter_errors(&ctx.record) {
                 // Skip required errors — the hand-rolled required check below
                 // handles these with better precision: null and empty string are
@@ -1279,6 +1373,62 @@ mod tests {
             results.len()
         );
         assert_eq!(results[0].level, ValidationLevel::Error);
+    }
+
+    #[test]
+    fn schemeless_urls_validate_against_uri_format() {
+        // Many connectors map a "link/website/url" service field to `format: "uri"`,
+        // and those services return SCHEMELESS host strings verbatim — e.g. Webflow's
+        // CMS Link field stores `usecaucus.com` / `www.arcadia.solutions` as typed.
+        // Per "preserve external data fidelity" the schema must accept what the service
+        // returns, so a schemeless host-shaped string validates as a `uri`. These are
+        // the exact verbatim values that surfaced as prod `enforce_schema` noise.
+        let schema = json!({ "schema": { "properties": {
+            "website": { "anyOf": [ { "type": "string", "format": "uri" }, { "type": "null" } ] }
+        }}});
+        for legitimate_value in [
+            "usecaucus.com",
+            "www.arcadia.solutions",
+            "foo.io/path?q=1",
+            "https://www.linkedin.com/posts/abc?utm_source=share",
+            "http://example.com",
+        ] {
+            let ctx = record_ctx(json!({ "website": legitimate_value }), None, schema.clone());
+            let results = enforce_schema(&ctx);
+            assert!(
+                results.is_empty(),
+                "{legitimate_value:?} should validate as a uri, got {} error(s)",
+                results.len()
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_urls_still_error_against_uri_format() {
+        // Widening `uri` to accept schemeless hosts must NOT collapse to "any non-empty
+        // string" — genuine garbage must keep surfacing ("surface failures; never
+        // silently succeed"). The embedded-`…` value is a real truncated-URL shape seen
+        // in prod Webflow Testimonials records; a bare word and a value with whitespace
+        // are obviously not URIs.
+        let schema = json!({ "schema": { "properties": {
+            "website": { "anyOf": [ { "type": "string", "format": "uri" }, { "type": "null" } ] }
+        }}});
+        for malformed_value in [
+            "https://www.linkedin.com/posts/marshwah_act[…]557015867392-hr-a",
+            "not a url",
+            "singlelabel",
+            "hello world",
+        ] {
+            let ctx = record_ctx(json!({ "website": malformed_value }), None, schema.clone());
+            let results = enforce_schema(&ctx);
+            assert_eq!(
+                results.len(),
+                1,
+                "{malformed_value:?} should fail uri validation, got {} error(s)",
+                results.len()
+            );
+            assert_eq!(results[0].level, ValidationLevel::Error);
+        }
     }
 
     #[test]
