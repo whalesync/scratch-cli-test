@@ -17,6 +17,7 @@ import { installScratchmdToPath, isCliSymlinkInstalled, uninstallScratchmdFromPa
 import {
   acceptFieldEditFromInputText,
   acceptUnreviewedFieldEdit,
+  countWorkspaceFiles,
   dropApprovedFieldAndRestoreToMain,
   findRecordOffset,
   getFolderMetadata,
@@ -667,11 +668,21 @@ ipcMain.handle('scratch:get-workspaces-registry', async () => {
   const rawEntries = await readWorkspaceRegistry();
   const entries = await pruneStaleWorkspaceRegistryEntries(rawEntries);
   const result = await Promise.all(
-    entries.map(async (entry) => ({
-      ...entry,
-      fileCount: 0,
-      cloudSyncWarning: toCloudSyncWarning(await detectCloudSync(entry.path)),
-    })),
+    entries.map(async (entry) => {
+      // Count files and detect cloud-sync concurrently — independent disk reads.
+      // countWorkspaceFiles can throw if the path can't be read; fall back to 0
+      // to honor LocalWorkspaceEntry.fileCount's documented contract. Stale paths
+      // are already dropped by pruneStaleWorkspaceRegistryEntries above.
+      const [fileCount, cloudSyncDetection] = await Promise.all([
+        countWorkspaceFiles(entry.path).catch(() => 0),
+        detectCloudSync(entry.path),
+      ]);
+      return {
+        ...entry,
+        fileCount,
+        cloudSyncWarning: toCloudSyncWarning(cloudSyncDetection),
+      };
+    }),
   );
   logPerf('main ipc getWorkspacesRegistry', performance.now() - start);
   return result;
