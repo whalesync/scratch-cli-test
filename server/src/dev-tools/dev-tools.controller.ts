@@ -376,6 +376,7 @@ export class DevToolsController {
     @Query('search') search?: string,
     @Query('services') services?: string,
     @Query('serviceMode') serviceMode?: string,
+    @Query('sortOrder') sortOrder?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ): Promise<{ workbooks: AdminWorkbookDto[]; total: number }> {
@@ -387,6 +388,8 @@ export class DevToolsController {
     const offsetNum = offset ? parseInt(offset, 10) : 0;
     const serviceList = services ? services.split(',').filter(Boolean) : [];
     const isAnd = serviceMode === 'AND';
+    // Created date is the only sortable column; default newest-first.
+    const createdAtSortDirection: 'asc' | 'desc' = sortOrder === 'asc' ? 'asc' : 'desc';
 
     const where: Record<string, unknown> = {};
     if (search) {
@@ -421,7 +424,7 @@ export class DevToolsController {
       }
     }
 
-    const [workbooks, total] = await Promise.all([
+    const [pageWorkbooks, total] = await Promise.all([
       this.dbService.client.workbook.findMany({
         where,
         include: {
@@ -430,14 +433,17 @@ export class DevToolsController {
             select: { id: true, displayName: true, service: true, authType: true, createdAt: true, repoPath: true },
           },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: createdAtSortDirection },
         take: limitNum,
         skip: offsetNum,
       }),
       this.dbService.client.workbook.count({ where }),
     ]);
 
-    const result: AdminWorkbookDto[] = workbooks.map((w) => {
+    // One grouped aggregate for the page's record-count column (display only — not sortable).
+    const recordCountByWorkbookId = await this.sumRecordCountByWorkbookId(pageWorkbooks.map((w) => w.id));
+
+    const result: AdminWorkbookDto[] = pageWorkbooks.map((w) => {
       const org = (w as unknown as { organization: { name: string } }).organization;
       const connections: AdminWorkbookConnectionDto[] = w.connectorAccounts.map((ca) => ({
         id: ca.id,
@@ -458,10 +464,27 @@ export class DevToolsController {
         userId: w.userId,
         isPendingDelete: w.isPendingDelete,
         connections,
+        recordCount: recordCountByWorkbookId.get(w.id) ?? 0,
       };
     });
 
     return { total, workbooks: result };
+  }
+
+  /**
+   * Sum each workbook's denormalized {@link DataFolder.recordCount} across its folders, for a set of
+   * workbook ids, in a single grouped aggregate (not N per-workbook queries). Workbooks with no
+   * folders are simply absent from the returned map — callers default them to 0. Mirrors the
+   * groupBy-sum pattern in DataFolderService.
+   */
+  private async sumRecordCountByWorkbookId(workbookIds: string[]): Promise<Map<string, number>> {
+    if (workbookIds.length === 0) return new Map();
+    const recordCountSumRows = await this.dbService.client.dataFolder.groupBy({
+      by: ['workbookId'],
+      where: { workbookId: { in: workbookIds } },
+      _sum: { recordCount: true },
+    });
+    return new Map(recordCountSumRows.map((row): [string, number] => [row.workbookId, row._sum.recordCount ?? 0]));
   }
 
   /* Sync data folders job trigger */

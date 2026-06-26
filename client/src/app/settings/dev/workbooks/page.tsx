@@ -31,7 +31,7 @@ import {
 } from '@mantine/core';
 import { useClipboard, useDebouncedValue } from '@mantine/hooks';
 import { AdminWorkbookConnectionDto, AdminWorkbookDto, WorkbookId } from '@spinner/shared-types';
-import { BookOpenIcon, FolderIcon, MoreVerticalIcon, ScissorsIcon } from 'lucide-react';
+import { BookOpenIcon, ChevronDownIcon, ChevronUpIcon, FolderIcon, MoreVerticalIcon, ScissorsIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -39,6 +39,26 @@ const PAGE_SIZE_OPTIONS = ['1', '10', '20', '25', '100', '1000'];
 
 function serviceLabel(s: string): string {
   return s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ');
+}
+
+// ── Sortable created-date header ──────────────────────────────────────────────
+
+type WorkbookSortOrder = 'asc' | 'desc';
+
+// Clickable "Created" header that toggles the server-side sort direction, showing a chevron for the
+// current direction (created date is the only sortable column).
+function CreatedSortableHeader({ sortOrder, onToggle }: { sortOrder: WorkbookSortOrder; onToggle: () => void }) {
+  const DirectionIcon = sortOrder === 'asc' ? ChevronUpIcon : ChevronDownIcon;
+  return (
+    <Table.Th>
+      <Group gap={4} wrap="nowrap" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={onToggle}>
+        <Text size="sm" fw={500}>
+          Created
+        </Text>
+        <DirectionIcon size={14} />
+      </Group>
+    </Table.Th>
+  );
 }
 
 // ── Connection row actions (uses shared useConnectionMenu hook) ───────────────
@@ -360,6 +380,11 @@ function WorkbookRow({
         <ConnectionCountCell connections={workbook.connections} onClick={() => onShowConnections(workbook)} />
       </Table.Td>
       <Table.Td>
+        <Text size="sm" c="dimmed" ta="right">
+          {workbook.recordCount.toLocaleString()}
+        </Text>
+      </Table.Td>
+      <Table.Td>
         <Text size="sm" c="dimmed">
           {new Date(workbook.createdAt).toLocaleDateString()}
         </Text>
@@ -392,6 +417,7 @@ export default function WorkbooksDevPage() {
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const [serviceFilter, setServiceFilter] = useState<string[]>([]);
   const [serviceMode, setServiceMode] = useState<'AND' | 'OR'>('OR');
+  const [sortOrder, setSortOrder] = useState<WorkbookSortOrder>('desc');
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
 
@@ -413,6 +439,7 @@ export default function WorkbooksDevPage() {
         search: debouncedSearch || undefined,
         services: serviceFilter.length ? serviceFilter : undefined,
         serviceMode: serviceFilter.length > 1 ? serviceMode : undefined,
+        sortOrder,
         limit: pageSize,
         offset: (page - 1) * pageSize,
       });
@@ -424,12 +451,17 @@ export default function WorkbooksDevPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [debouncedSearch, serviceFilter, serviceMode, page, pageSize]);
+  }, [debouncedSearch, serviceFilter, serviceMode, sortOrder, page, pageSize]);
 
-  // Reset to page 1 when filters change
+  // Reset to page 1 when filters or sort change
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, serviceFilter, serviceMode, pageSize]);
+  }, [debouncedSearch, serviceFilter, serviceMode, sortOrder, pageSize]);
+
+  // Toggle the created-date sort direction (created date is the only sortable column).
+  const toggleCreatedSortOrder = useCallback(() => {
+    setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+  }, []);
 
   useEffect(() => {
     if (isAdmin) fetchWorkbooks();
@@ -545,7 +577,8 @@ export default function WorkbooksDevPage() {
                     <Table.Th>Name</Table.Th>
                     <Table.Th>Org</Table.Th>
                     <Table.Th>Connections</Table.Th>
-                    <Table.Th>Created</Table.Th>
+                    <Table.Th ta="right">Records</Table.Th>
+                    <CreatedSortableHeader sortOrder={sortOrder} onToggle={toggleCreatedSortOrder} />
                     <Table.Th />
                   </Table.Tr>
                 </Table.Thead>

@@ -21,4 +21,8 @@ export interface AdminWorkbookDto {
   userId: string | null;
   isPendingDelete: boolean;
   connections: AdminWorkbookConnectionDto[];
+  // Total record count across the workbook's data folders (sum of the denormalized,
+  // git-sourced per-folder counts). Refreshed on pull + hourly cron, so it can briefly lag
+  // live edits.
+  recordCount: number;
 }

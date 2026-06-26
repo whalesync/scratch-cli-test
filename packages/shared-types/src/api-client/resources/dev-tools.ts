@@ -169,6 +169,8 @@ export function createDevToolsApi(http: Http) {
       search?: string;
       services?: string[];
       serviceMode?: 'AND' | 'OR';
+      // Sort direction for the workbook created date (the only sortable column).
+      sortOrder?: 'asc' | 'desc';
       limit?: number;
       offset?: number;
     }): Promise<{ workbooks: AdminWorkbookDto[]; total: number }> => {
@@ -177,6 +179,7 @@ export function createDevToolsApi(http: Http) {
           search: params.search || undefined,
           services: params.services?.length ? params.services.join(',') : undefined,
           serviceMode: params.serviceMode,
+          sortOrder: params.sortOrder,
           limit: params.limit,
           offset: params.offset,
         },
