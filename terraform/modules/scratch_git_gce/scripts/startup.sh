@@ -53,6 +53,13 @@ SLACK_NOTIFICATION_WEBHOOK_URL=$(gcloud secrets versions access latest \
   --secret=SLACK_NOTIFICATION_WEBHOOK_URL \
   --project="$GCP_PROJECT_ID")
 
+# SCRATCH_GIT_AUTH_TOKEN (DEV-10600) — the shared bearer token the NestJS server presents.
+# Tolerate a not-yet-created/empty secret so the boot can't hard-fail on rollout ordering;
+# an empty value leaves the service unauthenticated (legacy behavior).
+SCRATCH_GIT_AUTH_TOKEN=$(gcloud secrets versions access latest \
+  --secret=SCRATCH_GIT_AUTH_TOKEN \
+  --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+
 # ---------- write env file for deploy.sh ----------
 mkdir -p "$DEPLOY_DIR"
 cat > "$DEPLOY_DIR/env.sh" << EOF
@@ -132,6 +139,7 @@ docker run -d \
   --label service=scratch-git --label env="$GCP_PROJECT_ID" --label slot=blue \
   -e PORT=3200 -e GIT_BACKEND_PORT=3201 \
   -e SLACK_NOTIFICATION_WEBHOOK_URL="$SLACK_NOTIFICATION_WEBHOOK_URL" \
+  -e SCRATCH_GIT_AUTH_TOKEN="$SCRATCH_GIT_AUTH_TOKEN" \
   -v /mnt/disks/data:/data \
   "$IMAGE"
 
@@ -144,6 +152,7 @@ docker run -d \
   --label service=scratch-git --label env="$GCP_PROJECT_ID" --label slot=green \
   -e PORT=3300 -e GIT_BACKEND_PORT=3301 \
   -e SLACK_NOTIFICATION_WEBHOOK_URL="$SLACK_NOTIFICATION_WEBHOOK_URL" \
+  -e SCRATCH_GIT_AUTH_TOKEN="$SCRATCH_GIT_AUTH_TOKEN" \
   -v /mnt/disks/data:/data \
   "$IMAGE"
 

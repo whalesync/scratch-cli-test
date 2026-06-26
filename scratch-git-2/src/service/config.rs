@@ -11,6 +11,11 @@ pub struct Config {
     pub build_version: String,
     /// When set, POST a startup message to this Slack incoming webhook URL.
     pub slack_notification_webhook_url: Option<String>,
+    /// Shared bearer token the NestJS server presents to authenticate to this service
+    /// (DEV-10600). When `None` (env var unset/empty), the HTTP APIs are unauthenticated —
+    /// today's behavior, used for local dev, tests, and the smoke-test stack. When `Some`,
+    /// the `require_auth` middleware enforces it on the `:3100` and `:3101` routers.
+    pub shared_auth_token: Option<String>,
 }
 
 impl Config {
@@ -56,6 +61,15 @@ impl Config {
                 }
             });
 
+        let shared_auth_token = env::var("SCRATCH_GIT_AUTH_TOKEN").ok().and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        });
+
         Self {
             port,
             git_backend_port,
@@ -64,6 +78,7 @@ impl Config {
             staging_dir,
             build_version,
             slack_notification_webhook_url,
+            shared_auth_token,
         }
     }
 }

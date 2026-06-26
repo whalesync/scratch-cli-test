@@ -8,11 +8,13 @@ pub mod slack;
 pub mod state;
 pub mod types;
 
-use axum::extract::Request;
+use axum::extract::{Request, State};
+use axum::http::StatusCode;
 use axum::middleware::{self, Next};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::Router;
+use std::sync::Arc;
 use std::time::Instant;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
@@ -40,6 +42,90 @@ async fn timing_middleware(req: Request, next: Next) -> impl IntoResponse {
     response
 }
 
+/// Result of evaluating a request against the shared-token policy.
+enum AuthorizationOutcome {
+    Allow,
+    Reject,
+}
+
+/// Bearer-token authentication for the scratch-git HTTP APIs (DEV-10600).
+///
+/// Enforcement is gated on `SCRATCH_GIT_AUTH_TOKEN` being configured (passed in as this
+/// middleware's own state). When it is `None` the APIs are unauthenticated — today's
+/// behavior, relied on by local dev, `cargo test`, and the smoke-test Docker stack.
+///
+/// MR1 (this version) is intentionally LENIENT so it can deploy to prod before the server
+/// is updated to present the token: see [`authorize_request`]. `/` and `/health` are always
+/// exempt (the `deploy.sh` health probe and GCP TCP health checks).
+async fn require_auth(
+    State(expected_bearer_token): State<Option<Arc<str>>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path();
+    if path == "/" || path == "/health" {
+        return next.run(request).await;
+    }
+
+    let Some(expected_bearer_token) = expected_bearer_token.as_deref() else {
+        // No token configured on this service → preserve legacy unauthenticated behavior.
+        return next.run(request).await;
+    };
+
+    match authorize_request(&request, expected_bearer_token) {
+        AuthorizationOutcome::Allow => next.run(request).await,
+        AuthorizationOutcome::Reject => unauthorized_response(),
+    }
+}
+
+/// MR1 LENIENT policy: a request that presents NO `Authorization` header is allowed (the
+/// server is still being rolled out to send the token), and a request with a correct bearer
+/// token is allowed; only a present-but-wrong token is rejected. MR3 will change the
+/// no-header case from `Allow` to `Reject` once every caller sends a valid token.
+fn authorize_request(request: &Request, expected_bearer_token: &str) -> AuthorizationOutcome {
+    match extract_bearer_token(request) {
+        None => AuthorizationOutcome::Allow,
+        Some(provided_bearer_token)
+            if bearer_tokens_match(provided_bearer_token, expected_bearer_token) =>
+        {
+            AuthorizationOutcome::Allow
+        }
+        Some(_) => AuthorizationOutcome::Reject,
+    }
+}
+
+/// Extract the `<token>` from an `Authorization: Bearer <token>` header, if present and well-formed.
+fn extract_bearer_token(request: &Request) -> Option<&str> {
+    request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+}
+
+/// Constant-time token comparison. Both tokens are SHA-256 hashed first so the comparison
+/// runs over fixed-length (32-byte) digests — leaking nothing about the expected token's
+/// length — and the digests are compared with an XOR accumulator that always touches every
+/// byte. (`sha2` is already a dependency.)
+fn bearer_tokens_match(provided_bearer_token: &str, expected_bearer_token: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    let provided_digest = Sha256::digest(provided_bearer_token.as_bytes());
+    let expected_digest = Sha256::digest(expected_bearer_token.as_bytes());
+    let mut accumulated_difference: u8 = 0;
+    for (provided_byte, expected_byte) in provided_digest.iter().zip(expected_digest.iter()) {
+        accumulated_difference |= provided_byte ^ expected_byte;
+    }
+    accumulated_difference == 0
+}
+
+fn unauthorized_response() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        "scratch-git: missing or invalid bearer token\n",
+    )
+        .into_response()
+}
+
 pub async fn run() {
     tracing::info!("[API] Scratch-git starting",);
     tracing_subscriber::fmt()
@@ -58,6 +144,19 @@ pub async fn run() {
     );
     tracing::info!("[API] Index directory: {}", config.index_dir.display());
     tracing::info!("[API] Staging directory: {}", config.staging_dir.display());
+
+    // Shared bearer token the NestJS server presents (DEV-10600). Wrapped in `Arc<str>` so
+    // the auth middleware's per-request state clone is cheap. `None` → the HTTP APIs are
+    // unauthenticated (legacy behavior; local dev, tests, smoke-test stack).
+    let shared_auth_token: Option<Arc<str>> = config.shared_auth_token.as_deref().map(Arc::from);
+    let auth_mode_description = if shared_auth_token.is_some() {
+        // MR1 is lenient: a configured token rejects WRONG tokens but still allows requests
+        // with no Authorization header. MR3 will flip this to fully enforcing.
+        "configured (MR1 lenient — requests without a token are allowed; wrong tokens are rejected)"
+    } else {
+        "not configured — HTTP APIs are unauthenticated (legacy)"
+    };
+    tracing::info!("[API] Shared auth token: {}", auth_mode_description);
 
     let app = Router::new()
         // System
@@ -195,6 +294,12 @@ pub async fn run() {
             "/api/repo/debug/slow-request",
             get(routes::debug::slow_request),
         )
+        // Bearer-token auth (DEV-10600). Added first so it sits innermost — CORS preflight
+        // and timing wrap it, and it runs just before the handlers it protects.
+        .layer(middleware::from_fn_with_state(
+            shared_auth_token.clone(),
+            require_auth,
+        ))
         .layer(CorsLayer::permissive())
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB
         .layer(middleware::from_fn(timing_middleware))
@@ -207,6 +312,12 @@ pub async fn run() {
             "/{*repo_id_and_path}",
             axum::routing::any(routes::smart_http::git_backend),
         )
+        // Bearer-token auth (DEV-10600) — same policy as the :3100 API. Closes the
+        // git smart-HTTP backend (clone / git-receive-pack push) to unauthenticated callers.
+        .layer(middleware::from_fn_with_state(
+            shared_auth_token.clone(),
+            require_auth,
+        ))
         .layer(CorsLayer::permissive())
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB
         .layer(middleware::from_fn(timing_middleware))
@@ -261,4 +372,130 @@ pub async fn run() {
     }
 
     tracing::info!("Graceful shutdown complete.");
+}
+
+#[cfg(test)]
+mod auth_tests {
+    //! Tests for the DEV-10600 shared-bearer-token middleware (MR1, lenient policy).
+    use super::*;
+    use axum::body::Body;
+    use axum::http::header::AUTHORIZATION;
+    use axum::http::Request as HttpRequest;
+    use axum::routing::get;
+    use tower::ServiceExt; // for `oneshot`
+
+    /// A router mirroring the production layering: one protected route plus the always-exempt
+    /// `/` and `/health` routes, with the auth middleware carrying `shared_auth_token`.
+    fn build_test_router(shared_auth_token: Option<Arc<str>>) -> Router {
+        Router::new()
+            .route("/", get(|| async { "root" }))
+            .route("/health", get(|| async { "ok" }))
+            .route("/api/repo/manage/{id}/fsck", get(|| async { "protected" }))
+            .layer(middleware::from_fn_with_state(
+                shared_auth_token,
+                require_auth,
+            ))
+    }
+
+    async fn status_of(
+        shared_auth_token: Option<Arc<str>>,
+        path: &str,
+        authorization: Option<&str>,
+    ) -> StatusCode {
+        let mut builder = HttpRequest::builder().method("GET").uri(path);
+        if let Some(value) = authorization {
+            builder = builder.header(AUTHORIZATION, value);
+        }
+        let request = builder.body(Body::empty()).unwrap();
+        build_test_router(shared_auth_token)
+            .oneshot(request)
+            .await
+            .unwrap()
+            .status()
+    }
+
+    fn configured_token() -> Option<Arc<str>> {
+        Some(Arc::from("s3cret-token"))
+    }
+
+    #[tokio::test]
+    async fn no_token_configured_allows_unauthenticated_requests() {
+        // Legacy behavior: with no token configured the API is fully open (local/dev/tests).
+        assert_eq!(
+            status_of(None, "/api/repo/manage/abc/fsck", None).await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn mr1_lenient_allows_request_with_no_authorization_header() {
+        // The crux of MR1: callers aren't sending the token yet, so a missing header passes.
+        // MR3 will flip this to 401.
+        assert_eq!(
+            status_of(configured_token(), "/api/repo/manage/abc/fsck", None).await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn mr1_lenient_allows_non_bearer_authorization_header() {
+        // A header that isn't a well-formed `Bearer <token>` isn't recognized as a presented
+        // token, so MR1 treats it like "no token" and allows it. MR3 will reject it.
+        assert_eq!(
+            status_of(
+                configured_token(),
+                "/api/repo/manage/abc/fsck",
+                Some("s3cret-token")
+            )
+            .await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn allows_request_with_correct_bearer_token() {
+        assert_eq!(
+            status_of(
+                configured_token(),
+                "/api/repo/manage/abc/fsck",
+                Some("Bearer s3cret-token"),
+            )
+            .await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_request_with_wrong_bearer_token() {
+        // Even in lenient MR1, a present-but-wrong Bearer token is rejected.
+        assert_eq!(
+            status_of(
+                configured_token(),
+                "/api/repo/manage/abc/fsck",
+                Some("Bearer wrong-token"),
+            )
+            .await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn health_and_root_are_exempt() {
+        assert_eq!(
+            status_of(configured_token(), "/health", None).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_of(configured_token(), "/", None).await,
+            StatusCode::OK
+        );
+    }
+
+    #[test]
+    fn bearer_tokens_match_compares_correctly() {
+        assert!(bearer_tokens_match("abc", "abc"));
+        assert!(!bearer_tokens_match("abc", "abd"));
+        assert!(!bearer_tokens_match("abc", "abcd"));
+        assert!(!bearer_tokens_match("", "abc"));
+    }
 }

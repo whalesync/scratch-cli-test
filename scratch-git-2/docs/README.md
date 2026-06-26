@@ -64,6 +64,10 @@ GIT_REPOS_DIR=repos       # Absolute or relative path to repository storage
 GIT_REPOS_V2_DIR=repos-v2 # Path to v2 repositories (future)
 BUILD_VERSION=0.0.0-local # Build version label
 RUST_LOG=info             # Log level (debug, trace, etc.)
+SCRATCH_GIT_AUTH_TOKEN=   # Shared bearer token the NestJS server must present (DEV-10600).
+                          # Unset/empty → APIs are unauthenticated (local dev / tests). When
+                          # set, requests to anything other than `/` and `/health` must carry
+                          # `Authorization: Bearer <token>`.
 ```
 
 ### Running Locally

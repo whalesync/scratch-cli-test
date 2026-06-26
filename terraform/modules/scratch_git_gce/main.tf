@@ -17,6 +17,20 @@ resource "google_secret_manager_secret_iam_member" "slack_notification_webhook_u
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
+## Secret Access — allow the scratch-git service account to read the shared auth token at runtime (DEV-10600)
+## The startup/deploy scripts fetch SCRATCH_GIT_AUTH_TOKEN from Secret Manager and inject it into the container so the
+## service can require it on the :3100 / :3101 APIs. The fetch tolerates a missing secret, so this grant can land before
+## a value exists.
+## ---------------------------------------------------------------------------------------------------------------------
+
+resource "google_secret_manager_secret_iam_member" "scratch_git_auth_token" {
+  project   = var.gcp_project_id
+  secret_id = "SCRATCH_GIT_AUTH_TOKEN"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.service_account_email}"
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
 ## Persistent Data Disk
 ## ---------------------------------------------------------------------------------------------------------------------
 
