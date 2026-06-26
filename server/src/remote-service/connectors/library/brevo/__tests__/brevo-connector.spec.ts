@@ -397,8 +397,12 @@ describe('BrevoConnector', () => {
           listIds: [1, 2],
         },
       ];
+      // All four updatable contact fields changed (email is the identity, not updatable).
+      const changedFields: Record<string, unknown>[] = [
+        { attributes: { FIRSTNAME: 'Updated' }, emailBlacklisted: false, smsBlacklisted: false, listIds: [1, 2] },
+      ];
 
-      await connector.updateRecords(buildTableSpec('contacts'), files, files);
+      await connector.updateRecords(buildTableSpec('contacts'), files, changedFields);
 
       expect(mockUpdateContact).toHaveBeenCalledWith(42, {
         attributes: { FIRSTNAME: 'Updated' },
@@ -406,6 +410,18 @@ describe('BrevoConnector', () => {
         smsBlacklisted: false,
         listIds: [1, 2],
       });
+    });
+
+    // DEV-10597: a changed field Brevo can't update on a contact (email is the
+    // identity) is a genuine read-only edit — surface it instead of dropping it.
+    it('throws when a non-updatable contact field is changed, and does not call the API', async () => {
+      const files: ConnectorFile[] = [{ id: 42, email: 'old@example.com' }];
+      const changedFields: Record<string, unknown>[] = [{ email: 'new@example.com' }];
+
+      await expect(connector.updateRecords(buildTableSpec('contacts'), files, changedFields)).rejects.toThrow(
+        /"email" is read-only/,
+      );
+      expect(mockUpdateContact).not.toHaveBeenCalled();
     });
 
     it('updates templates with templateName mapping', async () => {

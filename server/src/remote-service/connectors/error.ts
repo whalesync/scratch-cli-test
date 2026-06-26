@@ -36,6 +36,44 @@ export function isUserFriendlyError(error: unknown): error is UserFriendlyError 
   return error instanceof Error && 'userFriendlyMessage' in error;
 }
 
+/**
+ * Thrown by a connector's `updateRecords` / `createRecords` when a user's
+ * publish payload changes a field the service treats as read-only / non-writable.
+ *
+ * Per the product principle "Surface failures; never silently succeed" (root
+ * `CLAUDE.md`) and the connector guide ("Do NOT silently strip read-only
+ * fields"), a connector must NOT quietly drop such an edit and report success.
+ * It throws this instead, which the publish runner routes through the normal
+ * per-record failure path (`failed-patches.json` / "Publish failed"), exactly
+ * like a service-side rejection of a writable field. Affinity is the reference
+ * implementation.
+ *
+ * The message is service-agnostic on purpose: each connector's
+ * `extractConnectorErrorDetails` fallback prefixes the service name (e.g.
+ * "Airtable error: Field …"), so the message must not repeat it.
+ */
+export class ReadonlyFieldEditError extends Error implements UserFriendlyError {
+  public readonly userFriendlyMessage: string;
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReadonlyFieldEditError';
+    this.userFriendlyMessage = message;
+  }
+}
+
+/**
+ * Build the standard user-facing message for {@link ReadonlyFieldEditError}.
+ * Service-agnostic — the connector error-detail fallback adds the service name.
+ */
+export function readonlyFieldEditErrorMessage(readonlyFieldNames: string[]): string {
+  const quotedFieldNames = readonlyFieldNames.map((fieldName) => `"${fieldName}"`).join(', ');
+  const isPlural = readonlyFieldNames.length > 1;
+  return (
+    `${isPlural ? 'Fields' : 'Field'} ${quotedFieldNames} ${isPlural ? 'are' : 'is'} read-only and cannot be published. ` +
+    `Undo the change to ${isPlural ? 'these fields' : 'this field'}, then publish again.`
+  );
+}
+
 export class ErrorMessageTemplates {
   // API issues.
   static readonly API_UNAUTHORIZED = (serviceName: string) =>

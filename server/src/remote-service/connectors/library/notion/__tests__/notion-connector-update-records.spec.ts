@@ -59,10 +59,10 @@ describe('NotionConnector.updateRecords', () => {
 
   // DEV-10125: sparse changedFields lacks each property's `type` wrapper, so the
   // RO-type check (formula/rollup/created_time/etc.) must look up the type from
-  // the *full file*, not from changedFields. Otherwise a formula property that
-  // appears in changedFields (e.g. due to a recompute) would leak through to
-  // Notion's update API and trigger a 4xx.
-  it('strips read-only property types using types looked up from the full file', async () => {
+  // the *full file*, not from changedFields. DEV-10597: when a read-only property
+  // is among the changed ones, the user genuinely edited a read-only property —
+  // surface it loudly instead of silently dropping the edit and reporting success.
+  it('throws when a changed property is a read-only type (looked up from the full file)', async () => {
     const files: ConnectorFile[] = [
       {
         id: 'page_1',
@@ -72,7 +72,7 @@ describe('NotionConnector.updateRecords', () => {
         },
       },
     ];
-    // Both Title and Score appear changed. Score is a formula (RO) — must not be sent.
+    // Both Title and Score appear changed. Score is a formula (RO) — must throw.
     const changedFields: Record<string, unknown>[] = [
       {
         properties: {
@@ -82,14 +82,10 @@ describe('NotionConnector.updateRecords', () => {
       },
     ];
 
-    await connector.updateRecords(buildTableSpec(), files, changedFields);
-
-    expect(mockUpdatePage).toHaveBeenCalledTimes(1);
-    const [callArg] = mockUpdatePage.mock.calls[0] as [{ page_id: string; properties: Record<string, unknown> }];
-    expect(callArg.page_id).toBe('page_1');
-    // Only Title should reach the API; Score (formula) must be stripped.
-    expect(Object.keys(callArg.properties)).toEqual(['Title']);
-    expect(callArg.properties.Title).toEqual({ title: [{ plain_text: 'New' }] });
+    await expect(connector.updateRecords(buildTableSpec(), files, changedFields)).rejects.toThrow(
+      /read-only and cannot be published/,
+    );
+    expect(mockUpdatePage).not.toHaveBeenCalled();
   });
 
   it('sends the cleared shape to Notion (clear-on-empty) instead of dropping it', async () => {
@@ -122,7 +118,7 @@ describe('NotionConnector.updateRecords', () => {
     expect(callArg.properties.Notes).toEqual({ rich_text: [] });
   });
 
-  it('skips the API call entirely when only read-only properties changed', async () => {
+  it('throws when only read-only properties changed (does not silently no-op)', async () => {
     const files: ConnectorFile[] = [
       {
         id: 'page_1',
@@ -135,12 +131,11 @@ describe('NotionConnector.updateRecords', () => {
       { properties: { Score: { formula: { type: 'number', number: 99 } } } },
     ];
 
-    const result = await connector.updateRecords(buildTableSpec(), files, changedFields);
-
+    await expect(connector.updateRecords(buildTableSpec(), files, changedFields)).rejects.toThrow(
+      /"Score" is read-only/,
+    );
     expect(mockUpdatePage).not.toHaveBeenCalled();
-    // No write → no refetch. Skipped rows pass the input file through verbatim.
     expect(mockRetrievePage).not.toHaveBeenCalled();
-    expect(result[0]).toBe(files[0]);
   });
 
   it('returns the refetched page (not the input file) for rows that were actually updated', async () => {

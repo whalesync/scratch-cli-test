@@ -22,6 +22,7 @@ import {
 import { ZOHO_PAGE_TOKEN_RECORD_CEILING, ZOHO_WRITE_BATCH_SIZE, ZohoApiClient, ZohoError } from './zoho-api-client';
 import {
   buildZohoJsonTableSpec,
+  buildZohoUpdatePayloadOrThrowOnReadonly,
   buildZohoUsersTableSpec,
   sanitizeZohoWritePayload,
   ZOHO_MODIFIED_TIME_FIELD,
@@ -310,8 +311,12 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
   ): Promise<ConnectorFile[]> {
     const moduleApiName = tableSpec.id.remoteId[0];
     const payloads = files.map((file, index) => {
-      const source = changedFields?.[index] ?? file;
-      const payload = sanitizeZohoWritePayload(source, tableSpec);
+      const changed = changedFields?.[index];
+      // Sparse changedFields → throw on a genuine read-only edit; the no-diff
+      // fallback re-sends the full record and strips read-only fields as before.
+      const payload = changed
+        ? buildZohoUpdatePayloadOrThrowOnReadonly(changed, tableSpec)
+        : sanitizeZohoWritePayload(file, tableSpec);
       payload.id = String(file.id);
       return payload;
     });

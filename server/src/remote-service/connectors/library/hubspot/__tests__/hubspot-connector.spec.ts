@@ -212,7 +212,10 @@ describe('HubspotConnector', () => {
   });
 
   describe('updateRecords with deep changedFields', () => {
-    it('filters readonly keys out of the changedFields.properties payload', async () => {
+    // DEV-10597: a read-only property in the sparse changedFields means the user
+    // genuinely edited it. Silently stripping it (the old behavior) discarded the
+    // edit while reporting success — surface it loudly instead.
+    it('throws when a read-only property is among the changed properties (does not silently send only the writable)', async () => {
       const tableSpec = buildTableSpec(OBJECT_TYPE, {
         name: {},
         hs_object_id: { readonly: true },
@@ -220,23 +223,22 @@ describe('HubspotConnector', () => {
 
       const file = makeFile('5', { name: 'New Name', hs_object_id: '5' });
 
-      await connector.updateRecords(tableSpec, [file], [{ properties: { name: true, hs_object_id: true } }]);
-
-      expect(mockUpdateRecord).toHaveBeenCalledTimes(1);
-      expect(mockUpdateRecord).toHaveBeenCalledWith(OBJECT_TYPE, '5', {
-        name: 'New Name',
-      });
+      await expect(
+        connector.updateRecords(tableSpec, [file], [{ properties: { name: true, hs_object_id: true } }]),
+      ).rejects.toThrow(/read-only and cannot be published/);
+      expect(mockUpdateRecord).not.toHaveBeenCalled();
     });
 
-    it('skips updateRecord when every changed key is readonly', async () => {
+    it('throws when every changed property is read-only', async () => {
       const tableSpec = buildTableSpec(OBJECT_TYPE, {
         hs_object_id: { readonly: true },
       });
 
       const file = makeFile('5', { hs_object_id: '5' });
 
-      await connector.updateRecords(tableSpec, [file], [{ properties: { hs_object_id: true } }]);
-
+      await expect(
+        connector.updateRecords(tableSpec, [file], [{ properties: { hs_object_id: true } }]),
+      ).rejects.toThrow(/"hs_object_id" is read-only/);
       expect(mockUpdateRecord).not.toHaveBeenCalled();
     });
   });
@@ -272,10 +274,11 @@ describe('HubspotConnector', () => {
     });
 
     it('returns the input verbatim when no write fired (empty changeset, no-op)', async () => {
-      const tableSpec = buildTableSpec(OBJECT_TYPE, { hs_object_id: { readonly: true } });
-      const file = makeFile('99', { hs_object_id: '99' });
+      const tableSpec = buildTableSpec(OBJECT_TYPE, { name: {} });
+      const file = makeFile('99', { name: 'Acme' });
 
-      const result = await connector.updateRecords(tableSpec, [file], [{ properties: { hs_object_id: true } }]);
+      // Empty deep changeset — no property and no association changes → no PATCH.
+      const result = await connector.updateRecords(tableSpec, [file], [{}]);
 
       expect(mockUpdateRecord).not.toHaveBeenCalled();
       // No write → no refetch. The input file is already canonical.

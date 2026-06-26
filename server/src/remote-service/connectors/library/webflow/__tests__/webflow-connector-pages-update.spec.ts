@@ -169,16 +169,18 @@ describe('WebflowConnector.updateRecords (pages — SEO metadata)', () => {
     });
   });
 
-  it('fires no write and returns the input unchanged when only read-only fields differ', async () => {
+  // DEV-10597: editing a read-only page field (publishedPath, parentId, draft, …)
+  // is a genuine read-only edit — surface it instead of silently no-op'ing while
+  // reporting success.
+  it('throws when only a read-only field changed, and does not call the API', async () => {
     const files: ConnectorFile[] = [{ id: 'page-1', title: 'About Us' } as unknown as ConnectorFile];
-    // publishedPath is read-only — editing it produces no editable update body.
     const changedFields: (Record<string, unknown> | undefined)[] = [{ publishedPath: '/changed' }];
 
-    const result = await connector.updateRecords(pagesTableSpec, files, changedFields);
-
+    await expect(connector.updateRecords(pagesTableSpec, files, changedFields)).rejects.toThrow(
+      /"publishedPath" is read-only/,
+    );
     expect(mockUpdatePageSettings).not.toHaveBeenCalled();
     expect(mockGetPageMetadata).not.toHaveBeenCalled();
-    expect(result[0]).toBe(files[0]);
   });
 
   it('processes multiple pages in input order', async () => {

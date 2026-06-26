@@ -17,6 +17,8 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -256,10 +258,9 @@ export class LinearConnector extends Connector {
     const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const entityId = String(files[i].id);
-      const input = this.stripReadOnlyFields(
+      const input = this.buildUpdateInputOrThrowOnReadonly(
         changedFields[i] as ConnectorFile,
         entityType as WritableEntityType,
-        'update',
       );
       const updated = await this.updateEntity(entityType as WritableEntityType, entityId, input);
       results.push(updated as unknown as ConnectorFile);
@@ -354,23 +355,58 @@ export class LinearConnector extends Connector {
     }
   }
 
-  private stripReadOnlyFields(
-    file: ConnectorFile,
-    entityType: WritableEntityType,
-    operation: 'create' | 'update' = 'create',
-  ): Record<string, unknown> {
+  /**
+   * Strip read-only fields from a full record before a CREATE mutation. The
+   * record carries every field verbatim from a pull (including read-only ones),
+   * so they're dropped rather than thrown on.
+   */
+  private stripReadOnlyFields(file: ConnectorFile, entityType: WritableEntityType): Record<string, unknown> {
     const readOnly = READ_ONLY_FIELDS_MAP[entityType] ?? new Set<string>();
-    const updateOnly = operation === 'update' ? STRIP_ON_UPDATE_MAP[entityType] : undefined;
     const result: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(file)) {
-      if (readOnly.has(key) || (updateOnly && updateOnly.has(key)) || value === undefined) {
+      if (readOnly.has(key) || value === undefined) {
         continue;
       }
       result[key] = value;
     }
 
     return result;
+  }
+
+  /**
+   * Build the UPDATE input from the user's sparse changed fields, throwing if any
+   * changed field is read-only or not writable on update (DEV-10597). The keys
+   * here are only what the user changed, so a read-only key is a genuine
+   * read-only edit that must be surfaced rather than silently dropped (which sent
+   * an empty/partial mutation and reported success). Contrast
+   * {@link stripReadOnlyFields}, used for create on the full record.
+   */
+  private buildUpdateInputOrThrowOnReadonly(
+    changedFile: ConnectorFile,
+    entityType: WritableEntityType,
+  ): Record<string, unknown> {
+    const readOnly = READ_ONLY_FIELDS_MAP[entityType] ?? new Set<string>();
+    const updateOnly = STRIP_ON_UPDATE_MAP[entityType];
+    const writableFields: Record<string, unknown> = {};
+    const readonlyChangedFieldNames: string[] = [];
+
+    for (const [key, value] of Object.entries(changedFile)) {
+      if (value === undefined) {
+        continue;
+      }
+      if (readOnly.has(key) || (updateOnly && updateOnly.has(key))) {
+        readonlyChangedFieldNames.push(key);
+        continue;
+      }
+      writableFields[key] = value;
+    }
+
+    if (readonlyChangedFieldNames.length > 0) {
+      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+    }
+
+    return writableFields;
   }
 
   private async createEntity(

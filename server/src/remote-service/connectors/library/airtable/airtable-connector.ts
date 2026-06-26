@@ -18,6 +18,8 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
 } from '../../error';
 import {
   type NormalizedCreateFieldsPlan,
@@ -534,11 +536,47 @@ export class AirtableConnector extends Connector {
 
     const airtableRecords = files.map((file, i) => ({
       id: file.id as string,
-      fields: this.processFieldDataWithSchema(changedFields[i] as ConnectorFile, tableSpec),
+      fields: this.extractChangedWritableFieldsOrThrowOnReadonly(changedFields[i] as ConnectorFile, tableSpec),
     }));
 
     const updated = await this.client.updateRecords(baseId, tableId, airtableRecords);
     return updated.map((record) => record as unknown as ConnectorFile);
+  }
+
+  /**
+   * Build the `fields` payload for an UPDATE from the user's sparse changed
+   * fields. Unlike {@link processFieldDataWithSchema} (used for create, which
+   * receives the full record and must drop the service's computed fields), the
+   * argument here lists ONLY the fields the user actually changed — so a
+   * read-only field present in it means the user edited a read-only field. We
+   * surface that loudly instead of silently dropping it (DEV-10597): stripping
+   * it would PATCH `fields: {}`, which Airtable accepts as a 200 no-op, and the
+   * user's edit would vanish while the publish reported success.
+   */
+  extractChangedWritableFieldsOrThrowOnReadonly(
+    changedFile: ConnectorFile,
+    tableSpec: BaseJsonTableSpec,
+  ): Record<string, unknown> {
+    const changedFields = (changedFile.fields as Record<string, unknown>) || {};
+    const writableFields: Record<string, unknown> = {};
+    const readonlyChangedFieldNames: string[] = [];
+
+    for (const [key, value] of Object.entries(changedFields)) {
+      if (value === undefined || key === 'id') {
+        continue;
+      }
+      if (isReadonlyField(key, tableSpec)) {
+        readonlyChangedFieldNames.push(key);
+        continue;
+      }
+      writableFields[key] = value;
+    }
+
+    if (readonlyChangedFieldNames.length > 0) {
+      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+    }
+
+    return writableFields;
   }
 
   /**

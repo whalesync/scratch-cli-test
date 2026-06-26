@@ -265,6 +265,30 @@ describe('YouTubeConnector', () => {
       });
     });
 
+    // DEV-10597: pickParts builds the write body from the full file and silently
+    // drops any non-writable part. A sparse changedFields touching a read-only
+    // part means the user edited it — surface it instead of dropping it.
+    it('throws when an edit changes a read-only part (statistics), and does not call the API', async () => {
+      const connector = makeConnector();
+      const spec = await connector.fetchJsonTableSpec(channelTableId('playlists', OWN_CHANNEL_ID));
+      await expect(
+        connector.updateRecords(spec, [{ id: 'pl1', snippet: { title: 'X' } }], [{ statistics: { viewCount: '5' } }]),
+      ).rejects.toThrow(/"statistics" is read-only/);
+      expect(mockClient.updatePlaylist).not.toHaveBeenCalled();
+    });
+
+    it('throws when a video edit changes a read-only snippet field (publishedAt)', async () => {
+      const connector = makeConnector();
+      const spec = await connector.fetchJsonTableSpec(channelTableId('videos', OWN_CHANNEL_ID));
+      await expect(
+        connector.updateRecords(
+          spec,
+          [{ id: 'v1', snippet: { title: 'T', publishedAt: '2020-01-01T00:00:00Z' } }],
+          [{ snippet: { publishedAt: '2021-01-01T00:00:00Z' } }],
+        ),
+      ).rejects.toThrow(/"publishedAt" is read-only/);
+    });
+
     it('throws on video create (unsupported) and video delete (disabled)', async () => {
       const connector = makeConnector();
       const spec = await connector.fetchJsonTableSpec(channelTableId('videos', OWN_CHANNEL_ID));

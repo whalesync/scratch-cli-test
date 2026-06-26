@@ -8,6 +8,8 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -31,6 +33,10 @@ import { AudiencefulField } from './audienceful-types';
  * - pullRecordFiles() for fetching records
  *
  */
+
+/** Audienceful person fields the API computes — read-only, never accepted on write. */
+const AUDIENCEFUL_READONLY_FIELD_KEYS = new Set(['uid', 'status', 'created_at', 'updated_at']);
+
 export class AudiencefulConnector extends Connector {
   readonly service = Service.AUDIENCEFUL;
   static readonly displayName = 'Audienceful';
@@ -191,6 +197,13 @@ export class AudiencefulConnector extends Connector {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const changed = changedFields[i];
+      // A changed field the API computes (uid/status/created_at/updated_at) is a
+      // genuine read-only edit — surface it instead of silently dropping it from
+      // the write payload (DEV-10597).
+      const readonlyChangedFieldNames = Object.keys(changed).filter((key) => AUDIENCEFUL_READONLY_FIELD_KEYS.has(key));
+      if (readonlyChangedFieldNames.length > 0) {
+        throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+      }
       // Email is the lookup key for updatePerson — always include it, even when unchanged.
       const payload: Record<string, unknown> = { ...changed, email: changed.email ?? file.email };
       const updateData = this.transformToUpdateRequest(payload);
@@ -259,10 +272,11 @@ export class AudiencefulConnector extends Connector {
       request.extra_data = extra_data as Record<string, unknown>;
     }
 
-    // Add custom fields
+    // Add custom fields. On create the full record carries the API-computed
+    // read-only fields verbatim, so they're dropped here (the update path
+    // instead surfaces an edit to one — see updateRecords / DEV-10597).
     for (const [key, value] of Object.entries(customFields)) {
-      // Skip internal fields
-      if (key === 'uid' || key === 'status' || key === 'created_at' || key === 'updated_at') {
+      if (AUDIENCEFUL_READONLY_FIELD_KEYS.has(key)) {
         continue;
       }
       request[key] = value;

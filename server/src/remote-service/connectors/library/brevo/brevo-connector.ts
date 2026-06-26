@@ -7,6 +7,8 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -35,6 +37,39 @@ import { BrevoCreateContactRequest, BrevoCreateTemplateRequest, BrevoUpdateConta
  *
  * API docs: https://developers.brevo.com/reference
  */
+
+/** Record-level fields Brevo accepts on a contact UPDATE (email is the identity, read-only here). */
+const CONTACT_WRITABLE_UPDATE_KEYS = new Set(['attributes', 'emailBlacklisted', 'smsBlacklisted', 'listIds']);
+
+/** Record-level fields Brevo accepts on a template UPDATE (`name` maps to templateName). */
+const TEMPLATE_WRITABLE_UPDATE_KEYS = new Set([
+  'name',
+  'subject',
+  'sender',
+  'htmlContent',
+  'isActive',
+  'replyTo',
+  'toField',
+  'tag',
+]);
+
+/**
+ * Throw if the user's sparse changed fields include a field Brevo can't update
+ * (DEV-10597). The keys here are only what the user changed, so a non-writable
+ * key is a genuine read-only edit that must be surfaced rather than silently
+ * dropped from the cherry-picked update payload. `id` is the identity, ignored.
+ */
+function assertOnlyWritableBrevoFieldsChanged(changed: Record<string, unknown>, writableKeys: Set<string>): void {
+  const readonlyChangedFieldNames: string[] = [];
+  for (const key of Object.keys(changed)) {
+    if (key === 'id') continue;
+    if (!writableKeys.has(key)) readonlyChangedFieldNames.push(key);
+  }
+  if (readonlyChangedFieldNames.length > 0) {
+    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+  }
+}
+
 export class BrevoConnector extends Connector {
   readonly service = Service.BREVO;
   static readonly displayName = 'Brevo';
@@ -250,6 +285,10 @@ export class BrevoConnector extends Connector {
       const file = files[i];
       const changed = changedFields[i];
       if (tableSpec.id.wsId === 'contacts') {
+        // A changed field outside Brevo's updatable contact set (email is the
+        // identity; createdAt/modifiedAt are computed) is a genuine read-only
+        // edit — surface it instead of silently dropping it (DEV-10597).
+        assertOnlyWritableBrevoFieldsChanged(changed, CONTACT_WRITABLE_UPDATE_KEYS);
         const contactId = file.id as number;
         const data: BrevoUpdateContactRequest = {
           attributes: changed.attributes as Record<string, unknown> | undefined,
@@ -259,6 +298,7 @@ export class BrevoConnector extends Connector {
         };
         await this.client.updateContact(contactId, data);
       } else if (tableSpec.id.wsId === 'templates') {
+        assertOnlyWritableBrevoFieldsChanged(changed, TEMPLATE_WRITABLE_UPDATE_KEYS);
         const templateId = file.id as number;
         await this.client.updateTemplate(templateId, {
           templateName: changed.name as string | undefined,

@@ -8,6 +8,8 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -242,7 +244,13 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
       }
 
       const changed = changedFields?.[i];
-      const stripped = changed ? stripReadonlyFields(changed, readonlyKeys) : stripReadonlyFields(file, readonlyKeys);
+      // Sparse changedFields lists only what the user changed, so a read-only key
+      // here is a genuine read-only edit → surface it (DEV-10597). The no-diff
+      // fallback re-sends the full record, where read-only system fields are
+      // always present and must be stripped, not thrown on.
+      const stripped = changed
+        ? extractChangedWritableFieldsOrThrowOnReadonly(changed, readonlyKeys)
+        : stripReadonlyFields(file, readonlyKeys);
       // Reshape any keyed custom_fields object back to Copper's array shape.
       const body = reshapeCustomFieldsObjectToArray(stripped);
       const updated = await this.client.updateEntity(entityType, parseInt(id, 10), body);
@@ -326,6 +334,32 @@ function stripReadonlyFields(record: Record<string, unknown>, readonlyKeys: Set<
     out[key] = value;
   }
   return out;
+}
+
+/**
+ * Build the writable update payload from the user's sparse changed fields,
+ * throwing if any changed field is read-only. Unlike {@link stripReadonlyFields}
+ * (used for the full-record create / no-diff fallback), the keys here are only
+ * the fields the user actually changed, so a read-only key means a genuine
+ * read-only edit that must be surfaced rather than silently dropped (DEV-10597).
+ */
+function extractChangedWritableFieldsOrThrowOnReadonly(
+  changedRecord: Record<string, unknown>,
+  readonlyKeys: Set<string>,
+): Record<string, unknown> {
+  const writableFields: Record<string, unknown> = {};
+  const readonlyChangedFieldKeys: string[] = [];
+  for (const [key, value] of Object.entries(changedRecord)) {
+    if (readonlyKeys.has(key)) {
+      readonlyChangedFieldKeys.push(key);
+      continue;
+    }
+    writableFields[key] = value;
+  }
+  if (readonlyChangedFieldKeys.length > 0) {
+    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldKeys));
+  }
+  return writableFields;
 }
 
 connectorRegistry.register({

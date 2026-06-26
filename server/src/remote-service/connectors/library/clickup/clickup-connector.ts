@@ -8,6 +8,8 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
 } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
 import { Service } from '../../service-constants';
@@ -311,7 +313,14 @@ export class ClickUpConnector extends Connector<string, ClickUpDownloadProgress>
         continue;
       }
 
-      const source = changedFields?.[i] ?? file;
+      const changed = changedFields?.[i];
+      // Sparse changedFields lists only the standard fields the user actually
+      // changed, so a non-writable standard field here is a genuine read-only
+      // edit — surface it instead of silently dropping it (DEV-10597). The
+      // no-diff fallback (`?? file`) re-sends the full record, where read-only
+      // standard fields are always present and are simply not written.
+      if (changed) assertNoReadonlyStandardFieldsChanged(changed);
+      const source = changed ?? file;
 
       const standardPayload = buildTaskWritePayload(source);
       let updated: Record<string, unknown> | undefined;
@@ -449,6 +458,46 @@ function buildBasePathFromList(list: ClickUpList | null): string[] {
  * partial. Read-shape objects (`status`, `priority`) and date strings are
  * translated to ClickUp's write shape (name / int / number).
  */
+/**
+ * The standard top-level task fields ClickUp lets us write (mirrors the keys
+ * {@link buildTaskWritePayload} emits). Everything else at the top level is
+ * read-only (id, dates, creator, …) or a structural container handled
+ * separately (`custom_fields`).
+ */
+const CLICKUP_WRITABLE_STANDARD_FIELD_KEYS = new Set<string>([
+  'name',
+  'description',
+  'status',
+  'priority',
+  'due_date',
+  'start_date',
+  'points',
+  'time_estimate',
+]);
+
+/**
+ * Throw if the user's sparse changedFields include a non-writable standard
+ * field (DEV-10597). Standard top-level keys ARE deep-diffed, so a non-writable
+ * key here means the user genuinely edited a read-only field — surface it
+ * instead of silently dropping it. `custom_fields` is skipped: ClickUp arrays
+ * aren't deep-diffed, so the whole array (including unchanged read-only formula
+ * / rollup fields) is always present whenever ANY custom field changes — there
+ * is no reliable signal of WHICH custom field the user touched, so read-only
+ * custom-field types stay silently skipped by {@link extractCustomFieldWrites}.
+ */
+function assertNoReadonlyStandardFieldsChanged(changed: Record<string, unknown>): void {
+  const readonlyChangedFieldKeys: string[] = [];
+  for (const key of Object.keys(changed)) {
+    if (key === 'id' || key === 'custom_fields') continue;
+    if (!CLICKUP_WRITABLE_STANDARD_FIELD_KEYS.has(key)) {
+      readonlyChangedFieldKeys.push(key);
+    }
+  }
+  if (readonlyChangedFieldKeys.length > 0) {
+    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldKeys));
+  }
+}
+
 function buildTaskWritePayload(source: Record<string, unknown>): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
 

@@ -9,6 +9,8 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -389,13 +391,42 @@ export class MocoConnector extends Connector {
   }
 
   /**
-   * Transform fields to Moco update request format.
+   * Transform the user's sparse changed fields to Moco's update request format,
+   * throwing if any changed field is read-only / not writable (DEV-10597).
+   * Unlike {@link transformToCreateRequest} (which receives the full record on
+   * create and drops everything outside the allow-list), the keys here are only
+   * what the user actually changed, so a non-allowed key is a genuine read-only
+   * edit that must be surfaced rather than silently dropped to a no-op PUT.
    */
   private transformToUpdateRequest(
     entityType: MocoEntityType,
-    fields: Record<string, unknown>,
+    changedFields: Record<string, unknown>,
   ): Record<string, unknown> {
-    return this.transformToCreateRequest(entityType, fields);
+    const allowedFields = new Set(MocoConnector.ALLOWED_FIELDS[entityType]);
+    const result: Record<string, unknown> = {};
+    const readonlyChangedFieldNames: string[] = [];
+
+    for (const [key, value] of Object.entries(changedFields)) {
+      if (key === 'id') continue;
+      // contacts: a changed `company` relation maps to the writable company_id.
+      if (entityType === 'contacts' && key === 'company') {
+        if (value && typeof value === 'object') {
+          const company = value as { id?: number };
+          if (company.id) result['company_id'] = company.id;
+        }
+        continue;
+      }
+      if (!allowedFields.has(key)) {
+        readonlyChangedFieldNames.push(key);
+        continue;
+      }
+      if (value !== undefined) result[key] = value;
+    }
+
+    if (readonlyChangedFieldNames.length > 0) {
+      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+    }
+    return result;
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {

@@ -3,7 +3,7 @@ import { connectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-t
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { ConnectorAccountRef, connectorRegistry } from '../../connector-registry';
-import { ConnectorInstantiationError } from '../../error';
+import { ConnectorInstantiationError, ReadonlyFieldEditError, readonlyFieldEditErrorMessage } from '../../error';
 import { Service } from '../../service-constants';
 import {
   BaseJsonTableSpec,
@@ -688,6 +688,7 @@ export class YouTubeConnector extends Connector {
     const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const changed = changedFields[i];
       const recordId = readRecordIdAsString(file, tableSpec.idPath);
       if (!recordId) {
         results.push(file);
@@ -696,18 +697,21 @@ export class YouTubeConnector extends Connector {
       let persisted: ConnectorFile | undefined;
       switch (parsed.kind) {
         case 'playlists':
+          this.assertNoReadonlyPartsChanged(changed, ['snippet', 'status']);
           persisted = (await this.apiClient.updatePlaylist(
             recordId,
             this.pickParts(file, ['snippet', 'status']),
           )) as ConnectorFile;
           break;
         case 'playlistItems':
+          this.assertNoReadonlyPartsChanged(changed, ['snippet', 'contentDetails']);
           persisted = (await this.apiClient.updatePlaylistItem(
             recordId,
             this.pickParts(file, ['snippet', 'contentDetails']),
           )) as ConnectorFile;
           break;
         case 'channelSections':
+          this.assertNoReadonlyPartsChanged(changed, ['snippet', 'contentDetails']);
           persisted = (await this.apiClient.updateChannelSection(
             recordId,
             this.pickParts(file, ['snippet', 'contentDetails']),
@@ -723,6 +727,7 @@ export class YouTubeConnector extends Connector {
                 `To edit a channel you own, connect it separately and authorize it on Google's consent screen.`,
             );
           }
+          this.assertNoReadonlyPartsChanged(changed, ['brandingSettings', 'status', 'localizations']);
           persisted = (await this.apiClient.updateChannel(
             recordId,
             this.pickParts(file, ['brandingSettings', 'status', 'localizations']),
@@ -753,6 +758,10 @@ export class YouTubeConnector extends Connector {
       const file = files[i];
       const changed = changedFields[i];
       const videoId = file.id as string;
+      // Surface an edit to a read-only video field (a non-snippet part like
+      // statistics/status, or a read-only snippet sub-field like publishedAt /
+      // channelId / thumbnails) instead of silently dropping it (DEV-10597).
+      this.assertNoReadonlyVideoFieldsChanged(changed);
       const changedSnippet = (changed.snippet as Record<string, unknown> | undefined) ?? changed;
 
       // `videos.update?part=snippet` REPLACES the snippet, and YouTube requires BOTH
@@ -936,6 +945,65 @@ export class YouTubeConnector extends Connector {
       if (part in file) body[part] = file[part];
     }
     return body;
+  }
+
+  /**
+   * Throw if the user's sparse changedFields touch a top-level part that's
+   * read-only for this entity kind (DEV-10597). The write payload is built from
+   * the full file via {@link pickParts}, which silently drops any part outside
+   * `writableParts` (id/etag/statistics/contentDetails/…); without this guard an
+   * edit to such a part would vanish while the publish reported success. Identity
+   * wrappers (`id`, `etag`, `kind`) are ignored — they're never user edits.
+   */
+  private assertNoReadonlyPartsChanged(changed: Record<string, unknown> | undefined, writableParts: string[]): void {
+    if (!changed) return;
+    const ignoredKeys = new Set(['id', 'etag', 'kind']);
+    const writablePartSet = new Set(writableParts);
+    const readonlyChangedPartNames = Object.keys(changed).filter(
+      (key) => !ignoredKeys.has(key) && !writablePartSet.has(key),
+    );
+    if (readonlyChangedPartNames.length > 0) {
+      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedPartNames));
+    }
+  }
+
+  /**
+   * Throw if the user's sparse changedFields touch a read-only video field
+   * (DEV-10597). Videos only write the snippet (and, separately, the transcript),
+   * and only the five editable snippet sub-fields — everything else (other parts
+   * like statistics/status, and read-only snippet sub-fields like publishedAt /
+   * channelId / thumbnails) is silently dropped by the update path without this
+   * guard.
+   */
+  private assertNoReadonlyVideoFieldsChanged(changed: Record<string, unknown>): void {
+    const writableSnippetFields = new Set(['title', 'description', 'categoryId', 'defaultLanguage', 'tags']);
+    const readonlyChangedFieldNames: string[] = [];
+
+    if (changed.snippet !== undefined) {
+      // Normal sparse diff: parts other than the snippet (and the special-cased
+      // transcript / identity keys) are not writable on videos.
+      const writableTopLevelKeys = new Set(['snippet', 'transcript', 'id', 'transcriptId']);
+      for (const key of Object.keys(changed)) {
+        if (!writableTopLevelKeys.has(key)) readonlyChangedFieldNames.push(key);
+      }
+      const changedSnippet = changed.snippet as Record<string, unknown> | undefined;
+      if (changedSnippet && typeof changedSnippet === 'object' && !Array.isArray(changedSnippet)) {
+        for (const [key, value] of Object.entries(changedSnippet)) {
+          if (value !== undefined && !writableSnippetFields.has(key)) readonlyChangedFieldNames.push(key);
+        }
+      }
+    } else {
+      // Fallback shape: `changed` carries snippet sub-fields flat (mirrors the
+      // `?? changed` the video update path uses when there's no snippet wrapper).
+      for (const [key, value] of Object.entries(changed)) {
+        if (key === 'transcript' || key === 'id' || key === 'transcriptId') continue;
+        if (value !== undefined && !writableSnippetFields.has(key)) readonlyChangedFieldNames.push(key);
+      }
+    }
+
+    if (readonlyChangedFieldNames.length > 0) {
+      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+    }
   }
 
   private throwWriteNotSupported(kind: YouTubeEntityKind, operation: string): never {

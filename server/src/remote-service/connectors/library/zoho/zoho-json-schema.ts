@@ -8,6 +8,7 @@ import {
   X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
+import { ReadonlyFieldEditError, readonlyFieldEditErrorMessage } from '../../error';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { buildZohoDefaultView } from './zoho-default-view';
 import { ZohoFieldMetadata } from './zoho-types';
@@ -28,8 +29,9 @@ const ASSET_DATA_TYPES = new Set(['fileupload', 'imageupload', 'profileimage']);
  * mutated via the dedicated `/{module}/actions/add_tags` & `remove_tags` endpoints.
  * Including `Tag` in a normal record write makes Zoho reject the **whole** record, so
  * keeping it read-only blocks edits in the grid and excludes it from publish (the same
- * path audit/computed fields already take) — a user who types into Tag has that edit
- * dropped rather than failing the record's publish.
+ * path audit/computed fields already take). As of DEV-10597, a user who edits `Tag`
+ * and publishes gets a clear "read-only" error rather than having the edit silently
+ * dropped — the sparse update path throws on a changed read-only field.
  *
  * TODO(zoho-tags): make `Tag` writable by routing Tag diffs to add_tags/remove_tags
  * (creating tags as needed), then remove it from this set. See PLAN.md → "Make the
@@ -384,6 +386,42 @@ export function sanitizeZohoWritePayload(
     }
 
     payload[key] = value;
+  }
+  return payload;
+}
+
+/**
+ * Build the write payload for an UPDATE from the user's sparse changed fields,
+ * throwing if any changed field is read-only. The keys here are only what the
+ * user actually changed, so a read-only key is a genuine read-only edit that
+ * must be surfaced rather than silently dropped (DEV-10597) — the old behavior
+ * sent an id-only no-op PUT and reported success. Contrast
+ * {@link sanitizeZohoWritePayload}, used for create and the full-record fallback,
+ * where read-only fields are always present and are simply stripped.
+ */
+export function buildZohoUpdatePayloadOrThrowOnReadonly(
+  changedRecord: Record<string, unknown>,
+  tableSpec: BaseJsonTableSpec,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  const readonlyChangedFieldNames: string[] = [];
+  for (const [key, value] of Object.entries(changedRecord)) {
+    if (key === 'id') continue;
+    if (isReadonlyFieldInSchema(tableSpec, key)) {
+      readonlyChangedFieldNames.push(key);
+      continue;
+    }
+
+    if (isForeignKeyFieldInSchema(tableSpec, key) && value && typeof value === 'object' && !Array.isArray(value)) {
+      const lookupId = (value as Record<string, unknown>).id;
+      payload[key] = typeof lookupId === 'string' || typeof lookupId === 'number' ? { id: String(lookupId) } : null;
+      continue;
+    }
+
+    payload[key] = value;
+  }
+  if (readonlyChangedFieldNames.length > 0) {
+    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
   }
   return payload;
 }

@@ -18,6 +18,8 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -80,6 +82,25 @@ function normalizeWebflowPageForFile(page: Page): ConnectorFile {
     createdOn: page.createdOn,
     lastUpdated: page.lastUpdated,
   } as unknown as ConnectorFile;
+}
+
+/** The Webflow page fields writable via `updatePageSettings`. */
+const WEBFLOW_PAGE_WRITABLE_FIELD_KEYS = new Set(['title', 'slug', 'seo', 'openGraph']);
+
+/**
+ * Throw if the user's sparse changed fields touch a read-only Webflow page field
+ * (DEV-10597). Only title/slug/seo/openGraph are writable; the page-settings
+ * update silently drops everything else (parentId, draft, archived,
+ * publishedPath, createdOn, lastUpdated, …), so without this guard an edit to one
+ * would vanish while the publish reported success. `id` is the identity, ignored.
+ */
+function assertNoReadonlyWebflowPageFieldsChanged(changed: Record<string, unknown>): void {
+  const readonlyChangedFieldNames = Object.keys(changed).filter(
+    (key) => key !== 'id' && !WEBFLOW_PAGE_WRITABLE_FIELD_KEYS.has(key),
+  );
+  if (readonlyChangedFieldNames.length > 0) {
+    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+  }
 }
 
 export class WebflowConnector extends Connector {
@@ -646,7 +667,14 @@ export class WebflowConnector extends Connector {
       const pageResults: ConnectorFile[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const source = changedFields?.[i] ?? file;
+        const changed = changedFields?.[i];
+        // Only title/slug/seo/openGraph are writable on a Webflow page. A changed
+        // field outside that set (parentId, draft, archived, publishedPath, …) is a
+        // genuine read-only edit — surface it instead of silently dropping it
+        // (DEV-10597). The no-diff fallback (`?? file`) re-sends the full record,
+        // where read-only fields are always present and are simply not picked.
+        if (changed) assertNoReadonlyWebflowPageFieldsChanged(changed);
+        const source = changed ?? file;
         const pageId = file.id as string;
 
         const update: Record<string, unknown> = {};

@@ -306,6 +306,19 @@ describe('ClickUpConnector', () => {
 
       expect(mockSetCustomFieldValue).not.toHaveBeenCalled();
     });
+
+    // DEV-10597: a non-writable standard field in the sparse diff is a genuine
+    // read-only edit (standard top-level keys are deep-diffed). Surface it
+    // instead of silently dropping it to a no-op.
+    it('throws when a read-only standard field is changed, and does not call the API', async () => {
+      const file: ConnectorFile = { id: 't1', date_created: '111' };
+      const changed = { date_created: '222' };
+
+      await expect(connector.updateRecords(tableSpec(), [file], [changed])).rejects.toThrow(
+        /"date_created" is read-only/,
+      );
+      expect(mockUpdateTask).not.toHaveBeenCalled();
+    });
   });
 
   describe('deleteRecords', () => {

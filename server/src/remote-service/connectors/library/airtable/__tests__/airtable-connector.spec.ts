@@ -125,27 +125,45 @@ describe('AirtableConnector.updateRecords', () => {
     expect(records[0].fields).toEqual({ Notes: 'New notes' });
   });
 
-  it('strips read-only fields even when present in changedFields', async () => {
+  // DEV-10597: a read-only field in the *sparse* changedFields means the user
+  // genuinely edited a read-only field (changedFields is the published-vs-working
+  // diff, so unedited fields never appear). Silently stripping it would PATCH a
+  // payload missing that field and report success while the edit vanished — so
+  // we surface it loudly instead. This supersedes the old "strip even when
+  // present" behavior, which masked the user's mistake.
+  it('throws when a changed field is read-only, and does not call the API', async () => {
     const files: ConnectorFile[] = [
       {
         id: 'recABC',
         fields: { Name: 'A', 'Date/heure de création': '2026-01-01T00:00:00.000Z' },
       },
     ];
-    // Both Name and the read-only field appear as "changed" (e.g. stale pull recompute).
+    // The user edited the computed/read-only field.
+    const changedFields: Record<string, unknown>[] = [
+      { fields: { 'Date/heure de création': '2026-02-02T00:00:00.000Z' } },
+    ];
+
+    await expect(connector.updateRecords(buildTableSpec(), files, changedFields)).rejects.toThrow(
+      /"Date\/heure de création" is read-only/,
+    );
+    expect(mockUpdateRecords).not.toHaveBeenCalled();
+  });
+
+  it('throws when a read-only field is changed alongside a writable one (does not silently send only the writable)', async () => {
+    const files: ConnectorFile[] = [
+      {
+        id: 'recABC',
+        fields: { Name: 'A', 'Date/heure de création': '2026-01-01T00:00:00.000Z' },
+      },
+    ];
     const changedFields: Record<string, unknown>[] = [
       { fields: { Name: 'B', 'Date/heure de création': '2026-02-02T00:00:00.000Z' } },
     ];
 
-    await connector.updateRecords(buildTableSpec(), files, changedFields);
-
-    const [, , records] = mockUpdateRecords.mock.calls[0] as [
-      string,
-      string,
-      { id: string; fields: Record<string, unknown> }[],
-    ];
-    // The computed field must not leak through — that's what made Airtable return 422.
-    expect(records[0].fields).toEqual({ Name: 'B' });
+    await expect(connector.updateRecords(buildTableSpec(), files, changedFields)).rejects.toThrow(
+      /read-only and cannot be published/,
+    );
+    expect(mockUpdateRecords).not.toHaveBeenCalled();
   });
 });
 

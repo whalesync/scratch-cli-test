@@ -9,6 +9,8 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -357,14 +359,25 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
       if (hasPropertyChanges) {
         let properties: Record<string, unknown>;
         if (cf?.properties && typeof cf.properties === 'object' && !Array.isArray(cf.properties)) {
-          // Deep changedFields: only send the specific sub-properties that changed
+          // Deep changedFields: only send the specific sub-properties that changed.
+          // A read-only property present here means the user genuinely edited a
+          // read-only property (changedFields is the published-vs-working diff) —
+          // surface it loudly instead of silently dropping the edit (DEV-10597).
           const changedProps = cf.properties as Record<string, unknown>;
           const fileProps = (file as unknown as HubspotRecord).properties ?? {};
           properties = {};
+          const readonlyChangedPropertyNames: string[] = [];
           for (const propKey of Object.keys(changedProps)) {
-            if (propKey in fileProps && !isReadonlyHubspotProperty(propKey, tableSpec)) {
+            if (isReadonlyHubspotProperty(propKey, tableSpec)) {
+              readonlyChangedPropertyNames.push(propKey);
+              continue;
+            }
+            if (propKey in fileProps) {
               properties[propKey] = fileProps[propKey];
             }
+          }
+          if (readonlyChangedPropertyNames.length > 0) {
+            throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedPropertyNames));
           }
         } else {
           properties = this.extractWritableProperties(file, tableSpec);

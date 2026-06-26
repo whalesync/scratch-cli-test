@@ -22,7 +22,12 @@ import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams } from '../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
-import { ConnectorInstantiationError, ErrorMessageTemplates } from '../../error';
+import {
+  ConnectorInstantiationError,
+  ErrorMessageTemplates,
+  ReadonlyFieldEditError,
+  readonlyFieldEditErrorMessage,
+} from '../../error';
 import {
   type NormalizedCreateFieldsPlan,
   type NormalizedCreateTablePlan,
@@ -741,12 +746,22 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       const fileProperties = (file.properties as Record<string, unknown>) || {};
       const changedProperties = (changed.properties as Record<string, unknown>) || {};
 
+      // A changed property whose type is read-only (rollup, formula, …) is a
+      // genuine read-only edit — changedFields lists only what the user changed.
+      // Surface it instead of silently dropping the edit (DEV-10597).
       const writableChangedProperties: Record<string, unknown> = {};
+      const readonlyChangedPropertyNames: string[] = [];
       for (const [key, value] of Object.entries(changedProperties)) {
         const fileProp = fileProperties[key] as Record<string, unknown> | undefined;
         const propType = fileProp?.type as string | undefined;
-        if (propType && NOTION_READ_ONLY_PROPERTY_TYPES.has(propType)) continue;
+        if (propType && NOTION_READ_ONLY_PROPERTY_TYPES.has(propType)) {
+          readonlyChangedPropertyNames.push(key);
+          continue;
+        }
         writableChangedProperties[key] = value;
+      }
+      if (readonlyChangedPropertyNames.length > 0) {
+        throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedPropertyNames));
       }
 
       const properties = this.transformPropertiesForUpdate(writableChangedProperties);

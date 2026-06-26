@@ -6,6 +6,7 @@ import {
 } from '@spinner/shared-types';
 import {
   buildZohoJsonTableSpec,
+  buildZohoUpdatePayloadOrThrowOnReadonly,
   isReadonlyZohoField,
   sanitizeZohoWritePayload,
   zohoFieldToJsonSchema,
@@ -207,5 +208,30 @@ describe('sanitizeZohoWritePayload', () => {
   it('writes null for a cleared lookup', () => {
     const payload = sanitizeZohoWritePayload({ id: '1', Account_Name: null }, spec);
     expect(payload).toEqual({ Account_Name: null });
+  });
+});
+
+describe('buildZohoUpdatePayloadOrThrowOnReadonly', () => {
+  const fields: ZohoFieldMetadata[] = [
+    makeField({ api_name: 'Last_Name', data_type: 'text', operation_type: { api_update: true } }),
+    makeField({ api_name: 'Modified_Time', data_type: 'datetime', operation_type: { api_update: false } }),
+    makeField({ api_name: 'Account_Name', data_type: 'lookup', lookup: { module: { api_name: 'Accounts' } } }),
+  ];
+  const spec = buildZohoJsonTableSpec({ wsId: 'Leads', remoteId: ['Leads'] }, 'Leads', 'Leads', fields);
+
+  it('builds the sparse writable payload and reduces a lookup to { id }', () => {
+    const payload = buildZohoUpdatePayloadOrThrowOnReadonly(
+      { Last_Name: 'Bob', Account_Name: { id: '9', name: 'Acme' } },
+      spec,
+    );
+    expect(payload).toEqual({ Last_Name: 'Bob', Account_Name: { id: '9' } });
+  });
+
+  // DEV-10597: a read-only field in the sparse diff means a genuine read-only
+  // edit — surface it instead of dropping it to an id-only no-op PUT.
+  it('throws when a changed field is read-only', () => {
+    expect(() => buildZohoUpdatePayloadOrThrowOnReadonly({ Modified_Time: '2026-06-04T00:00:00+00:00' }, spec)).toThrow(
+      /"Modified_Time" is read-only/,
+    );
   });
 });

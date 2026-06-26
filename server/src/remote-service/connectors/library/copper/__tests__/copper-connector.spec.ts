@@ -128,6 +128,19 @@ describe('CopperConnector', () => {
 
       expect(mockUpdateEntity).toHaveBeenCalledWith('people', 42, { title: 'Updated Title Only' });
     });
+
+    // DEV-10597: a read-only field in the *sparse* changedFields is a genuine
+    // read-only edit (vs. the full-record fallback above, where read-only fields
+    // are always present and must be stripped). Surface it instead of dropping it.
+    it('throws when a changed field is read-only, and does not call the API', async () => {
+      const files: ConnectorFile[] = [{ id: 42, name: 'New', company_id: 5 }];
+      const changedFields = [{ company_id: 7 }];
+
+      await expect(connector.updateRecords(realTableSpec('people'), files, changedFields)).rejects.toThrow(
+        /"company_id" is read-only/,
+      );
+      expect(mockUpdateEntity).not.toHaveBeenCalled();
+    });
   });
 
   describe('deleteRecords', () => {
