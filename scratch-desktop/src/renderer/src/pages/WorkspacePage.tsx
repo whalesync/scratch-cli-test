@@ -26,6 +26,7 @@ import { CloudSyncWarningBanner } from './workspace/CloudSyncWarningBanner';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
 import { PullProgressModal } from './workspace/PullProgressModal';
 import { ReinitWorkspaceModal } from './workspace/ReinitWorkspaceModal';
+import { buildApprovedPublishBreakdown } from './workspace/review-publish-breakdown';
 import {
   resolveSingleRecordPublishTarget,
   type SingleRecordPublishTarget,
@@ -195,6 +196,22 @@ export function WorkspacePage() {
   const [watchingEnabled, setWatchingEnabled] = useState(true);
   const validation = useValidation(localPath, workspaceLevelDataInvalidationCounter);
   const reviewStats = useReviewStats(localPath, workspaceLevelDataInvalidationCounter);
+  // Workspace-wide rollups of the per-folder review stats, for the header's
+  // "N to review" signpost and the pending-to-publish count on "Publish all"
+  // (DEV-10449). Derived from the already-subscribed stats — no extra fetch.
+  const { totalUnreviewedCount, totalApprovedPendingPublishCount, approvedPublishBreakdown } = useMemo(() => {
+    let unreviewed = 0;
+    for (const stat of reviewStats.stats) {
+      unreviewed += stat.unreviewed;
+    }
+    const breakdown = buildApprovedPublishBreakdown(reviewStats.stats);
+    const approvedPendingPublish = breakdown.reduce((sum, connection) => sum + connection.total, 0);
+    return {
+      totalUnreviewedCount: unreviewed,
+      totalApprovedPendingPublishCount: approvedPendingPublish,
+      approvedPublishBreakdown: breakdown,
+    };
+  }, [reviewStats.stats]);
   const [gridFilterActivation, setGridFilterActivation] = useState<{
     kind: 'has-problems';
     trigger: number;
@@ -867,12 +884,18 @@ export function WorkspacePage() {
         downloading={downloading}
         reDownloading={reDownloading}
         publishingAll={publishModalOpen}
+        unreviewedCount={totalUnreviewedCount}
+        approvedPendingPublishCount={totalApprovedPendingPublishCount}
+        approvedPublishBreakdown={approvedPublishBreakdown}
         pull={pullTracker}
         onShowPullProgress={() => setPullModalOpen(true)}
         onDownload={() => void handleDownload()}
         onReDownload={() => void handleReDownload()}
         onPublishAll={() => {
-          void trackPublishAll(workspace.id);
+          void trackPublishAll(workspace.id, {
+            approvedPendingPublishCount: totalApprovedPendingPublishCount,
+            unreviewedCount: totalUnreviewedCount,
+          });
           // R3: "Publish all" is always workspace-wide — clear any single-record target.
           setSingleRecordPublish(null);
           setPublishModalOpen(true);

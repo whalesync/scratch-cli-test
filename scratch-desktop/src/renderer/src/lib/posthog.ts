@@ -164,8 +164,11 @@ export async function trackPullTable(
   await captureEvent(PostHogEvents.PULL_TABLE, { workspaceId, dataFolderId, mode });
 }
 
-export async function trackPublishAll(workspaceId: string): Promise<void> {
-  await captureEvent(PostHogEvents.PUBLISH_ALL, { workspaceId });
+export async function trackPublishAll(
+  workspaceId: string,
+  props: { approvedPendingPublishCount: number; unreviewedCount: number },
+): Promise<void> {
+  await captureEvent(PostHogEvents.PUBLISH_ALL, { workspaceId, ...props });
 }
 
 export async function trackPublishSingleRecord(workspaceId: string, connectionId: string): Promise<void> {

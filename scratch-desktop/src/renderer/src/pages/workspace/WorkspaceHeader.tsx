@@ -1,6 +1,7 @@
 import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
+import { Text12Medium, Text12Regular } from '@/components/base/text';
 import { WorkspaceSwitcher } from '@/components/workspace-switcher';
-import { Group, Loader, Tooltip } from '@mantine/core';
+import { Badge, Group, HoverCard, Indicator, Loader, Stack, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
 import { Workspace } from '@spinner/shared-types';
 import {
@@ -19,6 +20,7 @@ import { useNavigate } from 'react-router-dom';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
 import { useDevTools } from '../../hooks/use-dev-tools';
+import type { ApprovedPublishConnectionBreakdown } from './review-publish-breakdown';
 import type { PullTracker } from './use-pull-tracker';
 
 interface WorkspaceHeaderProps {
@@ -35,6 +37,22 @@ interface WorkspaceHeaderProps {
   downloading: boolean;
   reDownloading: boolean;
   publishingAll: boolean;
+  /**
+   * Workspace-wide count of records still needing review (working copy differs
+   * from the approved value). These are NOT yet publishable — they gate publish.
+   */
+  unreviewedCount: number;
+  /**
+   * Workspace-wide count of records approved but not yet published (an entry in
+   * `accepted-patches.json`). This is the "X to update" count surfaced on
+   * "Publish all" (DEV-10449).
+   */
+  approvedPendingPublishCount: number;
+  /**
+   * Per-connection / per-folder breakdown of the approved-but-unpublished records,
+   * shown in the "Publish all" hover popover. Empty when nothing is pending.
+   */
+  approvedPublishBreakdown: ApprovedPublishConnectionBreakdown[];
   /** Background pull tracker — drives the non-blocking pull-progress pill (DEV-10501). */
   pull: PullTracker;
   /** Reopen the pull-progress detail modal. */
@@ -61,6 +79,9 @@ export function WorkspaceHeader({
   downloading,
   reDownloading,
   publishingAll,
+  unreviewedCount,
+  approvedPendingPublishCount,
+  approvedPublishBreakdown,
   pull,
   onShowPullProgress,
   onDownload,
@@ -252,25 +273,44 @@ export function WorkspaceHeader({
             </ButtonSecondaryGhost>
           </Tooltip>
         )}
-        {isDownloaded &&
-          (compact ? (
-            <Tooltip label={PUBLISH_ALL_TOOLTIP}>
-              <IconButtonGhost size="compact-xs" disabled={anyRunning} onClick={() => void onPublishAll()}>
-                {publishingAll ? <Loader size={12} /> : <CloudUpload size={12} />}
-              </IconButtonGhost>
-            </Tooltip>
-          ) : (
-            <Tooltip label={PUBLISH_ALL_TOOLTIP}>
-              <ButtonSecondaryGhost
-                size="compact-xs"
-                leftSection={publishingAll ? <Loader size={12} /> : <CloudUpload size={12} />}
-                disabled={anyRunning}
-                onClick={() => void onPublishAll()}
+        {isDownloaded && (
+          <>
+            {/* "Needs review" signpost — the prior step. These records aren't publishable
+                until accepted, so they get their own count distinct from the publish CTA. */}
+            {unreviewedCount > 0 && (
+              <Tooltip
+                label={`${unreviewedCount} change${unreviewedCount === 1 ? '' : 's'} still need review before they can be published`}
               >
-                Publish all
-              </ButtonSecondaryGhost>
-            </Tooltip>
-          ))}
+                <Badge
+                  size="sm"
+                  radius="sm"
+                  styles={{
+                    root: {
+                      backgroundColor: 'var(--modified-needs-review-bg)',
+                      color: 'var(--modified-needs-review-stroke)',
+                      textTransform: 'none',
+                      fontWeight: 500,
+                      cursor: 'default',
+                    },
+                  }}
+                >
+                  {compact ? formatHeaderCount(unreviewedCount) : `${formatHeaderCount(unreviewedCount)} to review`}
+                </Badge>
+              </Tooltip>
+            )}
+            {/* "Publish all" — carries the pending-to-publish count ("X to update", DEV-10449),
+                is promoted to the primary CTA when there's something approved, and reveals a
+                per-connection / per-folder breakdown of what it will ship on hover. */}
+            <PublishAllControl
+              compact={compact}
+              publishingAll={publishingAll}
+              anyRunning={anyRunning}
+              approvedPendingPublishCount={approvedPendingPublishCount}
+              approvedPublishBreakdown={approvedPublishBreakdown}
+              onPublishAll={onPublishAll}
+            />
+          </>
+        )}
         {isDevToolsEnabled && localPath && (
           <IconButtonGhost size="compact-xs" c="var(--mantine-color-devTool-9)" onClick={handleDevMenu}>
             <EllipsisVertical size={14} />
@@ -278,6 +318,112 @@ export function WorkspaceHeader({
         )}
       </Group>
     </Group>
+  );
+}
+
+/** Keep review/publish counts from blowing out the 40px header; cap the display at 999+. */
+function formatHeaderCount(count: number): string {
+  return count > 999 ? '999+' : String(count);
+}
+
+interface PublishAllControlProps {
+  compact: boolean;
+  publishingAll: boolean;
+  anyRunning: boolean;
+  approvedPendingPublishCount: number;
+  approvedPublishBreakdown: ApprovedPublishConnectionBreakdown[];
+  onPublishAll: () => void;
+}
+
+/**
+ * The header "Publish all" action. Shows the pending-to-publish count, promotes
+ * itself to the primary CTA when there's something approved, and — whenever there
+ * is — swaps its plain tooltip for a hover popover that breaks the pending changes
+ * down by connection and data folder (DEV-10449).
+ */
+function PublishAllControl({
+  compact,
+  publishingAll,
+  anyRunning,
+  approvedPendingPublishCount,
+  approvedPublishBreakdown,
+  onPublishAll,
+}: PublishAllControlProps) {
+  const icon = publishingAll ? <Loader size={12} /> : <CloudUpload size={12} />;
+  const hasApproved = approvedPendingPublishCount > 0;
+
+  const button = compact ? (
+    <Indicator
+      label={formatHeaderCount(approvedPendingPublishCount)}
+      size={16}
+      offset={4}
+      disabled={!hasApproved}
+      color="var(--highlight-border)"
+      styles={{ indicator: { color: 'var(--highlight-text)', fontWeight: 600, fontSize: '10px' } }}
+    >
+      <IconButtonGhost size="compact-xs" disabled={anyRunning} onClick={() => void onPublishAll()}>
+        {icon}
+      </IconButtonGhost>
+    </Indicator>
+  ) : hasApproved ? (
+    <ButtonPrimaryLight size="compact-xs" leftSection={icon} disabled={anyRunning} onClick={() => void onPublishAll()}>
+      {`Publish all · ${formatHeaderCount(approvedPendingPublishCount)}`}
+    </ButtonPrimaryLight>
+  ) : (
+    <ButtonSecondaryGhost
+      size="compact-xs"
+      leftSection={icon}
+      disabled={anyRunning}
+      onClick={() => void onPublishAll()}
+    >
+      Publish all
+    </ButtonSecondaryGhost>
+  );
+
+  // Nothing approved → keep the plain explanatory tooltip.
+  if (!hasApproved) {
+    return <Tooltip label={PUBLISH_ALL_TOOLTIP}>{button}</Tooltip>;
+  }
+
+  // Something to publish → reveal the per-connection / per-folder breakdown on hover.
+  return (
+    <HoverCard width={320} position="bottom-end" withArrow shadow="md" openDelay={120} closeDelay={80}>
+      <HoverCard.Target>{button}</HoverCard.Target>
+      <HoverCard.Dropdown p="sm">
+        <PublishBreakdown total={approvedPendingPublishCount} breakdown={approvedPublishBreakdown} />
+      </HoverCard.Dropdown>
+    </HoverCard>
+  );
+}
+
+/** The hover-popover body: total + a connection → data-folder breakdown of what "Publish all" ships. */
+function PublishBreakdown({ total, breakdown }: { total: number; breakdown: ApprovedPublishConnectionBreakdown[] }) {
+  return (
+    <Stack gap="xs">
+      <Text12Medium c="var(--fg-primary)">
+        {total.toLocaleString()} approved change{total === 1 ? '' : 's'} to publish
+      </Text12Medium>
+      <Stack gap={10} style={{ maxHeight: 320, overflowY: 'auto' }}>
+        {breakdown.map((connection) => (
+          <Stack key={connection.connection} gap={2}>
+            <Group justify="space-between" gap="sm" wrap="nowrap">
+              <Text12Medium c="var(--fg-primary)" truncate>
+                {connection.connection}
+              </Text12Medium>
+              <Text12Regular c="var(--fg-muted)">{connection.total.toLocaleString()}</Text12Regular>
+            </Group>
+            {connection.folders.map((folder) => (
+              <Group key={folder.folderPath} justify="space-between" gap="sm" wrap="nowrap" pl="sm">
+                <Text12Regular c="var(--fg-secondary)" truncate>
+                  {folder.folderPath}
+                </Text12Regular>
+                <Text12Regular c="var(--fg-muted)">{folder.count.toLocaleString()}</Text12Regular>
+              </Group>
+            ))}
+          </Stack>
+        ))}
+      </Stack>
+    </Stack>
   );
 }
 
