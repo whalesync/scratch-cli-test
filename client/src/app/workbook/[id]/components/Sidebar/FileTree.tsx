@@ -6,6 +6,7 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
+import { isExperimentEnabled } from '@/types/server-entities/users';
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
 import { SCRATCH_GROUP_NAME, type ConnectorAccount, type FileDiffStatus, type Workspace } from '@spinner/shared-types';
 import { RefreshCwIcon } from 'lucide-react';
@@ -26,7 +27,11 @@ const EMPTY_DIRTY_PATHS: ReadonlyMap<string, FileDiffStatus> = new Map();
 export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   const { dataFolderGroups, isLoading, refresh: refreshDataFolders } = useDataFolders(workbook.id);
   const { connectorAccounts } = useConnectorAccounts(workbook.id);
-  const { isAdmin } = useScratchPadUser();
+  const { isAdmin, user } = useScratchPadUser();
+  // DEV-10424 Scratch (connector-less) folders are off in production by default;
+  // when disabled we drop the Scratch group below so its sidebar node and the
+  // "New folder" entry point disappear in both files and review mode.
+  const scratchFoldersEnabled = isExperimentEnabled('ENABLE_SCRATCH_FOLDERS', user);
   const expandAll = useWorkbookUIStore((state) => state.expandAll);
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
 
@@ -54,15 +59,18 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
     return byConnection;
   }, [dirtyFiles]);
 
-  // Sort groups: Scratch first, then alphabetically by name
+  // Sort groups: Scratch first, then alphabetically by name. When the Scratch
+  // feature is disabled (production default), filter the Scratch group out here.
   const sortedGroups = useMemo(
     () =>
-      [...dataFolderGroups].sort((a, b) => {
-        if (a.name === SCRATCH_GROUP_NAME) return -1;
-        if (b.name === SCRATCH_GROUP_NAME) return 1;
-        return a.name.localeCompare(b.name);
-      }),
-    [dataFolderGroups],
+      [...dataFolderGroups]
+        .filter((group) => scratchFoldersEnabled || group.name !== SCRATCH_GROUP_NAME)
+        .sort((a, b) => {
+          if (a.name === SCRATCH_GROUP_NAME) return -1;
+          if (b.name === SCRATCH_GROUP_NAME) return 1;
+          return a.name.localeCompare(b.name);
+        }),
+    [dataFolderGroups, scratchFoldersEnabled],
   );
 
   // Create a map from connectorAccountId to ConnectorAccount for fast lookup

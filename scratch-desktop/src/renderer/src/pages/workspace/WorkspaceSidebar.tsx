@@ -22,6 +22,7 @@ import { useCurrentUser } from '../../hooks/use-current-user';
 import { useDevTools } from '../../hooks/use-dev-tools';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
+import { isExperimentEnabled } from '../../types/user';
 import { FolderTree } from './FolderTree';
 import { ScratchFoldersSection } from './ScratchFoldersSection';
 import type { StartPullOptions } from './use-pull-tracker';
@@ -87,6 +88,8 @@ export function WorkspaceSidebar({
   const { user } = useCurrentUser();
   const validateEnabled = useWorkspaceUiStore((s) => s.validateEnabled);
   const publishHistoryEnabled = true; // isExperimentEnabled('ENABLE_PUBLISH_HISTORY', user);
+  // DEV-10424 Scratch (connector-less) folders — off in production by default.
+  const scratchFoldersEnabled = isExperimentEnabled('ENABLE_SCRATCH_FOLDERS', user);
   const showInitialLoader = isFoldersLoading && !hasLoadedFoldersOnce;
 
   // Build a lookup map for validation counts keyed by "connection/folder_path".
@@ -164,7 +167,9 @@ export function WorkspaceSidebar({
                 </ButtonPrimaryLight>
               </Stack>
             )}
-            <ScratchFoldersSection workspace={workspace} onChanged={onScratchFoldersChanged} />
+            {scratchFoldersEnabled && (
+              <ScratchFoldersSection workspace={workspace} onChanged={onScratchFoldersChanged} />
+            )}
             <FolderTree
               workspaceId={workspace.id}
               dataFolders={workspace.dataFolders ?? []}

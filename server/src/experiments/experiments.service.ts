@@ -57,6 +57,11 @@ export class ExperimentsService implements OnModuleDestroy {
       if (key === UserFlag.DEV_TOOLBOX) {
         // Based on the user's role, set the flag value
         flagValues[key] = user.role === UserRole.ADMIN ? true : false;
+      } else if (key === UserFlag.ENABLE_SCRATCH_FOLDERS) {
+        // DEV-10424: enabled in every non-production environment so it stays on
+        // for local/test dogfooding; in production it falls back to a PostHog
+        // flag (default false) so it can be switched on later without a redeploy.
+        flagValues[key] = this.config.isProductionEnvironment() ? await this.getBooleanFlag(key, false, user) : true;
       } else if (dataType === 'boolean') {
         flagValues[key] = await this.getBooleanFlag(key, false, user);
       } else if (dataType === 'string') {

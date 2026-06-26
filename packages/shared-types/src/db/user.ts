@@ -13,6 +13,7 @@ export interface UserExperimentFlags {
   SHOW_OPEN_IN_DESKTOP: boolean;
   ENABLE_GENERIC_CONNECTOR: boolean;
   ENABLE_PUBLISH_HISTORY: boolean;
+  ENABLE_SCRATCH_FOLDERS: boolean;
 }
 
 /**

@@ -22,6 +22,14 @@ These are flags that are evaluated for the user and passed to the client.
 - ADMIN users automatically get access
 - No external flag evaluation needed
 
+### ENABLE_SCRATCH_FOLDERS
+
+- Gates the standalone "Scratch" (connector-less) files & folders UI (DEV-10424)
+- Automatically determined by the server **environment**, not per-user targeting
+- TRUE in every non-production environment (development / test / staging) so it stays on for local and test dogfooding
+- In production it falls back to a PostHog flag that defaults to FALSE — off for prod users today, but flippable later without a redeploy (create `ENABLE_SCRATCH_FOLDERS` in the production project to enable)
+- Client-only gate: the scratch data/endpoints stay available; only the UI surfaces are hidden when false
+
 ## PostHog Integration
 
 - Requires `POSTHOG_API_KEY` and `POSTHOG_FEATURE_FLAG_API_KEY` environment variables

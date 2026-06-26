@@ -55,6 +55,19 @@ export enum UserFlag {
    */
   ENABLE_PUBLISH_HISTORY = 'ENABLE_PUBLISH_HISTORY',
   /**
+   * DEV-10424 gate for the standalone "Scratch" (connector-less) files & folders
+   * feature — the "Scratch" group in the workbook sidebar plus its create-folder /
+   * create-file / browse surfaces in both the web client and the desktop app.
+   * Resolved from the server ENVIRONMENT rather than per-user targeting (see
+   * `ExperimentsService.resolveClientFeatureFlagsForUser`): TRUE in every
+   * non-production environment (development / test / staging) so it stays on for
+   * local and test dogfooding, and in production it falls back to a PostHog flag
+   * that defaults to FALSE — so the feature is off for prod users today but can be
+   * switched on later without a redeploy. Client-only gate: the underlying scratch
+   * data/endpoints remain available; only the UI surfaces are hidden when false.
+   */
+  ENABLE_SCRATCH_FOLDERS = 'ENABLE_SCRATCH_FOLDERS',
+  /**
    * Per-user gate for the new "use connector's returned row as the
    * post-publish blob" path. When TRUE, the publish service uses the
    * `ConnectorFile[]` returned by `Connector.updateRecords` to build the
@@ -104,4 +117,5 @@ export const ClientUserFlags: Partial<Record<UserFlag, FlagDataType>> = {
   [UserFlag.SHOW_OPEN_IN_DESKTOP]: 'boolean',
   [UserFlag.ENABLE_GENERIC_CONNECTOR]: 'boolean',
   [UserFlag.ENABLE_PUBLISH_HISTORY]: 'boolean',
+  [UserFlag.ENABLE_SCRATCH_FOLDERS]: 'boolean',
 };
