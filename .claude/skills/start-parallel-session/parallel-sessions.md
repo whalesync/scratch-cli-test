@@ -1,6 +1,6 @@
 # Running connector-build sessions in parallel
 
-A plan for running **N agents in parallel**, each building/testing a different connector on its own branch, while **sharing the expensive, branch-independent pieces** (one `scratch-git-2`, one CLI binary, one Postgres, one gstack browser). Companion to the [`/connector-build`](/.claude/skills/connector-build/SKILL.md) skill and its [playbook](connector-build.md).
+A plan for running **N agents in parallel**, each building/testing a different connector on its own branch, while **sharing the expensive, branch-independent pieces** (one `scratch-git-2`, one CLI binary, one Postgres, one gstack browser). Companion to the [`/connector-build-execute`](/.claude/skills/connector-build-execute/SKILL.md) skill and its [playbook](connector-build.md).
 
 > **Status:** plan / proposal. The "shared infra, per-port servers" topology works **today** with one ops gotcha (worker/queue isolation) and one optional small code change. See [Open items](#open-items).
 
@@ -144,7 +144,7 @@ PORT=$((3010+i)) REDIS_PORT=$((6379+i)) yarn dev     # SERVICE_TYPE defaults to 
 export SCRATCH_URL=http://localhost:$((3010+i))
 $B newtab about:blank        # this session's browser tab (note its id)
 ```
-Then run `/connector-build <connector>` as normal. Its pulls/publishes are enqueued to **this** session's Redis and processed by **this** session's worker (branch code). ✅
+Then run `/connector-build-execute <connector>` as normal. Its pulls/publishes are enqueued to **this** session's Redis and processed by **this** session's worker (branch code). ✅
 
 ---
 
@@ -184,7 +184,7 @@ Then run `/connector-build <connector>` as normal. Its pulls/publishes are enque
 
 ## Why this matches the skill
 
-The [`/connector-build` skill](/.claude/skills/connector-build/SKILL.md) already says: build the **CLI + desktop from `main`** (branch-independent), run **only the server from the branch worktree**. This plan extends that one step: because the **worker** also runs branch connector code, the per-session server must be a **monolith with an isolated queue** — not just an API process pointed at a shared worker. Everything else (scratch-git, CLI, Postgres, browser) is shared exactly as the skill intends.
+The [`/connector-build-execute` skill](/.claude/skills/connector-build-execute/SKILL.md) already says: build the **CLI + desktop from `main`** (branch-independent), run **only the server from the branch worktree**. This plan extends that one step: because the **worker** also runs branch connector code, the per-session server must be a **monolith with an isolated queue** — not just an API process pointed at a shared worker. Everything else (scratch-git, CLI, Postgres, browser) is shared exactly as the skill intends.
 
 ---
 

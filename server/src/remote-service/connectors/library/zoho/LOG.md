@@ -5,7 +5,7 @@
 
 # Zoho CRM connector — activity log
 
-## 2026-06-08 — /connector-build run (read + update + FK coverage via live-API spec)
+## 2026-06-08 — /connector-build-execute run (read + update + FK coverage via live-API spec)
 
 Environment & enumeration:
 [Service API] Minted an access token from the refresh token — POST https://accounts.zoho.com/oauth/v2/token (grant_type=refresh_token, client_id=1000.0…)

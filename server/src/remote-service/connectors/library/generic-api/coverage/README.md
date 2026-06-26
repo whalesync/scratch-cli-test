@@ -23,5 +23,5 @@ triaged through the skill's generality gate.
   `service-coverage-template.md`). The template is timestamp-versioned; each doc records the
   `Template version` it was reconciled to, so coverage is answerable "as of which date".
 - **Connector-wide improvement plans** promoted from these docs live in the sibling
-  `../PLAN.md` / `../ARCHIVE.md` (the `/connector-build` PLAN flow). One-off, service-specific
+  `../PLAN.md` / `../ARCHIVE.md` (the `/connector-build-execute` PLAN flow). One-off, service-specific
   quirks are **declared unsupported here**, never branched into the connector.

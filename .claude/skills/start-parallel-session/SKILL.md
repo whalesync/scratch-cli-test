@@ -1,13 +1,13 @@
 ---
 name: start-parallel-session
-description: Bring up an isolated Scratch server + Redis for one parallel connector-build session, indexed by N. `/start-parallel-session <N>` (N≥1) starts a monolith server on port 3010+N backed by its own Redis container on 6379+N — its own BullMQ queue + worker running THIS worktree's branch code — while sharing Postgres, scratch-git, and the gstack browser with every other session. Implements Option A of docs/connector-build-parallel.md. Idempotent: re-running cleans up a stale container and restarts. Then run /connector-build against this session, always passing --scratch-url http://localhost:<3010+N>.
+description: Bring up an isolated Scratch server + Redis for one parallel connector-build session, indexed by N. `/start-parallel-session <N>` (N≥1) starts a monolith server on port 3010+N backed by its own Redis container on 6379+N — its own BullMQ queue + worker running THIS worktree's branch code — while sharing Postgres, scratch-git, and the gstack browser with every other session. Implements Option A of .claude/skills/start-parallel-session/parallel-sessions.md. Idempotent: re-running cleans up a stale container and restarts. Then run /connector-build-execute against this session, always passing --scratch-url http://localhost:<3010+N>.
 user-invocable: true
 argument-hint: "<N>  (session index, N≥1)"
 ---
 
 # start-parallel-session
 
-Stand up **one isolated session** for running `/connector-build` in parallel with others. This is the automated form of the **"Per session i"** startup in [docs/connector-build-parallel.md](/docs/connector-build-parallel.md) — read that doc for the full topology and rationale; this skill executes its **Option A** (one Redis per session, zero code change).
+Stand up **one isolated session** for running `/connector-build-execute` in parallel with others. This is the automated form of the **"Per session i"** startup in [.claude/skills/start-parallel-session/parallel-sessions.md](/.claude/skills/start-parallel-session/parallel-sessions.md) — read that doc for the full topology and rationale; this skill executes its **Option A** (one Redis per session, zero code change).
 
 **The whole point:** the server compiles connector code at build time and runs pulls/publishes in a **worker** off a BullMQ queue. Two monolith servers on one Redis share `'worker-queue'`, so a job you enqueue can be run by a neighbor's worker against the wrong branch's code — silently. So each session gets its **own Redis** (own queue) and runs as a **monolith** (own worker, this branch's code). Everything else is shared.
 
@@ -123,7 +123,7 @@ scratchmd --scratch-url http://localhost:$((3010+N)) linked pull <dfd> --mode fu
 If the pull completes, this session's worker + queue are correctly wired to its own Redis and branch code. ✅
 
 ### 9. Hand off
-Report to the user: the server URL (`http://localhost:<3010+N>`), the Redis container name/port, that both run in background and stop on graceful session close, and the one-line teardown. Then run `/connector-build <connector>` as normal, always carrying the `--scratch-url` (or the config file).
+Report to the user: the server URL (`http://localhost:<3010+N>`), the Redis container name/port, that both run in background and stop on graceful session close, and the one-line teardown. Then run `/connector-build-execute <connector>` as normal, always carrying the `--scratch-url` (or the config file).
 
 ## Teardown
 ```bash
@@ -138,5 +138,5 @@ docker rm -f spinner-redis-<N>          # stop + remove this session's Redis
 - **Browser:** the gstack daemon has a single active tab; open your own tab and switch to it right before short bursts. See the doc's "Sharing the gstack browser".
 
 ## Reference
-- [docs/connector-build-parallel.md](/docs/connector-build-parallel.md) — full topology, the worker-code-identity constraint, isolation Options A/B/C, risks table.
-- [.claude/skills/connector-build/SKILL.md](/.claude/skills/connector-build/SKILL.md) — what you run inside the session.
+- [.claude/skills/start-parallel-session/parallel-sessions.md](/.claude/skills/start-parallel-session/parallel-sessions.md) — full topology, the worker-code-identity constraint, isolation Options A/B/C, risks table.
+- [.claude/skills/connector-build-execute/SKILL.md](/.claude/skills/connector-build-execute/SKILL.md) — what you run inside the session.

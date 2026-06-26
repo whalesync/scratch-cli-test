@@ -1,4 +1,4 @@
-<!-- ⛔ DO NOT DELETE. Maintained by the `/connector-build` skill: this connector's
+<!-- ⛔ DO NOT DELETE. Maintained by the `/connector-build-execute` skill: this connector's
      ACTIVE plans — atomic, concise items for substantial changes. -->
 
 # Attio — Active Plans

@@ -1,4 +1,4 @@
-<!-- Activity log for the Affinity connector — maintained by /connector-build.
+<!-- Activity log for the Affinity connector — maintained by /connector-build-execute.
      One line per operation actually performed; date in the section header, wall-clock time per row. -->
 
 # Affinity — Activity Log

@@ -1,4 +1,4 @@
-<!-- ⛔ DO NOT DELETE. Maintained by the `/connector-build` skill: IMPLEMENTED plans,
+<!-- ⛔ DO NOT DELETE. Maintained by the `/connector-build-execute` skill: IMPLEMENTED plans,
      moved here from PLAN.md once they ship. Write-mostly history — NOT read in the
      normal loop. Open it only to revisit how a past change was made. -->
 

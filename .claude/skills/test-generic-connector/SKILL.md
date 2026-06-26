@@ -1,17 +1,17 @@
 ---
 name: test-generic-connector
-description: Test the read-only GENERIC_API connector against one external service at a time — the connector that points Scratch at ANY REST/GraphQL JSON API rather than having bespoke per-service code. Mirrors /connector-build's discipline (resumable coverage doc, timestamp-tracked template, browser + CLI dual verification) but reframed for a read-only, config-driven connector: each endpoint is an entity, schemas are inferred by probing, there is no push/pull round-trip, and there are NO foreign keys. The flow is seed-in-browser → fetch → verify counts → seed more → re-fetch. Produces ONE coverage doc per service at server/src/remote-service/connectors/library/generic-api/coverage/<service>.md listing entities, reference fields, and which entities can/can't be fetched with the reason. Crucially, it feeds connector-improvement candidates through a GENERALITY GATE: a gap earns a connector change only if it's expected to recur across multiple services (or the fix is trivial); one-off quirks are declared UNSUPPORTED so the generic connector never rots into a ball of edge cases.
+description: Test the read-only GENERIC_API connector against one external service at a time — the connector that points Scratch at ANY REST/GraphQL JSON API rather than having bespoke per-service code. Mirrors /connector-build-execute's discipline (resumable coverage doc, timestamp-tracked template, browser + CLI dual verification) but reframed for a read-only, config-driven connector: each endpoint is an entity, schemas are inferred by probing, there is no push/pull round-trip, and there are NO foreign keys. The flow is seed-in-browser → fetch → verify counts → seed more → re-fetch. Produces ONE coverage doc per service at server/src/remote-service/connectors/library/generic-api/coverage/<service>.md listing entities, reference fields, and which entities can/can't be fetched with the reason. Crucially, it feeds connector-improvement candidates through a GENERALITY GATE: a gap earns a connector change only if it's expected to recur across multiple services (or the fix is trivial); one-off quirks are declared UNSUPPORTED so the generic connector never rots into a ball of edge cases.
 ---
 
 # Test the Generic API connector
 
 The **GENERIC_API** connector (`server/src/remote-service/connectors/library/generic-api/`) is not a per-service connector — it's a single connector that points Scratch at **any REST or GraphQL JSON API**, read-only, driven entirely by a user-supplied config of endpoints. This skill tests it **one service at a time** and records what works per service, while keeping the connector itself lean.
 
-It deliberately reuses the **mental model of [/connector-build](../connector-build/SKILL.md)** — a resumable, timestamp-tracked coverage doc, browser-on-one-side / CLI-on-the-other verification, a milestones tracker, and the **PLAN.md / ARCHIVE.md** improvement flow — but the task is shaped differently. Read that skill's "The docs" and template-versioning sections; the same machinery applies here.
+It deliberately reuses the **mental model of [/connector-build-execute](../connector-build/SKILL.md)** — a resumable, timestamp-tracked coverage doc, browser-on-one-side / CLI-on-the-other verification, a milestones tracker, and the **PLAN.md / ARCHIVE.md** improvement flow — but the task is shaped differently. Read that skill's "The docs" and template-versioning sections; the same machinery applies here.
 
-## How this differs from /connector-build
+## How this differs from /connector-build-execute
 
-| | /connector-build (per-service connectors) | /test-generic-connector (GENERIC_API) |
+| | /connector-build-execute (per-service connectors) | /test-generic-connector (GENERIC_API) |
 |---|---|---|
 | Unit of work | one connector = one service, with bespoke code | one connector, **many services**; one **coverage doc per service** |
 | Schema | discovered from the service's metadata endpoint | **inferred by probing** records (no schema endpoint) — page 1 + page 2, walk records → JSON Schema (`generic-api-schema-inference.ts`) |
@@ -53,7 +53,7 @@ There is **no base-URL field** — each endpoint carries its full `url`. When `o
 
 1. **Identify the service** (argument, or ask). Slugify it for the filename (`Linear` → `linear`).
 2. **Read the coverage doc** `server/src/remote-service/connectors/library/generic-api/coverage/<service>.md` if it exists → resume from the first unverified entity / open TODO. Missing → create it from [service-coverage-template.md](service-coverage-template.md) once you've picked the service and account.
-3. **Reconcile the template version** exactly as /connector-build does: compare the doc's `Template version` to the template's; apply any newer `Template changelog` entries, then bump.
+3. **Reconcile the template version** exactly as /connector-build-execute does: compare the doc's `Template version` to the template's; apply any newer `Template changelog` entries, then bump.
 4. **Read the connector-wide PLAN.md** (`library/generic-api/PLAN.md`) if present — clear `APPROVED` improvement items before sweeping for new gaps.
 
 ## Connection setup — automatable via the API token
@@ -76,13 +76,13 @@ The helper [`setup-generic-connection.sh`](setup-generic-connection.sh) wraps th
 - **Live auth probe at create time:** the server probes the first endpoint with the key before any row is written (`probeAuthOnly`). A bad/placeholder key → no connection. So the key must already be valid.
 - **SSRF guard:** endpoint URLs must be public HTTPS that resolve to public IPs (no localhost / private / metadata IPs).
 
-**The human gate (cannot be automated):** obtaining the target service's **API key / PAT**. A human logs into the service in the browser and generates a long-lived key. The generic connector does **no OAuth** for arbitrary services — if the service only issues OAuth tokens, the service is **unsupported** (record it; don't try to build OAuth into the generic connector). Pause for the human exactly here, the same way /connector-build pauses for login/billing/captcha gates.
+**The human gate (cannot be automated):** obtaining the target service's **API key / PAT**. A human logs into the service in the browser and generates a long-lived key. The generic connector does **no OAuth** for arbitrary services — if the service only issues OAuth tokens, the service is **unsupported** (record it; don't try to build OAuth into the generic connector). Pause for the human exactly here, the same way /connector-build-execute pauses for login/billing/captcha gates.
 
 ## The flow — read-only, so seed then fetch
 
 There is no publish. You prove an entity works by **putting data into the service and then fetching it**, comparing counts. Stages:
 
-**Browser tooling — gstack or chrome, your pick.** The browser-driven steps in this flow (logging into the service in Stage A, seeding and observing records in the service's UI in Stage D) can use **either** the gstack `/browse` skill **or** the claude-in-chrome MCP tools — the exact same principle as /connector-build's browser work. Default to gstack `/browse` for isolated headless runs; reach for chrome when you need the user's real, already-logged-in session or to coordinate tabs (there, always create your **own** tab so parallel agents don't collide). Pause for the human at any login / captcha / 2FA gate.
+**Browser tooling — gstack or chrome, your pick.** The browser-driven steps in this flow (logging into the service in Stage A, seeding and observing records in the service's UI in Stage D) can use **either** the gstack `/browse` skill **or** the claude-in-chrome MCP tools — the exact same principle as /connector-build-execute's browser work. Default to gstack `/browse` for isolated headless runs; reach for chrome when you need the user's real, already-logged-in session or to coordinate tabs (there, always create your **own** tab so parallel agents don't collide). Pause for the human at any login / captcha / 2FA gate.
 
 ### Stage A — pick the service & get a key (human gate)
 Human logs into the service (browser), generates an API key, and tells you the key + the API docs URL. Record the key's **source** (settings path) in the coverage doc — never the key itself. Confirm the service issues a **long-lived key** (not OAuth-only) — if OAuth-only, stop and mark the service unsupported.
@@ -122,13 +122,13 @@ Record, per entity, whether a **config workaround** (an `overrides` block) made 
 ### Stage F — connector-improvement candidates (the generality gate)
 When Stage D/E surfaces a gap, do **not** reflexively patch the connector. Classify each candidate fix into exactly one bucket and record the decision in the coverage doc's **Improvement candidates** table:
 
-- **GENERAL** — the gap is expected to recur across **a meaningful share of services** (rule of thumb: it would help **≥ ~3 services / some real %**, not just this one). Example: cursor-in-POST-body pagination blocks Notion **and** Attio **and** Sanity **and** Plaid — clearly general. → Promote it to a **plan item in `library/generic-api/PLAN.md`** (status `FOR_REVIEW`), following the /connector-build PLAN/ARCHIVE flow. A human approves before it's built.
+- **GENERAL** — the gap is expected to recur across **a meaningful share of services** (rule of thumb: it would help **≥ ~3 services / some real %**, not just this one). Example: cursor-in-POST-body pagination blocks Notion **and** Attio **and** Sanity **and** Plaid — clearly general. → Promote it to a **plan item in `library/generic-api/PLAN.md`** (status `FOR_REVIEW`), following the /connector-build-execute PLAN/ARCHIVE flow. A human approves before it's built.
 - **TRIVIAL** — tiny, local, low-risk fix, even if the trigger is rare (e.g. tolerate a trailing slash, accept one more cursor field name). → Just apply it (the small-fix exception); note it in the doc.
 - **TOO-SPECIFIC** — a quirk unique to one service and non-trivial to support generically. → **Declare the entity/service UNSUPPORTED** in the coverage doc with the reason. **Do not change the connector.** This is the default; it's what keeps the connector from becoming a ball of edge cases.
 
 When unsure between GENERAL and TOO-SPECIFIC, **default to TOO-SPECIFIC / unsupported** and write down what additional service would have to hit the same gap to reclassify it as GENERAL. The bar is "does this generalize?", and the burden of proof is on adding code.
 
-**A promoted plan item lives or dies on its example.** When you write a `GENERAL` candidate into `library/generic-api/PLAN.md`, follow /connector-build's single most important PLAN rule: **lead with a concrete before/after example, not prose.** Show a **minimal** real example — the failing call + response and the records the connector produces now, trimmed to only the fields that matter — **"here is what happens now: …"** — then the same call/records as they will look after the fix — **"here is what will happen after the fix: …"**. The explanation still matters, but a clear, concise example a human can grasp in seconds is what makes the item good and is what a reviewer needs to approve it from the example alone.
+**A promoted plan item lives or dies on its example.** When you write a `GENERAL` candidate into `library/generic-api/PLAN.md`, follow /connector-build-execute's single most important PLAN rule: **lead with a concrete before/after example, not prose.** Show a **minimal** real example — the failing call + response and the records the connector produces now, trimmed to only the fields that matter — **"here is what happens now: …"** — then the same call/records as they will look after the fix — **"here is what will happen after the fix: …"**. The explanation still matters, but a clear, concise example a human can grasp in seconds is what makes the item good and is what a reviewer needs to approve it from the example alone.
 
 ## The coverage doc — `coverage/<service>.md`
 
@@ -149,7 +149,7 @@ One per service, co-located with the connector at `server/src/remote-service/con
 
 Keep `Last run` current; flip a cell to ✅ only after a live fetch confirmed it. Legend: ✅ fetched & verified · ⬜ not yet · ➖ N/A · ❌ not fetchable (see reason).
 
-## Template versioning (same machinery as /connector-build)
+## Template versioning (same machinery as /connector-build-execute)
 
 The template carries a `Template version` (Metadata) and a `## Template changelog` at the bottom; every coverage doc records the `Template version` it was last reconciled to. **Consuming (every run):** Step 0 reconciles forward via the changelog. **Changing the template** (add/rename/remove a section or required rule): bump the template's `Template version` to today's date **and** add one concise changelog line. This lets any coverage doc diff itself against the template and catch up — so "as of which timestamp was this service covered" is always answerable.
 
@@ -158,6 +158,6 @@ The template carries a `Template version` (Metadata) and a `## Template changelo
 - `…/generic-api/coverage/README.md` — **central status table of ALL tested services** (🟢/🟠/🔴 + notes, one row per service, linking each coverage doc). **Every run must add/update its service's row here** so there's one place to see which services work against the generic connector.
 - `…/generic-api/coverage/<service>.md` — **one per service** (this skill). What's been tested for that service.
 - `…/generic-api/coverage/<service>-user-notes.md` — **client-facing brief, one per service.** Short, plain-language, sendable as-is: what's supported, what isn't, the gotchas, and a **paste-ready JSON config snippet** of the fetchable endpoints (what the user enters in Scratch) + a note on per-endpoint `overrides` options. The coverage doc's "User notes" section just points here.
-- `…/generic-api/PLAN.md` — connector-wide **active** improvement plans (only the GENERAL candidates promoted from coverage docs). Reuses the /connector-build PLAN flow.
+- `…/generic-api/PLAN.md` — connector-wide **active** improvement plans (only the GENERAL candidates promoted from coverage docs). Reuses the /connector-build-execute PLAN flow.
 - `…/generic-api/ARCHIVE.md` — implemented plans, moved out of PLAN.md once shipped.
 - [service-coverage-template.md](service-coverage-template.md) — the per-service template (this skill folder). Improve it here; bump its version when you do.

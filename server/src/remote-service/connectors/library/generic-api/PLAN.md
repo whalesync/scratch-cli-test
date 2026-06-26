@@ -2,7 +2,7 @@
 
 Connector-wide improvement plans promoted from per-service coverage docs (`coverage/<service>.md`) through the **generality gate**. Only **GENERAL** candidates live here — gaps expected to recur across a meaningful share of services. Service-specific quirks stay declared UNSUPPORTED in their coverage doc and never reach this file.
 
-Flow (same as `/connector-build`): a candidate enters as `FOR_REVIEW`. A human approves → `APPROVED` → built → moved to `ARCHIVE.md`. **Every item leads with a concrete before/after example**; the prose is secondary.
+Flow (same as `/connector-build-execute`): a candidate enters as `FOR_REVIEW`. A human approves → `APPROVED` → built → moved to `ARCHIVE.md`. **Every item leads with a concrete before/after example**; the prose is secondary.
 
 Status: `FOR_REVIEW` (awaiting human) · `APPROVED` (build it) · `BLOCKED`.
 

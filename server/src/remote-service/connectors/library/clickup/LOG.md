@@ -1,5 +1,5 @@
 <!-- ⛔ DO NOT DELETE. Human-readable activity log for the ClickUp connector build,
-     maintained by /connector-build. One line per operation; tags:
+     maintained by /connector-build-execute. One line per operation; tags:
      [Service UI] [Service API] [Scratch CLI] [Manual Edits]. Secrets masked. -->
 
 # ClickUp — Connector Build Activity Log

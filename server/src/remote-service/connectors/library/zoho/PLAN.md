@@ -1,4 +1,4 @@
-<!-- Maintained by /connector-build. Active, atomic plans for the Zoho CRM connector.
+<!-- Maintained by /connector-build-execute. Active, atomic plans for the Zoho CRM connector.
      Each item carries a status: APPROVED (cleared to execute) or FOR_REVIEW (needs human sign-off).
      When an item ships, append it to ARCHIVE.md and delete it from here so this file stays short. -->
 

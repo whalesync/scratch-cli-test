@@ -94,7 +94,7 @@ read back through the direct API. `describe.skip` when the var is unset, so CI s
    `CLICKUP_API_TOKEN: "${INTEGRATION_TEST_CLICKUP_API_TOKEN}"`, and create that masked GitLab CI/CD
    variable. Leave the custom-fields fixture var unset so only Tier 1 runs in CI.
 8. **Flip the docs**: `clickup/STATE.md` Integration-tests section → "Runs in CI pipeline: ✅"; the
-   aggregate `docs/connector-build.md` ClickUp row → `IT ✅` ✅.
+   aggregate `connector-build/existing-connectors.md` ClickUp row → `IT ✅` ✅.
 
 ## Coverage: before → after
 

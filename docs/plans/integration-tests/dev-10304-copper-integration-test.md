@@ -114,7 +114,7 @@ Add to the post-deploy job in `gitlab-ci/stages/06-environment-tests.yml`:
     COPPER_EMAIL: "${INTEGRATION_TEST_COPPER_EMAIL}"
 ```
 and create those masked GitLab CI/CD variables. Then flip `copper/STATE.md` Integration-tests →
-"Runs in CI ✅" and the `docs/connector-build.md` Copper row → `IT 📄 ✅` / `IT ✅ ✅`.
+"Runs in CI ✅" and the `connector-build/existing-connectors.md` Copper row → `IT 📄 ✅` / `IT ✅ ✅`.
 
 ## Setup doc — `server/test/integration/copper-setup.md`
 

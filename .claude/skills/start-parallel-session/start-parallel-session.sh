@@ -5,7 +5,7 @@
 # Finds the lowest free session index N (≥1), starts this session's own Redis
 # (container on 6379+N) and a monolith server (port 3010+N) running THIS worktree's
 # branch code with its own BullMQ queue + worker. Postgres / scratch-git / gstack
-# stay shared. Implements Option A of docs/connector-build-parallel.md.
+# stay shared. Implements Option A of .claude/skills/start-parallel-session/parallel-sessions.md.
 #
 # Ports: server = 3010+N, redis = 6379+N, redis container = spinner-redis-<N>.
 #

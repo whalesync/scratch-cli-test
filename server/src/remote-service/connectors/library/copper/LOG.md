@@ -1,4 +1,4 @@
-<!-- Human-readable activity log for the Copper connector (see /connector-build skill).
+<!-- Human-readable activity log for the Copper connector (see /connector-build-execute skill).
      STATE.md = what's covered; this file = what was done, in order. Append one line
      per operation. Coverage prior to 2026-06-10 predates this log and lives in STATE.md. -->
 
@@ -73,7 +73,7 @@ Per-entity CRUD for the 4 remaining entities (Leads/Opportunities/Tasks/Projects
 
 ## 2026-06-15 — add Pipelines + Pipeline Stages (read-only reference) + Opportunity pipeline FKs
 
-Scoped /connector-build pass (pipelines + FK wiring):
+Scoped /connector-build-execute pass (pipelines + FK wiring):
 [17:05:00] [Research] Cold-read copper-connector/types/api-client/json-schema; mirrored Zoho's read-only-reference pattern (`disabledCreates/Updates/Deletes/Reason` on the TablePreview + special-cased fetch/pull).
 [17:08:00] [Manual Edits] Added read-only reference entities `pipelines` + `pipeline_stages` (copper-types.ts), `listReferenceEntities` GET helper (copper-api-client.ts), reference schemas + `buildCopperReferenceTableSpec` (copper-json-schema.ts), and listTables/fetch/pull/pullByIds wiring + read-only write guard (copper-connector.ts). Wired `Opportunities.pipeline_id`→pipelines, `pipeline_stage_id`→pipeline_stages FKs.
 [17:12:00] [Scratch CLI] yarn jest copper (33 pass, updated listTables test) + eslint clean.

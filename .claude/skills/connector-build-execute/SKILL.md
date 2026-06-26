@@ -1,10 +1,10 @@
 ---
-name: connector-build
-description: The autonomous, from-zero process for building AND finishing a Scratch connector — drive the external service in a gstack browser on one side, the scratchmd CLI on the other, confirming EVERY operation with the CLI and the service's own API. `/connector-build <name>` can start from nothing: scaffold the connector code, provision a test account on the service, connect, pull, and exercise every operation — pausing ONLY for human-required gates (service login, credit-card/billing for a trial, captcha/2FA, email verification). Resumable at any stage via a per-connector STATE.md coverage doc. Per entity for static-schema services, per field-type for dynamic-schema services; hunts connector-specific edge cases and tracks covered/uncovered operations.
+name: connector-build-execute
+description: The autonomous, from-zero process for building AND finishing a Scratch connector — drive the external service in a gstack browser on one side, the scratchmd CLI on the other, confirming EVERY operation with the CLI and the service's own API. `/connector-build-execute <name>` can start from nothing: scaffold the connector code, provision a test account on the service, connect, pull, and exercise every operation — pausing ONLY for human-required gates (service login, credit-card/billing for a trial, captcha/2FA, email verification). Resumable at any stage via a per-connector STATE.md coverage doc. Per entity for static-schema services, per field-type for dynamic-schema services; hunts connector-specific edge cases and tracks covered/uncovered operations.
 user-invocable: true
 ---
 
-# connector-build
+# connector-build-execute
 
 A **process** that takes a connector from **zero → finished**, self-driving as far as it can. Two sides:
 
@@ -42,14 +42,14 @@ Scale effort to the surface, not to your patience. A 15-field-type service means
 
 ## Entry points & the autonomy contract
 
-- `/connector-build <name>` — start from **nothing**: create the connector folder + boilerplate, provision/select a test account, create the connection, pull, and run the test matrix.
-- `/connector-build <name> [account: <id|creds|"use the open browser session">]` — same, but use a provided/known account instead of creating one.
-- `/connector-build <name> resume` — read `STATE.md` and continue.
+- `/connector-build-execute <name>` — start from **nothing**: create the connector folder + boilerplate, provision/select a test account, create the connection, pull, and run the test matrix.
+- `/connector-build-execute <name> [account: <id|creds|"use the open browser session">]` — same, but use a provided/known account instead of creating one.
+- `/connector-build-execute <name> resume` — read `STATE.md` and continue.
 
-**Login is automated — you do NOT type credentials.** Authenticate via the saved gstack session (`$B state load <connector>`) or, if it expired, the connector's login script (`server/src/remote-service/connectors/library/<connector>/test/login.sh`), which reads the password from `.env.connector-build` and enters it **without you ever seeing it**. Provisioning + login wiring are done once, up front, by [`/prepare-connector-build <connector>`](/.claude/skills/prepare-connector-build/SKILL.md). Full model: [docs/connector-test-accounts.md](/docs/connector-test-accounts.md). These are **disposable, company-owned QA accounts** on `testing@whalesync.com` with no real data — authenticating them is routine, not sensitive.
+**Login is automated — you do NOT type credentials.** Authenticate via the saved gstack session (`$B state load <connector>`) or, if it expired, the connector's login script (`server/src/remote-service/connectors/library/<connector>/test/login.sh`), which reads the password from `.env.connector-build` and enters it **without you ever seeing it**. Provisioning + login wiring are done once, up front, by [`/connector-build-prepare <connector>`](/.claude/skills/connector-build-prepare/SKILL.md). Full model: [connector-build/test-accounts-mechanism.md](/connector-build/test-accounts-mechanism.md). These are **disposable, company-owned QA accounts** on `testing@whalesync.com` with no real data — authenticating them is routine, not sensitive.
 
 **Drive yourself end-to-end. PAUSE only for gates a human must clear:**
-1. **An emailed confirmation** — a verification link or code sent to `testing@whalesync.com` that the flow requires (you can't read that mailbox). This is the one routine pause.
+1. **An emailed confirmation** — a verification link or code. **You CAN read it yourself** via the **`gmail-whalesync` MCP** (`search_emails` + `read_email`), which is connected to the work mailbox that receives the `testing@whalesync.com` forwards — so this is normally **not** a pause. **If `mcp__gmail-whalesync__*` isn't connected**, prompt the developer to install it first: run `.claude/skills/connector-build-prepare/gmail-setup` (OAuth JSON in **1Password → "Gmail Auto-Label Desktop OAuth"**), then restart the session. Only pause if no email arrives or it can't be parsed. (Use `gmail-whalesync`, NOT `claude_ai_Gmail` — the latter redacts magic-link tokens. See the prepare skill's Email-gate section.)
 2. **Credit card / billing** for a trial or paid signup.
 3. **Captcha** (or a 2FA prompt the login script can't pass).
 4. An explicitly **destructive** confirmation (deleting a real account, mass-deleting real data).
@@ -77,27 +77,35 @@ Do this **before** pulling/pushing anything. The browser is not optional: create
 - **gstack `$B`** (default) — an **isolated headless browser per agent**. Always use this unless told otherwise. It's the default because parallel/autonomous runs need isolation: each agent gets its own browser, zero collisions.
 - **Claude-for-Chrome extension** (`mcp__claude-in-chrome__*`) — **only when the user explicitly requests it** ("use the Chrome extension"). It drives the user's **real, logged-in Chrome** (handy for an attended single run that needs existing logins), but it's a **shared** browser with no hard isolation. The user must connect it first via `/chrome` (the agent can't trigger it). **CRITICAL — every time you use it: create your OWN tab with `tabs_create_mcp` and drive only that tab id.** Never `tabs_context_mcp createIfEmpty` and reuse whatever tab is there — two agents race onto the same tab and stomp each other (booking.com → Airbnb mid-action is the symptom). Because there's no real isolation, **don't pick it for parallel runs** — those stay on gstack.
 
+**Browser fallback — if one driver doesn't work, SWITCH to the other; never let a flaky browser end the run.** The two are interchangeable for driving the service. If **gstack** misbehaves — won't start, `$B` commands time out, or the page keeps resetting to `about:blank` — first try the gstack recovery below; if it still won't cooperate, **switch to the Chrome extension** (`mcp__claude-in-chrome__*`; the user must have connected it via `/chrome` — if they haven't, ask them to). Conversely, if the **Chrome extension** is unavailable or unreliable, fall back to **gstack**. Only STOP for a human when **both** are unusable. (Trade-off reminder: the Chrome extension is a shared, non-isolated browser — fine for an attended single run, not for parallel runs.)
+
+**gstack recovery / gotchas (learned the hard way):**
+- **Run a SINGLE clean daemon.** Two daemons (e.g. a stray `--headed` attempt left running) cause `existing daemon has different config (proxy/headed mismatch)` and **every command is refused**. Reset: `pkill -f "gstack/browse/src/server.ts"`, `rm -f ~/.gstack/chromium-profile/SingletonLock ~/.gstack/chromium-profile/SingletonSocket`, then `$B connect`.
+- **Prefer JS form-submit over `$B click`.** `$B click` can hang and reset the page to `about:blank`; `$B js "document.querySelector('button[type=submit]').click()"` (or `form.requestSubmit()`) is far more reliable. `$B fill` for inputs is fine.
+- **Use CSS selectors, not `@e` snapshot refs**, for fill/click — refs go stale across the SPA re-renders these signup/login flows do.
+- **Headed mode needs `--headed` on EVERY command** (`$B goto … --headed`, `$B status --headed`, `$B focus --headed`), not just `connect` — a headed daemon refuses plain commands. `$B focus --headed` brings the window to the foreground.
+
 **gstack path (default):**
 1. Launch/verify the gstack browser: `$B connect` then `$B status` → must show `Mode: headed`.
 2. **Restore the saved session:** `$B state load <connector>`, then `$B goto` the service and `snapshot` — confirm you are **logged in** (authenticated UI, not a login wall).
-3. **If you hit a login wall**, run the connector's login script — `bash server/src/remote-service/connectors/library/<connector>/test/login.sh` — which logs in from `.env.connector-build` **without you seeing the password** and re-saves the session; then re-snapshot. (No login script / no session yet? The connector hasn't been prepared — run [`/prepare-connector-build <connector>`](/.claude/skills/prepare-connector-build/SKILL.md) first.)
+3. **If you hit a login wall**, run the connector's login script — `bash server/src/remote-service/connectors/library/<connector>/test/login.sh` — which logs in from `.env.connector-build` **without you seeing the password** and re-saves the session; then re-snapshot. (No login script / no session yet? The connector hasn't been prepared — run [`/connector-build-prepare <connector>`](/.claude/skills/connector-build-prepare/SKILL.md) first.)
 
 **Chrome-extension path (only if the user asked):** load the tools via ToolSearch → `tabs_create_mcp` to make **your own** tab → `navigate` it to the service → `read_page`/`screenshot` to confirm you're **logged in**. Drive only that tab id for the rest of the run.
 
-**If the browser won't start, the service won't load, or login can't be automated** (the login script hits an emailed confirmation / captcha and the user isn't available), **STOP and exit early**: post a one-line warning naming exactly what failed (e.g. "Browser preflight failed: gstack headed mode won't start" / "Acme login needs an emailed code — testing@whalesync.com"), `/read` it, and do not proceed with a partial CLI-only pass. Resume once the gate clears.
+**If the browser won't start or the service won't load: switch drivers first** (gstack ⇄ Chrome extension, per the fallback rule above) before giving up. Only when **both** browsers are unusable, or **login can't be automated** (the login script hits an emailed confirmation / captcha and the user isn't available), **STOP and exit early**: post a one-line warning naming exactly what failed (e.g. "Browser preflight failed: gstack headed mode won't start" / "Acme login needs an emailed code — testing@whalesync.com"), `/read` it, and do not proceed with a partial CLI-only pass. Resume once the gate clears.
 
 ---
 
 ## Step 0 — Resume & account detection (ALWAYS run first)
 
-**First task — env-var preflight (fail fast).** Before anything else, confirm the test-account credentials exist. Look up the connector's row in [`docs/connector-candidates.md`](/docs/connector-candidates.md) **Test env vars** column, then check they're present in `.env.connector-build`:
+**First task — env-var preflight (fail fast).** Before anything else, confirm the test-account credentials exist. Look up the connector's row in [`connector-build/provisioned-connectors.md`](/connector-build/provisioned-connectors.md) **Test env vars** column, then check they're present in `.env.connector-build`:
 ```bash
-H=.claude/skills/prepare-connector-build/lib/credential-helpers.sh
+H=.claude/skills/connector-build-prepare/lib/credential-helpers.sh
 bash $H require CB_<SVC>_API_TOKEN [CB_<SVC>_...]   # exits non-zero, naming any missing var
 ```
-If the file or the vars are **missing**, **stop immediately**: post a one-line message that the connector isn't prepared — run [`/prepare-connector-build <connector>`](/.claude/skills/prepare-connector-build/SKILL.md) (or copy the latest `.env.connector-build` from the 1Password note) — `/read` it, and wait. Don't start a run you can't authenticate.
+If the file or the vars are **missing**, **stop immediately**: post a one-line message that the connector isn't prepared — run [`/connector-build-prepare <connector>`](/.claude/skills/connector-build-prepare/SKILL.md) (or copy the latest `.env.connector-build` from the 1Password note) — `/read` it, and wait. Don't start a run you can't authenticate.
 
-**Then load the cross-connector playbook:** read [`docs/connector-build.md`](/docs/connector-build.md) — the accumulated catalog of tricks and problems seen on prior connectors — so you start already knowing what to watch for. You'll append to it in Stage E.
+**Then load the cross-connector playbook:** read [`connector-build/existing-connectors.md`](/connector-build/existing-connectors.md) — the accumulated catalog of tricks and problems seen on prior connectors — so you start already knowing what to watch for. You'll append to it in Stage E.
 
 1. **Pick the connector** + folder `server/src/remote-service/connectors/library/<connector>/`; service constant in `service-constants.ts`.
 2. **Read `STATE.md`.** Exists → it is the state (resume at first `⬜`); also re-read the **Test account** section so you reuse the same account. Missing → create it from [coverage-template.md](coverage-template.md) once you've classified + picked an account.
@@ -128,7 +136,7 @@ Read `listTables()`: hardcoded entity list ⇒ **static**; tables discovered fro
 - **Dynamic / open** (Postgres, Supabase, Airtable, Notion): user-defined objects, one endpoint pattern → **test field-types**; build one table with every type and round-trip each.
 - **Mixed** (HubSpot, Copper, Pipedrive, Attio): standard entities **plus** custom objects/fields → do both. Mark `Type: STATIC · custom fields supported (mixed)`.
 
-**Where each schema comes from (decide per object family):** **dynamic** data (user-defined objects/fields) → build the schema from the service's **discovery endpoint** at runtime; **static** data (fixed system entities/fields with **no** schema/describe endpoint) → enumerate the fields from the **API docs / OpenAPI** and **hardcode** them in the connector (the sanctioned exception to "discover dynamically"). If a discovery endpoint already returns the static fields *alongside* the dynamic ones, use that one endpoint for both; only hardcode when the static schema is **not exposed by any endpoint**. A static entity whose generic builder emits only an `id` column (no field metadata) is the tell that this enumeration was skipped. See [docs/connector-build.md → Schema & structure](/docs/connector-build.md).
+**Where each schema comes from (decide per object family):** **dynamic** data (user-defined objects/fields) → build the schema from the service's **discovery endpoint** at runtime; **static** data (fixed system entities/fields with **no** schema/describe endpoint) → enumerate the fields from the **API docs / OpenAPI** and **hardcode** them in the connector (the sanctioned exception to "discover dynamically"). If a discovery endpoint already returns the static fields *alongside* the dynamic ones, use that one endpoint for both; only hardcode when the static schema is **not exposed by any endpoint**. A static entity whose generic builder emits only an `id` column (no field metadata) is the tell that this enumeration was skipped. See [connector-build/existing-connectors.md → Schema & structure](/connector-build/existing-connectors.md).
 
 ### Check for prior art in Whalesync (the legacy product) — research, don't copy
 Whalesync (this company's older sync product) may already have a connector for this service. **If it does, research it for domain knowledge** — the entity surface, field quirks, pagination, rate limits, and gotchas it learned the hard way are a real head start. But treat it as **reference, never a template**, with two hard caveats:
@@ -172,9 +180,11 @@ Do this autonomously; only stop if a real API decision needs the user.
 
 ## Stage A0 — Provision the test account
 
-**Provisioning is normally [`/prepare-connector-build <connector>`](/.claude/skills/prepare-connector-build/SKILL.md)'s job, done up front** — registering the account, generating the password, storing creds in `.env.connector-build`, and building the login script. If you're here, the connector wasn't prepared; prefer running that skill. If you provision inline, follow the same rules:
+**First, check for a provisioning record.** If **`connector-build/provisioning-notes/<service>.md`** exists, the account was already provisioned by `/connector-build-prepare`. Do three things: (1) **copy it to the connector's library folder as `provisioning-notes.md`** (`server/src/remote-service/connectors/library/<service>/provisioning-notes.md`) — keep it there, it's the reference if the account ever needs re-provisioning; (2) **lift only build-useful details into `STATE.md`** (creds location, validated endpoint, schema/CRUD quirks) — **don't** copy the whole provisioning doc in, since `STATE.md` is read on every build; (3) **`git rm` the central `connector-build/provisioning-notes/<service>.md`**. A service lives in exactly one place: "provisioned, awaiting build" (central `provisioning-notes/`) → or "building/built" (its own folder, holding `STATE.md` + `provisioning-notes.md`). The index `connector-build/provisioned-connectors.md` stays the catalog.
 
-1. In the gstack browser, go to the service's **sign-up** page and fill the signup form autonomously, using **`testing@whalesync.com`** (default test email) + a company name. **At the password step, generate + enter the password via the credential helper so you never see it:** `bash .claude/skills/prepare-connector-build/lib/credential-helpers.sh gen-password CB_<SVC>_PASSWORD`, then `enter-secret CB_<SVC>_PASSWORD '<selector>'`.
+**Provisioning is normally [`/connector-build-prepare <connector>`](/.claude/skills/connector-build-prepare/SKILL.md)'s job, done up front** — registering the account, generating the password, storing creds in `.env.connector-build`, and building the login script. If you're here and there's no provisioning record, the connector wasn't prepared; prefer running that skill. If you provision inline, follow the same rules:
+
+1. In the gstack browser, go to the service's **sign-up** page and fill the signup form autonomously, using **`testing@whalesync.com`** (default test email) + a company name. **At the password step, generate + enter the password via the credential helper so you never see it:** `bash .claude/skills/connector-build-prepare/lib/credential-helpers.sh gen-password CB_<SVC>_PASSWORD`, then `enter-secret CB_<SVC>_PASSWORD '<selector>'`.
 2. **PAUSE only** for an **emailed confirmation** (link/code to `testing@whalesync.com`) the flow requires — or a card/captcha if one appears — with a one-line ask + `/read`. Resume after. Everything else, do autonomously.
 3. Once in, capture: account/org id, login email, plan + **trial end date**, and where API credentials are generated. Store secrets with the helper's `set-secret` (no echo).
 4. **Record it in the coverage doc immediately** — the **Test account** section (no API key, just where to find it) and, if it's a paid trial, the **TRIAL — CANCEL BY <date>** banner at the very top. This is how nobody gets surprise-charged.
@@ -284,7 +294,7 @@ Declarative: `x-scratch-foreign-key: { linkedTableId: "<table>" }`. Test both di
 
 This is Pass 2's job. Document every quirk in **two** places:
 1. **`STATE.md → Edge cases`** — specific to *this* connector.
-2. **[`docs/connector-build.md`](/docs/connector-build.md)** — the **cross-connector playbook**. Append a short entry (service · the trick/problem · how it surfaced · what to do) so the next connector's run starts forewarned. You read this file at Step 0; grow it every run — that compounding catalog is the point.
+2. **[`connector-build/existing-connectors.md`](/connector-build/existing-connectors.md)** — the **cross-connector playbook**. Append a short entry (service · the trick/problem · how it surfaced · what to do) so the next connector's run starts forewarned. You read this file at Step 0; grow it every run — that compounding catalog is the point.
 
 **Auto-add vs confirm-first:**
 - A **simple, concrete edge case** (a specific field/behavior on this connector) → **add it automatically** to both files.
@@ -329,7 +339,7 @@ Run this **last**, only once everything else is green. All testing is done with 
 the **post-deploy CI job** so it runs on every merge to master and catches connector/API drift. This
 is the connector's regression net; the manual CLI round-trips prove it works *once*, the integration
 test proves it *keeps* working. (DEV-10304 is the umbrella; the cross-connector status lives in the
-**IT 📄 / IT ✅** columns of [`docs/connector-build.md`](/docs/connector-build.md), and each connector's
+**IT 📄 / IT ✅** columns of [`connector-build/existing-connectors.md`](/connector-build/existing-connectors.md), and each connector's
 STATE.md has an **Integration tests** section.)
 
 Build it like the references — `notion-connector.spec.ts` (read-paths + snapshot) and
@@ -351,7 +361,7 @@ Build it like the references — `notion-connector.spec.ts` (read-paths + snapsh
    This is what lets a brand-new dedicated account be stood up reproducibly.
 5. **Wire CI + flip the docs.** Add `<KEY>: "${INTEGRATION_TEST_<SVC>_*}"` to the post-deploy job in
    `gitlab-ci/stages/06-environment-tests.yml`, create the masked GitLab variable, then update the
-   STATE.md Integration-tests section and the `docs/connector-build.md` IT columns.
+   STATE.md Integration-tests section and the `connector-build/existing-connectors.md` IT columns.
 
 ---
 
@@ -378,7 +388,7 @@ Re-confirm with a pull + a service-API check before resuming. Log a reproducible
 - **`server/src/remote-service/connectors/library/<connector>/LOG.md`** — *this* connector's human-readable **activity log**: one line per operation actually performed, so a human can review exactly what was done. One per connector. (What was done, step by step — see [The activity log](#the-activity-log--logmd).)
 - **`server/src/remote-service/connectors/library/<connector>/PLAN.md`** — *this* connector's **active plans**: atomic, concise plan items for substantial changes, each marked `APPROVED` or `FOR_REVIEW`, awaiting or cleared for execution. One per connector. (What we're about to change — see [The plan docs](#the-plan-docs--planmd--archivemd).)
 - **`server/src/remote-service/connectors/library/<connector>/ARCHIVE.md`** — **implemented** plans, moved here out of PLAN.md once they ship so PLAN stays short. One per connector. **Write-mostly history — not read in the normal loop; open it only to revisit how a past change was made (e.g. one that later turns out problematic).** (What we already changed.)
-- **[`docs/connector-build.md`](/docs/connector-build.md)** — the **cross-connector playbook**: tricks and problems seen across *all* connectors, so each new run starts forewarned. Read at Step 0, appended in Stage E. One global file. It also holds the **Connector summary table** (per-connector feature support) — **update the relevant cell whenever a connector's auth/feature support changes, and add a row for every connector you review.**
+- **[`connector-build/existing-connectors.md`](/connector-build/existing-connectors.md)** — the **cross-connector playbook**: tricks and problems seen across *all* connectors, so each new run starts forewarned. Read at Step 0, appended in Stage E. One global file. It also holds the **Connector summary table** (per-connector feature support) — **update the relevant cell whenever a connector's auth/feature support changes, and add a row for every connector you review.**
 
 ## The coverage doc — `STATE.md`
 

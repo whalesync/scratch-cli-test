@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# credential-helpers.sh — secret-handling for /prepare-connector-build and /connector-build.
+# credential-helpers.sh — secret-handling for /connector-build-prepare and /connector-build-execute.
 #
 # THE WHOLE POINT: these helpers read/generate secrets and hand them straight to the
 # browser (gstack `$B`). They NEVER print a secret value to stdout/stderr. So an agent
@@ -22,8 +22,8 @@ set -euo pipefail
 
 cb_repo_root()   { git rev-parse --show-toplevel; }
 # Paths default to the repo root; override with CB_ENV_FILE / CB_SAMPLE_FILE (used in tests).
-cb_env_file()    { echo "${CB_ENV_FILE:-$(cb_repo_root)/.env.connector-build}"; }
-cb_sample_file() { echo "${CB_SAMPLE_FILE:-$(cb_repo_root)/.env.connector-build.sample}"; }
+cb_env_file()    { echo "${CB_ENV_FILE:-$(cb_repo_root)/connector-build/.env.connector-build}"; }
+cb_sample_file() { echo "${CB_SAMPLE_FILE:-$(cb_repo_root)/connector-build/.env.connector-build.sample}"; }
 
 # Locate the gstack browse binary ($B), repo-local first, then $HOME.
 cb_browse() {
@@ -93,7 +93,8 @@ cb_enter_secret_into_field() {
   cb_load_env || return 1
   : "${!var:?missing $var in env file}"
   local B sel; B="$(cb_browse)"
-  for sel in "$@"; do "$B" fill "$sel" "${!var}" >/dev/null; done
+  # CB_BROWSE_FLAGS lets the caller target a non-default daemon, e.g. CB_BROWSE_FLAGS=--headed
+  for sel in "$@"; do "$B" fill "$sel" "${!var}" ${CB_BROWSE_FLAGS:-} >/dev/null; done
   echo "entered $var into $# field(s) (value hidden)"
 }
 
@@ -101,7 +102,7 @@ cb_enter_secret_into_field() {
 cb_type_secret() {
   local var="$1" B; cb_load_env || return 1
   : "${!var:?missing $var in env file}"
-  B="$(cb_browse)"; "$B" type "${!var}" >/dev/null
+  B="$(cb_browse)"; "$B" type "${!var}" ${CB_BROWSE_FLAGS:-} >/dev/null
   echo "typed $var into focused element (value hidden)"
 }
 

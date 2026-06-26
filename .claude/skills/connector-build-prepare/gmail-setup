@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#
+# gmail-setup — connect the work Gmail account (ivan@whalesync.com) as a local, project-scoped
+# Gmail MCP server for THIS repo. Hardcoded to label "whalesync"; only asks for the OAuth secret.
+#
+# End to end:
+#   1. asks for the OAuth client JSON (the "secret") — in 1Password under
+#      "Gmail Auto-Label Desktop OAuth" — paste it, or pass a file path as $1
+#   2. writes it to ~/.gmail-mcp/whalesync/gcp-oauth.keys.json
+#   3. runs the one-time OAuth sign-in (you complete it in the browser) -> credentials.json
+#   4. registers "gmail-whalesync" at LOCAL scope in this repo (off everywhere else)
+#
+# Port note: the package's `auth` flow uses a localhost OAuth callback hard-coded to port 3000
+# (no override). The script requires that port to be FREE and bails early if not. The MCP server
+# at runtime never binds it, so normal operation is unaffected. Nothing is installed locally —
+# both auth and the server run via `npx -y`.
+#
+# Re-runnable.
+set -euo pipefail
+
+LABEL="whalesync"
+SRV="gmail-whalesync"
+AUTH_PORT=3000
+PKG="@gongrzhe/server-gmail-autoauth-mcp"
+
+# project root = three levels up from this script (.claude/skills/connector-build-prepare/gmail-setup)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJ="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+DIR="$HOME/.gmail-mcp/$LABEL"
+OAUTH_PATH="$DIR/gcp-oauth.keys.json"
+CRED_PATH="$DIR/credentials.json"
+
+NPX="$(command -v npx || true)"
+NODE="$(command -v node || true)"
+
+bold(){ printf '\033[1m%s\033[0m\n' "$1"; }
+die(){ printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
+
+command -v claude >/dev/null || die "the 'claude' CLI is not on PATH"
+[ -n "$NPX" ] && [ -n "$NODE" ] || die "node/npx not found on PATH"
+
+# ---- 1. the only input: the OAuth client secret ------------------------------
+bold "== Connect gmail-whalesync (project: $PROJ) =="
+echo "The OAuth client JSON is in 1Password under \"Gmail Auto-Label Desktop OAuth\""
+echo "(the {\"installed\":{...}} blob). Copy it from there, or pass a file path as \$1."
+mkdir -p "$DIR"
+if [ -n "${1:-}" ]; then
+  [ -f "$1" ] || die "no such file: $1"
+  cp "$1" "$OAUTH_PATH"
+else
+  bold "Paste the OAuth client JSON from 1Password (\"Gmail Auto-Label Desktop OAuth\"), then press Ctrl-D:"
+  cat > "$OAUTH_PATH"
+fi
+"$NODE" -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$OAUTH_PATH" \
+  || die "that file is not valid JSON"
+chmod 600 "$OAUTH_PATH"
+echo "wrote $OAUTH_PATH"
+
+# ---- 2. require the auth port to be free -------------------------------------
+if lsof -nP -iTCP:"$AUTH_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Port $AUTH_PORT is in use by:"
+  lsof -nP -iTCP:"$AUTH_PORT" -sTCP:LISTEN
+  die "free port $AUTH_PORT (the OAuth callback is hard-coded to it) and re-run.
+     e.g.  lsof -ti tcp:$AUTH_PORT -sTCP:LISTEN | xargs kill"
+fi
+
+# ---- 3. one-time browser auth ------------------------------------------------
+bold "Launching browser auth on http://localhost:$AUTH_PORT — sign in as ivan@whalesync.com and approve."
+echo "(If you see an 'unverified app' screen: Advanced -> Go to <project> (unsafe), or set the"
+echo " OAuth consent screen to Internal in Google Cloud.)"
+GMAIL_OAUTH_PATH="$OAUTH_PATH" GMAIL_CREDENTIALS_PATH="$CRED_PATH" "$NPX" -y "$PKG" auth
+[ -f "$CRED_PATH" ] || die "auth did not produce $CRED_PATH"
+chmod 600 "$CRED_PATH"
+echo "token written to $CRED_PATH"
+
+# ---- 4. register the MCP server at local scope -------------------------------
+bold "Registering '$SRV' at local scope in $PROJ..."
+( cd "$PROJ" && claude mcp remove "$SRV" --scope local >/dev/null 2>&1 || true )
+( cd "$PROJ" && claude mcp add "$SRV" --scope local \
+    --env GMAIL_OAUTH_PATH="$OAUTH_PATH" \
+    --env GMAIL_CREDENTIALS_PATH="$CRED_PATH" \
+    -- "$NPX" -y "$PKG" )
+
+bold "Done."
+echo "Verify:  claude mcp list | grep -i gmail   (run from $PROJ)"
+echo "Then restart Claude Code here (reload the VS Code window) to pick it up."
+echo
+echo "Secret rotation: re-run this script with the new client JSON to overwrite + re-mint the token."
