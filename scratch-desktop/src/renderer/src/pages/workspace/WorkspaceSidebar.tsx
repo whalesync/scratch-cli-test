@@ -39,8 +39,8 @@ interface WorkspaceSidebarProps {
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string) => void;
   workspacePath: string | null;
-  /** Refetch the workspace (and its dataFolders) — used by the Scratch section after a create/delete (DEV-10424). */
-  invalidateWorkspaceLevelData: () => void;
+  /** Refetch the workspace (and its dataFolders) — used by the Scratch section after a create/delete (DEV-10583). */
+  onScratchFoldersChanged: () => void;
   /** Start a folder-scoped pull via the workspace's background tracker (DEV-10501). */
   onRequestFolderPull?: (options: StartPullOptions) => void;
   onOpenConnectionsPanel?: () => void;
@@ -69,7 +69,7 @@ export function WorkspaceSidebar({
   selectedFolderPath,
   onSelectFolder,
   workspacePath,
-  invalidateWorkspaceLevelData,
+  onScratchFoldersChanged,
   onRequestFolderPull,
   onOpenConnectionsPanel,
   connectionsPanelOpen,
@@ -164,7 +164,7 @@ export function WorkspaceSidebar({
                 </ButtonPrimaryLight>
               </Stack>
             )}
-            <ScratchFoldersSection workspace={workspace} onChanged={invalidateWorkspaceLevelData} />
+            <ScratchFoldersSection workspace={workspace} onChanged={onScratchFoldersChanged} />
             <FolderTree
               workspaceId={workspace.id}
               dataFolders={workspace.dataFolders ?? []}

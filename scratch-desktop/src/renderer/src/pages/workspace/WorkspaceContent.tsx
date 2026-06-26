@@ -36,6 +36,8 @@ interface WorkspaceContentProps {
   targetRecord?: { filename: string; trigger: string } | null;
   workspaceLevelDataInvalidationCounter: number;
   invalidateWorkspaceLevelData: () => void;
+  /** Refetch the workspace (and its `dataFolders`) after a scratch folder create/delete (DEV-10583). */
+  onScratchFoldersChanged: () => void;
   onConnectionsChanged?: () => void;
   /** Show pull/download progress after a connection-flow save starts pull jobs (DEV-10421). */
   onPullJobsStarted?: () => void;
@@ -87,6 +89,7 @@ export function WorkspaceContent({
   targetRecord,
   workspaceLevelDataInvalidationCounter,
   invalidateWorkspaceLevelData,
+  onScratchFoldersChanged,
   onConnectionsChanged,
   onPullJobsStarted,
   onRequestFolderPull,
@@ -330,7 +333,7 @@ export function WorkspaceContent({
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={handleSelectFolder}
         workspacePath={localPath}
-        invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
+        onScratchFoldersChanged={onScratchFoldersChanged}
         onRequestFolderPull={onRequestFolderPull}
         onOpenConnectionsPanel={handleOpenConnectionsPanel}
         connectionsPanelOpen={showConnectionsPanel}

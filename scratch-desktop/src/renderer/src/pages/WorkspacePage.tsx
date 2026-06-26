@@ -323,6 +323,16 @@ export function WorkspacePage() {
     setDataRefreshKey((current) => current + 1);
   }, []);
 
+  // The Scratch sidebar section (DEV-10424) renders from `workspace.dataFolders`, which only changes
+  // on a full workspace refetch — bumping the disk-backed data counter (`handleDataRefresh`) refreshes
+  // the connector grid/validation/review data but never re-runs `fetchWorkspace`, so a created or
+  // deleted scratch folder wouldn't appear/disappear until a window refocus. Silently refetch the
+  // workspace after a scratch folder create/delete so the section updates immediately (DEV-10583).
+  // `silent` avoids flashing the full-page loading spinner for what is just a sidebar edit.
+  const handleScratchFoldersChanged = useCallback(() => {
+    void fetchWorkspace({ silent: true });
+  }, [fetchWorkspace]);
+
   // Background pull tracker: owns the poll → local-download → refresh lifecycle so
   // it keeps running even when the progress modal is closed. The user can browse
   // and edit records while a pull works in the background. (DEV-10501)
@@ -903,6 +913,7 @@ export function WorkspacePage() {
         }
         workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
         invalidateWorkspaceLevelData={handleDataRefresh}
+        onScratchFoldersChanged={handleScratchFoldersChanged}
         onConnectionsChanged={() => void handlePullAndRefresh()}
         onPullJobsStarted={() => {
           // DEV-10421: a connection-flow save kicked off pull jobs. Attach the
