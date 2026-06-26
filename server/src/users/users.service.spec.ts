@@ -94,7 +94,8 @@ describe('UsersService — Whalesync shadow users', () => {
       {} as never, // emailService — unused
       workbookProvisioningService,
       {} as never, // experimentsService — unused by the shadow-user path (no auto-trial)
-      {} as never, // stripePaymentService — unused by the shadow-user path (no auto-trial)
+      // stripePaymentService — the shadow-user path assigns the Whalesync plan via this method.
+      { ensureWhalesyncPlanSubscription: jest.fn().mockResolvedValue(undefined) } as never,
     );
   });
 

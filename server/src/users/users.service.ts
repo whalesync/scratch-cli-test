@@ -274,6 +274,26 @@ export class UsersService {
   }
 
   /**
+   * Ensures a Scratch user exists for the given Whalesync user AND that the user's organization is on
+   * the internal Whalesync plan. Idempotent on `whalesyncUserId`. Delegates identity reconciliation to
+   * `resolveShadowUserFromWhalesync`, then assigns the Whalesync plan via
+   * `StripePaymentService.ensureWhalesyncPlanSubscription` (itself idempotent and best-effort: existing
+   * Free shadow users are self-healed onto the plan, and existing paid subscribers are left untouched).
+   *
+   * Both Whalesync internal entry points (`ensureSessionForWhalesyncUser` and `ensureWhalesyncUser`)
+   * funnel through here, so this is the single choke point where a shadow user is guaranteed the plan.
+   */
+  public async getOrCreateShadowUserFromWhalesync(
+    whalesyncUserId: string,
+    email: string,
+    name?: string,
+  ): Promise<UserCluster.User> {
+    const shadowUser = await this.resolveShadowUserFromWhalesync(whalesyncUserId, email, name);
+    await this.stripePaymentService.ensureWhalesyncPlanSubscription(shadowUser);
+    return shadowUser;
+  }
+
+  /**
    * Ensures a Scratch user exists for the given Whalesync user, reconciling against the existing
    * Scratch user base by email. Idempotent on `whalesyncUserId`. The incoming email is normalized
    * (lowercased + trimmed) to match the `user_email_normalize` DB trigger, then resolved in order:
@@ -299,7 +319,7 @@ export class UsersService {
    * PostHog identify is fired only for genuinely new users (cases 3–4); the adopt path (case 2) does
    * not re-identify, since the user already exists and was identified at native sign-up.
    */
-  public async getOrCreateShadowUserFromWhalesync(
+  private async resolveShadowUserFromWhalesync(
     whalesyncUserId: string,
     email: string,
     name?: string,

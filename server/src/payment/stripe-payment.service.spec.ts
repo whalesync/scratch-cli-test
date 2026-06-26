@@ -383,6 +383,80 @@ describe('StripePaymentService', () => {
     });
   });
 
+  describe('ensureWhalesyncPlanSubscription', () => {
+    it('creates a $0 Whalesync subscription when the organization has no active subscription', async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [] },
+      });
+      (mockDbService.client.subscription.create as jest.Mock).mockResolvedValue({ id: 'sub_whalesync' });
+
+      await service.ensureWhalesyncPlanSubscription(user);
+
+      expect(mockDbService.client.subscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: 'usr_shadow',
+            organizationId: 'org_shadow',
+            planType: ScratchPlanType.WHALESYNC_PLAN,
+            // Deterministic synthetic id (no Stripe) keyed on the organization.
+            stripeSubscriptionId: 'whalesync_org_shadow',
+            priceInDollars: 0,
+            stripeStatus: 'active',
+            cancelAt: null,
+            lastInvoicePaid: true,
+          }),
+        }),
+      );
+
+      // Expiry is effectively permanent (~100 years out).
+      const createCalls = (mockDbService.client.subscription.create as jest.Mock).mock.calls as Array<
+        [{ data: { expiration: Date } }]
+      >;
+      const createdExpiration = createCalls[0][0].data.expiration;
+      expect(createdExpiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
+
+      expect(mockPostHogService.trackSubscriptionChanged).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'usr_shadow' }),
+        ScratchPlanType.FREE_PLAN,
+        ScratchPlanType.WHALESYNC_PLAN,
+      );
+      expect(mockAuditLogService.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'create',
+          message: expect.stringContaining('Whalesync'),
+          entityId: 'sub_whalesync',
+        }),
+      );
+    });
+
+    it('is a no-op when the organization already has an active subscription (never downgrades a paid plan)', async () => {
+      const futureDate = new Date(Date.now() + 86400000);
+      const user = createMockUser({
+        id: 'usr_paid',
+        organizationId: 'org_paid',
+        organization: {
+          id: 'org_paid',
+          subscriptions: [{ id: 'sub_pro', userId: 'usr_paid', expiration: futureDate, stripeStatus: 'active' }],
+        },
+      });
+
+      await service.ensureWhalesyncPlanSubscription(user);
+
+      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
+      expect(mockAuditLogService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op when the user has no organization', async () => {
+      const user = createMockUser({ id: 'usr_noorg', organizationId: null, organization: null });
+
+      await service.ensureWhalesyncPlanSubscription(user);
+
+      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('generateCheckoutUrl', () => {
     it('should generate checkout URL for user without active subscription', async () => {
       const user = createMockUser({

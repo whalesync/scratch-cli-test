@@ -63,6 +63,13 @@ interface CurrentUserResponse {
   email?: string;
   clerkId: string | null;
   isAdmin: boolean;
+  subscription?: {
+    planType: string;
+    planDisplayName: string;
+    costUSD: number;
+    status: string;
+    canManageSubscription: boolean;
+  };
 }
 
 describeOrSkip('Whalesync shadow-user internal endpoints', () => {
@@ -143,6 +150,43 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
       const tokenRow = await prismaForDbRowAssertions.apiToken.findUnique({ where: { token: session.apiToken } });
       expect(tokenRow?.type).toBe('WHALESYNC_SESSION');
       expect(tokenRow?.userId).toBe(session.scratchUserId);
+    }
+  });
+
+  // 1c — shadow users are auto-subscribed to the internal Whalesync plan ($0, Pro-equivalent), the plan
+  // is visible on /users/current, "manage" is not offered (no real Stripe sub), and the assignment is
+  // idempotent: a second session does NOT create a duplicate subscription row (self-heal-safe).
+  it('auto-subscribes a shadow user to the Whalesync plan without creating duplicates', async () => {
+    const whalesyncUserId = randomUUID();
+    const email = `plan-${whalesyncUserId}@example.com`;
+    const session = await createSession(whalesyncUserId, email, 'Grace Hopper');
+
+    const whoami = await fetchCurrentUser(session.apiToken);
+    expect(whoami.status).toBe(200);
+    expect(whoami.data.subscription?.planType).toBe('WHALESYNC_PLAN');
+    expect(whoami.data.subscription?.planDisplayName).toBe('Whalesync');
+    expect(whoami.data.subscription?.costUSD).toBe(0);
+    expect(whoami.data.subscription?.status).toBe('valid');
+    // Internal plan: no real Stripe subscription behind it, so "manage" must not be offered.
+    expect(whoami.data.subscription?.canManageSubscription).toBe(false);
+
+    // A second session for the same user must not create a second Whalesync subscription.
+    const second = await createSession(whalesyncUserId, email);
+    const secondWhoami = await fetchCurrentUser(second.apiToken);
+    expect(secondWhoami.data.subscription?.planType).toBe('WHALESYNC_PLAN');
+
+    if (prismaForDbRowAssertions) {
+      const user = await prismaForDbRowAssertions.user.findFirst({ where: { whalesyncUserId } });
+      expect(user).toBeTruthy();
+      const subscriptions = await prismaForDbRowAssertions.subscription.findMany({
+        where: { organizationId: user?.organizationId ?? '' },
+      });
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0].planType).toBe('WHALESYNC_PLAN');
+      expect(subscriptions[0].priceInDollars).toBe(0);
+      expect(subscriptions[0].stripeStatus).toBe('active');
+      // Effectively-permanent expiry (far in the future).
+      expect(subscriptions[0].expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
     }
   });
 

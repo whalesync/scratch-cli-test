@@ -40,6 +40,9 @@ import { getPlan, getPlans } from './plans';
 const STRIPE_API_VERSION = '2025-08-27.basil';
 // Length, in days, of trials created by `createTrialSubscription` (and the dead checkout-trial branch).
 const TRIAL_PERIOD_DAYS = 14;
+// Expiry, in years, of the internal Whalesync plan. Effectively permanent — the subscription is torn
+// down when the shadow user is deprovisioned, not when it "expires".
+const WHALESYNC_PLAN_EXPIRATION_YEARS = 100;
 
 type StripeWebhookResult = 'success' | 'ignored';
 
@@ -204,6 +207,79 @@ export class StripePaymentService {
       WSLogger.error({
         source: StripePaymentService.name,
         message: `Failed to write trial-started audit log for user ${user.id}`,
+        error: err,
+      });
+    }
+  }
+
+  /**
+   * Ensures a Whalesync shadow user's organization is on the internal Whalesync plan. Idempotent and
+   * non-destructive: if the organization already has any active subscription it returns untouched — this
+   * both makes re-provisioning a no-op (the shadow user reappears on each ~10-minute session) and avoids
+   * ever downgrading a real paid (Pro/Max) subscriber to the $0 plan. Existing Free shadow users are
+   * "self-healed" onto the plan the next time they appear, so no data migration is needed.
+   *
+   * Unlike `createTrialSubscription`, this never talks to Stripe: the Whalesync plan has no Stripe
+   * product/price and shadow users never go through checkout, so the row carries a deterministic
+   * synthetic `stripeSubscriptionId` (`whalesync_<organizationId>`). The deterministic id means a
+   * concurrent or repeated insert collides on the `@unique` constraint instead of creating a duplicate,
+   * so there is at most one Whalesync subscription per organization.
+   *
+   * Best-effort: any failure is logged and swallowed so it can never block shadow-user provisioning —
+   * the same stance `UsersService.maybeStartProTrialForNewUser` takes for the native Pro trial.
+   */
+  async ensureWhalesyncPlanSubscription(user: UserCluster.User): Promise<void> {
+    try {
+      if (!user.organizationId) {
+        return;
+      }
+
+      // Idempotent + non-destructive: never replace an existing active subscription (an existing
+      // Whalesync row, or a real paid plan we must not silently downgrade).
+      if (getActiveSubscriptions(user.organization?.subscriptions ?? []).length > 0) {
+        return;
+      }
+
+      const expiration = new Date();
+      expiration.setFullYear(expiration.getFullYear() + WHALESYNC_PLAN_EXPIRATION_YEARS);
+
+      const createdSubscription = await this.dbService.client.subscription.create({
+        data: {
+          id: createSubscriptionId(),
+          userId: user.id,
+          organizationId: user.organizationId, // subscriptions belong to the organization, not the user
+          planType: ScratchPlanType.WHALESYNC_PLAN,
+          // The Whalesync plan never touches Stripe; this id is synthetic and deterministic so a repeated
+          // or concurrent create collides on the @unique constraint rather than inserting a duplicate.
+          stripeSubscriptionId: `whalesync_${user.organizationId}`,
+          expiration,
+          priceInDollars: 0,
+          stripeStatus: 'active',
+          cancelAt: null,
+          lastInvoicePaid: true,
+        },
+      });
+
+      this.postHogService.trackSubscriptionChanged(
+        userToActor(user),
+        ScratchPlanType.FREE_PLAN,
+        ScratchPlanType.WHALESYNC_PLAN,
+      );
+      await this.auditLogService.logEvent({
+        actor: userToActor(user),
+        eventType: 'create',
+        message: 'Subscribed to the Whalesync plan',
+        entityId: createdSubscription.id as SubscriptionId,
+      });
+
+      WSLogger.info({
+        source: StripePaymentService.name,
+        message: `Assigned Whalesync plan to user ${user.id}`,
+      });
+    } catch (err) {
+      WSLogger.error({
+        source: StripePaymentService.name,
+        message: `Failed to ensure Whalesync plan subscription for user ${user.id}`,
         error: err,
       });
     }

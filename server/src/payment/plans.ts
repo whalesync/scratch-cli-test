@@ -83,11 +83,34 @@ export const MAX_PLAN: Plan = {
   },
 };
 
+/**
+ * Whalesync Plan
+ *
+ * An internal, non-purchasable plan auto-assigned to Whalesync shadow users (see
+ * `StripePaymentService.ensureWhalesyncPlanSubscription`). It is free, never billed, and has no Stripe
+ * product/price — shadow users only arrive through the internal admin channel and never touch Stripe
+ * checkout or webhooks, so the subscription is a purely internal DB row with a synthetic
+ * `stripeSubscriptionId`. The empty `stripePriceIds` makes `getDefaultPriceId` return null (so checkout
+ * and trials naturally fail for it) and `hidden: true` keeps it off the public `/payment/plans` list and
+ * the billing UI. Its feature set intentionally mirrors the Pro plan.
+ */
+export const WHALESYNC_PLAN: Plan = {
+  planType: ScratchPlanType.WHALESYNC_PLAN,
+  costUSD: 0,
+  displayName: 'Whalesync',
+  stripeProductId: '', // No Stripe product — this plan is internal-only.
+  stripePriceIds: [], // No Stripe price — this plan is never purchased through Stripe.
+  popular: false,
+  hidden: true,
+  features: { ...PRO_PLAN.features }, // Equivalent to the Pro plan.
+};
+
 // Plans configured in the Scratch Test sandbox environment for developer testing
 export const TEST_SANDBOX_PLANS: Plan[] = [
   FREE_PLAN,
   { ...PRO_PLAN, stripeProductId: 'prod_TVV4n4JqTQnENy', stripePriceIds: ['price_1SYU4jBdRE0kMHNq4mMMjgWH'] },
   { ...MAX_PLAN, stripeProductId: 'prod_TVV6aVZ43QYJmO', stripePriceIds: ['price_1SYU6CBdRE0kMHNqr7YRm7uu'] },
+  WHALESYNC_PLAN, // Internal-only: no Stripe product/price in any environment.
 ];
 
 // Plans configured in the Scratch Staging sandbox environment
@@ -95,6 +118,7 @@ export const STAGING_SANDBOX_PLANS: Plan[] = [
   FREE_PLAN,
   { ...PRO_PLAN, stripeProductId: 'prod_TVXbDaLac1BeEs', stripePriceIds: ['price_1SYWWVPd1pp0ErHMfWTsG55n'] },
   { ...MAX_PLAN, stripeProductId: 'prod_TVXeZZtBUz1VRA', stripePriceIds: ['price_1SYWZDPd1pp0ErHMwtBs7ycN'] },
+  WHALESYNC_PLAN, // Internal-only: no Stripe product/price in any environment.
 ];
 
 // Plans configured in the Stripe Production environment
@@ -109,6 +133,7 @@ export const PRODUCTION_PLANS: Plan[] = [
     ],
   },
   { ...MAX_PLAN, stripeProductId: 'prod_TVXUCHtF58Bzd2', stripePriceIds: ['price_1SYWPuBuGFTHqsGmOtGqjM6E'] },
+  WHALESYNC_PLAN, // Internal-only: no Stripe product/price in any environment.
 ];
 
 export function getPlans(environment: ScratchEnvironment): Plan[] {

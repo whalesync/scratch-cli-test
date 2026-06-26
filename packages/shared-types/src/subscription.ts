@@ -2,6 +2,9 @@ export enum ScratchPlanType {
   FREE_PLAN = 'FREE_PLAN',
   PRO_PLAN = 'PRO_PLAN',
   MAX_PLAN = 'MAX_PLAN',
+  // Internal, non-purchasable plan auto-assigned to Whalesync shadow users. Pro-equivalent feature set,
+  // $0, never billed through Stripe. See server/src/payment/plans.ts (WHALESYNC_PLAN).
+  WHALESYNC_PLAN = 'WHALESYNC_PLAN',
 }
 
 export interface SubscriptionPlanFeatures {

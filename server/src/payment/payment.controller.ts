@@ -18,7 +18,7 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { isErr } from 'src/types/results';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { CreatePortalDto } from './dto/create-portal.dto';
-import { getPlanTypeFromString } from './plans';
+import { getPlan, getPlanTypeFromString } from './plans';
 import { StripePaymentService } from './stripe-payment.service';
 
 const STRIPE_PAGE_ERROR_USER_FACING_MESSAGE =
@@ -76,6 +76,14 @@ export class StripePaymentController {
     if (!planTypeEnum) {
       throw new BadRequestException({
         userFacingMessage: `Invalid product type: ${planType}`,
+      });
+    }
+
+    // Internal plans (e.g. the Whalesync plan) are hidden from the pricing UI and cannot be purchased.
+    // Reject with a clear 400 rather than letting checkout fail deep in Stripe with an opaque 500.
+    if (getPlan(planTypeEnum)?.hidden) {
+      throw new BadRequestException({
+        userFacingMessage: 'This plan cannot be purchased.',
       });
     }
 

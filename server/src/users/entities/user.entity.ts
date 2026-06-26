@@ -1,5 +1,12 @@
 import { Subscription, UserRole } from '@prisma/client';
-import { BillableActions, SubscriptionInfo, TokenType, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
+import {
+  BillableActions,
+  ScratchPlanType,
+  SubscriptionInfo,
+  TokenType,
+  WorkbookId,
+  WorkspacePermissionId,
+} from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
 import { UserFlagValues } from 'src/experiments/experiments.service';
 import { WSLogger } from 'src/logger';
@@ -161,7 +168,9 @@ function toSubscriptionInfo(
     daysRemaining,
     isTrial: latestSubscription.stripeStatus === 'trialing',
     isCancelled: latestSubscription.cancelAt !== null, // if cancelled the days remaining will also represent when the subscription ends
-    canManageSubscription: latestSubscription.userId === userId,
+    // The Whalesync plan has no real Stripe subscription behind it, so there is nothing to manage in the
+    // billing portal — never offer "manage" for it. The plan name/cost still render, so it stays visible.
+    canManageSubscription: planType !== ScratchPlanType.WHALESYNC_PLAN && latestSubscription.userId === userId,
     ownerId: latestSubscription.userId,
     features: new SubscriptionPlanFeaturesEntity(plan.features),
     billableActions,
