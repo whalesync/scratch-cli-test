@@ -30,6 +30,7 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
     std::fs::write(docs_dir.join("commands.md"), COMMANDS_DOC)?;
     std::fs::write(docs_dir.join("editing-data.md"), EDITING_DATA_DOC)?;
     std::fs::write(docs_dir.join("validations.md"), VALIDATIONS_DOC)?;
+    std::fs::write(docs_dir.join("routines.md"), ROUTINES_DOC)?;
     std::fs::write(docs_dir.join("sandbox-recovery.md"), SANDBOX_RECOVERY_DOC)?;
 
     Ok(())
@@ -78,6 +79,7 @@ Once your local agent has made changes, open the Scratch desktop app to review t
 - [Schema files (field definitions). Must read before editing records!](.scratch/docs/schema.md)
 - [Editing data (creating, updating, deleting records)](.scratch/docs/editing-data.md)
 - [Validation (checking records before publish)](.scratch/docs/validations.md)
+- [Routines (server-run, multi-step workflow pipelines)](.scratch/docs/routines.md)
 - [CLI command reference](.scratch/docs/commands.md)
 
 ## Scratch Desktop deep links
@@ -211,6 +213,40 @@ mod tests {
         assert!(SANDBOX_RECOVERY_DOC.contains("/bin/zsh -lc"));
         assert!(SANDBOX_RECOVERY_DOC.contains("Control your Mac"));
         assert!(SANDBOX_RECOVERY_DOC.contains("uname -s -m"));
+    }
+
+    #[test]
+    fn agents_index_links_to_routines_doc() {
+        let docs = claude_md(
+            "Test Workbook",
+            "https://app.scratch.md",
+            "/usr/local/bin/scratchmd",
+        );
+        assert!(docs.contains("(.scratch/docs/routines.md)"));
+    }
+
+    #[test]
+    fn commands_doc_lists_routines_commands() {
+        assert!(COMMANDS_DOC.contains("## routines"));
+        assert!(COMMANDS_DOC.contains("routines pull"));
+        assert!(COMMANDS_DOC.contains("routines push"));
+        assert!(COMMANDS_DOC.contains("routines status"));
+    }
+
+    #[test]
+    fn routines_doc_covers_format_and_cli() {
+        // File format: per-action step fields and the pull-only full-pull option.
+        assert!(ROUTINES_DOC.contains("folders"));
+        assert!(ROUTINES_DOC.contains("publish-plan"));
+        assert!(ROUTINES_DOC.contains("fullPull"));
+        // The three CLI verbs and the delete recipe.
+        assert!(ROUTINES_DOC.contains("routines pull"));
+        assert!(ROUTINES_DOC.contains("routines push"));
+        assert!(ROUTINES_DOC.contains("routines status"));
+        // Scheduling is documented as separate, not a YAML field.
+        assert!(ROUTINES_DOC.contains("Deprecated and ignored"));
+        // Local materialization path.
+        assert!(ROUTINES_DOC.contains(".scratch/workspace/routines/"));
     }
 }
 
@@ -440,6 +476,16 @@ Run `scratchmd <command> --help` for full flag details.
 | `validation get-files-with-problems --folder <connection>/<folder> [--limit <n>]` | Filenames in a folder with ≥1 error-level violation |
 | `validation get-stats` | Workspace-wide error/warning counts grouped by connection + folder |
 | `validation dump-config [--connection <name>]` | Print the loaded `validation.json` config (no DB required) |
+
+## routines
+
+Routine files (`routines/*.yaml`) define server-run, multi-step workflows. See [Routines](routines.md) for the file format. Delete a routine by removing its `.yaml` locally, then `routines push`.
+
+| Command | Description |
+|---|---|
+| `routines pull [--discard-local]` | Fetch the latest routine files from the server into the local workspace (`--discard-local` overwrites local routine edits) |
+| `routines push` | Push local routine file create / edit / delete to the server (it commits + reloads) |
+| `routines status` | Show local uncommitted routine edits and server drift (read-only) |
 
 ## docs
 
@@ -974,4 +1020,156 @@ The `-l` flag is required — without it, AppleScript's default PATH is `/usr/bi
 - Don't try `brew install`, `apt install`, `cargo install`, or downloading a Linux binary from GitHub releases — none of those work inside the sandbox today.
 - Don't fabricate `scratchmd` output if you can't run it. Tell the user the sandbox can't reach the CLI and ask them to install the Control your Mac extension.
 - Don't call `osascript` with a bare `do shell script "scratchmd ..."` (no `-lc`) — same PATH problem; it will fail.
+"#;
+
+// ---------------------------------------------------------------------------
+// .scratch/docs/routines.md
+// ---------------------------------------------------------------------------
+
+const ROUTINES_DOC: &str = r#"# Routines
+
+Routines are file-defined, **sequential** workflow pipelines. A routine chains
+discrete steps — `pull`, `sync`, `publish-plan`, `publish` — into one ordered
+workflow that the **server** runs, either on a schedule or when triggered manually.
+
+A routine is a single YAML file, and that file *is* the definition
+(git-authoritative — there is no separate database copy). Steps run top to bottom;
+if a step fails, the routine **stops** and the remaining steps do not run. A routine
+has at most one active run at a time.
+
+The CLI's job is to **pull, edit, and push routine files** — it does not run them.
+Triggering a run, watching run history, and cancelling are done from the Scratch web
+app, not `scratchmd`.
+
+## Where routine files live
+
+Routine files are stored at `routines/*.yaml` in the workbook config repo, which the
+CLI materializes locally at:
+
+```
+.scratch/workspace/routines/*.yaml
+```
+
+Edit them there like any other file. They are first materialized at
+`scratchmd workspaces init`; afterwards use `scratchmd routines pull` to refresh them
+and `scratchmd routines push` to send your edits back (see **Pulling, pushing, and
+deleting** below).
+
+## Scheduling is separate from the file
+
+A routine's **schedule is not part of the YAML.** When and how often a routine runs
+is configured from the Scratch app's **Schedules** UI (or the schedule API) and
+stored separately from the routine file. A `schedule:` key inside a routine YAML is
+**deprecated and ignored** — leaving one in place only produces a non-blocking
+deprecation warning. Do not add a `schedule:` field; set the schedule in the app.
+
+## Routine file format
+
+```yaml
+# routines/daily-content-sync.yaml
+name: Daily Content Sync
+comment: Pull blog content, run the sync, then publish.
+steps:
+  - action: pull
+    folders:
+      - /blog/posts
+      - /blog/authors
+  - action: sync
+    sync: syn_0123456789
+  - action: publish-plan
+    folder: /blog/posts
+  - action: publish
+    folder: /blog/posts
+```
+
+### Top-level fields
+
+| Field      | Required | Description |
+|------------|----------|-------------|
+| `name`     | yes      | Human-readable routine name (non-empty). |
+| `steps`    | yes      | Ordered list of steps; at least one. |
+| `comment`  | no       | Free-text note. |
+| `schedule` | —        | **Deprecated and ignored.** Schedule a routine from the Scratch app instead (see above). |
+
+### Step fields
+
+Each entry under `steps` is one step. `action` is required; which other fields are
+valid depends on the action.
+
+| Field        | Applies to | Description |
+|--------------|------------|-------------|
+| `action`     | all        | One of `pull`, `sync`, `publish-plan`, `publish`. (`discard-pending-changes` also exists — an advanced pre-flight cleanup that discards leftover working-set edits before the run.) |
+| `name`       | all (opt)  | Optional label for the step; must be unique within the routine. |
+| `folders`    | `pull`     | List of one or more target folders — POSIX paths (e.g. `/blog/posts`) and/or DataFolderIds (`dfd_...`). All must belong to the **same connection**. Pull steps use `folders`, not `folder`. |
+| `folder`     | `publish`, `publish-plan` | A single target folder — a POSIX path or a DataFolderId (`dfd_...`). |
+| `connection` | opt        | Target connection — its name or a ConnectorAccountId (`coa_...`). |
+| `sync`       | `sync`     | **Required on sync steps.** The SyncId (`syn_...`) to run. A sync step takes only `sync` — not `folder` / `folders` / `connection`. |
+| `comment`    | all (opt)  | Free-text note on the step. |
+| `timeout`    | all (opt)  | Per-step timeout in **seconds** (positive integer). Capped per action — see below. |
+| `options`    | opt        | Action-specific settings (see **Step options** below). |
+
+#### Step options
+
+`options` is a nested map of action-specific settings.
+
+| Option     | Applies to | Description |
+|------------|------------|-------------|
+| `fullPull` | `pull`     | `true` forces a full re-pull. Omitted / `false` = the default incremental pull. |
+
+```yaml
+steps:
+  - action: pull
+    folders: [/blog/posts]
+    options:
+      fullPull: true # force a full re-pull instead of incremental
+```
+
+#### Timeout caps
+
+An omitted `timeout` defaults to the per-action maximum; a specified one is capped at it.
+
+| Action                    | Max timeout |
+|---------------------------|-------------|
+| `pull`                    | 3600 s |
+| `publish`                 | 3600 s |
+| `sync`                    | 1800 s |
+| `publish-plan`            | 1800 s |
+| `discard-pending-changes` | 600 s |
+
+### Available actions
+
+| Action         | Description |
+|----------------|-------------|
+| `pull`         | Pull data from the external service into the workspace. Targets `folders`. |
+| `sync`         | Run a sync (copy / transform between folders). Targets `sync`. |
+| `publish-plan` | Build a publish plan (diff for review) — does **not** publish. Targets `folder`. |
+| `publish`      | Build the plan **and** publish approved changes to the service. Targets `folder`. |
+
+## Validation
+
+The **server is authoritative** for validation — it alone can resolve a workbook's
+folders, connections, and syncs, so a `routines push` may be rejected with a
+validation error (e.g. an unknown folder, a `folder` on a `pull` step, or `fullPull`
+on a non-pull step).
+
+`scratchmd routines push` runs a **light local check** first, for fast feedback: the
+file must be valid YAML, have a non-empty `name`, have at least one `step`, and use a
+`.yaml` / `.yml` extension. Everything else is enforced server-side.
+
+## Pulling, pushing, and deleting
+
+| Command | What it does |
+|---------|--------------|
+| `scratchmd routines pull [--discard-local]` | Fetch the latest routine files from the server into `.scratch/workspace/routines/`. Refuses to overwrite local uncommitted routine edits unless `--discard-local` is given. |
+| `scratchmd routines push` | Push your local routine create / edit / delete to the server, which commits them to the config repo and reloads. If the server has advanced since your last pull, the push is rejected — run `routines pull`, then retry. |
+| `scratchmd routines status` | Read-only. Show your local uncommitted routine edits and any server drift (routine changes you have not pulled yet). |
+
+All three accept `--workspace <dir>` (auto-detected from the current directory by
+default) and the global `--json` flag for machine-readable output.
+
+- **Create** a routine: add a new `routines/<name>.yaml` file under
+  `.scratch/workspace/routines/`, then `scratchmd routines push`.
+- **Edit** a routine: change the `.yaml` file, then `scratchmd routines push`.
+- **Delete** a routine: remove its `.yaml` file locally, then
+  `scratchmd routines push` — the server detects the deletion and removes it.
 "#;
