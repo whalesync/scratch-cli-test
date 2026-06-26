@@ -24,7 +24,6 @@ export function PanelShell({
       gap={0}
       style={{
         width,
-        maxWidth: '100%',
         height: 600,
         background: 'var(--bg-base)',
         border: '0.5px solid var(--fg-divider)',

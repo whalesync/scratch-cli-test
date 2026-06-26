@@ -120,7 +120,6 @@ export function RecordDetailView() {
       gap={0}
       style={{
         width: 1240,
-        maxWidth: '100%',
         height: 640,
         background: 'var(--bg-base)',
         border: '0.5px solid var(--fg-divider)',

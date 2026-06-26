@@ -16,5 +16,13 @@
   },
   "storyImports": {
     "shim": ["renderer/src/components/base", "@mantine/core"]
+  },
+  "overrides": {
+    "WorkspaceShell": { "viewport": "1240x720" },
+    "RecordDetailView": { "viewport": "1240x640" },
+    "ConnectionsPanel": { "viewport": "980x600" },
+    "ValidationPanel": { "viewport": "980x600" },
+    "PublishHistoryPanel": { "viewport": "980x600" },
+    "SettingsPanel": { "viewport": "980x600" }
   }
 }

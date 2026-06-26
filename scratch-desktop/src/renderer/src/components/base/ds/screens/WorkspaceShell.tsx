@@ -615,7 +615,6 @@ export function WorkspaceShell() {
       gap={0}
       style={{
         width: 1240,
-        maxWidth: '100%',
         height: 720,
         background: 'var(--bg-base)',
         border: '1px solid var(--fg-divider)',
