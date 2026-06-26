@@ -82,25 +82,41 @@ Once your local agent has made changes, open the Scratch desktop app to review t
 - [Routines (server-run, multi-step workflow pipelines)](.scratch/docs/routines.md)
 - [CLI command reference](.scratch/docs/commands.md)
 
-## Scratch Desktop deep links
+## Link the user to folders and records (Scratch Desktop deep links)
 
-When pointing the user back to the Scratch desktop app, create a deep link from the absolute local path and URL-encode the full path:
+Whenever you point the user at a specific data folder or record — telling them to review, open, or go look at something in the Scratch desktop app — turn the folder or record **name** into a deep link that opens it directly. Prefer this over naming the folder/record in plain text: it's the fastest way for the user to jump from your message to the exact place in the app. (Link when you're directing the user somewhere; you don't need to link every passing mention.)
+
+**Make the name the link.** Don't append a separate "open" link — link the name itself:
+
+> Review the updated posts in [Blog Posts](…); the slug fix is in [hello-world.json](…).
+
+### Building the link
+
+1. Take the **absolute local path** of the workspace, folder, or record and URL-encode it into a `scratch://open` URL:
+
+   ```
+   scratch://open?path=<url-encoded-absolute-path>&source=claude-code
+   ```
+
+   `source` is the tool generating the link, e.g. `claude-code` or `claude-cowork`.
+
+2. Most chat/terminal surfaces only open `http`/`https` links, so wrap the `scratch://` URL in the Scratch web relay — URL-encode the **whole** `scratch://` URL and pass it as `url`:
+
+   ```
+   {relay_base_url}/open-desktop?url=<url-encoded-scratch-url>
+   ```
+
+Encode the absolute path of whatever you're linking:
+
+- Workspace: the workspace root path.
+- Folder: the folder path, e.g. `{{workspace}}/My Website/Blog Posts`.
+- Record: the record file path, e.g. `{{workspace}}/My Website/Blog Posts/example.json`.
+
+Worked example — the path is encoded **twice** (once inside `scratch://`, once for the relay `url=`), so a record at `/Users/you/Scratch/My Website/Blog Posts/example.json` becomes:
 
 ```
-scratch://open?path=<url-encoded-absolute-path>&source=claude-code
+[example.json]({relay_base_url}/open-desktop?url=scratch%3A%2F%2Fopen%3Fpath%3D%252FUsers%252Fyou%252FScratch%252FMy%2520Website%252FBlog%2520Posts%252Fexample.json%26source%3Dclaude-code)
 ```
-
-The source should be the name of the tool that generated the deep link, e.g. `claude-code` or `claude-cowork`.
-
-When creating Markdown links for tools that only open `http` or `https` URLs, pass the full `scratch://` URL through the Scratch web relay page:
-
-```
-[Open in Scratch Desktop]({relay_base_url}/open-desktop?url=<url-encoded-scratch-url>)
-```
-
-- Workspace: encode this workspace root path.
-- Folder: encode the folder path, e.g. `{{workspace}}/My Website/Blog Posts`.
-- Record: encode the record file path, e.g. `{{workspace}}/My Website/Blog Posts/example.json`.
 
 ## Troubleshooting with `workspace.log`
 
@@ -174,9 +190,9 @@ mod tests {
             "/usr/local/bin/scratchmd",
         );
 
-        assert!(docs.contains(
-            "[Open in Scratch Desktop](https://test.scratch.md/open-desktop?url=<url-encoded-scratch-url>)"
-        ));
+        // Relay host is substituted into both the format template and the worked example.
+        assert!(docs.contains("https://test.scratch.md/open-desktop?url=<url-encoded-scratch-url>"));
+        assert!(docs.contains("https://test.scratch.md/open-desktop?url=scratch%3A%2F%2Fopen"));
     }
 
     #[test]
