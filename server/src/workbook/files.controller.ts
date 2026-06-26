@@ -133,19 +133,12 @@ export class FilesController {
   /**
    * Delete a file by path (like `rm`).
    * DELETE /workbooks/:workbookId/files/by-path?path=/folder/file.md
+   *
+   * Delegates to the scratch-aware `FilesService.deleteFileByPathGit`, which resolves the repo via
+   * `resolveRepoPathForFolder` and the branch via `workingBranchForConnector` — so a connector-less
+   * scratch file (DEV-10424) is deleted from the per-workbook scratch repo on `main`, matching how
+   * the GET (read) and PATCH (update) paths already resolve. (DEV-10584)
    */
-  /** Resolve the repoId for a file path by looking up the owning DataFolder's connectorAccountId. */
-  private async resolveConnectionRepoPathForPath(workbookId: WorkbookId, path: string): Promise<string> {
-    const rawFolder = path.substring(0, path.lastIndexOf('/'));
-    // DataFolder.path always starts with '/'; normalize incoming path accordingly
-    const folderPath = rawFolder ? (rawFolder.startsWith('/') ? rawFolder : `/${rawFolder}`) : '/';
-    const dataFolder = await this.db.client.dataFolder.findFirst({
-      where: { workbookId, path: folderPath },
-      select: { connectorAccountId: true },
-    });
-    return this.scratchGitService.resolveConnectionRepoPath(dataFolder?.connectorAccountId ?? '');
-  }
-
   @Delete('by-path')
   @HttpCode(204)
   async deleteFileByPath(
@@ -155,20 +148,7 @@ export class FilesController {
   ): Promise<void> {
     const actor = userToActor(req.user);
     await this.workbookService.assertWritableWorkbook(actor, workbookId);
-
-    try {
-      const repoId = await this.resolveConnectionRepoPathForPath(workbookId, path);
-      await this.scratchGitService.deleteFile(repoId, [path], `Delete ${path}`);
-    } catch (e) {
-      WSLogger.error({
-        source: 'FilesController.deleteFileByPath',
-        message: 'Failed to delete file from git',
-        path,
-        workbookId,
-        error: e instanceof Error ? e.message : String(e),
-      });
-      throw new NotFoundException(`Failed to delete file: ${path}`);
-    }
+    await this.filesService.deleteFileByPathGit(workbookId, path, actor);
   }
 
   /**

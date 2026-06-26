@@ -54,9 +54,12 @@ describe('FilesService', () => {
       getFolderDiff: jest.fn().mockResolvedValue([]),
       getRepoFile: jest.fn().mockResolvedValue({ content: '' }),
       commitFile: jest.fn().mockResolvedValue(undefined),
+      deleteFile: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ScratchGitService>;
 
-    posthogService = {} as unknown as jest.Mocked<PostHogService>;
+    posthogService = {
+      trackRecordDeleted: jest.fn(),
+    } as unknown as jest.Mocked<PostHogService>;
     workbookEventService = {} as unknown as jest.Mocked<WorkbookEventService>;
 
     workbookService = {
@@ -158,6 +161,57 @@ describe('FilesService', () => {
       expect(scratchGitService.getFolderDiff).not.toHaveBeenCalled();
       expect(res.file.content).toBe('hello');
       expect(res.file.ref.dirty).toBe(false);
+    });
+  });
+
+  describe('deleteFileByPathGit (scratch)', () => {
+    it('deletes a scratch file at a folder root from the scratch repo on main (DEV-10584)', async () => {
+      // The owning top-level scratch folder ("/notes") is a DataFolder row with a null connector.
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue({ connectorAccountId: null });
+      (scratchGitService.getRepoFile as jest.Mock).mockResolvedValue({ content: 'alpha' });
+
+      await service.deleteFileByPathGit(WORKBOOK_ID, '/notes/post.md', ACTOR);
+
+      // Connector-less → resolve the scratch repo and delete on `main` (not the default dirty branch).
+      expect(scratchGitService.resolveRepoPathForFolder).toHaveBeenLastCalledWith(null, WORKBOOK_ID);
+      expect(scratchGitService.deleteFile).toHaveBeenCalledWith(
+        'repo-123',
+        ['/notes/post.md'],
+        expect.any(String),
+        'main',
+      );
+    });
+
+    it('deletes a nested scratch file from the scratch repo on main (DEV-10584)', async () => {
+      // A nested file's parent dir ("/notes/drafts") is a git subdirectory, not a DataFolder row, so
+      // the lookup returns null → still resolves to the per-workbook scratch repo on `main`.
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue(null);
+      (scratchGitService.getRepoFile as jest.Mock).mockResolvedValue({ content: 'alpha' });
+
+      await service.deleteFileByPathGit(WORKBOOK_ID, '/notes/drafts/post.md', ACTOR);
+
+      expect(scratchGitService.resolveRepoPathForFolder).toHaveBeenLastCalledWith(undefined, WORKBOOK_ID);
+      expect(scratchGitService.deleteFile).toHaveBeenCalledWith(
+        'repo-123',
+        ['/notes/drafts/post.md'],
+        expect.any(String),
+        'main',
+      );
+    });
+
+    it('still deletes a connector file on the dirty branch (no regression)', async () => {
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue({ connectorAccountId: 'conn-123' });
+      (scratchGitService.getRepoFile as jest.Mock).mockResolvedValue({ content: 'rec' });
+
+      await service.deleteFileByPathGit(WORKBOOK_ID, '/my-folder/rec.json', ACTOR);
+
+      expect(scratchGitService.resolveRepoPathForFolder).toHaveBeenLastCalledWith('conn-123', WORKBOOK_ID);
+      expect(scratchGitService.deleteFile).toHaveBeenCalledWith(
+        'repo-123',
+        ['/my-folder/rec.json'],
+        expect.any(String),
+        'dirty',
+      );
     });
   });
 
