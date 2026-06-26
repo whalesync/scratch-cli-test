@@ -37,7 +37,8 @@
       "mcp__plugin_linear_linear__list_issue_statuses",
       "Bash(npx tsc *)",
       "Skill(fix-server-integration-tests)",
-      "Skill(fix-server-integration-tests:*)"
+      "Skill(fix-server-integration-tests:*)",
+      "Skill(fix-smoke-tests)"
     ]
   }
 }
