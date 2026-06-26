@@ -213,6 +213,34 @@ describe('FilesService', () => {
         'dirty',
       );
     });
+
+    it('normalizes a git-relative (no leading slash) connector path to the dirty branch (smoke publish-delete regression)', async () => {
+      // GET /files/list/by-folder returns git-relative paths with NO leading slash, e.g. "my-folder/rec.json"
+      // (scratch-git's files-paginated builds `{folder}/{name}` after stripping the leading slash).
+      // DataFolder.path is stored leading-slash form ("/my-folder"), so the owning-folder lookup MUST
+      // normalize — otherwise it misses, the connector record is mistaken for a scratch file, the delete is
+      // misrouted to the scratch repo's `main` branch (a no-op), and publish never sees the deletion.
+      // A path-sensitive mock: the connector account resolves ONLY for the normalized "/my-folder".
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockImplementation((args: { where: { path: string } }) =>
+        Promise.resolve(args.where.path === '/my-folder' ? { connectorAccountId: 'conn-123' } : null),
+      );
+      (scratchGitService.getRepoFile as jest.Mock).mockResolvedValue({ content: 'rec' });
+
+      await service.deleteFileByPathGit(WORKBOOK_ID, 'my-folder/rec.json', ACTOR);
+
+      // The lookup normalized to "/my-folder", found the connector, and deleted on `dirty` (publishable) —
+      // NOT misrouted to the scratch repo on `main`.
+      expect(dbService.client.dataFolder.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { workbookId: WORKBOOK_ID, path: '/my-folder' } }),
+      );
+      expect(scratchGitService.resolveRepoPathForFolder).toHaveBeenLastCalledWith('conn-123', WORKBOOK_ID);
+      expect(scratchGitService.deleteFile).toHaveBeenCalledWith(
+        'repo-123',
+        ['my-folder/rec.json'],
+        expect.any(String),
+        'dirty',
+      );
+    });
   });
 
   describe('createFile (scratch)', () => {

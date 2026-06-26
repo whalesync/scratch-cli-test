@@ -194,6 +194,25 @@ export class FilesService {
   }
 
   /**
+   * Compute the owning folder path for a file path in the leading-slash form that `DataFolder.path`
+   * is stored in. Accepts both already-rooted paths (`/MyTable/rec.json`) and git-relative paths with
+   * no leading slash (`MyTable/rec.json`, as returned by the folder listing) so the `DataFolder` lookup
+   * matches either way. A root-level file (or a path with no folder segment) resolves to `/`.
+   *
+   * Every file-by-path operation that resolves the owning connector account MUST normalize through this
+   * helper: a lookup against a non-leading-slash path silently misses, and the caller then treats a
+   * connector record as a connector-less scratch file — routing the operation to the wrong repo/branch.
+   * (Regression DEV-10584 introduced exactly that bug in the delete path.)
+   */
+  private ownerDataFolderPath(filePath: string): string {
+    const rawParentFolderPath = filePath.substring(0, filePath.lastIndexOf('/'));
+    if (!rawParentFolderPath) {
+      return '/';
+    }
+    return rawParentFolderPath.startsWith('/') ? rawParentFolderPath : `/${rawParentFolderPath}`;
+  }
+
+  /**
    * Get a single file by its path.
    * Used by the file agent's `cat` command.
    */
@@ -201,10 +220,10 @@ export class FilesService {
     await this.workbookService.findOneOrThrow(workbookId, actor);
 
     // Resolve the correct repo ID for this file's folder
-    const folderPath = path.substring(0, path.lastIndexOf('/')) || '.';
-    const gitFolderPath = folderPath === '.' ? '' : folderPath.replace(/^\//, '');
+    const ownerFolderPath = this.ownerDataFolderPath(path);
+    const gitFolderPath = ownerFolderPath === '/' ? '' : ownerFolderPath.replace(/^\//, '');
     const dataFolder = await this.db.client.dataFolder.findFirst({
-      where: { workbookId, path: `/${gitFolderPath}` },
+      where: { workbookId, path: ownerFolderPath },
       select: { connectorAccountId: true },
     });
     const isScratch = !dataFolder?.connectorAccountId;
@@ -258,9 +277,8 @@ export class FilesService {
       throw new NotFoundException(`Unable to find ${path}`);
     }
 
-    const folderPathRaw = path.substring(0, path.lastIndexOf('/'));
     const dataFolder = await this.db.client.dataFolder.findFirst({
-      where: { workbookId, path: folderPathRaw || '/' },
+      where: { workbookId, path: this.ownerDataFolderPath(path) },
       select: { connectorAccountId: true },
     });
     // T4: refuse a live edit while the connection is being migrated.
@@ -288,10 +306,8 @@ export class FilesService {
   ): Promise<void> {
     const workbook = await this.workbookService.findOneOrThrow(workbookId, actor);
 
-    const folderPathRaw = path.substring(0, path.lastIndexOf('/'));
-    const folderPath = folderPathRaw ? (folderPathRaw.startsWith('/') ? folderPathRaw : `/${folderPathRaw}`) : '/';
     const dataFolder = await this.db.client.dataFolder.findFirst({
-      where: { workbookId, path: folderPath },
+      where: { workbookId, path: this.ownerDataFolderPath(path) },
       select: { connectorAccountId: true },
     });
     // T4: refuse a live edit while the connection is being migrated.
@@ -325,8 +341,7 @@ export class FilesService {
     branch: string,
   ): Promise<Record<string, Record<string, string>>> {
     // 1. Resolve repo and read file content from the specified branch
-    const folderPath = path.substring(0, path.lastIndexOf('/')) || '/';
-    const normalizedFolderPath = folderPath.startsWith('/') ? folderPath : `/${folderPath}`;
+    const normalizedFolderPath = this.ownerDataFolderPath(path);
 
     const dataFolder = await this.db.client.dataFolder.findFirst({
       where: { workbookId, path: normalizedFolderPath },
@@ -469,8 +484,7 @@ export class FilesService {
 
     const oldFilename = extractFilenameFromPath(oldPath);
     const newFilename = extractFilenameFromPath(newPath);
-    const folderPathRaw = oldPath.substring(0, oldPath.lastIndexOf('/'));
-    const folderPath = folderPathRaw ? (folderPathRaw.startsWith('/') ? folderPathRaw : `/${folderPathRaw}`) : '/';
+    const folderPath = this.ownerDataFolderPath(oldPath);
 
     const dataFolder = await this.db.client.dataFolder.findFirst({
       where: { workbookId, path: folderPath },
