@@ -3,13 +3,13 @@ name: new-linear-issue
 description: Create a Linear issue for the Scratch project with the team's conventions baked in — always the Scratch project, Backlog status by default, Low priority by default, a t-shirt size derived from complexity + testing effort, and no cycle. Use when the user asks to create / file / open a Linear ticket or issue for this repo.
 user-invocable: true
 allowed-tools:
-  - mcp__linear__list_teams
-  - mcp__linear__list_projects
-  - mcp__linear__list_issue_statuses
-  - mcp__linear__list_users
-  - mcp__linear__get_user
-  - mcp__linear__get_issue
-  - mcp__linear__save_issue
+  - mcp__linear-server__list_teams
+  - mcp__linear-server__list_projects
+  - mcp__linear-server__list_issue_statuses
+  - mcp__linear-server__list_users
+  - mcp__linear-server__get_user
+  - mcp__linear-server__get_issue
+  - mcp__linear-server__save_issue
   - AskUserQuestion
 ---
 
@@ -61,10 +61,10 @@ bump it up.
 Before anything else, confirm the Linear MCP works by making one cheap read-only call:
 
 ```
-mcp__linear__list_teams({ "query": "Dev" })
+mcp__linear-server__list_teams({ "query": "Dev" })
 ```
 
-- If the tool is **not available at all** (no `mcp__linear__*` tools), tell the user the Linear MCP
+- If the tool is **not available at all** (no `mcp__linear-server__*` tools), tell the user the Linear MCP
   isn't configured for this session and stop. They need to add/enable the Linear MCP server (e.g.
   via `claude mcp` / their MCP config) and re-authenticate.
 - If the call **errors with an auth/permission failure** (401/403, "unauthorized", "not
@@ -95,10 +95,10 @@ state (e.g. "put it in To Do", "this is in progress").
 
 ## Step 4 — Create the issue
 
-Call `mcp__linear__save_issue` **without an `id`** (passing `id` would update an existing issue):
+Call `mcp__linear-server__save_issue` **without an `id`** (passing `id` would update an existing issue):
 
 ```
-mcp__linear__save_issue({
+mcp__linear-server__save_issue({
   "team": "b4e2b7f8-c4c2-4aaa-848c-e306f07c1a8f",
   "project": "41604a71-549f-4794-ab01-1b7f3b82d2dc",
   "title": "<title>",
