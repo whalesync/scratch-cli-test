@@ -1,0 +1,21 @@
+<style>
+.pub{font-size:17px;line-height:1.75;color:#1c1c1c;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+.pub img{max-width:100%;height:auto;border-radius:8px}
+.pub h1{font-size:34px;line-height:1.15;margin:0 0 .35em;letter-spacing:-.02em}
+.pub h2{font-size:25px;margin:1.6em 0 .4em}.pub h3{font-size:20px;margin:1.4em 0 .3em}
+.pub p{margin:0 0 1.1em}.pub a{color:#2b6cb0;text-decoration:underline}
+.pub ul,.pub ol{margin:0 0 1.1em 1.35em}.pub li{margin:.3em 0}
+.pub blockquote{border-left:3px solid #ddd;margin:1.2em 0;padding:.2em 0 .2em 1em;color:#555}
+.pub code{background:#eef0ee;border-radius:4px;padding:.1em .35em;font-size:.9em}
+.pub pre{background:#1f2430;color:#e6e8ee;border-radius:8px;padding:14px;overflow:auto}.pub pre code{background:none;color:inherit}
+.pub .byline{color:#8a8a8a;font-size:14px;margin:0 0 1.7em}
+.pub .hero{width:100%;border-radius:12px;margin:0 0 1.9em;display:block}
+</style>
+<div style="margin:6px -16px -16px;background:#fbfbfa;padding:46px 24px;min-height:72vh">
+  <div class="pub" style="max-width:720px;margin:0 auto">
+    {% if data.fieldData.image.url %}<img class="hero" src="{{ data.fieldData.image.url }}" alt="">{% endif %}
+    <h1>{{ data.fieldData.name }}</h1>
+    <div class="byline">{% if data.fieldData["published-date"] %}{{ data.fieldData["published-date"][0:10] }}{% endif %}{% if data.isDraft %} · Draft{% endif %}</div>
+    {{ mark(data.fieldData.body, published.fieldData.body) }}
+  </div>
+</div>

@@ -1,0 +1,16 @@
+{# Webflow blog row: thumbnail (or ✎ tile), title, short description #}
+<div style="display:flex;gap:10px;align-items:center">
+  {% if data.fieldData.image.url %}
+  <img loading="lazy" src="{{ data.fieldData.image.url }}" alt="" style="width:60px;height:42px;object-fit:cover;border-radius:5px;flex:none;background:var(--bg3)">
+  {% else %}
+  <div style="width:60px;height:42px;border-radius:5px;flex:none;background:var(--bg3);display:flex;align-items:center;justify-content:center;color:var(--dim)">✎</div>
+  {% endif %}
+  <div style="min-width:0;flex:1">
+    <div style="display:flex;gap:8px;align-items:center">
+      <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1">{{ data.fieldData.name }}</span>
+      {% if data.isDraft %}<span class="chip chip-unpublished" style="flex:none">draft</span>{% endif %}
+      {% if changed %}<span class="r-pill r-{{ state }}" style="flex:none">{{ state }}</span>{% endif %}
+    </div>
+    <div style="color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ data.fieldData["short-description"] or data.fieldData["meta-description"] }}</div>
+  </div>
+</div>

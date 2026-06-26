@@ -1,0 +1,12 @@
+{# Shopify product row: 🛍 tile, title, status, vendor · type · inventory #}
+<div style="display:flex;gap:10px;align-items:center">
+  <div style="width:40px;height:40px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;font-size:16px;background:linear-gradient(135deg,#1f6f54,#0f3d2e)">🛍</div>
+  <div style="min-width:0;flex:1">
+    <div style="display:flex;gap:8px;align-items:center">
+      <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1">{{ data.title }}</span>
+      <span class="chip chip-{{ 'added' if data.status == 'ACTIVE' else 'unchanged' }}" style="flex:none">{{ data.status | lower }}</span>
+      {% if changed %}<span class="r-pill r-{{ state }}" style="flex:none">{{ field_count }}Δ</span>{% endif %}
+    </div>
+    <div style="color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ data.vendor }} · {{ data.productType | lower }} · {{ data.totalInventory }} in stock</div>
+  </div>
+</div>

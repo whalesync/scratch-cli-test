@@ -1,0 +1,24 @@
+<style>
+.prod{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1c1c1c}
+.prod .shot{width:100%;max-height:440px;object-fit:cover;border-radius:14px;display:block;margin:0 0 1.7em;background:#f4f4f2}
+.prod .vendor{text-transform:uppercase;letter-spacing:.09em;font-size:12px;color:#8a8a8a;margin:0 0 .55em}
+.prod h1{font-size:30px;line-height:1.15;margin:0 0 .25em;letter-spacing:-.01em}
+.prod .meta{color:#666;font-size:14px;margin:0 0 1.5em}
+.prod .desc{font-size:16px;line-height:1.7}
+.prod .desc img{max-width:100%;border-radius:8px}.prod .desc p{margin:0 0 1em}
+.prod .tags{margin:1.3em 0 .2em}
+.prod .tag{display:inline-block;background:#efefec;color:#555;border-radius:20px;padding:3px 11px;font-size:12px;margin:0 6px 7px 0}
+.prod .buy{display:inline-block;background:#1a1a1a;color:#fff;padding:12px 24px;border-radius:9px;text-decoration:none;font-weight:600;margin-top:1.5em}
+</style>
+<div style="margin:6px -16px -16px;background:#fff;padding:46px 24px;min-height:72vh">
+  <div class="prod" style="max-width:680px;margin:0 auto">
+    {% set shot = lookup("Product Media", "id", data.featuredMedia.id, "image.url") %}
+    {% if shot %}<img class="shot" src="{{ shot }}" alt="{{ data.title }}">{% endif %}
+    <div class="vendor">{{ data.vendor }}</div>
+    <h1>{{ data.title }}</h1>
+    <div class="meta">{{ data.productType | title }} · {{ data.totalInventory }} in stock{% if data.status != 'ACTIVE' %} · {{ data.status | lower }}{% endif %}</div>
+    {% if data.tags %}<div class="tags">{% for t in data.tags %}<span class="tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+    <div class="desc">{{ mark(data.descriptionHtml, published.descriptionHtml) }}</div>
+    {% if data.onlineStoreUrl %}<a class="buy" href="{{ data.onlineStoreUrl }}">View on store →</a>{% endif %}
+  </div>
+</div>
