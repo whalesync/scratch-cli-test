@@ -2,8 +2,10 @@ import { Injectable } from '@nestjs/common';
 import {
   DirtyFileCountResponse,
   FileDiffStatus,
+  GitFsckResponse,
   GitGcResponse,
   GitObjectCountsResponse,
+  GitRepairResponse,
   HasDirtyFilesResponse,
 } from '@spinner/shared-types';
 // Trigger reload
@@ -184,6 +186,27 @@ export class ScratchGitClient {
       `/api/repo/manage/${this.encodeRepoId(repoId)}/count-objects`,
       'GET',
     ) as Promise<GitObjectCountsResponse>;
+  }
+
+  /**
+   * Read-only `git fsck` health report for a repo: which refs are corrupt,
+   * which objects are missing/unreadable, and whether `main` is affected.
+   */
+  async fsck(repoId: string): Promise<GitFsckResponse> {
+    return this.callGitApi(`/api/repo/manage/${this.encodeRepoId(repoId)}/fsck`, 'GET') as Promise<GitFsckResponse>;
+  }
+
+  /**
+   * Repair a repo whose corruption is confined to non-`main` refs: reset a
+   * corrupt `dirty` to `main`, drop corrupt publish-plan refs, and gc. Refuses
+   * (status `refused_main_corrupt`) when `main` itself is corrupt. Destructive
+   * only to unpublished `dirty` edits; published (`main`) data is never touched.
+   */
+  async repairRepo(repoId: string): Promise<GitRepairResponse> {
+    return this.callGitApi(
+      `/api/repo/manage/${this.encodeRepoId(repoId)}/repair`,
+      'POST',
+    ) as Promise<GitRepairResponse>;
   }
 
   /**

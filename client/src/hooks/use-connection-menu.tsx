@@ -10,6 +10,7 @@ import { GitGraphModal } from '@/app/workbook/[id]/components/modals/GitGraphMod
 import { GitIndexModal } from '@/app/workbook/[id]/components/modals/GitIndexModal';
 import { GitObjectCountsModal } from '@/app/workbook/[id]/components/modals/GitObjectCountsModal';
 import { MoveRepoModal } from '@/app/workbook/[id]/components/modals/MoveRepoModal';
+import { RepairRepoModal } from '@/app/workbook/[id]/components/modals/RepairRepoModal';
 import type { ContextMenuItem } from '@/app/workbook/[id]/components/shared/ContextMenu';
 import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDevTools } from '@/hooks/use-dev-tools';
@@ -35,6 +36,7 @@ import {
   SettingsIcon,
   TableIcon,
   Trash2Icon,
+  WrenchIcon,
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
@@ -84,6 +86,7 @@ export function useConnectionMenu(
   const [gitGraphOpen, setGitGraphOpen] = useState(false);
   const [gitFileBrowserOpen, setGitFileBrowserOpen] = useState(false);
   const [moveRepoOpen, setMoveRepoOpen] = useState(false);
+  const [repairRepoOpen, setRepairRepoOpen] = useState(false);
 
   // Connection-specific modal state
   const [chooseTablesOpened, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
@@ -189,7 +192,15 @@ export function useConnectionMenu(
       disabled: git.isLoadingObjectCounts,
     },
     ...(connection.repoPath
-      ? [{ label: 'Move Repo', icon: MoveIcon, devtool: true, onClick: () => setMoveRepoOpen(true) }]
+      ? [
+          { label: 'Move Repo', icon: MoveIcon, devtool: true, onClick: () => setMoveRepoOpen(true) },
+          {
+            label: 'Diagnose / Repair Repo',
+            icon: WrenchIcon,
+            devtool: true,
+            onClick: () => setRepairRepoOpen(true),
+          },
+        ]
       : []),
     {
       label: 'Copy Git Clone Command',
@@ -306,6 +317,14 @@ export function useConnectionMenu(
           onClose={() => setMoveRepoOpen(false)}
           connectorAccountId={cId}
           currentRepoPath={connection.repoPath}
+        />
+      )}
+      {connection.repoPath && (
+        <RepairRepoModal
+          opened={repairRepoOpen}
+          onClose={() => setRepairRepoOpen(false)}
+          connectorAccountId={cId}
+          connectionName={cName}
         />
       )}
       <GitIndexModal opened={git.indexModalOpen} onClose={() => git.setIndexModalOpen(false)} data={git.indexData} />

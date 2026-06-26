@@ -63,6 +63,63 @@ export interface GitGcResponse {
 }
 
 /**
+ * Per-ref walkability snapshot from `git fsck`. `walkable` is the clonability
+ * signal: a `git clone --bare` mirrors every ref, so one unwalkable ref (one
+ * that reaches a missing/corrupt object) makes the whole clone abort.
+ */
+export interface GitRefStatus {
+  /** Full ref name, e.g. `refs/heads/dirty`. */
+  refName: string;
+  /** Short name, e.g. `dirty`. */
+  shortName: string;
+  sha: string | null;
+  walkable: boolean;
+  /** First line of `git rev-list` stderr when not walkable. */
+  error: string | null;
+}
+
+/**
+ * Structured `git fsck` report for one connection's bare repo (the `fsck`
+ * dev-tools endpoint).
+ */
+export interface GitFsckResponse {
+  /** `git fsck` reported no missing/unreadable/broken objects. */
+  fsckClean: boolean;
+  /** Every ref walks cleanly ⇒ `git clone --bare` will succeed. */
+  refsAllWalkable: boolean;
+  mainWalkable: boolean;
+  dirtyWalkable: boolean;
+  corruptRefs: string[];
+  missingObjects: string[];
+  unreadableObjects: string[];
+  refs: GitRefStatus[];
+  /** Raw fsck output, truncated for transport. */
+  rawFsck: string;
+}
+
+/** Outcome of a connection-repo repair. */
+export type GitRepairStatus = 'repaired' | 'already_clean' | 'refused_main_corrupt';
+
+/**
+ * Result of repairing a corrupt connection repo (reset a corrupt `dirty` branch
+ * to `main`). Non-destructive to published (`main`) data — only unpublished
+ * `dirty` edits are lost. `refused_main_corrupt` means `main` itself is corrupt
+ * and manual recovery is required.
+ */
+export interface GitRepairResponse {
+  status: GitRepairStatus;
+  before: GitFsckResponse;
+  after: GitFsckResponse | null;
+  /** Human-readable list of the surgery performed, in order. */
+  actions: string[];
+  dirtyResetFrom: string | null;
+  dirtyResetTo: string | null;
+  deletedRefs: string[];
+  gcRan: boolean;
+  gcOutput: string | null;
+}
+
+/**
  * Reference to a file in the workbook
  */
 export interface FileRefEntity {

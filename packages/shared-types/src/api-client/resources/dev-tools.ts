@@ -7,6 +7,7 @@ import type { UserDetails } from '../../dto/dev-tools/user-detail.dto';
 import type { UpdateSettingsDto } from '../../dto/users/update-settings.dto';
 import type { AdminWorkbookDto } from '../../dto/workbook/admin-workbook.dto';
 import type { EmailTemplate, EmailTemplatePayload } from '../../email';
+import type { GitFsckResponse, GitRepairResponse } from '../../file-types';
 import type { ScratchPlanType } from '../../subscription';
 import type { Http } from '../http';
 
@@ -218,6 +219,27 @@ export function createDevToolsApi(http: Http) {
         `/dev-tools/connections/${connectorAccountId}/move-repo`,
         { newRepoPath },
         { fallbackMessage: 'Failed to move repo' },
+      );
+      return res.data;
+    },
+
+    /** GET `/dev-tools/connections/:id/git-fsck` — read-only `git fsck` health report for a connection's repo. */
+    fsckConnectionRepo: async (connectorAccountId: string): Promise<GitFsckResponse> => {
+      const res = await http.get<GitFsckResponse>(`/dev-tools/connections/${connectorAccountId}/git-fsck`, {
+        fallbackMessage: 'Failed to diagnose connection repo',
+      });
+      return res.data;
+    },
+
+    /**
+     * POST `/dev-tools/connections/:id/repair-git` — repair a corrupt connection repo
+     * (reset a corrupt `dirty` branch to `main`). Destructive only to unpublished edits.
+     */
+    repairConnectionRepo: async (connectorAccountId: string): Promise<GitRepairResponse> => {
+      const res = await http.post<GitRepairResponse>(
+        `/dev-tools/connections/${connectorAccountId}/repair-git`,
+        undefined,
+        { fallbackMessage: 'Failed to repair connection repo' },
       );
       return res.data;
     },

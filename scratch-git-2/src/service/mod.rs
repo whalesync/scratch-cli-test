@@ -80,6 +80,8 @@ pub async fn run() {
             get(routes::manage::count_objects),
         )
         .route("/api/repo/manage/{id}/gc", post(routes::manage::gc))
+        .route("/api/repo/manage/{id}/fsck", get(routes::manage::fsck))
+        .route("/api/repo/manage/{id}/repair", post(routes::manage::repair))
         .route("/api/repo/manage/copy", post(routes::manage::copy_repo))
         .route(
             "/api/repo/manage/{id}/strip-prefix",

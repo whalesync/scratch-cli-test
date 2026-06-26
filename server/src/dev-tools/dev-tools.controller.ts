@@ -18,8 +18,11 @@ import {
 import type {
   AdminWorkbookConnectionDto,
   AdminWorkbookDto,
+  ConnectorAccountId,
   DecryptedCredentials,
   GetAllJobsResponseDto,
+  GitFsckResponse,
+  GitRepairResponse,
 } from '@spinner/shared-types';
 import {
   createSubscriptionId,
@@ -602,6 +605,87 @@ export class DevToolsController {
       oldRepoPath: account.repoPath,
       newRepoPath: body.newRepoPath,
     };
+  }
+
+  /* Diagnose a connection's git repo health (read-only `git fsck`). */
+  @Get('connections/:id/git-fsck')
+  async fsckConnectionRepo(
+    @Param('id') connectorAccountId: string,
+    @Req() req: RequestWithUser,
+  ): Promise<GitFsckResponse> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can diagnose connection repos');
+    }
+
+    const account = await this.dbService.client.connectorAccount.findUnique({
+      where: { id: connectorAccountId },
+      select: { id: true, repoPath: true },
+    });
+
+    if (!account) {
+      throw new NotFoundException(`Connector account ${connectorAccountId} not found`);
+    }
+    if (!account.repoPath) {
+      throw new BadRequestException(`Connector account ${connectorAccountId} has no repoPath`);
+    }
+
+    return this.scratchGitClient.fsck(account.repoPath);
+  }
+
+  /*
+   * Repair a connection's git repo by resetting a corrupt `dirty` branch to
+   * `main` (the gentle sibling of resetConnection, which wipes the whole repo).
+   * Destructive only to unpublished `dirty` edits; published (`main`) data is
+   * never touched. Refuses when `main` itself is corrupt.
+   */
+  @Post('connections/:id/repair-git')
+  async repairConnectionRepo(
+    @Param('id') connectorAccountId: string,
+    @Req() req: RequestWithUser,
+  ): Promise<GitRepairResponse> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can repair connection repos');
+    }
+
+    const account = await this.dbService.client.connectorAccount.findUnique({
+      where: { id: connectorAccountId },
+      select: {
+        id: true,
+        repoPath: true,
+        displayName: true,
+        workbook: { select: { organizationId: true } },
+      },
+    });
+
+    if (!account) {
+      throw new NotFoundException(`Connector account ${connectorAccountId} not found`);
+    }
+    if (!account.repoPath) {
+      throw new BadRequestException(`Connector account ${connectorAccountId} has no repoPath`);
+    }
+
+    const result = await this.scratchGitClient.repairRepo(account.repoPath);
+
+    // Audit-log only when the repair actually mutated the repo.
+    if (result.status === 'repaired') {
+      await this.auditLogService.logEvent({
+        actor: userToActor(req.user),
+        eventType: 'update',
+        message: `Repaired corrupt git repo for connection ${account.displayName}`,
+        entityId: account.id as ConnectorAccountId,
+        organizationId: account.workbook.organizationId,
+        context: {
+          action: 'repair_connection_repo',
+          repoPath: account.repoPath,
+          dirtyResetFrom: result.dirtyResetFrom,
+          dirtyResetTo: result.dirtyResetTo,
+          deletedRefs: result.deletedRefs,
+          actions: result.actions,
+        },
+      });
+    }
+
+    return result;
   }
 
   /* Waitlist management */
