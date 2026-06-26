@@ -24,7 +24,10 @@ export class AirtableOAuthProvider implements OAuthProvider {
     authUrl.searchParams.set('redirect_uri', this.redirectUri);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('state', state);
-    authUrl.searchParams.set('scope', 'data.records:read data.records:write schema.bases:read');
+    // `schema.bases:write` is required to create tables/fields (the sync-draft
+    // materialize flow). Existing connections authorized before this scope was
+    // added must reconnect to grant it — Airtable freezes scopes at token grant.
+    authUrl.searchParams.set('scope', 'data.records:read data.records:write schema.bases:read schema.bases:write');
 
     if (overrides?.codeChallenge) {
       authUrl.searchParams.set('code_challenge', overrides.codeChallenge);

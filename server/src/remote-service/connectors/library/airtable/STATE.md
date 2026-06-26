@@ -168,10 +168,10 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 
 ## OAuth (final milestone — create the client with the user, or document what it takes)
 API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-release nicety done *with* the user. Fill this in when you reach Milestone 9.
-- **Requires:** <dev account? app registration? review/approval? specific scopes?>
-- **Endpoints:** authorize `<url>` · token `<url>` · redirect URI = Scratch callback `REDIRECT_URI` (`<https://test.scratch.md/oauth/callback>`)
-- **App / client:** <where the app is registered; client id/secret in `server/.env` as `<SERVICE>_CLIENT_ID`/`_SECRET` — never paste the secret here>
-- **Status:** <not started | documented (requirements only) | client created | provider wired (CONNECTOR_GUIDE → Server — OAuth)>
+- **Requires:** Airtable OAuth integration (Builder Hub → OAuth integrations). **Scopes:** `data.records:read data.records:write schema.bases:read schema.bases:write` — `schema.bases:write` is mandatory for the create-table/create-field (sync-draft materialize) flow. Adding a scope requires existing users to **reconnect**; Airtable freezes scopes at token grant.
+- **Endpoints:** authorize `https://airtable.com/oauth2/v1/authorize` · token `https://airtable.com/oauth2/v1/token` (PKCE) · redirect URI = Scratch callback `REDIRECT_URI` (`https://test.scratch.md/oauth/callback`)
+- **App / client:** registered in the Airtable Builder Hub; client id/secret in `server/.env` as `AIRTABLE_CLIENT_ID`/`AIRTABLE_CLIENT_SECRET` — never paste the secret here. Provider: `server/src/oauth/providers/airtable-oauth.provider.ts`.
+- **Status:** provider wired (CONNECTOR_GUIDE → Server — OAuth)
 - **Blockers:** <approval pending / paid dev account / none>
 
 ## UI quick-links (time-savers for the gstack browser)

@@ -40,6 +40,8 @@ export class ErrorMessageTemplates {
   // API issues.
   static readonly API_UNAUTHORIZED = (serviceName: string) =>
     `The credentials Scratch uses to communicate with ${serviceName} are no longer valid.`;
+  static readonly API_FORBIDDEN = (serviceName: string) =>
+    `Scratch's connection to ${serviceName} doesn't have permission to perform this action. You may need to reconnect it and grant the required permissions.`;
   static readonly API_QUOTA_EXCEEDED = (serviceName: string) =>
     `You have exceeded the service API quota for ${serviceName}.`;
   static readonly API_TIMEOUT = (serviceName: string) => `Request to ${serviceName} timed out. Please try again.`;
@@ -75,9 +77,25 @@ export function extractCommonDetailsFromAxiosError(
   connector: Connector,
   error: AxiosError,
 ): ConnectorErrorDetails | null {
-  if (error.response?.status === HttpStatusCode.Forbidden || error.response?.status === HttpStatusCode.Unauthorized) {
+  // 401 (invalid/expired token) and 403 (valid token, insufficient permission —
+  // e.g. an OAuth connection missing a required scope) are distinct problems and
+  // need distinct guidance: 401 → reconnect/refresh credentials; 403 → the
+  // connection lacks permission for this action (often a missing scope).
+  if (error.response?.status === HttpStatusCode.Unauthorized) {
     return {
       userFriendlyMessage: ErrorMessageTemplates.API_UNAUTHORIZED(getServiceDisplayName(connector.service)),
+      description: error.message,
+      additionalContext: {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        url: error.config?.url,
+      },
+    };
+  }
+
+  if (error.response?.status === HttpStatusCode.Forbidden) {
+    return {
+      userFriendlyMessage: ErrorMessageTemplates.API_FORBIDDEN(getServiceDisplayName(connector.service)),
       description: error.message,
       additionalContext: {
         status: error.response?.status,

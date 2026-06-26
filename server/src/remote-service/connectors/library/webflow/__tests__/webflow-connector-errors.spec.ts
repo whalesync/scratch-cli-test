@@ -74,6 +74,13 @@ describe('WebflowConnector error handling', () => {
       const error = makeAxiosError(401, { message: 'unauthorized' });
       expect(connector.extractConnectorErrorDetails(error).userFriendlyMessage).toMatch(/no longer valid/);
     });
+
+    it('maps 403 to a distinct insufficient-permission message (not "no longer valid")', () => {
+      const error = makeAxiosError(403, { message: 'forbidden' });
+      const message = connector.extractConnectorErrorDetails(error).userFriendlyMessage;
+      expect(message).toMatch(/permission/i);
+      expect(message).not.toMatch(/no longer valid/);
+    });
   });
 
   describe('deleteRecords (404 swallow contract)', () => {
