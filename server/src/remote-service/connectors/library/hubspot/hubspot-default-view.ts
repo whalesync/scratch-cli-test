@@ -7,11 +7,13 @@ import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
+import { OBJECT_CONFIG } from './hubspot-types';
 
 // ── Top-level fixed fields ──
 
-// Fixed fields that should be hidden by default.
-const HIDDEN_FIXED_FIELDS = new Set(['associations']);
+// `associations` is NOT emitted as a fixed column — it's expanded into one
+// foreign-key column per related object type (see buildAssociationForeignKeyEntries).
+const FIXED_FIELDS_HANDLED_SEPARATELY = new Set(['associations']);
 
 // Fixed fields that are always readonly (system-generated, not editable via the API).
 const READONLY_FIXED_FIELDS = new Set(['id', 'createdAt', 'updatedAt', 'archived']);
@@ -34,8 +36,32 @@ const HUBSPOT_TYPE_MAP: Partial<Record<string, TablePropertyType>> = {
 
 // ── Hidden properties ──
 
-// hs_ properties that are actually useful and should NOT be hidden.
+// hs_ properties that are actually useful and should NOT be hidden — even on the
+// analytics-heavy CRM objects (contacts/companies/deals) that otherwise hide the
+// whole hs_ namespace by default.
 const HS_KEEP_VISIBLE = new Set(['hs_email_domain', 'hs_lead_status', 'hs_object_id', 'hs_language', 'hs_timezone']);
+
+// Internal HubSpot plumbing that is never useful as a column on ANY object type
+// (record provenance, owner/team id arrays, merge bookkeeping). Hidden in both
+// the hide-hs and show-hs modes. On the hide-hs objects these would already be
+// caught by the hs_ blanket rule; listing them here also strips them from the
+// activity/commerce objects that otherwise show their hs_ content.
+const HS_SYSTEM_PLUMBING_PROPERTIES = new Set([
+  'hs_created_by_user_id',
+  'hs_updated_by_user_id',
+  'hs_merged_object_ids',
+  'hs_unique_creation_key',
+  'hs_was_imported',
+  'hs_read_only',
+  'hs_created_by',
+  'hs_modified_by',
+]);
+
+// Prefixes for families of internal plumbing properties:
+//   hs_all_*               → hs_all_owner_ids, hs_all_team_ids, hs_all_accessible_team_ids, …
+//   hs_object_source*      → hs_object_source, hs_object_source_label, hs_object_source_detail_1, …
+//   hs_user_ids_of_all_*   → hs_user_ids_of_all_owners, hs_user_ids_of_all_notification_followers, …
+const HS_SYSTEM_PLUMBING_PREFIXES = ['hs_all_', 'hs_object_source', 'hs_user_ids_of_all_'];
 
 // Non-hs_ properties that should be hidden (analytics noise, internal tracking).
 const HIDDEN_PROPERTIES = new Set([
@@ -93,22 +119,37 @@ const ALWAYS_READONLY_PROPERTIES = new Set([
 
 // ── Address banner group ──
 
-const ADDRESS_FIELDS = ['address', 'city', 'state', 'country', 'zip'];
+// The canonical HubSpot address fields, in the order they should read inside the
+// banner (street → street 2 → city → state → zip → country). Contacts expose
+// `address`/`city`/`state`/`zip`/`country`; Companies add `address2`. Only the
+// fields actually present on the object are grouped, so this is safe to share
+// across object types — an object missing a field simply omits it.
+const ADDRESS_FIELDS = ['address', 'address2', 'city', 'state', 'zip', 'country'];
+
+export interface HubspotDefaultViewOptions {
+  /** Dot-path to the title property (e.g. 'properties.email'). */
+  titleFieldPath?: string;
+  /** Property names to show right after id. */
+  priorityFields?: string[];
+  /**
+   * Blanket-hide `hs_`-prefixed (HubSpot-managed) properties as analytics/system
+   * noise. Correct ONLY for the analytics-heavy CRM record objects
+   * (contacts/companies/deals). Defaults to `false` — every other object type
+   * (activity/engagement and commerce objects) keeps its `hs_`-prefixed primary
+   * content visible. See {@link HubspotObjectConfig.hideHubspotManagedPropertiesByDefault}.
+   */
+  hideHubspotManagedProperties?: boolean;
+}
 
 /**
  * Build a default TableView for a HubSpot object (contacts, companies, deals, etc.).
  *
  * Column order: title property → id → priority properties → Address group → remaining properties
  * → remaining fixed fields (createdAt, updatedAt, archived, ...).
- *
- * @param titleFieldPath - dot-path to the title property (e.g. 'properties.email').
- * @param priorityFields - property names to show right after id.
  */
-export function buildHubspotDefaultView(
-  schema: TSchema,
-  titleFieldPath?: string,
-  priorityFields?: string[],
-): TableView {
+export function buildHubspotDefaultView(schema: TSchema, options: HubspotDefaultViewOptions = {}): TableView {
+  const { titleFieldPath, priorityFields, hideHubspotManagedProperties = false } = options;
+
   const topLevel: Record<string, TSchema> =
     (schema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
 
@@ -123,13 +164,22 @@ export function buildHubspotDefaultView(
   const titlePropName = titleFieldPath?.replace('properties.', '');
   const orderedProps = orderProperties(Object.entries(propertyFields), titlePropName, priorityFields);
 
+  // The title and priority properties were explicitly chosen as meaningful, so
+  // they must never be hidden — even when they are hs_-prefixed (e.g. a Note's
+  // title is `hs_note_body`) and the object hides the hs_ namespace by default.
+  const alwaysVisibleProps = new Set<string>(priorityFields ?? []);
+  if (titlePropName) alwaysVisibleProps.add(titlePropName);
+
   // Separate address fields for banner grouping
   const addressFieldSet = new Set(ADDRESS_FIELDS);
   const addressCols: TableViewCol[] = [];
   const regularProps: { name: string; col: TableViewCol }[] = [];
 
   for (const [propName, propSchema] of orderedProps) {
-    const col = buildPropertyCol(propName, propSchema);
+    const col = buildPropertyCol(propName, propSchema, {
+      hideHubspotManagedProperties,
+      alwaysVisible: alwaysVisibleProps.has(propName),
+    });
     if (addressFieldSet.has(propName)) {
       addressCols.push(col);
     } else {
@@ -137,12 +187,20 @@ export function buildHubspotDefaultView(
     }
   }
 
-  // Build fixed fields
-  const fixedFieldIds = Object.keys(topLevel).filter((k) => k !== 'properties');
+  // Build fixed fields (id, createdAt, updatedAt, archived). `properties` is the
+  // CRM property bag handled above; `associations` is expanded into per-type FK
+  // columns at the end rather than emitted as a single opaque object column.
+  const fixedFieldIds = Object.keys(topLevel).filter(
+    (k) => k !== 'properties' && !FIXED_FIELDS_HANDLED_SEPARATELY.has(k),
+  );
   const fixedCols = new Map<string, TableViewCol>();
   for (const fieldId of fixedFieldIds) {
     fixedCols.set(fieldId, buildFixedCol(fieldId, topLevel[fieldId]));
   }
+
+  // Foreign-key columns for the record's associations, appended after everything
+  // else (a standalone column for one related type, an "Associations" group for many).
+  const associationEntries = buildAssociationForeignKeyEntries(topLevel['associations']);
 
   // === Assemble final column order ===
 
@@ -166,8 +224,16 @@ export function buildHubspotDefaultView(
     if (next) cols.push(next.col);
   }
 
-  // 4. Address banner group (near the front, after priority fields)
+  // 4. Address banner group (near the front, after priority fields). Order its
+  // columns by the canonical ADDRESS_FIELDS sequence rather than API order, so
+  // the banner always reads street → city → state → zip → country.
   if (addressCols.length > 0) {
+    const addressFieldOrder = new Map(ADDRESS_FIELDS.map((field, index) => [field, index]));
+    addressCols.sort(
+      (a, b) =>
+        (addressFieldOrder.get(a.path.replace('properties.', '')) ?? 0) -
+        (addressFieldOrder.get(b.path.replace('properties.', '')) ?? 0),
+    );
     cols.push({ kind: 'banner-group', name: 'Address', cols: addressCols });
   }
 
@@ -187,6 +253,11 @@ export function buildHubspotDefaultView(
   }
   for (const [, col] of fixedCols) {
     cols.push(col);
+  }
+
+  // 7. Association foreign-key columns (or the "Associations" group) last.
+  for (const entry of associationEntries) {
+    cols.push(entry);
   }
 
   return { name: 'Default', cols };
@@ -253,10 +324,23 @@ function mapPropertyType(connectorDataType: string | undefined): TablePropertyTy
   return HUBSPOT_TYPE_MAP[connectorDataType];
 }
 
-/** Determine whether a property should be hidden by default. */
-function isHiddenProperty(propName: string): boolean {
+/** Whether a property is internal HubSpot plumbing, noise on every object type. */
+function isHubspotSystemPlumbingProperty(propName: string): boolean {
+  if (HS_SYSTEM_PLUMBING_PROPERTIES.has(propName)) return true;
+  return HS_SYSTEM_PLUMBING_PREFIXES.some((prefix) => propName.startsWith(prefix));
+}
+
+/**
+ * Determine whether a property should be hidden by default.
+ *
+ * @param hideHubspotManagedProperties - when true (contacts/companies/deals),
+ *   blanket-hide the hs_ namespace as analytics noise; when false (all other
+ *   objects), hs_ properties are primary content and stay visible.
+ */
+function isHiddenProperty(propName: string, hideHubspotManagedProperties: boolean): boolean {
   if (HIDDEN_PROPERTIES.has(propName)) return true;
-  if (propName.startsWith('hs_') && !HS_KEEP_VISIBLE.has(propName)) return true;
+  if (isHubspotSystemPlumbingProperty(propName)) return true;
+  if (hideHubspotManagedProperties && propName.startsWith('hs_') && !HS_KEEP_VISIBLE.has(propName)) return true;
   return false;
 }
 
@@ -278,9 +362,8 @@ function isOpaqueIdProperty(propName: string): boolean {
   return propName.startsWith('hs_object_id');
 }
 
-/** Build a TableViewCol for a fixed top-level field. */
+/** Build a TableViewCol for a fixed top-level field (id, createdAt, updatedAt, archived). */
 function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): TableViewCol {
-  const hidden = HIDDEN_FIXED_FIELDS.has(fieldId) || undefined;
   const isReadonly = READONLY_FIXED_FIELDS.has(fieldId) || fieldSchema?.[X_SCRATCH_READONLY] === true;
 
   return {
@@ -289,12 +372,59 @@ function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): Table
     name: formatFieldName(fieldId),
     type: mapFixedFieldType(fieldSchema),
     readonly: isReadonly || undefined,
-    hidden,
+  };
+}
+
+/**
+ * Expand the `associations` object into one foreign-key column per related object
+ * type. HubSpot keys associations by the related object type (`companies`,
+ * `contacts`, `0-421`, …), and each `results[].id` is annotated as a foreign key
+ * pointing at that type's table (see `buildAssociationsSchema`). The single opaque
+ * `associations` object column is useless in a grid, so we surface a column per
+ * type instead, each pointing at `associations.<type>.results` and flattened to
+ * its list of ids for display (the FK ids then resolve to the related records).
+ *
+ * Returns the columns plus whether they should be wrapped: a single related type
+ * renders as a standalone column ("Associated Contacts"); multiple types are
+ * grouped under an "Associations" banner, each column still named "Associated X".
+ */
+function buildAssociationForeignKeyEntries(
+  associationsSchema: TSchema | undefined,
+): (TableViewCol | TableViewBannerGroup)[] {
+  const associationFields: Record<string, TSchema> =
+    (associationsSchema as TSchema & { properties?: Record<string, TSchema> })?.properties ?? {};
+  const associationTypes = Object.keys(associationFields);
+  if (associationTypes.length === 0) return [];
+
+  const cols = associationTypes.map((assocType) => buildAssociationForeignKeyCol(assocType));
+
+  if (cols.length === 1) return cols;
+  return [{ kind: 'banner-group', name: 'Associations', cols }];
+}
+
+/** Build the foreign-key column for one association type (`associations.<type>.results`). */
+function buildAssociationForeignKeyCol(assocType: string): TableViewCol {
+  const targetTableDisplayName = OBJECT_CONFIG[assocType]?.displayName ?? assocType;
+
+  return {
+    kind: 'col',
+    path: `associations.${assocType}.results`,
+    // Always prefixed with "Associated" so the column reads clearly on its own
+    // (e.g. "Associated Emails"), both standalone and inside the Associations group.
+    name: `Associated ${targetTableDisplayName}`,
+    readonly: true,
+    // Flatten the [{ id, type }, …] array to its comma-joined ids for display; the
+    // ids resolve to the related records via the schema's foreign-key annotation.
+    displayTransformer: { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'join_comma' } },
   };
 }
 
 /** Build a TableViewCol for a HubSpot CRM property (under properties.*). */
-function buildPropertyCol(propName: string, propSchema: TSchema | undefined): TableViewCol {
+function buildPropertyCol(
+  propName: string,
+  propSchema: TSchema | undefined,
+  opts: { hideHubspotManagedProperties: boolean; alwaysVisible: boolean },
+): TableViewCol {
   const inner = unwrapOptional(propSchema);
   const connectorDataType =
     (propSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined) ??
@@ -303,18 +433,50 @@ function buildPropertyCol(propName: string, propSchema: TSchema | undefined): Ta
     propSchema?.[X_SCRATCH_READONLY] === true ||
     inner?.[X_SCRATCH_READONLY] === true ||
     isAlwaysReadonlyProperty(propName);
-  const hidden = isHiddenProperty(propName) || undefined;
+  const hidden = opts.alwaysVisible
+    ? undefined
+    : isHiddenProperty(propName, opts.hideHubspotManagedProperties) || undefined;
 
   const type = isOpaqueIdProperty(propName) ? 'string' : mapPropertyType(connectorDataType);
 
   return {
     kind: 'col',
     path: `properties.${propName}`,
-    name: propName,
+    name: resolvePropertyDisplayName(propName, propSchema, inner),
     type,
     readonly: isReadonly || undefined,
     hidden,
   };
+}
+
+/**
+ * Pick the human-readable column label for a HubSpot property. Prefers the
+ * label HubSpot ships for the property (stored on the schema as `description`,
+ * e.g. `hs_call_title` → "Call title") so we present the exact wording the
+ * service's own UI uses — no hand-maintained name map. Falls back to a
+ * humanized form of the raw property key when no label is present.
+ */
+function resolvePropertyDisplayName(
+  propName: string,
+  propSchema: TSchema | undefined,
+  inner: TSchema | undefined,
+): string {
+  const label = propSchema?.description ?? inner?.description;
+  if (typeof label === 'string' && label.trim() !== '') return label.trim();
+  return humanizePropertyName(propName);
+}
+
+/**
+ * Fallback humanizer for a raw HubSpot property key: drop the `hs_` system
+ * prefix, turn underscores into spaces, and sentence-case the result
+ * (`hs_call_title` → "Call title", `hs_email_domain` → "Email domain"). Only
+ * used when the schema carries no HubSpot-provided label.
+ */
+function humanizePropertyName(propName: string): string {
+  const withoutHsPrefix = propName.startsWith('hs_') ? propName.slice(3) : propName;
+  const spaced = withoutHsPrefix.replace(/_/g, ' ').trim();
+  if (spaced.length === 0) return propName;
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 /** Unwrap TypeBox Optional to get the inner schema. */

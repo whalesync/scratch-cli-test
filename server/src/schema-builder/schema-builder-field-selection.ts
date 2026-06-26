@@ -38,15 +38,31 @@ export interface PlanFieldSelection {
  * Select the plan's source fields from a connector's curated default view,
  * enriched with metadata from the JSON schema.
  *
- * For each visible column we find its **backing** schema field: an exact
- * `col.path` match, else the deepest existing ancestor path. This re-anchors a
- * drilled column path (e.g. Notion's `properties.Owners.relation`) back to the
- * envelope field (`properties.Owners`) that actually carries the foreign-key /
- * read-only annotations. The backing field's `path` becomes the derived field's
- * path so the existing primary-field and id-field matching (which compares
- * against the title/id column paths) keeps working untouched.
+ * Each visible column becomes one proposed field — the view is the source of
+ * truth for *what* fields to propose. We then join each column back to the schema
+ * for metadata the column can't carry (foreign-key target, read-only, type,
+ * description).
+ *
+ * A column may drill BELOW the schema field that owns its metadata (Notion's
+ * `properties.Owners.relation` sits under the `properties.Owners` envelope that
+ * carries the FK; its title column `properties.Name.title` sits under the
+ * `properties.Name` envelope that is the title path). For those we re-anchor the
+ * column onto the ancestor so the FK is recovered and the derived path matches the
+ * title/id designation. But we re-anchor ONLY onto an ancestor that actually owns
+ * such metadata — a foreign key, or the title/id path. A structural container that
+ * owns none of these (e.g. HubSpot's read-only `associations` bag, which the
+ * flattener exposes as a single leaf) is NOT a merge target: each column under it
+ * keeps its own identity, so distinct sibling columns ("Associated Companies",
+ * "Associated Contacts", …) stay distinct instead of collapsing into one.
  */
-export function selectPlanFieldsFromTableView(args: { schema: TSchema; view: TableView }): PlanFieldSelection {
+export function selectPlanFieldsFromTableView(args: {
+  schema: TSchema;
+  view: TableView;
+  /** Dot-path of the table's title column; a drilled title column re-anchors here. */
+  titlePath?: string;
+  /** Dot-path of the table's id column; a drilled id column re-anchors here. */
+  idPath?: string;
+}): PlanFieldSelection {
   const pathToSchemaField = new Map<string, SchemaField>();
   for (const schemaField of extractSchemaFields(args.schema)) {
     pathToSchemaField.set(schemaField.path, schemaField);
@@ -57,7 +73,7 @@ export function selectPlanFieldsFromTableView(args: { schema: TSchema; view: Tab
   const alreadySelectedBackingPaths = new Set<string>();
 
   for (const col of visibleColumns(args.view)) {
-    const backingField = findBackingSchemaField(col.path, pathToSchemaField);
+    const backingField = findBackingSchemaField(col.path, pathToSchemaField, args.titlePath, args.idPath);
     const path = backingField?.path ?? col.path;
 
     // Dedupe by backing path — multiple columns can drill into the same envelope
@@ -98,22 +114,49 @@ function visibleColumns(view: TableView): TableViewCol[] {
 }
 
 /**
- * Resolve a view column's path to the schema field that backs it: exact match
- * first, then the deepest ancestor path that exists in the schema. Returns
- * undefined when nothing in the schema corresponds (e.g. a purely derived
- * column) — the caller then falls back to the column's own path and type.
+ * Resolve a view column's path to the schema field that backs it.
+ *
+ * An exact match always wins — the column maps directly to a schema field. Failing
+ * that, the column drills BELOW some field, and we re-anchor to an ancestor ONLY
+ * when that ancestor owns metadata the plan needs: a foreign key, or the table's
+ * title/id path. An ancestor that is merely a structural container (it exists in
+ * the schema but carries no FK and isn't the title/id path — e.g. HubSpot's
+ * `associations` bag) is NOT re-anchored onto, so the column keeps its own
+ * identity. Returns undefined when nothing meaningful backs it; the caller then
+ * falls back to the column's own path and type.
  */
 function findBackingSchemaField(
   columnPath: string,
   pathToSchemaField: Map<string, SchemaField>,
+  titlePath: string | undefined,
+  idPath: string | undefined,
 ): SchemaField | undefined {
+  const exactMatch = pathToSchemaField.get(columnPath);
+  if (exactMatch) return exactMatch;
+
   let candidatePath = columnPath;
-  while (candidatePath.length > 0) {
-    const match = pathToSchemaField.get(candidatePath);
-    if (match) return match;
-    const lastDotIndex = candidatePath.lastIndexOf('.');
-    if (lastDotIndex === -1) break;
-    candidatePath = candidatePath.slice(0, lastDotIndex);
+  while (candidatePath.includes('.')) {
+    candidatePath = candidatePath.slice(0, candidatePath.lastIndexOf('.'));
+    const ancestor = pathToSchemaField.get(candidatePath);
+    if (ancestor && isMeaningfulReanchorTarget(candidatePath, ancestor, titlePath, idPath)) {
+      return ancestor;
+    }
   }
   return undefined;
+}
+
+/**
+ * Whether a drilled column should re-anchor onto this ancestor schema field. True
+ * only when the ancestor owns metadata the plan genuinely needs to inherit: a
+ * foreign-key target (the column is a drill into a relation envelope) or the
+ * table's title/id path (so primary-field / id-skip matching lines up). A plain
+ * structural container owns none of these and must not absorb its children.
+ */
+function isMeaningfulReanchorTarget(
+  ancestorPath: string,
+  ancestorField: SchemaField,
+  titlePath: string | undefined,
+  idPath: string | undefined,
+): boolean {
+  return Boolean(ancestorField.foreignKey) || ancestorPath === titlePath || ancestorPath === idPath;
 }

@@ -2,6 +2,7 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
@@ -74,6 +75,14 @@ function resolveConnectorDataType(property: HubspotProperty): string {
 /**
  * Build the associations sub-schema for an object type.
  * Associations are readonly since they're written via the separate v4 API.
+ *
+ * Each association is keyed by the related object type (`companies`, `contacts`,
+ * `deals`, `0-421`, …), and every `results[].id` holds the related record's HubSpot
+ * `id`. That object type is also the related table's wsId (see `listTables`, which
+ * sets `wsId: objectType`), so we annotate the `id` node as a foreign key whose
+ * `linkedTableId` is the association type. The FK resolves to whichever record in
+ * that table has the matching `id`; if the user hasn't synced that table into the
+ * workbook, the FK simply doesn't resolve (no table change needed here).
  */
 function buildAssociationsSchema(objectType: string): TSchema | null {
   const associatedTypes = ASSOCIATIONS_BY_OBJECT_TYPE[objectType];
@@ -85,7 +94,7 @@ function buildAssociationsSchema(objectType: string): TSchema | null {
       Type.Object({
         results: Type.Array(
           Type.Object({
-            id: Type.String(),
+            id: Type.String({ [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: assocType } }),
             type: Type.String(),
           }),
         ),
@@ -163,7 +172,11 @@ export async function buildHubspotJsonTableSpec(
     slugPath: config?.titleFieldPath ? dotPath(config.titleFieldPath) : undefined,
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildHubspotDefaultView(schema, config?.titleFieldPath, config?.priorityFields),
+    defaultView: buildHubspotDefaultView(schema, {
+      titleFieldPath: config?.titleFieldPath,
+      priorityFields: config?.priorityFields,
+      hideHubspotManagedProperties: config?.hideHubspotManagedPropertiesByDefault ?? false,
+    }),
   };
 
   return { spec, propertyNames };

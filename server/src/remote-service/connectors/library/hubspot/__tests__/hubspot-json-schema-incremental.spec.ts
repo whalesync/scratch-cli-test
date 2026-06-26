@@ -1,8 +1,8 @@
-import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
+import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import { findLastModifiedFieldName } from '../../../types';
 import { HubspotApiClient } from '../hubspot-api-client';
 import { buildHubspotJsonTableSpec, resolveHubspotLastModifiedPropertyName } from '../hubspot-json-schema';
-import { HubspotProperty } from '../hubspot-types';
+import { ASSOCIATIONS_BY_OBJECT_TYPE, HubspotProperty } from '../hubspot-types';
 
 function property(name: string): HubspotProperty {
   return {
@@ -77,5 +77,72 @@ describe('buildHubspotJsonTableSpec last-modified annotation', () => {
 
     expect(lastModifiedAnnotation(spec, 'name')).toBeUndefined();
     expect(findLastModifiedFieldName(spec)).toBeUndefined();
+  });
+});
+
+describe('buildHubspotJsonTableSpec association foreign keys', () => {
+  /** Reach the FK options on `associations.<assocType>.results[].id`. */
+  function associationForeignKey(spec: { schema: unknown }, assocType: string): unknown {
+    const schema = spec.schema as {
+      properties: {
+        associations: {
+          properties: Record<
+            string,
+            { properties: { results: { items: { properties: { id: Record<string, unknown> } } } } }
+          >;
+        };
+      };
+    };
+    return schema.properties.associations.properties[assocType]?.properties.results.items.properties.id?.[
+      X_SCRATCH_FOREIGN_KEY_OPTIONS
+    ];
+  }
+
+  it('annotates each association id with linkedTableId = the association object type', async () => {
+    const { spec } = await buildHubspotJsonTableSpec(
+      { wsId: 'deals', remoteId: ['deals'] },
+      'deals',
+      fakeClient([property('dealname')]),
+    );
+
+    // Deals associate with companies, contacts, deals (self), notes, tasks, tickets.
+    expect(associationForeignKey(spec, 'companies')).toEqual({ linkedTableId: 'companies' });
+    expect(associationForeignKey(spec, 'contacts')).toEqual({ linkedTableId: 'contacts' });
+    expect(associationForeignKey(spec, 'deals')).toEqual({ linkedTableId: 'deals' });
+    expect(associationForeignKey(spec, 'notes')).toEqual({ linkedTableId: 'notes' });
+  });
+
+  it('uses the raw HubSpot object-type code as linkedTableId (appointments → 0-421)', async () => {
+    const { spec } = await buildHubspotJsonTableSpec(
+      { wsId: 'meetings', remoteId: ['meetings'] },
+      'meetings',
+      fakeClient([property('hs_meeting_title')]),
+    );
+
+    // Meetings associate with 0-421 (Appointments), whose table wsId is the code itself.
+    expect(associationForeignKey(spec, '0-421')).toEqual({ linkedTableId: '0-421' });
+  });
+
+  it('annotates every association declared for an object type', async () => {
+    const { spec } = await buildHubspotJsonTableSpec(
+      { wsId: 'contacts', remoteId: ['contacts'] },
+      'contacts',
+      fakeClient([property('email')]),
+    );
+
+    for (const assocType of ASSOCIATIONS_BY_OBJECT_TYPE['contacts']) {
+      expect(associationForeignKey(spec, assocType)).toEqual({ linkedTableId: assocType });
+    }
+  });
+
+  it('builds no associations group for an object type without associations (products)', async () => {
+    const { spec } = await buildHubspotJsonTableSpec(
+      { wsId: 'products', remoteId: ['products'] },
+      'products',
+      fakeClient([property('name')]),
+    );
+
+    const schema = spec.schema as unknown as { properties: Record<string, unknown> };
+    expect(schema.properties.associations).toBeUndefined();
   });
 });

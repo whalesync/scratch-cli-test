@@ -44,6 +44,17 @@ Living checklist of what's left: gaps found while adopting human-built code, unf
 - [ ] <pending task> <(link issue if any)>
 - [ ] <…>
 
+**Default-view `hs_` visibility (note, not a TODO):** the default view blanket-hides
+`hs_`-prefixed properties as analytics/system noise ONLY for the analytics-heavy CRM
+record objects — contacts, companies, deals (`hideHubspotManagedPropertiesByDefault`
+in `OBJECT_CONFIG`). Every other object type (activity/engagement: calls, meetings,
+notes, tasks, emails, communications, appointments; commerce: products, quotes, line
+items, services; plus tickets, leads, and custom objects) keeps its `hs_` content
+visible, because that's where their primary payload lives. A small set of internal
+plumbing `hs_` fields (`hs_all_*`, `hs_object_source*`, merge/creation bookkeeping) is
+hidden on all object types. If you add a new object whose content is `hs_`-prefixed,
+do NOT set the hide flag.
+
 ## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
 These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
 
@@ -141,8 +152,10 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 
 | FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
 |---|:--:|:--:|---|
-| `<Entity>.<field>` → `<table>` | ⬜ | ⬜ | |
-- Association endpoint (if any): <describe> — ⬜
+| `<Entity>.associations.<objectType>.results[].id` → `<objectType>` table | ✅ | ⬜ | All association `id` nodes are annotated `x-scratch-foreign-key` with `linkedTableId = <objectType>` (= the related table's wsId, e.g. `companies`, `contacts`, `deals`, `0-421`). Built in `buildAssociationsSchema` (`hubspot-json-schema.ts`); resolves to the related record by its `id`. Tables not synced into the workbook simply don't resolve. |
+| flat owner/user/team props (`hubspot_owner_id`, `hs_created_by_user_id`, `hubspot_team_id`, …) | — | — | NOT annotated — Owners/Users/Teams/Business Units aren't exposed as tables, and `ForeignKeyOptionSchema` has no external-FK form. Left as plain strings by design. |
+- Associations are written via the v4 API on publish (the whole `associations` group is `x-scratch-readonly` in the schema); the FK annotation drives read-side relationship resolution. CLI move-parent write coverage: ⬜
+- Default view surfaces these: instead of one opaque `associations` object column, it emits one readonly FK column per related type (`associations.<type>.results`, ids flattened via a `jsonpath` `displayTransformer`). One related type → standalone "Associated X" column; multiple → an "Associations" banner group. Built in `buildAssociationForeignKeyEntries` (`hubspot-default-view.ts`).
 
 ## Edge cases discovered
 - (none yet — see SKILL.md → Stage E for what to hunt for)

@@ -39,12 +39,43 @@ export interface HubspotObjectConfig {
   priorityFields?: string[];
   /** Whether creates are disabled for this object type. */
   disabledCreates?: boolean;
+  /**
+   * When true, the default view blanket-hides `hs_`-prefixed (HubSpot-managed)
+   * properties as analytics/scoring/system noise. This is correct ONLY for the
+   * analytics-heavy CRM record objects (contacts, companies, deals), whose
+   * editable content lives in plain-named properties and which otherwise bury it
+   * under dozens of `hs_analytics_*` / scoring fields.
+   *
+   * It must stay OFF for every other object type — activity/engagement objects
+   * (calls, meetings, notes, tasks, emails, communications, appointments) and
+   * commerce objects (products, quotes, line items, services) keep their ENTIRE
+   * primary payload under `hs_`-prefixed properties (e.g. `hs_call_body`,
+   * `hs_note_body`, `hs_task_subject`). Blanket-hiding those leaves the table with
+   * only a handful of generic owner/system fields, and makes the real content
+   * uncopyable in the create-table flow (which drops hidden columns).
+   */
+  hideHubspotManagedPropertiesByDefault?: boolean;
 }
 
 export const OBJECT_CONFIG: Record<string, HubspotObjectConfig> = {
-  contacts: { displayName: 'Contacts', titleFieldPath: 'properties.email', priorityFields: ['firstname', 'lastname'] },
-  companies: { displayName: 'Companies', titleFieldPath: 'properties.name', priorityFields: ['domain', 'industry'] },
-  deals: { displayName: 'Deals', titleFieldPath: 'properties.dealname', priorityFields: ['dealstage', 'amount'] },
+  contacts: {
+    displayName: 'Contacts',
+    titleFieldPath: 'properties.email',
+    priorityFields: ['firstname', 'lastname'],
+    hideHubspotManagedPropertiesByDefault: true,
+  },
+  companies: {
+    displayName: 'Companies',
+    titleFieldPath: 'properties.name',
+    priorityFields: ['domain', 'industry'],
+    hideHubspotManagedPropertiesByDefault: true,
+  },
+  deals: {
+    displayName: 'Deals',
+    titleFieldPath: 'properties.dealname',
+    priorityFields: ['dealstage', 'amount'],
+    hideHubspotManagedPropertiesByDefault: true,
+  },
   tickets: {
     displayName: 'Tickets',
     titleFieldPath: 'properties.subject',

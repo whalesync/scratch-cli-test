@@ -294,7 +294,12 @@ export class SchemaBuilderService {
       // (e.g. connectors that don't build a default view).
       const storedView = await this.dataFolderService.getStoredView(source.dataFolderId as DataFolderId, actor);
       const { schemaFields, viewTypeByPath } = storedView
-        ? selectPlanFieldsFromTableView({ schema: stored.schema as TSchema, view: storedView })
+        ? selectPlanFieldsFromTableView({
+            schema: stored.schema as TSchema,
+            view: storedView,
+            titlePath: toDotPath(stored.titlePath),
+            idPath: typeof stored.idPath === 'string' ? stored.idPath : undefined,
+          })
         : { schemaFields: extractSchemaFields(stored.schema as TSchema), viewTypeByPath: undefined };
 
       // When the source targets an existing destination table, resolve that
