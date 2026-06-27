@@ -75,18 +75,20 @@ function noteColor(status: FieldMappingNote['status']): 'green' | 'gray' | 'red'
   if (status === 'mapped') return 'green';
   if (status === 'downgraded') return 'gray';
   if (status === 'exists') return 'gray'; // already on destination — skipped, not an error
-  return 'red'; // unsupported
+  return 'red'; // unsupported / needs_target — needs action before this field can be created
 }
 
 function PlanResultView({ planResult }: { planResult: PlanResult }) {
   const mappedCount = planResult.notes.filter((note) => note.status === 'mapped').length;
   const downgraded = planResult.notes.filter((note) => note.status === 'downgraded');
   const unsupported = planResult.notes.filter((note) => note.status === 'unsupported');
+  // Recognized foreign keys kept in the plan but still needing a destination table.
+  const needsTarget = planResult.notes.filter((note) => note.status === 'needs_target');
   const exists = planResult.notes.filter((note) => note.status === 'exists');
   const mapped = planResult.notes.filter((note) => note.status === 'mapped');
   const tableNotes = planResult.tableNotes;
   // All notes, most-severe first, for the collapsible details panel.
-  const orderedNotes = [...unsupported, ...downgraded, ...exists, ...mapped];
+  const orderedNotes = [...unsupported, ...needsTarget, ...downgraded, ...exists, ...mapped];
 
   return (
     <Stack gap="sm">
@@ -104,6 +106,7 @@ function PlanResultView({ planResult }: { planResult: PlanResult }) {
           {mappedCount} field{mappedCount === 1 ? '' : 's'} mapped
           {downgraded.length > 0 ? `, ${downgraded.length} downgraded` : ''}
           {exists.length > 0 ? `, ${exists.length} already on destination (skipped)` : ''}
+          {needsTarget.length > 0 ? `, ${needsTarget.length} need a destination table` : ''}
           {unsupported.length > 0 ? `, ${unsupported.length} unsupported (omitted)` : ''}
           {tableNotes.length > 0 ? `, ${tableNotes.length} table${tableNotes.length === 1 ? '' : 's'} renamed` : ''}.
         </Text13Regular>

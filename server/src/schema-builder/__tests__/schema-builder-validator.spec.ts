@@ -1,7 +1,9 @@
 import { createSchemaTablesSchema, SchemaCreationCapabilities } from '@spinner/shared-types';
 import {
   formatIssuePath,
+  validateForeignKeyTargetsResolved,
   validateNamesAgainstExisting,
+  validateTableForeignKeyTargetsResolved,
   validateTablesAgainstCapabilities,
   zodErrorToValidateIssues,
 } from '../schema-builder-validator';
@@ -157,6 +159,58 @@ describe('createSchemaTablesSchema (zod contract)', () => {
         ],
       }).success,
     ).toBe(false);
+  });
+
+  it('rejects a foreignKey still carrying an unresolved (pending) target', () => {
+    expect(
+      issueCodes({
+        ...validRequest,
+        tables: [
+          {
+            ref: 't1',
+            name: 'Posts',
+            fields: [
+              { name: 'Title', fieldType: { kind: 'text' }, isPrimary: true },
+              {
+                name: 'Author',
+                fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'contacts' } },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toContain('FK_TARGET_UNRESOLVED');
+  });
+});
+
+describe('validateForeignKeyTargetsResolved', () => {
+  it('flags only the pending foreignKey targets, leaving resolved ones alone', () => {
+    const issues = validateForeignKeyTargetsResolved(
+      [
+        { name: 'Title', fieldType: { kind: 'text' } },
+        { name: 'Owner', fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: ['base', 'tbl'] } } },
+        { name: 'Author', fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'contacts' } } },
+      ],
+      'fields',
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ code: 'FK_TARGET_UNRESOLVED', path: 'fields[2].fieldType.target' });
+  });
+
+  it('scans every table via validateTableForeignKeyTargetsResolved', () => {
+    const issues = validateTableForeignKeyTargetsResolved({
+      connectorAccountId: 'conn_1',
+      tables: [
+        { ref: 't1', name: 'A', fields: [{ name: 'Title', fieldType: { kind: 'text' } }] },
+        {
+          ref: 't2',
+          name: 'B',
+          fields: [{ name: 'Link', fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'x' } } }],
+        },
+      ],
+    });
+    expect(issues.map((issue) => issue.code)).toEqual(['FK_TARGET_UNRESOLVED']);
+    expect(issues[0].path).toBe('tables[1].fields[0].fieldType.target');
   });
 });
 

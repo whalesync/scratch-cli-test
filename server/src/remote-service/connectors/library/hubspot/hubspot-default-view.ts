@@ -413,6 +413,10 @@ function buildAssociationForeignKeyCol(assocType: string): TableViewCol {
     // (e.g. "Associated Emails"), both standalone and inside the Associations group.
     name: `Associated ${targetTableDisplayName}`,
     readonly: true,
+    // The flattened ids are foreign keys into the related object's table (its wsId is
+    // the association type). Declared on the column because the FK annotation lives on
+    // `results[].id` — below this column's path — so a schema-join can't recover it.
+    foreignKey: { linkedTableId: assocType },
     // Flatten the [{ id, type }, …] array to its comma-joined ids for display; the
     // ids resolve to the related records via the schema's foreign-key annotation.
     displayTransformer: { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'join_comma' } },

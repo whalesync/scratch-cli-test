@@ -215,6 +215,7 @@ describe('buildHubspotDefaultView', () => {
       expect(col.name).toBe('Associated Contacts');
       expect(col.readonly).toBe(true);
       expect(col.hidden).toBeUndefined();
+      expect(col.foreignKey).toEqual({ linkedTableId: 'contacts' });
       expect(col.displayTransformer).toEqual({
         type: 'jsonpath',
         options: { expression: '$[*].id', arrayHandling: 'join_comma' },
@@ -234,9 +235,12 @@ describe('buildHubspotDefaultView', () => {
       expect(byPath('associations.contacts.results')?.name).toBe('Associated Contacts');
       expect(byPath('associations.deals.results')?.name).toBe('Associated Deals');
       expect(byPath('associations.0-421.results')?.name).toBe('Associated Appointments');
-      // Every grouped column is a readonly FK column with the id-flattening transformer.
+      // Every grouped column is a readonly FK column declaring its target table (the
+      // association type in its path) with the id-flattening display transformer.
       for (const col of group.cols) {
         expect(col.readonly).toBe(true);
+        const associationType = col.path.split('.')[1];
+        expect(col.foreignKey).toEqual({ linkedTableId: associationType });
         expect(col.displayTransformer).toEqual({
           type: 'jsonpath',
           options: { expression: '$[*].id', arrayHandling: 'join_comma' },

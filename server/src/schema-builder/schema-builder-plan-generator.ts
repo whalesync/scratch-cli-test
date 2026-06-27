@@ -237,8 +237,10 @@ export function generateCreatePlanFromSources(args: {
  * name, case-insensitive). A name match whose existing kind matches the source is
  * surfaced as an `adopted` note (mapped to the existing column, not recreated); an
  * incompatible match (different kind, or a foreign key) is skipped with an `exists`
- * note. The primary field is not re-designated and sibling-`{ ref }` foreign keys
- * are downgraded to `unsupported` (the /schema/fields endpoint can't express either).
+ * note. The primary field is not re-designated. A foreign key whose target isn't an
+ * existing remote table (a sibling `{ ref }`, which /schema/fields can't express, or
+ * an unmapped link) is emitted with a pending `{ unresolvedLinkedTableId }` target
+ * and a `needs_target` note — to be bound to an existing table before it is added.
  */
 function buildAddFieldsPlanForSource(
   source: PlanGeneratorSource,
@@ -311,8 +313,10 @@ function collectCreateFieldSpecsForSource(
 
 /**
  * Map one source field to a create-field spec, or return null (with an
- * explanatory note) when it should be omitted: the id column, a field the
- * destination already has, or an unresolvable/sibling-ref foreign key.
+ * explanatory note) when it should be omitted: the id column, or a field the
+ * destination already has. A foreign key whose target can't be bound yet is NOT
+ * omitted — it is emitted with a pending `{ unresolvedLinkedTableId }` target and a
+ * `needs_target` note so it survives into the plan/draft to be resolved later.
  *
  * A field that IS emitted is given a name unique within the table (via
  * `takenFieldNames`): if its requested name collides, a numeric suffix is
@@ -368,28 +372,26 @@ function mapSchemaFieldToCreateFieldSpec(
   const isPrimary =
     options.markPrimaryField && source.primaryFieldPath !== undefined && schemaField.path === source.primaryFieldPath;
 
-  // Resolve a foreignKey up front so an unsupported one is omitted (and its note
-  // pushed) BEFORE a unique name slot is allocated to a field we won't emit.
+  // Resolve a foreignKey up front. A target that can't be bound yet — no sibling in
+  // the plan and no `linkedTableMappings` entry, or a sibling `{ ref }` that the
+  // /schema/fields endpoint can't express — is NOT dropped. The field is emitted with
+  // a pending `{ unresolvedLinkedTableId }` target and a `needs_target` note, so it
+  // survives the plan → draft roundtrip as an AVAILABLE field with an unmet
+  // requirement; the consumer binds it to a destination (co-create the linked table,
+  // or map it to an existing one) before create, which validation enforces.
   let foreignKeyType: CreateFieldType | null = null;
+  let foreignKeyNeedsTargetLinkedTableId: string | null = null;
   if (schemaField.foreignKey) {
-    const resolution = resolveForeignKey(schemaField.foreignKey.linkedTableId, linkedIdToRef, mappingByLinkedId);
-    // A sibling `{ ref }` target can't be expressed when adding fields to an
-    // existing table (the /schema/fields endpoint rejects `{ ref }`); only a
-    // mapped `existingRemoteTableId` is usable there.
+    const linkedTableId = schemaField.foreignKey.linkedTableId;
+    const resolution = resolveForeignKey(linkedTableId, linkedIdToRef, mappingByLinkedId);
     const isSiblingRefTarget = resolution !== null && 'ref' in resolution;
-    if (resolution === null || (isSiblingRefTarget && !options.allowSiblingRefForeignKeys)) {
-      notes.push({
-        sourceDataFolderId: source.dataFolderId,
-        sourceFieldPath: schemaField.path,
-        fieldName: requestedFieldName,
-        status: 'unsupported',
-        message: isSiblingRefTarget
-          ? `foreignKey to a table being created in the same plan can't be added to an existing destination table; provide a linkedTableMappings entry; field omitted`
-          : `foreignKey to table "${schemaField.foreignKey.linkedTableId}" is not in the plan and has no linkedTableMappings entry; field omitted`,
-      });
-      return null;
+    const targetIsUsable = resolution !== null && !(isSiblingRefTarget && !options.allowSiblingRefForeignKeys);
+    if (targetIsUsable) {
+      foreignKeyType = { kind: 'foreignKey', target: resolution };
+    } else {
+      foreignKeyType = { kind: 'foreignKey', target: { unresolvedLinkedTableId: linkedTableId } };
+      foreignKeyNeedsTargetLinkedTableId = linkedTableId;
     }
-    foreignKeyType = { kind: 'foreignKey', target: resolution };
   }
 
   // This field will be emitted — give it a name unique within the table.
@@ -398,15 +400,29 @@ function mapSchemaFieldToCreateFieldSpec(
   const renameClause = renamedFromName ? `renamed from "${renamedFromName}" to keep field names unique` : undefined;
 
   if (foreignKeyType) {
-    notes.push({
-      sourceDataFolderId: source.dataFolderId,
-      sourceFieldPath: schemaField.path,
-      fieldName,
-      status: 'mapped',
-      mappedKind: 'foreignKey',
-      ...(renameClause ? { message: renameClause } : {}),
-      ...(renamedFromName ? { renamedFromName } : {}),
-    });
+    if (foreignKeyNeedsTargetLinkedTableId !== null) {
+      const needsTargetClause = `links to "${foreignKeyNeedsTargetLinkedTableId}", which isn't in this plan — create that table alongside this one, or map it to an existing destination table, to enable this field`;
+      notes.push({
+        sourceDataFolderId: source.dataFolderId,
+        sourceFieldPath: schemaField.path,
+        fieldName,
+        status: 'needs_target',
+        mappedKind: 'foreignKey',
+        sourceLinkedTableId: foreignKeyNeedsTargetLinkedTableId,
+        message: composeNoteMessage(renameClause, needsTargetClause),
+        ...(renamedFromName ? { renamedFromName } : {}),
+      });
+    } else {
+      notes.push({
+        sourceDataFolderId: source.dataFolderId,
+        sourceFieldPath: schemaField.path,
+        fieldName,
+        status: 'mapped',
+        mappedKind: 'foreignKey',
+        ...(renameClause ? { message: renameClause } : {}),
+        ...(renamedFromName ? { renamedFromName } : {}),
+      });
+    }
     return buildFieldSpec(fieldName, foreignKeyType, isPrimary, schemaField.description);
   }
 

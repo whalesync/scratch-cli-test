@@ -56,12 +56,21 @@ export type CreateChoiceOption = z.infer<typeof createChoiceOptionSchema>;
  *     the destination service.
  *   - `ref` — the caller-assigned `ref` of another table being created in the
  *     SAME request (resolved to a real remote id by the server after creation).
+ *   - `unresolvedLinkedTableId` — a PENDING target: the field is a recognized
+ *     foreign key, but no destination table has been chosen yet. The value is the
+ *     SOURCE's linked-table id (e.g. a HubSpot association type) so a consumer can
+ *     bind it to a destination — either an existing remote table
+ *     (`existingRemoteTableId`) or a sibling being created in the same plan/draft
+ *     (`ref`). This variant is produced by plan generation so an unresolvable FK is
+ *     surfaced as "available, needs a target" rather than silently dropped; it must
+ *     be resolved before create — `/schema/tables` and `/schema/fields` REJECT it.
  *
- * Strict objects make "both branches" or an empty target fail validation.
+ * Strict objects make "more than one branch" or an empty target fail validation.
  */
 export const foreignKeyTargetSchema = z.union([
   z.strictObject({ existingRemoteTableId: z.array(z.string()).min(1) }),
   z.strictObject({ ref: z.string().min(1) }),
+  z.strictObject({ unresolvedLinkedTableId: z.string().min(1) }),
 ]);
 export type ForeignKeyTarget = z.infer<typeof foreignKeyTargetSchema>;
 
@@ -215,20 +224,28 @@ export const createSchemaTablesSchema = z
       'table',
       'DUPLICATE_TABLE_NAME',
     );
-    // Each foreignKey `{ ref }` target must reference a table in this request.
+    // Each foreignKey `{ ref }` target must reference a table in this request, and
+    // no foreignKey may still carry an unresolved (pending) target at create time.
     const refSet = new Set(request.tables.map((t) => t.ref));
     request.tables.forEach((table, tableIndex) => {
       table.fields.forEach((field, fieldIndex) => {
-        if (field.fieldType.kind === 'foreignKey' && 'ref' in field.fieldType.target) {
-          const targetRef = field.fieldType.target.ref;
-          if (!refSet.has(targetRef)) {
-            ctx.addIssue({
-              code: 'custom',
-              message: `foreignKey target ref "${targetRef}" does not match any table in this request`,
-              path: ['tables', tableIndex, 'fields', fieldIndex, 'fieldType', 'target', 'ref'],
-              params: { code: 'FK_UNKNOWN_REF' },
-            });
-          }
+        if (field.fieldType.kind !== 'foreignKey') return;
+        const target = field.fieldType.target;
+        if ('ref' in target && !refSet.has(target.ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `foreignKey target ref "${target.ref}" does not match any table in this request`,
+            path: ['tables', tableIndex, 'fields', fieldIndex, 'fieldType', 'target', 'ref'],
+            params: { code: 'FK_UNKNOWN_REF' },
+          });
+        }
+        if ('unresolvedLinkedTableId' in target) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `foreignKey field "${field.name}" has no destination table chosen (it links to "${target.unresolvedLinkedTableId}"); resolve it to an existing table or to a sibling being created in this request before creating`,
+            path: ['tables', tableIndex, 'fields', fieldIndex, 'fieldType', 'target'],
+            params: { code: 'FK_TARGET_UNRESOLVED' },
+          });
         }
       });
     });
@@ -267,14 +284,25 @@ export const createSchemaFieldsSchema = z
         });
       }
     }
-    // No in-request `{ ref }` FK targets when adding to an existing table.
+    // No in-request `{ ref }` FK targets when adding to an existing table, and no
+    // unresolved (pending) target — it must be bound to an existing table first.
     request.fields.forEach((field, fieldIndex) => {
-      if (field.fieldType.kind === 'foreignKey' && 'ref' in field.fieldType.target) {
+      if (field.fieldType.kind !== 'foreignKey') return;
+      const target = field.fieldType.target;
+      if ('ref' in target) {
         ctx.addIssue({
           code: 'custom',
           message: 'foreignKey target must be an existingRemoteTableId when adding fields to an existing table',
           path: ['fields', fieldIndex, 'fieldType', 'target', 'ref'],
           params: { code: 'FK_REF_NOT_ALLOWED' },
+        });
+      }
+      if ('unresolvedLinkedTableId' in target) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `foreignKey field "${field.name}" has no destination table chosen (it links to "${target.unresolvedLinkedTableId}"); resolve it to an existing remote table before adding it`,
+          path: ['fields', fieldIndex, 'fieldType', 'target'],
+          params: { code: 'FK_TARGET_UNRESOLVED' },
         });
       }
     });

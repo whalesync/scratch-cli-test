@@ -66,6 +66,15 @@ export type TableViewCol = {
   // value. The connector (server) sets this; the renderer stays connector-agnostic.
   displayTransformer?: DisplayTransformerConfig;
 
+  // When this column's values link to another table, the foreign-key target. Set by
+  // the connector (server); mirrors the schema's `x-scratch-foreign-key`. Required for
+  // SYNTHESIZED link columns whose FK annotation sits BELOW the column's own path and
+  // so can't be recovered by joining the column path back to the schema — e.g.
+  // HubSpot's "Associated X" columns, flattened from `associations.<type>.results[].id`.
+  // (Per this type's contract above, the view deliberately carries schema-redundant
+  // hints and is the source of truth for rendering decisions.)
+  foreignKey?: { linkedTableId: string };
+
   // When the field is an object, we may want to define a few subfields for the user to pick between, for
   // ergonomics. To the user, a complex object might only have one interesting field, which accurately represents it. For example,
   // Shopify's 'Blog count' field looks like: `{count, precision}`, but the user wants to see it as a number (count).

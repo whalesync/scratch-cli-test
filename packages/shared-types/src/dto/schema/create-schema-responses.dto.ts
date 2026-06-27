@@ -146,15 +146,26 @@ export interface FieldMappingNote {
   fieldName: string;
   /**
    * `mapped`/`downgraded`/`unsupported` describe how the source field maps to a
-   * create field. The next two are add-fields-only, when the destination already
-   * has a field of that name: `adopted` means the existing field is a compatible
-   * kind, so it's reused (mapped to, not recreated) — see `existingDestinationColumnId`;
+   * create field. `needs_target` is a recognized foreign key kept in the plan as an
+   * AVAILABLE field with an unmet requirement: no destination table was chosen yet
+   * (see `sourceLinkedTableId`), so its `fieldType.target` is
+   * `{ unresolvedLinkedTableId }` and create is rejected until it is bound to a
+   * destination. The next two are add-fields-only, when the destination already has
+   * a field of that name: `adopted` means the existing field is a compatible kind,
+   * so it's reused (mapped to, not recreated) — see `existingDestinationColumnId`;
    * `exists` means it can't be safely reused (a different kind, or a foreign key)
    * and was skipped.
    */
-  status: 'mapped' | 'downgraded' | 'unsupported' | 'exists' | 'adopted';
+  status: 'mapped' | 'downgraded' | 'unsupported' | 'exists' | 'adopted' | 'needs_target';
   mappedKind?: CreateFieldKind;
   message?: string;
+  /**
+   * Set on a `needs_target` note: the SOURCE's linked-table id (e.g. a HubSpot
+   * association type like `"contacts"`) the foreign key points at. The consumer
+   * binds it to a destination table — co-create it as a sibling in the same plan,
+   * or map it to an existing remote table — to enable the field.
+   */
+  sourceLinkedTableId?: string;
   /**
    * Set on an `adopted` note: the path id of the existing destination column the
    * source field maps to (the destination already has a compatible field, so it is

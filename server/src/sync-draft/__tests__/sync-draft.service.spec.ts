@@ -62,7 +62,9 @@ describe('SyncDraftService', () => {
           delete: jest.fn(),
         },
         schedule: { findFirst: jest.fn() },
-        dataFolder: { findFirst: jest.fn(), findMany: jest.fn() },
+        // findMany defaults to [] so materialize's foreignKey-resolution pass (which
+        // looks up source/destination folder remote ids) is a noop unless a test sets it.
+        dataFolder: { findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
         // getOrCreate runs its find-or-create inside a transaction guarded by an
         // advisory lock; the mock runs the callback against the same client.
         $transaction: jest.fn().mockImplementation((cb: (tx: unknown) => unknown) => cb(dbService.client)),
@@ -406,6 +408,89 @@ describe('SyncDraftService', () => {
       expect(dbService.client.syncDraft.update).toHaveBeenCalled();
       const dest = res.draft.tableMappings[0].destination;
       expect(dest.kind === 'placeholderTable' && dest.resolved?.remoteTableId).toEqual(['base1', 'tbl1']);
+    });
+
+    it('binds pending foreignKey targets to sibling placeholders before create; leaves truly-unbound ones pending', async () => {
+      // Appointments links to two HubSpot object types: "contacts" (also being created
+      // in this draft → resolves to a sibling ref) and "deals" (absent → stays pending,
+      // so createTables surfaces the requirement instead of the FK being dropped).
+      const tableMappings = [
+        {
+          ref: 'tm_appt',
+          source: { dataFolderId: 'dfd_appointments' },
+          destination: {
+            kind: 'placeholderTable',
+            ref: 'ph_appointments',
+            connectorAccountId: 'coa_1',
+            remoteParentId: ['base1'],
+            createSpec: {
+              ref: 'spec_appointments',
+              name: 'Appointments',
+              fields: [
+                { name: 'Name', fieldType: { kind: 'text' } },
+                {
+                  name: 'Associated Contacts',
+                  fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'contacts' } },
+                },
+                {
+                  name: 'Associated Deals',
+                  fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'deals' } },
+                },
+              ],
+            },
+          },
+          columnMappings: [],
+        },
+        {
+          ref: 'tm_contacts',
+          source: { dataFolderId: 'dfd_contacts' },
+          destination: {
+            kind: 'placeholderTable',
+            ref: 'ph_contacts',
+            connectorAccountId: 'coa_1',
+            remoteParentId: ['base1'],
+            createSpec: {
+              ref: 'spec_contacts',
+              name: 'Contacts',
+              fields: [{ name: 'Name', fieldType: { kind: 'text' } }],
+            },
+          },
+          columnMappings: [],
+        },
+      ];
+      const row = makeDraftRow({ tableMappings });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      // The Contacts source folder's remote table id is "contacts" — what the FK points
+      // at. No "deals" source exists in the draft.
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_appointments', tableId: ['0-421'] },
+        { id: 'dfd_contacts', tableId: ['contacts'] },
+      ]);
+      schemaBuilderService.createTables.mockResolvedValue({
+        status: 'ok',
+        tables: [
+          {
+            ref: 'spec_appointments',
+            name: 'Appointments',
+            status: 'created',
+            remoteTableId: ['base1', 'tblA'],
+            fields: [],
+          },
+          { ref: 'spec_contacts', name: 'Contacts', status: 'created', remoteTableId: ['base1', 'tblC'], fields: [] },
+        ],
+      } as never);
+
+      await service.materialize(DRAFT_ID, ACTOR);
+
+      const dto = schemaBuilderService.createTables.mock.calls[0][1];
+      const appointmentsSpec = dto.tables.find((table) => table.ref === 'spec_appointments');
+      const contactsFk = appointmentsSpec?.fields.find((field) => field.name === 'Associated Contacts');
+      const dealsFk = appointmentsSpec?.fields.find((field) => field.name === 'Associated Deals');
+      // The sibling Contacts table binds to its create-spec ref (the existing topological
+      // ordering in createTables then creates it first)...
+      expect(contactsFk?.fieldType).toEqual({ kind: 'foreignKey', target: { ref: 'spec_contacts' } });
+      // ...while a link to a table not in the draft is left pending for createTables to reject.
+      expect(dealsFk?.fieldType).toEqual({ kind: 'foreignKey', target: { unresolvedLinkedTableId: 'deals' } });
     });
 
     it('surfaces the create-schema issue message (not the generic one) on a failed table', async () => {

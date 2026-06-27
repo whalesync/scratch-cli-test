@@ -85,6 +85,15 @@ export function selectPlanFieldsFromTableView(args: {
     if (col.name) derivedField.displayLabel = col.name;
     if (col.readonly) derivedField.readonly = true;
 
+    // The view may declare a column's FK target directly — connectors set this for
+    // SYNTHESIZED link columns whose FK annotation sits BELOW the column's own path
+    // (HubSpot's "Associated X", flattened from `results[].id`), where the join above
+    // can't reach it. Prefer the declaration; otherwise the FK (if any) came from the
+    // joined backing schema field.
+    if (col.foreignKey && !derivedField.foreignKey) {
+      derivedField.foreignKey = { linkedTableId: col.foreignKey.linkedTableId };
+    }
+
     schemaFields.push(derivedField);
     if (col.type) viewTypeByPath[path] = col.type;
   }

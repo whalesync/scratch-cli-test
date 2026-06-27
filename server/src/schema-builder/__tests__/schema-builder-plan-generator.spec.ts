@@ -109,7 +109,7 @@ describe('generateCreatePlanFromSources', () => {
     expect(authorNote).toMatchObject({ status: 'mapped', mappedKind: 'foreignKey' });
   });
 
-  it('flags an unresolvable foreignKey as unsupported and omits the field', () => {
+  it('emits an unresolvable foreignKey as needs_target with a pending target (not dropped)', () => {
     const orphan: PlanGeneratorSource = {
       ref: 'posts',
       dataFolderId: 'posts',
@@ -123,9 +123,18 @@ describe('generateCreatePlanFromSources', () => {
       destinationConnectorAccountId: 'destConn',
     });
 
-    // The unresolvable FK is omitted; only the injected source-record-id remains.
-    expect(tables[0].fields.map((f) => f.name)).toEqual(['source_record_id']);
-    expect(notes.find((note) => note.sourceFieldPath === 'author')).toMatchObject({ status: 'unsupported' });
+    // The FK is kept as an available field carrying a pending target (alongside the
+    // injected source-record-id), not silently omitted.
+    expect(tables[0].fields.map((f) => f.name)).toEqual(['author', 'source_record_id']);
+    expect(tables[0].fields.find((f) => f.name === 'author')?.fieldType).toEqual({
+      kind: 'foreignKey',
+      target: { unresolvedLinkedTableId: 'tblMissing' },
+    });
+    expect(notes.find((note) => note.sourceFieldPath === 'author')).toMatchObject({
+      status: 'needs_target',
+      mappedKind: 'foreignKey',
+      sourceLinkedTableId: 'tblMissing',
+    });
   });
 
   it('resolves a foreignKey via linkedTableMappings to an existing remote table', () => {
@@ -388,7 +397,7 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
     expect(notes.find((note) => note.fieldName === 'age')).toMatchObject({ status: 'exists' });
   });
 
-  it('downgrades a sibling-ref foreignKey to unsupported when adding to an existing table', () => {
+  it('emits a sibling-ref foreignKey as needs_target when adding to an existing table', () => {
     const postsIntoExisting: PlanGeneratorSource = {
       ref: 'posts',
       dataFolderId: 'posts',
@@ -397,7 +406,9 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
       schemaFields: [field({ path: 'author', type: 'string', foreignKey: { linkedTableId: 'tblAuthors' } })],
       existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], existingFields: [] },
     };
-    // authorsSource registers tblAuthors as a sibling, so the FK would otherwise resolve to { ref }.
+    // authorsSource registers tblAuthors as a sibling; a sibling { ref } can't be added
+    // to an existing table via /schema/fields, so it's emitted with a pending target to
+    // be bound to an existing remote table rather than dropped.
     const { tables, fieldPlans, notes } = generateCreatePlanFromSources({
       sources: [authorsSource, postsIntoExisting],
       destinationConnectorAccountId: 'destConn',
@@ -406,8 +417,15 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
     // Mixed: authors is a new table, posts is an add-fields plan.
     expect(tables.map((table) => table.ref)).toEqual(['authors']);
     const postsPlan = fieldPlans.find((plan) => plan.sourceDataFolderId === 'posts');
-    expect(postsPlan?.fields).toHaveLength(0);
-    expect(notes.find((note) => note.sourceFieldPath === 'author')).toMatchObject({ status: 'unsupported' });
+    expect(postsPlan?.fields).toHaveLength(1);
+    expect(postsPlan?.fields[0].fieldType).toEqual({
+      kind: 'foreignKey',
+      target: { unresolvedLinkedTableId: 'tblAuthors' },
+    });
+    expect(notes.find((note) => note.sourceFieldPath === 'author')).toMatchObject({
+      status: 'needs_target',
+      sourceLinkedTableId: 'tblAuthors',
+    });
   });
 
   it('keeps a linkedTableMappings foreignKey as existingRemoteTableId in a fieldPlan', () => {

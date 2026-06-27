@@ -44,7 +44,9 @@ import {
 } from './schema-builder-plan-generator';
 import {
   validateFieldsAgainstCapabilities,
+  validateForeignKeyTargetsResolved,
   validateNamesAgainstExisting,
+  validateTableForeignKeyTargetsResolved,
   validateTablesAgainstCapabilities,
   zodErrorToValidateIssues,
 } from './schema-builder-validator';
@@ -58,9 +60,10 @@ const SOURCE = 'SchemaBuilderService';
  *
  * The execute* methods are deliberately self-contained (no controller-coupled
  * state) so a future BullMQ job handler can wrap them unchanged when schema
- * creation graduates from synchronous to async (decision #8). No connector ships
- * `supportsSchemaCreation() === true` yet, so in production the create endpoints
- * return a `not_supported` result; the dispatch path is exercised by tests.
+ * creation graduates from synchronous to async (decision #8). Airtable, Postgres,
+ * and Notion ship `supportsSchemaCreation() === true`, so the create endpoints
+ * execute against those services; a connector that doesn't (e.g. Framer) returns
+ * a `not_supported` result.
  */
 @Injectable()
 export class SchemaBuilderService {
@@ -128,6 +131,23 @@ export class SchemaBuilderService {
     const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
     const { connector } = await this.resolveConnectorForWorkbook(dto.connectorAccountId, workbookId, actor);
 
+    // A foreignKey still carrying a pending `{ unresolvedLinkedTableId }` target can't
+    // be created — it must be bound to a destination first. The zod pipe rejects this
+    // at the controller, but the sync-draft materializer calls us directly (bypassing
+    // the pipe), so guard here too rather than let an unresolved target reach a connector.
+    const unresolvedForeignKeyIssues = validateTableForeignKeyTargetsResolved(dto);
+    if (unresolvedForeignKeyIssues.length > 0) {
+      WSLogger.error({
+        source: SOURCE,
+        message: 'create-schema table validation failed: unresolved foreignKey target(s)',
+        workbookId,
+        connectorAccountId: dto.connectorAccountId,
+        service: connector.service,
+        issues: unresolvedForeignKeyIssues,
+      });
+      throw new BadRequestException({ message: 'create-schema validation failed', issues: unresolvedForeignKeyIssues });
+    }
+
     const capabilities = connector.getSchemaCreationCapabilities?.();
     if (capabilities) {
       const issues = validateTablesAgainstCapabilities(dto, capabilities);
@@ -177,6 +197,10 @@ export class SchemaBuilderService {
     if (capabilities) {
       issues.push(...validateFieldsAgainstCapabilities(dto.fields, capabilities, 'fields'));
     }
+    // A pending `{ unresolvedLinkedTableId }` FK target can't be added to an existing
+    // table — it must be bound to an existing remote table first (guarded here as well
+    // as in the zod pipe, since the sync-draft materializer calls us directly).
+    issues.push(...validateForeignKeyTargetsResolved(dto.fields, 'fields'));
     // If the target table is materialized as a local folder, reject names that
     // already exist on it (decision #3). A remote-only table's existing names are
     // checked by the connector pass.

@@ -141,6 +141,30 @@ describe('selectPlanFieldsFromTableView', () => {
       expect(new Set(associationLabels).size).toBe(associationLabels.length);
       expect(associationLabels.length).toBeGreaterThanOrEqual(6);
     });
+
+    it('carries each association column FK from the view declaration (not downgraded to text)', async () => {
+      // The FK annotation lives on `associations.<type>.results[].id`, below the
+      // column's path, so the schema join can't recover it; the connector declares
+      // the target on the view column instead. Each association field must surface a
+      // foreignKey targeting the association type embedded in its path, so the plan
+      // generator treats it as a foreignKey field rather than plain text.
+      const { spec } = await buildHubspotJsonTableSpec(
+        { wsId: 'deals', remoteId: ['deals'] },
+        'deals',
+        fakeClient([property('dealname')]),
+      );
+      const view = spec.defaultView;
+      if (!view) throw new Error('expected the HubSpot spec to carry a default view');
+
+      const { schemaFields } = selectPlanFieldsFromTableView({ schema: spec.schema, view });
+      const associationFields = schemaFields.filter((f) => f.path.startsWith('associations.'));
+
+      expect(associationFields.length).toBeGreaterThanOrEqual(6);
+      for (const field of associationFields) {
+        const associationType = field.path.split('.')[1];
+        expect(field.foreignKey).toEqual({ linkedTableId: associationType });
+      }
+    });
   });
 
   // ── Connector-agnostic join behaviour (hand-built inputs) ────────────────────
@@ -217,6 +241,38 @@ describe('selectPlanFieldsFromTableView', () => {
         'associations.companies.results',
         'associations.contacts.results',
       ]);
+      // The view columns declare no FK target and the array-element ids carry no
+      // annotation, so no foreignKey is invented for them.
+      expect(schemaFields.every((f) => f.foreignKey === undefined)).toBe(true);
+    });
+
+    it('adopts an explicit FK target declared on a synthesized view column', () => {
+      // A connector synthesizes a flattened link column whose FK annotation lives
+      // BELOW the column path (HubSpot associations: the FK is on `results[].id`). It
+      // declares the target on the view column; selection adopts it even though no
+      // backing schema node along the column path carries one.
+      const schema = Type.Object({
+        associations: Type.Object(
+          { contacts: Type.Object({ results: Type.Array(Type.Object({ id: Type.String(), type: Type.String() })) }) },
+          { [X_SCRATCH_READONLY]: true },
+        ),
+      });
+      const view: TableView = {
+        name: 'Default',
+        cols: [
+          {
+            kind: 'col',
+            name: 'Associated Contacts',
+            path: 'associations.contacts.results',
+            foreignKey: { linkedTableId: 'contacts' },
+          },
+        ],
+      };
+
+      const { schemaFields } = selectPlanFieldsFromTableView({ schema, view });
+      expect(schemaFields).toHaveLength(1);
+      expect(schemaFields[0].path).toBe('associations.contacts.results');
+      expect(schemaFields[0].foreignKey).toEqual({ linkedTableId: 'contacts' });
     });
 
     it('re-anchors a drilled title column onto the title path so primary matching lines up', () => {

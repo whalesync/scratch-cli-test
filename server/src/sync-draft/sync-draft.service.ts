@@ -10,11 +10,13 @@ import {
   type CreateSchemaFieldsDto,
   type CreateSchemaTablesDto,
   createSyncDraftId,
+  type CreateTableSpec,
   type DataFolderId,
   type DraftColumnDestination,
   type DraftFieldAddition,
   type DraftTableDestination,
   type DraftTableMapping,
+  type ForeignKeyTarget,
   type MaterializePlaceholderResult,
   type MaterializeResponse,
   pickMappingTransformers,
@@ -52,6 +54,30 @@ type PlaceholderTableDestination = Extract<DraftTableDestination, { kind: 'place
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Return a copy of `createSpec` with every pending `{ unresolvedLinkedTableId }`
+ * foreignKey target replaced by the destination target it resolves to within the
+ * draft (see {@link SyncDraftService.buildForeignKeyResolutionMap}). A target with
+ * no entry in the map is left pending — createTables then rejects it, surfacing the
+ * unmet requirement instead of dropping the column.
+ */
+function resolveCreateSpecForeignKeyTargets(
+  createSpec: CreateTableSpec,
+  resolutionBySourceRemoteTableId: Map<string, ForeignKeyTarget>,
+): CreateTableSpec {
+  return {
+    ...createSpec,
+    fields: createSpec.fields.map((field) => {
+      const fieldType = field.fieldType;
+      if (fieldType.kind !== 'foreignKey' || !('unresolvedLinkedTableId' in fieldType.target)) {
+        return field;
+      }
+      const resolvedTarget = resolutionBySourceRemoteTableId.get(fieldType.target.unresolvedLinkedTableId);
+      return resolvedTarget ? { ...field, fieldType: { ...fieldType, target: resolvedTarget } } : field;
+    }),
+  };
 }
 
 /**
@@ -448,6 +474,14 @@ export class SyncDraftService {
     results: MaterializePlaceholderResult[],
     actor: Actor,
   ): Promise<void> {
+    // Resolve any pending `{ unresolvedLinkedTableId }` foreignKey targets the plan
+    // generator left on these placeholders, binding each to the destination chosen
+    // for that source table within this draft (a sibling placeholder → `{ ref }`, or
+    // an existing destination table → `{ existingRemoteTableId }`). Targets that still
+    // can't be bound stay pending and are rejected by createTables below, so the
+    // requirement surfaces rather than the foreign key being silently dropped.
+    const foreignKeyResolutionMap = await this.buildForeignKeyResolutionMap(tableMappings);
+
     // Group unresolved placeholder tables by (connectorAccountId, remoteParentId)
     // so each createTables call is one batch against one destination base.
     const groups = new Map<
@@ -482,7 +516,9 @@ export class SyncDraftService {
         const dto: CreateSchemaTablesDto = {
           connectorAccountId: group.connectorAccountId,
           ...(group.remoteParentId ? { remoteParentId: group.remoteParentId } : {}),
-          tables: group.placeholders.map((placeholder) => placeholder.createSpec),
+          tables: group.placeholders.map((placeholder) =>
+            resolveCreateSpecForeignKeyTargets(placeholder.createSpec, foreignKeyResolutionMap),
+          ),
           materializeLocally: false,
         };
         const response = await this.schemaBuilderService.createTables(workbookId, dto, actor);
@@ -519,6 +555,58 @@ export class SyncDraftService {
         }
       }
     }
+  }
+
+  /**
+   * Map each source table's remote id → the create-side foreignKey target the
+   * destination chosen for it (within this draft) resolves to: a placeholder table
+   * binds to `{ ref }` (its create-spec ref, created in the same batch); an existing
+   * destination table binds to `{ existingRemoteTableId }` (its remote table id). The
+   * plan generator emits an unbound foreignKey as
+   * `{ unresolvedLinkedTableId: <source remote id> }`, and this is what binds it. A
+   * source whose destination supplies no target is simply absent from the map,
+   * leaving its foreignKey pending so createTables rejects it (surfacing, not dropping).
+   */
+  private async buildForeignKeyResolutionMap(
+    tableMappings: DraftTableMapping[],
+  ): Promise<Map<string, ForeignKeyTarget>> {
+    const sourceFolderIds = tableMappings.map((tableMapping) => tableMapping.source.dataFolderId);
+    const existingDestinationFolderIds = tableMappings
+      .map((tableMapping) =>
+        tableMapping.destination.kind === 'existing' ? tableMapping.destination.dataFolderId : null,
+      )
+      .filter((dataFolderId): dataFolderId is string => dataFolderId !== null);
+    const folders = await this.db.client.dataFolder.findMany({
+      where: { id: { in: [...new Set([...sourceFolderIds, ...existingDestinationFolderIds])] } },
+      select: { id: true, tableId: true },
+    });
+    const remoteTableIdByFolderId = new Map(folders.map((folder) => [folder.id, folder.tableId]));
+
+    const resolutionBySourceRemoteTableId = new Map<string, ForeignKeyTarget>();
+    for (const tableMapping of tableMappings) {
+      const sourceRemoteTableId = remoteTableIdByFolderId.get(tableMapping.source.dataFolderId);
+      if (!sourceRemoteTableId || sourceRemoteTableId.length === 0) continue;
+
+      let resolvedTarget: ForeignKeyTarget | null = null;
+      if (tableMapping.destination.kind === 'placeholderTable') {
+        resolvedTarget = { ref: tableMapping.destination.createSpec.ref };
+      } else {
+        const existingRemoteTableId = remoteTableIdByFolderId.get(tableMapping.destination.dataFolderId);
+        if (existingRemoteTableId && existingRemoteTableId.length > 0) {
+          resolvedTarget = { existingRemoteTableId };
+        }
+      }
+      if (!resolvedTarget) continue;
+
+      // A foreignKey's `unresolvedLinkedTableId` is a single source remote-id string;
+      // index every segment of the source table's remote id so either form resolves.
+      for (const remoteTableIdSegment of sourceRemoteTableId) {
+        if (!resolutionBySourceRemoteTableId.has(remoteTableIdSegment)) {
+          resolutionBySourceRemoteTableId.set(remoteTableIdSegment, resolvedTarget);
+        }
+      }
+    }
+    return resolutionBySourceRemoteTableId;
   }
 
   private async materializeFieldAdditions(

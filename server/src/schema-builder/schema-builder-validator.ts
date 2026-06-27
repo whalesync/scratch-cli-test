@@ -126,6 +126,43 @@ export function validateFieldsAgainstCapabilities(
 }
 
 /**
+ * Flag any foreignKey field still carrying an unresolved (pending) target
+ * (`{ unresolvedLinkedTableId }`). The plan generator emits these so an unbound FK
+ * survives the plan → draft roundtrip as an available-but-incomplete field; they
+ * MUST be bound to a destination (a sibling `ref` or an `existingRemoteTableId`)
+ * before create. The zod schema already rejects them at the controller boundary,
+ * but the create path re-checks here because the schema-builder service is also
+ * invoked directly (e.g. by the sync-draft materializer, which bypasses the
+ * controller's zod pipe). Returns all issues (does not throw).
+ */
+export function validateForeignKeyTargetsResolved(
+  fields: CreateFieldSpec[],
+  pathPrefix: string,
+): ValidateSchemaIssue[] {
+  const issues: ValidateSchemaIssue[] = [];
+  fields.forEach((field, fieldIndex) => {
+    const fieldType = field.fieldType;
+    if (fieldType.kind === 'foreignKey' && 'unresolvedLinkedTableId' in fieldType.target) {
+      issues.push({
+        path: `${pathPrefix}[${fieldIndex}].fieldType.target`,
+        code: 'FK_TARGET_UNRESOLVED',
+        message: `foreignKey field "${field.name}" has no destination table chosen (it links to "${fieldType.target.unresolvedLinkedTableId}"); resolve it to an existing table or to a sibling being created before creating`,
+      });
+    }
+  });
+  return issues;
+}
+
+/** Run {@link validateForeignKeyTargetsResolved} across every table in a create-tables request. */
+export function validateTableForeignKeyTargetsResolved(request: CreateSchemaTablesDto): ValidateSchemaIssue[] {
+  const issues: ValidateSchemaIssue[] = [];
+  request.tables.forEach((table, tableIndex) => {
+    issues.push(...validateForeignKeyTargetsResolved(table.fields, `tables[${tableIndex}].fields`));
+  });
+  return issues;
+}
+
+/**
  * Case-insensitively flag any proposed field name that collides with an existing
  * field name on the target table (used by create-fields, and by create-tables
  * when the table is already materialized as a local folder).

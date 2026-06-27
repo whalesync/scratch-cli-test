@@ -316,10 +316,13 @@ export function editorFieldFromSpec(spec: CreateFieldSpec): EditorField {
       if ('ref' in fieldType.target) {
         editor.foreignKeyTargetMode = 'ref';
         editor.foreignKeyRef = fieldType.target.ref;
-      } else {
+      } else if ('existingRemoteTableId' in fieldType.target) {
         editor.foreignKeyTargetMode = 'existing';
         editor.foreignKeyExistingRemoteTableId = fieldType.target.existingRemoteTableId.join('/');
       }
+      // A pending `{ unresolvedLinkedTableId }` target (the plan recognized the FK but
+      // no destination table is chosen yet) leaves the picker empty in the default
+      // 'existing' mode, so the user binds it to a table before creating.
       break;
     default:
       // Plain kinds (text/longText/boolean/url/email/phone) carry no extra inputs.
