@@ -14,7 +14,7 @@
  *      snapshot — the diff against the v5 SDK output is the gate for
  *      Phase 3 / Phase 4.
  *   2. CRUD round-trip: create → update → delete (archive) one page, and
- *      confirm `updateRecords` silently strips read-only properties.
+ *      confirm `updateRecords` throws on a read-only property edit (DEV-10597).
  *
  * Requires NOTION_API_KEY in .env.integration. See
  * `server/test/integration/notion-setup.md` for the one-time Notion workspace
@@ -529,7 +529,7 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     expect((afterDelete as Record<string, unknown>).in_trash).toBe(true);
   });
 
-  it('updateRecords silently strips read-only property changes (formula, rollup, created_time)', async () => {
+  it('updateRecords throws on a read-only property edit (formula, rollup, created_time)', async () => {
     const titlePropName = findTitlePropertyName(tableSpec);
     const title = `${ROUND_TRIP_TITLE_PREFIX} readonly-filter ${Date.now()}`;
 
@@ -544,11 +544,11 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     const fullPage = await fetchById(connector, tableSpec, pageId);
     expect(fullPage).not.toBeNull();
 
-    // Build a `changedFields` bag that ONLY mutates read-only props. The
-    // connector should resolve to a no-op call and not throw a 400 from
-    // Notion. `updateRecords` returns `ConnectorFile[]` (currently the input
-    // files, per commit 072bb2c2's placeholder return) — the assertion is on
-    // "resolves successfully", not on the returned shape.
+    // Build a `changedFields` bag that ONLY mutates read-only props. Per
+    // DEV-10597 (commit 4c5b626f), a sparse diff that edits a read-only
+    // property means the user genuinely edited a read-only field, so the
+    // connector surfaces a `ReadonlyFieldEditError` rather than silently
+    // dropping the PATCH and reporting success.
     const readOnlyChange = {
       properties: {
         Score: { formula: { type: 'number', number: 999 } }, // formula — read-only
@@ -557,7 +557,7 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     };
     await expect(
       connector.updateRecords(tableSpec, [{ ...(fullPage as Record<string, unknown>) }], [readOnlyChange]),
-    ).resolves.toBeDefined();
+    ).rejects.toThrow(/read-only and cannot be published/);
   });
 });
 
