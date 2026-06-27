@@ -2610,8 +2610,30 @@ fn run_accept(
 
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
         let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-        let file_path_to_contents_map_for_approved_state =
-            compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
+
+        // The approved state we need here is only for the requested paths, and a
+        // path's approved value depends solely on its own `main` blob plus its
+        // own patch entry. The `main` read above is deliberately narrowed to the
+        // requested paths for performance, so replaying the *entire*
+        // accepted-patches file here would apply every unrelated entry against a
+        // missing (`None` → `Null`) base and fail — e.g. an unrelated Update
+        // entry touching `/fieldData/...` errors with "path traverses
+        // non-container". Scope the replay to the requested paths' own entries so
+        // accepting one record is never broken by an accepted edit that happens
+        // to be sitting on a different record in the same connection.
+        let accepted_patches_scoped_to_requested_paths =
+            crate::shared::accepted_patches::AcceptedPatchesFile {
+                patches: accepted_file
+                    .patches
+                    .iter()
+                    .filter(|entry| requested_rel_paths_set.contains(entry.path.as_str()))
+                    .cloned()
+                    .collect(),
+            };
+        let file_path_to_contents_map_for_approved_state = compute_accepted_state(
+            &file_path_to_contents_map_in_main_branch,
+            &accepted_patches_scoped_to_requested_paths,
+        )?;
 
         let changes = compute_unreviewed_entries(
             &ctx.conn_dir_name,
@@ -6211,8 +6233,28 @@ fn discard_record_paths_in_connection_repo(
 
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let file_path_to_contents_map_for_approved_state =
-        compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
+
+    // Scope the approved-state replay to the requested paths, mirroring the
+    // narrowed `main` read above. `compute_accepted_state` replays every patch
+    // entry against its `main` blob; an entry for a record *other* than the ones
+    // being discarded would apply against a missing (`None` → `Null`) base and
+    // abort ("path traverses non-container"), so a single accepted edit sitting
+    // on an unrelated record would otherwise break this discard. Same fix as
+    // `run_accept`; the reference handling lives in
+    // `read_main_approved_worktree_maps_for_candidate_paths`.
+    let accepted_patches_scoped_to_requested_paths =
+        crate::shared::accepted_patches::AcceptedPatchesFile {
+            patches: accepted_file
+                .patches
+                .iter()
+                .filter(|entry| requested_rel_paths_set.contains(entry.path.as_str()))
+                .cloned()
+                .collect(),
+        };
+    let file_path_to_contents_map_for_approved_state = compute_accepted_state(
+        &file_path_to_contents_map_in_main_branch,
+        &accepted_patches_scoped_to_requested_paths,
+    )?;
 
     // A path is "discardable" if it has a patch entry (approved differs
     // from published) or an unreviewed edit (working differs from

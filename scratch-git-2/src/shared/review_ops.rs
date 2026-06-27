@@ -2297,6 +2297,70 @@ mod tests {
         assert!(!approved.contains_key("Companies/rec_keep.json"));
     }
 
+    // Regression for the `scratchmd files accept <record>` crash: `run_accept`
+    // narrows its `refs/heads/main` read to the requested record for
+    // performance, then builds the approved state from the accepted-patches
+    // file. If the file holds an accepted RFC 6902 Update edit on a *different*
+    // record, replaying the whole file applies that entry against a `main` blob
+    // that isn't in the narrowed map — base `Null` — so `add /fieldData/...`
+    // aborts with "path traverses non-container", failing the accept of an
+    // unrelated record. `run_accept` must scope the replay to the requested
+    // paths' own entries; this pins both halves: unscoped replay fails, scoped
+    // replay succeeds.
+    #[test]
+    fn compute_accepted_state_over_narrowed_main_fails_then_succeeds_when_scoped_to_requested_paths(
+    ) {
+        let requested_path = "Blog Posts/brew-perfect-green-tea.json";
+        let unrelated_path = "Blog Posts/balanced-cocktail-spirit-sweet-sour.json";
+
+        // `main` narrowed to ONLY the record being accepted, mirroring
+        // `read_main_branch_contents_filtered_by_path(.., keep = requested)`.
+        let narrowed_main = {
+            let mut m = FileMap::new();
+            m.insert(
+                requested_path.into(),
+                json_bytes(&json!({"fieldData": {"name": "Brew Perfect Green Tea"}})),
+            );
+            m
+        };
+
+        // An accepted RFC 6902 Update edit on a DIFFERENT record — the shape seen
+        // in the wild: add a nested field under an existing `/fieldData` object.
+        let accepted_file = AcceptedPatchesFile {
+            patches: vec![entry(
+                unrelated_path,
+                PatchKind::Update,
+                json!([{"op": "add", "path": "/fieldData/post-body", "value": "<p>balance</p>"}]),
+            )],
+        };
+
+        // Latent footgun: replaying the whole file over the narrowed map errors
+        // on the unrelated entry's missing base.
+        let err = compute_accepted_state(&narrowed_main, &accepted_file)
+            .expect_err("unrelated Update entry must fail against a narrowed main map");
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains(unrelated_path),
+            "error should name the unrelated record, got: {chain}"
+        );
+
+        // The fix: scope the replay to the requested paths' own entries. With no
+        // entry for the requested record, its approved value is just `main`.
+        let requested_set: std::collections::HashSet<&str> =
+            std::iter::once(requested_path).collect();
+        let scoped_file = AcceptedPatchesFile {
+            patches: accepted_file
+                .patches
+                .iter()
+                .filter(|e| requested_set.contains(e.path.as_str()))
+                .cloned()
+                .collect(),
+        };
+        let approved = compute_accepted_state(&narrowed_main, &scoped_file)
+            .expect("scoped replay must succeed");
+        assert_eq!(approved, narrowed_main);
+    }
+
     #[test]
     fn apply_patch_entry_to_blob_create_serializes_full_content() {
         let e = entry("p.json", PatchKind::Create, json!({"name": "Acme"}));

@@ -3622,20 +3622,44 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             const relativeFolderPath = workspaceRelativePosixPath(workspacePath, selectedFolderPath);
             const recordPath = relativeFolderPath ? `${relativeFolderPath}/${filename}` : filename;
             const handleRecordApprove = () => {
-              void window.scratchDesktop.acceptRecord(workspacePath, recordPath).then((result) => {
-                if (result.exitCode === 0) {
+              void window.scratchDesktop
+                .acceptRecord(workspacePath, recordPath)
+                .then((result) => {
+                  // Non-zero exit arrives as a result object, not a throw —
+                  // surface it instead of silently doing nothing.
+                  if (result.exitCode !== 0) {
+                    throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to approve record');
+                  }
                   setCellPopover(null);
                   refreshGridData();
-                }
-              });
+                })
+                .catch((err: unknown) => {
+                  console.error('acceptRecord failed', err);
+                  notifications.show({
+                    color: 'red',
+                    title: 'Failed to approve record',
+                    message: err instanceof Error ? err.message : 'Unknown error',
+                  });
+                });
             };
             const handleRecordReject = () => {
-              void window.scratchDesktop.rejectRecord(workspacePath, recordPath).then((result) => {
-                if (result.exitCode === 0) {
+              void window.scratchDesktop
+                .rejectRecord(workspacePath, recordPath)
+                .then((result) => {
+                  if (result.exitCode !== 0) {
+                    throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to reject record');
+                  }
                   setCellPopover(null);
                   refreshGridData();
-                }
-              });
+                })
+                .catch((err: unknown) => {
+                  console.error('rejectRecord failed', err);
+                  notifications.show({
+                    color: 'red',
+                    title: 'Failed to reject record',
+                    message: err instanceof Error ? err.message : 'Unknown error',
+                  });
+                });
             };
 
             return (

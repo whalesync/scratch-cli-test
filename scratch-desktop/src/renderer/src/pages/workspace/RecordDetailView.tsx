@@ -535,13 +535,21 @@ export const RecordDetailView = memo(function RecordDetailView({
     void window.scratchDesktop
       .acceptRecord(workspacePath, currentRecordCliPath)
       .then((result) => {
-        if (result.exitCode === 0) {
-          reloadRecordAndValidations();
-          onRecordStructurallyChangedRefetchAll?.();
+        // A non-zero exit comes back as a result object, not a thrown error, so
+        // surface it explicitly — never silently swallow a failed accept.
+        if (result.exitCode !== 0) {
+          throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to approve record');
         }
+        reloadRecordAndValidations();
+        onRecordStructurallyChangedRefetchAll?.();
       })
       .catch((err: unknown) => {
-        console.debug('acceptRecord failed', err);
+        console.error('acceptRecord failed', err);
+        notifications.show({
+          color: 'red',
+          title: 'Failed to approve record',
+          message: err instanceof Error ? err.message : 'Unknown error',
+        });
       });
   }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
@@ -550,13 +558,19 @@ export const RecordDetailView = memo(function RecordDetailView({
     void window.scratchDesktop
       .rejectRecord(workspacePath, currentRecordCliPath)
       .then((result) => {
-        if (result.exitCode === 0) {
-          reloadRecordAndValidations();
-          onRecordStructurallyChangedRefetchAll?.();
+        if (result.exitCode !== 0) {
+          throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to reject record');
         }
+        reloadRecordAndValidations();
+        onRecordStructurallyChangedRefetchAll?.();
       })
       .catch((err: unknown) => {
-        console.debug('rejectRecord failed', err);
+        console.error('rejectRecord failed', err);
+        notifications.show({
+          color: 'red',
+          title: 'Failed to reject record',
+          message: err instanceof Error ? err.message : 'Unknown error',
+        });
       });
   }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
@@ -565,13 +579,19 @@ export const RecordDetailView = memo(function RecordDetailView({
     void window.scratchDesktop
       .discardRecord(workspacePath, currentRecordCliPath)
       .then((result) => {
-        if (result.exitCode === 0) {
-          reloadRecordAndValidations();
-          onRecordStructurallyChangedRefetchAll?.();
+        if (result.exitCode !== 0) {
+          throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to discard record');
         }
+        reloadRecordAndValidations();
+        onRecordStructurallyChangedRefetchAll?.();
       })
       .catch((err: unknown) => {
-        console.debug('discardRecord failed', err);
+        console.error('discardRecord failed', err);
+        notifications.show({
+          color: 'red',
+          title: 'Failed to discard record',
+          message: err instanceof Error ? err.message : 'Unknown error',
+        });
       });
   }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
@@ -1132,6 +1152,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                       c="green.8"
                       onClick={handleAccept}
                       disabled={!currentRecordCliPath}
+                      data-testid="record-detail-approve"
                     >
                       {unreviewedFieldCount === 1 ? 'Approve' : 'Approve all'}
                     </ButtonSecondaryGhost>
@@ -1249,6 +1270,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                       leftSection={<Check size={12} />}
                       onClick={handleAccept}
                       disabled={!currentRecordCliPath}
+                      data-testid="record-detail-approve"
                     >
                       Approve
                     </ButtonSecondaryGhost>
@@ -1311,6 +1333,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                       leftSection={<Check size={12} />}
                       onClick={handleAccept}
                       disabled={!currentRecordCliPath}
+                      data-testid="record-detail-approve"
                     >
                       Approve
                     </ButtonSecondaryGhost>
