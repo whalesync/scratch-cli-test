@@ -146,6 +146,17 @@ Per env (`eu-test`, then `eu-production`):
    cron) and into the VM scripts. The VM `deploy.sh`/`startup.sh` fetch is tolerant of a
    missing secret (`|| echo ""`), so apply ordering can't hard-fail a scratch-git deploy.
 
+### Rollout progress
+
+- **eu-test secret**: ✅ created + value added (2026-06-27). Verified: 64 bytes, no trailing
+  newline. IAM grant + Cloud Run/VM wiring NOT yet applied (come with the MR1 deploy).
+- **eu-production secret**: ✅ created + value added (2026-06-27, distinct value). gcp-ro
+  `versions.access` is correctly DENIED (token out of read-only reach — the core requirement).
+  Byte length verified out-of-band by the operator (`wc -c` = 64). IAM grant + wiring come
+  with the MR1 deploy.
+- **MR1 deploy** (full apply + VM redeploy): ⬜ pending.
+- **MR2 / MR3**: ⬜ not started.
+
 ### Deploy order (the safety-critical part)
 
 1. **MR1** → merge + deploy. Cloud Run picks up the env (unused by MR1 server code). The VM
