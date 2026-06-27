@@ -23,6 +23,16 @@
     "ConnectionsPanel": { "viewport": "980x600" },
     "ValidationPanel": { "viewport": "980x600" },
     "PublishHistoryPanel": { "viewport": "980x600" },
-    "SettingsPanel": { "viewport": "980x600" }
+    "SettingsPanel": { "viewport": "980x600" },
+    "PublishReviewModal": { "viewport": "560x340" },
+    "PublishProgressModal": { "viewport": "580x480" },
+    "PullProgressModal": { "viewport": "620x460" },
+    "CreateConnectionModal": { "viewport": "600x540" },
+    "ChooseTablesModal": { "viewport": "600x460" },
+    "LoginPage": { "viewport": "900x660" },
+    "WelcomePage": { "viewport": "900x660" },
+    "HomePage": { "viewport": "1100x720" },
+    "SettingsUserPage": { "viewport": "1100x720" },
+    "SettingsBillingPage": { "viewport": "1100x720" }
   }
 }

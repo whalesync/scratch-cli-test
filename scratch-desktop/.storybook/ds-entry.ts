@@ -30,3 +30,15 @@ export { RecordDetailView } from '../src/renderer/src/components/base/ds/screens
 export { SettingsPanel } from '../src/renderer/src/components/base/ds/screens/SettingsPanel';
 export { ValidationPanel } from '../src/renderer/src/components/base/ds/screens/ValidationPanel';
 export { WorkspaceShell } from '../src/renderer/src/components/base/ds/screens/WorkspaceShell';
+// Phase 3 — modals & flows.
+export { ChooseTablesModal } from '../src/renderer/src/components/base/ds/screens/ChooseTablesModal';
+export { CreateConnectionModal } from '../src/renderer/src/components/base/ds/screens/CreateConnectionModal';
+export { PublishProgressModal } from '../src/renderer/src/components/base/ds/screens/PublishProgressModal';
+export { PublishReviewModal } from '../src/renderer/src/components/base/ds/screens/PublishReviewModal';
+export { PullProgressModal } from '../src/renderer/src/components/base/ds/screens/PullProgressModal';
+// Phase 4 — onboarding, home & settings pages.
+export { HomePage } from '../src/renderer/src/components/base/ds/screens/HomePage';
+export { LoginPage } from '../src/renderer/src/components/base/ds/screens/LoginPage';
+export { SettingsBillingPage } from '../src/renderer/src/components/base/ds/screens/SettingsBillingPage';
+export { SettingsUserPage } from '../src/renderer/src/components/base/ds/screens/SettingsUserPage';
+export { WelcomePage } from '../src/renderer/src/components/base/ds/screens/WelcomePage';

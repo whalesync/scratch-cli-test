@@ -38,6 +38,26 @@ export declare const PublishHistoryPanel: FC;
 export declare const SettingsPanel: FC;
 /** The single-record inspector overlay: record navigator + FIELD/CURRENT/NEW field table. No props. */
 export declare const RecordDetailView: FC;
+/** Publish modal — review/approval stage: validation + unreviewed notices, accept/discard. No props. */
+export declare const PublishReviewModal: FC;
+/** Publish modal — publishing stage: per-connection progress bar + operation table. No props. */
+export declare const PublishProgressModal: FC;
+/** Pull-progress modal: overall progress + per-connection pull-job status table. No props. */
+export declare const PullProgressModal: FC;
+/** "Create Connection" modal: the connector picker grid + name + API-key field. No props. */
+export declare const CreateConnectionModal: FC;
+/** "Choose tables" modal: the connector table picker (step 1, checkbox list). No props. */
+export declare const ChooseTablesModal: FC;
+/** Login screen: centered logo + title + log-in / create-account actions. No props. */
+export declare const LoginPage: FC;
+/** First-run Welcome screen: "Download a workspace" with the cloud workspaces. No props. */
+export declare const WelcomePage: FC;
+/** Home screen: the workspace picker (downloaded + cloud workspaces) + footer. No props. */
+export declare const HomePage: FC;
+/** User settings page: account info + sign out, inside the settings shell. No props. */
+export declare const SettingsUserPage: FC;
+/** Billing settings page: usage, subscription, and upgrade plan cards. No props. */
+export declare const SettingsBillingPage: FC;
 
 // ── Icon buttons (square, icon-only; pass an icon element as children) ───────────
 /** Icon-only primary action. Square, yellow fill + highlight border. */
