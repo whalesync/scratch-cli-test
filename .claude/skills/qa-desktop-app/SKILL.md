@@ -50,6 +50,37 @@ It's read-only (seam → real token → live auth → loads the workspace list �
 screen). If it's **green**, auth, the build, and the token are all healthy — so any later "it dropped to
 the Login screen" is almost certainly a bug in **your harness**, not the app (see gotcha #1).
 
+### ⚠️ A RED canary is usually a benign false-negative — confirm before you trust it
+
+The canary frequently fails **without anything being wrong**. `live.spec.ts` asserts that an account
+**with** remote workspaces lands on the first-run **"Download a workspace"** welcome screen
+(`expect(getByText('Download a workspace')).toBeVisible()`), and that assertion assumes a **clean
+first-run state with nothing downloaded locally**. But the `scratchmd` CLI workspace registry
+(`~/.scratchmd/workspaces.yaml`) is **global and shared across the whole machine** and is **NOT**
+isolated by the test's throwaway Electron profile (gotcha #4). So the moment **any** workspace is already
+downloaded on this machine — typically one a **prior QA run left behind** (shows as "On my Mac · N" on
+the home screen) — the app correctly renders the **HomePage "Your Workspaces" list** instead of the
+welcome screen, and the test fails like this:
+
+```
+expect(locator).toBeVisible() failed
+Locator: getByText('Download a workspace')   ← app showed the workspace LIST, not the first-run screen
+```
+
+This is **not** an auth/build/token failure — the test already proved the token valid (it asserts
+`/workbook → 200` before launching and the "Log in" button is hidden). Confirm the false-negative in
+~10 s, then **proceed with the QA run**:
+
+- `curl -s -o /dev/null -w '%{http_code}' "$URL/users/current" -H "Authorization: API-Token $T"` → **200**.
+- Open the failure's page snapshot at `scratch-desktop/test-results/live-*/error-context.md`. If it shows
+  **"Your Workspaces"** with workspace cards → auth/build/token are healthy; the red is just the
+  hermeticity gap above. Only a **Login** screen there is a real auth problem (then suspect gotcha #1's
+  quote-wrapped token).
+
+In short: **green = definitely healthy; red ≠ broken — check `/users/current` and the error-context
+snapshot first.** A truly clean machine (nothing in `~/.scratchmd/workspaces.yaml`) would pass, but in
+practice prior runs leave downloads behind, so expect red and verify rather than trust the exit code.
+
 ## Get real data to test (reuse or create a workspace + connect a connector)
 
 Feel free to **reuse or create a workspace** — don't be limited to whatever's there. The dedicated test

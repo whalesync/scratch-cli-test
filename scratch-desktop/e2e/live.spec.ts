@@ -94,10 +94,19 @@ test.describe('live (test-api.scratch.md)', () => {
 
     // Real account data rendered from the live backend. Reaching these screens proves the full
     // chain worked end to end (auth-gate pass → real /users/current 200 → real /workbook list).
-    // A fresh profile with remote-but-not-yet-downloaded workspaces lands on the first-run
-    // "Download a workspace" screen; otherwise the empty-account home zero-state.
+    //
+    // For an account WITH remote workspaces, the app lands on one of two equally-healthy home
+    // states, and which one it is depends on MACHINE state, not on auth/build:
+    //   • the first-run "Download a workspace" WelcomePage — only when nothing is downloaded locally;
+    //   • the "Your Workspaces" HomePage list — as soon as the GLOBAL scratchmd CLI registry
+    //     (~/.scratchmd/workspaces.yaml) already has any workspace cloned on this machine. That
+    //     registry is shared across the whole machine and is NOT isolated by this test's throwaway
+    //     Electron profile, so a prior local download (e.g. left by a QA run) flips the screen.
+    // Accept EITHER — both prove the same chain. (Asserting only the WelcomePage made this canary
+    // fail as a false negative on any machine that had ever downloaded a workspace.)
     if (remoteWorkspaces.length > 0) {
-      await expect(window.getByText('Download a workspace')).toBeVisible();
+      await expect(window.getByText(/Download a workspace|Your Workspaces/i).first()).toBeVisible();
+      // The meaningful signal that holds on BOTH screens: a real workspace name renders.
       const firstWorkspaceName = remoteWorkspaces[0].name;
       if (firstWorkspaceName) {
         await expect(window.getByText(firstWorkspaceName, { exact: false }).first()).toBeVisible();
