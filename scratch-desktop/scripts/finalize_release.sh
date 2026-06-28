@@ -16,8 +16,12 @@ fi
 # Runs after all platform upload jobs succeed:
 #   1. Computes an aggregated checksums.txt across all uploaded assets and
 #      uploads it to the release (still draft at this point).
-#   2. Flips the release's `draft` flag to false (makes it visible).
-#   3. Writes annotations.json so GitLab's job UI links to the release.
+#   2. Asserts every expected platform has an installer on the release, and
+#      refuses to publish (fails the job, leaving the draft) if one is missing —
+#      the backstop against shipping a partial release like the macOS-only
+#      v1.0.49. Tune via REQUIRED_PLATFORM_INSTALLER_PATTERNS.
+#   3. Flips the release's `draft` flag to false (makes it visible).
+#   4. Writes annotations.json so GitLab's job UI links to the release.
 #
 # If the draft referenced by $RELEASE_ID is missing (Cleanup may have deleted
 # it between a failed run and the retry — DEV-10257), the sourced
@@ -100,6 +104,57 @@ curl -sS --fail-with-body -X POST \
   -H "Content-Type: text/plain" \
   "${UPLOAD_URL_BASE}?name=checksums.txt" \
   --data-binary "@$CHECKSUMS_FILE"
+
+# Backstop against publishing an incomplete release. Even with Cleanup hardened
+# not to delete drafts that hold installers, a partial retry — only some platform
+# package/upload jobs re-running against a recreated draft — could otherwise make
+# a release visible that is missing a platform. That is the v1.0.49 incident:
+# macOS-only got published while Windows + Linux were absent. Before flipping the
+# release visible, assert every expected platform has at least one installer asset
+# on it. Override REQUIRED_PLATFORM_INSTALLER_PATTERNS (newline-separated
+# "Label=<extended regex over asset names>") to change the build matrix without
+# editing this script; set it to empty to skip the check entirely.
+DEFAULT_REQUIRED_PLATFORM_INSTALLER_PATTERNS=$'macOS=\\.dmg$\nWindows=\\.exe$\nLinux=\\.(AppImage|deb)$'
+REQUIRED_PLATFORM_INSTALLER_PATTERNS="${REQUIRED_PLATFORM_INSTALLER_PATTERNS-$DEFAULT_REQUIRED_PLATFORM_INSTALLER_PATTERNS}"
+
+assert_all_required_platform_installers_present() {
+  if [ -z "$REQUIRED_PLATFORM_INSTALLER_PATTERNS" ]; then
+    echo "REQUIRED_PLATFORM_INSTALLER_PATTERNS is empty — skipping platform-coverage check."
+    return 0
+  fi
+
+  # Re-fetch live asset names rather than trust the snapshot taken before the
+  # checksums pass, so the gate reflects the release's true final state.
+  local asset_names_on_release
+  asset_names_on_release=$(curl -sS --fail-with-body -H "Authorization: token $GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github.v3+json" \
+    "https://api.github.com/repos/${GITHUB_REPO}/releases/${RELEASE_ID}/assets?per_page=100" \
+    | jq -r '.[].name')
+
+  local missing_platform_labels=()
+  local platform_pattern_line
+  while IFS= read -r platform_pattern_line; do
+    [ -n "$platform_pattern_line" ] || continue
+    local platform_label="${platform_pattern_line%%=*}"
+    local installer_name_pattern="${platform_pattern_line#*=}"
+    if ! echo "$asset_names_on_release" | grep -qiE "$installer_name_pattern"; then
+      missing_platform_labels+=("$platform_label")
+    fi
+  done <<< "$REQUIRED_PLATFORM_INSTALLER_PATTERNS"
+
+  if [ "${#missing_platform_labels[@]}" -gt 0 ]; then
+    echo "ERROR: Refusing to publish $NEW_VERSION — no installer found for: ${missing_platform_labels[*]}."
+    echo "Assets currently on the release:"
+    echo "$asset_names_on_release" | sed 's/^/  /'
+    echo "A platform's package/upload job likely did not run, or its assets were lost to a"
+    echo "draft deletion. Re-run the missing platform's Package + Upload jobs against this"
+    echo "draft, then re-run Finalize. The release stays an unpublished draft until then."
+    return 1
+  fi
+  echo "Platform-coverage check passed — installers present for all required platforms."
+}
+
+assert_all_required_platform_installers_present
 
 # Flip draft:false. This is the only moment the release becomes visible.
 echo "Publishing release (draft -> false)..."
