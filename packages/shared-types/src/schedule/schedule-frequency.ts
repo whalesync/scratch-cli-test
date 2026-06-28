@@ -2,7 +2,7 @@
  * Pure, dependency-free helpers that translate between a schedule's stored 5-field cron
  * expression and the structured "frequency + time + weekday/day-of-month" model the UI
  * edits. The cron expression remains the single source of truth (see
- * docs/plans/2026-06-25-dev-10569-pull-schedule-weekly-monthly-when-to-run.md); these
+ * docs/plans/2026-06-25-dev-10569-pull-schedule-weekly-monthly-when-to-run/2026-06-25-dev-10569-pull-schedule-weekly-monthly-when-to-run.md); these
  * helpers only compose it (`buildScheduleCron`), decompose it for editing
  * (`parseScheduleCron`), and render a human label (`describeScheduleCron`).
  *

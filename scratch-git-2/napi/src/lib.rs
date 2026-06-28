@@ -2,7 +2,7 @@
 //! process. Shipped under the local module name `scratchmd-native` (D6) at
 //! `scratch-desktop/Resources/bin/scratchmd-native.<platform>-<arch>[-<abi>].node`
 //! in packaged builds; in dev, the loader resolves the `.node` next to this
-//! crate's `Cargo.toml`. See `docs/plans/resolved/2026-05-20-slice-h-spec.md`.
+//! crate's `Cargo.toml`. See `docs/plans/resolved/2026-05-20-slice-h-spec/2026-05-20-slice-h-spec.md`.
 //!
 //! Slice H.2 ships only `acceptField`. The remaining three entry points
 //! (`discardField`, `restoreDeletedRecord`, `discardCreatedRecord`) land in
@@ -50,7 +50,7 @@ impl From<RustReviewOpResult> for ReviewOpResult {
 /// is `"<CODE>: <human description>"`. The desktop's TS shim parses the
 /// `<CODE>` prefix to pattern-match on (in particular, `LOCK_BUSY` must
 /// surface as "another operation in progress" — see
-/// [Lock semantics](../../../docs/plans/resolved/2026-05-20-slice-h-spec.md#lock-semantics)).
+/// [Lock semantics](../../../docs/plans/resolved/2026-05-20-slice-h-spec/2026-05-20-slice-h-spec.md#lock-semantics)).
 ///
 /// Why message-prefix and not `err.code`: napi-rs 2.x sets `err.code` to the
 /// `Status` enum name (`GenericFailure` / `InvalidArg`) and offers no way to
@@ -260,7 +260,7 @@ pub async fn read_folder_blobs(
 /// Use this from paginated grid renderers (pass the page's filenames) and
 /// single-record diff views (pass `[filename]`) to bound memory at the page
 /// size instead of loading the entire folder's `(published, approved)`
-/// content. See `docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md`
+/// content. See `docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md`
 /// follow-up D5.
 ///
 /// Same error-prefix convention as `readFolderBlobs`.
@@ -322,7 +322,7 @@ pub async fn list_folder_filenames(
 //
 // Powers the desktop sidebar's "Needs review" (blue) and "Approved" (gray)
 // dots plus the existing validation dots, per
-// `docs/plans/2026-05-31-folder-tree-review-approved-dots.md`. These were
+// `docs/plans/resolved/2026-05-31-folder-tree-review-approved-dots/2026-05-31-folder-tree-review-approved-dots.md`. These were
 // previously shelled out to the `scratchmd` CLI; moving them in-process
 // eliminates the ~10-20 ms spawn cost per invocation, which matters for the
 // cold-start refresh pass (sequential walk across every folder).

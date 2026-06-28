@@ -29,10 +29,10 @@ A failed refresh leaves the workspace in a recoverable state: "local `main` is o
 
 ## Future work
 
-If telemetry shows refresh failures clustering around specific causes, surface them via a non-blocking toast instead of `console.debug`. The richer fix — having the server push a HEAD-advance signal so the client doesn't have to poll/fetch at all — is tracked under CEO follow-up F9 in [`docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md`](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md) ("Publish-then-fetch failure → server-driven HEAD-advance signal").
+If telemetry shows refresh failures clustering around specific causes, surface them via a non-blocking toast instead of `console.debug`. The richer fix — having the server push a HEAD-advance signal so the client doesn't have to poll/fetch at all — is tracked under CEO follow-up F9 in [`docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md`](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md) ("Publish-then-fetch failure → server-driven HEAD-advance signal").
 
 ## Related
 
-- [DEV-10144 E4](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md#eng-review-follow-ups) — the follow-up that drove this doc.
-- [CEO Review Finding 1.6](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md) — the original data-flow shadow-path observation.
+- [DEV-10144 E4](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md#eng-review-follow-ups) — the follow-up that drove this doc.
+- [CEO Review Finding 1.6](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md) — the original data-flow shadow-path observation.
 - `reconcile_accepted_after_publish` in [`scratch-git-2/src/cli/commands/files.rs`](../../scratch-git-2/src/cli/commands/files.rs) — the CLI-side post-publish reconciliation that this refresh transitively triggers.

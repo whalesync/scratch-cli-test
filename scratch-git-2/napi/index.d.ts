@@ -141,7 +141,7 @@ export function listFolderFilenames(
 // Powers the desktop folder-tree sidebar's "Needs review" (blue) and
 // "Approved" (gray) dots plus the existing validation dots. Migrated from
 // `runScratchmd*` CLI shell-out to eliminate ~10–20 ms spawn cost per call
-// — see `docs/plans/2026-05-31-folder-tree-review-approved-dots.md`.
+// — see `docs/plans/resolved/2026-05-31-folder-tree-review-approved-dots/2026-05-31-folder-tree-review-approved-dots.md`.
 //
 // All three return JSON-shaped objects with snake_case keys to preserve the
 // long-standing TS `ValidationStat` shape consumed by

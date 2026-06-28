@@ -8,7 +8,7 @@
 //! (cli + service) AND across the future napi cdylib without dragging the
 //! cli's `git_ops` along.
 //!
-//! See `docs/plans/resolved/2026-05-20-slice-h-spec.md` for the slice H plan; this
+//! See `docs/plans/resolved/2026-05-20-slice-h-spec/2026-05-20-slice-h-spec.md` for the slice H plan; this
 //! module is the "pure compute + FS" core. The I/O-bundling public entry
 //! points that call git on behalf of callers (`accept_field`, `drop_approved_field_and_restore_to_main_value`,
 //! `restore_record_from_main_after_dropping_delete_patch`, `drop_create_patch_and_delete_working_file` with `LockMode`) land in
@@ -1137,7 +1137,7 @@ pub fn normalize_crlf(data: Vec<u8>) -> Vec<u8> {
 //   5. Mutate the patches file + the working file as the op demands.
 //   6. Atomic save + return a `ReviewOpResult`.
 //
-// Mirrors the layout from `docs/plans/resolved/2026-05-20-slice-h-spec.md`.
+// Mirrors the layout from `docs/plans/resolved/2026-05-20-slice-h-spec/2026-05-20-slice-h-spec.md`.
 // ---------------------------------------------------------------------------
 
 const WORKSPACE_LOCK_SHORT_WAIT: std::time::Duration = std::time::Duration::from_millis(100);

@@ -9,7 +9,7 @@
  * Cross-platform Node replacement for the original build-native.sh — runs on
  * macOS, Linux, AND Windows (the bash script had no Windows/MINGW host case
  * and emitted unix-only .dylib/.so paths, so `predev`/`prebuild` failed on a
- * native Windows checkout). See `docs/plans/2026-05-20-slice-h-spec.md`
+ * native Windows checkout). See `docs/plans/resolved/2026-05-20-slice-h-spec/2026-05-20-slice-h-spec.md`
  * (slice H.2 of DEV-10144) for the original rationale.
  *
  * Usage:

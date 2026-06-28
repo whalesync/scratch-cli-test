@@ -12,7 +12,7 @@ import { waitForJob } from "../helpers/wait-for-job";
 /**
  * End-to-end smoke test for the `/upload-patch` publish flow — the CLI/desktop
  * path now used by every caller (see
- * docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md, Phase 1).
+ * docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md, Phase 1).
  *
  * Drives the wire shape: `/upload-patch/init` → PUT to the presigned URL →
  * `/upload-patch/commit` → ApplyPatchesJob → `/publish-v2/plan-job` →

@@ -1,7 +1,7 @@
 /**
  * DB-backed live-pipeline E2E for the DEV-9698 (T4) per-connection quiesce — the
  * "publish/sync interleaved with a migration batch" scenario the plan deferred
- * (`docs/plans/2026-06-11-webflow-folder-structure-and-support-all.md` → Tests →
+ * (`docs/plans/resolved/2026-06-11-webflow-folder-structure-and-support-all/2026-06-11-webflow-folder-structure-and-support-all.md` → Tests →
  * Integration / E2E, bullet A3/#6).
  *
  * The unit specs exercise the quiesce gate + schedule logic against mocked Prisma,

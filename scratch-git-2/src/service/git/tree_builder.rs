@@ -230,7 +230,7 @@ mod tests {
     }
 
     /// Regression: logical paths with `//` must not create invalid trees (`git fsck` / pack-objects).
-    /// See docs/plans/2026-04-09-git-tree-corruption-empty-path-segments.md.
+    /// See docs/plans/resolved/2026-04-09-git-tree-corruption-empty-path-segments/2026-04-09-git-tree-corruption-empty-path-segments.md.
     #[test]
     fn double_slash_in_logical_path_normalizes_and_git_fsck_succeeds() {
         assert_git_available();

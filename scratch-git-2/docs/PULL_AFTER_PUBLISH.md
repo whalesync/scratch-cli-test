@@ -14,7 +14,7 @@ The post-publish reconcile was reworked so the `dirty` branch and the local
 `accepted-patches.json` converge cleanly even when a publish is a **no-op** (the
 old bug: a removed-key edit `main` never advanced for stayed stuck as "accepted"
 forever) or **fails** for some records. Full design:
-[`docs/plans/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign.md).
+[`docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md).
 
 What changed:
 
@@ -143,4 +143,4 @@ The log uses POSIX `O_APPEND` for single-write atomicity (entries are well under
 
 - [REVIEW_MODEL.md](REVIEW_MODEL.md) — accept/reject/discard semantics; the patch file format.
 - [REPO_STRUCTURES.md](REPO_STRUCTURES.md) — on-disk layout (`.scratch/connections/<conn>/`, `refs/heads/main`, etc.).
-- [The workspace-simplification plan](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md) — slice D (refuse-or-replay pull), `mr17` (publish reconcile), `mr35` (publish staleness gate).
+- [The workspace-simplification plan](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md) — slice D (refuse-or-replay pull), `mr17` (publish reconcile), `mr35` (publish staleness gate).

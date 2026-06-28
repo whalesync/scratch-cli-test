@@ -734,7 +734,7 @@ async fn run_download(
     // NOTE: the publish-side unreviewed block (`run_publish`) and the DEV-10316
     // server dirty-gate stay as-is — relaxing the *pull* gate doesn't let an
     // unreviewed or web-dirty change reach the external service. See the plan
-    // doc (docs/plans/2026-06-23-dev-10523-pull-with-unreviewed-edits.md) and
+    // doc (docs/plans/resolved/2026-06-23-dev-10523-pull-with-unreviewed-edits/2026-06-23-dev-10523-pull-with-unreviewed-edits.md) and
     // `refresh_workbook_for_contexts`, whose focus-sync warn-and-skip is left
     // unchanged on purpose.
 

@@ -23,7 +23,7 @@ for (const format of ['date', 'date-time', 'uri', 'email']) {
  * JSON schema described the unwrapped per-property value, but records on disk
  * store the raw Notion envelope `{ id, type, <typeKey>: value }`. Before the
  * fix, Value.Check failed on every property. See
- * docs/plans/2026-06-02-notion-schema-envelope-fix.md.
+ * docs/plans/resolved/2026-06-02-notion-schema-envelope-fix/2026-06-02-notion-schema-envelope-fix.md.
  */
 
 const TABLE_ID = { wsId: 'crm', remoteId: ['db_123', 'ds_123'] };

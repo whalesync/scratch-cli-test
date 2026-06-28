@@ -2,7 +2,7 @@
 
 End-to-end smoke tests for pull and publish pipelines. Tests hit the real NestJS API server, which talks to fake connector APIs (e.g. fake Airtable) instead of real external services. Everything runs in Docker.
 
-See [smoke-test-plan.md](/docs/plans/resolved/smoke-test-plan.md) for the full design and test case descriptions.
+See [smoke-test-plan.md](/docs/plans/resolved/smoke-test-plan/smoke-test-plan.md) for the full design and test case descriptions.
 
 ## Prerequisites
 

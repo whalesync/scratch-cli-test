@@ -6,7 +6,7 @@
 //! concerns the napi binding doesn't need.
 //!
 //! Added in slice H.1.5 to unblock the I/O-bundling public entry points in
-//! `shared::review_ops`. See `docs/plans/resolved/2026-05-20-slice-h-spec.md`.
+//! `shared::review_ops`. See `docs/plans/resolved/2026-05-20-slice-h-spec/2026-05-20-slice-h-spec.md`.
 
 // The service binary doesn't reach into these helpers (it has its own service-
 // side git surface). Mirrors the same pattern `shared::review_ops` uses.

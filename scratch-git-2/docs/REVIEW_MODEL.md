@@ -169,7 +169,7 @@ Sibling to `accepted-patches.json`, at `<workspace>/.scratch/connections/<conn>/
 
 The error lives at the **entry** level, never on the RFC 6902 ops, so `patch` stays a conformant op array / merge patch and re-applies through the same machinery as an accepted patch.
 
-The failed edit is re-applied to the **working tree** during the post-publish reconcile (so it shows as **needs-approval**), but is NOT in `accepted-patches.json` — so it is not staged to publish again until the user deliberately re-accepts it (which removes the `failed-patches.json` entry and folds the edit back into `accepted-patches.json`). An empty set deletes the file; a clean publish leaves none behind. See the publish redesign doc, [`docs/plans/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign.md).
+The failed edit is re-applied to the **working tree** during the post-publish reconcile (so it shows as **needs-approval**), but is NOT in `accepted-patches.json` — so it is not staged to publish again until the user deliberately re-accepts it (which removes the `failed-patches.json` entry and folds the edit back into `accepted-patches.json`). An empty set deletes the file; a clean publish leaves none behind. See the publish redesign doc, [`docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md).
 
 ### `unreviewed-changes.json` (the pull conflict stash, DEV-10523)
 
@@ -180,4 +180,4 @@ It is a **recovery artifact**, not resumable state: nothing auto-replays it on a
 ## See also
 
 - [REPO_STRUCTURES.md](REPO_STRUCTURES.md) — on-disk layout for CLI workspaces and service-side bare repos.
-- The architecture-change plan at [`docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md`](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md) — context for _why_ this model exists (history of the move from a three-worktree model; not a learning resource).
+- The architecture-change plan at [`docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md`](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md) — context for _why_ this model exists (history of the move from a three-worktree model; not a learning resource).

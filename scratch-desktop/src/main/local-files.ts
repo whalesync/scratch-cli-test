@@ -1292,7 +1292,7 @@ function buildInvalidJsonFileEntries(folderPath: string, rows: DiffRow[]): Inval
  * CLI (`shared/folder_index.rs`). Pagination + global-scope filters + sorts
  * happen SQL-side via `scratchmd read-records`; only the page filenames are
  * read off disk for the diff comparison, so memory stays bounded at the page
- * size (D5: see docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md).
+ * size (D5: see docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md).
  *
  * Summary counts (`total`, `added`, `modified`, `unpublished`, `deleted`,
  * `invalidJson`, etc.) come full-folder from the CLI's `FolderSummary`
@@ -1583,7 +1583,7 @@ export async function readDiffGridDataPage(
   // Full-folder counts come from the CLI's SQL query (folder_index v4's
   // `query_summary` discriminator), so the modal badges show "1234 modified
   // / 12 unpublished" for the entire folder rather than only the visible
-  // page. See D5 in docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md.
+  // page. See D5 in docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md.
   const summary: DiffGridSummary = {
     total: cliResult.summary.total,
     added: cliResult.summary.added,

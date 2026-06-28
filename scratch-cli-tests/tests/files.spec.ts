@@ -194,7 +194,7 @@ describeIfPostgres("Files", () => {
 
   describe("round-trip", () => {
     it("should handle local edit → accept → upload → download cycle", () => {
-      // Post-slice-F flow (see docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md):
+      // Post-slice-F flow (see docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md):
       // working-tree edits are "unreviewed" and must be `accept`ed into
       // accepted-patches.json before `files upload` will ship them. `files
       // download` refuses while any unreviewed edits exist, so the accept

@@ -1146,7 +1146,7 @@ export async function getValidationStats(workspacePath: string): Promise<Validat
 /**
  * Workspace-wide per-folder review-state counts. Powers the sidebar's blue
  * "Needs review" and gray "Approved" folder-tree dots — see
- * `docs/plans/2026-05-31-folder-tree-review-approved-dots.md`.
+ * `docs/plans/resolved/2026-05-31-folder-tree-review-approved-dots/2026-05-31-folder-tree-review-approved-dots.md`.
  *
  * Same swallow-errors-as-`[]` contract as `getValidationStats` so the dot
  * subsystem degrades to "no dots" if the napi binding fails to load on a

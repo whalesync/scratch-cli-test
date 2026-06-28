@@ -1685,7 +1685,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
   }, 60_000);
 
   it('respects UPDATE_RECORDS_RETURNS_REMOTE_DATA: persists connector-returned row to main', async () => {
-    // Step 7 from `docs/plans/2026-05-29-publish-pk-stringification-bug.md`:
+    // Step 7 from `docs/plans/2026-05-29-publish-pk-stringification-bug/2026-05-29-publish-pk-stringification-bug.md`:
     // when the flag is on, the git commit on `main` should reflect the
     // row the connector says it actually persisted (carrying server-side
     // rewrites — trigger-set timestamps, native PK types, normalized

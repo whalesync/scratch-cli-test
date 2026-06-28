@@ -1,6 +1,6 @@
 // Spike: time `gix::Repository::status(...)` against an existing dirty worktree
 // to validate the diff-detection plan in
-// docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md.
+// docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md.
 //
 // Usage: cargo run --example gix_status_spike --release -- <worktree-path>
 

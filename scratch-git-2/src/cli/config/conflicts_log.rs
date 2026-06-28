@@ -1,7 +1,7 @@
 //! Workspace-level conflict log (`.scratch/conflicts.log`).
 //!
 //! Slice D of the simplify-local-workspace plan
-//! (`docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md`).
+//! (`docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md`).
 //!
 //! When `scratchmd files download` re-anchors `accepted-patches.json` against
 //! the new server `main` and finds a same-field collision between a user's

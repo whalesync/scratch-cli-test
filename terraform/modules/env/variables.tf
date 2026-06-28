@@ -427,6 +427,6 @@ variable "grant_readonly_sa_all_secrets" {
     for production. Safe only while this env's secrets stay test-scoped and distinct from prod: keep the connector OAuth
     client secrets, the AI/observability keys (GEMINI/OPENROUTER/LANGSMITH/POSTHOG/LINEAR), ENCRYPTION_MASTER_KEY, and
     the write-capable DB creds (DATABASE_URL/MIGRATIONS_DB_*) test-scoped. See
-    docs/plans/2026-06-11-local-readonly-agent-access-spinner.md.
+    docs/plans/2026-06-11-local-readonly-agent-access-spinner/2026-06-11-local-readonly-agent-access-spinner.md.
   EOT
 }

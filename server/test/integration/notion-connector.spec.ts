@@ -194,7 +194,7 @@ describeIfKey('NotionConnector — live API', () => {
 
     it('snapshot — captures the v3 fetchJsonTableSpec shape as the upgrade contract', () => {
       // This snapshot is the "v3 baseline" referenced in the upgrade plan
-      // (docs/plans/2026-05-25-notion-client-v5-upgrade.md, Phase 1 → 3 → 4).
+      // (docs/plans/2026-05-25-notion-client-v5-upgrade/2026-05-25-notion-client-v5-upgrade.md, Phase 1 → 3 → 4).
       // Strip volatile fields so the snapshot is reproducible.
       const snapshot = redactForSnapshot(primarySpec);
       expect(snapshot).toMatchSnapshot();

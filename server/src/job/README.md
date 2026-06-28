@@ -138,7 +138,7 @@ When a job stalls (worker dies) and BullMQ re-dispatches it, `run()` is called a
 - **jobProgress** tracks high-level completion (e.g., `completedFolderIds` — which folders to skip)
 - **connectorProgress** tracks API pagination state (e.g., a cursor token to resume fetching mid-page)
 
-This means resume is **opt-in per handler and per connector**. The framework provides the checkpoint/restore plumbing, but each handler must be written to actually use it. All active connectors now persist their pagination cursor — see [Connector Resume Plan](/docs/plans/resolved/2026-04-14-connector-resume-plan.md) for details.
+This means resume is **opt-in per handler and per connector**. The framework provides the checkpoint/restore plumbing, but each handler must be written to actually use it. All active connectors now persist their pagination cursor — see [Connector Resume Plan](/docs/plans/resolved/2026-04-14-connector-resume-plan/2026-04-14-connector-resume-plan.md) for details.
 
 ## Checkpointing and Progress
 
@@ -264,7 +264,7 @@ When BullMQ re-dispatches a stalled job to a new worker:
    - **jobProgress.completedFolderIds** — skip fully-processed folders
    - **connectorProgress** — resume API pagination from the last cursor
 
-All active connectors support cursor-based resume. See [Connector Resume Plan](/docs/plans/resolved/2026-04-14-connector-resume-plan.md) for details.
+All active connectors support cursor-based resume. See [Connector Resume Plan](/docs/plans/resolved/2026-04-14-connector-resume-plan/2026-04-14-connector-resume-plan.md) for details.
 
 ### What Causes Stalls (and What Doesn't)
 
@@ -427,5 +427,5 @@ The enqueuer writes to Postgres first, then BullMQ. If the process crashes betwe
 | Worker config (concurrency, lock) | `server/src/config/scratch-config.service.ts`                                               |
 | Custom metrics definitions        | `server/src/metrics/custom-metrics.ts`                                                      |
 | Prisma schema (DbJob model)       | `server/prisma/schema.prisma`                                                               |
-| Connector resume plan             | [`docs/connector-resume-plan.md`](/docs/plans/resolved/2026-04-14-connector-resume-plan.md) |
+| Connector resume plan             | [`docs/connector-resume-plan.md`](/docs/plans/resolved/2026-04-14-connector-resume-plan/2026-04-14-connector-resume-plan.md) |
 | Pull job performance plan         | [`docs/pull-job-performance-plan.md`](/docs/pull-job-performance-plan.md)                   |

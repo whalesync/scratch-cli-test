@@ -4,7 +4,7 @@
  *
  * Powers the desktop sidebar's "Needs review" (blue) and "Approved" (gray)
  * folder-tree dots — see
- * `docs/plans/2026-05-31-folder-tree-review-approved-dots.md`.
+ * `docs/plans/resolved/2026-05-31-folder-tree-review-approved-dots/2026-05-31-folder-tree-review-approved-dots.md`.
  *
  * Field naming is snake_case to mirror `ValidationStat` so consumers can key
  * both maps off the same `${connection}/${folder_path}` string.

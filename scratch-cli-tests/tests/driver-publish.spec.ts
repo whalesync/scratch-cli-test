@@ -21,7 +21,7 @@ const describeIfPostgres = postgresUrl ? describe : describe.skip;
 //
 // The two `pseudo-ref FK` cases remain `.skip`ped pending a fix for the
 // backfill / re-anchor bug documented in
-// docs/plans/2026-06-01-publish-backfill-reanchor-bug.md: after the
+// docs/plans/2026-06-01-publish-backfill-reanchor-bug/2026-06-01-publish-backfill-reanchor-bug.md: after the
 // server-side publish-plan refactor, the CLI's `accepted-patches.json` is no
 // longer cleared for patches that contained an `@/...` pseudo-ref, so the
 // post-publish working tree silently un-resolves the FK. Un-skip once one of

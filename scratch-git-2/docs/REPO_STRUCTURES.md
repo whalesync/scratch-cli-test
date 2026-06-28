@@ -113,7 +113,7 @@ Before slice F (2026-05-20), the CLI maintained three worktrees per connection:
 - `.scratch/connections/master/{CONNECTOR-NAME}/` held the published-state worktree (sparse on `main`), used as the snapshot source for diff detection.
 - `.scratch/connections/dirty/{CONNECTOR-NAME}/` held the "reviewed-dirty" worktree (an identical sparse copy of `dirty`), used by the local publish-plan generator.
 
-Slice F retired all three by collapsing to one real `git worktree add` of `main` and moving the approved-state record into `accepted-patches.json`. See the [workspace-simplification plan](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md) for the migration history.
+Slice F retired all three by collapsing to one real `git worktree add` of `main` and moving the approved-state record into `accepted-patches.json`. See the [workspace-simplification plan](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md) for the migration history.
 
 ### Global local-workspace registry
 

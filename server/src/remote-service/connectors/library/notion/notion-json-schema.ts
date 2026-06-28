@@ -231,7 +231,7 @@ function notionUserObjectSchema(): TSchema {
  * `{ id, type: 'multi_select', multi_select: [...] }`. Modeling this envelope —
  * rather than the bare inner value — is what makes the generated schema match the
  * verbatim API response, per the *Preserve external data fidelity* product
- * principle. See docs/plans/2026-06-02-notion-schema-envelope-fix.md.
+ * principle. See docs/plans/resolved/2026-06-02-notion-schema-envelope-fix/2026-06-02-notion-schema-envelope-fix.md.
  *
  * The envelope is intentionally faithful-where-it-matters, not exhaustive: it
  * models the structural extras real data carries (e.g. `relation.has_more`) but

@@ -156,4 +156,4 @@ After setup, share the credentials so other engineers can run the tests:
 
 1. Add `NOTION_API_KEY` to 1Password under the team's "Integration test credentials" vault.
 2. If you want CI to run this suite, add the secret to the GitLab CI variable store as `NOTION_API_KEY` (masked). Until then, the suite auto-skips when the env var is missing.
-3. Add yourself as the owner-of-record for this workspace so re-provisioning has a clear point of contact (see Open Question #6 in [docs/plans/2026-05-25-notion-client-v5-upgrade.md](../../../docs/plans/2026-05-25-notion-client-v5-upgrade.md)).
+3. Add yourself as the owner-of-record for this workspace so re-provisioning has a clear point of contact (see Open Question #6 in [docs/plans/2026-05-25-notion-client-v5-upgrade/2026-05-25-notion-client-v5-upgrade.md](../../../docs/plans/2026-05-25-notion-client-v5-upgrade/2026-05-25-notion-client-v5-upgrade.md)).

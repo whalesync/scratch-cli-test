@@ -31,7 +31,7 @@ A file is **unpublished** when it has an entry in `accepted-patches.json`.
 
 After a publish, `accepted-patches.json` and the server `dirty` branch are
 reconciled per the publish redesign
-([`docs/plans/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign.md)):
+([`docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md)):
 
 - The run-job carries a **`publishOrigin`** (`'desktop'` / `'web'`) that routes a
   record's **failed** edit. The server reconciles `dirty` via `rebaseDirty` with an
@@ -65,7 +65,7 @@ reconciled per the publish redesign
 
 ## Pre-Phase-5 model (historical)
 
-Before slice F (2026-05-20), the CLI carried a local `refs/heads/dirty` branch as the "approved" snapshot, with the user's working tree on a sparse worktree of `dirty`. Accept committed working-tree edits onto `dirty`. That branch was retired in favor of `accepted-patches.json` — see the [architecture-change plan](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md). The server-side `dirty` branch (the publish staging area) is unchanged.
+Before slice F (2026-05-20), the CLI carried a local `refs/heads/dirty` branch as the "approved" snapshot, with the user's working tree on a sparse worktree of `dirty`. Accept committed working-tree edits onto `dirty`. That branch was retired in favor of `accepted-patches.json` — see the [architecture-change plan](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md). The server-side `dirty` branch (the publish staging area) is unchanged.
 
 ## See also
 

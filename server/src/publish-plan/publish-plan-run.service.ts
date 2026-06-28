@@ -132,7 +132,7 @@ export class PublishPlanRunService {
     // `processBatch` → `dispatchUpdateBatch`. When true, the persisted
     // rows returned by `connector.updateRecords` drive the git commit on
     // `main`; when false, the sent payload drives it (current behavior).
-    // See `docs/plans/2026-05-29-publish-pk-stringification-bug.md`.
+    // See `docs/plans/2026-05-29-publish-pk-stringification-bug/2026-05-29-publish-pk-stringification-bug.md`.
     const planUser = await this.db.client.user.findUnique({
       where: { id: plan.userId },
       select: { id: true, role: true },

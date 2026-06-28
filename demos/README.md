@@ -1,7 +1,7 @@
 # Scratch sales-demo tooling
 
 Presenter-run tooling to get a Scratch sales demo into a known, repeatable state.
-See the plan: [`docs/plans/2026-06-16-sales-demo-tooling.md`](../docs/plans/2026-06-16-sales-demo-tooling.md)
+See the plan: [`docs/plans/2026-06-16-sales-demo-tooling/2026-06-16-sales-demo-tooling.md`](../docs/plans/2026-06-16-sales-demo-tooling/2026-06-16-sales-demo-tooling.md)
 and the approved story design referenced there.
 
 **This is not product code.** It is intentionally outside the Yarn workspaces / Turborepo

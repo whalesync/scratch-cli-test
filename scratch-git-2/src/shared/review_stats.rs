@@ -14,7 +14,7 @@
 //! Both sets are O(changes), so this is cheap on a mostly-clean corpus and needs
 //! no cold-start index build (DEV-10327). Powers the desktop sidebar's "Needs
 //! review" (blue) and "Approved" (gray) dots per
-//! `docs/plans/2026-05-31-folder-tree-review-approved-dots.md`.
+//! `docs/plans/resolved/2026-05-31-folder-tree-review-approved-dots/2026-05-31-folder-tree-review-approved-dots.md`.
 //!
 //! Used by:
 //! - `cli::commands::files::run_get_review_stats` (the `files get-review-stats`

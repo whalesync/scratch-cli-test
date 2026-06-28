@@ -76,7 +76,7 @@ export enum UserFlag {
    * connector actually persisted them. When FALSE (default), the
    * pre-existing sent-payload behavior is preserved. Checked server-side
    * only — not exposed to the client. See
-   * `docs/plans/2026-05-29-publish-pk-stringification-bug.md` for the
+   * `docs/plans/2026-05-29-publish-pk-stringification-bug/2026-05-29-publish-pk-stringification-bug.md` for the
    * broader fix plan.
    */
   UPDATE_RECORDS_RETURNS_REMOTE_DATA = 'UPDATE_RECORDS_RETURNS_REMOTE_DATA',

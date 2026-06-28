@@ -1,7 +1,7 @@
 //! Per-connection `accepted-patches.json` file.
 //!
 //! Phase 4/5 of the simplify-local-workspace plan
-//! (`docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md`).
+//! (`docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture/2026-05-17-simplify-local-workspace-architecture.md`).
 //!
 //! Once the `dirty` branch retires as the source of truth for
 //! accepted-but-not-published edits, this JSON file takes over. Every accept,
