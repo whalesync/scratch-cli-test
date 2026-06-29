@@ -261,7 +261,11 @@ Build CLI for test desktop release:
   extends:
     - .package_desktop
     - .local-macos-runner-defaults
-  timeout: 30 minutes
+  # Notarization (scripts/notarize.cjs) retries transient Apple-notary failures
+  # up to NOTARIZE_MAX_ATTEMPTS (default 3) with a per-attempt NOTARIZE_TIMEOUT
+  # (default 12m) + backoff. Healthy runs finish in <10m on the first attempt;
+  # this ceiling only matters when transients force the full retry budget.
+  timeout: 45 minutes
   variables:
     PLATFORM: 'mac'
     MAC_TARGETS: 'dmg zip'

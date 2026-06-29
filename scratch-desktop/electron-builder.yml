@@ -73,6 +73,12 @@ extraResources:
 
 afterPack: scripts/afterPack.cjs
 
+# Notarization is handled by this hook (NOT electron-builder's built-in
+# `mac.notarize`) so it can retry transient Apple-notary failures with a bounded
+# per-attempt timeout and staple the result. See scripts/notarize.cjs for the
+# full rationale. The hook no-ops for unsigned/ad-hoc local builds.
+afterSign: scripts/notarize.cjs
+
 mac:
   icon: build/icons/mac/icon.icns
   # Release mac builds: set CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID.
@@ -81,7 +87,9 @@ mac:
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  notarize: true
+  # Notarization + stapling are done by the afterSign hook (scripts/notarize.cjs),
+  # which adds retry/backoff + a per-attempt timeout that the built-in path lacks.
+  notarize: false
   extendInfo:
     - NSDocumentsFolderUsageDescription: Scratch needs access to manage your workspace files.
   protocols:

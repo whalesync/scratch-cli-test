@@ -41,8 +41,25 @@ verify_signed_app() {
     return 1
   fi
 
-  local found_team
-  found_team=$(codesign -dvv "$app" 2>&1 | grep -E '^TeamIdentifier=' | head -1 | cut -d= -f2-)
+  # Snapshot the signature description ONCE, then run every check against it with
+  # pure-bash matching (no pipes). Piping `codesign -dvv` straight into
+  # `grep -q`/`head` under `set -o pipefail` is fragile right after a build — the
+  # early-exiting reader can SIGPIPE codesign, and the bundle may still be
+  # settling — which produced spurious "ad-hoc or wrong cert" failures on apps
+  # that were in fact correctly Developer ID signed.
+  local signature_description
+  if ! signature_description=$(codesign -dvv "$app" 2>&1); then
+    echo "ERROR: codesign -dvv failed for $app" >&2
+    return 1
+  fi
+
+  local found_team="" line
+  while IFS= read -r line; do
+    if [[ "$line" == TeamIdentifier=* ]]; then
+      found_team="${line#TeamIdentifier=}"
+      break
+    fi
+  done <<<"$signature_description"
   if [[ -z "$found_team" ]]; then
     echo "ERROR: Could not read TeamIdentifier (codesign -dvv $app)" >&2
     return 1
@@ -51,7 +68,7 @@ verify_signed_app() {
     echo "ERROR: TeamIdentifier mismatch: expected '$APPLE_TEAM_ID' (from .env), got '$found_team'" >&2
     return 1
   fi
-  if ! codesign -dvv "$app" 2>&1 | grep -qF 'Authority=Developer ID Application:'; then
+  if [[ "$signature_description" != *'Authority=Developer ID Application:'* ]]; then
     echo "ERROR: No Developer ID Application authority on signature (ad-hoc or wrong cert?)" >&2
     return 1
   fi
