@@ -14,6 +14,11 @@ Read [`connector-build/test-accounts-mechanism.md`](/connector-build/test-accoun
 
 **Do everything autonomously, including registration and password entry.** The bar: a free-plan signup with no card and no human-delivered code should complete with **zero** human input.
 
+**FIRST THING — announce the gate plan, so the developer knows whether they can walk away.** Before you start signing up, check the connector's **reg-flow gate** (in `queued-connectors.md` / its provisioning note) and say one of:
+- **"No gates — I'll work on my own; you can walk away."** (a `✅ unblocked` service: email code/link auto-read via `gmail-whalesync`).
+- **"Heads up: a gate is coming (`<e.g. CAPTCHA on signup>`). When I reach it (~a couple minutes in) I'll open the page and you'll have ~1 minute to pass it, then I continue autonomously."** (a `👤 1-off-human-gate`).
+Say this up front, not when you hit it. (And when **batching** several, front-load the single `👤` service so the one human moment is at the very start.)
+
 **The email-confirmation gate is no longer a pause — you read the code/link from the mailbox yourself** (Gmail MCP tools; see [Email-gate handling](#email-gate-handling--read-the-verification-codelink-from-the-mailbox-available)). So a clean run with the right access needs **zero** human input. **Pause only** for a genuinely impassable gate: a **captcha**, a **forced credit card**, or a verification email that never arrives / can't be parsed. Services picked from [`queued-connectors.md`](/connector-build/queued-connectors.md) are chosen for free, no-card plans, so even those should be rare.
 
 **Onboarding and other soft UI are NOT pauses — push through to the key.** Welcome/intro modals, "set up your profile / pick a use case" onboarding, consent banners, product tours, "create your first project" nudges: click through all of them (see step 5). The run is only done when you have a **validated** API key (or OAuth connection); don't stop short at a settings page that's merely gated behind onboarding.
@@ -50,7 +55,7 @@ You locate the password/email fields (you *can* see the form), pass their select
 
 **2. Env-file preflight (fail fast).** `bash $H require CB_<SVC>_...` for whatever should already exist. If `.env.connector-build` is **missing**, stop and tell the developer to copy it by hand from the 1Password note `Scratch Connector QA — .env.connector-build` (the helper prints where), `/read`, and wait. If the account simply isn't provisioned yet, that's expected — continue to provision it.
 
-**3. Browser preflight.** `$B connect` then `$B status` (must be `Mode: headed`). If a saved session already exists, `$B state load <connector>` and `$B goto` the app — if you land authenticated, the account is already provisioned; skip to step 6 (build/verify the login script). **If gstack misbehaves (timeouts, `about:blank` resets, daemon config-mismatch), don't push through it — follow the Browser fallback + gstack-recovery rules in [connector-build-execute's preflight](/.claude/skills/connector-build-execute/SKILL.md): run a single clean daemon, prefer JS form-submit over `$B click`, and switch to the Chrome extension if gstack still won't cooperate.**
+**3. Browser preflight — try the 3-rung ladder, use the first that works:** (1) **gstack headless** (`$B connect`), (2) **gstack headed** (`$B connect --headed`), (3) **Chrome extension** (`mcp__claude-in-chrome__*`, user-connected via `/connect-chrome`). All need the machine awake. Fall through the ladder; don't let one option's flakiness stop you. Full ladder + gstack recovery (single clean daemon, JS form-submit over `$B click`, kill stray daemons): [connector-build-execute's preflight](/.claude/skills/connector-build-execute/SKILL.md). If a saved session already exists, `$B state load <connector>` and `$B goto` the app — if you land authenticated, the account is already provisioned; skip to step 6 (build/verify the login script). If the coworker has **no** browser set up at all, point them at **`/connector-build-onboarding`**.
 
 **4. Register the account — autonomously.** `$B goto` the service **sign-up** page. Fill the form (`testing@whalesync.com`, a company name, etc.) with `$B fill`/`$B click`.
    - **At the password step:** `bash $H gen-password CB_<SVC>_PASSWORD`, then `bash $H enter-secret CB_<SVC>_PASSWORD '<pw-selector>' ['<confirm-selector>']`. The agent never sees the password. Submit.
@@ -70,9 +75,12 @@ You locate the password/email fields (you *can* see the form), pass their select
    - Add/update the connector's row in [`connector-build/provisioned-connectors.md`](/connector-build/provisioned-connectors.md) — fill the **Test env vars** column with the `CB_<SVC>_*` names.
    - `bash $H update-sample CB_<SVC>_...` to add the var names to `.env.connector-build.sample`.
    - Record the account in the connector's `STATE.md` **Test account** section (account id, plan/trial, session name, where creds live — never the secret).
-   - **Paste the new `CB_<SVC>_*` lines into the 1Password note** `Scratch Connector QA — .env.connector-build` so the team has the new creds.
+   - (1Password is a **human** step — you can't write to it. Remind them at the end, per step 9.)
 
-**9. Declare victory.** Post a short summary — account provisioned, env vars stored, login script built + verified N×, candidates row + sample + STATE.md updated, 1Password refreshed — then invoke `/read`. The connector is now ready for `/connector-build-execute <connector>`.
+**9. Declare victory.** Post a short summary — account provisioned, env vars stored, login script built + verified N×, provisioned-connectors row + sample + STATE.md updated. **End with the secrets reminder** (the agent cannot write to 1Password):
+> "Please add the new `CB_<SVC>_*` secrets to the **bottom** of the 1Password note *"Scratch Connector QA — .env.connector-build"* so the team gets them. They're already in your local `connector-build/.env.connector-build`."
+
+Then invoke `/read`. The connector is now ready for `/connector-build-execute <connector>`.
 
 ## Login-script template
 
