@@ -111,6 +111,27 @@ copyFileSync(dylibPath, outNode);
 const sizeMb = (statSync(outNode).size / (1024 * 1024)).toFixed(1);
 console.log(`Wrote ${outNode} (${sizeMb} MB)`);
 
+// Also build the `scratchmd` CLI binary. The desktop app uses two Rust surfaces:
+// the in-process napi addon built above (review/validation stats, cell edits) and
+// the CLI binary it shells out to for other operations — e.g. the diff grid's
+// `files:read-diff-grid-data` handler spawns `scratch-git-2/target/debug/scratchmd`
+// (see getScratchmdBinaryPath() in src/main/scratchmd.ts). The napi build alone
+// leaves the CLI binary missing, so those CLI-backed views throw "scratchmd binary
+// not found" until someone runs `cargo build --bin scratchmd` by hand. Build it
+// here so `predev`/`prebuild` produce BOTH artifacts. Debug profile to match the
+// `target/debug/scratchmd` path the dev-mode loader resolves to; release packaging
+// bundles the CLI separately (scripts/afterPack.cjs).
+console.log('Building scratchmd CLI (debug)…');
+const cliBuild = spawnSync('cargo', ['build', '--bin', 'scratchmd'], {
+  cwd: scratchGit2Dir,
+  stdio: 'inherit',
+  shell: process.platform === 'win32',
+});
+if (cliBuild.status !== 0) {
+  console.error(`ERROR: cargo build --bin scratchmd failed (exit ${cliBuild.status}).`);
+  process.exit(cliBuild.status || 1);
+}
+
 // On macOS, dyld validation kills any process that tries to `dlopen` a .node
 // whose on-disk signature doesn't match what it had at first load — which
 // fires every time we rebuild during dev. An ad-hoc sign clears the signature
