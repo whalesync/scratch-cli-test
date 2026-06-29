@@ -356,11 +356,31 @@ fn enforce_schema_inner(ctx: &RecordValidationContext) -> Vec<RecordValidationRe
                 } else {
                     field_path_segments.join(".")
                 };
+                // A `format`-keyword failure (email/uri/date/date-time, or Scratch's
+                // custom uri) is informational, not a hard error: the record holds the
+                // service's verbatim value and most services (e.g. Notion) don't enforce
+                // these formats. Surface it as a warning so the user is informed that the
+                // data doesn't match the expectation, without the data being treated as
+                // broken. A structural failure (wrong type, missing required) stays an
+                // error. When the failure is purely format-caused we also replace the
+                // crate's generic message — which for a nullable-wrapped field is the
+                // opaque "… is not valid under any of the schemas listed in the 'anyOf'
+                // keyword" — with a readable "<value> is not a valid <format>".
+                let (level, message) = match collect_purely_format_caused_failures(
+                    &error,
+                    MAX_SCHEMA_PROPERTY_RECURSION_DEPTH,
+                ) {
+                    Some(format_failures) => (
+                        ValidationLevel::Warning,
+                        build_format_warning_message(&format_failures, || error.to_string()),
+                    ),
+                    None => (ValidationLevel::Error, error.to_string()),
+                };
                 results.push(RecordValidationResult {
                     field_path,
                     field_path_segments,
-                    level: ValidationLevel::Error,
-                    message: Some(error.to_string()),
+                    level,
+                    message: Some(message),
                     description: None,
                     fixable: false,
                 });
@@ -577,6 +597,128 @@ fn severity_rank(level: ValidationLevel) -> u8 {
     match level {
         ValidationLevel::Error => 1,
         ValidationLevel::Warning => 0,
+    }
+}
+
+/// One string-`format` check that a value failed: the `format` keyword name (e.g.
+/// `"email"`) and the offending value. Collected from a purely-format-caused validation
+/// error to build a friendly "<value> is not a valid <format>" warning message.
+struct FormatFailure {
+    format_name: String,
+    offending_value: serde_json::Value,
+}
+
+/// Returns `Some(failures)` when a JSON-schema validation error is caused SOLELY by string
+/// `format` keyword(s) — directly (a `Format` error) or hidden inside an `anyOf`/`oneOf`
+/// failure where relaxing the format constraint would let some branch match — and `None`
+/// otherwise. The record holds the service's verbatim value and most services don't enforce
+/// these formats, so a `format` mismatch is informational; `enforce_schema` emits it as a
+/// warning, not an error (a structural failure — wrong type, missing required — stays an
+/// error). `Some`/`None` therefore decides the level, and the returned `FormatFailure`s
+/// drive the friendly message.
+///
+/// For a nullable-wrapped formatted field — `anyOf[{string, format}, {null}]`, the shape
+/// TypeBox emits for an optional formatted column — the crate collapses the failure into a
+/// single `AnyOf` error whose per-branch errors live in its public `context`; the string
+/// branch fails ONLY on `format` while the null branch fails on `type`. "Some branch fails
+/// only on format" means ignoring format would let that branch match, so the value's only
+/// problem is the format, and we collect that branch's `FormatFailure`(s) (e.g. `email` for
+/// a nullable email field, or `date` + `date-time` for Notion's two-branch date union). A
+/// genuinely wrong type (e.g. a number in a `string|null` field) fails every branch on
+/// `type` (format doesn't apply to non-strings) ⇒ no all-format branch ⇒ `None` ⇒ stays an
+/// error. `OneOfMultipleValid` is intentionally excluded: matching more than one branch is a
+/// structural ambiguity, not a format problem. The `!is_empty()` guard rejects a
+/// vacuously-true empty (i.e. passing) branch. Bounded by `MAX_SCHEMA_PROPERTY_RECURSION_DEPTH`
+/// so a pathological deeply-nested union can't recurse without end (on exhausting the budget
+/// it returns `None` — stay an error).
+fn collect_purely_format_caused_failures(
+    error: &jsonschema::ValidationError,
+    depth_budget: usize,
+) -> Option<Vec<FormatFailure>> {
+    match error.kind() {
+        jsonschema::error::ValidationErrorKind::Format { format } => Some(vec![FormatFailure {
+            format_name: format.clone(),
+            offending_value: error.instance().clone().into_owned(),
+        }]),
+        jsonschema::error::ValidationErrorKind::AnyOf { context }
+        | jsonschema::error::ValidationErrorKind::OneOfNotValid { context } => {
+            if depth_budget == 0 {
+                return None;
+            }
+            let mut failures: Vec<FormatFailure> = Vec::new();
+            let mut found_purely_format_branch = false;
+            for branch_errors in context {
+                if branch_errors.is_empty() {
+                    continue;
+                }
+                // A branch counts as purely-format only if EVERY one of its errors is.
+                let mut branch_failures: Vec<FormatFailure> = Vec::new();
+                let branch_is_purely_format = branch_errors.iter().all(|branch_error| {
+                    match collect_purely_format_caused_failures(branch_error, depth_budget - 1) {
+                        Some(branch_error_failures) => {
+                            branch_failures.extend(branch_error_failures);
+                            true
+                        }
+                        None => false,
+                    }
+                });
+                if branch_is_purely_format {
+                    found_purely_format_branch = true;
+                    failures.append(&mut branch_failures);
+                }
+            }
+            if found_purely_format_branch {
+                Some(failures)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Builds a readable warning message for a value that failed string `format` check(s), e.g.
+/// `"trash" is not a valid email` or `"2025" is not a valid date or date-time`. The value is
+/// rendered as compact JSON (so strings keep their quotes, matching the crate's own format
+/// message). When the failures reference more than one distinct offending value — rare;
+/// multiple formatted leaves failing under one container — there is no single value to name,
+/// so it returns `fallback()` (the crate's original message) rather than misattribute a value.
+fn build_format_warning_message(
+    failures: &[FormatFailure],
+    fallback: impl FnOnce() -> String,
+) -> String {
+    let first_failure = match failures.first() {
+        Some(failure) => failure,
+        None => return fallback(),
+    };
+    let all_share_one_value = failures
+        .iter()
+        .all(|failure| failure.offending_value == first_failure.offending_value);
+    if !all_share_one_value {
+        return fallback();
+    }
+    // Distinct format names, in first-seen order (e.g. ["date", "date-time"]).
+    let mut distinct_format_names: Vec<&str> = Vec::new();
+    for failure in failures {
+        if !distinct_format_names.contains(&failure.format_name.as_str()) {
+            distinct_format_names.push(failure.format_name.as_str());
+        }
+    }
+    format!(
+        "{} is not a valid {}",
+        first_failure.offending_value,
+        join_with_or(&distinct_format_names),
+    )
+}
+
+/// Joins items into an English list with a final "or": `["a"]` → `a`, `["a","b"]` →
+/// `a or b`, `["a","b","c"]` → `a, b, or c`.
+fn join_with_or(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.to_string(),
+        [first, second] => format!("{first} or {second}"),
+        [all_but_last @ .., last] => format!("{}, or {}", all_but_last.join(", "), last),
     }
 }
 
@@ -940,12 +1082,111 @@ mod tests {
     }
 
     #[test]
-    fn nonempty_invalid_formatted_field_still_errors() {
-        // Only "" is exempt — a non-empty malformed value is still flagged.
+    fn nonempty_invalid_nullable_formatted_field_is_warning() {
+        // Only "" is exempt — a non-empty malformed value is still flagged, but as a
+        // WARNING: the service stores the value verbatim and doesn't enforce `format`, so
+        // a format mismatch is informational, not a hard error. The failure surfaces as a
+        // single `AnyOf` error (the string branch fails only on `format`, the null branch
+        // on `type`), which the purely-format-caused check reclassifies to a warning.
         let schema = json!({ "schema": { "properties": {
             "email": { "anyOf": [ { "type": "string", "format": "email" }, { "type": "null" } ] }
         }}});
         let ctx = record_ctx(json!({ "email": "not-an-email" }), None, schema);
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "email");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        // The crate's raw message for the nullable case is the opaque "… is not valid under
+        // any of the schemas listed in the 'anyOf' keyword"; we replace it with a readable
+        // one naming the value and the format.
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("\"not-an-email\" is not a valid email")
+        );
+    }
+
+    #[test]
+    fn nonempty_invalid_direct_formatted_field_is_warning() {
+        // A non-nullable formatted field surfaces a direct `Format` error (not `AnyOf`);
+        // it is reclassified to a warning for the same reason and gets the same readable
+        // message.
+        let schema = json!({ "schema": { "properties": {
+            "email": { "type": "string", "format": "email" }
+        }}});
+        let ctx = record_ctx(json!({ "email": "not-an-email" }), None, schema);
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "email");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("\"not-an-email\" is not a valid email")
+        );
+    }
+
+    #[test]
+    fn invalid_value_in_dual_format_union_is_warning() {
+        // Notion dates: `anyOf[{string, format:date}, {string, format:date-time}]`. Both
+        // branches fail ONLY on `format`, so the union failure is purely format-caused and
+        // the message names both formats.
+        let schema = json!({ "schema": { "properties": {
+            "due": { "anyOf": [
+                { "type": "string", "format": "date" },
+                { "type": "string", "format": "date-time" }
+            ] }
+        }}});
+        let ctx = record_ctx(json!({ "due": "not-a-date" }), None, schema);
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "due");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("\"not-a-date\" is not a valid date or date-time")
+        );
+    }
+
+    #[test]
+    fn invalid_format_nested_in_object_branch_is_warning() {
+        // Notion icon/cover shape: a union of objects, one of which holds a formatted url.
+        // A bad url inside the matching object branch fails only on `format`, so the union
+        // failure is purely format-caused and reclassified to a warning. The message names
+        // the offending LEAF value (the bad url), not the whole container.
+        let schema = json!({ "schema": { "properties": {
+            "icon": { "anyOf": [
+                { "type": "object", "properties": {
+                    "type": { "const": "external" },
+                    "external": { "type": "object", "properties": {
+                        "url": { "type": "string", "format": "uri" }
+                    }}
+                }},
+                { "type": "null" }
+            ] }
+        }}});
+        let ctx = record_ctx(
+            json!({ "icon": { "type": "external", "external": { "url": "not a url" } } }),
+            None,
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "icon");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("\"not a url\" is not a valid uri")
+        );
+    }
+
+    #[test]
+    fn wrong_type_in_nullable_formatted_field_still_errors() {
+        // A number in a `string|null` field is a genuine structural failure: every branch
+        // fails on `type` (format never applies to a non-string), so no branch is
+        // all-format ⇒ stays an error.
+        let schema = json!({ "schema": { "properties": {
+            "email": { "anyOf": [ { "type": "string", "format": "email" }, { "type": "null" } ] }
+        }}});
+        let ctx = record_ctx(json!({ "email": 42 }), None, schema);
         let results = enforce_schema(&ctx);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].field_path, "email");
@@ -1355,9 +1596,11 @@ mod tests {
     }
 
     #[test]
-    fn non_date_string_still_errors_against_notion_date_union() {
+    fn non_date_string_warns_against_notion_date_union() {
         // The union still asserts formats — a non-empty, non-date string is flagged,
-        // proving the date-only fix did not silently disable date validation.
+        // proving the date-only fix did not silently disable date validation. It surfaces
+        // as a WARNING, not an error: the service stores the value verbatim and doesn't
+        // enforce the date format, so the mismatch is informational.
         let schema = json!({ "schema": { "properties": {
             "when": { "type": "object", "properties": { "start": { "anyOf": [
                 { "type": "string", "format": "date" },
@@ -1369,10 +1612,14 @@ mod tests {
         assert_eq!(
             results.len(),
             1,
-            "non-date should produce exactly one error, got {}",
+            "non-date should produce exactly one violation, got {}",
             results.len()
         );
-        assert_eq!(results[0].level, ValidationLevel::Error);
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("\"not-a-date\" is not a valid date or date-time")
+        );
     }
 
     #[test]
@@ -1404,12 +1651,13 @@ mod tests {
     }
 
     #[test]
-    fn malformed_urls_still_error_against_uri_format() {
+    fn malformed_urls_warn_against_uri_format() {
         // Widening `uri` to accept schemeless hosts must NOT collapse to "any non-empty
         // string" — genuine garbage must keep surfacing ("surface failures; never
         // silently succeed"). The embedded-`…` value is a real truncated-URL shape seen
         // in prod Webflow Testimonials records; a bare word and a value with whitespace
-        // are obviously not URIs.
+        // are obviously not URIs. The violation surfaces as a WARNING, not an error: the
+        // service stores the value verbatim and doesn't enforce the uri format.
         let schema = json!({ "schema": { "properties": {
             "website": { "anyOf": [ { "type": "string", "format": "uri" }, { "type": "null" } ] }
         }}});
@@ -1424,10 +1672,16 @@ mod tests {
             assert_eq!(
                 results.len(),
                 1,
-                "{malformed_value:?} should fail uri validation, got {} error(s)",
+                "{malformed_value:?} should fail uri validation, got {} violation(s)",
                 results.len()
             );
-            assert_eq!(results[0].level, ValidationLevel::Error);
+            assert_eq!(results[0].level, ValidationLevel::Warning);
+            // Readable message naming the value and the failed format.
+            let message = results[0].message.as_deref().unwrap_or_default();
+            assert!(
+                message.ends_with(" is not a valid uri"),
+                "unexpected message for {malformed_value:?}: {message:?}"
+            );
         }
     }
 
