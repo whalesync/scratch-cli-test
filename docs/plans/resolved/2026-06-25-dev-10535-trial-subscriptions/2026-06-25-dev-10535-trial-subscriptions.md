@@ -1,6 +1,6 @@
 # DEV-10535 — Trial subscriptions: review, auto-trial on signup, admin grant-trial dev tool
 
-- **Status:** In Review
+- **Status:** Resolved
 - **Created:** 2026-06-25
 - **Author:** Chris Hoefgen
 - **Linear:** [DEV-10535 — Verify trial system still works](https://linear.app/whalesync/issue/DEV-10535/verify-trial-system-still-works) (parent: DEV-10520)

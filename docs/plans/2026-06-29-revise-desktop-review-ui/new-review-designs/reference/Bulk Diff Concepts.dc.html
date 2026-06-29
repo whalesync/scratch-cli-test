@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_ds/scratch-design-system-7b1662a2-9756-4c83-9df8-54b7c7ed1dc8/_ds_bundle.css">
+<link rel="stylesheet" href="_ds/scratch-design-system-7b1662a2-9756-4c83-9df8-54b7c7ed1dc8/styles.css">
+<style>
+  *{box-sizing:border-box;}
+  body{font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;color:#212529;}
+  del.d{text-decoration:line-through;text-decoration-color:rgba(190,18,60,.5);color:#9f1239;}
+  ins.a{text-decoration:none;color:#15803d;}
+  .mono{font-family:'Geist Mono';}
+  .sc{scrollbar-width:thin;scrollbar-color:#ced4da transparent;}
+  .sc::-webkit-scrollbar{width:9px;height:9px;}
+  .sc::-webkit-scrollbar-thumb{background:#dee2e6;}
+  .trow{display:grid;grid-template-columns:34px 248px 168px 120px 1fr 132px;align-items:stretch;border-bottom:1px solid #f1f3f5;}
+  .tcell{padding:6px 12px;display:flex;flex-direction:column;justify-content:center;border-right:1px solid #f4f5f7;min-width:0;min-height:34px;}
+  .chg-mod{background:rgba(5,81,205,.06);}
+  .ckbox{width:15px;height:15px;border:1.5px solid #c4cad0;display:inline-block;}
+  .swatch{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;font-family:'Geist Mono';font-size:11px;color:#868e96;background:#f1f3f5;}
+  .pill{font-family:'Geist Mono';font-size:10px;padding:2px 7px;white-space:nowrap;}
+</style>
+</helmet>
+
+<!-- TITLE -->
+<div style="position:absolute;left:80px;top:56px;width:1200px;">
+  <div class="mono" style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#868e96;margin-bottom:10px;">Bulk diff · exploration</div>
+  <div style="font-family:'Funnel Display';font-weight:600;font-size:36px;line-height:1.05;color:#212529;letter-spacing:-0.01em;">Reviewing changes across many records</div>
+  <div style="font-size:15px;line-height:1.5;color:#495057;max-width:760px;margin-top:12px;">Editing prices and descriptions across a Shopify catalog. The job: <strong>see every change at a glance</strong> with enough surrounding data to trust it, drill into any one change, then pop straight back to the overview. Three concepts, same 248-product sync.</div>
+</div>
+
+<!-- ============ CONCEPT A : DIFF TABLE (overview) ============ -->
+<div style="position:absolute;left:80px;top:280px;width:1300px;">
+  <div data-drags-parent="1" style="position:absolute;top:-30px;left:0;" class="mono"><span style="background:#212529;color:#fff;padding:2px 7px;margin-right:8px;font-size:12px;">A</span><span style="font-size:12px;color:#495057;letter-spacing:.05em;">Diff table — changed cells in place, full row as context</span></div>
+  <div data-screen-label="Concept A — Diff table" style="background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.10),0 8px 24px rgba(0,0,0,.04);border:1px solid #e9ecef;overflow:hidden;">
+
+    <!-- header -->
+    <div style="height:56px;border-bottom:1px solid #dee2e6;display:flex;align-items:center;gap:13px;padding:0 18px;">
+      <div style="width:9px;height:20px;background:var(--highlight-fill);border:1px solid var(--highlight-border);"></div>
+      <div>
+        <div class="mono" style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#868e96;">Shopify · Products</div>
+        <div style="font-family:'Funnel Display';font-weight:600;font-size:16px;">Review bulk edit</div>
+      </div>
+      <div style="flex:1;"></div>
+      <button style="background:#fff;border:1px solid #ced4da;color:#343a40;font:500 12px Inter;padding:8px 13px;cursor:pointer;">Discard all</button>
+      <button style="background:var(--highlight-fill);border:1.5px solid var(--highlight-border);color:#000;font:600 12px Inter;padding:8px 15px;cursor:pointer;">Approve 41 &amp; publish</button>
+    </div>
+
+    <!-- high-level summary strip -->
+    <div style="padding:11px 18px;background:#fbfbfc;border-bottom:1px solid #eef0f2;display:flex;align-items:center;gap:9px;">
+      <span class="mono" style="font-size:12px;color:#212529;font-weight:500;">41 of 248 changed</span>
+      <span style="width:1px;height:14px;background:#e0e3e7;margin:0 3px;"></span>
+      <button class="pill" style="background:#212529;color:#fff;border:none;cursor:pointer;">All 41</button>
+      <button class="pill" style="background:#fff;border:1px solid #dbe0f4;color:#0551cd;cursor:pointer;"><span style="display:inline-block;width:6px;height:6px;background:#0551cd;margin-right:5px;"></span>34 price</button>
+      <button class="pill" style="background:#fff;border:1px solid #dbe0f4;color:#0551cd;cursor:pointer;">12 description</button>
+      <button class="pill" style="background:#fff;border:1px solid #dbe0f4;color:#0551cd;cursor:pointer;">8 inventory</button>
+      <button class="pill" style="background:#fff;border:1px solid #c6e6d2;color:#15803d;cursor:pointer;">3 new</button>
+      <button class="pill" style="background:#fff;border:1px solid #f3cdd3;color:#be123c;cursor:pointer;">1 removed</button>
+      <div style="flex:1;"></div>
+      <span class="mono" style="font-size:11px;color:#adb5bd;">showing changed only</span>
+    </div>
+
+    <!-- column header -->
+    <div class="trow" style="border-bottom:1px solid #dee2e6;background:#fff;">
+      <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+      <div class="tcell mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#868e96;">Product</div>
+      <div class="tcell mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#868e96;">Price</div>
+      <div class="tcell mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#868e96;">Inventory</div>
+      <div class="tcell mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#868e96;">Description</div>
+      <div class="tcell mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#868e96;border-right:none;">Status</div>
+    </div>
+
+    <div class="sc" style="max-height:600px;overflow-y:auto;">
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Merino Wool Beanie</span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">$32.00</del> <ins class="a">$28.00</ins></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">120</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#ced0d4;">—</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Ceramic Pour-Over Kit</span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">$48.00</del> <ins class="a">$52.00</ins></span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">86</del> <ins class="a">64</ins></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#ced0d4;">—</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Canvas Tote Bag</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">$24.00</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">300</span></div>
+        <div class="tcell chg-mod" style="cursor:pointer;"><span style="font-size:12.5px;color:#3c4248;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">…made from <del class="d">12oz</del> <ins class="a">16oz</ins> organic cotton with reinforced…</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Stoneware Mug Set</span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">$44.00</del> <ins class="a">$39.00</ins></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">52</span></div>
+        <div class="tcell chg-mod" style="cursor:pointer;"><span style="font-size:12.5px;color:#3c4248;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><ins class="a">Now dishwasher safe. </ins>Set of four hand-glazed…</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow" style="background:rgba(21,128,61,.045);">
+        <div class="tcell" style="align-items:center;background:none;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#15803d;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Cold Brew Bottle</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#15803d;">$26.00</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#15803d;">200</span></div>
+        <div class="tcell"><span style="font-size:12.5px;color:#15803d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Double-wall borosilicate, 1L…</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#dcfce7;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Enamel Camp Cup</span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">$18.00</del> <ins class="a">$16.00</ins></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">410</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#ced0d4;">—</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Waxed Canvas Roll</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">$58.00</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">74</span></div>
+        <div class="tcell chg-mod" style="cursor:pointer;"><span style="font-size:12.5px;color:#3c4248;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><del class="d">Water-resistant</del> <ins class="a">Fully waterproof</ins> waxed finish that…</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Linen Apron</span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">$38.00</del> <ins class="a">$34.00</ins></span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">60</del> <ins class="a">48</ins></span></div>
+        <div class="tcell chg-mod" style="cursor:pointer;"><span style="font-size:12.5px;color:#3c4248;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">…with <del class="d">two</del> <ins class="a">three</ins> front pockets and an…</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Cast Iron Skillet</span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">$65.00</del> <ins class="a">$59.00</ins></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">95</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#ced0d4;">—</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Wool Throw Blanket</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">$89.00</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">38</span></div>
+        <div class="tcell chg-mod" style="cursor:pointer;"><span style="font-size:12.5px;color:#3c4248;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">…now <del class="d">queen</del> <ins class="a">king</ins>-size, <ins class="a">Oeko-Tex certified…</ins></span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Glass Spice Jars (set of 12)</span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">$28.00</del> <ins class="a">$24.00</ins></span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">140</del> <ins class="a">96</ins></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#ced0d4;">—</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Bamboo Cutting Board</span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">$36.00</del> <ins class="a">$32.00</ins></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">210</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#ced0d4;">—</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow">
+        <div class="tcell" style="align-items:center;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#212529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">French Press 1L</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#868e96;">$42.00</span></div>
+        <div class="tcell chg-mod"><span style="font-size:13px;"><del class="d">210</del> <ins class="a">180</ins></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#ced0d4;">—</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#e9f9ee;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow" style="background:rgba(21,128,61,.045);">
+        <div class="tcell" style="align-items:center;background:none;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#15803d;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Recycled Wool Socks</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#15803d;">$14.00</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#15803d;">500</span></div>
+        <div class="tcell"><span style="font-size:12.5px;color:#15803d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Cushioned merino blend, 3-pack…</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#dcfce7;color:#15803d;align-self:flex-start;">Active</span></div>
+      </div>
+
+      <div class="trow" style="background:rgba(190,18,60,.04);">
+        <div class="tcell" style="align-items:center;background:none;"><span class="ckbox"></span></div>
+        <div class="tcell"><span style="font-size:13px;color:#be123c;text-decoration:line-through;text-decoration-color:#e7a3ab;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Leather Coasters (set of 4)</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#c98a93;">$22.00</span></div>
+        <div class="tcell"><span style="font-size:13px;color:#c98a93;">0</span></div>
+        <div class="tcell"><span style="font-size:12.5px;color:#c98a93;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Discontinued line…</span></div>
+        <div class="tcell" style="border-right:none;"><span class="pill" style="background:#ffe4e6;color:#be123c;align-self:flex-start;">Active → Archived</span></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============ CONCEPT B : GROUPED BY CHANGE TYPE ============ -->
+<div style="position:absolute;left:1460px;top:280px;width:760px;">
+  <div data-drags-parent="1" style="position:absolute;top:-30px;left:0;" class="mono"><span style="background:#212529;color:#fff;padding:2px 7px;margin-right:8px;font-size:12px;">B</span><span style="font-size:12px;color:#495057;letter-spacing:.05em;">Grouped by change type — built for "I changed a bunch of prices"</span></div>
+  <div data-screen-label="Concept B — Grouped" style="background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.10),0 8px 24px rgba(0,0,0,.04);border:1px solid #e9ecef;overflow:hidden;">
+    <div style="height:56px;border-bottom:1px solid #dee2e6;display:flex;align-items:center;gap:13px;padding:0 18px;">
+      <div style="width:9px;height:20px;background:var(--highlight-fill);border:1px solid var(--highlight-border);"></div>
+      <div style="font-family:'Funnel Display';font-weight:600;font-size:16px;">Review by change type</div>
+      <div style="flex:1;"></div>
+      <span class="mono" style="font-size:11px;color:#868e96;">41 changes</span>
+    </div>
+    <div class="sc" style="max-height:614px;overflow-y:auto;">
+
+      <!-- PRICE group -->
+      <div style="border-bottom:1px solid #eef0f2;">
+        <div style="display:flex;align-items:center;gap:11px;padding:13px 18px;background:#fbfbfc;">
+          <span style="width:8px;height:8px;background:#0551cd;"></span>
+          <span style="font-family:'Funnel Display';font-weight:600;font-size:15px;">Price</span>
+          <span class="mono" style="font-size:11px;color:#868e96;">34 products</span>
+          <span class="pill" style="background:#eef3ff;color:#0551cd;">28 ▼ lowered · 6 ▲ raised · avg −9%</span>
+          <div style="flex:1;"></div>
+          <button style="background:#fff;border:1px solid #c8d3ee;color:#0551cd;font:500 11px Inter;padding:6px 11px;cursor:pointer;">Approve all 34</button>
+        </div>
+        <div style="padding:4px 18px 12px;">
+          <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f6f7f8;"><span style="font-size:13px;color:#343a40;flex:1;">Merino Wool Beanie</span><span style="font-size:13px;"><del class="d">$32.00</del> <ins class="a">$28.00</ins></span><span class="mono" style="font-size:11px;color:#be123c;width:52px;text-align:right;">▼ 12%</span></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f6f7f8;"><span style="font-size:13px;color:#343a40;flex:1;">Stoneware Mug Set</span><span style="font-size:13px;"><del class="d">$44.00</del> <ins class="a">$39.00</ins></span><span class="mono" style="font-size:11px;color:#be123c;width:52px;text-align:right;">▼ 11%</span></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f6f7f8;"><span style="font-size:13px;color:#343a40;flex:1;">Ceramic Pour-Over Kit</span><span style="font-size:13px;"><del class="d">$48.00</del> <ins class="a">$52.00</ins></span><span class="mono" style="font-size:11px;color:#15803d;width:52px;text-align:right;">▲ 8%</span></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:8px 0;"><span style="font-size:13px;color:#343a40;flex:1;">Enamel Camp Cup</span><span style="font-size:13px;"><del class="d">$18.00</del> <ins class="a">$16.00</ins></span><span class="mono" style="font-size:11px;color:#be123c;width:52px;text-align:right;">▼ 11%</span></div>
+          <button class="mono" style="background:none;border:none;color:#0551cd;font-size:11px;cursor:pointer;padding:8px 0 0;">+ 30 more price changes ▾</button>
+        </div>
+      </div>
+
+      <!-- DESCRIPTION group -->
+      <div style="border-bottom:1px solid #eef0f2;">
+        <div style="display:flex;align-items:center;gap:11px;padding:13px 18px;background:#fbfbfc;">
+          <span style="width:8px;height:8px;background:#0551cd;"></span>
+          <span style="font-family:'Funnel Display';font-weight:600;font-size:15px;">Description</span>
+          <span class="mono" style="font-size:11px;color:#868e96;">12 products</span>
+          <div style="flex:1;"></div>
+          <button style="background:#fff;border:1px solid #c8d3ee;color:#0551cd;font:500 11px Inter;padding:6px 11px;cursor:pointer;">Approve all 12</button>
+        </div>
+        <div style="padding:4px 18px 12px;">
+          <div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid #f6f7f8;cursor:pointer;"><span style="font-size:13px;color:#343a40;width:150px;flex:none;">Canvas Tote Bag</span><span style="font-size:12.5px;color:#3c4248;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">…made from <del class="d">12oz</del> <ins class="a">16oz</ins> organic cotton…</span><span class="mono" style="font-size:11px;color:#0551cd;">view →</span></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid #f6f7f8;cursor:pointer;"><span style="font-size:13px;color:#343a40;width:150px;flex:none;">Waxed Canvas Roll</span><span style="font-size:12.5px;color:#3c4248;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><del class="d">Water-resistant</del> <ins class="a">Fully waterproof</ins> waxed…</span><span class="mono" style="font-size:11px;color:#0551cd;">view →</span></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:9px 0;cursor:pointer;"><span style="font-size:13px;color:#343a40;width:150px;flex:none;">Linen Apron</span><span style="font-size:12.5px;color:#3c4248;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">…with <del class="d">two</del> <ins class="a">three</ins> front pockets…</span><span class="mono" style="font-size:11px;color:#0551cd;">view →</span></div>
+          <button class="mono" style="background:none;border:none;color:#0551cd;font-size:11px;cursor:pointer;padding:8px 0 0;">+ 9 more description edits ▾</button>
+        </div>
+      </div>
+
+      <!-- INVENTORY group (collapsed) -->
+      <div style="display:flex;align-items:center;gap:11px;padding:13px 18px;border-bottom:1px solid #eef0f2;cursor:pointer;">
+        <span style="width:8px;height:8px;background:#0551cd;"></span>
+        <span style="font-family:'Funnel Display';font-weight:600;font-size:15px;">Inventory</span>
+        <span class="mono" style="font-size:11px;color:#868e96;">8 products</span>
+        <div style="flex:1;"></div>
+        <span class="mono" style="font-size:13px;color:#adb5bd;">▾</span>
+      </div>
+
+      <!-- NEW group (collapsed) -->
+      <div style="display:flex;align-items:center;gap:11px;padding:13px 18px;border-bottom:1px solid #eef0f2;cursor:pointer;">
+        <span style="width:8px;height:8px;background:#15803d;"></span>
+        <span style="font-family:'Funnel Display';font-weight:600;font-size:15px;color:#15803d;">New products</span>
+        <span class="mono" style="font-size:11px;color:#868e96;">3 added</span>
+        <div style="flex:1;"></div>
+        <span class="mono" style="font-size:13px;color:#adb5bd;">▾</span>
+      </div>
+
+      <!-- REMOVED group (collapsed) -->
+      <div style="display:flex;align-items:center;gap:11px;padding:13px 18px;cursor:pointer;">
+        <span style="width:8px;height:8px;background:#be123c;"></span>
+        <span style="font-family:'Funnel Display';font-weight:600;font-size:15px;color:#be123c;">Removed</span>
+        <span class="mono" style="font-size:11px;color:#868e96;">1 archived</span>
+        <div style="flex:1;"></div>
+        <span class="mono" style="font-size:13px;color:#adb5bd;">▾</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ DRILL-IN demonstration ============ -->
+<div style="position:absolute;left:80px;top:1010px;width:1300px;">
+  <div data-drags-parent="1" style="position:absolute;top:-30px;left:0;" class="mono"><span style="background:#212529;color:#fff;padding:2px 7px;margin-right:8px;font-size:12px;">↳</span><span style="font-size:12px;color:#495057;letter-spacing:.05em;">Drill into one change — overview stays put behind, ✕ pops you back</span></div>
+  <div data-screen-label="Drill-in drawer" style="background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.10),0 8px 24px rgba(0,0,0,.04);border:1px solid #e9ecef;overflow:hidden;display:flex;height:480px;">
+    <!-- dimmed table behind -->
+    <div style="flex:1;position:relative;overflow:hidden;min-width:0;">
+      <div style="position:absolute;inset:0;background:#fff;opacity:.5;padding:0;">
+        <div style="height:56px;border-bottom:1px solid #dee2e6;display:flex;align-items:center;gap:13px;padding:0 18px;"><div style="width:9px;height:20px;background:var(--highlight-fill);"></div><div style="font-family:'Funnel Display';font-weight:600;font-size:16px;">Review bulk edit</div></div>
+        <div class="trow" style="grid-template-columns:34px 1fr 150px;"><div class="tcell" style="align-items:center;"><span class="ckbox"></span></div><div class="tcell"><span style="font-size:13px;">Canvas Tote Bag</span></div><div class="tcell chg-mod" style="border-right:none;"><span style="font-size:13px;">desc edited</span></div></div>
+        <div class="trow" style="grid-template-columns:34px 1fr 150px;"><div class="tcell" style="align-items:center;"><span class="ckbox"></span></div><div class="tcell"><span style="font-size:13px;">Stoneware Mug Set</span></div><div class="tcell" style="border-right:none;"><span style="font-size:13px;color:#868e96;">$39.00</span></div></div>
+        <div class="trow" style="grid-template-columns:34px 1fr 150px;"><div class="tcell" style="align-items:center;"><span class="ckbox"></span></div><div class="tcell"><span style="font-size:13px;">Waxed Canvas Roll</span></div><div class="tcell" style="border-right:none;"><span style="font-size:13px;color:#868e96;">$58.00</span></div></div>
+      </div>
+      <div style="position:absolute;inset:0;background:rgba(33,37,41,.12);"></div>
+    </div>
+    <!-- drawer -->
+    <div style="width:640px;flex:none;border-left:1px solid #d0d4d8;box-shadow:-12px 0 28px rgba(0,0,0,.07);background:#fff;display:flex;flex-direction:column;">
+      <div style="padding:14px 18px;border-bottom:1px solid #eef0f2;display:flex;align-items:center;gap:11px;">
+        <button class="mono" style="background:#f1f3f5;border:none;color:#495057;font-size:11px;padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:6px;">← Back to all changes</button>
+        <div style="flex:1;"></div>
+        <button style="background:#fff;border:1px solid #c8d3ee;color:#0551cd;width:26px;height:24px;cursor:pointer;">↑</button>
+        <span class="mono" style="font-size:11px;color:#868e96;">3 / 12</span>
+        <button style="background:#fff;border:1px solid #c8d3ee;color:#0551cd;width:26px;height:24px;cursor:pointer;">↓</button>
+        <button style="background:none;border:none;color:#868e96;font-size:18px;cursor:pointer;line-height:1;margin-left:4px;">✕</button>
+      </div>
+      <div style="padding:16px 20px;border-bottom:1px solid #f1f3f5;display:flex;align-items:center;gap:11px;">
+        <span class="swatch" style="width:34px;height:34px;">CT</span>
+        <div>
+          <div style="font-family:'Funnel Display';font-weight:600;font-size:16px;">Canvas Tote Bag</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:3px;"><span class="pill" style="background:#e0e7ff;color:#0551cd;">MODIFIED</span><span class="mono" style="font-size:11px;color:#868e96;">Description field</span></div>
+        </div>
+      </div>
+      <div class="sc" style="flex:1;overflow-y:auto;padding:18px 20px;">
+        <div class="mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#868e96;margin-bottom:10px;">Description</div>
+        <div style="font-size:14.5px;line-height:1.75;color:#3c4248;">Built for the long haul and made from <del class="d">12oz</del> <ins class="a">16oz</ins> organic cotton with <ins class="a">reinforced box-stitched </ins>handles. <ins class="a">Holds up to 40 lbs without sagging. </ins>Machine washable, and it only looks better with age.</div>
+        <div style="font-size:14.5px;line-height:1.75;color:#3c4248;margin-top:15px;"><del class="d">A roomy everyday carry-all.</del> <ins class="a">A roomy everyday carry-all with an interior zip pocket for keys and a phone, plus a flat base so it stands up on its own.</ins> Available in natural, charcoal<ins class="a">, and forest green</ins>.</div>
+      </div>
+      <div style="padding:13px 20px;border-top:1px solid #dee2e6;display:flex;align-items:center;gap:9px;">
+        <span class="mono" style="font-size:10px;color:#adb5bd;">other fields unchanged</span>
+        <div style="flex:1;"></div>
+        <button style="background:#fff0f1;border:1px solid #f7c9cf;color:#be123c;font:500 12px Inter;padding:8px 13px;cursor:pointer;">Reject</button>
+        <button style="background:var(--highlight-fill);border:1.5px solid var(--highlight-border);color:#000;font:600 12px Inter;padding:8px 15px;cursor:pointer;">Approve · next →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ANNOTATIONS + RECOMMENDATION -->
+<div style="position:absolute;left:1460px;top:1010px;width:760px;">
+  <div style="font-family:'Funnel Display';font-weight:600;font-size:20px;color:#212529;margin-bottom:10px;">Reading these</div>
+  <div style="font-size:14px;line-height:1.65;color:#495057;">
+    <strong>A (diff table)</strong> is the strongest default: the whole row is the context, changed cells light up in place, and short changes (price, inventory) are fully legible without drilling. Long fields (descriptions) show a one-line redline preview and open a drawer for the full diff — overview stays put behind, ✕ returns you exactly where you were.<br><br>
+    <strong>B (grouped by type)</strong> matches the mental model when an edit is really one operation — "I lowered 34 prices." It surfaces the <em>pattern</em> (28 down, avg −9%) and lets you approve a whole class at once, which A can't.<br><br>
+    My recommendation: build <strong>A as the home</strong> with the drawer drill-in, and offer <strong>B's grouping as a toggle</strong> ("Table / By type") on the same data — they're two lenses on one change set. Tell me which to make interactive.
+  </div>
+</div>
+
+<!-- sticky notes -->
+<div style="position:absolute;left:1392px;top:560px;width:46px;"></div></x-dc>
+</body>
+</html>

@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_ds/scratch-design-system-7b1662a2-9756-4c83-9df8-54b7c7ed1dc8/_ds_bundle.css">
+<link rel="stylesheet" href="_ds/scratch-design-system-7b1662a2-9756-4c83-9df8-54b7c7ed1dc8/styles.css">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;color:#212529;background:#d8dade;}
+  del.d{text-decoration:line-through;text-decoration-color:rgba(190,18,60,.5);color:#9f1239;}
+  ins.a{text-decoration:none;color:#15803d;}
+  .mono{font-family:'Geist Mono';}
+  .sc{scrollbar-width:thin;scrollbar-color:#ced4da transparent;}
+  .sc::-webkit-scrollbar{width:9px;height:9px;}
+  .sc::-webkit-scrollbar-thumb{background:#dee2e6;}
+  .ckbox{width:15px;height:15px;border:1.5px solid #c4cad0;display:inline-block;flex:none;}
+  .pill{font-family:'Geist Mono';font-size:10px;padding:2px 7px;white-space:nowrap;}
+  [data-view="table"] [data-seg="table"],[data-view="bytype"] [data-seg="bytype"]{background:#212529;color:#fff;}
+  [data-filter="all"] [data-chip="all"],[data-filter="price"] [data-chip="price"],[data-filter="description"] [data-chip="description"],[data-filter="inventory"] [data-chip="inventory"],[data-filter="new"] [data-chip="new"],[data-filter="removed"] [data-chip="removed"]{background:#212529;color:#fff;border-color:#212529;}
+  [data-view="bytype"] .filters{display:none;}
+  [data-view="table"] .grouplabel{display:none;}
+  .fchip{font-family:'Geist Mono';font-size:10px;padding:5px 9px;border:1px solid #dfe3e7;background:#fff;color:#495057;cursor:pointer;display:inline-flex;align-items:center;gap:5px;}
+  .navrow{display:flex;align-items:center;gap:9px;padding:6px 10px 6px 22px;cursor:pointer;font-size:12.5px;color:#3c4248;}
+  .navrow:hover{background:#eceef1;}
+  .tbtn{display:inline-flex;align-items:center;gap:7px;background:none;border:none;color:#3c4248;font:500 13.5px Inter;padding:8px 11px;border-radius:6px;cursor:pointer;}
+  .tbtn:hover{background:#f1f3f5;}
+  .tbtn svg{width:16px;height:16px;stroke:#6b7178;stroke-width:2;fill:none;}
+  .trow{display:flex;align-items:center;gap:7px;padding:5px 10px;margin:1px 8px;border-radius:5px;cursor:pointer;font-size:13px;color:#3c4248;}
+  .trow:hover{background:#f3f4f6;}
+  .trow .cnt{margin-left:auto;font-size:11.5px;color:#9aa0a6;font-variant-numeric:tabular-nums;}
+  .fi{width:15px;height:15px;flex:none;stroke:#8b9199;fill:none;stroke-width:1.6;}
+  .cv{width:11px;flex:none;color:#9aa0a6;font-size:8px;display:inline-flex;justify-content:center;}
+  .snav{display:flex;align-items:center;gap:11px;padding:8px 16px;cursor:pointer;font-size:13px;color:#495057;}
+  .snav:hover{background:#f3f4f6;}
+  .snav svg{width:16px;height:16px;flex:none;stroke:#6b7178;fill:none;stroke-width:1.8;}
+</style>
+</helmet>
+
+<div onClick="{{ onClick }}" style="height:100vh;display:flex;flex-direction:column;background:#fff;">
+  <!-- ============ APP FRAME ============ -->
+  <div data-screen-label="Whalesync — Acme Store" style="flex:1;min-height:0;background:#fff;display:flex;flex-direction:column;overflow:hidden;">
+
+    <!-- ===== TOP BAR ===== -->
+    <div style="height:60px;flex:none;border-bottom:1px solid #e7e9ec;display:flex;align-items:center;gap:9px;padding:0 16px;background:#fff;">
+      <div style="width:30px;height:30px;border-radius:7px;background:var(--highlight-fill);border:1px solid var(--highlight-border);display:flex;align-items:center;justify-content:center;font-family:'Funnel Display';font-weight:700;font-size:14px;color:#000;">W</div>
+      <span style="font-family:'Funnel Display';font-weight:600;font-size:17px;color:#1c1f23;">Acme Store</span>
+      <span style="color:#9aa0a6;font-size:10px;">▼</span>
+      <div style="flex:1;"></div>
+      <button class="tbtn" data-act="open-in"><svg viewBox="0 0 24 24"><path d="M14 3h7v7"/><path d="M21 3l-9 9"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>Open in…</button>
+      <button class="tbtn" data-act="redownload"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 11l5 4 5-4"/><path d="M5 21h14"/></svg>Re-download files</button>
+      <button class="tbtn" data-act="pull"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 11l5 4 5-4"/><path d="M5 21h14"/></svg>Pull all<span style="margin-left:4px;color:#9aa0a6;font-size:9px;">▼</span></button>
+      <button data-act="review" style="background:#e7effe;border:1px solid #cadcfb;color:#0551cd;font:500 13px Inter;padding:8px 14px;border-radius:6px;cursor:pointer;margin-left:5px;">{{ pendingCount }} to review</button>
+      <button data-act="publish" style="display:inline-flex;align-items:center;gap:7px;background:var(--highlight-fill);border:1px solid var(--highlight-border);color:#000;font:600 13px Inter;padding:8px 15px;border-radius:6px;cursor:pointer;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2"><path d="M12 21V9"/><path d="M7 13l5-4 5 4"/><path d="M5 5h14"/></svg>Publish all · {{ approvedCount }}</button>
+      <span style="color:#9aa0a6;font-size:19px;cursor:pointer;padding:0 4px;line-height:1;">⋮</span>
+    </div>
+
+    <!-- main row -->
+    <div style="flex:1;display:flex;min-height:0;">
+
+      <!-- ===== sidebar : folder tree ===== -->
+      <div style="width:300px;flex:none;border-right:1px solid #e7e9ec;background:#fff;display:flex;flex-direction:column;">
+        <div class="sc" style="flex:1;overflow-y:auto;padding:10px 0;">
+
+          <!-- Airtable -->
+          <div class="trow" style="padding-left:12px;"><span class="cv">▼</span><svg class="fi" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Airtable</div>
+          <div class="trow" style="padding-left:40px;"><svg class="fi" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Blog Posts<span class="cnt">12</span></div>
+          <div class="trow" style="padding-left:40px;"><svg class="fi" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Authors<span class="cnt">8</span></div>
+
+          <!-- Webflow -->
+          <div class="trow" style="padding-left:12px;"><span class="cv">▼</span><svg class="fi" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Webflow (Demo)</div>
+          <div class="trow" style="padding-left:40px;"><span class="cv">▼</span><svg class="fi" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Collections</div>
+          <div class="trow" style="padding-left:68px;"><svg class="fi" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Blog (CMS)<span class="cnt">40</span></div>
+
+          <!-- Shopify -->
+          <div class="trow" style="padding-left:12px;"><span class="cv">▼</span><svg class="fi" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Shopify</div>
+          <div class="trow" data-screen-label="Active folder · Shopify Products" style="padding-left:36px;background:#fdf3c4;color:#3a3500;font-weight:500;">
+            <span style="display:inline-flex;gap:3px;flex:none;"><span style="width:6px;height:6px;border-radius:50%;background:#0551cd;"></span><span style="width:6px;height:6px;border-radius:50%;background:#c4cad0;"></span></span>
+            <svg class="fi" viewBox="0 0 24 24" style="stroke:#7a6f00;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Products<span class="cnt" style="color:#7a6f00;">248</span></div>
+          <div class="trow" style="padding-left:40px;"><svg class="fi" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Collections<span class="cnt">18</span></div>
+
+          <div style="flex:1;"></div>
+        </div>
+        <div style="border-top:1px solid #eef0f2;padding:9px 16px;text-align:right;font-size:11px;color:#9aa0a6;">286 total files</div>
+
+        <!-- ===== secondary nav ===== -->
+        <div style="border-top:1px solid #eef0f2;padding:6px 0 4px;">
+          <div class="snav"><svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><path d="M8 12h8"/></svg>Connections</div>
+          <div class="snav"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 8-4-1-7-4-7-8V6z"/><path d="M9 12l2 2 4-4"/></svg>Validation<span style="flex:1;"></span><svg viewBox="0 0 24 24" style="stroke:#15803d;width:15px;height:15px;"><path d="M20 6 9 17l-5-5"/></svg></div>
+          <div class="snav"><svg viewBox="0 0 24 24"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h12"/></svg>Publish History</div>
+          <div class="snav"><svg viewBox="0 0 24 24"><path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><path d="M19.4 13a7.5 7.5 0 0 0 0-2l1.8-1.4-2-3.4-2.1.9a7.5 7.5 0 0 0-1.7-1L15 3h-4l-.3 2.1a7.5 7.5 0 0 0-1.7 1l-2.1-.9-2 3.4L6.6 11a7.5 7.5 0 0 0 0 2l-1.8 1.4 2 3.4 2.1-.9a7.5 7.5 0 0 0 1.7 1L11 21h4l.3-2.1a7.5 7.5 0 0 0 1.7-1l2.1.9 2-3.4z"/></svg>Workspace Settings</div>
+          <div class="snav" style="gap:10px;"><span style="width:22px;height:22px;border-radius:50%;background:#dfe3e7;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#6b7178;flex:none;">DK</span>dana@acme.store</div>
+        </div>
+      </div>
+
+      <!-- ===== content : review surface ===== -->
+      <div data-view="{{ view }}" data-filter="{{ filter }}" style="flex:1;min-width:0;display:flex;flex-direction:column;background:#fff;">
+
+        <!-- context banner -->
+        <div style="flex:none;padding:13px 20px;background:#fffaf0;border-bottom:1px solid #f0e6cf;display:flex;align-items:center;gap:12px;">
+          <span style="width:9px;height:20px;background:var(--highlight-fill);border:1px solid var(--highlight-border);"></span>
+          <div style="display:flex;flex-direction:column;line-height:1.3;">
+            <span style="font-family:'Funnel Display';font-weight:600;font-size:15px;color:#212529;">Review before publishing to Shopify · Products</span>
+            <span class="mono" style="font-size:11px;color:#9a7b00;">{{ pendingCount }} pending · {{ approvedCount }} approved · changes pulled from Google Sheet</span>
+          </div>
+          <div style="flex:1;"></div>
+          <button data-act="reject-all" style="background:#fff;border:1px solid #ced4da;color:#343a40;font:500 12px Inter;padding:8px 13px;cursor:pointer;">Discard all</button>
+        </div>
+
+        <!-- subbar: toggle + filters -->
+        <div style="flex:none;padding:10px 20px;background:#fbfbfc;border-bottom:1px solid #eef0f2;display:flex;align-items:center;gap:13px;">
+          <div style="display:flex;border:1px solid #ced4da;overflow:hidden;">
+            <button data-act="view-table" data-seg="table" style="background:#fff;color:#495057;border:none;font:500 12px Inter;padding:7px 13px;cursor:pointer;">Table</button>
+            <button data-act="view-bytype" data-seg="bytype" style="background:#fff;color:#495057;border:none;border-left:1px solid #ced4da;font:500 12px Inter;padding:7px 13px;cursor:pointer;">By type</button>
+          </div>
+          <span class="grouplabel mono" style="font-size:11px;color:#868e96;">grouped by what changed</span>
+          <div class="filters" style="display:flex;align-items:center;gap:7px;">
+            <button class="fchip" data-chip="all" data-act="filter" data-filter="all">All {{ changedCount }}</button>
+            <button class="fchip" data-chip="price" data-act="filter" data-filter="price"><span style="width:6px;height:6px;background:#0551cd;"></span>{{ cPrice }} price</button>
+            <button class="fchip" data-chip="description" data-act="filter" data-filter="description"><span style="width:6px;height:6px;background:#0551cd;"></span>{{ cDesc }} description</button>
+            <button class="fchip" data-chip="inventory" data-act="filter" data-filter="inventory"><span style="width:6px;height:6px;background:#0551cd;"></span>{{ cInv }} inventory</button>
+            <button class="fchip" data-chip="new" data-act="filter" data-filter="new"><span style="width:6px;height:6px;background:#15803d;"></span>{{ cNew }} new</button>
+            <button class="fchip" data-chip="removed" data-act="filter" data-filter="removed"><span style="width:6px;height:6px;background:#be123c;"></span>{{ cDel }} removed</button>
+          </div>
+          <div style="flex:1;"></div>
+          <span class="mono" style="font-size:11px;color:#15803d;">{{ approvedCount }} approved</span>
+          <span class="mono" style="font-size:11px;color:#adb5bd;">· {{ pendingCount }} pending</span>
+        </div>
+
+        <!-- body -->
+        <div class="sc" style="flex:1;overflow-y:auto;min-height:0;">
+          {{ bodyEl }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {{ drawerEl }}
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1412,&quot;height&quot;:892},&quot;defaultView&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;table&quot;,&quot;bytype&quot;],&quot;default&quot;:&quot;table&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Behavior&quot;}}">
+class Component extends DCLogic {
+  state = { view: (this.props && this.props.defaultView) || 'table', filter: 'all', drawer: null, descView: 'changes', statuses: {} };
+  descScrollRef = React.createRef();
+  descVpRef = React.createRef();
+
+  P = [
+    { id:1, name:'Merino Wool Beanie', kind:'modified', status:'Active',
+      price:{changed:true, from:'$32.00', to:'$28.00', pct:'▼ 12%', dir:'down'}, inv:{now:'120'}, desc:{changed:false} },
+    { id:2, name:'Ceramic Pour-Over Kit', kind:'modified', status:'Active',
+      price:{changed:true, from:'$48.00', to:'$52.00', pct:'▲ 8%', dir:'up'}, inv:{changed:true, from:'86', to:'64'}, desc:{changed:false} },
+    { id:3, name:'Canvas Tote Bag', kind:'modified', status:'Active',
+      price:{now:'$24.00'}, inv:{now:'300'},
+      desc:{changed:true,
+        preview:[['e','…made from '],['d','12oz'],['e',' '],['i','16oz'],['e',' organic cotton with reinforced…']],
+        full:[[['e','Built for the long haul and made from '],['d','12oz'],['e',' '],['i','16oz'],['e',' organic cotton with '],['i','reinforced box-stitched '],['e','handles. '],['i','Holds up to 40 lbs without sagging.']],[['e','We started making this bag because we could not find one that survived a real week — commute, groceries, gym, beach — without fraying at the strap or losing its shape by Thursday.']],[['e','The cotton is grown without synthetic pesticides and woven at a mill that has been running for over a century, then cut and sewn in batches small enough that a single maker signs off on every run.']],[['d','A roomy everyday carry-all.'],['i','A roomy everyday carry-all with an interior zip pocket for keys and a phone, plus a flat reinforced base so it stands up on its own when you set it down.']],[['e','The main compartment measures 14 by 16 inches with a 5-inch gusset — big enough for a 15-inch laptop, a change of clothes, and a full farmers-market haul without straining the seams.']],[['e','Handles are double-stitched and bar-tacked at every stress point, and we recently switched to '],['d','a standard polyester thread'],['e',' '],['i','a heavier waxed thread that resists abrasion and will not rot'],['e','.']],[['e','Care is simple: machine wash cold and hang to dry. Skip the dryer and the bag keeps its structure for years.']],[['e','Available in natural, charcoal'],['i',', forest green, and rust'],['e','.']],[['e','Each bag develops its own character over time. The canvas softens, the color settles, and the corners round out into something that feels unmistakably yours.']],[['e','We tested early versions through eight months of daily use before the first production run — loaded with bricks, dragged through sand, and left out in the rain.']],[['e','Backed by a '],['d','one-year warranty'],['e','. '],['i','no-questions lifetime repair guarantee — send it back and we will re-stitch or replace it, free.']],[['e','Ethically made in a small family-run workshop, and every bag ships in fully recyclable packaging with no plastic.']],[['e','A portion of every sale goes to a textile-recycling nonprofit that keeps fabric waste out of landfill.']],[['e','If you are choosing between sizes, size down — the canvas relaxes about half an inch in each direction after the first wash.']]] } },
+    { id:4, name:'Stoneware Mug Set', kind:'modified', status:'Active',
+      price:{changed:true, from:'$44.00', to:'$39.00', pct:'▼ 11%', dir:'down'}, inv:{now:'52'},
+      desc:{changed:true,
+        preview:[['i','Now dishwasher safe. '],['e','Set of four hand-glazed…']],
+        full:[[['i','Now dishwasher safe. '],['e','Set of four hand-glazed stoneware mugs, '],['d','10oz'],['e',' '],['i','12oz'],['e',' each.']],[['e','Microwave safe and '],['i','oven safe to 400°F, '],['e','so they move from fridge to reheat to table without a second thought.']],[['e','Each piece is thrown and glazed by hand, so no two are exactly alike — slight variations in color and form are the mark of the maker, not a defect.']],[['e','The clay is dug from a single quarry and fired twice at high temperature, which is what gives the glaze its depth and the body its chip resistance.']],[['d','Holds a standard cup.'],['i','Holds a generous 12 ounces — enough for a proper pour-over or a deep morning coffee without a refill.']],[['e','They stack neatly to save cabinet space, and the wide handle is comfortable even for larger hands.']],[['d','Offered in three colorways.'],['i','Now offered in four colorways: oatmeal, slate, clay, and a new matte forest.']],[['e','The unglazed base doubles as a built-in coaster and will not scratch a wooden table.']],[['e','Boxed in a recycled-pulp tray that protects them in transit and composts at the end of its life.']]] } },
+    { id:5, name:'Cold Brew Bottle', kind:'created', status:'Active',
+      price:{now:'$26.00'}, inv:{now:'200'},
+      desc:{changed:true, isNew:true,
+        preview:[['i','Double-wall borosilicate, 1L…']],
+        full:[[['i','Double-wall borosilicate glass with a 1L capacity and an airtight silicone seal that fits most fridge doors.']],[['i','Brews smooth cold brew overnight, pours cleanly without dripping, and goes straight into the dishwasher when you are done.']],[['i','The double wall keeps the brew cold for hours and never sweats onto the shelf or the table.']],[['i','Includes a fine-mesh stainless filter that strains grounds completely, so there is no grit in the last glass.']],[['i','Flat-sided so two fit side by side in the door, and the cap doubles as a measuring cup for grounds.']]] } },
+    { id:6, name:'Enamel Camp Cup', kind:'modified', status:'Active',
+      price:{changed:true, from:'$18.00', to:'$16.00', pct:'▼ 11%', dir:'down'}, inv:{now:'410'}, desc:{changed:false} },
+    { id:7, name:'Waxed Canvas Roll', kind:'modified', status:'Active',
+      price:{now:'$58.00'}, inv:{now:'74'},
+      desc:{changed:true,
+        preview:[['d','Water-resistant'],['e',' '],['i','Fully waterproof'],['e',' waxed finish that…']],
+        full:[[['d','Water-resistant'],['e',' '],['i','Fully waterproof'],['e',' waxed-canvas finish that ages into a unique patina with use.']],[['e','Rolls flat for storage and unrolls to a full tool layout with twelve individual slots and a full-length protective flap.']],[['e','Reproofing keeps it going for decades, and it '],['i','now ships with a repair wax bar and care instructions. '],['e','Made in Portland.']],[['e','The canvas starts stiff and breaks in over the first few weeks, molding to whatever you carry until it feels custom to you.']],[['e','Brass hardware is solid rather than plated, so it patinas instead of flaking and will outlast the fabric itself.']],[['e','We moved the seams to '],['d','a standard chain stitch'],['e',' '],['i','a lock-stitch that will not unravel even if a single thread is cut'],['e','.']],[['e','Wipes clean with a damp cloth; never machine wash it, as that strips the wax out of the weave.']],[['e','Each roll is cut and finished by a two-person shop and stamped with the maker initials on the inside of the flap.']]] } },
+    { id:8, name:'Linen Apron', kind:'modified', status:'Active',
+      price:{changed:true, from:'$38.00', to:'$34.00', pct:'▼ 11%', dir:'down'}, inv:{changed:true, from:'60', to:'48'},
+      desc:{changed:true,
+        preview:[['e','…with '],['d','two'],['e',' '],['i','three'],['e',' front pockets and an…']],
+        full:[[['e','Heavyweight stonewashed linen with '],['d','two'],['e',' '],['i','three'],['e',' front pockets and an adjustable '],['d','cotton'],['e',' '],['i','leather'],['e',' neck strap.']],[['e','Cross-back straps take the weight off the neck for long sessions at the stove or the workbench.']],[['e','Linen is naturally cool, quick-drying, and gets more absorbent the more you wash it.']],[['d','The pockets fit the basics.'],['i','The pockets are sized for a phone, a towel, and a thermometer, with a divided slot for pens and tools.']],[['e','Pre-washed so it will not shrink, and it only gets softer with every wash.']],[['e','The strap now adjusts with '],['d','a tie knot'],['e',' '],['i','a solid brass slide, so you can dial in the fit one-handed'],['e','.']],[['e','Full coverage from chest to mid-thigh, with a generous cut that fits most body types.']],[['e','Made to order in small batches, and every apron is hemmed and pressed before it ships.']]] } },
+    { id:9, name:'Cast Iron Skillet', kind:'modified', status:'Active',
+      price:{changed:true, from:'$65.00', to:'$59.00', pct:'▼ 9%', dir:'down'}, inv:{now:'95'}, desc:{changed:false} },
+    { id:10, name:'Wool Throw Blanket', kind:'modified', status:'Active',
+      price:{now:'$89.00'}, inv:{now:'38'},
+      desc:{changed:true,
+        preview:[['e','…now '],['d','queen'],['e',' '],['i','king'],['e','-size, '],['i','Oeko-Tex certified…']],
+        full:[[['e','Lambswool throw, '],['d','queen'],['e',' '],['i','king'],['e','-size at '],['i','60 by 80 inches.']],[['e','Naturally temperature-regulating — warm without overheating — and '],['i','now Oeko-Tex certified for skin safety.']],[['e','Finished with hand-tied fringe and woven on traditional looms in a mill that has been running for four generations.']],[['e','The wool is sourced from a single flock and spun undyed where possible, so the natural heather tones come straight from the fleece.']],[['d','Available in one weight.'],['i','Now available in four weights, from a light summer throw to a heavy winter blanket.']],[['e','Lanolin in the wool naturally resists odor and water, so it needs cleaning far less often than you would expect.']],[['e','Spot clean or dry clean only, and comb the fringe out by hand after it dries.']],[['e','Folds into its own attached carry strap for the couch, the car, or the campsite.']]] } },
+    { id:11, name:'Glass Spice Jars (set of 12)', kind:'modified', status:'Active',
+      price:{changed:true, from:'$28.00', to:'$24.00', pct:'▼ 14%', dir:'down'}, inv:{changed:true, from:'140', to:'96'}, desc:{changed:false} },
+    { id:12, name:'Bamboo Cutting Board', kind:'modified', status:'Active',
+      price:{changed:true, from:'$36.00', to:'$32.00', pct:'▼ 11%', dir:'down'}, inv:{now:'210'}, desc:{changed:false} },
+    { id:13, name:'French Press 1L', kind:'modified', status:'Active',
+      price:{now:'$42.00'}, inv:{changed:true, from:'210', to:'180'}, desc:{changed:false} },
+    { id:14, name:'Recycled Wool Socks', kind:'created', status:'Active',
+      price:{now:'$14.00'}, inv:{now:'500'},
+      desc:{changed:true, isNew:true,
+        preview:[['i','Cushioned merino blend, 3-pack…']],
+        full:[[['i','Cushioned merino blend in a 3-pack, with a reinforced heel and toe and a seamless toe closure.']],[['i','Made from 60% recycled fibers and built to stay up all day without digging in.']],[['i','Merino wicks moisture and regulates temperature, so the same sock works in summer and in winter.']],[['i','Machine washable and built to survive hundreds of cycles without thinning at the heel.']]] } },
+    { id:15, name:'Leather Coasters (set of 4)', kind:'deleted', status:'Active → Archived',
+      price:{now:'$22.00'}, inv:{now:'0'}, desc:{changed:false} },
+  ];
+
+  componentDidUpdate(){ if(this.state.drawer && this.state.descView==='full'){ requestAnimationFrame(()=>{ this.measureDescTicks(); this.onDescScroll(); }); } }
+
+  matches(p, f){
+    if(f==='all') return true;
+    if(f==='new') return p.kind==='created';
+    if(f==='removed') return p.kind==='deleted';
+    if(p.kind!=='modified') return false;
+    if(f==='price') return !!p.price.changed;
+    if(f==='description') return !!p.desc.changed;
+    if(f==='inventory') return !!p.inv.changed;
+    return true;
+  }
+  list(f){ return this.P.filter(p=>this.matches(p, f||this.state.filter)); }
+  diffEls(tokens){ return tokens.map((t,i)=> t[0]==='d' ? React.createElement('del',{className:'d',key:i}, t[1]) : t[0]==='i' ? React.createElement('ins',{className:'a',key:i}, t[1]) : t[1]); }
+
+  openDrawer(setIds, idx){ this.setState({ drawer: { set: setIds, idx } }); }
+  closeDrawer(){ this.setState({ drawer:null }); }
+  stepDrawer(d){ this.setState(s=>{ if(!s.drawer) return {}; let i=s.drawer.idx+d; const n=s.drawer.set.length; if(i<0)i=n-1; if(i>=n)i=0; return { drawer:{ set:s.drawer.set, idx:i } }; }); }
+  setStatus(id, st){ this.setState(s=>({ statuses:{ ...s.statuses, [id]: s.statuses[id]===st ? null : st } })); }
+  setMany(ids, st){ this.setState(s=>{ const m={...s.statuses}; ids.forEach(i=>m[i]=st); return { statuses:m }; }); }
+
+  onClick(e){
+    const b = e.target.closest('[data-act]'); if(!b) return;
+    const act = b.dataset.act;
+    if(act==='view-table') this.setState({view:'table'});
+    else if(act==='view-bytype') this.setState({view:'bytype'});
+    else if(act==='filter') this.setState({filter:b.dataset.filter});
+    else if(act==='approve-all'||act==='publish') this.setMany(this.list('all').map(p=>p.id),'approved');
+    else if(act==='reject-all') this.setMany(this.P.map(p=>p.id),'rejected');
+    // 'pull' is a no-op in the prototype
+  }
+
+  cellPrice(p){
+    const h=React.createElement;
+    if(p.price.changed) return h('div',{className:'tcell', style:S.cell(true)}, h('span',{style:{fontSize:13}}, h('del',{className:'d'},p.price.from),' ',h('ins',{className:'a'},p.price.to)));
+    const col = p.kind==='created'?'#15803d':p.kind==='deleted'?'#c98a93':'#868e96';
+    return h('div',{className:'tcell', style:S.cell(false)}, h('span',{style:{fontSize:13,color:col}}, p.price.now));
+  }
+  cellInv(p){
+    const h=React.createElement;
+    if(p.inv.changed) return h('div',{className:'tcell', style:S.cell(true)}, h('span',{style:{fontSize:13}}, h('del',{className:'d'},p.inv.from),' ',h('ins',{className:'a'},p.inv.to)));
+    const col = p.kind==='created'?'#15803d':p.kind==='deleted'?'#c98a93':'#868e96';
+    return h('div',{className:'tcell', style:S.cell(false)}, h('span',{style:{fontSize:13,color:col}}, p.inv.now));
+  }
+  cellDesc(p){
+    const h=React.createElement;
+    if(p.desc.changed && !p.desc.isNew) return h('div',{className:'tcell', style:S.cell(true)}, h('span',{style:{fontSize:12.5,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',display:'block'}}, this.diffEls(p.desc.preview)));
+    if(p.kind==='created') return h('div',{className:'tcell', style:S.cell(false)}, h('span',{style:{fontSize:12.5,color:'#15803d',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',display:'block'}}, this.diffEls(p.desc.preview)));
+    const col = p.kind==='deleted'?'#c98a93':'#ced0d4';
+    return h('div',{className:'tcell', style:S.cell(false)}, h('span',{style:{fontSize:13,color:col}}, p.kind==='deleted'?'Discontinued line…':'—'));
+  }
+  renderTable(){
+    const h=React.createElement;
+    const rows = this.list();
+    const ids = rows.map(p=>p.id);
+    const head = h('div',{style:{...S.row, position:'sticky', top:0, background:'#fff', borderBottom:'1px solid #dee2e6', zIndex:1}},
+      h('div',{className:'tcell',style:{...S.cell(false), alignItems:'center'}}, h('span',{className:'ckbox'})),
+      ['Product','Price','Inventory','Description','Status'].map((c,i)=> h('div',{key:i,className:'tcell mono',style:{...S.cell(false), fontSize:10, letterSpacing:'.06em', textTransform:'uppercase', color:'#868e96', borderRight: i===4?'none':'1px solid #f4f5f7'}}, c)));
+    const body = rows.map((p,idx)=>{
+      const st=this.state.statuses[p.id];
+      const rowBg = p.kind==='created'?'rgba(21,128,61,.045)': p.kind==='deleted'?'rgba(190,18,60,.04)':'#fff';
+      const nameCol = p.kind==='created'?'#15803d': p.kind==='deleted'?'#be123c':'#212529';
+      const nameStyle = {fontSize:13,color:nameCol,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',fontWeight:p.kind==='created'?500:400, textDecoration:p.kind==='deleted'?'line-through':'none', textDecorationColor:'#e7a3ab'};
+      return h('div',{key:p.id, onClick:()=>this.openDrawer(ids, idx), style:{...S.row, background:rowBg, cursor:'pointer', opacity: st==='rejected'?.45:1}},
+        h('div',{className:'tcell',style:{...S.cell(false), alignItems:'center', background:'none'}}, st==='approved'? h('span',{style:{color:'#15803d',fontSize:13}},'✓') : st==='rejected'? h('span',{style:{color:'#be123c',fontSize:13}},'✕') : h('span',{className:'ckbox'})),
+        h('div',{className:'tcell',style:S.cell(false)}, h('span',{style:nameStyle}, p.name)),
+        this.cellPrice(p), this.cellInv(p), this.cellDesc(p),
+        h('div',{className:'tcell',style:{...S.cell(false), borderRight:'none'}}, h('span',{className:'pill', style:{alignSelf:'flex-start', ...S.statusPill(p)}}, p.status)));
+    });
+    return h('div',{className:'sc',style:{overflowX:'auto'}}, h('div',{style:{minWidth:1040}}, head, body.length?body:h('div',{style:{padding:'40px',textAlign:'center',color:'#adb5bd',fontSize:13}},'No changes in this filter')));
+  }
+
+  groupBlock(title, dotColor, ids, summary, renderRow){
+    const h=React.createElement;
+    const allApproved = ids.length>0 && ids.every(i=>this.state.statuses[i]==='approved');
+    return h('div',{style:{borderBottom:'1px solid #eef0f2'}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:11,padding:'13px 20px',background:'#fbfbfc'}},
+        h('span',{style:{width:8,height:8,background:dotColor}}),
+        h('span',{style:{fontFamily:"'Funnel Display'",fontWeight:600,fontSize:15, color: dotColor==='#15803d'?'#15803d': dotColor==='#be123c'?'#be123c':'#212529'}}, title),
+        h('span',{className:'mono',style:{fontSize:11,color:'#868e96'}}, ids.length+' '+(title==='Removed'?'archived': title==='New products'?'added':'products')),
+        summary?h('span',{className:'pill',style:{background:'#eef3ff',color:'#0551cd'}}, summary):null,
+        h('div',{style:{flex:1}}),
+        h('button',{onClick:()=>this.setMany(ids,'approved'), style:{background:allApproved?'#e9f9ee':'#fff',border:'1px solid #c8d3ee',color:'#0551cd',font:"500 11px Inter",padding:'6px 11px',cursor:'pointer'}}, allApproved?'All approved ✓':('Approve all '+ids.length))),
+      h('div',{style:{padding:'4px 20px 12px'}}, ids.map((id,k)=>{
+        const p=this.P.find(x=>x.id===id); const st=this.state.statuses[id];
+        return h('div',{key:id, onClick:()=>this.openDrawer(ids,k), style:{display:'flex',alignItems:'center',gap:12,padding:'9px 0',borderBottom: k<ids.length-1?'1px solid #f6f7f8':'none',cursor:'pointer',opacity:st==='rejected'?.45:1}}, renderRow(p,st));
+      })));
+  }
+  renderGroups(){
+    const h=React.createElement;
+    const price=this.list('price').map(p=>p.id), desc=this.list('description').map(p=>p.id), inv=this.list('inventory').map(p=>p.id), neu=this.list('new').map(p=>p.id), del=this.list('removed').map(p=>p.id);
+    const chk=(st)=> st==='approved'?h('span',{className:'mono',style:{fontSize:11,color:'#15803d',width:16}},'✓'): st==='rejected'?h('span',{className:'mono',style:{fontSize:11,color:'#be123c',width:16}},'✕'):h('span',{style:{width:16}});
+    const nm=(p)=>h('span',{style:{fontSize:13,color:'#343a40',width:200,flex:'none',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}, p.name);
+    return h('div',{},
+      this.groupBlock('Price','#0551cd',price,'avg −10% · mostly lowered',(p,st)=>[chk(st), nm(p),
+        h('span',{key:'v',style:{fontSize:13,flex:1}}, h('del',{className:'d'},p.price.from),' ',h('ins',{className:'a'},p.price.to)),
+        h('span',{key:'p',className:'mono',style:{fontSize:11,color:p.price.dir==='up'?'#15803d':'#be123c',width:52,textAlign:'right'}}, p.price.pct)]),
+      this.groupBlock('Description','#0551cd',desc,null,(p,st)=>[chk(st), nm(p),
+        h('span',{key:'d',style:{fontSize:12.5,color:'#3c4248',flex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}, this.diffEls(p.desc.preview)),
+        h('span',{key:'v',className:'mono',style:{fontSize:11,color:'#0551cd'}},'view →')]),
+      this.groupBlock('Inventory','#0551cd',inv,null,(p,st)=>[chk(st), nm(p),
+        h('span',{key:'v',style:{fontSize:13,flex:1}}, h('del',{className:'d'},p.inv.from),' ',h('ins',{className:'a'},p.inv.to)),
+        h('span',{key:'a',className:'mono',style:{fontSize:11,color:'#868e96'}},'units')]),
+      this.groupBlock('New products','#15803d',neu,null,(p,st)=>[chk(st), nm(p),
+        h('span',{key:'v',style:{fontSize:12.5,color:'#15803d',flex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}, this.diffEls(p.desc.preview)),
+        h('span',{key:'pr',style:{fontSize:13,color:'#15803d'}}, p.price.now)]),
+      this.groupBlock('Removed','#be123c',del,null,(p,st)=>[chk(st), nm(p),
+        h('span',{key:'v',style:{fontSize:12.5,color:'#9f1239',flex:1}},'Will be archived · was '+p.price.now),
+        h('span',{key:'a',className:'mono',style:{fontSize:11,color:'#be123c'}}, p.status)]));
+  }
+
+  paraChanged(tokens){ return tokens.some(t=>t[0]!=='e'); }
+  renderDesc(paras, mode){
+    const h=React.createElement;
+    const pst={fontSize:14.5,lineHeight:1.78,color:'#3c4248',margin:'0 0 14px'};
+    if(mode==='full') return paras.map((tk,i)=>h('p',{key:i,style:pst}, this.diffEls(tk)));
+    const out=[]; let hidden=0;
+    const flush=(key)=>{ if(hidden>0){ out.push(h('div',{key:'h'+key,style:{display:'flex',alignItems:'center',gap:10,margin:'2px 0 14px'}}, h('span',{className:'mono',style:{fontSize:10,letterSpacing:'.04em',color:'#adb5bd',whiteSpace:'nowrap'}}, '▾ '+hidden+' unchanged paragraph'+(hidden>1?'s':'')), h('span',{style:{flex:1,height:1,background:'repeating-linear-gradient(90deg,#dadde1 0 5px,transparent 5px 9px)'}}))); hidden=0; } };
+    paras.forEach((tk,i)=>{ if(this.paraChanged(tk)){ flush(i); out.push(h('p',{key:i,style:pst}, this.diffEls(tk))); } else hidden++; });
+    flush('end');
+    return out;
+  }
+  onDescScroll(){ const sc=this.descScrollRef.current, vp=this.descVpRef.current; if(!sc||!vp) return; const hh=sc.scrollHeight||1; vp.style.top=(100*sc.scrollTop/hh)+'%'; vp.style.height=(100*sc.clientHeight/hh)+'%'; }
+  measureDescTicks(){ const sc=this.descScrollRef.current; if(!sc) return; const flex=sc.parentElement; if(!flex) return; const hh=sc.scrollHeight||1; flex.querySelectorAll('[data-tick]').forEach(tk=>{ const i=tk.getAttribute('data-tick'); const p=sc.querySelector('[data-cp="'+i+'"]'); if(p) tk.style.top=(100*p.offsetTop/hh)+'%'; }); }
+  renderDescFull(paras){
+    const h=React.createElement;
+    const pst={fontSize:14.5,lineHeight:1.78,color:'#3c4248',margin:'0 0 14px'};
+    const changedIdx=[];
+    const prose=paras.map((tk,i)=>{ const c=this.paraChanged(tk); if(c) changedIdx.push(i); return h('p',{key:i,'data-cp':c?String(i):null,style:pst}, this.diffEls(tk)); });
+    const ticks=changedIdx.map((i,k)=>h('div',{key:k,'data-tick':String(i),style:{position:'absolute',left:-7,right:-7,top:'0%',height:6,background:'var(--modified-needs-review-stroke)'}}));
+    return h('div',{style:{display:'flex',height:470,border:'1px solid #eef0f2'}},
+      h('div',{ref:this.descScrollRef,onScroll:()=>this.onDescScroll(),className:'sc',style:{flex:1,overflowY:'auto',padding:'16px 18px',minWidth:0,position:'relative'}}, prose),
+      h('div',{style:{width:56,borderLeft:'1px solid #eef0f2',background:'#fcfcfd',position:'relative',flex:'none'}},
+        h('div',{className:'mono',style:{fontSize:8,letterSpacing:'.08em',color:'#adb5bd',textAlign:'center',paddingTop:9}},'MAP'),
+        h('div',{style:{position:'absolute',top:30,bottom:12,left:17,right:17,background:'#eef0f2'}},
+          h('div',{ref:this.descVpRef,style:{position:'absolute',left:-7,right:-7,top:0,height:'25%',border:'1.5px solid #0551cd',background:'rgba(5,81,205,.06)',pointerEvents:'none',transition:'top .1s'}}),
+          ticks)));
+  }
+
+  fieldBlock(label, node){
+    const h=React.createElement;
+    return h('div',{style:{borderTop:'1px solid #f1f3f5',padding:'14px 0'}},
+      h('div',{className:'mono',style:{fontSize:10,letterSpacing:'.06em',textTransform:'uppercase',color:'#868e96',marginBottom:8}}, label),
+      node);
+  }
+  renderDrawer(){
+    const h=React.createElement;
+    const d=this.state.drawer; if(!d) return null;
+    const id=d.set[d.idx]; const p=this.P.find(x=>x.id===id); const st=this.state.statuses[id];
+    const badge = p.kind==='created'?{t:'NEW',bg:'#dcfce7',c:'#15803d'}: p.kind==='deleted'?{t:'REMOVED',bg:'#ffe4e6',c:'#be123c'}:{t:'MODIFIED',bg:'#e0e7ff',c:'#0551cd'};
+    const fields=[];
+    if(p.kind==='deleted'){
+      fields.push(this.fieldBlock('This product will be archived', h('div',{style:{fontSize:14,color:'#9f1239'}}, 'It was removed at the source. Approving will set it to Archived in Shopify (it will no longer be available for sale).')));
+    } else {
+      if(p.price.changed) fields.push(this.fieldBlock('Price', h('div',{style:{fontSize:15}}, h('del',{className:'d'},p.price.from),' → ',h('ins',{className:'a'},p.price.to),' ',h('span',{className:'mono',style:{fontSize:12,color:p.price.dir==='up'?'#15803d':'#be123c',marginLeft:6}},p.price.pct))));
+      else if(p.kind==='created') fields.push(this.fieldBlock('Price', h('div',{style:{fontSize:15,color:'#15803d'}}, p.price.now)));
+      if(p.inv.changed) fields.push(this.fieldBlock('Inventory', h('div',{style:{fontSize:15}}, h('del',{className:'d'},p.inv.from),' → ',h('ins',{className:'a'},p.inv.to))));
+      else if(p.kind==='created') fields.push(this.fieldBlock('Inventory', h('div',{style:{fontSize:15,color:'#15803d'}}, p.inv.now+' units')));
+      if(p.desc.changed){
+        const dv=this.state.descView;
+        const seg=(v,label)=>h('button',{onClick:()=>this.setState({descView:v}), style:{background:dv===v?'#212529':'#fff',color:dv===v?'#fff':'#495057',border:'none',borderLeft:v==='full'?'1px solid #dde1e5':'none',font:'500 11px Inter',padding:'5px 11px',cursor:'pointer'}}, label);
+        fields.push(h('div',{key:'desc',style:{borderTop:'1px solid #f1f3f5',padding:'14px 0'}},
+          h('div',{style:{display:'flex',alignItems:'center',marginBottom:12}},
+            h('div',{className:'mono',style:{fontSize:10,letterSpacing:'.06em',textTransform:'uppercase',color:'#868e96'}},'Description'),
+            h('div',{style:{flex:1}}),
+            h('div',{style:{display:'flex',border:'1px solid #dde1e5',overflow:'hidden'}}, seg('changes','Changes only'), seg('full','Full + map'))),
+          dv==='full' ? this.renderDescFull(p.desc.full) : h('div',{}, this.renderDesc(p.desc.full,'changes'))));
+      }
+    }
+    const panel = h('div',{onClick:(e)=>e.stopPropagation(), style:{width:640,maxWidth:'92vw',background:'#fff',height:'100%',display:'flex',flexDirection:'column',boxShadow:'-12px 0 40px rgba(0,0,0,.18)'}},
+      h('div',{style:{padding:'13px 18px',borderBottom:'1px solid #eef0f2',display:'flex',alignItems:'center',gap:10}},
+        h('button',{onClick:()=>this.closeDrawer(), className:'mono', style:{background:'#f1f3f5',border:'none',color:'#495057',fontSize:11,padding:'6px 10px',cursor:'pointer'}}, '← All changes'),
+        h('div',{style:{flex:1}}),
+        h('button',{onClick:()=>this.stepDrawer(-1), style:{background:'#fff',border:'1px solid #c8d3ee',color:'#0551cd',width:26,height:24,cursor:'pointer'}},'↑'),
+        h('span',{className:'mono',style:{fontSize:11,color:'#868e96'}}, (d.idx+1)+' / '+d.set.length),
+        h('button',{onClick:()=>this.stepDrawer(1), style:{background:'#fff',border:'1px solid #c8d3ee',color:'#0551cd',width:26,height:24,cursor:'pointer'}},'↓'),
+        h('button',{onClick:()=>this.closeDrawer(), style:{background:'none',border:'none',color:'#868e96',fontSize:18,cursor:'pointer',lineHeight:1,marginLeft:4}},'✕')),
+      h('div',{style:{padding:'16px 22px 6px',display:'flex',alignItems:'center',gap:11}},
+        h('div',{}, h('div',{style:{fontFamily:"'Funnel Display'",fontWeight:600,fontSize:18}}, p.name),
+          h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:4}}, h('span',{className:'pill',style:{background:badge.bg,color:badge.c}}, badge.t), h('span',{className:'mono',style:{fontSize:11,color:'#868e96'}}, 'product '+p.id+' of 248'),
+            st==='approved'?h('span',{className:'mono',style:{fontSize:11,color:'#15803d'}},'· ✓ approved'): st==='rejected'?h('span',{className:'mono',style:{fontSize:11,color:'#be123c'}},'· ✕ rejected'):null))),
+      h('div',{className:'sc',style:{flex:1,overflowY:'auto',padding:'4px 22px 18px'}}, fields,
+        h('div',{className:'mono',style:{fontSize:10,color:'#adb5bd',paddingTop:14}}, p.kind==='deleted'?'':'All other fields unchanged.')),
+      h('div',{style:{padding:'13px 20px',borderTop:'1px solid #dee2e6',display:'flex',alignItems:'center',gap:9}},
+        h('span',{className:'mono',style:{fontSize:10,color:'#adb5bd'}}, '↑ ↓ to step'),
+        h('div',{style:{flex:1}}),
+        h('button',{onClick:()=>this.setStatus(id,'rejected'), style:{background:'#fff0f1',border:'1px solid #f7c9cf',color:'#be123c',font:'500 12px Inter',padding:'9px 14px',cursor:'pointer'}}, p.kind==='deleted'?'Keep product':'Reject'),
+        h('button',{onClick:()=>{ this.setStatus(id,'approved'); this.stepDrawer(1); }, style:{background:'var(--highlight-fill)',border:'1.5px solid var(--highlight-border)',color:'#000',font:'600 12px Inter',padding:'9px 16px',cursor:'pointer'}}, 'Approve · next →')));
+    return h('div',{onClick:()=>this.closeDrawer(), style:{position:'fixed',inset:0,background:'rgba(33,37,41,.28)',display:'flex',justifyContent:'flex-end',zIndex:50}}, panel);
+  }
+
+  renderVals(){
+    const sts=this.state.statuses;
+    const approvedCount=this.P.filter(p=>sts[p.id]==='approved').length;
+    const rejectedCount=this.P.filter(p=>sts[p.id]==='rejected').length;
+    const pendingCount=this.P.length-approvedCount-rejectedCount;
+    return {
+      view:this.state.view, filter:this.state.filter,
+      changedCount:this.P.length,
+      cPrice:this.list('price').length, cDesc:this.list('description').length, cInv:this.list('inventory').length,
+      cNew:this.list('new').length, cDel:this.list('removed').length,
+      approvedCount, pendingCount,
+      bodyEl: this.state.view==='table' ? this.renderTable() : this.renderGroups(),
+      drawerEl: this.renderDrawer(),
+      onClick:(e)=>this.onClick(e),
+    };
+  }
+}
+const S = {
+  row: { display:'grid', gridTemplateColumns:'34px 230px 150px 104px minmax(280px,1fr) 120px', alignItems:'stretch', borderBottom:'1px solid #f1f3f5' },
+  cell: (chg)=>({ padding:'6px 12px', display:'flex', flexDirection:'column', justifyContent:'center', borderRight:'1px solid #f4f5f7', minWidth:0, minHeight:34, background: chg?'rgba(5,81,205,.06)':'transparent' }),
+  statusPill: (p)=> p.kind==='created'?{background:'#dcfce7',color:'#15803d'}: p.kind==='deleted'?{background:'#ffe4e6',color:'#be123c'}:{background:'#e9f9ee',color:'#15803d'},
+};
+</script>
+</body>
+</html>

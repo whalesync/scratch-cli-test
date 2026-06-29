@@ -1,7 +1,7 @@
 # Upgrade `@notionhq/client` 3.1.3 → 5.22.0
 
 **Date**: 2026-05-25
-**Status**: Phases 1-3 complete; Phase 4 (SDK bump) and Phase 5 (2026-03-11 adoption) pending
+**Status**: Resolved (all phases complete — SDK bumped to 5.22.0, API version pinned to 2026-03-11)
 **Linear**: DEV-8910
 **Author**: Chris Hoefgen
 **Branch**: `dev-8910-upgrade-notion-client-notionhqclient-from-313-to-latest-5xx`

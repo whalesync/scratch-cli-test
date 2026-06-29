@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_ds/scratch-design-system-7b1662a2-9756-4c83-9df8-54b7c7ed1dc8/_ds_bundle.css">
+<link rel="stylesheet" href="_ds/scratch-design-system-7b1662a2-9756-4c83-9df8-54b7c7ed1dc8/styles.css">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;color:#212529;background:#f1f3f5;}
+  del.d{text-decoration:line-through;text-decoration-color:rgba(190,18,60,.55);background:rgba(190,18,60,.10);color:#9f1239;padding:0 1px;border-radius:1px;}
+  ins.a{text-decoration:none;background:rgba(21,128,61,.16);color:#15803d;padding:0 1px;border-radius:1px;}
+  .sc{scrollbar-width:thin;scrollbar-color:#ced4da transparent;}
+  .sc::-webkit-scrollbar{width:10px;}
+  .sc::-webkit-scrollbar-thumb{background:#dee2e6;}
+  .prose{font-size:15px;line-height:1.82;color:#3c4248;}
+  .prose p{margin:0 0 17px;}
+
+  /* ---- view toggling (state-driven, can't be inline) ---- */
+  [data-view="collapsed"] .full-only{display:none !important;}
+  [data-view="full"] .collapsed-only{display:none !important;}
+  [data-view="collapsed"] .run{display:none;}
+  [data-view="collapsed"] .run[data-exp="true"]{display:block;}
+  [data-view="full"] .run{display:block;}
+  [data-view="full"][data-dim="true"] .run{color:#aeb4ba;}
+
+  /* changed-line wash: only in full view (wayfinding); plain in changes-only view */
+  [data-view="full"] .change{padding:10px 14px;}
+  [data-view="full"] .change[data-kind="modified"]{background:rgba(5,81,205,.07);}
+  [data-view="full"] .change[data-kind="created"]{background:rgba(21,128,61,.08);}
+  [data-view="full"] .change[data-kind="deleted"]{background:rgba(190,18,60,.06);}
+
+  .divider{display:flex;align-items:center;gap:11px;padding:9px 0;cursor:pointer;user-select:none;}
+  .divider .ln{flex:1;height:1px;background:repeating-linear-gradient(90deg,#dadde1 0 5px,transparent 5px 9px);}
+  .divider .lbl{font-family:'Geist Mono';font-size:10px;letter-spacing:.04em;color:#adb5bd;white-space:nowrap;}
+  .divider:hover .lbl{color:#0551cd;}
+
+  /* segmented control active state */
+  [data-view="collapsed"] [data-seg="collapsed"],[data-view="full"] [data-seg="full"]{background:#212529;color:#fff;}
+
+  /* current-change emphasis (parent-attr trick) */
+  [data-current="1"] [data-change="1"],[data-current="2"] [data-change="2"],[data-current="3"] [data-change="3"],[data-current="4"] [data-change="4"],[data-current="5"] [data-change="5"]{outline:2px solid var(--highlight-border);outline-offset:2px;}
+  [data-current="1"] [data-tick="1"],[data-current="2"] [data-tick="2"],[data-current="3"] [data-tick="3"],[data-current="4"] [data-tick="4"],[data-current="5"] [data-tick="5"]{box-shadow:0 0 0 2px #fcfcfd,0 0 0 3.5px #0551cd;z-index:3;}
+</style>
+</helmet>
+
+<div data-view="{{ view }}" data-current="{{ current }}" data-dim="{{ dimUnchanged }}" onClick="{{ onClick }}" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:36px 24px;">
+
+  <div style="width:920px;max-width:100%;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px;">
+      <div style="font-family:'Geist Mono';font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#868e96;">Review · Airtable → Webflow · Blog Posts</div>
+      <div style="flex:1;"></div>
+      <div style="font-family:'Geist Mono';font-size:11px;color:#adb5bd;">1 of 142 modified</div>
+    </div>
+
+    <div style="background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.10),0 10px 30px rgba(0,0,0,.05);border:1px solid #e9ecef;overflow:hidden;">
+
+      <!-- header -->
+      <div style="padding:16px 20px;border-bottom:1px solid #eef0f2;display:flex;align-items:center;gap:13px;">
+        <span style="background:#e0e7ff;color:#0551cd;font-family:'Geist Mono';font-size:10px;font-weight:500;padding:4px 8px;">MODIFIED</span>
+        <div>
+          <div style="font-family:'Funnel Display';font-weight:600;font-size:17px;line-height:1.1;color:#212529;">10 Tips for Remote Onboarding</div>
+          <div style="font-family:'Geist Mono';font-size:11px;color:#868e96;margin-top:3px;">Body field · 2,981 words · synced 4 min ago</div>
+        </div>
+        <div style="flex:1;"></div>
+        <!-- view toggle -->
+        <div style="display:flex;border:1px solid #ced4da;overflow:hidden;">
+          <button data-act="view-collapsed" data-seg="collapsed" style="background:#fff;color:#495057;border:none;font:500 12px Inter;padding:8px 13px;cursor:pointer;display:flex;align-items:center;gap:7px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>Changes only</button>
+          <button data-act="view-full" data-seg="full" style="background:#fff;color:#495057;border:none;border-left:1px solid #ced4da;font:500 12px Inter;padding:8px 13px;cursor:pointer;display:flex;align-items:center;gap:7px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9h18"/></svg>Full post + map</button>
+        </div>
+      </div>
+
+      <!-- sub bar -->
+      <div style="padding:9px 20px;background:#fafbfc;border-bottom:1px solid #eef0f2;display:flex;align-items:center;gap:13px;">
+        <span style="font-family:'Geist Mono';font-size:11px;color:#0551cd;font-weight:500;">5 changes</span>
+        <span style="width:1px;height:13px;background:#e0e3e7;"></span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-family:'Geist Mono';font-size:11px;color:#495057;"><span style="width:7px;height:7px;background:#0551cd;display:inline-block;"></span>3 modified</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-family:'Geist Mono';font-size:11px;color:#495057;"><span style="width:7px;height:7px;background:#15803d;display:inline-block;"></span>1 added</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-family:'Geist Mono';font-size:11px;color:#495057;"><span style="width:7px;height:7px;background:#be123c;display:inline-block;"></span>1 removed</span>
+        <div style="flex:1;"></div>
+        <span style="font-family:'Geist Mono';font-size:10px;color:#c0c5cb;letter-spacing:.02em;">J / K to step through changes</span>
+        <div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #d6e0f7;padding:3px 4px 3px 11px;">
+          <span style="font-family:'Geist Mono';font-size:11px;color:#0551cd;white-space:nowrap;">Change {{ current }} / 5</span>
+          <button data-act="step-prev" style="background:#fff;border:1px solid #c8d3ee;color:#0551cd;width:24px;height:22px;cursor:pointer;line-height:1;">↑</button>
+          <button data-act="step-next" style="background:#fff;border:1px solid #c8d3ee;color:#0551cd;width:24px;height:22px;cursor:pointer;line-height:1;">↓</button>
+        </div>
+      </div>
+
+      <!-- body -->
+      <div style="display:flex;height:560px;">
+        <div class="sc prose" ref="{{ scrollRef }}" onScroll="{{ onScroll }}" style="flex:1;overflow-y:auto;padding:22px 30px;min-width:0;">
+
+          <!-- R1 -->
+          <div class="divider collapsed-only" data-act="toggle-run" data-id="1"><span class="lbl">▾ opening paragraph</span><span class="ln"></span></div>
+          <div class="run" data-exp="{{ r1 }}"><p>Remote onboarding is mostly a logistics problem dressed up as a culture problem. Get the boring things right — hardware, access, a clear first week — and the culture part very nearly takes care of itself. Here's the playbook we landed on after two years of getting it wrong.</p></div>
+
+          <!-- C1 -->
+          <div class="change ctext" data-change="1" data-kind="modified" style="margin:0 0 17px;"><del class="d">Send</del> <ins class="a">Ship</ins> the new hire their laptop <ins class="a">and welcome kit </ins><ins class="a">at least </ins>a week before day one — nothing kills momentum like a blank desk and a login that doesn't work yet.</div>
+
+          <!-- R2 -->
+          <div class="divider collapsed-only" data-act="toggle-run" data-id="2"><span class="lbl">▾ 612 words unchanged</span><span class="ln"></span></div>
+          <div class="run" data-exp="{{ r2 }}">
+            <p>Pre-stage every account the night before. SSO, email, the repo, the design tool, the docs — all of it should be waiting when they log in, not requested on day one. Every access request that lands on a first morning is an hour of someone's day spent waiting instead of building.</p>
+            <p>Then write a first-week plan and share it before they start. Ambiguity is the enemy; a new hire staring at an empty calendar is a new hire quietly wondering whether they made a mistake taking the job.</p>
+          </div>
+
+          <!-- C2 -->
+          <div class="change ctext" data-change="2" data-kind="modified" style="margin:0 0 17px;">When we rebuilt our first-week plan around these tips, we saw a <del class="d">30%</del> <ins class="a">42%</ins> bump in 90-day retention across remote hires.</div>
+
+          <!-- R3 -->
+          <div class="divider collapsed-only" data-act="toggle-run" data-id="3"><span class="lbl">▾ 884 words unchanged</span><span class="ln"></span></div>
+          <div class="run" data-exp="{{ r3 }}">
+            <p>Assign a single point of contact for questions. Not the manager, not "the team" — one named person whose entire job that week is to be interruptible. It feels expensive until you compare it to the cost of a confused hire guessing for a week.</p>
+            <p>Front-load the social stuff, too. Quick intros, a team lunch on the company card, and a channel where it's explicitly safe to ask the dumb questions everyone secretly has on day three.</p>
+          </div>
+
+          <!-- C3 -->
+          <div class="change ctext" data-change="3" data-kind="modified" style="margin:0 0 17px;"><del class="d">Schedule a single onboarding call and let them settle in on their own.</del> <ins class="a">Schedule a short daily check-in for the whole first week — ten minutes is plenty, and it catches the small blockers before they fester.</ins></div>
+
+          <!-- R4 -->
+          <div class="divider collapsed-only" data-act="toggle-run" data-id="4"><span class="lbl">▾ 220 words unchanged</span><span class="ln"></span></div>
+          <div class="run" data-exp="{{ r4 }}"><p>Documentation only goes so far on its own. People learn an organization through other people — the unwritten norms, the who-to-ask, the way decisions actually get made around here.</p></div>
+
+          <!-- C4 created -->
+          <div class="change ctext" data-change="4" data-kind="created" style="margin:0 0 17px;"><ins class="a">Pair every new hire with a buddy outside their own team for the first month — someone with no authority over them and no stake in looking competent.</ins></div>
+
+          <!-- R5 -->
+          <div class="divider collapsed-only" data-act="toggle-run" data-id="5"><span class="lbl">▾ 198 words unchanged</span><span class="ln"></span></div>
+          <div class="run" data-exp="{{ r5 }}"><p>By the end of week one they should have shipped something small but real — a doc edit, a one-line bug fix, a config change that lands in production. Nothing builds belonging faster than seeing your own name in the changelog while you still feel like a guest.</p></div>
+
+          <!-- C5 deleted -->
+          <div class="change ctext" data-change="5" data-kind="deleted" style="margin:0 0 17px;"><del class="d">Want help getting started? Our remote-onboarding template is free to download at the link below.</del></div>
+
+          <!-- R6 -->
+          <div class="divider collapsed-only" data-act="toggle-run" data-id="6"><span class="lbl">▾ closing paragraph</span><span class="ln"></span></div>
+          <div class="run" data-exp="{{ r6 }}"><p>Onboarding never really ends, but the first week sets the tone for everything after it. Spend the effort up front and you'll spend far less of it later chasing down disengagement you could have prevented.</p></div>
+        </div>
+
+        <!-- minimap -->
+        <div class="minimap full-only" style="width:60px;border-left:1px solid #eef0f2;background:#fcfcfd;position:relative;flex:none;">
+          <div style="font-family:'Geist Mono';font-size:8px;letter-spacing:.08em;color:#adb5bd;text-align:center;padding-top:11px;">MAP</div>
+          <div style="position:absolute;top:34px;bottom:16px;left:19px;right:19px;background:#eef0f2;">
+            <div ref="{{ vpRef }}" style="position:absolute;left:-8px;right:-8px;top:0;height:25%;border:1.5px solid #0551cd;background:rgba(5,81,205,.06);pointer-events:none;transition:top .12s;"></div>
+            <div data-act="jump" data-id="1" data-tick="1" title="Change 1" style="position:absolute;left:-8px;right:-8px;top:6%;height:6px;background:var(--modified-needs-review-stroke);cursor:pointer;"></div>
+            <div data-act="jump" data-id="2" data-tick="2" title="Change 2" style="position:absolute;left:-8px;right:-8px;top:28%;height:6px;background:var(--modified-needs-review-stroke);cursor:pointer;"></div>
+            <div data-act="jump" data-id="3" data-tick="3" title="Change 3" style="position:absolute;left:-8px;right:-8px;top:52%;height:6px;background:var(--modified-needs-review-stroke);cursor:pointer;"></div>
+            <div data-act="jump" data-id="4" data-tick="4" title="Change 4" style="position:absolute;left:-8px;right:-8px;top:70%;height:6px;background:var(--create-needs-review-stroke);cursor:pointer;"></div>
+            <div data-act="jump" data-id="5" data-tick="5" title="Change 5" style="position:absolute;left:-8px;right:-8px;top:88%;height:6px;background:var(--delete-needs-review-stroke);cursor:pointer;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- footer -->
+      <div style="padding:13px 20px;border-top:1px solid #dee2e6;display:flex;align-items:center;gap:10px;">
+        <span style="font-family:'Geist Mono';font-size:10px;color:#adb5bd;">{{ hiddenNote }}</span>
+        <div style="flex:1;"></div>
+        <button data-act="reject-field" style="background:#fff0f1;border:1px solid #f7c9cf;color:#be123c;font:500 12px Inter;padding:9px 14px;cursor:pointer;">Reject changes</button>
+        <button data-act="approve-field" style="background:var(--highlight-fill);border:1.5px solid var(--highlight-border);color:#000;font:600 12px Inter;padding:9px 18px;cursor:pointer;">Approve &amp; continue</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:968,&quot;height&quot;:760},&quot;defaultView&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;collapsed&quot;,&quot;full&quot;],&quot;default&quot;:&quot;collapsed&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Behavior&quot;},&quot;dimUnchanged&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Behavior&quot;}}">
+class Component extends DCLogic {
+  state = { view: null, current: 1, expanded: {} };
+  changeIds = [1,2,3,4,5];
+  scrollRef = React.createRef();
+  vpRef = React.createRef();
+
+  get view(){ return this.state.view ?? (this.props.defaultView || 'collapsed'); }
+
+  componentDidMount(){
+    this._key = (e)=>this.onKey(e);
+    window.addEventListener('keydown', this._key);
+    requestAnimationFrame(()=>this.onScroll());
+  }
+  componentDidUpdate(prevProps, prevState){
+    if(prevState && prevState.view !== this.state.view){
+      requestAnimationFrame(()=>this.onScroll());
+    }
+  }
+  componentWillUnmount(){ window.removeEventListener('keydown', this._key); }
+
+  onScroll(){
+    const sc = this.scrollRef.current, vp = this.vpRef.current;
+    if(!sc || !vp) return;
+    const h = sc.scrollHeight || 1;
+    vp.style.top = (100*sc.scrollTop/h) + '%';
+    vp.style.height = (100*sc.clientHeight/h) + '%';
+  }
+  jump(id){
+    const sc = this.scrollRef.current;
+    this.setState({ current: id });
+    if(!sc) return;
+    const el = sc.querySelector('[data-change="'+id+'"]');
+    if(el) sc.scrollTo({ top: Math.max(0, el.offsetTop - 30), behavior: 'smooth' });
+  }
+  step(d){
+    let n = this.state.current + d;
+    if(n < 1) n = this.changeIds.length;
+    if(n > this.changeIds.length) n = 1;
+    this.jump(n);
+  }
+  setView(v){ this.setState({ view: v }); }
+  toggleRun(id){ this.setState(s => ({ expanded: { ...s.expanded, [id]: !s.expanded[id] } })); }
+
+  onKey(e){
+    const t = e.target;
+    if(t && /input|textarea|select/i.test(t.tagName)) return;
+    const k = e.key.toLowerCase();
+    if(k === 'j'){ e.preventDefault(); this.step(1); }
+    else if(k === 'k'){ e.preventDefault(); this.step(-1); }
+    else if(k === 'c'){ this.setView('collapsed'); }
+    else if(k === 'f'){ this.setView('full'); }
+  }
+  onClick(e){
+    const b = e.target.closest('[data-act]');
+    if(!b) return;
+    const act = b.dataset.act;
+    const id = b.dataset.id ? parseInt(b.dataset.id, 10) : null;
+    if(act === 'view-collapsed') this.setView('collapsed');
+    else if(act === 'view-full') this.setView('full');
+    else if(act === 'step-prev') this.step(-1);
+    else if(act === 'step-next') this.step(1);
+    else if(act === 'jump') this.jump(id);
+    else if(act === 'toggle-run') this.toggleRun(id);
+  }
+
+  renderVals(){
+    const ex = this.state.expanded;
+    const v = this.view;
+    return {
+      view: v,
+      current: this.state.current,
+      dimUnchanged: (this.props.dimUnchanged ?? true) ? 'true' : 'false',
+      hiddenNote: v === 'collapsed' ? '~85% of the post hidden — only edits shown' : 'reading the full post with edits in place',
+      r1: ex[1] ? 'true':'false', r2: ex[2] ? 'true':'false', r3: ex[3] ? 'true':'false',
+      r4: ex[4] ? 'true':'false', r5: ex[5] ? 'true':'false', r6: ex[6] ? 'true':'false',
+      scrollRef: this.scrollRef, vpRef: this.vpRef,
+      onScroll: () => this.onScroll(),
+      onClick: (e) => this.onClick(e),
+    };
+  }
+}
+</script>
+</body>
+</html>

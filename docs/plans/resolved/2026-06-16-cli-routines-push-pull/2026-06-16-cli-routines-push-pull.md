@@ -1,7 +1,7 @@
 # CLI push/pull for routine files
 
 **Date**: 2026-06-16
-**Status**: Planned
+**Status**: Resolved
 **Author**: Chris Hoefgen
 **Linear**: [DEV-10445](https://linear.app/whalesync/issue/DEV-10445/cli-pushpull-for-routine-files)
 
