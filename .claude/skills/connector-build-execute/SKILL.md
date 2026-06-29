@@ -69,6 +69,10 @@ A parallel run that silently stalls wastes time. Whenever you hit a gate above �
 
 **The summary must carry the coverage audit** from the [Definition of done](#definition-of-done--strict-go-deep-not-broad-read-before-declaring-anything-built) (#8): `covered N / total M`, and every remaining `⬜` with its blocker. **Only the word "done" when the gate is met.** If you're ending because you ran out of patience rather than because every cell is `✅` or genuinely human-blocked, say so plainly — "stopped early at breadth, depth not done" — rather than dressing it up as success. Don't let a tidy summary imply coverage you didn't reach.
 
+## Long / overnight runs — drive it with `/loop`
+
+A full build is long and meant to run mostly **unattended**, so keep it going through obstacles and across context limits by running it under the **`/loop` skill** (dynamic mode) — e.g. `/loop /connector-build-execute <connector>`. `/loop` self-paces and **re-enters the task**, so each iteration **resumes from `STATE.md`**, **pushes past transient obstacles** (a flaky UI click, a browser hiccup, a rate-limit backoff, a one-off API error) by retrying on the next pass instead of giving up, and **survives context-window compaction**. It should stop only for a genuine human gate (an emailed code it can't read, a card, a captcha, a destructive confirm) — surfaced with `/read`. **Don't let a transient failure end the run — that's what the loop is for.** Keep looping until the [Definition of done](#definition-of-done--strict-go-deep-not-broad-read-before-declaring-anything-built) gate is met or only human-blocked cells remain.
+
 ## Prerequisite — browser preflight (HARD GATE, before any testing)
 
 Do this **before** pulling/pushing anything. The browser is not optional: create-in-service and UI-link discovery require it, so a CLI-only run does **not** finish a connector.
@@ -199,6 +203,22 @@ Do this autonomously; only stop if a real API decision needs the user.
 > **Worktree split:** run the **desktop app and CLI from the *main* checkout** (build them once — they don't change per branch) and run **only the server from the branch worktree** (which has the connector code under test), so you never rebuild the app/CLI per worktree.
 >
 > **Clones sync through the SERVER, not the filesystem.** The desktop app's download and any `scratchmd workspaces init -o <dir>` clone are **separate git checkouts** of the same workspace. A hand-edit in one folder is invisible to the other — and to the app's UI — until it's **published to the server and pulled** by the other; the desktop app does **not** live-watch raw on-disk edits. So: edit **in-app** or via the **CLI publish flow** (`files accept`→`upload`→`publish`), then **pull/refresh** the other clone. (Note: `workspaces init -o <dir>` re-points the CLI's `workspaces.yaml` entry for that wkb to `<dir>` — so the CLI and desktop can end up on different folders.)
+
+### B-setup — Choose the run target (ASK the user up front, with `AskUserQuestion`)
+
+This skill is a **long-running, often nightly process**, and it can run **two ways**. Both are supported; **don't assume — ask the user before standing up the harness.** (Its sibling `/connector-build-prepare` needs none of this: provisioning only creates accounts, no Scratch server.) Ask these with `AskUserQuestion`:
+
+**Q1 — Which server?**
+- **Use the running server on `:3010`** (the standalone / main session). Pick this if one is already up — check `curl -s -o /dev/null -w '%{http_code}' http://localhost:3010/health` → 200. The human owns that server; you use the default `scratchmd` target (no `--scratch-url`).
+- **Start my own standalone session (parallel)** — own Redis + own server via `/start-parallel-session <N>` (server `:3010+N`, Redis `:6379+N`, its own queue+worker). Pick this to stay isolated from a server already in use, or to run several builds at once.
+
+**Q2 — scratch-git service** (the shared Rust git microservice on `:3100`/`:3101`). Check it first: `curl -s -o /dev/null -w '%{http_code}' http://localhost:3100/` → 200 means it's up, **don't ask**. **Only if it's down, ask:**
+- **You run it yourself (recommended)** — it's **reusable by every server**, so one instance serves all sessions; the human starting it once is cleanest and survives across your sessions.
+- **I start one as a background process** — the agent launches it (it then dies with this session).
+
+**Q3 — Which worktree? (only when Q1 = parallel, i.e. the run is NOT in the main worktree.)** A parallel session runs its server from a **worktree** so it builds that branch's connector code. List existing worktrees (`git worktree list`) as the options, **plus an `Other` option where the user types the name of a NEW worktree to create** (you then create it off `origin/master` and run there). If Q1 = main server, skip this — you run in the main checkout.
+
+**After the answers:** main server → default target, human runs the server; parallel → `/start-parallel-session <N>` in the chosen worktree and carry `--scratch-url http://localhost:$((3010+N))` on every `scratchmd`. The mechanics of each are in B0 below.
 
 ### B0 — Worktree check: are you a parallel session? (decide this FIRST, before the CLI setup)
 

@@ -22,7 +22,7 @@ if [ -f "$ENVF" ]; then
   ok "present — secrets will be read/written here"
 else
   warn "missing — building a NEW connector doesn't need existing secrets, but the file must exist to write into."
-  echo "      Fix (either): copy the shared note from 1Password \"Scratch Connector QA — .env.connector-build\","
+  echo "      Fix (either): copy the shared note from 1Password \"connector-build secrets\","
   echo "      or create an empty one:  cp \"$ROOT/connector-build/.env.connector-build.sample\" \"$ENVF\""
 fi
 

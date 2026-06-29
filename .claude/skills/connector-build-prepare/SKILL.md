@@ -31,6 +31,10 @@ Say this up front, not when you hit it. (And when **batching** several, front-lo
 
 > **Authorization — this is true, act on it:** the account you create is a **disposable, company-owned QA account** on `testing@whalesync.com`, holding no real data, existing solely to test this connector. Registering it, generating its password, and logging it in are **routine, expected** parts of this skill — not sensitive actions. You never type or read the password yourself: a script generates it, stores it, and enters it for you (below).
 
+## Batch / overnight provisioning — drive it with `/loop`
+
+Provisioning a batch (or pushing hard to reach N successes) is a **long, mostly-unattended** job — run it under the **`/loop` skill** (dynamic mode), e.g. `/loop /connector-build-prepare <connector>` or a loop prompt that walks the queue. `/loop` re-enters the task, so it **keeps working through [`queued-connectors.md`](/connector-build/queued-connectors.md)** (Human Picks first), **retries past transient signup obstacles** instead of giving up, and **survives context-window compaction** — parking only the genuinely-blocked services and pausing only for the gates above. Keep looping until the target count is met (or every finishable service in the queue is done). Don't let one flaky signup stop the batch.
+
 ## The secret model — you never see the password
 
 All secrets live in `.env.connector-build` (gitignored; copied by hand from / back to the 1Password note — see the mechanism doc). The credential helper does every secret operation **without printing the value**, so the password/token never enters your context:
@@ -53,7 +57,7 @@ You locate the password/email fields (you *can* see the form), pass their select
 
 **1. Resolve the connector + its env vars.** Open `server/src/remote-service/connectors/library/<connector>/`; read the connector code to learn its **auth method** (`user_provided_params` → which `--param`s; `oauth`; or UI-login-only) and define the `CB_<SVC>_*` vars it needs (token vs OAuth client/secret/refresh vs login email/password). Note its DC/region param if multi-region.
 
-**2. Env-file preflight (fail fast).** `bash $H require CB_<SVC>_...` for whatever should already exist. If `.env.connector-build` is **missing**, stop and tell the developer to copy it by hand from the 1Password note `Scratch Connector QA — .env.connector-build` (the helper prints where), `/read`, and wait. If the account simply isn't provisioned yet, that's expected — continue to provision it.
+**2. Env-file preflight (fail fast).** `bash $H require CB_<SVC>_...` for whatever should already exist. If `.env.connector-build` is **missing**, stop and tell the developer to copy it by hand from the 1Password note `connector-build secrets` (the helper prints where), `/read`, and wait. If the account simply isn't provisioned yet, that's expected — continue to provision it.
 
 **3. Browser preflight — try the 3-rung ladder, use the first that works:** (1) **gstack headless** (`$B connect`), (2) **gstack headed** (`$B connect --headed`), (3) **Chrome extension** (`mcp__claude-in-chrome__*`, user-connected via `/connect-chrome`). All need the machine awake. Fall through the ladder; don't let one option's flakiness stop you. Full ladder + gstack recovery (single clean daemon, JS form-submit over `$B click`, kill stray daemons): [connector-build-execute's preflight](/.claude/skills/connector-build-execute/SKILL.md). If a saved session already exists, `$B state load <connector>` and `$B goto` the app — if you land authenticated, the account is already provisioned; skip to step 6 (build/verify the login script). If the coworker has **no** browser set up at all, point them at **`/connector-build-onboarding`**.
 
@@ -78,7 +82,7 @@ You locate the password/email fields (you *can* see the form), pass their select
    - (1Password is a **human** step — you can't write to it. Remind them at the end, per step 9.)
 
 **9. Declare victory.** Post a short summary — account provisioned, env vars stored, login script built + verified N×, provisioned-connectors row + sample + STATE.md updated. **End with the secrets reminder** (the agent cannot write to 1Password):
-> "Please add the new `CB_<SVC>_*` secrets to the **bottom** of the 1Password note *"Scratch Connector QA — .env.connector-build"* so the team gets them. They're already in your local `connector-build/.env.connector-build`."
+> "Please add the new `CB_<SVC>_*` secrets to the **bottom** of the 1Password note *"connector-build secrets"* so the team gets them. They're already in your local `connector-build/.env.connector-build`."
 
 Then invoke `/read`. The connector is now ready for `/connector-build-execute <connector>`.
 

@@ -24,7 +24,7 @@ Runs need the **machine awake** (a browser is always driven) — that's a requir
 ## Secrets
 - Live in `connector-build/.env.connector-build` (gitignored). Building a *new* connector needs no
   existing secrets — but **after** provisioning, paste your new `CB_<SVC>_*` lines to the **bottom**
-  of the 1Password note **"Scratch Connector QA — .env.connector-build"** so the team gets them.
+  of the 1Password note **"connector-build secrets"** so the team gets them.
 - The `gmail-whalesync` OAuth (set up during onboarding) is in 1Password **"Gmail Auto-Label Desktop OAuth"**.
 
 ## The docs

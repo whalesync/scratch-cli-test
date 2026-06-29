@@ -39,7 +39,7 @@ cb_require_env_file() {
   local f; f="$(cb_env_file)"
   if [ ! -f "$f" ]; then
     echo "ERROR: $f not found." >&2
-    echo "Copy the shared secrets from the 1Password note 'Scratch Connector QA — .env.connector-build'" >&2
+    echo "Copy the shared secrets from the 1Password note 'connector-build secrets'" >&2
     echo "by hand into: $f" >&2
     return 1
   fi

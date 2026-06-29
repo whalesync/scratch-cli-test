@@ -57,7 +57,7 @@ All test-account secrets live in **one gitignored file at the repo root**:
   mailbox, so emailed verification links can be retrieved). Passwords are **generated** by the
   credential helper at registration time, not chosen by hand.
 - **Distributed through 1Password — one canonical copy, copied by hand.** The file's contents live
-  in the 1Password note **`Scratch Connector QA — .env.connector-build`**. On a new machine, copy
+  in the 1Password note **`connector-build secrets`**. On a new machine, copy
   them into `<repo-root>/.env.connector-build`. When you provision a new account, paste your new
   `CB_<SVC>_*` lines back into that note so the team gets them. (Manual copy by design — no `op` CLI,
   no automation.) 1Password is the **source of truth**; the on-disk `.env.connector-build` is a

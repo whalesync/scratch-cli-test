@@ -29,7 +29,7 @@ bash .claude/skills/connector-build-onboarding/check-setup.sh
 ```
 Read its output with them; it tells you the secrets-file + gstack-binary state and what to fix.
 
-**1. Secrets file — `connector-build/.env.connector-build`.** Building a **new** connector doesn't need anyone else's secrets, but the file must exist to write into. If it's missing: either copy the shared note from **1Password → "Scratch Connector QA — .env.connector-build"**, or `cp connector-build/.env.connector-build.sample connector-build/.env.connector-build` to start empty.
+**1. Secrets file — `connector-build/.env.connector-build`.** Building a **new** connector doesn't need anyone else's secrets, but the file must exist to write into. If it's missing: either copy the shared note from **1Password → "connector-build secrets"**, or `cp connector-build/.env.connector-build.sample connector-build/.env.connector-build` to start empty.
 
 **2. Browser — get at least ONE working.**
 - **gstack** (option A): if the binary check passed, smoke-test it live — `$B connect` then `$B status` (headless), and `$B connect --headed` then `$B status --headed` (must show `Mode: headed`). If the binary is missing, walk them through installing the gstack browser, then re-check. If gstack misbehaves, use the recovery in the execute skill's preflight (single clean daemon, kill stray daemons + remove the SingletonLock).
