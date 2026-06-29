@@ -246,6 +246,19 @@ export class PostHogService implements OnModuleDestroy {
     });
   }
 
+  trackRefreshConnectionSchemas(
+    actor: Actor,
+    dataSource: ConnectorAccount,
+    counts: { refreshedCount: number; failedCount: number },
+  ): void {
+    this.captureEvent(PostHogEventName.REFRESH_CONNECTION_SCHEMAS, actor, {
+      dataSourceId: dataSource.id,
+      connectorService: dataSource.service,
+      refreshedCount: counts.refreshedCount,
+      failedCount: counts.failedCount,
+    });
+  }
+
   trackUpdateDataSource(actor: Actor, dataSource: ConnectorAccount, options?: { changedFields?: string[] }): void {
     this.captureEvent(PostHogEventName.CONNECTOR_ACCOUNT_UPDATED, actor, {
       dataSourceId: dataSource.id,
@@ -542,6 +555,7 @@ export enum PostHogEventName {
   RECORD_EDITED = 'record_edited',
   RECORD_DELETED = 'record_deleted',
   PULL_TABLES_FOR_DATA_SOURCE = 'pull_tables_for_data_source',
+  REFRESH_CONNECTION_SCHEMAS = 'refresh_connection_schemas',
   CLI_TEST_CONNECTION = 'cli_test_connection',
   CLI_LIST_TABLES = 'cli_list_tables',
   CLI_LIST_WORKBOOKS = 'cli_list_workbooks',

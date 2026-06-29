@@ -9,8 +9,9 @@ import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
-import { trackPullFilesFromSource } from '@/lib/posthog';
+import { trackPullFilesFromSource, trackRefreshConnectionSchemas } from '@/lib/posthog';
 import { selectJobsForConnector, useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Badge, Box, Collapse, Group, Stack, Tooltip, UnstyledButton } from '@mantine/core';
@@ -26,6 +27,7 @@ import {
   type DataFolderOptions,
   type FileRefEntity,
   type Job,
+  type RefreshConnectionSchemasResponse,
   type WorkbookId,
 } from '@spinner/shared-types';
 import {
@@ -58,7 +60,7 @@ import {
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import React, { useCallback, useMemo, useState, type MouseEvent } from 'react';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { useShallow } from 'zustand/react/shallow';
 import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { PublishPlansModal } from '../modals/PublishPlansModal';
@@ -74,6 +76,10 @@ import { DeleteAllRecordsModal } from '../shared/DeleteAllRecordsModal';
 import { NewFileModal } from '../shared/NewFileModal';
 import { NewFolderModal } from '../shared/NewFolderModal';
 import { PullAssetsModal } from '../shared/PullAssetsModal';
+import {
+  RefreshConnectionSchemasModal,
+  type RefreshConnectionSchemasStatus,
+} from '../shared/RefreshConnectionSchemasModal';
 import { RemoveFileModal } from '../shared/RemoveFileModal';
 import { RemoveTableModal } from '../shared/RemoveTableModal';
 import { RenameFileModal } from '../shared/RenameFileModal';
@@ -317,7 +323,18 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
   const { workbook, pullFolders, pullAssets } = useActiveWorkbook();
+  const { mutate: globalMutate } = useSWRConfig();
+  const { metadata: connectorsMetadata } = useConnectorsMetadata();
   const [isReauthorizing, setIsReauthorizing] = useState(false);
+
+  // Connection-wide schema refresh, surfaced in a blocking modal.
+  const [refreshSchemasModalOpen, { open: openRefreshSchemasModal, close: closeRefreshSchemasModal }] =
+    useDisclosure(false);
+  const [refreshSchemasStatus, setRefreshSchemasStatus] = useState<RefreshConnectionSchemasStatus>('refreshing');
+  const [refreshSchemasResult, setRefreshSchemasResult] = useState<RefreshConnectionSchemasResponse | undefined>(
+    undefined,
+  );
+  const [refreshSchemasError, setRefreshSchemasError] = useState<string | undefined>(undefined);
 
   // Targeted Zustand selector — only re-renders when THIS connector's jobs change
   const connectorJobsSelector = useCallback(
@@ -383,6 +400,32 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
     },
     [pullAssets, connectionFolderIds],
   );
+
+  // Refresh the schema (JSON spec + default view) for every table in this connection at once, behind a
+  // blocking modal. Non-destructive — re-derives each schema from the service and overwrites schema.json.
+  const handleRefreshAllSchemas = useCallback(async () => {
+    if (!connectorAccount) return;
+    setRefreshSchemasStatus('refreshing');
+    setRefreshSchemasResult(undefined);
+    setRefreshSchemasError(undefined);
+    openRefreshSchemasModal();
+    try {
+      trackRefreshConnectionSchemas(connectorAccount.id, group.dataFolders.length);
+      const result = await scratchApiClient.dataFolders.refreshConnectionSchemas(connectorAccount.id);
+      // Revalidate any cached schemas so open schema / advanced-settings modals reflect the new shape.
+      await Promise.all(
+        group.dataFolders.flatMap((folder) => [
+          globalMutate(SWR_KEYS.dataFolders.schema(folder.id, 'view')),
+          globalMutate(SWR_KEYS.dataFolders.schema(folder.id, 'refresh')),
+        ]),
+      );
+      setRefreshSchemasResult(result);
+      setRefreshSchemasStatus('done');
+    } catch (error) {
+      setRefreshSchemasError(error instanceof Error ? error.message : 'An unexpected error occurred.');
+      setRefreshSchemasStatus('error');
+    }
+  }, [connectorAccount, group.dataFolders, openRefreshSchemasModal, globalMutate]);
 
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault();
@@ -567,6 +610,7 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
               : [{ label: 'Pull All Tables', icon: CloudDownloadIcon, onClick: handlePullAllFull }]),
             { label: 'Pull All Assets', icon: ImageIcon, onClick: openPullAssetsModal },
             { label: 'Pull Schedule', icon: ClockIcon, onClick: openConnectionPullSchedule },
+            { label: 'Refresh All Schemas', icon: RefreshCwIcon, onClick: handleRefreshAllSchemas },
           ]}
           extraItemsAfter={[
             {
@@ -604,6 +648,18 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
         onClose={closePullAssetsModal}
         onConfirm={handlePullAllAssetsConfirm}
         title={`Pull All Assets — ${group.name}`}
+      />
+
+      {/* Refresh All Schemas — blocking modal while every table's schema re-derives */}
+      <RefreshConnectionSchemasModal
+        opened={refreshSchemasModalOpen}
+        onClose={closeRefreshSchemasModal}
+        connectionName={group.name}
+        connectorName={group.service ? getServiceName(connectorsMetadata, group.service) : undefined}
+        totalFolders={group.dataFolders.length}
+        status={refreshSchemasStatus}
+        result={refreshSchemasResult}
+        errorMessage={refreshSchemasError}
       />
 
       {/* Connection-level Pull Schedule Modal (DEV-10396) */}

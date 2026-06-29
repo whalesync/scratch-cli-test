@@ -16,6 +16,7 @@ import {
 import type {
   DataFolder,
   DataFolderId,
+  RefreshConnectionSchemasResponse,
   ValidatedCreateDataFolderDto,
   ValidatedUpdateDataFolderDto,
   WorkbookId,
@@ -31,7 +32,7 @@ import { userToActor } from '../users/types';
 import { SchemaField } from '../utils/schema-helpers';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
 import { DataFolderService } from './data-folder.service';
-import { CreateDataFolderDto, UpdateDataFolderDto } from './dto/data-folder.dto';
+import { CreateDataFolderDto, RefreshConnectionSchemasDto, UpdateDataFolderDto } from './dto/data-folder.dto';
 import { WorkbookService } from './workbook.service';
 
 @Controller('data-folder')
@@ -54,6 +55,15 @@ export class DataFolderController {
     // Service-level assertion runs again, but we want to fail fast at the controller boundary.
     await this.workbookService.assertWritableWorkbook(actor, dto.workbookId);
     return await this.dataFolderService.createFolder(dto, actor, createRunContext('web'));
+  }
+
+  // Static route declared before the `:id`-prefixed routes so it is never shadowed by a param match.
+  @Post('refresh-schemas')
+  async refreshConnectionSchemas(
+    @Body() dto: RefreshConnectionSchemasDto,
+    @Req() req: RequestWithUser,
+  ): Promise<RefreshConnectionSchemasResponse> {
+    return await this.dataFolderService.refreshSchemasForConnection(dto.connectorAccountId, userToActor(req.user));
   }
 
   @Get(':id')

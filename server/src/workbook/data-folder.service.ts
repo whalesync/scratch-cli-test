@@ -1,12 +1,15 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConnectorAccount, Prisma, WorkbookManager } from '@prisma/client';
 import {
+  AnyId,
   createDataFolderId,
   DataFolderGroup,
   DataFolderId,
   DataFolderOptions,
   formatRecordJson,
   IncrementalPullSupport,
+  RefreshConnectionSchemasResponse,
+  RefreshConnectionSchemasResult,
   SCRATCH_GROUP_NAME,
   Service,
   TableView,
@@ -1226,6 +1229,80 @@ export class DataFolderService {
       });
       return null;
     }
+  }
+
+  /**
+   * Re-derives the schema (and default view) for every data folder belonging to a single
+   * connection (connector account), in one pass. Reuses the per-folder {@link fetchSchemaSpec},
+   * which fetches the spec from the connector and writes `schema.json` + `views/default.json`
+   * back to the connection's git repo.
+   *
+   * Folders are processed sequentially to stay gentle on the connector's metadata API. A folder
+   * whose refresh fails (connector error, missing path, no linked table, etc.) is recorded as
+   * `failed` and does NOT stop the others — the caller gets a per-folder outcome list plus
+   * aggregate counts rather than an all-or-nothing failure.
+   */
+  async refreshSchemasForConnection(
+    connectorAccountId: string,
+    actor: Actor,
+  ): Promise<RefreshConnectionSchemasResponse> {
+    const connectorAccount = await this.connectorAccountService.findOneById(connectorAccountId, actor);
+    // Fail fast at the boundary; each per-folder fetchSchemaSpec also re-checks folder access.
+    const workbook = await this.workbookService.assertWritableWorkbook(
+      actor,
+      connectorAccount.workbookId as WorkbookId,
+    );
+
+    const foldersInConnection = await this.db.client.dataFolder.findMany({
+      where: { connectorAccountId },
+      orderBy: { path: 'asc' },
+    });
+
+    const perFolderResults: RefreshConnectionSchemasResult[] = [];
+    for (const folder of foldersInConnection) {
+      const dataFolderId = folder.id as DataFolderId;
+      try {
+        const tableSpec = await this.fetchSchemaSpec(dataFolderId, actor);
+        if (tableSpec) {
+          perFolderResults.push({ dataFolderId, folderName: folder.name, status: 'refreshed' });
+        } else {
+          perFolderResults.push({
+            dataFolderId,
+            folderName: folder.name,
+            status: 'failed',
+            error: 'No schema available for this data folder',
+          });
+        }
+      } catch (error) {
+        perFolderResults.push({
+          dataFolderId,
+          folderName: folder.name,
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    const refreshedCount = perFolderResults.filter((result) => result.status === 'refreshed').length;
+    const failedCount = perFolderResults.length - refreshedCount;
+
+    this.posthogService.trackRefreshConnectionSchemas(actor, connectorAccount, { refreshedCount, failedCount });
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Refreshed schemas for connection ${connectorAccount.displayName} (${refreshedCount} of ${perFolderResults.length} folders)`,
+      entityId: connectorAccount.id as AnyId,
+      organizationId: workbook.organizationId,
+      context: {
+        workbookId: connectorAccount.workbookId,
+        connectorAccountId: connectorAccount.id,
+        connectorService: connectorAccount.service,
+        refreshedCount,
+        failedCount,
+      },
+    });
+
+    return { refreshedCount, failedCount, results: perFolderResults };
   }
 
   /**

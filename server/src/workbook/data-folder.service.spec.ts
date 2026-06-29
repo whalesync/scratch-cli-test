@@ -551,3 +551,132 @@ describe('DataFolderService.deleteFolder', () => {
     expect(mockDb.client.syncMatchKeys.deleteMany).toHaveBeenCalledWith({ where: { dataFolderId: FOLDER_ID } });
   });
 });
+
+/* eslint-disable @typescript-eslint/unbound-method */
+describe('DataFolderService.refreshSchemasForConnection', () => {
+  const WORKBOOK_ID = 'wkb_test' as WorkbookId;
+  const ORG_ID = 'org_test';
+  const CONNECTOR_ACCOUNT_ID = 'coa_test';
+  const ACTOR: Actor = { userId: 'usr_test', organizationId: ORG_ID, authSource: 'user' };
+
+  const FOLDER_A = 'df_aaaaaaaaaaaaaaaaaaaaaaaaaa' as DataFolderId;
+  const FOLDER_B = 'df_bbbbbbbbbbbbbbbbbbbbbbbbbb' as DataFolderId;
+  const FOLDER_C = 'df_cccccccccccccccccccccccccc' as DataFolderId;
+
+  let service: DataFolderService;
+  let mockDb: jest.Mocked<DbService>;
+  let mockConnectorAccountService: jest.Mocked<ConnectorAccountService>;
+  let mockWorkbookService: jest.Mocked<WorkbookService>;
+  let mockPosthogService: jest.Mocked<PostHogService>;
+  let mockAuditLogService: jest.Mocked<AuditLogService>;
+
+  const okSpec = {} as BaseJsonTableSpec;
+
+  beforeEach(() => {
+    mockDb = {
+      client: {
+        dataFolder: {
+          findMany: jest.fn().mockResolvedValue([
+            { id: FOLDER_A, name: 'Companies' },
+            { id: FOLDER_B, name: 'Contacts' },
+            { id: FOLDER_C, name: 'Deals' },
+          ]),
+        },
+      },
+    } as unknown as jest.Mocked<DbService>;
+
+    mockConnectorAccountService = {
+      findOneById: jest.fn().mockResolvedValue({
+        id: CONNECTOR_ACCOUNT_ID,
+        workbookId: WORKBOOK_ID,
+        displayName: 'My Airtable',
+        service: 'Airtable',
+      }),
+    } as unknown as jest.Mocked<ConnectorAccountService>;
+
+    mockWorkbookService = {
+      assertWritableWorkbook: jest.fn().mockResolvedValue({ id: WORKBOOK_ID, organizationId: ORG_ID }),
+    } as unknown as jest.Mocked<WorkbookService>;
+
+    mockPosthogService = {
+      trackRefreshConnectionSchemas: jest.fn(),
+    } as unknown as jest.Mocked<PostHogService>;
+
+    mockAuditLogService = {
+      logEvent: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<AuditLogService>;
+
+    const stub = {} as unknown;
+    service = new DataFolderService(
+      mockWorkbookService,
+      mockDb,
+      mockConnectorAccountService,
+      stub as ConnectorsService,
+      stub as ScratchConfigService,
+      stub as BullEnqueuerService,
+      mockAuditLogService,
+      mockPosthogService,
+      stub as ScratchGitService,
+      stub as FilesService,
+      stub as WorkbookEventService,
+      stub as FileIndexService,
+      stub as FileReferenceService,
+    );
+  });
+
+  it('refreshes every folder in the connection and reports all successes', async () => {
+    const fetchSchemaSpecSpy = jest.spyOn(service, 'fetchSchemaSpec').mockResolvedValue(okSpec);
+
+    const result = await service.refreshSchemasForConnection(CONNECTOR_ACCOUNT_ID, ACTOR);
+
+    expect(mockDb.client.dataFolder.findMany).toHaveBeenCalledWith({
+      where: { connectorAccountId: CONNECTOR_ACCOUNT_ID },
+      orderBy: { path: 'asc' },
+    });
+    expect(fetchSchemaSpecSpy).toHaveBeenCalledTimes(3);
+    expect(result.refreshedCount).toBe(3);
+    expect(result.failedCount).toBe(0);
+    expect(result.results.map((r) => r.status)).toEqual(['refreshed', 'refreshed', 'refreshed']);
+    expect(mockPosthogService.trackRefreshConnectionSchemas).toHaveBeenCalled();
+    expect(mockAuditLogService.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'update', organizationId: ORG_ID, entityId: CONNECTOR_ACCOUNT_ID }),
+    );
+  });
+
+  it('records per-folder failures (null spec and thrown error) without aborting the batch', async () => {
+    jest
+      .spyOn(service, 'fetchSchemaSpec')
+      .mockResolvedValueOnce(okSpec) // Companies → refreshed
+      .mockResolvedValueOnce(null) // Contacts → no schema available
+      .mockRejectedValueOnce(new Error('connector exploded')); // Deals → failed
+
+    const result = await service.refreshSchemasForConnection(CONNECTOR_ACCOUNT_ID, ACTOR);
+
+    expect(result.refreshedCount).toBe(1);
+    expect(result.failedCount).toBe(2);
+    expect(result.results).toEqual([
+      { dataFolderId: FOLDER_A, folderName: 'Companies', status: 'refreshed' },
+      {
+        dataFolderId: FOLDER_B,
+        folderName: 'Contacts',
+        status: 'failed',
+        error: 'No schema available for this data folder',
+      },
+      { dataFolderId: FOLDER_C, folderName: 'Deals', status: 'failed', error: 'connector exploded' },
+    ]);
+    expect(mockPosthogService.trackRefreshConnectionSchemas).toHaveBeenCalledWith(
+      ACTOR,
+      expect.objectContaining({ id: CONNECTOR_ACCOUNT_ID }),
+      { refreshedCount: 1, failedCount: 2 },
+    );
+  });
+
+  it('asserts write access to the connection workbook before refreshing', async () => {
+    jest.spyOn(service, 'fetchSchemaSpec').mockResolvedValue(okSpec);
+
+    await service.refreshSchemasForConnection(CONNECTOR_ACCOUNT_ID, ACTOR);
+
+    expect(mockConnectorAccountService.findOneById).toHaveBeenCalledWith(CONNECTOR_ACCOUNT_ID, ACTOR);
+    expect(mockWorkbookService.assertWritableWorkbook).toHaveBeenCalledWith(ACTOR, WORKBOOK_ID);
+  });
+});

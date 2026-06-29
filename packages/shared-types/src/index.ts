@@ -39,6 +39,7 @@ export * from './dto/cron/cron.dto';
 export * from './dto/data-folder/create-data-folder.dto';
 export * from './dto/data-folder/data-folder-publish-status.dto';
 export * from './dto/data-folder/move-data-folder.dto';
+export * from './dto/data-folder/refresh-connection-schemas.dto';
 export * from './dto/data-folder/rename-data-folder.dto';
 export * from './dto/data-folder/update-data-folder.dto';
 export * from './dto/desktop-release/desktop-release.dto';

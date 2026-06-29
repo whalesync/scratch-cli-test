@@ -1,6 +1,7 @@
 import type { DataFolder, DataFolderGroup } from '../../db';
 import type { CreateDataFolderDto } from '../../dto/data-folder/create-data-folder.dto';
 import type { MoveDataFolderDto } from '../../dto/data-folder/move-data-folder.dto';
+import type { RefreshConnectionSchemasResponse } from '../../dto/data-folder/refresh-connection-schemas.dto';
 import type { RenameDataFolderDto } from '../../dto/data-folder/rename-data-folder.dto';
 import type { UpdateDataFolderDto } from '../../dto/data-folder/update-data-folder.dto';
 import type { DirtyFile } from '../../file-types';
@@ -18,7 +19,8 @@ import type { Http } from '../http';
  *    RETURN DIVERGES: web returns the updated `DataFolder`; desktop ignored the body and typed it as
  *    `void`. Canonical here returns `DataFolder` (the richer shape); desktop callers may discard it.
  *  - `list`, `getDirtyFiles` — DESKTOP-ONLY (web has no equivalent in its module).
- *  - `findOne`, `rename`, `move`, `pullFiles`, `refreshSchema`, `deleteAllRecords` — WEB-ONLY.
+ *  - `findOne`, `rename`, `move`, `pullFiles`, `refreshSchema`, `refreshConnectionSchemas`,
+ *    `deleteAllRecords` — WEB-ONLY.
  *
  * Note on `create`'s DTO: the web module passes the full `CreateDataFolderDto`; the desktop module
  * declared an inline body (`tableId`/`connectorAccountId` required, plus `name`, `workbookId`,
@@ -107,6 +109,20 @@ export function createDataFoldersApi(http: Http) {
       const res = await http.post<Record<string, unknown>>(`/data-folder/${dataFolderId}/refresh-schema`, undefined, {
         fallbackMessage: 'Failed to refresh schema for data folder: ' + dataFolderId,
       });
+      return res.data;
+    },
+
+    /**
+     * POST `/data-folder/refresh-schemas` — re-derive schemas for every folder in a connection. (web-only)
+     * Loops the per-folder refresh over all data folders belonging to `connectorAccountId` and returns
+     * aggregate counts plus a per-folder outcome list.
+     */
+    refreshConnectionSchemas: async (connectorAccountId: string): Promise<RefreshConnectionSchemasResponse> => {
+      const res = await http.post<RefreshConnectionSchemasResponse>(
+        '/data-folder/refresh-schemas',
+        { connectorAccountId },
+        { fallbackMessage: 'Failed to refresh schemas for connection: ' + connectorAccountId },
+      );
       return res.data;
     },
 

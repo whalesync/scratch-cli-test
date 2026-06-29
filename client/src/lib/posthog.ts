@@ -12,6 +12,7 @@ export enum PostHogEvents {
   PUBLISH_ALL = 'publish_all',
   DISCARD_CHANGES = 'discard_changes',
   PULL_FILES_FROM_SOURCE = 'pull_files_from_source',
+  REFRESH_CONNECTION_SCHEMAS = 'refresh_connection_schemas',
   WHALESYNC_IMPORT = 'whalesync_import',
   DELETE_WORKBOOK = 'delete_workbook',
   CLICK_OPEN_IN_DESKTOP = 'click_open_in_desktop',
@@ -130,6 +131,10 @@ export function trackDiscardChanges(workbookId: string): void {
 
 export function trackPullFilesFromSource(workbookId: string, dataFolderId: string): void {
   captureEvent(PostHogEvents.PULL_FILES_FROM_SOURCE, { workbookId, dataFolderId });
+}
+
+export function trackRefreshConnectionSchemas(connectorAccountId: string, folderCount: number): void {
+  captureEvent(PostHogEvents.REFRESH_CONNECTION_SCHEMAS, { connectorAccountId, folderCount });
 }
 
 export function trackWhalesyncImport(workbookId: string, syncCount: number): void {
