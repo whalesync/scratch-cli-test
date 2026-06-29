@@ -102,6 +102,17 @@ describe('buildNotionDefaultView', () => {
       expect(findCol(view, 'properties.Email.email')?.type).toBe('string');
     });
 
+    it('types url columns from the connector data type, not a schema format', () => {
+      // Notion url properties are free-text, so notion-json-schema.ts emits NO
+      // format:'uri' on the inner value (otherwise enforce_schema rejects verbatim
+      // values like "lu.ma/adithya"). The 'url' column type must therefore derive
+      // from x-scratch-connector-data-type. This builds the real generated schema
+      // (which has no format) and asserts the column still types as 'url' — guarding
+      // against re-coupling url display-typing to a format assertion.
+      const urlOnly = buildView({ Website: { id: 'p_url', type: 'url' } });
+      expect(findCol(urlOnly, 'properties.Website.url')?.type).toBe('url');
+    });
+
     it('maps object/array inner values to object', () => {
       expect(findCol(view, 'properties.Priority.select')?.type).toBe('object');
       expect(findCol(view, 'properties.Tags.multi_select')?.type).toBe('object');

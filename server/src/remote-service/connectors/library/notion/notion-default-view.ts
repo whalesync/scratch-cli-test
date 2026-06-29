@@ -216,7 +216,7 @@ function buildPropertyCol(propName: string, propSchema: TSchema | undefined): Ta
     kind: 'col',
     path: `properties.${propName}.${connectorDataType}`,
     name: propName,
-    type: RICH_TEXT_TYPES.has(connectorDataType) ? 'richtext' : resolveInnerValueTablePropertyType(innerValueSchema),
+    type: resolveNotionPropertyColumnType(connectorDataType, innerValueSchema),
     readonly: isReadonly || undefined,
   };
 
@@ -254,6 +254,24 @@ function buildPropertyCol(propName: string, propSchema: TSchema | undefined): Ta
   }
 
   return col;
+}
+
+/**
+ * Resolve the renderer column type for a Notion property, keyed first off the
+ * connector data type and only then off the inner value schema. `url` is mapped
+ * here — NOT via a `format:'uri'` on the inner value — because Notion url/email
+ * properties are free-text and `notion-json-schema.ts` deliberately omits the
+ * format so the CLI's enforce_schema validator doesn't reject the verbatim value.
+ * Rich-text types flatten to a richtext column; everything else (including email,
+ * which has no dedicated column type) falls back to the inner-value mapping.
+ */
+function resolveNotionPropertyColumnType(
+  connectorDataType: string,
+  innerValueSchema: TSchema | undefined,
+): TablePropertyType | undefined {
+  if (RICH_TEXT_TYPES.has(connectorDataType)) return 'richtext';
+  if (connectorDataType === 'url') return 'url';
+  return resolveInnerValueTablePropertyType(innerValueSchema);
 }
 
 /**

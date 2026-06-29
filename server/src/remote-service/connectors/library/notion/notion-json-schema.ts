@@ -379,12 +379,20 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
       innerValueSchema = Type.Boolean();
       break;
 
+    // Notion does NOT validate the content of `url`/`email` properties — they are
+    // free-text fields. The API returns verbatim whatever the user typed: schemeless
+    // domains ("lu.ma/adithya"), phone numbers, Twitter handles ("@_adenab"), notes
+    // ("Yohei tweet"), even multiple comma-separated emails. Asserting format:'uri'/
+    // 'email' would make the CLI's enforce_schema validator (should_validate_formats(true))
+    // reject that legitimate data, so we model these as plain nullable strings (like
+    // phone_number below). URL column display-typing is preserved via the
+    // x-scratch-connector-data-type='url' signal in notion-default-view.ts.
     case 'url':
-      innerValueSchema = Type.Union([Type.String({ format: 'uri' }), Type.Null()]);
+      innerValueSchema = Type.Union([Type.String(), Type.Null()]);
       break;
 
     case 'email':
-      innerValueSchema = Type.Union([Type.String({ format: 'email' }), Type.Null()]);
+      innerValueSchema = Type.Union([Type.String(), Type.Null()]);
       break;
 
     case 'phone_number':

@@ -964,7 +964,6 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               "url": {
                 "anyOf": [
                   {
-                    "format": "uri",
                     "type": "string",
                   },
                   {
@@ -1187,7 +1186,6 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               "email": {
                 "anyOf": [
                   {
-                    "format": "email",
                     "type": "string",
                   },
                   {

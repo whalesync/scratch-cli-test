@@ -252,6 +252,31 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
   });
 });
 
+describe('url/email properties are free-text — no format assertion', () => {
+  // Notion does NOT validate the content of url/email properties. The API returns
+  // verbatim whatever the user typed: schemeless domains ("lu.ma/adithya"), phone
+  // numbers ("845-240-9716"), Twitter handles ("@_adenab"), notes ("Yohei tweet"),
+  // even multiple comma-separated emails ("a@x.com, b@y.com"). The generated schema
+  // must therefore NOT carry format:'uri'/'email' — the CLI's enforce_schema validator
+  // runs with should_validate_formats(true) and would reject that legitimate data.
+  // Regression for the 109 false-positive errors seen in the Whalesync Internal workspace.
+  it('models the url inner value as a nullable string with no uri format', () => {
+    const inner = props(prop('url')).url;
+    expect(collectStringFormats(inner)).toEqual([]);
+    const variants = inner.anyOf as SchemaNode[];
+    expect(variants.some((v) => v.type === 'string' && v.format === undefined)).toBe(true);
+    expect(variants.some((v) => v.type === 'null')).toBe(true);
+  });
+
+  it('models the email inner value as a nullable string with no email format', () => {
+    const inner = props(prop('email')).email;
+    expect(collectStringFormats(inner)).toEqual([]);
+    const variants = inner.anyOf as SchemaNode[];
+    expect(variants.some((v) => v.type === 'string' && v.format === undefined)).toBe(true);
+    expect(variants.some((v) => v.type === 'null')).toBe(true);
+  });
+});
+
 // ── Page-level envelope (unchanged behavior, kept as a guardrail) ──
 
 function buildDataSource(): DataSourceObjectResponse {
