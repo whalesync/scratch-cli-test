@@ -21,6 +21,21 @@ import {
 const COMMON_READONLY_SYSTEM_FIELDS: readonly string[] = ['id', 'add_time', 'update_time'];
 
 /**
+ * Pipedrive's "empty date" sentinels. Instead of `null`, Pipedrive can return a
+ * placeholder date string for an unset date field (most visibly `birthday`): the
+ * raw zero-date `"0000-00-00"`, and the value `"-0001-11-30"` — that same zero-date
+ * normalised into the proleptic Gregorian calendar (year 0000 → -0001, and the day
+ * before the epoch is Nov 30). Both are legitimate verbatim API output, not corrupt
+ * data, but neither satisfies `format: 'date'`, so a record carrying one fails the
+ * CLI's enforce_schema validator (`should_validate_formats(true)`).
+ *
+ * Per "preserve external data fidelity", we admit these verbatim sentinels rather
+ * than reshaping the stored value — the `'date'` union accepts a well-formed date,
+ * either empty sentinel, or `null`. (DEV-10453, Pipedrive zero-date birthdays.)
+ */
+const PIPEDRIVE_EMPTY_DATE_SENTINELS: readonly string[] = ['0000-00-00', '-0001-11-30'];
+
+/**
  * Decide whether a Pipedrive `field_type: 'date'` field actually holds a full
  * RFC 3339 date-time rather than a `YYYY-MM-DD` date-only value.
  *
@@ -209,8 +224,16 @@ export function pipedriveFieldToJsonSchema(
       // Timestamp-valued system fields (`add_time`, `update_time`, `marked_as_done_time`, …)
       // are typed `'date'` by Pipedrive but return RFC 3339 date-times, so they need
       // `format: 'date-time'`; true date-only fields keep `format: 'date'`.
-      const dateFormat = pipedriveDateFieldHoldsDateTime(field) ? 'date-time' : 'date';
-      return Type.Union([Type.String({ format: dateFormat }), Type.Null()]);
+      if (pipedriveDateFieldHoldsDateTime(field)) {
+        return Type.Union([Type.String({ format: 'date-time' }), Type.Null()]);
+      }
+      // Date-only fields may instead carry an empty-date sentinel (`"0000-00-00"` /
+      // `"-0001-11-30"`) in place of `null`; admit those verbatim alongside a real date.
+      return Type.Union([
+        Type.String({ format: 'date' }),
+        ...PIPEDRIVE_EMPTY_DATE_SENTINELS.map((sentinel) => Type.Literal(sentinel)),
+        Type.Null(),
+      ]);
     }
 
     case 'time':

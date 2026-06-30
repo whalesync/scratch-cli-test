@@ -18,8 +18,10 @@ a connector-schema fix in the repo.
 These are non-negotiable. The user is trusting this skill not to disturb their data.
 
 1. **Never modify, create, rename, or delete any file inside the workspace folder.** Treat it as
-   immutable. Open every SQLite index **read-only**: `sqlite3 -readonly "<db>" "<SELECT …>"`. Only
-   ever run `SELECT`/`.tables`/`.schema` — never `INSERT`/`UPDATE`/`DELETE`/`DROP`/`PRAGMA writes`.
+   immutable. Open every SQLite index in **immutable** mode (see
+   [Opening the SQLite indices](#opening-the-sqlite-indices-read-this-first) — plain `-readonly`
+   does **not** work on these workspace DBs). Only ever run `SELECT`/`.tables`/`.schema` — never
+   `INSERT`/`UPDATE`/`DELETE`/`DROP`/`PRAGMA writes`.
 2. **Never push data back.** Do not run the desktop app, `scratchmd` write/sync verbs, or anything
    that pulls, syncs, publishes, accepts, rejects, or otherwise writes to Scratch or a connector's
    external service. No connector API **writes** either — API docs are for **reading**, and you may
@@ -38,6 +40,38 @@ workspace directory, e.g. `~/Documents/ScratchWorkspaces…/<name>` — note the
 spaces, so always quote it). Confirm it exists and contains both `.repos/` and `.scratch/`. If
 either is missing, it isn't a desktop workspace root — ask for the correct folder.
 
+## Opening the SQLite indices (read this first)
+
+**`sqlite3 -readonly "<db>" …` does NOT work on these workspace DBs** — it fails with
+`Error: unable to open database file`, even after copying the `.db` to a writable temp dir. The
+desktop app leaves the index in a state where SQLite still wants to touch lock/journal/WAL sidecars
+or a temp dir on open, and `-readonly` doesn't fully suppress that.
+
+**Use the `immutable=1` URI instead** — it opens the file with zero side effects (no lock, no journal,
+no sidecar creation), which is exactly what we want for a strictly read-only audit:
+
+```bash
+sqlite3 "file:<absolute-db-path>?immutable=1" ".tables"
+sqlite3 "file:<absolute-db-path>?immutable=1" "SELECT … ;"
+```
+
+Practical tips:
+
+- **Quote the whole `file:…` argument** — workspace paths contain spaces. The URI needs an absolute
+  path; relative paths plus a `cd` into a space-containing dir are fragile (the shell `cwd` may reset
+  between calls). Prefer a variable: `WS="/abs/path/with spaces"; sqlite3 "file:$WS/.repos/X.db?immutable=1" …`.
+- `immutable=1` tells SQLite the file will not change while open. That holds for an audit (you never
+  write), and it's safe even if the desktop app is running — you get a consistent read of the file as
+  it is on disk.
+- Still only ever run `SELECT` / `.tables` / `.schema`. `immutable=1` is about *how* you open, not a
+  license to mutate.
+- A small helper keeps the rest of the steps clean:
+  `q() { sqlite3 "file:$WS/.repos/$1.db?immutable=1" "$2"; }` then `q Notion ".tables"`.
+
+Every query example in the steps below assumes this `q()` helper (or the inline `file:…?immutable=1`
+URI). If you ever see `Error: unable to open database file`, you've reverted to plain `-readonly` —
+switch back to the URI form.
+
 ## Step 1 — locate the stored validation results
 
 Validation results are stored per connection, computed by the same validator the desktop app shows.
@@ -48,8 +82,8 @@ Validation results are stored per connection, computed by the same validator the
 - Find the results table — **its name varies by desktop build**: `validation_results__v4`,
   `validation_results_v1`, … This vintage matters (an old build can be the whole story; see Step 4).
   ```
-  sqlite3 -readonly "<db>" ".tables"
-  sqlite3 -readonly "<db>" ".schema <that table>"     # confirm columns
+  sqlite3 "file:<db>?immutable=1" ".tables"
+  sqlite3 "file:<db>?immutable=1" ".schema <that table>"     # confirm columns
   ```
   Columns are typically: `folder_path, filename, field_path, validator_kind, level, message,
   description, fixable`. Confirm the distinct `validator_kind` and `level` values present.
@@ -59,12 +93,13 @@ Validation results are stored per connection, computed by the same validator the
 A clean record produces **no** rows, so the table is only the failures. Use aggregates:
 
 ```
--- totals by level
-sqlite3 -readonly "<db>" "SELECT level, COUNT(*) FROM <table> WHERE validator_kind='enforce_schema' GROUP BY level;"
--- top failing shapes
-sqlite3 -readonly "<db>" "SELECT field_path, level, substr(message,1,160) m, COUNT(*) c FROM <table> WHERE validator_kind='enforce_schema' GROUP BY field_path, m, level ORDER BY c DESC LIMIT 50;"
--- distribution across tables
-sqlite3 -readonly "<db>" "SELECT folder_path, COUNT(*) FROM <table> WHERE validator_kind='enforce_schema' GROUP BY folder_path ORDER BY 2 DESC;"
+# uses the q() helper from "Opening the SQLite indices": q() { sqlite3 "file:$WS/.repos/$1.db?immutable=1" "$2"; }
+# totals by level
+q <Connection> "SELECT level, COUNT(*) FROM <table> WHERE validator_kind='enforce_schema' GROUP BY level;"
+# top failing shapes
+q <Connection> "SELECT field_path, level, substr(message,1,160) m, COUNT(*) c FROM <table> WHERE validator_kind='enforce_schema' GROUP BY field_path, m, level ORDER BY c DESC LIMIT 50;"
+# distribution across tables
+q <Connection> "SELECT folder_path, COUNT(*) FROM <table> WHERE validator_kind='enforce_schema' GROUP BY folder_path ORDER BY 2 DESC;"
 ```
 
 Report real counts. `level=error` = JSON-schema / required / format failures; `level=warning` =
@@ -76,8 +111,9 @@ per connection (and one to read the connector code), each told the hard rules ab
 
 For each of the top ~8–12 distinct shapes (by count):
 
-1. Find a representative failing record:
-   `sqlite3 -readonly "<db>" "SELECT folder_path, filename FROM <table> WHERE validator_kind='enforce_schema' AND field_path='<fp>' LIMIT 1;"`
+1. Find a representative failing record (using the `immutable=1` URI / `q()` helper from
+   [Opening the SQLite indices](#opening-the-sqlite-indices-read-this-first)):
+   `q <Connection> "SELECT folder_path, filename FROM <table> WHERE validator_kind='enforce_schema' AND field_path='<fp>' LIMIT 1;"`
 2. **Read the verbatim value** at that `field_path`. Record files live at
    `<workspace>/<folder_path>/<filename>` (discover the exact layout — it can vary). Quote the real
    value: is it `null`, `""`, an object, an array, a number, a string like `"NA"`? This is the

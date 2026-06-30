@@ -67,6 +67,51 @@ describe('pipedriveFieldToJsonSchema', () => {
     expect(stringType?.format).toBe('date');
   });
 
+  // Pipedrive zero-date birthdays: an unset date-only field can come back as the empty-date
+  // sentinel `"0000-00-00"` (or its proleptic-Gregorian normalization `"-0001-11-30"`) instead
+  // of `null`. Both are legitimate verbatim API output but neither satisfies `format: 'date'`,
+  // so the date-only union must admit them as `const` members or verbatim records false-fail.
+  it.each(['0000-00-00', '-0001-11-30'])('admits the empty-date sentinel %s on a date-only field', (sentinel) => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'date', field_code: 'birthday' }));
+    expect(schema).toBeDefined();
+    // Structural: a `const`-valued member for the sentinel sits alongside the format:'date' member.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const sentinelMember = schema!.anyOf?.find((s: { const?: string }) => s.const === sentinel);
+    expect(sentinelMember).toBeDefined();
+    // Behavior: under a STRICT date-format validator the sentinel still validates — proving the
+    // sentinel member (not the permissive format) is what carries it. The strict validator parses
+    // the value as a real calendar date (rejecting both `0000-00-00`'s out-of-range month/day and
+    // `-0001-11-30`'s negative year), mirroring the CLI validator's `format: 'date'` semantics.
+    // Save/restore the registry so the permissive validator the rest of this file relies on is kept.
+    const isStrictIsoDate = (value: unknown): boolean => {
+      if (typeof value !== 'string') return false;
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+      if (!match) return false;
+      const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+      const parsed = new Date(Date.UTC(year, month - 1, day));
+      return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+    };
+    const previousDateValidator = FormatRegistry.Get('date');
+    try {
+      FormatRegistry.Set('date', isStrictIsoDate);
+      expect(isStrictIsoDate(sentinel)).toBe(false); // sentinel is NOT a strict ISO calendar date
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect(Value.Check(schema!, sentinel)).toBe(true); // …yet the verbatim record validates
+      // A real date and null still validate; a genuinely malformed string still fails — we only
+      // widened the union by the two known sentinels.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect(Value.Check(schema!, '1990-05-14')).toBe(true);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect(Value.Check(schema!, null)).toBe(true);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect(Value.Check(schema!, 'not-a-date')).toBe(false);
+    } finally {
+      if (previousDateValidator) {
+        FormatRegistry.Set('date', previousDateValidator);
+      }
+    }
+  });
+
   // DEV-10453 finding 3: Pipedrive types its timestamp system fields as `field_type: 'date'`
   // but returns full RFC 3339 date-times; mapping them to `format: 'date'` floods verbatim
   // records with false-positive format errors. `_time`-suffixed date fields get `date-time`.
