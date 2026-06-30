@@ -28,39 +28,14 @@ import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFile
 import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../components/ScratchJsonCodeMirror';
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
+import {
+  getRecordName,
+  rowHasUnreviewedChanges,
+  toDisplayString,
+  type DiffRecordData,
+  type DiffRow,
+} from './record-diff-helpers';
 import { RecordFieldsGrid, type FieldValueViewMode, type RecordFieldRow } from './RecordFieldsGrid';
-
-interface DiffRecordColumn {
-  id: string;
-  displayName: string;
-  attributes: { readOnly: boolean; writeOnce?: boolean; required: boolean; nested: boolean };
-}
-
-interface DiffRecordData {
-  row: {
-    __rowStatus:
-      | 'added'
-      | 'addedUnpublished'
-      | 'modified'
-      | 'unpublished'
-      | 'deleted'
-      | 'deletedUnpublished'
-      | 'unchanged'
-      | 'invalidJson';
-    __changedFields: string[];
-    __fromFields: Record<string, unknown>;
-    __unpublishedFields: string[];
-    __masterFields: Record<string, unknown>;
-    __filename: string;
-    __parseError?: string;
-    __raw: Record<string, unknown>;
-  };
-  columns: DiffRecordColumn[];
-  workingData: Record<string, unknown> | null;
-  dirtyData: Record<string, unknown> | null;
-  masterData: Record<string, unknown> | null;
-  displayData: Record<string, unknown> | null;
-}
 
 interface RecordDetailViewProps {
   rows: Array<{ __filename: string; __raw: Record<string, unknown>; [key: string]: unknown }>;
@@ -108,53 +83,6 @@ interface RecordDetailViewProps {
   visibleColumnPaths?: Set<string>;
 }
 
-function rowHasUnreviewedChanges(
-  row:
-    | {
-        __rowStatus?:
-          | 'added'
-          | 'addedUnpublished'
-          | 'modified'
-          | 'unpublished'
-          | 'deleted'
-          | 'deletedUnpublished'
-          | 'unchanged'
-          | 'invalidJson';
-        __changedFields?: string[];
-        [key: string]: unknown;
-      }
-    | null
-    | undefined,
-): boolean {
-  if (!row) return false;
-  return (
-    row.__rowStatus === 'added' ||
-    row.__rowStatus === 'deleted' ||
-    row.__rowStatus === 'invalidJson' ||
-    (row.__changedFields?.length ?? 0) > 0
-  );
-}
-
-function getRecordName(row: Record<string, unknown>, titleColumnId: string | null): string {
-  if (titleColumnId) {
-    const raw = (row as { __raw?: Record<string, unknown> }).__raw;
-    const val = raw ? getByPath(raw, titleColumnId) : undefined;
-    if (typeof val === 'string' && val !== '') return val;
-    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
-  }
-  // Fallback to filename
-  const filename = row.__filename;
-  if (typeof filename === 'string') return filename.replace(/\.json$/, '');
-  return '';
-}
-
-function toDisplayString(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value);
-}
-
 function diffValuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a == null || b == null) return a == null && b == null;
@@ -168,8 +96,6 @@ function diffValuesEqual(a: unknown, b: unknown): boolean {
   }
   return false;
 }
-
-type DiffRow = DiffRecordData['row'];
 
 function deriveRowStatusAfterEdit(row: DiffRow): DiffRow['__rowStatus'] {
   if (

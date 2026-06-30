@@ -38,6 +38,9 @@ export enum PostHogEvents {
   OPEN_SETTINGS = 'open_settings',
   BILLING_START_CHECKOUT = 'billing_start_checkout',
   BILLING_MANAGE_SUBSCRIPTION = 'billing_manage_subscription',
+  OPEN_RECORD_CHANGES_DRAWER = 'open_record_changes_drawer',
+  APPROVE_RECORD_CHANGE = 'approve_record_change',
+  REJECT_RECORD_CHANGE = 'reject_record_change',
 }
 
 export type CloudSyncSurface = 'open' | 'create';
@@ -286,6 +289,30 @@ export async function trackBillingStartCheckout(planType: string): Promise<void>
 /** The user opened the Stripe customer portal to manage their subscription — leaves the app. */
 export async function trackBillingManageSubscription(): Promise<void> {
   await captureEvent(PostHogEvents.BILLING_MANAGE_SUBSCRIPTION);
+}
+
+/** DEV-10616: the user opened the record changes review drawer by clicking a changed row. */
+export async function trackOpenRecordChangesDrawer(
+  workspaceId: string,
+  props: { folderPath: string | null; rowStatus: string },
+): Promise<void> {
+  await captureEvent(PostHogEvents.OPEN_RECORD_CHANGES_DRAWER, { workspaceId, ...props });
+}
+
+/** DEV-10616: the user approved a record's changes from the review drawer. */
+export async function trackApproveRecordChange(
+  workspaceId: string,
+  props: { rowStatus: string; changedFieldCount: number },
+): Promise<void> {
+  await captureEvent(PostHogEvents.APPROVE_RECORD_CHANGE, { workspaceId, ...props });
+}
+
+/** DEV-10616: the user rejected a record's changes from the review drawer. */
+export async function trackRejectRecordChange(
+  workspaceId: string,
+  props: { rowStatus: string; changedFieldCount: number },
+): Promise<void> {
+  await captureEvent(PostHogEvents.REJECT_RECORD_CHANGE, { workspaceId, ...props });
 }
 
 export async function identifyUser(user: User, email: string | undefined): Promise<void> {

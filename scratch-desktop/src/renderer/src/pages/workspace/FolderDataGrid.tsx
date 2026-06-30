@@ -63,7 +63,13 @@ import {
 import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
-import { trackRefreshFolderDataGrid } from '../../lib/posthog';
+import { useReviewSurfaceV2Enabled } from '../../hooks/use-review-surface-v2';
+import {
+  trackApproveRecordChange,
+  trackOpenRecordChangesDrawer,
+  trackRefreshFolderDataGrid,
+  trackRejectRecordChange,
+} from '../../lib/posthog';
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { useViewMode, useWorkspaceUiStore, type FilterKind, type GridFilter } from '../../stores/workspace-ui-store';
 import type { ColumnDefinition } from '../../types/local-files';
@@ -74,6 +80,8 @@ import { formatFieldDisplay } from './field-formatters';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 import { InvalidJsonFilesModal, type InvalidJsonFileListEntry } from './InvalidJsonFilesModal';
+import { rowHasUnreviewedChanges } from './record-diff-helpers';
+import { RecordChangesDrawer } from './RecordChangesDrawer';
 import { RecordDetailView } from './RecordDetailView';
 import { drawUnifiedDiffCell, UNIFIED_DIFF_ROW_HEIGHT } from './unified-diff-cell';
 
@@ -207,6 +215,11 @@ const PAGE_SIZE = 100;
 const STATUS_COL_WIDTH = 50;
 const STATUS_COL_ID = '__status';
 const INSPECT_BUTTON_SIZE = 18;
+// A single click on a changed row opens the changes drawer, but only after this
+// delay so a double-click (which edits the cell) can cancel it first — see
+// onCellClicked / onCellActivated. Long enough to catch a normal double-click,
+// short enough that the drawer still feels responsive on a deliberate single click.
+const RECORD_CHANGES_DRAWER_CLICK_DELAY_MS = 250;
 const FLOATING_PANEL_GAP = 0;
 /**
  * Upper bound the user can drag a column to. Glide's own default is 500px, which is too
@@ -906,6 +919,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const setDetailFocusFieldName = useWorkspaceUiStore((s) => s.setFocusedFieldName);
 
   const viewMode = useViewMode();
+  // DEV-10616: the record changes drawer is part of the review-surface-v2 redesign
+  // (DEV-10615) and ships dark behind the per-user DESKTOP_REVIEW_SURFACE_V2 flag.
+  const isReviewSurfaceV2Enabled = useReviewSurfaceV2Enabled();
   const showGrid = useWorkspaceUiStore((s) => s.showGrid);
   const showRecord = useWorkspaceUiStore((s) => s.showRecord);
   const showField = useWorkspaceUiStore((s) => s.showField);
@@ -1508,6 +1524,87 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [pagedRows, setSelectedRecordFilename],
   );
 
+  // ── Record changes drawer (DEV-10616) ──
+  // The drawer opens when the user clicks a row that has unapproved changes. Its
+  // open state is local (a modal-like overlay owned by this component, per
+  // stores/CLAUDE.md) and mutually exclusive with the maximize-button
+  // RecordDetailView, which is driven by the store's selectedRecordFilename.
+  const [recordChangesDrawerFilename, setRecordChangesDrawerFilename] = useState<string | null>(null);
+  // Pending single-click → open-drawer timer, cancelled by a double-click (which
+  // edits a cell) so double-click-to-edit keeps working on changed rows.
+  const recordChangesDrawerOpenTimerRef = useRef<number | null>(null);
+
+  const clearRecordChangesDrawerOpenTimer = useCallback(() => {
+    if (recordChangesDrawerOpenTimerRef.current !== null) {
+      window.clearTimeout(recordChangesDrawerOpenTimerRef.current);
+      recordChangesDrawerOpenTimerRef.current = null;
+    }
+  }, []);
+
+  // Ordered filenames of the records on this page with unapproved changes — the set
+  // the drawer steps through ("i of N"). Scoped to the current page, like RecordDetailView.
+  const changedRecordFilenames = useMemo(
+    () => pagedRows.filter((row) => rowHasUnreviewedChanges(row)).map((row) => row.__filename),
+    [pagedRows],
+  );
+  const recordChangesDrawerIndex = useMemo(
+    () => (recordChangesDrawerFilename ? changedRecordFilenames.indexOf(recordChangesDrawerFilename) : -1),
+    [recordChangesDrawerFilename, changedRecordFilenames],
+  );
+
+  const openRecordChangesDrawer = useCallback(
+    (filename: string) => {
+      const row = pagedRows.find((r) => r.__filename === filename);
+      // Mutually exclusive with the maximize-button detail overlay.
+      showGrid();
+      setGridSelection(undefined);
+      setCellPopover(null);
+      setRecordChangesDrawerFilename(filename);
+      void trackOpenRecordChangesDrawer(workspaceId, {
+        folderPath: selectedFolderPath,
+        rowStatus: row?.__rowStatus ?? 'unknown',
+      });
+    },
+    [pagedRows, showGrid, workspaceId, selectedFolderPath],
+  );
+
+  // Pick the record to show after the current one leaves the changed set, computed
+  // from the set as it is now (before the async grid refetch resolves). Returns null
+  // when nothing changed remains, which closes the drawer.
+  const nextChangedRecordAfter = useCallback(
+    (filename: string): string | null => {
+      const index = changedRecordFilenames.indexOf(filename);
+      const remaining = changedRecordFilenames.filter((f) => f !== filename);
+      if (remaining.length === 0) return null;
+      return remaining[Math.min(Math.max(index, 0), remaining.length - 1)] ?? null;
+    },
+    [changedRecordFilenames],
+  );
+
+  // Opening the full record-detail overlay (maximize button / view-mode buttons)
+  // closes the changes drawer, so the two never render at once.
+  useEffect(() => {
+    if (selectedRecordFilename) setRecordChangesDrawerFilename(null);
+  }, [selectedRecordFilename]);
+
+  // Close the drawer (and cancel any pending open) when the folder changes.
+  useEffect(() => {
+    setRecordChangesDrawerFilename(null);
+    clearRecordChangesDrawerOpenTimer();
+  }, [selectedFolderPath, clearRecordChangesDrawerOpenTimer]);
+
+  // Close the drawer if the open record is no longer in the changed set (e.g. it was
+  // approved/rejected elsewhere or edited away). The advance logic already points at
+  // a valid record after approve/reject, so this only fires on genuine drop-out.
+  useEffect(() => {
+    if (recordChangesDrawerFilename && recordChangesDrawerIndex < 0) {
+      setRecordChangesDrawerFilename(null);
+    }
+  }, [recordChangesDrawerFilename, recordChangesDrawerIndex]);
+
+  // Cancel any pending open-drawer timer on unmount.
+  useEffect(() => clearRecordChangesDrawerOpenTimer, [clearRecordChangesDrawerOpenTimer]);
+
   useEffect(() => {
     const pending = pendingRecordTargetRef.current;
     if (!pending || !selectedFolderPath || !workspacePath || !hasCurrentQueryData) {
@@ -1986,6 +2083,24 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       void loadDiffData('refreshing', currentQueryRef.current);
     }
   }, [loadDiffData]);
+
+  // After the drawer approves/rejects a record: track it, advance to the next changed
+  // record (or close when none remain), and refresh the grid so the row's status updates.
+  const handleRecordChangeReviewed = useCallback(
+    (filename: string, action: 'approve' | 'reject') => {
+      const row = pagedRows.find((r) => r.__filename === filename);
+      const trackProps = {
+        rowStatus: row?.__rowStatus ?? 'unknown',
+        changedFieldCount: row?.__changedFields.length ?? 0,
+      };
+      if (action === 'approve') void trackApproveRecordChange(workspaceId, trackProps);
+      else void trackRejectRecordChange(workspaceId, trackProps);
+      setRecordChangesDrawerFilename(nextChangedRecordAfter(filename));
+      refreshGridDataInBackground();
+      invalidateWorkspaceLevelData();
+    },
+    [pagedRows, workspaceId, nextChangedRecordAfter, refreshGridDataInBackground, invalidateWorkspaceLevelData],
+  );
 
   const acceptGridCellChange = useCallback(
     (filename: string, fieldName: string, nextValue: string, logLabel: string) => {
@@ -2692,8 +2807,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           rows: CompactSelection.empty().add(cell[1]),
         });
       }
+      // Open the changes drawer on a single click of any cell in a row that has
+      // unapproved changes (review-surface-v2 only). Deferred briefly and cancelled
+      // by onCellActivated so a double-click (which edits the cell) does not also
+      // open the drawer.
+      clearRecordChangesDrawerOpenTimer();
+      const clickedRow = pagedRows[cell[1]] as DiffRow | undefined;
+      if (isReviewSurfaceV2Enabled && clickedRow && rowHasUnreviewedChanges(clickedRow)) {
+        const filename = clickedRow.__filename;
+        recordChangesDrawerOpenTimerRef.current = window.setTimeout(() => {
+          recordChangesDrawerOpenTimerRef.current = null;
+          openRecordChangesDrawer(filename);
+        }, RECORD_CHANGES_DRAWER_CLICK_DELAY_MS);
+      }
     },
-    [setGridSelection],
+    [setGridSelection, pagedRows, isReviewSurfaceV2Enabled, clearRecordChangesDrawerOpenTimer, openRecordChangesDrawer],
   );
 
   const recomputeInspectRect = useCallback((rowIdx: number | null) => {
@@ -2758,6 +2886,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const onCellActivated = useCallback(
     ([col, row]: Item) => {
+      // A double-click edits the cell — cancel the pending single-click drawer open.
+      clearRecordChangesDrawerOpenTimer();
       if (col === 0) return; // Status column
       const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
@@ -2773,7 +2903,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
       setCellPopover(buildCellPopoverState(col, row));
     },
-    [buildCellPopoverState, viewColMap, columns, pagedRows],
+    [buildCellPopoverState, viewColMap, columns, pagedRows, clearRecordChangesDrawerOpenTimer],
   );
 
   const onCellEdited = useCallback(
@@ -3270,6 +3400,26 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 columnGroups={columnGroupMap}
               />
             )}
+            {isReviewSurfaceV2Enabled &&
+              recordChangesDrawerFilename &&
+              recordChangesDrawerIndex >= 0 &&
+              detailRowIndex === null &&
+              selectedFolderPath &&
+              workspacePath && (
+                <RecordChangesDrawer
+                  folderPath={selectedFolderPath}
+                  workspacePath={workspacePath}
+                  titleColumnId={titleColumnId}
+                  columnLabels={columnLabelsMap}
+                  columnEffectivePaths={columnEffectivePathsMap}
+                  changedFilenames={changedRecordFilenames}
+                  currentIndex={recordChangesDrawerIndex}
+                  onSelectIndex={(index) => setRecordChangesDrawerFilename(changedRecordFilenames[index] ?? null)}
+                  onClose={() => setRecordChangesDrawerFilename(null)}
+                  onApproved={(filename) => handleRecordChangeReviewed(filename, 'approve')}
+                  onRejected={(filename) => handleRecordChangeReviewed(filename, 'reject')}
+                />
+              )}
           </Box>
 
           <Box
