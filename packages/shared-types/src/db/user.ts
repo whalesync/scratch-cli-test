@@ -14,6 +14,7 @@ export interface UserExperimentFlags {
   ENABLE_GENERIC_CONNECTOR: boolean;
   ENABLE_PUBLISH_HISTORY: boolean;
   ENABLE_SCRATCH_FOLDERS: boolean;
+  DESKTOP_REVIEW_SURFACE_V2: boolean;
 }
 
 /**

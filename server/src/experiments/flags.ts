@@ -96,6 +96,11 @@ export enum UserFlag {
    * Checked only in the connector write path, so it is NOT exposed to the client.
    */
   ENABLE_AFFINITY_WRITE = 'ENABLE_AFFINITY_WRITE',
+  /**
+   * DEV-10617 per-user gate for the redesigned desktop review surface ("review
+   * surface v2" — Client-only UI
+   */
+  DESKTOP_REVIEW_SURFACE_V2 = 'DESKTOP_REVIEW_SURFACE_V2',
 }
 
 /**
@@ -120,4 +125,5 @@ export const ClientUserFlags: Partial<Record<UserFlag, FlagDataType>> = {
   [UserFlag.ENABLE_GENERIC_CONNECTOR]: 'boolean',
   [UserFlag.ENABLE_PUBLISH_HISTORY]: 'boolean',
   [UserFlag.ENABLE_SCRATCH_FOLDERS]: 'boolean',
+  [UserFlag.DESKTOP_REVIEW_SURFACE_V2]: 'boolean',
 };

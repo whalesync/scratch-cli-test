@@ -30,6 +30,13 @@ These are flags that are evaluated for the user and passed to the client.
 - In production it falls back to a PostHog flag that defaults to FALSE — off for prod users today, but flippable later without a redeploy (create `ENABLE_SCRATCH_FOLDERS` in the production project to enable)
 - Client-only gate: the scratch data/endpoints stay available; only the UI surfaces are hidden when false
 
+### DESKTOP_REVIEW_SURFACE_V2
+
+- Gates the redesigned desktop review surface — review surface v2 (DEV-10617, under DEV-10615)
+- Ordinary per-user boolean flag: no role or environment special-case, so it defaults FALSE in every environment when PostHog is disabled (ships dark)
+- Flippable per-user from PostHog without a redeploy (create `DESKTOP_REVIEW_SURFACE_V2` in each project to enable)
+- Client-only gate: when false the existing review experience is unchanged; no server behavior depends on it
+
 ## PostHog Integration
 
 - Requires `POSTHOG_API_KEY` and `POSTHOG_FEATURE_FLAG_API_KEY` environment variables

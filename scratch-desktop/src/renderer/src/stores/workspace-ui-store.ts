@@ -25,6 +25,17 @@ export type SortState = { column: string | null; direction: 'asc' | 'desc' | nul
 
 export type DiffViewMode = 'side-by-side' | 'inline-words';
 
+// ── Review surface v2 (DEV-10617) ──
+
+/**
+ * Which review surface the user is viewing: the existing canvas table ('table')
+ * or the Phase 2 grouped-by-change-type view ('by-type'). Flag-scoped UI state —
+ * only meaningful when the `DESKTOP_REVIEW_SURFACE_V2` flag is on (see
+ * `useReviewSurfaceV2Enabled`). Phase 0 seam: no surface reads it yet; the Phase 2
+ * view toggle will drive it.
+ */
+export type ReviewSurfaceViewMode = 'table' | 'by-type';
+
 // ── Store state ──
 
 export interface WorkspaceUiState {
@@ -61,6 +72,14 @@ export interface WorkspaceUiState {
   /** User-chosen diff view mode. `null` means "use the default" (side-by-side when diffs exist, inline otherwise). */
   diffViewMode: DiffViewMode | null;
 
+  // --- Review surface v2 (DEV-10617) ---
+  /**
+   * Which review surface to show when `DESKTOP_REVIEW_SURFACE_V2` is on. A
+   * session-level view preference — intentionally NOT reset on folder change, so
+   * the chosen view persists as the user browses folders. Phase 0 seam.
+   */
+  reviewSurfaceViewMode: ReviewSurfaceViewMode;
+
   // --- Per-workbook settings ---
   /** The active workbook ID, used for persisting per-workbook settings. */
   currentWorkbookId: string | null;
@@ -95,6 +114,7 @@ export interface WorkspaceUiState {
   setColumnWidths: (widths: Updater<Record<string, number>>) => void;
   setPage: (page: Updater<number>) => void;
   setDiffViewMode: (mode: DiffViewMode | null) => void;
+  setReviewSurfaceViewMode: (mode: ReviewSurfaceViewMode) => void;
   setCurrentWorkbookId: (id: string | null) => void;
   hydrateWorkbookSettings: (settings: { validateEnabled?: boolean }) => void;
   setValidateEnabled: (enabled: boolean) => void;
@@ -132,6 +152,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   columnWidths: {},
   page: 1,
   diffViewMode: null,
+  reviewSurfaceViewMode: 'table',
   currentWorkbookId: null,
   validateEnabled: true,
 
@@ -193,6 +214,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   setColumnWidths: (v) => set({ columnWidths: typeof v === 'function' ? v(get().columnWidths) : v }),
   setPage: (v) => set({ page: typeof v === 'function' ? v(get().page) : v }),
   setDiffViewMode: (mode) => set({ diffViewMode: mode }),
+  setReviewSurfaceViewMode: (mode) => set({ reviewSurfaceViewMode: mode }),
   setCurrentWorkbookId: (id) =>
     set({
       currentWorkbookId: id,

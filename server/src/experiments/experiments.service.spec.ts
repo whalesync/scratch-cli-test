@@ -86,3 +86,26 @@ describe('ExperimentsService — ENABLE_SCRATCH_FOLDERS (DEV-10424)', () => {
     expect(flags[UserFlag.ENABLE_SCRATCH_FOLDERS]).toBe(false);
   });
 });
+
+describe('ExperimentsService — DESKTOP_REVIEW_SURFACE_V2 (DEV-10617)', () => {
+  it('defaults OFF in every environment when PostHog is disabled (ships dark, no env special-case)', async () => {
+    for (const environment of ['development', 'staging', 'test', 'production'] as const) {
+      const service = makeService(environment);
+
+      const flags = await service.resolveClientFeatureFlagsForUser(makeUser());
+
+      expect(flags[UserFlag.DESKTOP_REVIEW_SURFACE_V2]).toBe(false);
+    }
+  });
+
+  it('is per-user PostHog-targetable — ON only when the flag is enabled for the user', async () => {
+    const service = makeService('production');
+    const posthog = injectPostHog(service);
+    posthog.isFeatureEnabled.mockImplementation((flag: UserFlag) => flag === UserFlag.DESKTOP_REVIEW_SURFACE_V2);
+
+    const flags = await service.resolveClientFeatureFlagsForUser(makeUser());
+
+    expect(flags[UserFlag.DESKTOP_REVIEW_SURFACE_V2]).toBe(true);
+    expect(posthog.isFeatureEnabled).toHaveBeenCalledWith(UserFlag.DESKTOP_REVIEW_SURFACE_V2, 'usr_1');
+  });
+});
