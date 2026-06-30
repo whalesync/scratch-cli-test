@@ -91,6 +91,39 @@ export class EmailService {
     });
   }
 
+  /**
+   * DEV-10573: "~N days remaining" reminder, sent off the Stripe `customer.subscription.trial_will_end`
+   * webhook so a trialing user is prompted to add a payment method before their Pro trial ends. The
+   * `upgradeUrl` deep-links to the billing page so the user can add a payment method directly.
+   */
+  async sendTrialEndingSoon({
+    to,
+    userName,
+    daysRemaining,
+  }: {
+    to: string;
+    userName: string;
+    daysRemaining: number;
+  }): Promise<void> {
+    await this.sendTemplatedEmail(to, EmailTemplate.TrialEndingSoon, {
+      userName,
+      daysRemaining: String(daysRemaining),
+      upgradeUrl: `${this.configService.getScratchApplicationUrl()}/billing`,
+    });
+  }
+
+  /**
+   * DEV-10573: post-expiry notice, sent when a Pro trial ends without a payment method and the account
+   * has been downgraded to Free (the `trialing -> canceled` transition). The `resubscribeUrl` deep-links
+   * to the billing page so the user can re-subscribe directly.
+   */
+  async sendTrialExpired({ to, userName }: { to: string; userName: string }): Promise<void> {
+    await this.sendTemplatedEmail(to, EmailTemplate.TrialExpired, {
+      userName,
+      resubscribeUrl: `${this.configService.getScratchApplicationUrl()}/billing`,
+    });
+  }
+
   async sendTestEmail({
     to,
     templateId,

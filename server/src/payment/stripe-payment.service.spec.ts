@@ -5,6 +5,8 @@ import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { EmailService } from 'src/email/email.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { SlackNotificationService } from 'src/slack/slack-notification.service';
@@ -41,7 +43,8 @@ const mockDbService = {
       create: jest.fn(),
       update: jest.fn(),
       upsert: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue({ id: 'sub_db_audit' }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockResolvedValue({ id: 'sub_db_audit', planType: ScratchPlanType.PRO_PLAN }),
     },
     invoiceResult: {
       create: jest.fn(),
@@ -53,6 +56,8 @@ const mockPostHogService = {
   trackTrialStarted: jest.fn(),
   trackSubscriptionChanged: jest.fn(),
   trackSubscriptionCancelled: jest.fn(),
+  trackTrialEndingReminderSent: jest.fn(),
+  trackTrialExpiredNoticeSent: jest.fn(),
 } as unknown as PostHogService;
 
 const mockSlackNotificationService = {
@@ -62,6 +67,16 @@ const mockSlackNotificationService = {
 const mockAuditLogService = {
   logEvent: jest.fn().mockResolvedValue(undefined),
 } as unknown as AuditLogService;
+
+const mockEmailService = {
+  sendTrialEndingSoon: jest.fn().mockResolvedValue(undefined),
+  sendTrialExpired: jest.fn().mockResolvedValue(undefined),
+} as unknown as EmailService;
+
+// Default: reminders enabled, so the reminder paths are exercised unless a test overrides the flag.
+const mockExperimentsService = {
+  getBooleanFlag: jest.fn().mockResolvedValue(true),
+} as unknown as ExperimentsService;
 
 // Helper to create mock user
 
@@ -146,6 +161,8 @@ describe('StripePaymentService', () => {
       mockPostHogService,
       mockSlackNotificationService,
       mockAuditLogService,
+      mockEmailService,
+      mockExperimentsService,
     );
 
     // Access private stripe instance for mocking
@@ -1017,6 +1034,148 @@ describe('StripePaymentService', () => {
           data: { lastInvoicePaid: false },
         }),
       );
+    });
+  });
+
+  describe('trial reminder emails (DEV-10573)', () => {
+    const THREE_DAYS_IN_SECONDS = 86400 * 3;
+
+    // jest.clearAllMocks() (outer beforeEach) clears call history but not mockResolvedValue
+    // implementations, so reset the implementations these tests toggle back to their defaults here —
+    // otherwise an override (e.g. flag off, claim count 0) leaks into the next test.
+    beforeEach(() => {
+      (mockExperimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(true);
+      (mockDbService.client.subscription.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (mockDbService.client.subscription.findUnique as jest.Mock).mockResolvedValue({
+        id: 'sub_db_audit',
+        planType: ScratchPlanType.PRO_PLAN,
+      });
+    });
+
+    function makeTrialWillEndEvent(): Stripe.Event {
+      return {
+        type: 'customer.subscription.trial_will_end',
+        data: {
+          object: {
+            id: 'sub_trial123',
+            customer: 'cus_trial123',
+            status: 'trialing',
+            trial_end: Math.floor(Date.now() / 1000) + THREE_DAYS_IN_SECONDS,
+            metadata: { application: 'scratch', planType: ScratchPlanType.PRO_PLAN, environment: 'test' },
+          } as unknown as Stripe.Subscription,
+        },
+      } as Stripe.Event;
+    }
+
+    // Builds a customer.subscription.updated event whose re-fetched Stripe subscription has `status`.
+    // upsertSubscription re-fetches via subscriptions.retrieve, so the retrieve mock drives the status.
+    function setupSubscriptionUpdatedTo(status: 'canceled' | 'active'): void {
+      const mockEvent = {
+        type: 'customer.subscription.updated',
+        data: { object: { id: 'sub_cancel123' } as unknown as Stripe.Subscription },
+      } as Stripe.Event;
+      mockStripeInstance.webhooks.constructEvent = jest.fn().mockReturnValue(mockEvent);
+      mockStripeInstance.subscriptions.retrieve = jest.fn().mockResolvedValue({
+        id: 'sub_cancel123',
+        customer: 'cus_cancel123',
+        status,
+        metadata: { application: 'scratch', planType: ScratchPlanType.PRO_PLAN, environment: 'test' },
+        items: {
+          data: [
+            {
+              price: { id: VALID_TEST_PRICE_ID },
+              current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+              plan: { amount: 1000, currency: 'usd' },
+            },
+          ],
+        },
+      } as unknown as Stripe.Subscription);
+      // The pre-upsert DB row is on the user's org; status 'trialing' is what makes a -> canceled a trial expiry.
+      const userOnTrial = createMockUser({
+        stripeCustomerId: 'cus_cancel123',
+        organizationId: 'org_cancel',
+        organization: {
+          id: 'org_cancel',
+          subscriptions: [{ stripeSubscriptionId: 'sub_cancel123', stripeStatus: 'trialing', planType: 'PRO_PLAN' }],
+        },
+      });
+      (mockDbService.client.user.findFirst as jest.Mock).mockResolvedValue(userOnTrial);
+      (mockDbService.client.subscription.upsert as jest.Mock).mockResolvedValue({ id: 'sub_db_cancel' });
+    }
+
+    it('sends the ~3-day reminder once on trial_will_end and claims the idempotency flag', async () => {
+      mockStripeInstance.webhooks.constructEvent = jest.fn().mockReturnValue(makeTrialWillEndEvent());
+      (mockDbService.client.user.findFirst as jest.Mock).mockResolvedValue(
+        createMockUser({ stripeCustomerId: 'cus_trial123' }),
+      );
+
+      const result = await service.handleWebhookCallback('{}', 'valid_signature');
+
+      expect(isOk(result)).toBe(true);
+      expect(mockEmailService.sendTrialEndingSoon).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'test@example.com', userName: 'Test User', daysRemaining: 3 }),
+      );
+      expect(mockDbService.client.subscription.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'sub_db_audit', trialEndingReminderSentAt: null },
+        }),
+      );
+      expect(mockPostHogService.trackTrialEndingReminderSent).toHaveBeenCalled();
+    });
+
+    it('does not re-send the reminder when the idempotency claim is already taken', async () => {
+      mockStripeInstance.webhooks.constructEvent = jest.fn().mockReturnValue(makeTrialWillEndEvent());
+      (mockDbService.client.user.findFirst as jest.Mock).mockResolvedValue(
+        createMockUser({ stripeCustomerId: 'cus_trial123' }),
+      );
+      // A concurrent/duplicate delivery already flipped the flag — the claim matches zero rows.
+      (mockDbService.client.subscription.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+
+      const result = await service.handleWebhookCallback('{}', 'valid_signature');
+
+      expect(isOk(result)).toBe(true);
+      expect(mockEmailService.sendTrialEndingSoon).not.toHaveBeenCalled();
+    });
+
+    it('does not send the reminder when the TRIAL_REMINDER_EMAILS flag is off', async () => {
+      mockStripeInstance.webhooks.constructEvent = jest.fn().mockReturnValue(makeTrialWillEndEvent());
+      (mockDbService.client.user.findFirst as jest.Mock).mockResolvedValue(
+        createMockUser({ stripeCustomerId: 'cus_trial123' }),
+      );
+      (mockExperimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(false);
+
+      const result = await service.handleWebhookCallback('{}', 'valid_signature');
+
+      expect(isOk(result)).toBe(true);
+      expect(mockEmailService.sendTrialEndingSoon).not.toHaveBeenCalled();
+      expect(mockDbService.client.subscription.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('sends the expiry notice once on a trialing -> canceled transition', async () => {
+      setupSubscriptionUpdatedTo('canceled');
+
+      const result = await service.handleWebhookCallback('{}', 'valid_signature');
+
+      expect(isOk(result)).toBe(true);
+      expect(mockEmailService.sendTrialExpired).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'test@example.com', userName: 'Test User' }),
+      );
+      expect(mockDbService.client.subscription.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'sub_db_cancel', trialExpiredReminderSentAt: null },
+        }),
+      );
+      expect(mockPostHogService.trackTrialExpiredNoticeSent).toHaveBeenCalled();
+    });
+
+    it('does not send the expiry notice when a trial converts (trialing -> active)', async () => {
+      setupSubscriptionUpdatedTo('active');
+
+      const result = await service.handleWebhookCallback('{}', 'valid_signature');
+
+      expect(isOk(result)).toBe(true);
+      expect(mockEmailService.sendTrialExpired).not.toHaveBeenCalled();
+      expect(mockEmailService.sendTrialEndingSoon).not.toHaveBeenCalled();
     });
   });
 

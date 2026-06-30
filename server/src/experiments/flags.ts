@@ -25,6 +25,8 @@ export enum SystemFeatureFlag {
    * Fail-closed: default false
    */
   AUTO_TRIAL_SUBSCRIPTION_ON_SIGNUP = 'AUTO_TRIAL_SUBSCRIPTION_ON_SIGNUP',
+  /** DEV-10573 gate for trial reminder emails (3-day reminder + post-expiry notice). Default false. */
+  TRIAL_REMINDER_EMAILS = 'TRIAL_REMINDER_EMAILS',
 }
 
 /**

@@ -264,21 +264,28 @@ model WorkspaceInvites {
 /// A user's subscription with stripe.
 /// There *should* only ever be one of these for a user, but we track any subscriptions stripe sends our way.
 model Subscription {
-  id                   String       @id // type: SubscriptionId
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
-  version              Int          @default(1)
-  user                 User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId               String // the subscription must be assocated with a user that has the customer ID in Stripe
-  organizationId       String
-  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  planType             String       @default("NOT_MIGRATED") // values should match the the ScratchPlanType enum
-  stripeSubscriptionId String       @unique
-  expiration           DateTime
-  priceInDollars       Int          @default(0)
-  stripeStatus         String?
-  cancelAt             DateTime? // set when the user has cancelled the subscription and the date it takes effect
-  lastInvoicePaid      Boolean? /// Set when we receive invoice.paid or invoice.payment_failed webhooks.
+  id                         String       @id // type: SubscriptionId
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+  version                    Int          @default(1)
+  user                       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                     String // the subscription must be assocated with a user that has the customer ID in Stripe
+  organizationId             String
+  organization               Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planType                   String       @default("NOT_MIGRATED") // values should match the the ScratchPlanType enum
+  stripeSubscriptionId       String       @unique
+  expiration                 DateTime
+  priceInDollars             Int          @default(0)
+  stripeStatus               String?
+  cancelAt                   DateTime? // set when the user has cancelled the subscription and the date it takes effect
+  lastInvoicePaid            Boolean? /// Set when we receive invoice.paid or invoice.payment_failed webhooks.
+  /// idempotency guard for the "~3 days remaining" trial reminder email. Set when we send it
+  /// (off the Stripe customer.subscription.trial_will_end webhook) so a duplicate webhook never re-sends.
+  trialEndingReminderSentAt  DateTime?
+  /// idempotency guard for the post-expiry "trial ended, downgraded to Free" email. Set when we
+  /// send it (on the trialing -> canceled transition in upsertSubscription) so repeat updated/deleted
+  /// webhook deliveries never re-send.
+  trialExpiredReminderSentAt DateTime?
 
   @@index([userId])
   @@index([organizationId])
@@ -462,12 +469,12 @@ model Organization {
   name      String
   deleted   Boolean  @default(false) // a soft delete flag for orgs to allow for async cleanup
 
-  users                       User[]
-  workbooks                   Workbook[]
-  subscriptions               Subscription[]
-  invoiceResults              InvoiceResult[]
-  actions                     Action[]
-  schedules                   Schedule[]
+  users                        User[]
+  workbooks                    Workbook[]
+  subscriptions                Subscription[]
+  invoiceResults               InvoiceResult[]
+  actions                      Action[]
+  schedules                    Schedule[]
   organizationMonthlyRunCounts OrganizationMonthlyRunCount[]
 }
 

@@ -20,6 +20,8 @@ function createTestSubscription(
     updatedAt: overrides.updatedAt || now,
     version: overrides.version ?? 1,
     cancelAt: overrides.cancelAt ?? null,
+    trialEndingReminderSentAt: overrides.trialEndingReminderSentAt ?? null,
+    trialExpiredReminderSentAt: overrides.trialExpiredReminderSentAt ?? null,
   };
 }
 

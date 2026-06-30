@@ -446,6 +446,19 @@ export class PostHogService implements OnModuleDestroy {
     });
   }
 
+  trackTrialEndingReminderSent(actor: Actor, planType: ScratchPlanType, daysRemaining: number): void {
+    this.captureEvent(PostHogEventName.TRIAL_ENDING_REMINDER_SENT, actor, {
+      planType,
+      daysRemaining,
+    });
+  }
+
+  trackTrialExpiredNoticeSent(actor: Actor, planType: ScratchPlanType): void {
+    this.captureEvent(PostHogEventName.TRIAL_EXPIRED_NOTICE_SENT, actor, {
+      planType,
+    });
+  }
+
   /*******************************************************
    * CLI events (user actions via CLI that are not tracked elsewhere)
    *******************************************************/
@@ -539,6 +552,8 @@ export enum PostHogEventName {
   AGENT_CREDENTIAL_CREATED = 'agent_credential_created',
   AGENT_CREDENTIAL_DELETED = 'agent_credential_deleted',
   TRIAL_STARTED = 'trial_started',
+  TRIAL_ENDING_REMINDER_SENT = 'trial_ending_reminder_sent',
+  TRIAL_EXPIRED_NOTICE_SENT = 'trial_expired_notice_sent',
   SUBSCRIPTION_CANCELLED = 'subscription_cancelled',
   SUBSCRIPTION_CHANGED = 'subscription_changed',
   DATA_FOLDER_ADDED = 'data_folder_added',

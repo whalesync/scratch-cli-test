@@ -12,6 +12,9 @@ import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { EmailService } from 'src/email/email.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
+import { SystemFeatureFlag } from 'src/experiments/flags';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { SlackFormatters } from 'src/slack/slack-formatters';
@@ -44,6 +47,11 @@ const TRIAL_PERIOD_DAYS = 14;
 // down when the shadow user is deprovisioned, not when it "expires".
 const WHALESYNC_PLAN_EXPIRATION_YEARS = 100;
 
+// DEV-10573 trial reminder emails.
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+// Fallback "days remaining" for the trial-ending reminder if Stripe's event has no trial_end timestamp.
+const DEFAULT_TRIAL_ENDING_REMINDER_DAYS = 3;
+
 type StripeWebhookResult = 'success' | 'ignored';
 
 // Client path that we redirect to if the checkout is successful.
@@ -67,6 +75,8 @@ export class StripePaymentService {
     private readonly postHogService: PostHogService,
     private readonly slackNotificationService: SlackNotificationService,
     private readonly auditLogService: AuditLogService,
+    private readonly emailService: EmailService,
+    private readonly experimentsService: ExperimentsService,
   ) {
     this.stripe = new Stripe(this.configService.getStripeApiKey(), {
       apiVersion: STRIPE_API_VERSION,
@@ -534,6 +544,10 @@ export class StripePaymentService {
         // A subscription changed (switching from one plan to another, or changing the status from trial to active).
         result = await this.handleCustomerSubscriptionUpdated(event);
         break;
+      case 'customer.subscription.trial_will_end':
+        // DEV-10573: Stripe fires this ~3 days before a trial ends. Send the "trial ending soon" reminder.
+        result = await this.handleTrialWillEnd(event);
+        break;
       case 'invoice.paid':
         // A charge has gone through successfully.
         result = await this.handleInvoicePaid(event.data.object);
@@ -549,6 +563,8 @@ export class StripePaymentService {
         // Staging: https://dashboard.stripe.com/test/webhooks/we_1KhNmyB3kcxQq5fuTyvOImPi
         // and Production: https://dashboard.stripe.com/webhooks/we_1KhNqVB3kcxQq5fuVE6hGARg
         // Seen events: invoice.created, invoice.finalized, invoice.payment_succeeded
+        // DEV-10573: customer.subscription.trial_will_end is handled above — it must be registered on
+        // both webhook endpoints linked here for the "~3 days remaining" reminder to fire.
         WSLogger.info({
           source: StripePaymentService.name,
           message: `Unhandled Stripe webhook event type: ${event.type}`,
@@ -608,6 +624,178 @@ export class StripePaymentService {
     }
 
     return this.upsertSubscription(stripeSubscriptionId, undefined);
+  }
+
+  /**
+   * DEV-10573: handle `customer.subscription.trial_will_end` (Stripe fires it ~3 days before a trial
+   * ends) by emailing the user a "trial ending soon — add a payment method" reminder.
+   *
+   * Idempotent: the send is guarded by an atomic claim on `Subscription.trialEndingReminderSentAt`
+   * (the same `updateMany`-and-check pattern the cron reapers use), so a duplicate webhook delivery —
+   * or two server instances processing the same event — sends at most one email. Gated behind the
+   * `TRIAL_REMINDER_EMAILS` flag (default off) so it can be dark-launched. Best-effort: a missing
+   * user/email, a disabled flag, or an already-sent reminder is acked, not retried.
+   */
+  private async handleTrialWillEnd(event: Stripe.Event): AsyncResult<StripeWebhookResult> {
+    const subscription = event.data.object as Stripe.Subscription;
+    WSLogger.info({
+      source: StripePaymentService.name,
+      message: `Handling trial_will_end`,
+      subscriptionId: subscription.id,
+    });
+
+    try {
+      // Ignore events for a different Scratch environment (preprod environments share one Stripe account).
+      if (!this.isCurrentScratchEnvironment(subscription)) {
+        return ok('ignored');
+      }
+
+      const stripeCustomerId = subscription.customer as string;
+      const user = await this.resolveUserForStripeCustomer(stripeCustomerId);
+      if (!user || !user.email) {
+        WSLogger.warn({
+          source: StripePaymentService.name,
+          message: 'No user/email resolved for trial_will_end; skipping reminder',
+          stripeCustomerId,
+          subscriptionId: subscription.id,
+        });
+        return ok('ignored');
+      }
+
+      const remindersEnabled = await this.experimentsService.getBooleanFlag(
+        SystemFeatureFlag.TRIAL_REMINDER_EMAILS,
+        false,
+        user,
+      );
+      if (!remindersEnabled) {
+        return ok('ignored');
+      }
+
+      // The subscription row is created when the trial starts, so it should already exist by the time
+      // this fires (~3 days before trial end). If it doesn't, ack and move on.
+      const dbSubscription = await this.dbService.client.subscription.findUnique({
+        where: { stripeSubscriptionId: subscription.id },
+      });
+      if (!dbSubscription) {
+        return ok('success');
+      }
+
+      // Atomic idempotency claim: only the caller that flips the flag from null sends the email.
+      const claimed = await this.dbService.client.subscription.updateMany({
+        where: { id: dbSubscription.id, trialEndingReminderSentAt: null },
+        data: { trialEndingReminderSentAt: new Date() },
+      });
+      if (claimed.count !== 1) {
+        return ok('success');
+      }
+
+      const trialEndMs = subscription.trial_end ? subscription.trial_end * 1000 : null;
+      const daysRemaining = trialEndMs
+        ? Math.max(1, Math.ceil((trialEndMs - Date.now()) / MILLISECONDS_PER_DAY))
+        : DEFAULT_TRIAL_ENDING_REMINDER_DAYS;
+
+      await this.emailService.sendTrialEndingSoon({
+        to: user.email,
+        userName: user.name ?? user.email,
+        daysRemaining,
+      });
+
+      const planType = (dbSubscription.planType ?? ScratchPlanType.PRO_PLAN) as ScratchPlanType;
+      this.postHogService.trackTrialEndingReminderSent(userToActor(user), planType, daysRemaining);
+      await this.logSubscriptionAuditEvent(
+        user,
+        dbSubscription.id as SubscriptionId,
+        `Sent trial-ending reminder (~${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left)`,
+      );
+
+      return ok('success');
+    } catch (err) {
+      return unexpectedError('Failed to handle trial_will_end', {
+        cause: err as Error,
+        context: { subscriptionId: subscription.id },
+      });
+    }
+  }
+
+  /**
+   * DEV-10573: when a trial ends without a payment method, Stripe transitions the subscription
+   * `trialing -> canceled` and the user falls back to the Free plan. Email them a "your trial ended,
+   * here's how to re-subscribe" notice. Called from `upsertSubscription` on that exact transition.
+   *
+   * Idempotent + best-effort, mirroring `handleTrialWillEnd`: an atomic claim on
+   * `Subscription.trialExpiredReminderSentAt` ensures at most one send across repeated
+   * `customer.subscription.updated`/`deleted` deliveries, the send is gated behind
+   * `TRIAL_REMINDER_EMAILS` (default off), and any failure is logged and swallowed so it can never
+   * fail the surrounding subscription upsert.
+   */
+  private async maybeSendTrialExpiredEmail(
+    user: UserCluster.User,
+    subscriptionDbId: SubscriptionId,
+    planType: ScratchPlanType,
+  ): Promise<void> {
+    try {
+      if (!user.email) {
+        return;
+      }
+
+      const remindersEnabled = await this.experimentsService.getBooleanFlag(
+        SystemFeatureFlag.TRIAL_REMINDER_EMAILS,
+        false,
+        user,
+      );
+      if (!remindersEnabled) {
+        return;
+      }
+
+      // Atomic idempotency claim: only the caller that flips the flag from null sends the email.
+      const claimed = await this.dbService.client.subscription.updateMany({
+        where: { id: subscriptionDbId, trialExpiredReminderSentAt: null },
+        data: { trialExpiredReminderSentAt: new Date() },
+      });
+      if (claimed.count !== 1) {
+        return;
+      }
+
+      await this.emailService.sendTrialExpired({ to: user.email, userName: user.name ?? user.email });
+      this.postHogService.trackTrialExpiredNoticeSent(userToActor(user), planType);
+      await this.logSubscriptionAuditEvent(
+        user,
+        subscriptionDbId,
+        'Sent trial-expired notice (downgraded to the Free plan)',
+      );
+    } catch (err) {
+      WSLogger.error({
+        source: StripePaymentService.name,
+        message: 'Failed to send trial-expired email',
+        subscriptionId: subscriptionDbId,
+        error: err,
+      });
+    }
+  }
+
+  /**
+   * DEV-10573: best-effort audit-log helper for the trial reminder emails — a failure here never fails
+   * the webhook. Mirrors `logTrialStartedAuditEvent`.
+   */
+  private async logSubscriptionAuditEvent(
+    user: UserCluster.User,
+    subscriptionDbId: SubscriptionId,
+    message: string,
+  ): Promise<void> {
+    try {
+      await this.auditLogService.logEvent({
+        actor: userToActor(user),
+        eventType: 'update',
+        message,
+        entityId: subscriptionDbId,
+      });
+    } catch (err) {
+      WSLogger.error({
+        source: StripePaymentService.name,
+        message: `Failed to write subscription audit log for user ${user.id}`,
+        error: err,
+      });
+    }
   }
 
   private async handleInvoicePaid(invoice: Stripe.Invoice): AsyncResult<StripeWebhookResult> {
@@ -912,6 +1100,13 @@ export class StripePaymentService {
           message: `Downgraded to the free plan`,
           entityId: updatedDbSubscription.id as SubscriptionId,
         });
+      }
+
+      // DEV-10573: a trial that ends without a payment method transitions trialing -> canceled (and the
+      // user falls back to Free). `existingSubscription` is the pre-upsert DB row, so this fires exactly
+      // once on the transition; the email send is itself idempotent and best-effort.
+      if (existingSubscription?.stripeStatus === 'trialing' && subscription.status === 'canceled') {
+        await this.maybeSendTrialExpiredEmail(user, updatedDbSubscription.id as SubscriptionId, plan.planType);
       }
     } catch (err) {
       WSLogger.error({
