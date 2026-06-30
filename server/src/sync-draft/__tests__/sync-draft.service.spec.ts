@@ -352,6 +352,154 @@ describe('SyncDraftService', () => {
       await expect(service.patch(DRAFT_ID, { version: 1 } as never, ACTOR)).rejects.toBeInstanceOf(ConflictException);
       expect(dbService.client.syncDraft.updateMany).not.toHaveBeenCalled();
     });
+
+    it('422s when a save strands a foreignKey token whose target table was removed (force unmap)', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ version: 1 }));
+      // Only the Appointments source remains — the "contacts" source mapping was removed,
+      // so the FK token can no longer resolve.
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([{ tableId: ['0-421'] }]);
+
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_appt',
+            source: { dataFolderId: 'dfd_appt_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_appt_dst' },
+            fieldAdditions: [
+              {
+                ref: 'fa_contacts',
+                createFieldSpec: {
+                  name: 'Associated Contacts',
+                  fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'contacts' } },
+                },
+              },
+            ],
+            columnMappings: [],
+          },
+        ],
+      };
+
+      const error = await service.patch(DRAFT_ID, dto as never, ACTOR).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+        error: 'SYNC_DRAFT_FK_TARGET_MISSING',
+        missingTargets: [
+          {
+            tableMappingRef: 'tm_appt',
+            fieldName: 'Associated Contacts',
+            target: { unresolvedLinkedTableId: 'contacts' },
+          },
+        ],
+      });
+      expect(dbService.client.syncDraft.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('allows the save when the foreignKey token still resolves to a mapped table', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock)
+        .mockResolvedValueOnce(makeDraftRow({ version: 1 }))
+        .mockResolvedValueOnce(makeDraftRow({ version: 2 }));
+      (dbService.client.syncDraft.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      // The Contacts source mapping is present → its remote id "contacts" satisfies the token.
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { tableId: ['0-421'] },
+        { tableId: ['contacts'] },
+      ]);
+
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_appt',
+            source: { dataFolderId: 'dfd_appt_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_appt_dst' },
+            fieldAdditions: [
+              {
+                ref: 'fa_contacts',
+                createFieldSpec: {
+                  name: 'Associated Contacts',
+                  fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'contacts' } },
+                },
+              },
+            ],
+            columnMappings: [],
+          },
+          {
+            ref: 'tm_contacts',
+            source: { dataFolderId: 'dfd_contacts_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_contacts_dst' },
+            columnMappings: [],
+          },
+        ],
+      };
+
+      await expect(service.patch(DRAFT_ID, dto as never, ACTOR)).resolves.toBeDefined();
+      expect(dbService.client.syncDraft.updateMany).toHaveBeenCalled();
+    });
+
+    it('422s on a foreignKey { ref } that matches no placeholder table in the draft', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ version: 1 }));
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([{ tableId: ['0-421'] }]);
+
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_appt',
+            source: { dataFolderId: 'dfd_appt_src' },
+            destination: {
+              kind: 'placeholderTable',
+              ref: 'ph_appt',
+              connectorAccountId: 'coa_1',
+              createSpec: {
+                ref: 'spec_appt',
+                name: 'Appointments',
+                fields: [
+                  { name: 'Name', fieldType: { kind: 'text' } },
+                  { name: 'Linked', fieldType: { kind: 'foreignKey', target: { ref: 'spec_contacts' } } },
+                ],
+              },
+            },
+            columnMappings: [],
+          },
+        ],
+      };
+
+      await expect(service.patch(DRAFT_ID, dto as never, ACTOR)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(dbService.client.syncDraft.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('allows a foreignKey targeting an existing remote table regardless of draft contents', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock)
+        .mockResolvedValueOnce(makeDraftRow({ version: 1 }))
+        .mockResolvedValueOnce(makeDraftRow({ version: 2 }));
+      (dbService.client.syncDraft.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([{ tableId: ['0-421'] }]);
+
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_appt',
+            source: { dataFolderId: 'dfd_appt_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_appt_dst' },
+            fieldAdditions: [
+              {
+                ref: 'fa_link',
+                createFieldSpec: {
+                  name: 'Linked',
+                  fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: ['base1', 'tblOther'] } },
+                },
+              },
+            ],
+            columnMappings: [],
+          },
+        ],
+      };
+
+      await expect(service.patch(DRAFT_ID, dto as never, ACTOR)).resolves.toBeDefined();
+      expect(dbService.client.syncDraft.updateMany).toHaveBeenCalled();
+    });
   });
 
   describe('delete', () => {
@@ -656,6 +804,64 @@ describe('SyncDraftService', () => {
         kind: 'field',
         status: 'created',
         remoteFieldId: 'fld1',
+      });
+    });
+
+    it('binds a field-addition foreignKey token to an existing destination table in the draft', async () => {
+      // Add "Associated Contacts" (FK → "contacts") to an EXISTING Appointments table.
+      // A Contacts table mapping in the same draft (source = the HubSpot Contacts
+      // object) supplies the binding, so the pending token resolves to the existing
+      // Airtable Contacts table — field additions can only take an existingRemoteTableId.
+      const row = makeDraftRow({
+        tableMappings: [
+          {
+            ref: 'tm_appt',
+            source: { dataFolderId: 'dfd_appt_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_appt_dst' },
+            fieldAdditions: [
+              {
+                ref: 'fa_contacts',
+                createFieldSpec: {
+                  name: 'Associated Contacts',
+                  fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'contacts' } },
+                },
+              },
+            ],
+            columnMappings: [],
+          },
+          {
+            ref: 'tm_contacts',
+            source: { dataFolderId: 'dfd_contacts_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_contacts_dst' },
+            columnMappings: [],
+          },
+        ],
+      });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_appt_src', tableId: ['0-421'] },
+        { id: 'dfd_appt_dst', tableId: ['base1', 'tblAppt'] },
+        { id: 'dfd_contacts_src', tableId: ['contacts'] },
+        { id: 'dfd_contacts_dst', tableId: ['base1', 'tblContacts'] },
+      ]);
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue({
+        connectorAccountId: 'coa_1',
+        tableId: ['base1', 'tblAppt'],
+      });
+      schemaBuilderService.createFields.mockResolvedValue({
+        status: 'ok',
+        remoteTableId: ['base1', 'tblAppt'],
+        fields: [{ name: 'Associated Contacts', status: 'created', remoteFieldId: 'fld_assoc' }],
+      } as never);
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      expect(res.results.find((result) => result.ref === 'fa_contacts')).toMatchObject({ status: 'created' });
+      // The pending token was bound to the existing Airtable Contacts table BEFORE createFields.
+      const dto = schemaBuilderService.createFields.mock.calls[0][1];
+      expect(dto.fields[0].fieldType).toEqual({
+        kind: 'foreignKey',
+        target: { existingRemoteTableId: ['base1', 'tblContacts'] },
       });
     });
 

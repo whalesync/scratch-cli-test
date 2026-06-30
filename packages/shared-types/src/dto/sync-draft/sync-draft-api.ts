@@ -40,6 +40,34 @@ export const patchSyncDraftSchema = z.object({
 });
 export type PatchSyncDraftDto = z.infer<typeof patchSyncDraftSchema>;
 
+/**
+ * 422 body when a PATCH would leave a foreignKey field pointing at a table that is
+ * no longer in the draft — e.g. the user removed (unmapped) the table that another
+ * table's foreignKey targets. The save is rejected so the reference can't dangle; the
+ * client unmaps the listed field(s) — or restores the target table — and retries.
+ *
+ * Only foreignKeys whose target is resolved WITHIN the draft are checked: a sibling
+ * `{ ref }` (must match a placeholder table in the draft) and a
+ * `{ unresolvedLinkedTableId }` token (must match some mapping's source remote table
+ * id — the same binding materialize uses). A concrete `{ existingRemoteTableId }`
+ * always resolves (the remote table exists regardless of the draft) and is never flagged.
+ */
+export interface SyncDraftForeignKeyTargetMissingError {
+  error: 'SYNC_DRAFT_FK_TARGET_MISSING';
+  message: string;
+  missingTargets: SyncDraftMissingForeignKeyTarget[];
+}
+
+/** One foreignKey field in the draft whose target table is no longer present. */
+export interface SyncDraftMissingForeignKeyTarget {
+  /** The `ref` of the table mapping that holds the foreignKey field. */
+  tableMappingRef: string;
+  /** The foreignKey field's name. */
+  fieldName: string;
+  /** What the field points at: a sibling create-spec ref, or a source linked-table id. */
+  target: { ref: string } | { unresolvedLinkedTableId: string };
+}
+
 // ── POST /sync-drafts/:draftId/materialize (Phase 1) ──────────────────────────
 
 /** Per-placeholder outcome of a materialize call. */

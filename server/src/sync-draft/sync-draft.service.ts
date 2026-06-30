@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, SyncDraft as PrismaSyncDraft } from '@prisma/client';
 import {
+  type CreateFieldSpec,
   type CreateSchemaFieldsDto,
   type CreateSchemaTablesDto,
   createSyncDraftId,
@@ -25,6 +26,7 @@ import {
   type Sync,
   type SyncDraft,
   type SyncDraftId,
+  type SyncDraftMissingForeignKeyTarget,
   type SyncId,
   type SyncMapping,
   SyncState,
@@ -56,27 +58,65 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+interface DraftForeignKeyReference {
+  /** The `ref` of the table mapping that holds the foreignKey field. */
+  tableMappingRef: string;
+  fieldName: string;
+  target: ForeignKeyTarget;
+}
+
+/** Every foreignKey field across a draft's placeholder create-specs and field additions. */
+function collectDraftForeignKeyReferences(tableMappings: DraftTableMapping[]): DraftForeignKeyReference[] {
+  const references: DraftForeignKeyReference[] = [];
+  for (const tableMapping of tableMappings) {
+    if (tableMapping.destination.kind === 'placeholderTable') {
+      for (const field of tableMapping.destination.createSpec.fields) {
+        if (field.fieldType.kind === 'foreignKey') {
+          references.push({ tableMappingRef: tableMapping.ref, fieldName: field.name, target: field.fieldType.target });
+        }
+      }
+    }
+    for (const addition of tableMapping.fieldAdditions ?? []) {
+      const fieldType = addition.createFieldSpec.fieldType;
+      if (fieldType.kind === 'foreignKey') {
+        references.push({
+          tableMappingRef: tableMapping.ref,
+          fieldName: addition.createFieldSpec.name,
+          target: fieldType.target,
+        });
+      }
+    }
+  }
+  return references;
+}
+
 /**
- * Return a copy of `createSpec` with every pending `{ unresolvedLinkedTableId }`
- * foreignKey target replaced by the destination target it resolves to within the
- * draft (see {@link SyncDraftService.buildForeignKeyResolutionMap}). A target with
- * no entry in the map is left pending — createTables then rejects it, surfacing the
- * unmet requirement instead of dropping the column.
+ * Replace a field's pending `{ unresolvedLinkedTableId }` foreignKey target with the
+ * destination target it resolves to within the draft (see
+ * {@link SyncDraftService.buildForeignKeyResolutionMap}). A target with no entry in
+ * the map is left pending — create then rejects it, surfacing the unmet requirement
+ * instead of dropping the column. Non-foreignKey / already-bound fields pass through.
  */
+function resolveFieldForeignKeyTarget(
+  field: CreateFieldSpec,
+  resolutionBySourceRemoteTableId: Map<string, ForeignKeyTarget>,
+): CreateFieldSpec {
+  const fieldType = field.fieldType;
+  if (fieldType.kind !== 'foreignKey' || !('unresolvedLinkedTableId' in fieldType.target)) {
+    return field;
+  }
+  const resolvedTarget = resolutionBySourceRemoteTableId.get(fieldType.target.unresolvedLinkedTableId);
+  return resolvedTarget ? { ...field, fieldType: { ...fieldType, target: resolvedTarget } } : field;
+}
+
+/** Resolve every pending foreignKey target across a create-table spec's fields. */
 function resolveCreateSpecForeignKeyTargets(
   createSpec: CreateTableSpec,
   resolutionBySourceRemoteTableId: Map<string, ForeignKeyTarget>,
 ): CreateTableSpec {
   return {
     ...createSpec,
-    fields: createSpec.fields.map((field) => {
-      const fieldType = field.fieldType;
-      if (fieldType.kind !== 'foreignKey' || !('unresolvedLinkedTableId' in fieldType.target)) {
-        return field;
-      }
-      const resolvedTarget = resolutionBySourceRemoteTableId.get(fieldType.target.unresolvedLinkedTableId);
-      return resolvedTarget ? { ...field, fieldType: { ...fieldType, target: resolvedTarget } } : field;
-    }),
+    fields: createSpec.fields.map((field) => resolveFieldForeignKeyTarget(field, resolutionBySourceRemoteTableId)),
   };
 }
 
@@ -201,6 +241,13 @@ export class SyncDraftService {
         error: 'SYNC_DRAFT_ARCHIVED',
         message: `Sync draft ${draftId} has been applied and can no longer be edited.`,
       });
+    }
+
+    // Reject a save that would strand a foreignKey field on a table no longer in the
+    // draft (e.g. the user removed the table another table's FK points at) — forcing
+    // the reference to be unmapped before it can dangle into materialize.
+    if (dto.tableMappings !== undefined) {
+      await this.validateForeignKeyTargetsSatisfiable(dto.tableMappings);
     }
 
     const data: Prisma.SyncDraftUpdateInput = { version: { increment: 1 } };
@@ -480,7 +527,9 @@ export class SyncDraftService {
     // an existing destination table → `{ existingRemoteTableId }`). Targets that still
     // can't be bound stay pending and are rejected by createTables below, so the
     // requirement surfaces rather than the foreign key being silently dropped.
-    const foreignKeyResolutionMap = await this.buildForeignKeyResolutionMap(tableMappings);
+    const foreignKeyResolutionMap = await this.buildForeignKeyResolutionMap(tableMappings, {
+      resolvePlaceholdersToRemoteId: false,
+    });
 
     // Group unresolved placeholder tables by (connectorAccountId, remoteParentId)
     // so each createTables call is one batch against one destination base.
@@ -559,16 +608,23 @@ export class SyncDraftService {
 
   /**
    * Map each source table's remote id → the create-side foreignKey target the
-   * destination chosen for it (within this draft) resolves to: a placeholder table
-   * binds to `{ ref }` (its create-spec ref, created in the same batch); an existing
-   * destination table binds to `{ existingRemoteTableId }` (its remote table id). The
-   * plan generator emits an unbound foreignKey as
-   * `{ unresolvedLinkedTableId: <source remote id> }`, and this is what binds it. A
-   * source whose destination supplies no target is simply absent from the map,
-   * leaving its foreignKey pending so createTables rejects it (surfacing, not dropping).
+   * destination chosen for it (within this draft) resolves to. The plan generator
+   * emits an unbound foreignKey as `{ unresolvedLinkedTableId: <source remote id> }`,
+   * and this binds it against the source→destination mapping the draft already
+   * carries. A source whose destination supplies no target is simply absent from the
+   * map, leaving its foreignKey pending so create rejects it (surfacing, not dropping).
+   *
+   * The binding differs by phase (`resolvePlaceholdersToRemoteId`):
+   *  - new-tables phase (false): a sibling placeholder binds to `{ ref }` — both
+   *    tables are created in the same createTables batch, where the ref resolves.
+   *  - add-fields phase (true): the sibling placeholder has ALREADY been created, so
+   *    it binds to its real `{ existingRemoteTableId }` (the /schema/fields endpoint
+   *    can't take a `{ ref }`); an unresolved placeholder is skipped (left pending).
+   * An existing-destination table always binds to its `{ existingRemoteTableId }`.
    */
   private async buildForeignKeyResolutionMap(
     tableMappings: DraftTableMapping[],
+    options: { resolvePlaceholdersToRemoteId: boolean },
   ): Promise<Map<string, ForeignKeyTarget>> {
     const sourceFolderIds = tableMappings.map((tableMapping) => tableMapping.source.dataFolderId);
     const existingDestinationFolderIds = tableMappings
@@ -589,7 +645,14 @@ export class SyncDraftService {
 
       let resolvedTarget: ForeignKeyTarget | null = null;
       if (tableMapping.destination.kind === 'placeholderTable') {
-        resolvedTarget = { ref: tableMapping.destination.createSpec.ref };
+        if (options.resolvePlaceholdersToRemoteId) {
+          const resolvedRemoteTableId = tableMapping.destination.resolved?.remoteTableId;
+          if (resolvedRemoteTableId && resolvedRemoteTableId.length > 0) {
+            resolvedTarget = { existingRemoteTableId: resolvedRemoteTableId };
+          }
+        } else {
+          resolvedTarget = { ref: tableMapping.destination.createSpec.ref };
+        }
       } else {
         const existingRemoteTableId = remoteTableIdByFolderId.get(tableMapping.destination.dataFolderId);
         if (existingRemoteTableId && existingRemoteTableId.length > 0) {
@@ -609,6 +672,69 @@ export class SyncDraftService {
     return resolutionBySourceRemoteTableId;
   }
 
+  /**
+   * Reject a draft state whose foreignKey fields point at a table no longer present in
+   * the draft — the "deleting the table a foreignKey points at forces you to unmap"
+   * guard, and more generally the no-broken-draft-saved check. A sibling `{ ref }` must
+   * match a placeholder table in the draft; a `{ unresolvedLinkedTableId }` token must
+   * match some mapping's source remote table id (the same binding {@link
+   * buildForeignKeyResolutionMap} uses at materialize). A concrete `{ existingRemoteTableId }`
+   * always resolves (the remote table exists regardless of the draft) and is never
+   * flagged. Throws 422 `SYNC_DRAFT_FK_TARGET_MISSING` listing each stranded field so
+   * the client unmaps it — or restores the target table — before saving.
+   */
+  private async validateForeignKeyTargetsSatisfiable(tableMappings: DraftTableMapping[]): Promise<void> {
+    const foreignKeyReferences = collectDraftForeignKeyReferences(tableMappings);
+    if (foreignKeyReferences.length === 0) return;
+
+    const placeholderCreateSpecRefs = new Set<string>();
+    for (const tableMapping of tableMappings) {
+      if (tableMapping.destination.kind === 'placeholderTable') {
+        placeholderCreateSpecRefs.add(tableMapping.destination.createSpec.ref);
+      }
+    }
+
+    const sourceFolderIds = [...new Set(tableMappings.map((tableMapping) => tableMapping.source.dataFolderId))];
+    const folders = await this.db.client.dataFolder.findMany({
+      where: { id: { in: sourceFolderIds } },
+      select: { tableId: true },
+    });
+    const draftSourceRemoteTableIds = new Set<string>();
+    for (const folder of folders) {
+      for (const remoteTableIdSegment of folder.tableId) draftSourceRemoteTableIds.add(remoteTableIdSegment);
+    }
+
+    const missingTargets: SyncDraftMissingForeignKeyTarget[] = [];
+    for (const reference of foreignKeyReferences) {
+      if ('ref' in reference.target) {
+        if (!placeholderCreateSpecRefs.has(reference.target.ref)) {
+          missingTargets.push({
+            tableMappingRef: reference.tableMappingRef,
+            fieldName: reference.fieldName,
+            target: { ref: reference.target.ref },
+          });
+        }
+      } else if ('unresolvedLinkedTableId' in reference.target) {
+        if (!draftSourceRemoteTableIds.has(reference.target.unresolvedLinkedTableId)) {
+          missingTargets.push({
+            tableMappingRef: reference.tableMappingRef,
+            fieldName: reference.fieldName,
+            target: { unresolvedLinkedTableId: reference.target.unresolvedLinkedTableId },
+          });
+        }
+      }
+      // `existingRemoteTableId` always resolves — the remote table exists regardless of the draft.
+    }
+
+    if (missingTargets.length > 0) {
+      throw new UnprocessableEntityException({
+        error: 'SYNC_DRAFT_FK_TARGET_MISSING',
+        message: `${missingTargets.length} foreign key field(s) point at a table that is not in this draft. Unmap them — or restore the target table — before saving.`,
+        missingTargets,
+      });
+    }
+  }
+
   private async materializeFieldAdditions(
     workbookId: WorkbookId,
     draftId: SyncDraftId,
@@ -616,6 +742,15 @@ export class SyncDraftService {
     results: MaterializePlaceholderResult[],
     actor: Actor,
   ): Promise<void> {
+    // Bind any pending `{ unresolvedLinkedTableId }` foreignKey target carried on a
+    // field addition to its destination within this draft. Placeholder siblings have
+    // already been created by this phase, so they bind to their real remote id (not a
+    // `{ ref }`, which /schema/fields rejects); an existing-destination table binds to
+    // its id. Unbound targets stay pending so createFields surfaces the requirement.
+    const foreignKeyResolutionMap = await this.buildForeignKeyResolutionMap(tableMappings, {
+      resolvePlaceholdersToRemoteId: true,
+    });
+
     for (const tableMapping of tableMappings) {
       const additions = tableMapping.fieldAdditions ?? [];
       for (const addition of additions) {
@@ -655,7 +790,9 @@ export class SyncDraftService {
         const dto: CreateSchemaFieldsDto = {
           connectorAccountId: folder.connectorAccountId,
           remoteTableId: folder.tableId,
-          fields: unresolved.map((addition) => addition.createFieldSpec),
+          fields: unresolved.map((addition) =>
+            resolveFieldForeignKeyTarget(addition.createFieldSpec, foreignKeyResolutionMap),
+          ),
           refreshLocalSchema: true,
         };
         const response = await this.schemaBuilderService.createFields(workbookId, dto, actor);
