@@ -882,6 +882,29 @@ ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordP
     return result;
   }),
 );
+ipcMain.handle('scratch:accept-records', async (_, workspacePath: string, recordPaths: string[]) =>
+  withWorkspaceInternalMutation(workspacePath, async () => {
+    if (recordPaths.length === 0) return { stdout: '', stderr: '', exitCode: 0 };
+    // The CLI `files accept` takes many paths in one call (the by-type view's
+    // "Approve all N" for a created/removed/invalid group), so this is one spawn
+    // instead of N. accept moves working → dirty; dirty changed so the hot path
+    // won't detect it — reindex the affected records, grouped by folder.
+    const result = await runScratchmdCapture(['files', 'accept', ...recordPaths], workspacePath);
+    if (result.exitCode === 0) {
+      const filenamesByFolder = new Map<string, string[]>();
+      for (const recordPath of recordPaths) {
+        const folder = folderFromRecordPath(recordPath);
+        const filenames = filenamesByFolder.get(folder) ?? [];
+        filenames.push(filenameFromRecordPath(recordPath));
+        filenamesByFolder.set(folder, filenames);
+      }
+      for (const [folder, filenames] of Array.from(filenamesByFolder.entries())) {
+        await reindexFiles(workspacePath, folder, filenames);
+      }
+    }
+    return result;
+  }),
+);
 ipcMain.handle('scratch:reject-record', async (_, workspacePath: string, recordPath: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     // reject reverts working only; hot path detects working-tree changes automatically

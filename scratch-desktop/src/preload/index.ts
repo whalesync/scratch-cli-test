@@ -152,6 +152,11 @@ const scratchDesktop = {
     recordPath: string,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
     invoke('scratch:accept-record', workspacePath, recordPath),
+  acceptRecords: (
+    workspacePath: string,
+    recordPaths: string[],
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    invoke('scratch:accept-records', workspacePath, recordPaths),
   rejectRecord: (
     workspacePath: string,
     recordPath: string,

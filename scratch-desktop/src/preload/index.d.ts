@@ -113,6 +113,11 @@ interface ScratchDesktopAPI {
     workspacePath: string,
     recordPath: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  /** Accept several records in one CLI call (the by-type view's per-group bulk approve for created/removed/invalid groups). */
+  acceptRecords: (
+    workspacePath: string,
+    recordPaths: string[],
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   rejectRecord: (
     workspacePath: string,
     recordPath: string,

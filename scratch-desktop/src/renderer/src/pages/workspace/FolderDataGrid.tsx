@@ -25,6 +25,7 @@ import {
   Modal,
   Popover,
   Portal,
+  SegmentedControl,
   Stack,
   Table,
   Tooltip,
@@ -71,7 +72,13 @@ import {
   trackRejectRecordChange,
 } from '../../lib/posthog';
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
-import { useViewMode, useWorkspaceUiStore, type FilterKind, type GridFilter } from '../../stores/workspace-ui-store';
+import {
+  useViewMode,
+  useWorkspaceUiStore,
+  type FilterKind,
+  type GridFilter,
+  type ReviewSurfaceViewMode,
+} from '../../stores/workspace-ui-store';
 import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { EditPropertyDialog } from './EditPropertyDialog';
@@ -83,6 +90,13 @@ import { InvalidJsonFilesModal, type InvalidJsonFileListEntry } from './InvalidJ
 import { rowHasUnreviewedChanges } from './record-diff-helpers';
 import { RecordChangesDrawer } from './RecordChangesDrawer';
 import { RecordDetailView } from './RecordDetailView';
+import {
+  buildByTypeGroupModel,
+  byTypeGroupKey,
+  type ByTypeGroupModel,
+  type ByTypeSourceColumn,
+} from './review-surface/build-by-type-group-model';
+import { ByTypeView } from './review-surface/ByTypeView';
 import { drawUnifiedDiffCell, UNIFIED_DIFF_ROW_HEIGHT } from './unified-diff-cell';
 
 // ── Types ──
@@ -212,6 +226,11 @@ interface GridQueryState {
 // ── Constants ──
 
 const PAGE_SIZE = 100;
+// The By-type view loads the folder's whole unreviewed set in one request. The
+// main process caps a single readDiffGridData page (offset AND limit) at
+// GRID_DATA_MAX_PAGINATION (1000), so this is the hard ceiling; past it the view
+// shows a truncation banner and disables per-group bulk approve.
+const BY_TYPE_MAX_PENDING_RECORDS = 1000;
 const STATUS_COL_WIDTH = 50;
 const STATUS_COL_ID = '__status';
 const INSPECT_BUTTON_SIZE = 18;
@@ -922,9 +941,25 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // DEV-10616: the record changes drawer is part of the review-surface-v2 redesign
   // (DEV-10615) and ships dark behind the per-user DESKTOP_REVIEW_SURFACE_V2 flag.
   const isReviewSurfaceV2Enabled = useReviewSurfaceV2Enabled();
+  const reviewSurfaceViewMode = useWorkspaceUiStore((s) => s.reviewSurfaceViewMode);
+  const setReviewSurfaceViewMode = useWorkspaceUiStore((s) => s.setReviewSurfaceViewMode);
+  // The By-type grouped review surface (DEV-10618) is active when the flag is on
+  // and the user has selected it; its folder-wide pending data loads separately
+  // from the canvas grid's page-scoped `diffData`.
+  const isByTypeReviewMode = isReviewSurfaceV2Enabled && reviewSurfaceViewMode === 'by-type';
   const showGrid = useWorkspaceUiStore((s) => s.showGrid);
   const showRecord = useWorkspaceUiStore((s) => s.showRecord);
   const showField = useWorkspaceUiStore((s) => s.showField);
+
+  // Folder-wide unreviewed changes for the By-type view (capped at
+  // BY_TYPE_MAX_PENDING_RECORDS), loaded only while that view is active. Kept
+  // apart from the canvas grid's page-scoped `diffData` so toggling back to the
+  // table is instant and the grid's draw loop is never touched.
+  const [byTypeDiffData, setByTypeDiffData] = useState<DiffGridResult | null>(null);
+  const [byTypeReloadKey, setByTypeReloadKey] = useState(0);
+  const bumpByTypeReload = useCallback(() => setByTypeReloadKey((key) => key + 1), []);
+  // Group keys (see byTypeGroupKey) whose bulk "Approve all" is in flight.
+  const [approvingByTypeGroupKeys, setApprovingByTypeGroupKeys] = useState<ReadonlySet<string>>(() => new Set());
 
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
   const page = useWorkspaceUiStore((s) => s.page);
@@ -1530,6 +1565,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // stores/CLAUDE.md) and mutually exclusive with the maximize-button
   // RecordDetailView, which is driven by the store's selectedRecordFilename.
   const [recordChangesDrawerFilename, setRecordChangesDrawerFilename] = useState<string | null>(null);
+  // When the drawer is opened from a By-type group row, this captures that group's
+  // record filenames so the stepper cycles within the group; null means the drawer
+  // is page-scoped (the table view's changed records). It is pruned as records are
+  // reviewed so the stepper never lands back on an already-approved record.
+  const [recordChangesDrawerFilenameSet, setRecordChangesDrawerFilenameSet] = useState<string[] | null>(null);
   // Pending single-click → open-drawer timer, cancelled by a double-click (which
   // edits a cell) so double-click-to-edit keeps working on changed rows.
   const recordChangesDrawerOpenTimerRef = useRef<number | null>(null);
@@ -1547,10 +1587,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     () => pagedRows.filter((row) => rowHasUnreviewedChanges(row)).map((row) => row.__filename),
     [pagedRows],
   );
-  const recordChangesDrawerIndex = useMemo(
-    () => (recordChangesDrawerFilename ? changedRecordFilenames.indexOf(recordChangesDrawerFilename) : -1),
-    [recordChangesDrawerFilename, changedRecordFilenames],
+  // The set the drawer actually steps through: a By-type group's records when
+  // opened from there, otherwise the page's changed records.
+  const drawerFilenames = useMemo(
+    () => recordChangesDrawerFilenameSet ?? changedRecordFilenames,
+    [recordChangesDrawerFilenameSet, changedRecordFilenames],
   );
+  const recordChangesDrawerIndex = useMemo(
+    () => (recordChangesDrawerFilename ? drawerFilenames.indexOf(recordChangesDrawerFilename) : -1),
+    [recordChangesDrawerFilename, drawerFilenames],
+  );
+
+  const closeRecordChangesDrawer = useCallback(() => {
+    setRecordChangesDrawerFilename(null);
+    setRecordChangesDrawerFilenameSet(null);
+  }, []);
 
   const openRecordChangesDrawer = useCallback(
     (filename: string) => {
@@ -1559,6 +1610,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       showGrid();
       setGridSelection(undefined);
       setCellPopover(null);
+      setRecordChangesDrawerFilenameSet(null); // page-scoped
       setRecordChangesDrawerFilename(filename);
       void trackOpenRecordChangesDrawer(workspaceId, {
         folderPath: selectedFolderPath,
@@ -1568,39 +1620,63 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [pagedRows, showGrid, workspaceId, selectedFolderPath],
   );
 
-  // Pick the record to show after the current one leaves the changed set, computed
-  // from the set as it is now (before the async grid refetch resolves). Returns null
-  // when nothing changed remains, which closes the drawer.
+  // Open the drawer scoped to a By-type group (DEV-10618): the stepper cycles
+  // within the group's records rather than the page's changed set.
+  const openByTypeGroupDrawer = useCallback(
+    (group: ByTypeGroupModel, filename: string) => {
+      showGrid();
+      setGridSelection(undefined);
+      setCellPopover(null);
+      setRecordChangesDrawerFilenameSet(group.recordFilenames);
+      setRecordChangesDrawerFilename(filename);
+      void trackOpenRecordChangesDrawer(workspaceId, {
+        folderPath: selectedFolderPath,
+        rowStatus: group.rows.find((groupRow) => groupRow.filename === filename)?.rowStatus ?? 'unknown',
+      });
+    },
+    [showGrid, workspaceId, selectedFolderPath],
+  );
+
+  // Pick the record to show after the current one leaves the stepped set, computed
+  // from the set as it is now (before the async refetch resolves). Returns null
+  // when nothing remains, which closes the drawer.
   const nextChangedRecordAfter = useCallback(
     (filename: string): string | null => {
-      const index = changedRecordFilenames.indexOf(filename);
-      const remaining = changedRecordFilenames.filter((f) => f !== filename);
+      const index = drawerFilenames.indexOf(filename);
+      const remaining = drawerFilenames.filter((f) => f !== filename);
       if (remaining.length === 0) return null;
       return remaining[Math.min(Math.max(index, 0), remaining.length - 1)] ?? null;
     },
-    [changedRecordFilenames],
+    [drawerFilenames],
   );
 
   // Opening the full record-detail overlay (maximize button / view-mode buttons)
   // closes the changes drawer, so the two never render at once.
   useEffect(() => {
-    if (selectedRecordFilename) setRecordChangesDrawerFilename(null);
-  }, [selectedRecordFilename]);
+    if (selectedRecordFilename) closeRecordChangesDrawer();
+  }, [selectedRecordFilename, closeRecordChangesDrawer]);
 
   // Close the drawer (and cancel any pending open) when the folder changes.
   useEffect(() => {
-    setRecordChangesDrawerFilename(null);
+    closeRecordChangesDrawer();
     clearRecordChangesDrawerOpenTimer();
-  }, [selectedFolderPath, clearRecordChangesDrawerOpenTimer]);
+  }, [selectedFolderPath, closeRecordChangesDrawer, clearRecordChangesDrawerOpenTimer]);
 
-  // Close the drawer if the open record is no longer in the changed set (e.g. it was
-  // approved/rejected elsewhere or edited away). The advance logic already points at
-  // a valid record after approve/reject, so this only fires on genuine drop-out.
+  // Switching the review surface (Table ⇄ By type) closes the drawer so a
+  // group-scoped stepper never lingers over the table view (or vice-versa).
+  useEffect(() => {
+    closeRecordChangesDrawer();
+  }, [reviewSurfaceViewMode, closeRecordChangesDrawer]);
+
+  // Close the drawer if the open record is no longer in the stepped set (e.g. it was
+  // approved/rejected, or its By-type group emptied). The advance logic already
+  // points at a valid record after approve/reject, so this only fires on genuine
+  // drop-out — and never silently re-points a group-scoped drawer at the page set.
   useEffect(() => {
     if (recordChangesDrawerFilename && recordChangesDrawerIndex < 0) {
-      setRecordChangesDrawerFilename(null);
+      closeRecordChangesDrawer();
     }
-  }, [recordChangesDrawerFilename, recordChangesDrawerIndex]);
+  }, [recordChangesDrawerFilename, recordChangesDrawerIndex, closeRecordChangesDrawer]);
 
   // Cancel any pending open-drawer timer on unmount.
   useEffect(() => clearRecordChangesDrawerOpenTimer, [clearRecordChangesDrawerOpenTimer]);
@@ -1851,6 +1927,73 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return map;
   }, [flatViewCols]);
 
+  // ── By-type grouped review view (DEV-10618) ──
+  // Columns for the group model, in the grid's display order. Keyed by the same
+  // ids as columnEffectivePathsMap so the model resolves effective leaf paths the
+  // same way the grid's cell-diff does.
+  const byTypeColumns = useMemo<ByTypeSourceColumn[]>(
+    () => flatViewCols.map((col) => ({ id: col.path, displayName: col.name ?? col.path })),
+    [flatViewCols],
+  );
+  const byTypeGroups = useMemo<ByTypeGroupModel[]>(
+    () =>
+      byTypeDiffData
+        ? buildByTypeGroupModel(byTypeDiffData.rows, byTypeColumns, columnEffectivePathsMap, titleColumnId)
+        : [],
+    [byTypeDiffData, byTypeColumns, columnEffectivePathsMap, titleColumnId],
+  );
+  // filterCounts.unreviewed is the TRUE folder-wide pending total (not page-bounded),
+  // so this comparison is honest even though rows are capped at BY_TYPE_MAX_PENDING_RECORDS.
+  const byTypeLoadedRecordCount = byTypeDiffData?.rows.length ?? 0;
+  const byTypeTotalPendingRecordCount = byTypeDiffData?.filterCounts.unreviewed ?? 0;
+  const byTypeIsTruncated = byTypeDiffData ? byTypeLoadedRecordCount < byTypeTotalPendingRecordCount : false;
+
+  // Folder-wide unreviewed load for the By-type view. Generation ref drops stale
+  // responses; the scope ref clears the prior folder's groups only on a real
+  // folder/mode change (not on a same-folder refresh) to avoid flashing empty.
+  const byTypeLoadGenerationRef = useRef(0);
+  const byTypePrevScopeRef = useRef<string | null>(null);
+  const loadByTypeDiffData = useCallback(async () => {
+    if (!selectedFolderPath || !workspacePath) return;
+    const generation = ++byTypeLoadGenerationRef.current;
+    try {
+      const result = await window.scratchFiles.readDiffGridData(selectedFolderPath, workspacePath, {
+        offset: 0,
+        limit: BY_TYPE_MAX_PENDING_RECORDS,
+        filters: [{ scope: 'global', kind: 'unreviewed' }],
+        validate: false,
+      });
+      if (generation !== byTypeLoadGenerationRef.current) return;
+      setByTypeDiffData(result as DiffGridResult);
+    } catch (err) {
+      if (generation !== byTypeLoadGenerationRef.current) return;
+      console.error('[by-type] failed to load folder-wide pending changes', err);
+    }
+  }, [selectedFolderPath, workspacePath]);
+
+  useEffect(() => {
+    if (!isByTypeReviewMode || !selectedFolderPath || !workspacePath) {
+      setByTypeDiffData(null);
+      byTypePrevScopeRef.current = null;
+      return;
+    }
+    const scope = `${workspacePath}::${selectedFolderPath}`;
+    if (byTypePrevScopeRef.current !== scope) {
+      byTypePrevScopeRef.current = scope;
+      setByTypeDiffData(null); // folder/mode changed → clear stale before reload
+    }
+    void loadByTypeDiffData();
+    // workspaceLevelDataInvalidationCounter + byTypeReloadKey re-run an in-place
+    // refresh (no clear) after pulls and review actions.
+  }, [
+    isByTypeReviewMode,
+    selectedFolderPath,
+    workspacePath,
+    workspaceLevelDataInvalidationCounter,
+    byTypeReloadKey,
+    loadByTypeDiffData,
+  ]);
+
   /** Map from column ID to description (for header menu, detail view, etc.) */
   const columnDescriptionsMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -2088,7 +2231,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // record (or close when none remain), and refresh the grid so the row's status updates.
   const handleRecordChangeReviewed = useCallback(
     (filename: string, action: 'approve' | 'reject') => {
-      const row = pagedRows.find((r) => r.__filename === filename);
+      // The reviewed record may be off the current grid page when the drawer was
+      // opened from a By-type group, so fall back to the by-type set for tracking.
+      const row =
+        pagedRows.find((r) => r.__filename === filename) ?? byTypeDiffData?.rows.find((r) => r.__filename === filename);
       const trackProps = {
         rowStatus: row?.__rowStatus ?? 'unknown',
         changedFieldCount: row?.__changedFields.length ?? 0,
@@ -2096,10 +2242,103 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       if (action === 'approve') void trackApproveRecordChange(workspaceId, trackProps);
       else void trackRejectRecordChange(workspaceId, trackProps);
       setRecordChangesDrawerFilename(nextChangedRecordAfter(filename));
+      // Drop the reviewed record from a group-scoped stepper so it never lands
+      // back on it; the page-scoped set recomputes itself from the refreshed grid.
+      setRecordChangesDrawerFilenameSet((set) => (set ? set.filter((f) => f !== filename) : set));
       refreshGridDataInBackground();
+      bumpByTypeReload();
       invalidateWorkspaceLevelData();
     },
-    [pagedRows, workspaceId, nextChangedRecordAfter, refreshGridDataInBackground, invalidateWorkspaceLevelData],
+    [
+      pagedRows,
+      byTypeDiffData,
+      workspaceId,
+      nextChangedRecordAfter,
+      refreshGridDataInBackground,
+      bumpByTypeReload,
+      invalidateWorkspaceLevelData,
+    ],
+  );
+
+  const setByTypeGroupApproving = useCallback((groupKey: string, approving: boolean) => {
+    setApprovingByTypeGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (approving) next.add(groupKey);
+      else next.delete(groupKey);
+      return next;
+    });
+  }, []);
+
+  // Per-group "Approve all N" (DEV-10618). A field group accepts the column's edit
+  // across the whole folder in one CLI call (the effective leaf path, like the
+  // grid header); a created/removed/invalid group accepts its records in one
+  // batched call. Disabled while the folder's pending set is truncated past the
+  // load cap, so the action can never reach beyond what the view shows.
+  const approveAllForByTypeGroup = useCallback(
+    (group: ByTypeGroupModel) => {
+      if (!selectedFolderPath || !workspacePath || byTypeIsTruncated) return;
+      const groupKey = byTypeGroupKey(group);
+      if (approvingByTypeGroupKeys.has(groupKey)) return;
+      setByTypeGroupApproving(groupKey, true);
+
+      const finish = () => {
+        setByTypeGroupApproving(groupKey, false);
+        refreshGridDataInBackground();
+        bumpByTypeReload();
+        invalidateWorkspaceLevelData();
+      };
+      const fail = (err: unknown, title: string) => {
+        console.error(`[by-type] ${title}`, err);
+        notifications.show({ color: 'red', title, message: err instanceof Error ? err.message : 'Unknown error' });
+      };
+
+      if (group.kind === 'field' && group.effectivePath) {
+        void window.scratchFiles
+          .acceptFieldChanges(selectedFolderPath, workspacePath, group.effectivePath)
+          .then((result) => {
+            const fileCount = result.filesAccepted ?? result.paths.length;
+            notifications.show({
+              color: 'green',
+              title: 'Changes approved',
+              message: `Approved ${fileCount.toLocaleString()} change${fileCount === 1 ? '' : 's'} to "${group.title}".`,
+            });
+          })
+          .catch((err: unknown) => fail(err, 'Failed to approve field'))
+          .finally(finish);
+        return;
+      }
+
+      const relativeFolderPath = workspaceRelativePosixPath(workspacePath, selectedFolderPath);
+      if (!relativeFolderPath) {
+        setByTypeGroupApproving(groupKey, false);
+        return;
+      }
+      const recordPaths = group.recordFilenames.map((filename) => `${relativeFolderPath}/${filename}`);
+      void window.scratchDesktop
+        .acceptRecords(workspacePath, recordPaths)
+        .then((result) => {
+          if (result.exitCode !== 0) {
+            throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to approve records');
+          }
+          notifications.show({
+            color: 'green',
+            title: 'Changes approved',
+            message: `Approved ${recordPaths.length.toLocaleString()} record${recordPaths.length === 1 ? '' : 's'}.`,
+          });
+        })
+        .catch((err: unknown) => fail(err, 'Failed to approve records'))
+        .finally(finish);
+    },
+    [
+      selectedFolderPath,
+      workspacePath,
+      byTypeIsTruncated,
+      approvingByTypeGroupKeys,
+      setByTypeGroupApproving,
+      refreshGridDataInBackground,
+      bumpByTypeReload,
+      invalidateWorkspaceLevelData,
+    ],
   );
 
   const acceptGridCellChange = useCallback(
@@ -2201,8 +2440,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
       closeGridEditorChrome();
 
+      // The CLI's accept-field reads each record's value by splitting the field
+      // arg on `.`, so it must receive the column's *effective leaf path* (e.g.
+      // WordPress `title` → `title.raw`), not the root column id — otherwise it
+      // compares the whole envelope object and approves the wrong records (or none).
+      const effectivePath = columnEffectivePathsMap.get(columnId) ?? columnId;
+
       void window.scratchFiles
-        .acceptFieldChanges(selectedFolderPath, workspacePath, columnId)
+        .acceptFieldChanges(selectedFolderPath, workspacePath, effectivePath)
         .then((result) => {
           refreshGridDataInBackground();
           if (result.status === 'no_changes') {
@@ -2230,7 +2475,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           });
         });
     },
-    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, columnEffectivePathsMap, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const rejectGridFieldChanges = useCallback(
@@ -2241,8 +2486,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
       closeGridEditorChrome();
 
+      // See acceptGridFieldChanges: reject-field also splits the field arg on `.`,
+      // so it needs the effective leaf path, not the root column id.
+      const effectivePath = columnEffectivePathsMap.get(columnId) ?? columnId;
+
       void window.scratchFiles
-        .rejectFieldChanges(selectedFolderPath, workspacePath, columnId)
+        .rejectFieldChanges(selectedFolderPath, workspacePath, effectivePath)
         .then((result) => {
           refreshGridDataInBackground();
           if (result.status === 'no_changes') {
@@ -2270,7 +2519,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           });
         });
     },
-    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, columnEffectivePathsMap, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const handleBulkAction = useCallback(
@@ -3006,6 +3255,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const showBlockingLoader = Boolean(
     selectedFolderPath && (isBlockingLoad || (!hasCurrentQueryData && !hasCurrentQueryError && workspacePath)),
   );
+  // Render the By-type body in place of the canvas grid when it is selected and no
+  // inline record/field detail overlay is open (the detail overlay wins, as it does
+  // over the canvas). Its own folder-wide load drives loading/empty states, so it
+  // is independent of the page's `pagedRows`/`showBlockingLoader`.
+  const showByTypeBody = isByTypeReviewMode && detailRowIndex === null;
   const disableGlobalFilterPills = isBlockingLoad;
 
   return (
@@ -3103,6 +3357,25 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             </Tooltip>
           </ActionIcon.Group>
 
+          {/* The Table / By type toggle is only meaningful for the review surface
+              itself — hide it while the inline record/field detail overlay is open,
+              since neither body is visible then. */}
+          {isReviewSurfaceV2Enabled && detailRowIndex === null && (
+            <>
+              <Divider orientation="vertical" />
+              <SegmentedControl
+                size="xs"
+                value={reviewSurfaceViewMode}
+                onChange={(value) => setReviewSurfaceViewMode(value as ReviewSurfaceViewMode)}
+                data={[
+                  { label: 'Table', value: 'table' },
+                  { label: 'By type', value: 'by-type' },
+                ]}
+                aria-label="Review surface view"
+              />
+            </>
+          )}
+
           <Divider orientation="vertical" />
 
           <Group gap="xs">
@@ -3170,33 +3443,39 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               </Group>
             </>
           )}
-          <Divider orientation="vertical" />
-          <Popover>
-            <Popover.Target>
-              <ButtonSecondaryGhost size="compact-xs" leftSection={<Columns3 size={16} />}>
-                Columns
-                {visibleColumnIds && visibleColumnIds.length < allColumnIds.length
-                  ? ` (${visibleColumnIds.length.toLocaleString()})`
-                  : ''}
-              </ButtonSecondaryGhost>
-            </Popover.Target>
-            <Popover.Dropdown w={420}>
-              <ColumnPickerMenu
-                allColumns={allColumnIds}
-                visibleColumns={effectiveVisibleColumns}
-                titleColumnId={titleColumnId}
-                unreviewedColumnIds={unreviewedColumnIds}
-                approvedColumnIds={approvedColumnIds}
-                columnLabels={columnLabelsMap}
-                columnGroups={columnGroups}
-                onChangeVisible={setVisibleColumnIds}
-                activeViewName={viewSource}
-                availableViewNames={availableViewNames}
-                onSwitchView={handleSwitchView}
-                onEditProperty={handleEditPropertyFromPicker}
-              />
-            </Popover.Dropdown>
-          </Popover>
+          {/* The Columns picker only applies to the canvas grid — the By-type view
+              has no columns to show/hide, so hide it there. */}
+          {!isByTypeReviewMode && (
+            <>
+              <Divider orientation="vertical" />
+              <Popover>
+                <Popover.Target>
+                  <ButtonSecondaryGhost size="compact-xs" leftSection={<Columns3 size={16} />}>
+                    Columns
+                    {visibleColumnIds && visibleColumnIds.length < allColumnIds.length
+                      ? ` (${visibleColumnIds.length.toLocaleString()})`
+                      : ''}
+                  </ButtonSecondaryGhost>
+                </Popover.Target>
+                <Popover.Dropdown w={420}>
+                  <ColumnPickerMenu
+                    allColumns={allColumnIds}
+                    visibleColumns={effectiveVisibleColumns}
+                    titleColumnId={titleColumnId}
+                    unreviewedColumnIds={unreviewedColumnIds}
+                    approvedColumnIds={approvedColumnIds}
+                    columnLabels={columnLabelsMap}
+                    columnGroups={columnGroups}
+                    onChangeVisible={setVisibleColumnIds}
+                    activeViewName={viewSource}
+                    availableViewNames={availableViewNames}
+                    onSwitchView={handleSwitchView}
+                    onEditProperty={handleEditPropertyFromPicker}
+                  />
+                </Popover.Dropdown>
+              </Popover>
+            </>
+          )}
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
               <ActionIcon size="sm" variant="subtle" color="gray">
@@ -3241,7 +3520,27 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         </Box>
       )}
 
-      {selectedFolderPath && showBlockingLoader && (
+      {selectedFolderPath && showByTypeBody && (
+        <Box style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          {byTypeDiffData === null ? (
+            <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Loader size="sm" />
+            </Box>
+          ) : (
+            <ByTypeView
+              groups={byTypeGroups}
+              isTruncated={byTypeIsTruncated}
+              loadedRecordCount={byTypeLoadedRecordCount}
+              totalPendingRecordCount={byTypeTotalPendingRecordCount}
+              approvingGroupKeys={approvingByTypeGroupKeys}
+              onApproveAllForGroup={approveAllForByTypeGroup}
+              onOpenGroupRow={openByTypeGroupDrawer}
+            />
+          )}
+        </Box>
+      )}
+
+      {selectedFolderPath && !showByTypeBody && showBlockingLoader && (
         <Box
           style={{
             flex: 1,
@@ -3261,313 +3560,332 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         </Box>
       )}
 
-      {selectedFolderPath && hasCurrentQueryError && (
+      {selectedFolderPath && !showByTypeBody && hasCurrentQueryError && (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Text13Regular c="var(--mantine-color-red-6)">{error}</Text13Regular>
         </Box>
       )}
 
-      {selectedFolderPath && !showBlockingLoader && !hasCurrentQueryError && pagedRows.length === 0 && (
-        <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Text13Regular c="dimmed">
-            {activeFilters.length > 0 ? 'No rows match the current filter' : 'No data in this folder'}
-          </Text13Regular>
-        </Box>
-      )}
+      {selectedFolderPath &&
+        !showByTypeBody &&
+        !showBlockingLoader &&
+        !hasCurrentQueryError &&
+        pagedRows.length === 0 && (
+          <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Text13Regular c="dimmed">
+              {activeFilters.length > 0 ? 'No rows match the current filter' : 'No data in this folder'}
+            </Text13Regular>
+          </Box>
+        )}
 
-      {selectedFolderPath && !showBlockingLoader && !hasCurrentQueryError && pagedRows.length > 0 && (
-        <>
-          <Box ref={wrapperRef} onMouseLeave={onGridMouseLeave} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-            {gridSize && (
-              <DataEditor
-                ref={gridRef}
-                theme={GRID_THEME}
-                columns={columns}
-                rows={pagedRows.length}
-                getCellContent={getCellContent}
-                width={gridSize.width}
-                height={gridSize.height}
-                smoothScrollX
-                smoothScrollY
-                gridSelection={gridSelection}
-                onGridSelectionChange={(sel) => {
-                  // Prevent selecting the status column via header click
-                  if (sel.columns.hasIndex(0)) {
-                    setGridSelection({ ...sel, columns: sel.columns.remove(0) });
-                  } else {
-                    setGridSelection(sel);
-                  }
-                }}
-                onSelectionCleared={() => {
-                  setGridSelection(undefined);
-                  setCellPopover(null);
-                  clearActiveEditorState();
-                }}
-                onHeaderClicked={onHeaderClicked}
-                onHeaderContextMenu={onHeaderContextMenu}
-                onHeaderMenuClick={onHeaderMenuClick}
-                onCellClicked={onCellClicked}
-                onMouseMove={onMouseMove}
-                onVisibleRegionChanged={onVisibleRegionChanged}
-                onCellActivated={onCellActivated}
-                onCellEdited={onCellEdited}
-                onFinishedEditing={onFinishedEditing}
-                isOutsideClick={isEditorOutsideClick}
-                cellActivationBehavior="double-click"
-                onColumnResize={onColumnResize}
-                maxColumnWidth={MAX_RESIZABLE_COLUMN_WIDTH}
-                drawCell={drawCell}
-                verticalBorder={(col) => col !== 0}
-                groupHeaderHeight={hasAnyGroups ? 28 : 0}
-                rowMarkers="none"
-                freezeColumns={titleColumnId && columns[1]?.id === titleColumnId ? 2 : 1}
-                rowHeight={unifiedDiffMode ? UNIFIED_DIFF_ROW_HEIGHT : 34}
-              />
-            )}
-            {inspectButtonRect && hoveredRowIdx !== null && (
-              <UnstyledButton
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  if (hoveredRowIdx !== null) {
-                    const filename = pagedRows[hoveredRowIdx]?.__filename;
-                    if (filename) showRecord(filename);
-                  }
-                }}
-                tabIndex={-1}
-                aria-label="Open record detail"
-                style={{
-                  position: 'absolute',
-                  left: inspectButtonRect.x - INSPECT_BUTTON_SIZE - 6,
-                  top: inspectButtonRect.y + (inspectButtonRect.height - INSPECT_BUTTON_SIZE) / 2,
-                  width: INSPECT_BUTTON_SIZE,
-                  height: INSPECT_BUTTON_SIZE,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: 3,
-                  border: '0.5px solid var(--fg-divider)',
-                  backgroundColor: 'var(--bg-base)',
-                  cursor: 'pointer',
-                  zIndex: 3,
-                  padding: 0,
-                }}
-              >
-                <StyledLucideIcon Icon={Maximize2} size={12} c="var(--fg-muted)" strokeWidth={2} />
-              </UnstyledButton>
-            )}
-            {detailRowIndex !== null && selectedFolderPath && workspacePath && (
-              <RecordDetailView
-                rows={pagedRows}
-                selectedIndex={detailRowIndex}
-                folderPath={selectedFolderPath}
-                workspacePath={workspacePath}
-                schema={schema}
-                titleColumnId={titleColumnId}
-                columnOrder={effectiveVisibleColumns}
-                columnLabels={columnLabelsMap}
-                columnDescriptions={columnDescriptionsMap}
-                readonlyFields={readonlyFields}
-                columnTypes={columnTypesMap}
-                onSelectIndex={(nextIndex) => {
-                  setDetailRowIndex(nextIndex);
-                }}
-                onClose={() => {
-                  showGrid();
-                  // Drop the cell selection so the rebuild effect can't restore the popover
-                  // when returning to the grid — require a fresh click.
-                  setGridSelection(undefined);
-                }}
-                workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
-                onRecordStructurallyChangedRefetchAll={() => {
-                  refreshGridDataInBackground();
-                  invalidateWorkspaceLevelData();
-                }}
-                onSingleFieldAcceptedApplyOptimistically={(filename, fieldName, nextValue) => {
-                  // No invalidateWorkspaceLevelData here: the setDiffData call already updates
-                  // the grid's view of this cell. See acceptGridCellChange for the same
-                  // reasoning.
-                  setDiffData((prev) =>
-                    prev ? applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue) : prev,
-                  );
-                }}
-                onPublishFile={props.onPublishFile}
-                onAddColumn={handleAddColumn}
-                onToggleColumnVisible={handleToggleColumnVisible}
-                allColumnPaths={allColumnPathsSet}
-                visibleColumnPaths={visibleColumnPathsSet}
-                columnEffectivePaths={columnEffectivePathsMap}
-                columnGroups={columnGroupMap}
-              />
-            )}
-            {isReviewSurfaceV2Enabled &&
-              recordChangesDrawerFilename &&
-              recordChangesDrawerIndex >= 0 &&
-              detailRowIndex === null &&
-              selectedFolderPath &&
-              workspacePath && (
-                <RecordChangesDrawer
-                  folderPath={selectedFolderPath}
-                  workspacePath={workspacePath}
-                  titleColumnId={titleColumnId}
-                  columnLabels={columnLabelsMap}
-                  columnEffectivePaths={columnEffectivePathsMap}
-                  changedFilenames={changedRecordFilenames}
-                  currentIndex={recordChangesDrawerIndex}
-                  onSelectIndex={(index) => setRecordChangesDrawerFilename(changedRecordFilenames[index] ?? null)}
-                  onClose={() => setRecordChangesDrawerFilename(null)}
-                  onApproved={(filename) => handleRecordChangeReviewed(filename, 'approve')}
-                  onRejected={(filename) => handleRecordChangeReviewed(filename, 'reject')}
+      {selectedFolderPath &&
+        !showByTypeBody &&
+        !showBlockingLoader &&
+        !hasCurrentQueryError &&
+        pagedRows.length > 0 && (
+          <>
+            <Box
+              ref={wrapperRef}
+              onMouseLeave={onGridMouseLeave}
+              style={{ flex: 1, position: 'relative', minHeight: 0 }}
+            >
+              {gridSize && (
+                <DataEditor
+                  ref={gridRef}
+                  theme={GRID_THEME}
+                  columns={columns}
+                  rows={pagedRows.length}
+                  getCellContent={getCellContent}
+                  width={gridSize.width}
+                  height={gridSize.height}
+                  smoothScrollX
+                  smoothScrollY
+                  gridSelection={gridSelection}
+                  onGridSelectionChange={(sel) => {
+                    // Prevent selecting the status column via header click
+                    if (sel.columns.hasIndex(0)) {
+                      setGridSelection({ ...sel, columns: sel.columns.remove(0) });
+                    } else {
+                      setGridSelection(sel);
+                    }
+                  }}
+                  onSelectionCleared={() => {
+                    setGridSelection(undefined);
+                    setCellPopover(null);
+                    clearActiveEditorState();
+                  }}
+                  onHeaderClicked={onHeaderClicked}
+                  onHeaderContextMenu={onHeaderContextMenu}
+                  onHeaderMenuClick={onHeaderMenuClick}
+                  onCellClicked={onCellClicked}
+                  onMouseMove={onMouseMove}
+                  onVisibleRegionChanged={onVisibleRegionChanged}
+                  onCellActivated={onCellActivated}
+                  onCellEdited={onCellEdited}
+                  onFinishedEditing={onFinishedEditing}
+                  isOutsideClick={isEditorOutsideClick}
+                  cellActivationBehavior="double-click"
+                  onColumnResize={onColumnResize}
+                  maxColumnWidth={MAX_RESIZABLE_COLUMN_WIDTH}
+                  drawCell={drawCell}
+                  verticalBorder={(col) => col !== 0}
+                  groupHeaderHeight={hasAnyGroups ? 28 : 0}
+                  rowMarkers="none"
+                  freezeColumns={titleColumnId && columns[1]?.id === titleColumnId ? 2 : 1}
+                  rowHeight={unifiedDiffMode ? UNIFIED_DIFF_ROW_HEIGHT : 34}
                 />
               )}
-          </Box>
+              {inspectButtonRect && hoveredRowIdx !== null && (
+                <UnstyledButton
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    if (hoveredRowIdx !== null) {
+                      const filename = pagedRows[hoveredRowIdx]?.__filename;
+                      if (filename) showRecord(filename);
+                    }
+                  }}
+                  tabIndex={-1}
+                  aria-label="Open record detail"
+                  style={{
+                    position: 'absolute',
+                    left: inspectButtonRect.x - INSPECT_BUTTON_SIZE - 6,
+                    top: inspectButtonRect.y + (inspectButtonRect.height - INSPECT_BUTTON_SIZE) / 2,
+                    width: INSPECT_BUTTON_SIZE,
+                    height: INSPECT_BUTTON_SIZE,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 3,
+                    border: '0.5px solid var(--fg-divider)',
+                    backgroundColor: 'var(--bg-base)',
+                    cursor: 'pointer',
+                    zIndex: 3,
+                    padding: 0,
+                  }}
+                >
+                  <StyledLucideIcon Icon={Maximize2} size={12} c="var(--fg-muted)" strokeWidth={2} />
+                </UnstyledButton>
+              )}
+              {detailRowIndex !== null && selectedFolderPath && workspacePath && (
+                <RecordDetailView
+                  rows={pagedRows}
+                  selectedIndex={detailRowIndex}
+                  folderPath={selectedFolderPath}
+                  workspacePath={workspacePath}
+                  schema={schema}
+                  titleColumnId={titleColumnId}
+                  columnOrder={effectiveVisibleColumns}
+                  columnLabels={columnLabelsMap}
+                  columnDescriptions={columnDescriptionsMap}
+                  readonlyFields={readonlyFields}
+                  columnTypes={columnTypesMap}
+                  onSelectIndex={(nextIndex) => {
+                    setDetailRowIndex(nextIndex);
+                  }}
+                  onClose={() => {
+                    showGrid();
+                    // Drop the cell selection so the rebuild effect can't restore the popover
+                    // when returning to the grid — require a fresh click.
+                    setGridSelection(undefined);
+                  }}
+                  workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
+                  onRecordStructurallyChangedRefetchAll={() => {
+                    refreshGridDataInBackground();
+                    invalidateWorkspaceLevelData();
+                  }}
+                  onSingleFieldAcceptedApplyOptimistically={(filename, fieldName, nextValue) => {
+                    // No invalidateWorkspaceLevelData here: the setDiffData call already updates
+                    // the grid's view of this cell. See acceptGridCellChange for the same
+                    // reasoning.
+                    setDiffData((prev) =>
+                      prev ? applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue) : prev,
+                    );
+                  }}
+                  onPublishFile={props.onPublishFile}
+                  onAddColumn={handleAddColumn}
+                  onToggleColumnVisible={handleToggleColumnVisible}
+                  allColumnPaths={allColumnPathsSet}
+                  visibleColumnPaths={visibleColumnPathsSet}
+                  columnEffectivePaths={columnEffectivePathsMap}
+                  columnGroups={columnGroupMap}
+                />
+              )}
+            </Box>
 
-          <Box
-            style={{
-              padding: '6px 12px',
-              borderTop: '0.5px solid var(--fg-divider)',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <Text12Regular c="var(--fg-muted)">
-              {(diffData?.total ?? 0).toLocaleString()} rows &middot; {columns.length.toLocaleString()} columns
-              {sort.column && (
-                <span style={{ marginLeft: 8 }}>
-                  &middot; Sorted by {sort.column === STATUS_COL_ID ? 'Status' : sort.column}{' '}
-                  {sort.direction === 'desc' ? '\u2193' : '\u2191'}
-                </span>
-              )}
-            </Text12Regular>
+            <Box
+              style={{
+                padding: '6px 12px',
+                borderTop: '0.5px solid var(--fg-divider)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <Text12Regular c="var(--fg-muted)">
+                {(diffData?.total ?? 0).toLocaleString()} rows &middot; {columns.length.toLocaleString()} columns
+                {sort.column && (
+                  <span style={{ marginLeft: 8 }}>
+                    &middot; Sorted by {sort.column === STATUS_COL_ID ? 'Status' : sort.column}{' '}
+                    {sort.direction === 'desc' ? '\u2193' : '\u2191'}
+                  </span>
+                )}
+              </Text12Regular>
 
-            <Group gap={10} align="center">
-              {isRefreshing && detailRowIndex === null && (
-                <Group gap={6} align="center">
-                  <Loader size="xs" />
-                  <Text12Regular c="var(--fg-muted)">Refreshing…</Text12Regular>
-                </Group>
-              )}
-              {(filterCounts?.unreviewed ?? 0) > 0 && (
-                <Group gap={3}>
-                  <Box
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      backgroundColor: 'var(--modified-needs-review-stroke)',
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Text12Regular c="var(--fg-muted)">
-                    {(filterCounts?.unreviewed ?? 0).toLocaleString()} needs review
-                  </Text12Regular>
-                </Group>
-              )}
-              {hasChanges && (
-                <Group gap={10}>
-                  {summary.addedApproved > 0 && (
-                    <Group gap={3}>
-                      <Plus size={12} color="var(--create-approved-stroke)" />
-                      <Text12Regular c="var(--fg-muted)">{summary.addedApproved.toLocaleString()} added</Text12Regular>
-                    </Group>
-                  )}
-                  {summary.unpublished > 0 && (
-                    <Group gap={3}>
-                      <Box
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          backgroundColor: 'var(--modified-approved-stroke)',
-                          flexShrink: 0,
-                        }}
-                      />
-                      <Text12Regular c="var(--fg-muted)">{summary.unpublished.toLocaleString()} modified</Text12Regular>
-                    </Group>
-                  )}
-                  {summary.deletedApproved > 0 && (
-                    <Group gap={3}>
-                      <Minus size={12} color="var(--delete-approved-stroke)" />
-                      <Text12Regular c="var(--fg-muted)">
-                        {summary.deletedApproved.toLocaleString()} deleted
-                      </Text12Regular>
-                    </Group>
-                  )}
-                  {summary.invalidJson > 0 && (
-                    <UnstyledButton
-                      type="button"
-                      onClick={() => setInvalidJsonModalOpen(true)}
+              <Group gap={10} align="center">
+                {isRefreshing && detailRowIndex === null && (
+                  <Group gap={6} align="center">
+                    <Loader size="xs" />
+                    <Text12Regular c="var(--fg-muted)">Refreshing…</Text12Regular>
+                  </Group>
+                )}
+                {(filterCounts?.unreviewed ?? 0) > 0 && (
+                  <Group gap={3}>
+                    <Box
                       style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        border: 'none',
-                        background: 'transparent',
-                        padding: 0,
-                        margin: 0,
-                        cursor: 'pointer',
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        backgroundColor: 'var(--modified-needs-review-stroke)',
+                        flexShrink: 0,
                       }}
-                    >
+                    />
+                    <Text12Regular c="var(--fg-muted)">
+                      {(filterCounts?.unreviewed ?? 0).toLocaleString()} needs review
+                    </Text12Regular>
+                  </Group>
+                )}
+                {hasChanges && (
+                  <Group gap={10}>
+                    {summary.addedApproved > 0 && (
+                      <Group gap={3}>
+                        <Plus size={12} color="var(--create-approved-stroke)" />
+                        <Text12Regular c="var(--fg-muted)">
+                          {summary.addedApproved.toLocaleString()} added
+                        </Text12Regular>
+                      </Group>
+                    )}
+                    {summary.unpublished > 0 && (
                       <Group gap={3}>
                         <Box
                           style={{
-                            width: 6,
-                            height: 6,
+                            width: 8,
+                            height: 8,
                             borderRadius: '50%',
-                            backgroundColor: '#ea580c',
+                            backgroundColor: 'var(--modified-approved-stroke)',
                             flexShrink: 0,
                           }}
                         />
-                        <Text12Regular c="var(--fg-muted)" style={{ textDecoration: 'underline' }}>
-                          {summary.invalidJson.toLocaleString()} invalid files
+                        <Text12Regular c="var(--fg-muted)">
+                          {summary.unpublished.toLocaleString()} modified
                         </Text12Regular>
                       </Group>
-                    </UnstyledButton>
-                  )}
-                </Group>
-              )}
+                    )}
+                    {summary.deletedApproved > 0 && (
+                      <Group gap={3}>
+                        <Minus size={12} color="var(--delete-approved-stroke)" />
+                        <Text12Regular c="var(--fg-muted)">
+                          {summary.deletedApproved.toLocaleString()} deleted
+                        </Text12Regular>
+                      </Group>
+                    )}
+                    {summary.invalidJson > 0 && (
+                      <UnstyledButton
+                        type="button"
+                        onClick={() => setInvalidJsonModalOpen(true)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          border: 'none',
+                          background: 'transparent',
+                          padding: 0,
+                          margin: 0,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <Group gap={3}>
+                          <Box
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: '50%',
+                              backgroundColor: '#ea580c',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <Text12Regular c="var(--fg-muted)" style={{ textDecoration: 'underline' }}>
+                            {summary.invalidJson.toLocaleString()} invalid files
+                          </Text12Regular>
+                        </Group>
+                      </UnstyledButton>
+                    )}
+                  </Group>
+                )}
 
-              {totalPages > 1 && (
-                <Group gap={4} align="center">
-                  <Box
-                    component="button"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    style={{
-                      padding: '1px 6px',
-                      border: '1px solid var(--fg-divider)',
-                      borderRadius: 4,
-                      backgroundColor: 'transparent',
-                      cursor: page <= 1 ? 'default' : 'pointer',
-                      opacity: page <= 1 ? 0.4 : 1,
-                    }}
-                  >
-                    <Text12Regular>&#8592;</Text12Regular>
-                  </Box>
-                  <Text12Regular c="var(--fg-muted)">
-                    {page.toLocaleString()} / {totalPages.toLocaleString()}
-                  </Text12Regular>
-                  <Box
-                    component="button"
-                    disabled={page >= totalPages}
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    style={{
-                      padding: '1px 6px',
-                      border: '1px solid var(--fg-divider)',
-                      borderRadius: 4,
-                      backgroundColor: 'transparent',
-                      cursor: page >= totalPages ? 'default' : 'pointer',
-                      opacity: page >= totalPages ? 0.4 : 1,
-                    }}
-                  >
-                    <Text12Regular>&#8594;</Text12Regular>
-                  </Box>
-                </Group>
-              )}
-            </Group>
-          </Box>
-        </>
-      )}
+                {totalPages > 1 && (
+                  <Group gap={4} align="center">
+                    <Box
+                      component="button"
+                      disabled={page <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      style={{
+                        padding: '1px 6px',
+                        border: '1px solid var(--fg-divider)',
+                        borderRadius: 4,
+                        backgroundColor: 'transparent',
+                        cursor: page <= 1 ? 'default' : 'pointer',
+                        opacity: page <= 1 ? 0.4 : 1,
+                      }}
+                    >
+                      <Text12Regular>&#8592;</Text12Regular>
+                    </Box>
+                    <Text12Regular c="var(--fg-muted)">
+                      {page.toLocaleString()} / {totalPages.toLocaleString()}
+                    </Text12Regular>
+                    <Box
+                      component="button"
+                      disabled={page >= totalPages}
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      style={{
+                        padding: '1px 6px',
+                        border: '1px solid var(--fg-divider)',
+                        borderRadius: 4,
+                        backgroundColor: 'transparent',
+                        cursor: page >= totalPages ? 'default' : 'pointer',
+                        opacity: page >= totalPages ? 0.4 : 1,
+                      }}
+                    >
+                      <Text12Regular>&#8594;</Text12Regular>
+                    </Box>
+                  </Group>
+                )}
+              </Group>
+            </Box>
+          </>
+        )}
+
+      {/* The changes drawer (a Portal) overlays whichever review body is shown —
+          the canvas grid (table view) or the By-type view. */}
+      {isReviewSurfaceV2Enabled &&
+        recordChangesDrawerFilename &&
+        recordChangesDrawerIndex >= 0 &&
+        detailRowIndex === null &&
+        selectedFolderPath &&
+        workspacePath && (
+          <RecordChangesDrawer
+            folderPath={selectedFolderPath}
+            workspacePath={workspacePath}
+            titleColumnId={titleColumnId}
+            columnLabels={columnLabelsMap}
+            columnEffectivePaths={columnEffectivePathsMap}
+            changedFilenames={drawerFilenames}
+            currentIndex={recordChangesDrawerIndex}
+            onSelectIndex={(index) => setRecordChangesDrawerFilename(drawerFilenames[index] ?? null)}
+            onClose={closeRecordChangesDrawer}
+            onApproved={(filename) => handleRecordChangeReviewed(filename, 'approve')}
+            onRejected={(filename) => handleRecordChangeReviewed(filename, 'reject')}
+          />
+        )}
 
       <EditPropertyDialog
         opened={editPropertyCol !== null}
