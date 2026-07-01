@@ -4,14 +4,26 @@ A guide for building new connectors in Scratch (Spinner). Intended for internal 
 
 ## 1. Core Philosophy
 
-### Store Raw API Responses
+### The Connector Prime Directive: Store Raw API Responses
 
-Save exactly what the API returns — no transformation. The system stores records as JSON files in git, so preserving the original structure ensures round-trip fidelity and simplifies debugging.
+**We never reshape, rename, or normalize the data on the way in — a record's own structure stays exactly as the API returned it. If the raw shape is awkward to display or edit, adapt the view/schema layer to the data; never transform the data to fit the UI.** This is the **Connector Prime Directive**, and it overrides convenience every time. The system stores records as JSON files in git, so this is what gives us round-trip fidelity (what we publish back is the shape the service expects), keeps debugging honest (the file on disk is exactly what the API sent), and keeps git history meaningful.
 
-**Exceptions:**
+**The only two exceptions — and this is the entire list:**
 
-- **Strip pagination metadata** — cursors, `hasMore` flags, page counts. These are transport artifacts, not data.
-- **Hydrate nested structures in-place** — when the API returns stub references (e.g., Notion block children, Shopify product variants), fetch the full objects and embed them directly in the record.
+- **Strip transport wrappers** — pagination cursors, `hasMore` flags, page/total counts. These are the envelope around the data, not the data.
+- **Hydrate stub references in place** — when the API returns a stub (e.g. Notion block children, Shopify product variants), fetch the full object and embed it exactly where the stub sat.
+
+Both stay within the Directive because **neither alters a record's own structure**: one removes an outer envelope, the other deepens the tree where the API itself points — no key is renamed, no container kind is changed, nothing is re-ordered.
+
+**Litmus test.** Before any transform on the way in, ask: _would the stored record still deserialize to exactly what the service's read endpoint returns for that record (minus transport wrappers, plus hydrated stubs)?_ If your change renames a key, alters nesting, coerces a type, reorders keys, or **swaps a container kind (array ↔ object)**, it fails the test and violates the Directive.
+
+**A stored record that fails this test is a bug** — even if it round-trips cleanly on publish, and even if it already ships in a connector today. Any existing violation slipped in unintentionally; it is an open bug to fix, not a sanctioned exception and not precedent. Fix it; don't enshrine it.
+
+> **These feel justified but are still violations — do not do them:**
+>
+> - **Reshaping an array into a keyed object so its elements become editable columns** — e.g. `custom_fields: [{ id, value }]` → `custom_fields: { cf_<id>: value }`. This is the most common trap, because Scratch's editable path engine treats arrays as leaves (`getByPath`/`setByPath` don't index into arrays, and schema auto-columns recurse only into objects), so per-element editing _seems_ impossible without it. **It is still a violation.** "It reverses cleanly on publish" does not save it — the Directive governs what sits on disk, not just what we ship back, and the on-disk record no longer matches the API. The correct fix is to make the **view/schema/path layer** address array elements, or to leave the array a non-editable leaf until it can — never to reshape the stored data. (**GoHighLevel** `customFields[]` and **Copper** `custom_fields[]` currently do this — that is a **known bug to fix, not a pattern to replicate.**)
+> - **Renaming keys to friendlier names**, flattening nested objects, or splitting/combining fields for display. All of this belongs in the schema/view layer (column labels, `displayTransformer`, subfield paths, FK options), never in the stored record.
+> - **Coercing types or normalizing values** — numbers-as-strings → numbers, trimming, case-folding, snapping dates. Store what the API sent; if a value is awkward, adapt the column type or add a display transform.
 
 ### Prefer Dynamic Discovery
 
@@ -1086,7 +1098,7 @@ Why custom fields behave differently:
 
 What to do:
 
-- **Default to pushing the stored shape through verbatim.** Because we [store the raw API response](#store-raw-api-responses) and most services' read and write shapes match, the on-disk record (and the `changedFields` diff derived from it) is usually already in the exact shape the write API wants — including the custom-field container. Prefer that over re-separating system vs. custom fields and rebuilding the body; the rebuild is where wrappers get dropped. (The Pipedrive connector was simplified to do exactly this — see `library/pipedrive/pipedrive-api-client.ts`.)
+- **Default to pushing the stored shape through verbatim.** Because we [store the raw API response](#the-connector-prime-directive-store-raw-api-responses) and most services' read and write shapes match, the on-disk record (and the `changedFields` diff derived from it) is usually already in the exact shape the write API wants — including the custom-field container. Prefer that over re-separating system vs. custom fields and rebuilding the body; the rebuild is where wrappers get dropped. (The Pipedrive connector was simplified to do exactly this — see `library/pipedrive/pipedrive-api-client.ts`.)
 - **Verify the read==write assumption per service**, since the asymmetries above are real. Where a structured type's write shape differs from its read shape, adapt at the write boundary, not by reshaping stored data.
 - **Test custom fields explicitly** — their own create + edit + publish-back round-trips, across object types **and** field types, asserting the value is actually live in the service after publish (not just that the request returned 200). See the testing call-out below.
 
