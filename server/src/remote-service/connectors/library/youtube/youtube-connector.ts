@@ -42,6 +42,22 @@ import {
 import type { YouTubeVideo } from './youtube-types';
 
 /**
+ * The video snippet sub-fields a user may edit and that we write back via
+ * `videos.update?part=snippet`. Everything else on the snippet (publishedAt,
+ * channelId, thumbnails, …) is read-only and is dropped from the write body.
+ */
+const WRITABLE_VIDEO_SNIPPET_FIELDS = ['title', 'description', 'categoryId', 'defaultLanguage', 'tags'] as const;
+
+/**
+ * The video status sub-fields a user may edit and that we write back via
+ * `videos.update?part=status` (DEV-10629). `uploadStatus` and the computed
+ * `madeForKids` are read-only; `selfDeclaredMadeForKids` is the writable
+ * counterpart we always resend alongside a status write so YouTube doesn't reset
+ * the made-for-kids declaration when it replaces the status part.
+ */
+const WRITABLE_VIDEO_STATUS_FIELDS = ['privacyStatus', 'license', 'embeddable', 'publicStatsViewable'] as const;
+
+/**
  * Video pull options. `includeTranscript` / `includeComments` come from the
  * table's advanced-setting checkboxes and, when enabled, deep-fetch each video's
  * English caption track / first page of comments and embed them on the record
@@ -763,6 +779,7 @@ export class YouTubeConnector extends Connector {
       // channelId / thumbnails) instead of silently dropping it (DEV-10597).
       this.assertNoReadonlyVideoFieldsChanged(changed);
       const changedSnippet = (changed.snippet as Record<string, unknown> | undefined) ?? changed;
+      const changedStatus = changed.status as Record<string, unknown> | undefined;
 
       // `videos.update?part=snippet` REPLACES the snippet, and YouTube requires BOTH
       // `title` and `categoryId` on every snippet write. So we cannot send only the
@@ -770,21 +787,37 @@ export class YouTubeConnector extends Connector {
       // description-only edit 400s ("empty title"), and even a passing sparse write
       // would wipe the fields we omitted. Merge the changes over the video's existing
       // snippet so the full writable set is always present.
-      const writableSnippetFields = ['title', 'description', 'categoryId', 'defaultLanguage', 'tags'] as const;
-      const snippetChanged = writableSnippetFields.some((field) => changedSnippet[field] !== undefined);
+      const snippetChanged = WRITABLE_VIDEO_SNIPPET_FIELDS.some((field) => changedSnippet[field] !== undefined);
+      const statusChanged =
+        changedStatus !== undefined && WRITABLE_VIDEO_STATUS_FIELDS.some((field) => changedStatus[field] !== undefined);
 
-      let persisted: YouTubeVideo | undefined;
+      const updateParts: { snippet?: Record<string, unknown>; status?: Record<string, unknown> } = {};
       if (snippetChanged) {
         const existingSnippet = (file.snippet as Record<string, unknown> | undefined) ?? {};
         const mergedSnippet = { ...existingSnippet, ...changedSnippet };
-        const updateData: Record<string, unknown> = {
+        updateParts.snippet = {
           title: mergedSnippet.title,
           description: mergedSnippet.description,
           categoryId: mergedSnippet.categoryId,
           defaultLanguage: mergedSnippet.defaultLanguage,
           tags: mergedSnippet.tags,
         };
-        persisted = await this.apiClient.updateVideo(videoId, updateData);
+      }
+      if (statusChanged) {
+        // `videos.update?part=status` likewise REPLACES the status part, so resend
+        // the full writable status set (merged over the existing status) — sending
+        // only the one changed sub-field would reset the others. `madeForKids` /
+        // `uploadStatus` are read-only and excluded; `selfDeclaredMadeForKids` is
+        // resent so YouTube keeps the existing made-for-kids declaration.
+        updateParts.status = this.buildWritableVideoStatus(
+          (file.status as Record<string, unknown> | undefined) ?? {},
+          changedStatus,
+        );
+      }
+
+      let persisted: YouTubeVideo | undefined;
+      if (snippetChanged || statusChanged) {
+        persisted = await this.apiClient.updateVideo(videoId, updateParts);
       }
 
       // Transcript update is keyed by transcriptId from the full file; only push when the transcript text changed.
@@ -968,30 +1001,61 @@ export class YouTubeConnector extends Connector {
   }
 
   /**
+   * Build the `status` part body for a `videos.update?part=status` write. The
+   * status part is REPLACED wholesale, so we resend every writable status field
+   * (merged: the user's changes over the video's existing status), plus
+   * `selfDeclaredMadeForKids` to preserve the made-for-kids declaration. Read-only
+   * status fields (`uploadStatus`, the computed `madeForKids`) are excluded —
+   * YouTube rejects or ignores them.
+   */
+  private buildWritableVideoStatus(
+    existingStatus: Record<string, unknown>,
+    changedStatus: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const mergedStatus = { ...existingStatus, ...changedStatus };
+    const statusBody: Record<string, unknown> = {};
+    for (const field of WRITABLE_VIDEO_STATUS_FIELDS) {
+      if (mergedStatus[field] !== undefined) statusBody[field] = mergedStatus[field];
+    }
+    if (mergedStatus.selfDeclaredMadeForKids !== undefined) {
+      statusBody.selfDeclaredMadeForKids = mergedStatus.selfDeclaredMadeForKids;
+    }
+    return statusBody;
+  }
+
+  /**
    * Throw if the user's sparse changedFields touch a read-only video field
-   * (DEV-10597). Videos only write the snippet (and, separately, the transcript),
-   * and only the five editable snippet sub-fields — everything else (other parts
-   * like statistics/status, and read-only snippet sub-fields like publishedAt /
-   * channelId / thumbnails) is silently dropped by the update path without this
-   * guard.
+   * (DEV-10597). Videos write the snippet, the status (DEV-10629), and —
+   * separately — the transcript; only the editable sub-fields of snippet
+   * ({@link WRITABLE_VIDEO_SNIPPET_FIELDS}) and status
+   * ({@link WRITABLE_VIDEO_STATUS_FIELDS}) are writable. Everything else (other
+   * parts like statistics/contentDetails, read-only snippet sub-fields like
+   * publishedAt / channelId / thumbnails, and read-only status sub-fields like
+   * uploadStatus / madeForKids) is silently dropped by the update path without
+   * this guard.
    */
   private assertNoReadonlyVideoFieldsChanged(changed: Record<string, unknown>): void {
-    const writableSnippetFields = new Set(['title', 'description', 'categoryId', 'defaultLanguage', 'tags']);
+    const writableSnippetFields = new Set<string>(WRITABLE_VIDEO_SNIPPET_FIELDS);
+    const writableStatusFields = new Set<string>(WRITABLE_VIDEO_STATUS_FIELDS);
     const readonlyChangedFieldNames: string[] = [];
 
-    if (changed.snippet !== undefined) {
-      // Normal sparse diff: parts other than the snippet (and the special-cased
+    const collectReadonlySubfields = (part: unknown, writableFields: Set<string>): void => {
+      if (part && typeof part === 'object' && !Array.isArray(part)) {
+        for (const [key, value] of Object.entries(part)) {
+          if (value !== undefined && !writableFields.has(key)) readonlyChangedFieldNames.push(key);
+        }
+      }
+    };
+
+    if (changed.snippet !== undefined || changed.status !== undefined) {
+      // Normal sparse diff: parts other than snippet/status (and the special-cased
       // transcript / identity keys) are not writable on videos.
-      const writableTopLevelKeys = new Set(['snippet', 'transcript', 'id', 'transcriptId']);
+      const writableTopLevelKeys = new Set(['snippet', 'status', 'transcript', 'id', 'transcriptId']);
       for (const key of Object.keys(changed)) {
         if (!writableTopLevelKeys.has(key)) readonlyChangedFieldNames.push(key);
       }
-      const changedSnippet = changed.snippet as Record<string, unknown> | undefined;
-      if (changedSnippet && typeof changedSnippet === 'object' && !Array.isArray(changedSnippet)) {
-        for (const [key, value] of Object.entries(changedSnippet)) {
-          if (value !== undefined && !writableSnippetFields.has(key)) readonlyChangedFieldNames.push(key);
-        }
-      }
+      collectReadonlySubfields(changed.snippet, writableSnippetFields);
+      collectReadonlySubfields(changed.status, writableStatusFields);
     } else {
       // Fallback shape: `changed` carries snippet sub-fields flat (mirrors the
       // `?? changed` the video update path uses when there's no snippet wrapper).

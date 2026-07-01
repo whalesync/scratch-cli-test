@@ -356,12 +356,31 @@ describe('YoutubeApiClient', () => {
   });
 
   describe('updateVideo', () => {
-    it('PUTs /videos with the snippet body and snippet/id parts, returning the persisted video verbatim', async () => {
+    it('PUTs /videos with the snippet body and id/snippet parts, returning the persisted video verbatim', async () => {
       mockPut.mockResolvedValue({ data: { id: 'v1', snippet: { title: 'New' } } });
       const snippet = { title: 'New', categoryId: '22' };
-      const result = await client.updateVideo('v1', snippet);
-      expect(mockPut).toHaveBeenCalledWith('/videos', { id: 'v1', snippet }, { params: { part: ['snippet', 'id'] } });
+      const result = await client.updateVideo('v1', { snippet });
+      expect(mockPut).toHaveBeenCalledWith('/videos', { id: 'v1', snippet }, { params: { part: ['id', 'snippet'] } });
       expect(result).toEqual({ id: 'v1', snippet: { title: 'New' } });
+    });
+
+    it('PUTs only the status part (id/status) for a status-only update (DEV-10629)', async () => {
+      mockPut.mockResolvedValue({ data: { id: 'v1', status: { privacyStatus: 'public' } } });
+      const status = { privacyStatus: 'public', selfDeclaredMadeForKids: false };
+      await client.updateVideo('v1', { status });
+      expect(mockPut).toHaveBeenCalledWith('/videos', { id: 'v1', status }, { params: { part: ['id', 'status'] } });
+    });
+
+    it('PUTs both parts (id/snippet/status) when snippet and status both change', async () => {
+      mockPut.mockResolvedValue({ data: { id: 'v1' } });
+      const snippet = { title: 'New', categoryId: '22' };
+      const status = { privacyStatus: 'unlisted' };
+      await client.updateVideo('v1', { snippet, status });
+      expect(mockPut).toHaveBeenCalledWith(
+        '/videos',
+        { id: 'v1', snippet, status },
+        { params: { part: ['id', 'snippet', 'status'] } },
+      );
     });
   });
 

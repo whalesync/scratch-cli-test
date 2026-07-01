@@ -17,6 +17,8 @@ const mockClient = {
   deletePlaylist: jest.fn(),
   createPlaylistItem: jest.fn(),
   updatePlaylistItem: jest.fn(),
+  updateVideo: jest.fn(),
+  updateTranscript: jest.fn(),
   getChannelSections: jest.fn(),
   getSubscriptionsPage: jest.fn(),
   getMembersPage: jest.fn(),
@@ -287,6 +289,86 @@ describe('YouTubeConnector', () => {
           [{ snippet: { publishedAt: '2021-01-01T00:00:00Z' } }],
         ),
       ).rejects.toThrow(/"publishedAt" is read-only/);
+    });
+
+    // DEV-10629: status.privacyStatus (and license/embeddable/publicStatsViewable)
+    // are writable on videos.update?part=status — they must publish, not be blocked.
+    it('writes a video privacyStatus change via the status part (no snippet part)', async () => {
+      mockClient.updateVideo.mockResolvedValue({ id: 'v1', status: { privacyStatus: 'public' } });
+      const connector = makeConnector();
+      const spec = await connector.fetchJsonTableSpec(channelTableId('videos', OWN_CHANNEL_ID));
+      const file = {
+        id: 'v1',
+        snippet: { title: 'T', categoryId: '22' },
+        status: {
+          uploadStatus: 'processed',
+          privacyStatus: 'public',
+          license: 'youtube',
+          embeddable: true,
+          publicStatsViewable: true,
+          madeForKids: false,
+          selfDeclaredMadeForKids: false,
+        },
+      };
+      await connector.updateRecords(spec, [file], [{ status: { privacyStatus: 'public' } }]);
+      // Resends the full writable status set (read-only uploadStatus / madeForKids
+      // excluded) plus selfDeclaredMadeForKids; no snippet part since none changed.
+      expect(mockClient.updateVideo).toHaveBeenCalledWith('v1', {
+        status: {
+          privacyStatus: 'public',
+          license: 'youtube',
+          embeddable: true,
+          publicStatsViewable: true,
+          selfDeclaredMadeForKids: false,
+        },
+      });
+    });
+
+    it('writes a combined snippet + status edit in one updateVideo call', async () => {
+      mockClient.updateVideo.mockResolvedValue({ id: 'v1' });
+      const connector = makeConnector();
+      const spec = await connector.fetchJsonTableSpec(channelTableId('videos', OWN_CHANNEL_ID));
+      const file = {
+        id: 'v1',
+        snippet: { title: 'Old', description: 'D2', categoryId: '22' },
+        status: { privacyStatus: 'unlisted', selfDeclaredMadeForKids: false },
+      };
+      await connector.updateRecords(
+        spec,
+        [file],
+        [{ snippet: { description: 'D2' }, status: { privacyStatus: 'unlisted' } }],
+      );
+      // Exact match: jest treats undefined-valued keys (defaultLanguage/tags on the
+      // snippet) as absent, so we only spell out the fields that carry a value.
+      expect(mockClient.updateVideo).toHaveBeenCalledWith('v1', {
+        snippet: { title: 'Old', description: 'D2', categoryId: '22' },
+        status: { privacyStatus: 'unlisted', selfDeclaredMadeForKids: false },
+      });
+    });
+
+    it('does not send a status part for a snippet-only (description) edit', async () => {
+      mockClient.updateVideo.mockResolvedValue({ id: 'v1' });
+      const connector = makeConnector();
+      const spec = await connector.fetchJsonTableSpec(channelTableId('videos', OWN_CHANNEL_ID));
+      const file = {
+        id: 'v1',
+        snippet: { title: 'T', description: 'new', categoryId: '22' },
+        status: { privacyStatus: 'unlisted' },
+      };
+      await connector.updateRecords(spec, [file], [{ snippet: { description: 'new' } }]);
+      // No status part in the call — exact match means the `status` key is absent.
+      expect(mockClient.updateVideo).toHaveBeenCalledWith('v1', {
+        snippet: { title: 'T', description: 'new', categoryId: '22' },
+      });
+    });
+
+    it('throws when a video edit changes a read-only status field (madeForKids), without calling the API', async () => {
+      const connector = makeConnector();
+      const spec = await connector.fetchJsonTableSpec(channelTableId('videos', OWN_CHANNEL_ID));
+      await expect(connector.updateRecords(spec, [{ id: 'v1' }], [{ status: { madeForKids: true } }])).rejects.toThrow(
+        /"madeForKids" is read-only/,
+      );
+      expect(mockClient.updateVideo).not.toHaveBeenCalled();
     });
 
     it('throws on video create (unsupported) and video delete (disabled)', async () => {

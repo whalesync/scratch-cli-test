@@ -290,10 +290,18 @@ export class YoutubeApiClient {
     return response.data;
   }
 
-  // Somehow youtube forces you to send the category of the video to update it.
-  async updateVideo(videoId: string, snippet: object): Promise<YouTubeVideo> {
+  /**
+   * Update a video's writable parts. Pass only the parts that changed: `snippet`
+   * (YouTube forces both `title` and `categoryId` on every snippet write) and/or
+   * `status` (privacyStatus / license / embeddable / publicStatsViewable —
+   * DEV-10629). `part` is derived from the parts actually supplied, so a
+   * status-only edit doesn't drag in the snippet (and its title/categoryId
+   * requirement) and a snippet-only edit doesn't touch status.
+   */
+  async updateVideo(videoId: string, parts: { snippet?: object; status?: object }): Promise<YouTubeVideo> {
+    const partNames = ['id', ...Object.keys(parts)];
     const response = await this.withRetry(async () =>
-      this.http.put<YouTubeVideo>('/videos', { id: videoId, snippet }, { params: { part: ['snippet', 'id'] } }),
+      this.http.put<YouTubeVideo>('/videos', { id: videoId, ...parts }, { params: { part: partNames } }),
     );
     return response.data;
   }
