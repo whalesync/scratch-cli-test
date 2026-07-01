@@ -60,9 +60,12 @@ const MAX_LOG_RESPONSE = 1000;
 @Injectable()
 export class ScratchGitClient {
   private readonly gitApiUrl: string;
+  /** Shared bearer token presented on every scratch-git call (DEV-10600); undefined → send none. */
+  private readonly authToken: string | undefined;
 
   constructor(private readonly configService: ScratchConfigService) {
     this.gitApiUrl = this.configService.getScratchGitApiUrl();
+    this.authToken = this.configService.getScratchGitAuthToken();
   }
 
   /** Encode a repo ID for use in URL paths (percent-encode slashes so deep paths stay as one segment) */
@@ -72,9 +75,13 @@ export class ScratchGitClient {
 
   private async callGitApi(endpoint: string, method: string, body?: Record<string, unknown>): Promise<unknown> {
     const url = `${this.gitApiUrl}${endpoint}`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.authToken) {
+      headers.Authorization = `Bearer ${this.authToken}`;
+    }
     const options: RequestInit = {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
     };
 
     if (body) {

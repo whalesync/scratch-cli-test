@@ -195,6 +195,18 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable('SCRATCH_GIT_API_URL') ?? 'http://localhost:3100';
   }
 
+  /**
+   * Shared bearer token the server presents to the scratch-git service (DEV-10600).
+   * Returns `undefined` when unset/empty, in which case the server sends no `Authorization`
+   * header (scratch-git then treats the call as legacy/unauthenticated). The `.trim()` is
+   * defensive: Cloud Run injects the secret payload verbatim, so a stray trailing newline
+   * in the stored secret would otherwise produce `Bearer <token>\n` and fail the match.
+   */
+  getScratchGitAuthToken(): string | undefined {
+    const token = this.getOptionalEnvVariable<string>('SCRATCH_GIT_AUTH_TOKEN')?.trim();
+    return token ? token : undefined;
+  }
+
   getSendGridApiKey(): string | undefined {
     return this.getOptionalEnvVariable('SENDGRID_API_KEY');
   }

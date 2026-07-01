@@ -118,6 +118,7 @@ describe('CliWorkbookController', () => {
 
     configService = {
       getScratchGitBackendUrl: jest.fn().mockReturnValue(GIT_BACKEND_URL),
+      getScratchGitAuthToken: jest.fn().mockReturnValue(undefined),
     } as unknown as jest.Mocked<ScratchConfigService>;
 
     posthogService = {

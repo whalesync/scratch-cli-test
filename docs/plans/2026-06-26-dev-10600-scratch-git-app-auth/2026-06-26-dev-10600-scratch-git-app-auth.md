@@ -154,8 +154,11 @@ Per env (`eu-test`, then `eu-production`):
   `versions.access` is correctly DENIED (token out of read-only reach — the core requirement).
   Byte length verified out-of-band by the operator (`wc -c` = 64). IAM grant + wiring come
   with the MR1 deploy.
-- **MR1 deploy** (full apply + VM redeploy): ⬜ pending.
-- **MR2 / MR3**: ⬜ not started.
+- **MR1 deploy** (full apply + VM redeploy): ✅ deployed to prod (2026-06-27) — lenient mode live.
+- **MR2** (server presents the token): ✅ implemented (config getter with defensive `.trim()`,
+  `Authorization` header in `callGitApi()` + `proxyToGitBackend()`, `.env.example`, 2 new client
+  tests). Server build + strict lint (changed files) + specs green. NOT yet committed/merged/deployed.
+- **MR3** (flip to strict): ⬜ not started.
 
 ### Deploy order (the safety-critical part)
 

@@ -57,6 +57,8 @@ import {
 @UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 export class CliWorkbookController {
   private readonly gitBackendUrl: string;
+  /** Shared bearer token presented when proxying to the scratch-git backend (DEV-10600). */
+  private readonly gitAuthToken: string | undefined;
 
   constructor(
     private readonly workbookService: WorkbookService,
@@ -72,6 +74,7 @@ export class CliWorkbookController {
     private readonly routineService: RoutineService,
   ) {
     this.gitBackendUrl = this.configService.getScratchGitBackendUrl();
+    this.gitAuthToken = this.configService.getScratchGitAuthToken();
   }
 
   /**
@@ -289,6 +292,12 @@ export class CliWorkbookController {
       };
       if (req.headers['content-length']) {
         proxyHeaders['Content-Length'] = req.headers['content-length'];
+      }
+      // Present the shared bearer token to the authenticated scratch-git backend (DEV-10600).
+      // The client's own auth already happened at the server's `:id`/connector guard above;
+      // this is the server↔scratch-git internal credential, not the end user's.
+      if (this.gitAuthToken) {
+        proxyHeaders['Authorization'] = `Bearer ${this.gitAuthToken}`;
       }
 
       proxyResponse = await fetch(targetUrl, {
