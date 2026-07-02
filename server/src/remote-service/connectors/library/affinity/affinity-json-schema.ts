@@ -1,15 +1,20 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import {
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_AGENT_INSTRUCTIONS,
+  X_SCRATCH_ARRAY_KEYED_BY,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
-  X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { AffinityApiClient } from './affinity-api-client';
 import { buildAffinityDefaultView } from './affinity-default-view';
+import {
+  X_SCRATCH_AFFINITY_FIELDS_BY_ID,
+  buildAffinityFieldSchemasById,
+  buildAffinityFieldsArrayKeyedByOptions,
+  isReadOnlyAffinityField,
+} from './affinity-fields';
 import { AffinityEntityType, AffinityFieldMetadata, AffinityList, AffinityValueType } from './affinity-types';
-import { isReadOnlyAffinityField } from './affinity-write-translation';
 
 // wsIds of the tenant tables that FK fields point at. These mirror the
 // `TENANT_*_ID` sentinels in affinity-connector.ts (which sets each tenant
@@ -50,7 +55,7 @@ const personDataSchema = Type.Object({
  * variants (location, dropdown, etc.) so the connector keeps working as
  * Affinity adds shape variants.
  */
-function valueSchemaForType(valueType: AffinityValueType): TSchema {
+export function valueSchemaForType(valueType: AffinityValueType): TSchema {
   switch (valueType) {
     case 'text':
     case 'filterable-text':
@@ -111,48 +116,85 @@ function valueSchemaForType(valueType: AffinityValueType): TSchema {
 }
 
 /**
- * Build a schema for one entry in `entity.fields` (after the array → keyed
- * object transformation done at pull time). The shape mirrors the API's
- * `Field` schema, with `value` narrowed by the field's known `valueType`.
- *
- * Writability: only the field's `value` is editable, and only for `list` /
- * `global` category fields with a writable valueType — `enriched` and
- * `relationship-intelligence` fields are computed by Affinity, and
- * `interaction` / `formula-number` values have no write shape at all. Those
- * are labeled `x-scratch-readonly` so publish never attempts them. The field's
- * own metadata keys (id / name / type / enrichmentSource) are always read-only.
+ * Build the `value` union for a verbatim `fields` element. A record mixes value
+ * shapes across field types in one array, so the element `value` accepts any of
+ * the discovered fields' `valueType` shapes (via {@link valueSchemaForType}),
+ * plus a permissive `{ type, data }` fallback (covers a future/unknown field
+ * type the metadata fetch didn't cover) and `null` (empty field). Duplicate
+ * valueTypes are collapsed. The per-column renderer type comes from the
+ * `x-scratch-array-keyed-by` annotation, not this schema.
  */
-function fieldEntrySchema(metadata: AffinityFieldMetadata): TSchema {
-  const valueSchema = valueSchemaForType(metadata.valueType);
-  const fieldIsReadOnly = isReadOnlyAffinityField(metadata.type, metadata.valueType);
-  return Type.Object(
+function buildFieldElementValueSchema(fieldMetadata: AffinityFieldMetadata[]): TSchema {
+  const seenValueTypes = new Set<string>();
+  const valueUnionMembers: TSchema[] = [];
+  for (const metadata of fieldMetadata) {
+    if (seenValueTypes.has(metadata.valueType)) continue;
+    seenValueTypes.add(metadata.valueType);
+    valueUnionMembers.push(valueSchemaForType(metadata.valueType));
+  }
+  // Permissive fallback + null so a verbatim record always validates.
+  valueUnionMembers.push(Type.Object({ type: Type.String(), data: Type.Unknown() }, { additionalProperties: true }));
+  valueUnionMembers.push(Type.Null());
+  return Type.Union(valueUnionMembers);
+}
+
+/**
+ * Build the verbatim `fields` array property, annotated with
+ * `x-scratch-array-keyed-by` so the generic engines expand each element into its
+ * own editable column addressed by its `id` — the WHOLE element is the value
+ * (no `valuePath`). The element is typed permissively (`additionalProperties:
+ * true`, a permissive `value` union) because one record mixes field shapes; the
+ * per-field `valueType` + read-only bit the write layer / default view need are
+ * carried in the {@link X_SCRATCH_AFFINITY_FIELDS_BY_ID} map. Stored exactly as
+ * Affinity returns it — no array→object reshape on disk.
+ */
+function buildFieldsArrayProperty(fieldMetadata: AffinityFieldMetadata[]): TSchema {
+  const elementSchema = Type.Object(
     {
-      id: Type.Literal(metadata.id, { [X_SCRATCH_READONLY]: true }),
-      name: Type.String({ [X_SCRATCH_READONLY]: true }),
-      type: Type.Literal(metadata.type, { [X_SCRATCH_READONLY]: true }),
-      enrichmentSource: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-      value: Type.Union([valueSchema, Type.Null()]),
+      id: Type.String({ [X_SCRATCH_READONLY]: true }),
+      name: Type.Optional(Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true })),
+      type: Type.Optional(Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true })),
+      enrichmentSource: Type.Optional(Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true })),
+      value: buildFieldElementValueSchema(fieldMetadata),
     },
-    {
-      description: metadata.name,
-      [X_SCRATCH_REMOTE_FIELD_ID]: metadata.id,
-      [X_SCRATCH_CONNECTOR_DATA_TYPE]: metadata.valueType,
-      ...(fieldIsReadOnly ? { [X_SCRATCH_READONLY]: true } : {}),
-    },
+    { additionalProperties: true },
   );
+  return Type.Array(elementSchema, {
+    description: 'Affinity field values, stored verbatim as `[{ id, name, type, enrichmentSource, value }]`.',
+    [X_SCRATCH_ARRAY_KEYED_BY]: buildAffinityFieldsArrayKeyedByOptions(fieldMetadata),
+    [X_SCRATCH_AFFINITY_FIELDS_BY_ID]: buildAffinityFieldSchemasById(fieldMetadata),
+  });
+}
+
+/**
+ * Agent-readable legend describing the verbatim `fields` array and each field's
+ * id / name / type / value-type / read-only status. Mounted at the schema ROOT
+ * (like Copper's) so the array isn't an opaque leaf column.
+ */
+function buildFieldsAgentInstructions(fieldMetadata: AffinityFieldMetadata[], fieldsPathPrefix: string): string {
+  const shapeHint =
+    `Affinity field values are stored verbatim in the \`${fieldsPathPrefix}\` array as ` +
+    '`[{ id, name, type, enrichmentSource, value: { type, data } }]`. Edit a field by its id ' +
+    `(path \`${fieldsPathPrefix}.[id=<id>]\`, drilling into \`.value.data\`); never reorder or drop elements.`;
+  if (fieldMetadata.length === 0) {
+    return `${shapeHint} This table has no Affinity fields defined.`;
+  }
+  const fieldLines = fieldMetadata.map((metadata) => {
+    const readonlySuffix = isReadOnlyAffinityField(metadata.type, metadata.valueType) ? ', read-only' : '';
+    return `- ${metadata.name} (id: ${metadata.id}, category: ${metadata.type}, value type: ${metadata.valueType}${readonlySuffix})`;
+  });
+  return `${shapeHint}\nAffinity field definitions for this table:\n${fieldLines.join('\n')}`;
 }
 
 /**
  * Build the inner `entity` schema for a list entry, which differs by entity
  * type (Company, Person, OpportunityWithFields). The discovered list-fields are
- * mounted under `entity.fields` as a keyed object so each field can be addressed
- * by its remote id (e.g. `entity.fields.field-1234`).
+ * mounted under `entity.fields` as a verbatim array, annotated with
+ * `x-scratch-array-keyed-by` so each field is addressable by its id via the
+ * filter path `entity.fields.[id=field-1234]`.
  */
-function buildEntitySchema(entityType: AffinityEntityType, fieldsByKey: Record<string, TSchema>): TSchema {
-  const fieldsObject = Type.Object(fieldsByKey, {
-    description: 'Affinity fields keyed by field id',
-    additionalProperties: false,
-  });
+function buildEntitySchema(entityType: AffinityEntityType, fieldMetadata: AffinityFieldMetadata[]): TSchema {
+  const fieldsArray = buildFieldsArrayProperty(fieldMetadata);
 
   switch (entityType) {
     case 'company':
@@ -162,7 +204,7 @@ function buildEntitySchema(entityType: AffinityEntityType, fieldsByKey: Record<s
         domain: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
         domains: Type.Array(Type.String(), { [X_SCRATCH_READONLY]: true }),
         isGlobal: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
-        fields: fieldsObject,
+        fields: fieldsArray,
       });
 
     case 'person':
@@ -173,7 +215,7 @@ function buildEntitySchema(entityType: AffinityEntityType, fieldsByKey: Record<s
         primaryEmailAddress: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
         emailAddresses: Type.Array(Type.String(), { [X_SCRATCH_READONLY]: true }),
         type: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-        fields: fieldsObject,
+        fields: fieldsArray,
       });
 
     case 'opportunity':
@@ -181,7 +223,7 @@ function buildEntitySchema(entityType: AffinityEntityType, fieldsByKey: Record<s
         id: Type.Number({ [X_SCRATCH_READONLY]: true }),
         name: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
         listId: Type.Number({ [X_SCRATCH_READONLY]: true }),
-        fields: fieldsObject,
+        fields: fieldsArray,
       });
   }
 }
@@ -197,12 +239,7 @@ export async function buildAffinityJsonTableSpec(
 ): Promise<BaseJsonTableSpec> {
   const fieldMetadata = await client.listListFields(list.id);
 
-  const fieldsByKey: Record<string, TSchema> = {};
-  for (const fm of fieldMetadata) {
-    fieldsByKey[fm.id] = fieldEntrySchema(fm);
-  }
-
-  const entitySchema = buildEntitySchema(list.type, fieldsByKey);
+  const entitySchema = buildEntitySchema(list.type, fieldMetadata);
 
   const schema = Type.Object(
     {
@@ -223,6 +260,9 @@ export async function buildAffinityJsonTableSpec(
     {
       $id: `affinity/list-${list.id}`,
       title: list.name,
+      // Field id→name/type legend for agents, at the schema ROOT so it does not
+      // turn `entity.fields` into an opaque leaf column.
+      [X_SCRATCH_AGENT_INSTRUCTIONS]: buildFieldsAgentInstructions(fieldMetadata, 'entity.fields'),
     },
   );
 
@@ -267,11 +307,6 @@ export async function buildAffinityPersonsTableSpec(
 ): Promise<BaseJsonTableSpec> {
   const fieldMetadata = await client.listPersonFields();
 
-  const fieldsByKey: Record<string, TSchema> = {};
-  for (const fm of fieldMetadata) {
-    fieldsByKey[fm.id] = fieldEntrySchema(fm);
-  }
-
   const schema = Type.Object(
     {
       id: Type.Number({ description: 'Person id', [X_SCRATCH_READONLY]: true }),
@@ -282,12 +317,13 @@ export async function buildAffinityPersonsTableSpec(
       primaryEmailAddress: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
       emailAddresses: Type.Array(Type.String()),
       type: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-      fields: Type.Object(fieldsByKey, {
-        description: 'Affinity fields keyed by field id',
-        additionalProperties: false,
-      }),
+      fields: buildFieldsArrayProperty(fieldMetadata),
     },
-    { $id: 'affinity/persons', title: 'People' },
+    {
+      $id: 'affinity/persons',
+      title: 'People',
+      [X_SCRATCH_AGENT_INSTRUCTIONS]: buildFieldsAgentInstructions(fieldMetadata, 'fields'),
+    },
   );
 
   return {
@@ -315,11 +351,6 @@ export async function buildAffinityCompaniesTableSpec(
 ): Promise<BaseJsonTableSpec> {
   const fieldMetadata = await client.listCompanyFields();
 
-  const fieldsByKey: Record<string, TSchema> = {};
-  for (const fm of fieldMetadata) {
-    fieldsByKey[fm.id] = fieldEntrySchema(fm);
-  }
-
   const schema = Type.Object(
     {
       id: Type.Number({ description: 'Company id', [X_SCRATCH_READONLY]: true }),
@@ -329,12 +360,13 @@ export async function buildAffinityCompaniesTableSpec(
       // `domains` is the server-maintained set (derived from `domain` + enrichment); read-only.
       domains: Type.Array(Type.String(), { [X_SCRATCH_READONLY]: true }),
       isGlobal: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
-      fields: Type.Object(fieldsByKey, {
-        description: 'Affinity fields keyed by field id',
-        additionalProperties: false,
-      }),
+      fields: buildFieldsArrayProperty(fieldMetadata),
     },
-    { $id: 'affinity/companies', title: 'Companies' },
+    {
+      $id: 'affinity/companies',
+      title: 'Companies',
+      [X_SCRATCH_AGENT_INSTRUCTIONS]: buildFieldsAgentInstructions(fieldMetadata, 'fields'),
+    },
   );
 
   return {

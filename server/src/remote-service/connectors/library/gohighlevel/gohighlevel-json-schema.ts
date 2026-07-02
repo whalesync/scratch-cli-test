@@ -1,6 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import {
   X_SCRATCH_AGENT_INSTRUCTIONS,
+  X_SCRATCH_ARRAY_KEYED_BY,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
   type TablePropertyType,
@@ -9,6 +10,14 @@ import {
   type TableViewCol,
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
+import {
+  CUSTOM_FIELDS_KEY,
+  CUSTOM_FIELD_KEY_FIELD,
+  buildGoHighLevelCustomFieldsArrayKeyedByOptions,
+  goHighLevelCustomFieldColumnPath,
+  tablePropertyTypeForGoHighLevelDataType,
+  type GoHighLevelCustomFieldValueKey,
+} from './gohighlevel-custom-fields';
 import { GenericFieldType, GoHighLevelGenericEntityField } from './gohighlevel-entities';
 import {
   GoHighLevelCustomFieldDefinition,
@@ -39,67 +48,56 @@ const readonlyOptionalNumber = (description?: string): TSchema =>
   );
 
 /**
- * Build a one-paragraph, agent-readable description of a model's custom fields.
- * Values are reshaped on pull into a keyed `custom_fields` object (short key →
- * value), so this mapping documents each short key's meaning, type, and options
- * for an agent (or a human reading schema.json) without a separate API call.
+ * Build a one-paragraph, agent-readable legend for a model's custom fields.
+ * Values are stored verbatim in the `customFields` array (`[{ id, <valueKey> }]`)
+ * and addressed per element by the definition `id` through the
+ * `x-scratch-array-keyed-by` annotation, so this documents each definition's id,
+ * name, type, and options for an agent (or a human reading schema.json) without a
+ * separate API call. `valueKey` is `value` for Contacts, `fieldValue` for
+ * Opportunities (GHL's read-key asymmetry).
  */
-function buildCustomFieldsAgentInstructions(definitions: GoHighLevelCustomFieldDefinition[]): string {
+function buildCustomFieldsAgentInstructions(
+  definitions: GoHighLevelCustomFieldDefinition[],
+  valueKey: GoHighLevelCustomFieldValueKey,
+): string {
+  const shapeHint =
+    'Custom field values are stored verbatim in the `customFields` array as ' +
+    `\`[{ id, ${valueKey} }]\`. Edit an element by its definition id ` +
+    `(path \`customFields.[id=<id>].${valueKey}\`); never reorder or drop elements.`;
   if (definitions.length === 0) {
-    return "Custom field values are stored under the `custom_fields` object, keyed by each field's short key. This location has no custom fields defined for this object.";
+    return `${shapeHint} This location has no custom fields defined for this object.`;
   }
   const fieldLines = definitions.map((definition) => {
     const optionsSuffix =
       definition.picklistOptions && definition.picklistOptions.length > 0
         ? `, options: ${definition.picklistOptions.join(' | ')}`
         : '';
-    const shortKey = definition.fieldKey ? customFieldShortKey(definition.fieldKey) : '?';
-    return `- ${definition.name ?? '(unnamed)'} (custom_fields key: ${shortKey}, id: ${definition.id}, fieldKey: ${definition.fieldKey ?? '?'}, type: ${definition.dataType ?? '?'}${optionsSuffix})`;
+    return `- ${definition.name ?? '(unnamed)'} (id: ${definition.id}, fieldKey: ${definition.fieldKey ?? '?'}, type: ${definition.dataType ?? '?'}${optionsSuffix})`;
   });
-  return (
-    "Custom field values are stored under the `custom_fields` object, keyed by each field's short key (the part of its fieldKey after the first `.`). " +
-    'Each short key maps to one of the location custom-field definitions below; the value shape depends on the field type. ' +
-    'Custom-field definitions for this location:\n' +
-    fieldLines.join('\n')
+  return `${shapeHint}\nCustom-field definitions for this location:\n${fieldLines.join('\n')}`;
+}
+
+/**
+ * Build the verbatim `customFields` array property, annotated with
+ * `x-scratch-array-keyed-by` so the generic engines expand each element into its
+ * own editable column addressed by the definition `id`. The element value is typed
+ * permissively (`unknown`) because one record mixes value shapes across field types
+ * in a single array — the per-column type hint for the renderer comes from the
+ * annotation's `columns`, not the JSON schema. Stored exactly as the API returns it
+ * (`[{ id, value }]` for Contacts, `[{ id, fieldValue }]` for Opportunities).
+ */
+function buildCustomFieldsArrayProperty(
+  definitions: GoHighLevelCustomFieldDefinition[],
+  valueKey: GoHighLevelCustomFieldValueKey,
+): TSchema {
+  const elementSchema = Type.Object(
+    { [CUSTOM_FIELD_KEY_FIELD]: Type.String(), [valueKey]: Type.Unknown() },
+    { additionalProperties: true },
   );
-}
-
-/**
- * The short key used inside a record's `custom_fields` object: the part of the
- * HighLevel `fieldKey` after the first `.` (e.g. `contact.scratch_text` →
- * `scratch_text`). Returns the whole string when there is no dot.
- */
-function customFieldShortKey(fieldKey: string): string {
-  const dotIndex = fieldKey.indexOf('.');
-  return dotIndex === -1 ? fieldKey : fieldKey.slice(dotIndex + 1);
-}
-
-/**
- * Build the `custom_fields` property: a keyed object with one typed sub-property
- * per discovered custom-field definition (keyed by its short key), so the client
- * auto-expands each into its own column. No x-scratch-* extension on this object
- * → the column builder expands the sub-properties; `additionalProperties: true`
- * keeps any field the definitions omitted. Definitions without a `fieldKey` are
- * skipped (no short key to derive).
- */
-function buildCustomFieldsObjectProperty(definitions: GoHighLevelCustomFieldDefinition[]): TSchema {
-  const fieldProperties: Record<string, TSchema> = {};
-  for (const definition of definitions) {
-    if (!definition.fieldKey) continue;
-    const optionsDescription =
-      definition.picklistOptions && definition.picklistOptions.length > 0
-        ? `${definition.name ?? definition.fieldKey} (options: ${definition.picklistOptions.join(' | ')})`
-        : definition.name;
-    fieldProperties[customFieldShortKey(definition.fieldKey)] = schemaForObjectFieldDataType({
-      dataType: definition.dataType,
-      name: definition.name,
-      description: optionsDescription,
-    });
-  }
   return Type.Optional(
-    Type.Object(fieldProperties, {
-      additionalProperties: true,
-      description: "Custom field values, keyed by each field's short key (see agent instructions for definitions).",
+    Type.Array(elementSchema, {
+      [X_SCRATCH_ARRAY_KEYED_BY]: buildGoHighLevelCustomFieldsArrayKeyedByOptions(definitions, valueKey),
+      description: `Custom field values, stored verbatim as \`[{ id, ${valueKey} }]\`.`,
     }),
   );
 }
@@ -107,19 +105,23 @@ function buildCustomFieldsObjectProperty(definitions: GoHighLevelCustomFieldDefi
 /**
  * Default view for a standard entity (Contacts / Opportunities): one column per
  * top-level schema property (derived from the schema keys, never hardcoded),
- * EXCLUDING `custom_fields`, followed by a "Custom Fields" banner group that
- * gathers one column per discovered custom-field definition
- * (`custom_fields.<shortKey>`). Each column's `readonly` is propagated from the
- * property's `x-scratch-readonly` flag, so the UI blocks edits to server-computed
- * fields (id, timestamps, locationId) that publish would drop anyway.
+ * EXCLUDING the verbatim `customFields` array, followed by a "Custom Fields"
+ * banner group that gathers one column per discovered custom-field definition,
+ * each addressing its verbatim array element by definition id
+ * (`customFields.[id=<id>].<valueKey>`). Each system column's `readonly` is
+ * propagated from the property's `x-scratch-readonly` flag, so the UI blocks edits
+ * to server-computed fields (id, timestamps, locationId) that publish would drop
+ * anyway. GHL exposes no read-only signal on a custom-field definition, so those
+ * columns carry no `readonly`.
  */
 function buildStandardEntityDefaultView(
   properties: Record<string, TSchema>,
   definitions: GoHighLevelCustomFieldDefinition[],
+  valueKey: GoHighLevelCustomFieldValueKey,
 ): TableView {
   const cols: (TableViewCol | TableViewBannerGroup)[] = [];
   for (const key of Object.keys(properties)) {
-    if (key === 'custom_fields') continue;
+    if (key === CUSTOM_FIELDS_KEY) continue;
     const propertySchema = properties[key] as Record<string, unknown>;
     const title = typeof propertySchema.title === 'string' ? propertySchema.title : key;
     cols.push({
@@ -136,16 +138,12 @@ function buildStandardEntityDefaultView(
     });
   }
 
-  const customFieldCols: TableViewCol[] = [];
-  for (const definition of definitions) {
-    if (!definition.fieldKey) continue;
-    customFieldCols.push({
-      kind: 'col',
-      path: `custom_fields.${customFieldShortKey(definition.fieldKey)}`,
-      name: definition.name ?? customFieldShortKey(definition.fieldKey),
-      type: tablePropertyTypeForObjectField(definition.dataType),
-    });
-  }
+  const customFieldCols: TableViewCol[] = definitions.map((definition) => ({
+    kind: 'col',
+    path: goHighLevelCustomFieldColumnPath(definition.id, valueKey),
+    name: definition.name ?? definition.id,
+    type: tablePropertyTypeForGoHighLevelDataType(definition.dataType),
+  }));
   if (customFieldCols.length > 0) {
     cols.push({ kind: 'banner-group', name: 'Custom Fields', cols: customFieldCols });
   }
@@ -161,8 +159,9 @@ function buildStandardEntityDefaultView(
  * System fields are enumerated and typed; `additionalProperties: true` keeps any
  * field we did not enumerate (so the stored record stays a faithful copy of the
  * API response). Custom fields are discovered dynamically from the Locations
- * customFields API and reshaped on pull into a keyed `custom_fields` object (one
- * typed sub-property per definition) so each renders as its own column.
+ * customFields API; their values are kept verbatim in the `customFields` array
+ * (`[{ id, value }]`) annotated with `x-scratch-array-keyed-by`, so each element
+ * renders as its own editable column addressed by definition id — no reshape.
  */
 export function buildContactsJsonTableSpec(
   id: EntityId,
@@ -196,16 +195,19 @@ export function buildContactsJsonTableSpec(
     tags: Type.Optional(Type.Array(Type.String())),
     dateAdded: readonlyOptionalString('ISO 8601 creation timestamp'),
     dateUpdated: readonlyOptionalString('ISO 8601 last-updated timestamp'),
-    custom_fields: buildCustomFieldsObjectProperty(contactCustomFieldDefinitions),
+    // Custom fields are stored verbatim as GHL's array; the annotation drives
+    // per-field editable columns (see gohighlevel-custom-fields.ts) — no reshape.
+    // Contacts carry the value under `value`.
+    [CUSTOM_FIELDS_KEY]: buildCustomFieldsArrayProperty(contactCustomFieldDefinitions, 'value'),
   };
 
   const schema = Type.Object(properties, {
     $id: 'gohighlevel/contacts',
     title: 'Contacts',
     additionalProperties: true,
-    // Field short-key→name/type/options reference for agents, kept at the schema
-    // ROOT so it does not turn `custom_fields` into an opaque leaf column.
-    [X_SCRATCH_AGENT_INSTRUCTIONS]: buildCustomFieldsAgentInstructions(contactCustomFieldDefinitions),
+    // Field id→name/type/options legend for agents, kept at the schema ROOT so it
+    // does not turn `customFields` into an opaque leaf column.
+    [X_SCRATCH_AGENT_INSTRUCTIONS]: buildCustomFieldsAgentInstructions(contactCustomFieldDefinitions, 'value'),
   });
 
   return {
@@ -216,7 +218,7 @@ export function buildContactsJsonTableSpec(
     idPath: dotPath('id'),
     titlePath: dotPath('contactName'),
     basePath: ['Standard Objects'],
-    defaultView: buildStandardEntityDefaultView(properties, contactCustomFieldDefinitions),
+    defaultView: buildStandardEntityDefaultView(properties, contactCustomFieldDefinitions, 'value'),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -225,10 +227,11 @@ export function buildContactsJsonTableSpec(
 
 /**
  * Build the Opportunities JSON table spec. Custom fields are discovered from the
- * Locations customFields API (the `opportunity` model) and reshaped on pull into
- * a keyed `custom_fields` object (one typed sub-property per definition).
- * `pipelineId`/`contactId` are annotated as foreign keys into the
- * Pipelines/Contacts tables.
+ * Locations customFields API (the `opportunity` model); their values are kept
+ * verbatim in the `customFields` array (`[{ id, fieldValue }]`) annotated with
+ * `x-scratch-array-keyed-by`, so each element renders as its own editable column
+ * addressed by definition id — no reshape. `pipelineId`/`contactId` are annotated
+ * as foreign keys into the Pipelines/Contacts tables.
  */
 export function buildOpportunitiesJsonTableSpec(
   id: EntityId,
@@ -279,16 +282,18 @@ export function buildOpportunitiesJsonTableSpec(
     notes: Type.Optional(Type.Array(Type.Unknown(), { [X_SCRATCH_READONLY]: true })),
     tasks: Type.Optional(Type.Array(Type.Unknown(), { [X_SCRATCH_READONLY]: true })),
     calendarEvents: Type.Optional(Type.Array(Type.Unknown(), { [X_SCRATCH_READONLY]: true })),
-    custom_fields: buildCustomFieldsObjectProperty(opportunityCustomFieldDefinitions),
+    // Custom fields stored verbatim as GHL's array; the annotation drives per-field
+    // editable columns. Opportunities carry the value under `fieldValue`.
+    [CUSTOM_FIELDS_KEY]: buildCustomFieldsArrayProperty(opportunityCustomFieldDefinitions, 'fieldValue'),
   };
 
   const schema = Type.Object(properties, {
     $id: 'gohighlevel/opportunities',
     title: 'Opportunities',
     additionalProperties: true,
-    // Field short-key→name/type/options reference for agents, kept at the schema
-    // ROOT so it does not turn `custom_fields` into an opaque leaf column.
-    [X_SCRATCH_AGENT_INSTRUCTIONS]: buildCustomFieldsAgentInstructions(opportunityCustomFieldDefinitions),
+    // Field id→name/type/options legend for agents, kept at the schema ROOT so it
+    // does not turn `customFields` into an opaque leaf column.
+    [X_SCRATCH_AGENT_INSTRUCTIONS]: buildCustomFieldsAgentInstructions(opportunityCustomFieldDefinitions, 'fieldValue'),
   });
 
   return {
@@ -299,7 +304,7 @@ export function buildOpportunitiesJsonTableSpec(
     idPath: dotPath('id'),
     titlePath: dotPath('name'),
     basePath: ['Standard Objects'],
-    defaultView: buildStandardEntityDefaultView(properties, opportunityCustomFieldDefinitions),
+    defaultView: buildStandardEntityDefaultView(properties, opportunityCustomFieldDefinitions, 'fieldValue'),
     generatedAt: new Date().toISOString(),
   };
 }

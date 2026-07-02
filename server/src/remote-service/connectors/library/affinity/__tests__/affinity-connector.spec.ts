@@ -373,10 +373,9 @@ describe('AffinityConnector.pullRecordFiles', () => {
     return batches;
   }
 
-  it('list dispatch: pulls list-entries and rekeys entity.fields by id', async () => {
-    const listEntry = makeListEntry(1, 500, [
-      { id: 'field-a', name: 'A', type: 'list', value: { type: 'text', data: 'hi' } },
-    ]);
+  it('list dispatch: pulls list-entries and stores entity.fields as a verbatim array', async () => {
+    const fieldsArray = [{ id: 'field-a', name: 'A', type: 'list', value: { type: 'text', data: 'hi' } }];
+    const listEntry = makeListEntry(1, 500, fieldsArray);
     mockListListEntries.mockReturnValue(singleBatch([listEntry]));
 
     const connector = new AffinityConnector('fake-key');
@@ -384,15 +383,15 @@ describe('AffinityConnector.pullRecordFiles', () => {
 
     expect(mockListListEntries).toHaveBeenCalledWith(500, undefined);
     expect(batches).toHaveLength(1);
-    const file = batches[0][0] as unknown as { entity: { fields: Record<string, unknown> } };
-    // Array transformed into an object keyed by field id.
-    expect(file.entity.fields).toEqual({
-      'field-a': { id: 'field-a', name: 'A', type: 'list', value: { type: 'text', data: 'hi' } },
-    });
+    const file = batches[0][0] as unknown as { entity: { fields: unknown[] } };
+    // Stored verbatim as the array — never reshaped to an object on disk.
+    expect(Array.isArray(file.entity.fields)).toBe(true);
+    expect(file.entity.fields).toEqual(fieldsArray);
   });
 
-  it('tenant-persons dispatch: pulls /v2/persons and rekeys top-level fields by id', async () => {
-    const person = makePerson(7101, [{ id: 'field-x', type: 'enriched', value: { type: 'text', data: 'CTO' } }]);
+  it('tenant-persons dispatch: pulls /v2/persons and stores top-level fields as a verbatim array', async () => {
+    const fieldsArray = [{ id: 'field-x', type: 'enriched', value: { type: 'text', data: 'CTO' } }];
+    const person = makePerson(7101, fieldsArray);
     mockListAllPersons.mockReturnValue(singleBatch([person]));
 
     const connector = new AffinityConnector('fake-key');
@@ -400,25 +399,24 @@ describe('AffinityConnector.pullRecordFiles', () => {
 
     expect(mockListAllPersons).toHaveBeenCalledWith(undefined);
     expect(mockListListEntries).not.toHaveBeenCalled();
-    const file = batches[0][0] as unknown as { fields: Record<string, unknown>; entity?: unknown };
+    const file = batches[0][0] as unknown as { fields: unknown[]; entity?: unknown };
     expect(file.entity).toBeUndefined();
-    expect(file.fields).toEqual({
-      'field-x': { id: 'field-x', type: 'enriched', value: { type: 'text', data: 'CTO' } },
-    });
+    expect(Array.isArray(file.fields)).toBe(true);
+    expect(file.fields).toEqual(fieldsArray);
   });
 
-  it('tenant-companies dispatch: pulls /v2/companies and rekeys top-level fields by id', async () => {
-    const company = makeCompany(7001, [{ id: 'field-y', type: 'enriched', value: null }]);
+  it('tenant-companies dispatch: pulls /v2/companies and stores top-level fields as a verbatim array', async () => {
+    const fieldsArray = [{ id: 'field-y', type: 'enriched', value: null }];
+    const company = makeCompany(7001, fieldsArray);
     mockListAllCompanies.mockReturnValue(singleBatch([company]));
 
     const connector = new AffinityConnector('fake-key');
     const batches = await collectBatches(connector, buildTableSpec('companies'));
 
     expect(mockListAllCompanies).toHaveBeenCalledWith(undefined);
-    const file = batches[0][0] as unknown as { fields: Record<string, unknown> };
-    expect(file.fields).toEqual({
-      'field-y': { id: 'field-y', type: 'enriched', value: null },
-    });
+    const file = batches[0][0] as unknown as { fields: unknown[] };
+    expect(Array.isArray(file.fields)).toBe(true);
+    expect(file.fields).toEqual(fieldsArray);
   });
 
   it('tenant-opportunities dispatch: pulls /v2/opportunities and passes records through verbatim', async () => {
@@ -606,18 +604,24 @@ describe('AffinityConnector.getSuggestedRecordFileNames', () => {
 describe('AffinityConnector writes', () => {
   const X_SCRATCH_READONLY = 'x-scratch-readonly';
   const X_SCRATCH_CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
+  const X_SCRATCH_AFFINITY_FIELDS_BY_ID = 'x-scratch-affinity-fields-by-id';
 
-  /** Table spec whose schema declares one writable text field (`field-1`). */
+  /**
+   * Table spec whose verbatim `fields` array carries the per-field-id write-meta
+   * map: one writable text field (`field-1`) and one read-only enriched field
+   * (`enriched-1`).
+   */
   function buildWritableTableSpec(remoteId: string, recordHasEntityWrapper: boolean): BaseJsonTableSpec {
-    const fieldsObjectSchema = {
-      properties: {
-        'field-1': { description: 'Status', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'text' },
-        'enriched-1': { description: 'Growth', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'number', [X_SCRATCH_READONLY]: true },
+    const fieldsArraySchema = {
+      type: 'array',
+      [X_SCRATCH_AFFINITY_FIELDS_BY_ID]: {
+        'field-1': { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'text' },
+        'enriched-1': { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'number', [X_SCRATCH_READONLY]: true },
       },
     };
     const schema = recordHasEntityWrapper
-      ? { properties: { entity: { properties: { fields: fieldsObjectSchema } } } }
-      : { properties: { fields: fieldsObjectSchema } };
+      ? { properties: { entity: { properties: { fields: fieldsArraySchema } } } }
+      : { properties: { fields: fieldsArraySchema } };
     return {
       ...buildTableSpec(remoteId),
       schema: schema as unknown as TSchema,
@@ -626,27 +630,23 @@ describe('AffinityConnector writes', () => {
 
   describe('updateRecords', () => {
     it('pushes a changed person field through the persons batch endpoint and reads back', async () => {
-      const personFile = {
-        id: 42,
-        firstName: 'Ada',
-        fields: {
-          'field-1': {
-            id: 'field-1',
-            name: 'Status',
-            type: 'global',
-            enrichmentSource: null,
-            value: { type: 'text', data: 'Active' },
-          },
-        },
-      } as unknown as ConnectorFile;
+      const changedFieldElement = {
+        id: 'field-1',
+        name: 'Status',
+        type: 'global',
+        enrichmentSource: null,
+        value: { type: 'text', data: 'Active' },
+      };
+      const personFile = { id: 42, firstName: 'Ada', fields: [changedFieldElement] } as unknown as ConnectorFile;
       mockUpdatePersonFieldValues.mockResolvedValue(undefined);
       mockGetPerson.mockResolvedValue(makePerson(42, [{ id: 'field-1', value: { type: 'text', data: 'Active' } }]));
 
       const connector = new AffinityConnector('fake-key');
+      // The keyed-array diff yields the changed element(s), identified by id.
       const results = await connector.updateRecords(
         buildWritableTableSpec('persons', false),
         [personFile],
-        [{ fields: { 'field-1': { value: { data: 'Active' } } } }],
+        [{ fields: [changedFieldElement] }],
       );
 
       expect(mockUpdatePersonFieldValues).toHaveBeenCalledWith(42, [
@@ -657,22 +657,17 @@ describe('AffinityConnector writes', () => {
     });
 
     it('pushes a changed list-entry field through the list-entries batch endpoint', async () => {
+      const changedFieldElement = {
+        id: 'field-1',
+        name: 'Status',
+        type: 'list',
+        enrichmentSource: null,
+        value: { type: 'text', data: 'Won' },
+      };
       const entryFile = {
         id: 9,
         listId: 500,
-        entity: {
-          id: 8,
-          name: 'Deal',
-          fields: {
-            'field-1': {
-              id: 'field-1',
-              name: 'Status',
-              type: 'list',
-              enrichmentSource: null,
-              value: { type: 'text', data: 'Won' },
-            },
-          },
-        },
+        entity: { id: 8, name: 'Deal', fields: [changedFieldElement] },
       } as unknown as ConnectorFile;
       mockUpdateListEntryFieldValues.mockResolvedValue(undefined);
       mockGetListEntry.mockResolvedValue(makeListEntry(9, 500));
@@ -681,7 +676,7 @@ describe('AffinityConnector writes', () => {
       await connector.updateRecords(
         buildWritableTableSpec('500', true),
         [entryFile],
-        [{ entity: { fields: { 'field-1': { value: { data: 'Won' } } } } }],
+        [{ entity: { fields: [changedFieldElement] } }],
       );
 
       expect(mockUpdateListEntryFieldValues).toHaveBeenCalledWith(500, 9, [
@@ -690,7 +685,7 @@ describe('AffinityConnector writes', () => {
     });
 
     it('routes a writable basic (firstName) to the v1 PUT, not a v2 field write', async () => {
-      const personFile = { id: 42, firstName: 'Renamed', fields: {} } as unknown as ConnectorFile;
+      const personFile = { id: 42, firstName: 'Renamed', fields: [] } as unknown as ConnectorFile;
       mockUpdatePerson.mockResolvedValue({ id: 42 });
       mockGetPerson.mockResolvedValue(makePerson(42));
 
@@ -702,17 +697,15 @@ describe('AffinityConnector writes', () => {
     });
 
     it('refuses an edit to a computed (read-only) field', async () => {
-      const personFile = {
-        id: 42,
-        fields: { 'enriched-1': { id: 'enriched-1', value: { type: 'number', data: 1 } } },
-      } as unknown as ConnectorFile;
+      const changedFieldElement = { id: 'enriched-1', value: { type: 'number', data: 1 } };
+      const personFile = { id: 42, fields: [changedFieldElement] } as unknown as ConnectorFile;
 
       const connector = new AffinityConnector('fake-key');
       await expect(
         connector.updateRecords(
           buildWritableTableSpec('persons', false),
           [personFile],
-          [{ fields: { 'enriched-1': { value: { data: 2 } } } }],
+          [{ fields: [{ id: 'enriched-1', value: { data: 2 } }] }],
         ),
       ).rejects.toThrow(/computed by Affinity/);
     });
@@ -791,7 +784,7 @@ describe('AffinityConnector v1 writes (P2)', () => {
   function specWithSchema(remoteId: string, schema: object): BaseJsonTableSpec {
     return { ...buildTableSpec(remoteId), schema: schema as unknown as TSchema };
   }
-  const PERSON_SCHEMA = { properties: { id: {}, firstName: {}, fields: { properties: {} } } };
+  const PERSON_SCHEMA = { properties: { id: {}, firstName: {}, fields: { type: 'array' } } };
 
   describe('createRecords', () => {
     it('creates a person via v1 basics then reads back via v2', async () => {
@@ -801,7 +794,7 @@ describe('AffinityConnector v1 writes (P2)', () => {
         firstName: 'Ada',
         lastName: 'L',
         emailAddresses: ['ada@x.com'],
-        fields: {},
+        fields: [],
       } as unknown as ConnectorFile;
 
       const connector = new AffinityConnector('k');
@@ -815,12 +808,10 @@ describe('AffinityConnector v1 writes (P2)', () => {
     it('creates a company via v1 /organizations', async () => {
       mockCreateCompany.mockResolvedValue({ id: 7 });
       mockGetCompany.mockResolvedValue(makeCompany(7));
-      const file = { name: 'Acme', domain: 'acme.com', fields: {} } as unknown as ConnectorFile;
+      const file = { name: 'Acme', domain: 'acme.com', fields: [] } as unknown as ConnectorFile;
 
       const connector = new AffinityConnector('k');
-      await connector.createRecords(specWithSchema('companies', { properties: { fields: { properties: {} } } }), [
-        file,
-      ]);
+      await connector.createRecords(specWithSchema('companies', { properties: { fields: { type: 'array' } } }), [file]);
       expect(mockCreateCompany).toHaveBeenCalledWith({ name: 'Acme', domain: 'acme.com' });
     });
 
@@ -837,11 +828,11 @@ describe('AffinityConnector v1 writes (P2)', () => {
     it('creates list membership from entity.id', async () => {
       mockCreateListEntry.mockResolvedValue({ id: 555 });
       mockGetListEntry.mockResolvedValue(makeListEntry(555, 197394));
-      const file = { entity: { id: 7 }, fields: {} } as unknown as ConnectorFile;
+      const file = { entity: { id: 7, fields: [] } } as unknown as ConnectorFile;
 
       const connector = new AffinityConnector('k');
       await connector.createRecords(
-        specWithSchema('197394', { properties: { entity: { properties: { fields: { properties: {} } } } } }),
+        specWithSchema('197394', { properties: { entity: { properties: { fields: { type: 'array' } } } } }),
         [file],
       );
       expect(mockCreateListEntry).toHaveBeenCalledWith(197394, 7);
@@ -861,19 +852,24 @@ describe('AffinityConnector v1 writes (P2)', () => {
       mockUpdatePersonFieldValues.mockResolvedValue(undefined);
       mockGetPerson.mockResolvedValue(makePerson(42));
       const schema = {
-        properties: { fields: { properties: { 'field-1': { 'x-scratch-connector-data-type': 'text' } } } },
+        properties: {
+          fields: {
+            type: 'array',
+            'x-scratch-affinity-fields-by-id': { 'field-1': { 'x-scratch-connector-data-type': 'text' } },
+          },
+        },
       };
       const file = {
         id: 42,
         firstName: 'New',
-        fields: { 'field-1': { id: 'field-1', value: { type: 'text', data: 'v' } } },
+        fields: [{ id: 'field-1', value: { type: 'text', data: 'v' } }],
       } as unknown as ConnectorFile;
 
       const connector = new AffinityConnector('k');
       await connector.updateRecords(
         specWithSchema('persons', schema),
         [file],
-        [{ firstName: 'New', fields: { 'field-1': { value: { data: 'v' } } } }],
+        [{ firstName: 'New', fields: [{ id: 'field-1', value: { type: 'text', data: 'v' } }] }],
       );
 
       expect(mockUpdatePerson).toHaveBeenCalledWith(42, { first_name: 'New' });

@@ -16,6 +16,7 @@
 
 import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { AffinityError } from './affinity-api-client';
+import { getAffinityFieldSchemasById } from './affinity-fields';
 import {
   AffinityFieldValueUpdate,
   AffinityFieldValueWritePayload,
@@ -27,6 +28,15 @@ import {
   AffinityValueType,
 } from './affinity-types';
 
+// `isReadOnlyAffinityField` and the read-only category / value-type sets moved
+// to ./affinity-fields (shared with the schema builder and default view). Kept
+// re-exported here for the connector + existing importers/tests.
+export {
+  isReadOnlyAffinityField,
+  READ_ONLY_AFFINITY_FIELD_CATEGORIES,
+  READ_ONLY_AFFINITY_VALUE_TYPES,
+} from './affinity-fields';
+
 // The record *basics* (top-level scalar identity fields) that the v1 API can
 // write, by table. Everything else top-level is read-only or server-derived
 // (`id`, `primaryEmailAddress`, `domains`, `isGlobal`, `type`, `listId`); a
@@ -35,36 +45,8 @@ export const PERSON_WRITABLE_BASIC_KEYS: ReadonlySet<string> = new Set(['firstNa
 export const COMPANY_WRITABLE_BASIC_KEYS: ReadonlySet<string> = new Set(['name', 'domain']);
 export const OPPORTUNITY_WRITABLE_BASIC_KEYS: ReadonlySet<string> = new Set(['name']);
 
-/**
- * Field-category types that are computed by Affinity and can never be written:
- * `enriched` (Affinity Data / Dealroom / Crunchbase enrichment) and
- * `relationship-intelligence` (derived from email/calendar activity).
- * Only `list` and `global` category fields accept value updates.
- */
-export const READ_ONLY_AFFINITY_FIELD_CATEGORIES: ReadonlySet<string> = new Set([
-  'enriched',
-  'relationship-intelligence',
-]);
-
-/**
- * Value types with no entry in the v2 `FieldValueUpdate` union — they cannot
- * be written even when the field's category is writable.
- */
-export const READ_ONLY_AFFINITY_VALUE_TYPES: ReadonlySet<string> = new Set(['interaction', 'formula-number']);
-
 /** The only keys the v2 `Location` write schema accepts. */
 const LOCATION_WRITE_KEYS = ['streetAddress', 'city', 'state', 'country', 'continent'] as const;
-
-/**
- * Decide whether a field is writable from its metadata annotations.
- * Used both at schema-build time (to label `x-scratch-readonly`) and at
- * publish time (to refuse rather than silently drop an unwritable edit).
- */
-export function isReadOnlyAffinityField(fieldCategory: string | undefined, valueType: string | undefined): boolean {
-  if (fieldCategory !== undefined && READ_ONLY_AFFINITY_FIELD_CATEGORIES.has(fieldCategory)) return true;
-  if (valueType !== undefined && READ_ONLY_AFFINITY_VALUE_TYPES.has(valueType)) return true;
-  return false;
-}
 
 /**
  * Narrow a stored read-shaped field value into the `{ type, data }` write
@@ -201,9 +183,12 @@ function narrowArray<T>(
 // ---------------------------------------------------------------------------
 
 /**
- * Pull the per-field-id schema annotations out of a table spec's JSON schema.
- * List entries nest the dynamic fields under `entity.fields`; tenant tables
- * (persons / companies) carry them at top-level `fields`.
+ * Pull the per-field-id metadata (each field's `valueType` +
+ * `x-scratch-readonly`) out of a table spec's JSON schema. The verbatim `fields`
+ * array carries this as the {@link X_SCRATCH_AFFINITY_FIELDS_BY_ID} map (there is
+ * no longer a per-field object schema, since the array is stored verbatim). List
+ * entries nest the array under `entity.fields`; tenant tables (persons /
+ * companies) carry it at top-level `fields`.
  */
 export function extractDynamicFieldSchemasByFieldId(
   tableSpecSchema: Record<string, unknown>,
@@ -213,8 +198,8 @@ export function extractDynamicFieldSchemasByFieldId(
   const fieldsParent = recordHasEntityWrapper
     ? ((topLevelProperties['entity'] as { properties?: Record<string, unknown> } | undefined)?.properties ?? {})
     : topLevelProperties;
-  const fieldsObjectSchema = fieldsParent['fields'] as { properties?: Record<string, unknown> } | undefined;
-  return (fieldsObjectSchema?.properties as Record<string, Record<string, unknown>>) ?? {};
+  const fieldsArraySchema = fieldsParent['fields'];
+  return getAffinityFieldSchemasById(fieldsArraySchema) ?? {};
 }
 
 /**
@@ -244,12 +229,14 @@ export function buildFieldValueUpdatesForChangedRecord(params: {
   const { changedRecordSparseObject, fullRecordFile, tableSpecSchema, recordHasEntityWrapper } = params;
 
   const fieldSchemasByFieldId = extractDynamicFieldSchemasByFieldId(tableSpecSchema, recordHasEntityWrapper);
-  const storedFieldsContainer = readFieldsContainer(fullRecordFile, recordHasEntityWrapper) ?? {};
+  // The verbatim `fields` array; each element is `{ id, name, type, value, … }`.
+  // Index it by id so a changed element resolves to its full stored value.
+  const storedFieldEntriesByFieldId = indexFieldsArrayById(readFieldsArray(fullRecordFile, recordHasEntityWrapper));
 
   let changedFieldIds: string[];
   if (changedRecordSparseObject === undefined) {
     // No diff available — re-send every writable field present on the record.
-    changedFieldIds = Object.keys(storedFieldsContainer).filter((fieldId) => {
+    changedFieldIds = [...storedFieldEntriesByFieldId.keys()].filter((fieldId) => {
       const fieldSchema = fieldSchemasByFieldId[fieldId];
       return fieldSchema !== undefined && fieldSchema[X_SCRATCH_READONLY] !== true;
     });
@@ -265,8 +252,13 @@ export function buildFieldValueUpdatesForChangedRecord(params: {
         )}. Record basics (names, domains, emails) and system fields require the v1 API, which the connector does not write through yet — only Affinity field values are publishable.`,
       );
     }
-    const changedFieldsContainer = readFieldsContainer(changedRecordSparseObject, recordHasEntityWrapper) ?? {};
-    changedFieldIds = Object.keys(changedFieldsContainer);
+    // The sparse diff's `fields` is the keyed-array-aware element diff: a sparse
+    // list of the changed elements, each identified by its `id`.
+    const changedFieldElements = readFieldsArray(changedRecordSparseObject, recordHasEntityWrapper);
+    changedFieldIds = changedFieldElements
+      .filter((element): element is Record<string, unknown> => isPlainObject(element))
+      .map((element) => String(element['id']))
+      .filter((fieldId) => fieldId !== 'undefined');
   }
 
   const updates: AffinityFieldValueUpdate[] = [];
@@ -283,7 +275,7 @@ export function buildFieldValueUpdatesForChangedRecord(params: {
       );
     }
 
-    const storedFieldEntry = storedFieldsContainer[fieldId] as
+    const storedFieldEntry = storedFieldEntriesByFieldId.get(fieldId) as
       | { value?: { type?: string; data?: unknown; totalCount?: number } | null }
       | undefined;
     const valueTypeFromSchema = fieldSchema[X_SCRATCH_CONNECTOR_DATA_TYPE] as AffinityValueType | undefined;
@@ -300,18 +292,37 @@ export function buildFieldValueUpdatesForChangedRecord(params: {
   return updates;
 }
 
-/** Read the dynamic-fields container off a record (or sparse diff) object. */
-function readFieldsContainer(
-  recordShapedObject: Record<string, unknown>,
-  recordHasEntityWrapper: boolean,
-): Record<string, unknown> | undefined {
+/** Whether a value is a plain (non-array, non-null) object. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read the verbatim dynamic-fields **array** off a record (or its sparse diff).
+ * Returns `[]` when absent or not an array (the field is stored verbatim as
+ * `fields: [{ id, … }]`, top-level or under `entity`).
+ */
+function readFieldsArray(recordShapedObject: Record<string, unknown>, recordHasEntityWrapper: boolean): unknown[] {
   const fieldsParent = recordHasEntityWrapper
     ? (recordShapedObject['entity'] as Record<string, unknown> | undefined)
     : recordShapedObject;
-  const fieldsContainer = fieldsParent?.['fields'];
-  return typeof fieldsContainer === 'object' && fieldsContainer !== null
-    ? (fieldsContainer as Record<string, unknown>)
-    : undefined;
+  const fieldsArray = fieldsParent?.['fields'];
+  return Array.isArray(fieldsArray) ? fieldsArray : [];
+}
+
+/** Index a verbatim `fields` array by each element's `id`. */
+function indexFieldsArrayById(fieldsArray: unknown[]): Map<string, Record<string, unknown>> {
+  const fieldEntriesByFieldId = new Map<string, Record<string, unknown>>();
+  for (const element of fieldsArray) {
+    if (!isPlainObject(element)) continue;
+    // Match the keyed-array grammar: a field is addressed by a scalar `id`,
+    // compared stringwise. Skip elements whose id is missing or non-scalar.
+    const elementId = element['id'];
+    if (typeof elementId === 'string' || typeof elementId === 'number') {
+      fieldEntriesByFieldId.set(String(elementId), element);
+    }
+  }
+  return fieldEntriesByFieldId;
 }
 
 /**

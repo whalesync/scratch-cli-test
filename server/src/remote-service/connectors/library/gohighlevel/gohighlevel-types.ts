@@ -32,18 +32,6 @@ export interface GoHighLevelCustomFieldsListResponse {
 }
 
 /**
- * Bidirectional maps between a custom-field definition's HighLevel `id` and the
- * short key used inside a record's `custom_fields` object (the part of `fieldKey`
- * after the first `.`). Built once per pull/publish from the discovered
- * definitions and used to reshape values between the stored keyed object and the
- * `{ id, ... }` array the API reads/writes.
- */
-export interface GoHighLevelCustomFieldKeyMaps {
-  idToShortKey: Map<string, string>;
-  shortKeyToId: Map<string, string>;
-}
-
-/**
  * A contact record, stored verbatim as the HighLevel API returns it. We only
  * type the fields we reference; everything else is preserved (the JSON table
  * spec sets `additionalProperties: true`).

@@ -1,29 +1,42 @@
-import { Type } from '@sinclair/typebox';
+import { Type, type TSchema } from '@sinclair/typebox';
 import {
   TableViewBannerGroup,
   TableViewCol,
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_ARRAY_KEYED_BY,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
 import { buildAffinityDefaultView } from '../affinity-default-view';
+import {
+  buildAffinityFieldsArrayKeyedByOptions,
+  buildAffinityFieldSchemasById,
+  X_SCRATCH_AFFINITY_FIELDS_BY_ID,
+} from '../affinity-fields';
+import { AffinityFieldMetadata, AffinityValueType } from '../affinity-types';
 
 // ── Schema helpers ──
 
-/** Build a field entry schema mimicking Affinity's field objects. */
-function fieldEntry(id: string, name: string, valueType: string) {
-  return Type.Object(
+/** One field definition (the input the real schema builders discover from the API). */
+function fieldDef(id: string, name: string, valueType: AffinityValueType): AffinityFieldMetadata {
+  return { id, name, type: 'list', enrichmentSource: null, valueType };
+}
+
+/**
+ * Build a verbatim `fields` array property with both annotations
+ * (`x-scratch-array-keyed-by` + the per-field-id write-meta map), exactly as
+ * `affinity-json-schema` mounts it, so the default view reads real annotations.
+ */
+function fieldsArrayProperty(defs: AffinityFieldMetadata[]): TSchema {
+  const elementSchema = Type.Object(
     {
-      id: Type.Literal(id),
-      name: Type.String(),
-      type: Type.Literal('list'),
-      enrichmentSource: Type.Union([Type.String(), Type.Null()]),
+      id: Type.String(),
       value: Type.Union([Type.Object({}, { additionalProperties: true }), Type.Null()]),
     },
-    {
-      description: name,
-      [X_SCRATCH_CONNECTOR_DATA_TYPE]: valueType,
-    },
+    { additionalProperties: true },
   );
+  return Type.Array(elementSchema, {
+    [X_SCRATCH_ARRAY_KEYED_BY]: buildAffinityFieldsArrayKeyedByOptions(defs),
+    [X_SCRATCH_AFFINITY_FIELDS_BY_ID]: buildAffinityFieldSchemasById(defs),
+  });
 }
 
 /** Build a company list-entry schema (entity wrapper). */
@@ -41,11 +54,11 @@ function makeCompanyListEntrySchema() {
         domain: Type.Union([Type.String(), Type.Null()]),
         domains: Type.Array(Type.String()),
         isGlobal: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
-        fields: Type.Object({
-          'field-1': fieldEntry('field-1', 'Industry', 'dropdown'),
-          'field-2': fieldEntry('field-2', 'Revenue', 'number'),
-          'field-3': fieldEntry('field-3', 'Founded', 'datetime'),
-        }),
+        fields: fieldsArrayProperty([
+          fieldDef('field-1', 'Industry', 'dropdown'),
+          fieldDef('field-2', 'Revenue', 'number'),
+          fieldDef('field-3', 'Founded', 'datetime'),
+        ]),
       }),
     },
     { $id: 'affinity/list-42', title: 'My Companies List' },
@@ -62,10 +75,7 @@ function makePersonsSchema() {
       primaryEmailAddress: Type.Union([Type.String(), Type.Null()]),
       emailAddresses: Type.Array(Type.String()),
       type: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-      fields: Type.Object({
-        'field-10': fieldEntry('field-10', 'Title', 'text'),
-        'field-11': fieldEntry('field-11', 'Company', 'company'),
-      }),
+      fields: fieldsArrayProperty([fieldDef('field-10', 'Title', 'text'), fieldDef('field-11', 'Company', 'company')]),
     },
     { $id: 'affinity/persons', title: 'People' },
   );
@@ -80,9 +90,7 @@ function makeCompaniesSchema() {
       domain: Type.Union([Type.String(), Type.Null()]),
       domains: Type.Array(Type.String()),
       isGlobal: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
-      fields: Type.Object({
-        'field-20': fieldEntry('field-20', 'Sector', 'dropdown'),
-      }),
+      fields: fieldsArrayProperty([fieldDef('field-20', 'Sector', 'dropdown')]),
     },
     { $id: 'affinity/companies', title: 'Companies' },
   );
@@ -179,14 +187,14 @@ describe('buildAffinityDefaultView — company list entry', () => {
 
     it('should place dynamic fields after entity fixed fields', () => {
       const paths = view.cols.map((c) => (c as TableViewCol).path);
-      const fieldIdx = paths.indexOf('entity.fields.field-1');
+      const fieldIdx = paths.indexOf('entity.fields.[id=field-1]');
       const domainsIdx = paths.indexOf('entity.domains');
       expect(fieldIdx).toBeGreaterThan(domainsIdx);
     });
 
     it('should place top-level system fields (type, listId, createdAt, creatorId) last', () => {
       const paths = view.cols.map((c) => (c as TableViewCol).path);
-      const lastFieldIdx = paths.indexOf('entity.fields.field-3');
+      const lastFieldIdx = paths.indexOf('entity.fields.[id=field-3]');
       const typeIdx = paths.indexOf('type');
       const createdAtIdx = paths.indexOf('createdAt');
       expect(typeIdx).toBeGreaterThan(lastFieldIdx);
@@ -268,7 +276,7 @@ describe('buildAffinityDefaultView — company list entry', () => {
 
   describe('dynamic field subfields', () => {
     it('should add subfields to dynamic fields', () => {
-      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-1') as TableViewCol;
+      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
       expect(col.subfields).toBeDefined();
       expect(col.subfields).toHaveLength(4);
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -282,38 +290,38 @@ describe('buildAffinityDefaultView — company list entry', () => {
     });
 
     it('should default to showing the value subfield', () => {
-      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-1') as TableViewCol;
+      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
       expect(col.selectedSubfield).toBe(0);
     });
 
     it('should use the field description as the column name', () => {
-      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-1') as TableViewCol;
+      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
       expect(col.name).toBe('Industry');
     });
 
     it('should map connector data type for dynamic fields', () => {
-      const numCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-2') as TableViewCol;
+      const numCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-2]') as TableViewCol;
       expect(numCol.type).toBe('number');
 
-      const dateCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-3') as TableViewCol;
+      const dateCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-3]') as TableViewCol;
       expect(dateCol.type).toBe('date');
 
-      const dropCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-1') as TableViewCol;
+      const dropCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
       expect(dropCol.type).toBe('object');
     });
 
     it('should map data subfield type from connector data type', () => {
-      const numCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-2') as TableViewCol;
+      const numCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-2]') as TableViewCol;
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(numCol.subfields![0].relativePath).toBe('value.data');
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(numCol.subfields![0].type).toBe('number');
 
-      const dateCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-3') as TableViewCol;
+      const dateCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-3]') as TableViewCol;
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(dateCol.subfields![0].type).toBe('date');
 
-      const dropCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-1') as TableViewCol;
+      const dropCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(dropCol.subfields![0].type).toBe('object');
     });
@@ -360,7 +368,7 @@ describe('buildAffinityDefaultView — tenant persons', () => {
   });
 
   it('should include dynamic fields with subfields', () => {
-    const col = view.cols.find((c) => (c as TableViewCol).path === 'fields.field-10') as TableViewCol;
+    const col = view.cols.find((c) => (c as TableViewCol).path === 'fields.[id=field-10]') as TableViewCol;
     expect(col).toBeDefined();
     expect(col.name).toBe('Title');
     expect(col.subfields).toHaveLength(4);
@@ -520,11 +528,11 @@ describe('buildAffinityDefaultView — location banner groups', () => {
     return Type.Object({
       id: Type.Number({ [X_SCRATCH_READONLY]: true }),
       name: Type.Union([Type.String(), Type.Null()]),
-      fields: Type.Object({
-        'affinity-data-location': fieldEntry('affinity-data-location', 'Location', 'location'),
-        'dealroom-location': fieldEntry('dealroom-location', 'Location', 'location'),
-        'field-1234': fieldEntry('field-1234', 'Round', 'dropdown'),
-      }),
+      fields: fieldsArrayProperty([
+        fieldDef('affinity-data-location', 'Location', 'location'),
+        fieldDef('dealroom-location', 'Location', 'location'),
+        fieldDef('field-1234', 'Round', 'dropdown'),
+      ]),
     });
   }
 
@@ -549,11 +557,11 @@ describe('buildAffinityDefaultView — location banner groups', () => {
     ) as TableViewBannerGroup;
     expect(group.cols).toHaveLength(5);
     const paths = group.cols.map((c) => c.path);
-    expect(paths).toContain('fields.dealroom-location.value.data.streetAddress');
-    expect(paths).toContain('fields.dealroom-location.value.data.city');
-    expect(paths).toContain('fields.dealroom-location.value.data.state');
-    expect(paths).toContain('fields.dealroom-location.value.data.country');
-    expect(paths).toContain('fields.dealroom-location.value.data.continent');
+    expect(paths).toContain('fields.[id=dealroom-location].value.data.streetAddress');
+    expect(paths).toContain('fields.[id=dealroom-location].value.data.city');
+    expect(paths).toContain('fields.[id=dealroom-location].value.data.state');
+    expect(paths).toContain('fields.[id=dealroom-location].value.data.country');
+    expect(paths).toContain('fields.[id=dealroom-location].value.data.continent');
   });
 
   it('should format sub-column names as Title Case', () => {
@@ -569,7 +577,7 @@ describe('buildAffinityDefaultView — location banner groups', () => {
   });
 
   it('should not create a banner group for non-location fields', () => {
-    const roundCol = view.cols.find((c) => c.kind === 'col' && c.path === 'fields.field-1234');
+    const roundCol = view.cols.find((c) => c.kind === 'col' && c.path === 'fields.[id=field-1234]');
     expect(roundCol).toBeDefined();
   });
 
@@ -584,9 +592,7 @@ describe('buildAffinityDefaultView — location banner groups', () => {
         entity: Type.Object({
           id: Type.Number({ [X_SCRATCH_READONLY]: true }),
           name: Type.Union([Type.String(), Type.Null()]),
-          fields: Type.Object({
-            'dealroom-location': fieldEntry('dealroom-location', 'Location', 'location'),
-          }),
+          fields: fieldsArrayProperty([fieldDef('dealroom-location', 'Location', 'location')]),
         }),
       },
       { $id: 'affinity/list-123' },
@@ -596,6 +602,6 @@ describe('buildAffinityDefaultView — location banner groups', () => {
       (c) => c.kind === 'banner-group' && c.name === 'Location (Dealroom)',
     ) as TableViewBannerGroup;
     expect(group).toBeDefined();
-    expect(group.cols[0].path).toBe('entity.fields.dealroom-location.value.data.streetAddress');
+    expect(group.cols[0].path).toBe('entity.fields.[id=dealroom-location].value.data.streetAddress');
   });
 });

@@ -980,47 +980,24 @@ function describeTableKind(kind: AffinityTableKind['kind']): string {
 }
 
 /**
- * Replace a `fields` *array* on an object with an object keyed by each field's
- * `id`, in place. Affinity v2 returns fields as `[{id, name, type, value,
- * enrichmentSource}]`; we re-key for two reasons:
- *
- *   1. Stable ordering — git diffs only show real changes, not array reorderings.
- *   2. Each field is addressable by its remote id (e.g. `fields.field-1234`),
- *      which is what the JSON schema describes and what column-level sync needs.
- *
- * The transformation is fully lossless — the inner Field object (including its
- * `id`) is preserved verbatim under its key.
- */
-function rekeyFieldsArrayInPlace(target: { fields?: unknown }): void {
-  const rawFields = target.fields;
-  if (!Array.isArray(rawFields)) return;
-  const keyed: Record<string, unknown> = {};
-  for (const field of rawFields as Array<{ id?: unknown }>) {
-    if (field && typeof field.id === 'string') {
-      keyed[field.id] = field;
-    }
-  }
-  target.fields = keyed;
-}
-
-/**
- * Transform a list entry into the file shape stored in git. The fields array
- * lives under `entry.entity.fields` (list entries wrap the entity).
+ * Store a list entry verbatim as the file on disk (the Connector Prime
+ * Directive). The `fields` array under `entry.entity.fields` is kept exactly as
+ * Affinity returns it — `[{ id, name, type, enrichmentSource, value }]` — and
+ * each element is exposed as an editable column via the schema's
+ * `x-scratch-array-keyed-by` annotation (see `affinity-fields.ts`); no
+ * array→keyed-object reshape on disk.
  */
 function listEntryToFile(entry: AffinityListEntry): ConnectorFile {
-  if (entry.entity) {
-    rekeyFieldsArrayInPlace(entry.entity as { fields?: unknown });
-  }
   return entry as unknown as ConnectorFile;
 }
 
 /**
- * Transform a tenant-wide person/company record into the file shape stored in
- * git. The fields array lives at the top level (no `entity` wrapper). Used for
- * persons and companies; opportunities have no fields and pass through verbatim.
+ * Store a tenant-wide person/company record verbatim as the file on disk. The
+ * `fields` array lives at the top level (no `entity` wrapper) and is kept
+ * exactly as Affinity returns it — same verbatim-array + `x-scratch-array-keyed-by`
+ * model as list entries. Opportunities have no fields and pass through the same way.
  */
 function tenantRecordToFile(record: AffinityPerson | AffinityCompany): ConnectorFile {
-  rekeyFieldsArrayInPlace(record as { fields?: unknown });
   return record as unknown as ConnectorFile;
 }
 

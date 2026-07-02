@@ -1,10 +1,13 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any */
 import {
+  ArrayKeyedByOptions,
+  X_SCRATCH_AGENT_INSTRUCTIONS,
+  X_SCRATCH_ARRAY_KEYED_BY,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
-  X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
+import { X_SCRATCH_AFFINITY_FIELDS_BY_ID } from '../affinity-fields';
 import {
   buildAffinityCompaniesTableSpec,
   buildAffinityEntityFilesTableSpec,
@@ -12,6 +15,7 @@ import {
   buildAffinityNotesTableSpec,
   buildAffinityOpportunitiesTableSpec,
   buildAffinityPersonsTableSpec,
+  valueSchemaForType,
 } from '../affinity-json-schema';
 import { AffinityFieldMetadata, AffinityList, AffinityValueType } from '../affinity-types';
 
@@ -171,41 +175,65 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
     expect(entityProps.listId[X_SCRATCH_READONLY]).toBe(true);
   });
 
-  it('keys field metadata under entity.fields by remote field id', async () => {
+  it('exposes entity.fields as a verbatim array with an x-scratch-array-keyed-by column per field (no valuePath)', async () => {
     mockListListFields.mockResolvedValue([
       makeField({ id: 'field-1001-stage', valueType: 'dropdown' }),
       makeField({ id: 'field-1001-amount', valueType: 'number' }),
     ]);
 
     const spec = await buildAffinityJsonTableSpec(entityId, makeList({ id: 500 }), mockClient);
-    const fieldsProps = (spec.schema as any).properties.entity.properties.fields.properties;
+    const fields = (spec.schema as any).properties.entity.properties.fields;
 
-    expect(fieldsProps).toHaveProperty('field-1001-stage');
-    expect(fieldsProps).toHaveProperty('field-1001-amount');
+    // Stored verbatim as an array — never reshaped to an object keyed by id.
+    expect(fields.type).toBe('array');
+    const keyedBy = fields[X_SCRATCH_ARRAY_KEYED_BY] as ArrayKeyedByOptions;
+    expect(keyedBy.keyField).toBe('id');
+    // The whole element is the value — no valuePath.
+    expect(keyedBy.valuePath).toBeUndefined();
+    expect(keyedBy.columns.map((c) => c.key)).toEqual(['field-1001-stage', 'field-1001-amount']);
     expect(mockListListFields).toHaveBeenCalledWith(500);
   });
 
-  it('annotates each field with REMOTE_FIELD_ID and CONNECTOR_DATA_TYPE', async () => {
+  it('carries each field name/type via the keyed-by column and the valueType via the fields-by-id map', async () => {
     mockListListFields.mockResolvedValue([makeField({ id: 'field-stage', name: 'Stage', valueType: 'dropdown' })]);
 
     const spec = await buildAffinityJsonTableSpec(entityId, makeList({ id: 500 }), mockClient);
-    const field = (spec.schema as any).properties.entity.properties.fields.properties['field-stage'];
+    const fields = (spec.schema as any).properties.entity.properties.fields;
 
-    expect(field[X_SCRATCH_REMOTE_FIELD_ID]).toBe('field-stage');
-    expect(field[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('dropdown');
-    // The TypeBox object's `description` carries the human-readable name.
-    expect(field.description).toBe('Stage');
+    const keyedBy = fields[X_SCRATCH_ARRAY_KEYED_BY] as ArrayKeyedByOptions;
+    const stageColumn = keyedBy.columns.find((c) => c.key === 'field-stage');
+    expect(stageColumn?.name).toBe('Stage');
+    expect(stageColumn?.type).toBe('object'); // dropdown → object column hint
+
+    // The exact Affinity valueType (needed by the write layer + location
+    // detection) lives in the per-field-id write-meta map on the array property.
+    const fieldsById = fields[X_SCRATCH_AFFINITY_FIELDS_BY_ID];
+    expect(fieldsById['field-stage'][X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('dropdown');
   });
 
-  it('rejects unknown additional fields on the entity.fields object', async () => {
+  it('stores fields verbatim: the element schema tolerates extra keys (no reshape, no forced refresh)', async () => {
     mockListListFields.mockResolvedValue([makeField({ id: 'field-known', valueType: 'text' })]);
 
     const spec = await buildAffinityJsonTableSpec(entityId, makeList({ id: 500 }), mockClient);
-    const fieldsObj = (spec.schema as any).properties.entity.properties.fields;
+    const fields = (spec.schema as any).properties.entity.properties.fields;
 
-    // additionalProperties: false means a future Affinity field that wasn't in
-    // the metadata fetch won't validate — forces a schema refresh.
-    expect(fieldsObj.additionalProperties).toBe(false);
+    // A verbatim array element permits additional properties — a future Affinity
+    // field the metadata fetch didn't cover is still stored (it just has no
+    // column until the next schema refresh), never rejected.
+    expect(fields.items.additionalProperties).toBe(true);
+  });
+
+  it('adds an agent legend describing the fields array at the schema root', async () => {
+    mockListListFields.mockResolvedValue([
+      makeField({ id: 'field-stage', name: 'Stage', valueType: 'dropdown', type: 'list' }),
+    ]);
+
+    const spec = await buildAffinityJsonTableSpec(entityId, makeList({ id: 500 }), mockClient);
+    const instructions = (spec.schema as any)[X_SCRATCH_AGENT_INSTRUCTIONS] as string;
+
+    expect(instructions).toContain('entity.fields.[id=<id>]');
+    expect(instructions).toContain('id: field-stage');
+    expect(instructions).toContain('Stage');
   });
 
   it('produces a $id of the form affinity/list-{id}', async () => {
@@ -259,15 +287,20 @@ describe('buildAffinityPersonsTableSpec', () => {
     expect(props).not.toHaveProperty('entity');
   });
 
-  it('keys tenant-person fields by remote field id at the TOP-LEVEL .fields', async () => {
+  it('exposes tenant-person fields as a verbatim keyed array at the TOP-LEVEL .fields', async () => {
     mockListPersonFields.mockResolvedValue([
       makeField({ id: 'affinity-data-current-organization', valueType: 'company', type: 'enriched' }),
     ]);
 
     const spec = await buildAffinityPersonsTableSpec(entityId, mockClient);
-    const fieldsProps = (spec.schema as any).properties.fields.properties;
+    const fields = (spec.schema as any).properties.fields;
 
-    expect(fieldsProps).toHaveProperty('affinity-data-current-organization');
+    expect(fields.type).toBe('array');
+    const keyedBy = fields[X_SCRATCH_ARRAY_KEYED_BY] as ArrayKeyedByOptions;
+    expect(keyedBy.keyField).toBe('id');
+    expect(keyedBy.columns.map((c) => c.key)).toContain('affinity-data-current-organization');
+    // enriched fields are read-only.
+    expect(keyedBy.columns.find((c) => c.key === 'affinity-data-current-organization')?.readonly).toBe(true);
     expect(mockListPersonFields).toHaveBeenCalled();
   });
 
@@ -319,15 +352,17 @@ describe('buildAffinityCompaniesTableSpec', () => {
     expect(props.isGlobal[X_SCRATCH_READONLY]).toBe(true);
   });
 
-  it('keys tenant-company fields by remote field id', async () => {
+  it('exposes tenant-company fields as a verbatim keyed array', async () => {
     mockListCompanyFields.mockResolvedValue([
       makeField({ id: 'affinity-data-industry', valueType: 'filterable-text-multi', type: 'enriched' }),
     ]);
 
     const spec = await buildAffinityCompaniesTableSpec(entityId, mockClient);
-    const fieldsProps = (spec.schema as any).properties.fields.properties;
+    const fields = (spec.schema as any).properties.fields;
 
-    expect(fieldsProps).toHaveProperty('affinity-data-industry');
+    expect(fields.type).toBe('array');
+    const keyedBy = fields[X_SCRATCH_ARRAY_KEYED_BY] as ArrayKeyedByOptions;
+    expect(keyedBy.columns.map((c) => c.key)).toContain('affinity-data-industry');
   });
 
   it('uses the affinity/companies $id', async () => {
@@ -492,8 +527,7 @@ describe('buildAffinityEntityFilesTableSpec', () => {
 // current set of supported types so that's at least a visible regression.
 // ---------------------------------------------------------------------------
 
-describe('valueSchemaForType coverage (via list-entry field schemas)', () => {
-  const entityId = { wsId: 'list_500', remoteId: ['500'] };
+describe('valueSchemaForType coverage', () => {
   const VALUE_TYPES_TO_TEST: AffinityValueType[] = [
     'text',
     'filterable-text',
@@ -514,23 +548,16 @@ describe('valueSchemaForType coverage (via list-entry field schemas)', () => {
     'location-multi',
   ];
 
-  it.each(VALUE_TYPES_TO_TEST)('produces a non-Unknown schema for valueType "%s"', async (valueType) => {
-    mockListListFields.mockResolvedValue([
-      makeField({ id: `field-${valueType}`, valueType, name: `Field ${valueType}` }),
-    ]);
-
-    const spec = await buildAffinityJsonTableSpec(entityId, makeList({ id: 500 }), mockClient);
-    const fieldSchema = (spec.schema as any).properties.entity.properties.fields.properties[`field-${valueType}`];
-    const valueShape = fieldSchema.properties.value;
-
-    // The field's `value` is `Union(valueSchema, Null)`. If we hit the
-    // `default: Type.Unknown()` branch, the union would be `Union(Unknown, Null)`
-    // which doesn't have an `anyOf` of two object schemas — it would be a
-    // single permissive shape with no inner structure.
-    expect(valueShape).toBeDefined();
-    expect(valueShape.anyOf).toBeDefined();
-    // The annotated CONNECTOR_DATA_TYPE on the field carries the original
-    // valueType so downstream tooling can map it back to a transformer.
-    expect(fieldSchema[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(valueType);
-  });
+  it.each(VALUE_TYPES_TO_TEST)(
+    'produces a structured `{ type, data }` schema (never Unknown) for "%s"',
+    (valueType) => {
+      const schema = valueSchemaForType(valueType) as any;
+      // Every known valueType maps to a `{ type, data }` object. If we hit the
+      // `default: Type.Unknown()` branch it would be an empty schema with no
+      // `type`/`properties` — a visible regression if Affinity adds a type.
+      expect(schema.type).toBe('object');
+      expect(schema.properties?.type).toBeDefined();
+      expect(schema.properties?.data).toBeDefined();
+    },
+  );
 });

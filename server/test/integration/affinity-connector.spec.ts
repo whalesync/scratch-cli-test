@@ -189,15 +189,22 @@ describeIfKey('AffinityConnector — live API', () => {
       expect(['name', 'firstName']).toContain(segments[1]);
     });
 
-    it('mounts list-specific fields under entity.fields keyed by remote id', () => {
+    it('mounts list-specific fields under entity.fields as a verbatim keyed array', () => {
       const entitySchema = (
         listSpec.schema as unknown as { properties: { entity: { properties: Record<string, unknown> } } }
       ).properties.entity;
       expect(entitySchema.properties).toHaveProperty('fields');
 
-      const fieldsSchema = entitySchema.properties.fields as { properties?: Record<string, unknown>; type: string };
-      expect(fieldsSchema.type).toBe('object');
-      expect(fieldsSchema.properties).toBeDefined();
+      // Stored verbatim as an array (DEV-10637 — no array→keyed-object reshape),
+      // with each field exposed as a column via x-scratch-array-keyed-by.
+      const fieldsSchema = entitySchema.properties.fields as {
+        type: string;
+        'x-scratch-array-keyed-by'?: { keyField: string; valuePath?: string };
+      };
+      expect(fieldsSchema.type).toBe('array');
+      expect(fieldsSchema['x-scratch-array-keyed-by']?.keyField).toBe('id');
+      // The whole element is the value — no valuePath.
+      expect(fieldsSchema['x-scratch-array-keyed-by']?.valuePath).toBeUndefined();
     });
   });
 
@@ -285,7 +292,7 @@ describeIfKey('AffinityConnector — live API', () => {
         type: string;
         listId: number;
         createdAt: string;
-        entity: { id: number; fields?: Record<string, unknown> };
+        entity: { id: number; fields?: unknown };
       };
 
       expect(typeof sample.id).toBe('number');
@@ -295,13 +302,13 @@ describeIfKey('AffinityConnector — live API', () => {
       expect(sample.entity).toBeDefined();
       expect(typeof sample.entity.id).toBe('number');
 
-      // Confirm the array → keyed-object transformation ran.
-      expect(Array.isArray(sample.entity.fields)).toBe(false);
-      if (sample.entity.fields) {
-        for (const [key, rawValue] of Object.entries(sample.entity.fields)) {
-          expect(typeof key).toBe('string');
+      // Confirm `entity.fields` is stored VERBATIM as the array Affinity returns
+      // (DEV-10637 — no array→keyed-object reshape); each element keeps its id/name/type.
+      if (sample.entity.fields !== undefined) {
+        expect(Array.isArray(sample.entity.fields)).toBe(true);
+        for (const rawValue of sample.entity.fields as unknown[]) {
           const value = rawValue as { id?: unknown; name?: unknown; type?: unknown };
-          expect(value.id).toBe(key);
+          expect(typeof value.id).toBe('string');
           expect(typeof value.name).toBe('string');
           expect(typeof value.type).toBe('string');
         }
@@ -452,8 +459,8 @@ describeIfKey('AffinityConnector — v2 inline-fields verification', () => {
         .map(([path, count]) => `    ${count.toString().padStart(4)}  ${path}`)
         .join('\n');
       const recordsWithFieldData = chosenRecords.filter((r) => {
-        const entity = (r as { entity?: { fields?: Record<string, unknown> } }).entity;
-        return entity?.fields && Object.keys(entity.fields).length > 0;
+        const entity = (r as { entity?: { fields?: unknown } }).entity;
+        return Array.isArray(entity?.fields) && entity.fields.length > 0;
       }).length;
 
       console.log(
@@ -479,10 +486,13 @@ describeIfKey('AffinityConnector — v2 inline-fields verification', () => {
 
       const fieldsSchema = (
         chosenSpec.schema as unknown as {
-          properties: { entity: { properties: { fields?: { properties?: Record<string, unknown> } } } };
+          properties: {
+            entity: { properties: { fields?: { 'x-scratch-array-keyed-by'?: { columns?: unknown[] } } } };
+          };
         }
       ).properties.entity.properties.fields;
-      const fieldColumnCount = Object.keys(fieldsSchema?.properties ?? {}).length;
+      // Field columns are the x-scratch-array-keyed-by columns on the verbatim array (DEV-10637).
+      const fieldColumnCount = (fieldsSchema?.['x-scratch-array-keyed-by']?.columns ?? []).length;
       if (fieldColumnCount > 0) {
         expect(recordsWithFieldData).toBeGreaterThan(0);
       }
@@ -522,7 +532,7 @@ describeIfKey('AffinityConnector — v1 write round-trip (P2)', () => {
       primaryEmailAddress: 'zzz-integration-deleteme@example.com',
       emailAddresses: ['zzz-integration-deleteme@example.com'],
       type: 'external',
-      fields: {},
+      fields: [],
     } as unknown as ConnectorFile;
 
     let createdId: number | undefined;

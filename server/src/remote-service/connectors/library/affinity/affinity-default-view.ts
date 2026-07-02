@@ -1,35 +1,34 @@
 import { Kind, TSchema } from '@sinclair/typebox';
 import {
+  ArrayKeyedColumn,
+  buildKeyedArrayColumnPath,
+  getArrayKeyedByOptions,
   TablePropertyType,
   TableView,
   TableViewBannerGroup,
   TableViewCol,
   TableViewSubfield,
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
-
-// ── Affinity value type → TablePropertyType mapping ──
-
-const AFFINITY_TYPE_MAP: Partial<Record<string, TablePropertyType>> = {
-  text: 'string',
-  'filterable-text': 'string',
-  number: 'number',
-  'formula-number': 'number',
-  datetime: 'date',
-};
+import {
+  affinityFieldValueTypeFromSchemasById,
+  FIELD_KEY_FIELD,
+  getAffinityFieldSchemasById,
+  tablePropertyTypeForAffinityValueType,
+} from './affinity-fields';
 
 // ── Field-level subfields ──
 
-// Each entry in `entity.fields` (or `fields`) is an object with
-// `{ id, name, type, enrichmentSource, value: { type, data } }`.
-// The useful payload lives at `value.data`. We expose subfields so users
-// can drill into the nested structure and see the actual data by default.
+// Each element of the verbatim `entity.fields` (or `fields`) array is an object
+// `{ id, name, type, enrichmentSource, value: { type, data } }`. The whole
+// element is the editable column (addressed by `[id=<id>]`), and the useful
+// payload lives at `value.data`. We expose subfields so users can drill into the
+// nested structure and see the actual data by default.
 
 /** Build subfields for a dynamic Affinity field, with the data subfield type based on valueType. */
 function buildFieldSubfields(connectorDataType: string | undefined): TableViewSubfield[] {
   return [
-    { relativePath: 'value.data', name: 'Data', type: mapConnectorDataType(connectorDataType) },
+    { relativePath: 'value.data', name: 'Data', type: tablePropertyTypeForAffinityValueType(connectorDataType) },
     { relativePath: 'value.type', name: 'Value Type', type: 'string' },
     { relativePath: 'type', name: 'Field Type', type: 'string' },
     { relativePath: 'enrichmentSource', name: 'Enrichment Source', type: 'string' },
@@ -101,16 +100,14 @@ export function buildAffinityDefaultView(schema: TSchema, titleFieldPath?: strin
   const entityProps: Record<string, TSchema> =
     (entitySchema as TSchema & { properties?: Record<string, TSchema> })?.properties ?? {};
 
-  // Flat tables (persons, companies, opportunities) have `fields` at top level
-  const hasTopLevelFields = !hasEntity && 'fields' in topLevel;
-  const topLevelFieldsSchema = hasTopLevelFields ? topLevel['fields'] : undefined;
-  const topLevelFieldsProps: Record<string, TSchema> =
-    (topLevelFieldsSchema as TSchema & { properties?: Record<string, TSchema> })?.properties ?? {};
-
-  // Entity-level fields (list entries)
-  const entityFieldsSchema = entityProps['fields'];
-  const entityFieldsProps: Record<string, TSchema> =
-    (entityFieldsSchema as TSchema & { properties?: Record<string, TSchema> })?.properties ?? {};
+  // The verbatim `fields` array lives under `entity.fields` (list entries) or at
+  // the top level (flat tenant tables). Its `x-scratch-array-keyed-by` columns
+  // drive one editable column per field, addressed by `[id=<id>]`.
+  const fieldsPropertySchema = hasEntity
+    ? entityProps['fields']
+    : 'fields' in topLevel
+      ? topLevel['fields']
+      : undefined;
 
   // Determine if this is a notes or entity-files table
   const schemaId = (schema as TSchema & { $id?: string }).$id ?? '';
@@ -151,16 +148,23 @@ export function buildAffinityDefaultView(schema: TSchema, titleFieldPath?: strin
     }
   }
 
-  // ── 5. Dynamic fields (from entity.fields or fields) ──
-  const dynamicFields = hasEntity ? entityFieldsProps : topLevelFieldsProps;
+  // ── 5. Dynamic fields (verbatim `fields` array → one column per keyed element) ──
   const fieldPathPrefix = hasEntity ? 'entity.fields' : 'fields';
+  const keyedByOptions = getArrayKeyedByOptions(fieldsPropertySchema);
+  const fieldSchemasById = getAffinityFieldSchemasById(fieldsPropertySchema);
 
-  for (const [fieldKey, fieldSchema] of Object.entries(dynamicFields)) {
-    const cdt = fieldSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
-    if (cdt === 'location') {
-      cols.push(buildLocationBannerGroup(fieldKey, fieldSchema, fieldPathPrefix));
-    } else {
-      cols.push(buildDynamicFieldCol(fieldKey, fieldSchema, fieldPathPrefix));
+  if (keyedByOptions) {
+    for (const column of keyedByOptions.columns) {
+      const fieldId = String(column.key);
+      const valueType = affinityFieldValueTypeFromSchemasById(fieldSchemasById, fieldId);
+      // The whole element is the column value: `entity.fields.[id=field-1]` /
+      // `fields.[id=field-1]` — no valuePath.
+      const fieldColumnPath = buildKeyedArrayColumnPath(fieldPathPrefix, FIELD_KEY_FIELD, fieldId);
+      if (valueType === 'location') {
+        cols.push(buildLocationBannerGroup(fieldId, column, fieldColumnPath));
+      } else {
+        cols.push(buildDynamicFieldCol(column, valueType, fieldColumnPath));
+      }
     }
   }
 
@@ -264,21 +268,27 @@ function buildEntityCol(fieldId: string, fieldSchema: TSchema): TableViewCol {
   };
 }
 
-/** Build a column for a dynamic Affinity field (under `entity.fields.*` or `fields.*`). */
-function buildDynamicFieldCol(fieldKey: string, fieldSchema: TSchema, pathPrefix: string): TableViewCol {
-  const description = (fieldSchema as TSchema & { description?: string }).description;
-  const connectorDataType = fieldSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
-
+/**
+ * Build a column for one dynamic Affinity field. The column addresses the whole
+ * verbatim array element by its filter path (`entity.fields.[id=field-1]` /
+ * `fields.[id=field-1]`); subfields drill into `value.data` etc. relative to it.
+ * `name` / `type` / `readonly` come from the `x-scratch-array-keyed-by` column.
+ */
+function buildDynamicFieldCol(
+  column: ArrayKeyedColumn,
+  valueType: string | undefined,
+  fieldColumnPath: string,
+): TableViewCol {
   return {
     kind: 'col',
-    path: `${pathPrefix}.${fieldKey}`,
-    name: description || fieldKey,
-    type: mapConnectorDataType(connectorDataType),
-    // The schema flags enriched / relationship-intelligence / computed fields
-    // x-scratch-readonly; the grid honors the column's own readonly, so it has
-    // to be propagated here or the user gets an edit publish will reject.
-    readonly: fieldSchema?.[X_SCRATCH_READONLY] === true || undefined,
-    subfields: buildFieldSubfields(connectorDataType),
+    path: fieldColumnPath,
+    name: column.name,
+    type: (column.type as TablePropertyType | undefined) ?? tablePropertyTypeForAffinityValueType(valueType),
+    // enriched / relationship-intelligence / computed fields are read-only; the
+    // grid honors the column's own readonly, so publish never gets an edit it
+    // would reject.
+    readonly: column.readonly || undefined,
+    subfields: buildFieldSubfields(valueType),
     selectedSubfield: 0,
   };
 }
@@ -314,12 +324,6 @@ function mapType(fieldSchema: TSchema | undefined): TablePropertyType | undefine
   }
 }
 
-/** Map an Affinity connector data type annotation to a TablePropertyType. */
-function mapConnectorDataType(connectorDataType: string | undefined): TablePropertyType | undefined {
-  if (!connectorDataType) return 'object';
-  return AFFINITY_TYPE_MAP[connectorDataType] ?? 'object';
-}
-
 /** Format a camelCase field ID as Title Case (e.g. `firstName` → `First Name`). */
 function formatCamelCaseName(fieldId: string): string {
   const spaced = fieldId.replace(/([a-z])([A-Z])/g, '$1 $2');
@@ -333,19 +337,24 @@ function formatCamelCaseName(fieldId: string): string {
 
 const LOCATION_SUBFIELDS = ['streetAddress', 'city', 'state', 'country', 'continent'] as const;
 
-/** Build a banner group for a location-type field, expanding value.data into separate columns. */
-function buildLocationBannerGroup(fieldKey: string, fieldSchema: TSchema, pathPrefix: string): TableViewBannerGroup {
-  const description = (fieldSchema as TSchema & { description?: string }).description;
-  const basePath = `${pathPrefix}.${fieldKey}`;
-
-  // Derive a disambiguated group name from the field key.
+/**
+ * Build a banner group for a location-type field, expanding `value.data` into
+ * separate columns hung off the field's verbatim-array filter path (e.g.
+ * `entity.fields.[id=dealroom-location].value.data.city`).
+ */
+function buildLocationBannerGroup(
+  fieldId: string,
+  column: ArrayKeyedColumn,
+  fieldColumnPath: string,
+): TableViewBannerGroup {
+  // Derive a disambiguated group name from the field id.
   // e.g. "dealroom-location" → "Location (Dealroom)", "affinity-data-location" → "Location (Affinity Data)"
-  const groupName = deriveLocationGroupName(fieldKey, description);
+  const groupName = deriveLocationGroupName(fieldId, column.name);
 
-  const locationFieldIsReadonly = fieldSchema?.[X_SCRATCH_READONLY] === true || undefined;
+  const locationFieldIsReadonly = column.readonly || undefined;
   const cols: TableViewCol[] = LOCATION_SUBFIELDS.map((sub) => ({
     kind: 'col' as const,
-    path: `${basePath}.value.data.${sub}`,
+    path: `${fieldColumnPath}.value.data.${sub}`,
     name: formatCamelCaseName(sub),
     readonly: locationFieldIsReadonly,
   }));

@@ -1,5 +1,6 @@
 import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { AffinityError } from '../affinity-api-client';
+import { X_SCRATCH_AFFINITY_FIELDS_BY_ID } from '../affinity-fields';
 import {
   buildCompanyBasicsUpdatePayload,
   buildCompanyCreatePayload,
@@ -129,44 +130,38 @@ describe('translateStoredFieldValueToWritePayload', () => {
 // ---------------------------------------------------------------------------
 
 function buildTestTableSpecSchema(recordHasEntityWrapper: boolean): Record<string, unknown> {
-  const fieldsObjectSchema = {
-    properties: {
-      'field-1': {
-        description: 'Stage',
-        [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'ranked-dropdown',
-      },
-      'field-2': {
-        description: 'Amount',
-        [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'number',
-      },
-      'affinity-data-growth': {
-        description: 'Growth',
-        [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'number',
-        [X_SCRATCH_READONLY]: true,
-      },
+  // The verbatim `fields` array carries per-field valueType + readonly in the
+  // x-scratch-affinity-fields-by-id map (there is no per-field object schema).
+  const fieldsArraySchema = {
+    type: 'array',
+    [X_SCRATCH_AFFINITY_FIELDS_BY_ID]: {
+      'field-1': { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'ranked-dropdown' },
+      'field-2': { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'number' },
+      'affinity-data-growth': { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'number', [X_SCRATCH_READONLY]: true },
     },
   };
   if (recordHasEntityWrapper) {
-    return { properties: { entity: { properties: { fields: fieldsObjectSchema } } } };
+    return { properties: { entity: { properties: { fields: fieldsArraySchema } } } };
   }
-  return { properties: { fields: fieldsObjectSchema } };
+  return { properties: { fields: fieldsArraySchema } };
 }
 
 const STORED_STAGE_VALUE = { type: 'ranked-dropdown', data: { dropdownOptionId: 99, text: 'Won', rank: 3 } };
 const STORED_AMOUNT_VALUE = { type: 'number', data: 5000 };
 
 function buildTestRecordFile(recordHasEntityWrapper: boolean): Record<string, unknown> {
-  const fields = {
-    'field-1': { id: 'field-1', name: 'Stage', type: 'list', enrichmentSource: null, value: STORED_STAGE_VALUE },
-    'field-2': { id: 'field-2', name: 'Amount', type: 'list', enrichmentSource: null, value: STORED_AMOUNT_VALUE },
-    'affinity-data-growth': {
+  // Verbatim `fields` array (never reshaped to an object keyed by id).
+  const fields = [
+    { id: 'field-1', name: 'Stage', type: 'list', enrichmentSource: null, value: STORED_STAGE_VALUE },
+    { id: 'field-2', name: 'Amount', type: 'list', enrichmentSource: null, value: STORED_AMOUNT_VALUE },
+    {
       id: 'affinity-data-growth',
       name: 'Growth',
       type: 'enriched',
       enrichmentSource: 'affinity-data',
       value: { type: 'number', data: 0.4 },
     },
-  };
+  ];
   if (recordHasEntityWrapper) {
     return { id: 7, type: 'opportunity', listId: 1, entity: { id: 8, name: 'Deal', fields } };
   }
@@ -175,10 +170,10 @@ function buildTestRecordFile(recordHasEntityWrapper: boolean): Record<string, un
 
 describe('buildFieldValueUpdatesForChangedRecord', () => {
   it('builds updates only for the changed field ids, reading full values off the record file', () => {
-    // Deep-sparse diff that only touched value.data — the payload must still
-    // carry the full {type, data} from the file.
+    // The keyed-array diff yields the changed element (identified by id); the
+    // payload is read whole from the record file, then narrowed for the API.
     const updates = buildFieldValueUpdatesForChangedRecord({
-      changedRecordSparseObject: { fields: { 'field-1': { value: { data: { dropdownOptionId: 99 } } } } },
+      changedRecordSparseObject: { fields: [{ id: 'field-1', value: { data: { dropdownOptionId: 99 } } }] },
       fullRecordFile: buildTestRecordFile(false),
       tableSpecSchema: buildTestTableSpecSchema(false),
       recordHasEntityWrapper: false,
@@ -188,7 +183,7 @@ describe('buildFieldValueUpdatesForChangedRecord', () => {
 
   it('handles the entity wrapper on list entries', () => {
     const updates = buildFieldValueUpdatesForChangedRecord({
-      changedRecordSparseObject: { entity: { fields: { 'field-2': { value: { data: 6000 } } } } },
+      changedRecordSparseObject: { entity: { fields: [{ id: 'field-2', value: { data: 6000 } }] } },
       fullRecordFile: buildTestRecordFile(true),
       tableSpecSchema: buildTestTableSpecSchema(true),
       recordHasEntityWrapper: true,
@@ -219,7 +214,7 @@ describe('buildFieldValueUpdatesForChangedRecord', () => {
   it('throws when a changed field is labeled read-only (computed/enriched)', () => {
     expect(() =>
       buildFieldValueUpdatesForChangedRecord({
-        changedRecordSparseObject: { fields: { 'affinity-data-growth': { value: { data: 1 } } } },
+        changedRecordSparseObject: { fields: [{ id: 'affinity-data-growth', value: { data: 1 } }] },
         fullRecordFile: buildTestRecordFile(false),
         tableSpecSchema: buildTestTableSpecSchema(false),
         recordHasEntityWrapper: false,
@@ -230,7 +225,7 @@ describe('buildFieldValueUpdatesForChangedRecord', () => {
   it('throws when a changed field id is not in the schema', () => {
     expect(() =>
       buildFieldValueUpdatesForChangedRecord({
-        changedRecordSparseObject: { fields: { 'field-unknown': { value: { data: 1 } } } },
+        changedRecordSparseObject: { fields: [{ id: 'field-unknown', value: { data: 1 } }] },
         fullRecordFile: buildTestRecordFile(false),
         tableSpecSchema: buildTestTableSpecSchema(false),
         recordHasEntityWrapper: false,
@@ -349,11 +344,11 @@ describe('buildOpportunityCreatePayload', () => {
 describe('splitChangedRecordIntoBasicsAndFields', () => {
   it('separates writable basics from the fields container', () => {
     const result = splitChangedRecordIntoBasicsAndFields(
-      { firstName: 'New', fields: { 'field-1': { value: { data: 'x' } } } },
+      { firstName: 'New', fields: [{ id: 'field-1', value: { data: 'x' } }] },
       PERSON_WRITABLE_BASIC_KEYS,
     );
     expect(result.basicsChanged).toEqual({ firstName: 'New' });
-    expect(result.fieldsChangedSparse).toEqual({ fields: { 'field-1': { value: { data: 'x' } } } });
+    expect(result.fieldsChangedSparse).toEqual({ fields: [{ id: 'field-1', value: { data: 'x' } }] });
   });
 
   it('throws on a changed top-level key that is neither a writable basic nor fields', () => {
@@ -401,19 +396,20 @@ describe('buildNonEmptyFieldValueUpdatesForNewRecord', () => {
     const schema = {
       properties: {
         fields: {
-          properties: {
-            'field-set': { description: 'Set', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'text' },
-            'field-empty': { description: 'Empty', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'text' },
+          type: 'array',
+          [X_SCRATCH_AFFINITY_FIELDS_BY_ID]: {
+            'field-set': { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'text' },
+            'field-empty': { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'text' },
           },
         },
       },
     };
     const file = {
       id: 1,
-      fields: {
-        'field-set': { id: 'field-set', value: { type: 'text', data: 'hi' } },
-        'field-empty': { id: 'field-empty', value: { type: 'text', data: null } },
-      },
+      fields: [
+        { id: 'field-set', value: { type: 'text', data: 'hi' } },
+        { id: 'field-empty', value: { type: 'text', data: null } },
+      ],
     };
     const updates = buildNonEmptyFieldValueUpdatesForNewRecord({
       fullRecordFile: file,
