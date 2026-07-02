@@ -13,6 +13,8 @@ import {
 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
+import { isLongFormContent } from './content-paragraph-diff';
+import { ContentDiffWithMap } from './ContentDiffWithMap';
 import { getRecordName, toDisplayString, type DiffRecordData, type DiffRowStatus } from './record-diff-helpers';
 
 interface RecordChangesDrawerProps {
@@ -85,6 +87,26 @@ const STATE_BADGE_BY_ROW_STATUS: Record<DiffRowStatus, StateBadge> = {
 const EMPTY_VALUE_PLACEHOLDER = '(empty)';
 
 /**
+ * Shared shell for a single field block: an uppercase mono field label above the
+ * field's diff content, with the divider/padding chrome. Used by both the compact
+ * `ChangedFieldBlock` and the long-form `ContentDiffWithMap` block so the field
+ * label looks identical regardless of which renderer the field routes to.
+ */
+function FieldBlockShell({ label, children }: { label: string; children: ReactNode }): ReactNode {
+  return (
+    <Box style={{ borderTop: '0.5px solid var(--fg-divider)', padding: '12px 0' }}>
+      <TextMono12Regular
+        c="var(--fg-muted)"
+        style={{ textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}
+      >
+        {label}
+      </TextMono12Regular>
+      {children}
+    </Box>
+  );
+}
+
+/**
  * A single changed field rendered under an uppercase mono label. For modified
  * records it shows the approved value struck through, an arrow, then the new
  * local value; for created records it shows only the new value.
@@ -101,13 +123,7 @@ function ChangedFieldBlock({
   kind: 'modified' | 'created';
 }): ReactNode {
   return (
-    <Box style={{ borderTop: '0.5px solid var(--fg-divider)', padding: '12px 0' }}>
-      <TextMono12Regular
-        c="var(--fg-muted)"
-        style={{ textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}
-      >
-        {label}
-      </TextMono12Regular>
+    <FieldBlockShell label={label}>
       {kind === 'modified' ? (
         <Group gap={8} align="baseline" wrap="wrap">
           <Text13Regular
@@ -126,7 +142,7 @@ function ChangedFieldBlock({
           {toValue && toValue.length > 0 ? toValue : EMPTY_VALUE_PLACEHOLDER}
         </Text13Regular>
       )}
-    </Box>
+    </FieldBlockShell>
   );
 }
 
@@ -254,15 +270,24 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
   const modifiedFieldBlocks = useMemo<ReactNode[]>(() => {
     if (!recordData) return [];
     const displayData = recordData.displayData ?? {};
-    return recordData.row.__changedFields.map((fieldPath) => (
-      <ChangedFieldBlock
-        key={fieldPath}
-        label={labelForChangedField(fieldPath)}
-        fromValue={toDisplayString(recordData.row.__fromFields[fieldPath])}
-        toValue={toDisplayString(getByPath(displayData, fieldPath))}
-        kind="modified"
-      />
-    ));
+    return recordData.row.__changedFields.map((fieldPath) => {
+      const fromValue = toDisplayString(recordData.row.__fromFields[fieldPath]);
+      const toValue = toDisplayString(getByPath(displayData, fieldPath));
+      const label = labelForChangedField(fieldPath);
+      // Long-form bodies (multi-paragraph descriptions) read terribly as a single
+      // struck-through-then-new block, so route them to the rich paragraph diff +
+      // minimap. Short fields stay on the compact from → to redline.
+      if (isLongFormContent(fromValue, toValue)) {
+        return (
+          <FieldBlockShell key={fieldPath} label={label}>
+            <ContentDiffWithMap fromValue={fromValue} toValue={toValue} diffKind="unreviewed" />
+          </FieldBlockShell>
+        );
+      }
+      return (
+        <ChangedFieldBlock key={fieldPath} label={label} fromValue={fromValue} toValue={toValue} kind="modified" />
+      );
+    });
   }, [recordData, labelForChangedField]);
 
   const createdFieldBlocks = useMemo<ReactNode[]>(() => {

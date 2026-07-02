@@ -3,13 +3,14 @@ import { ActionIcon, Box, Stack, Tooltip } from '@mantine/core';
 import { diffWordsWithSpace } from 'diff';
 import type { LucideIcon } from 'lucide-react';
 import { Undo2 } from 'lucide-react';
-import { memo, useMemo } from 'react';
+import { memo, useMemo, type CSSProperties } from 'react';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import {
   DIFF_REMOVED_BG,
   DIFF_REMOVED_FG,
   DIFF_TEXT_STYLE,
   getAddedBg,
+  PROSE_TEXT_STYLE,
   type FieldValueDiffKind,
 } from './field-value-types';
 
@@ -110,15 +111,27 @@ export const InlineWordsDiff = memo(function InlineWordsDiff({
   fromValue,
   value,
   diffKind,
+  variant = 'mono',
 }: {
   fromValue: string;
   value: string;
   diffKind: FieldValueDiffKind;
+  /**
+   * `mono` (default) renders the redline in the monospace field-diff style with
+   * its own inset padding — used by data cells. `prose` renders in a reading font
+   * with no padding, letting a long-form container (`ContentDiffWithMap`) own all
+   * spacing and any background wash. The redline colors are identical either way.
+   */
+  variant?: 'mono' | 'prose';
 }) {
   const changes = useMemo(() => diffWordsWithSpace(fromValue, value), [fromValue, value]);
   const addedBg = getAddedBg(diffKind);
+  const containerStyle: CSSProperties =
+    variant === 'prose'
+      ? { color: 'var(--fg-primary)', ...PROSE_TEXT_STYLE }
+      : { padding: '8px 12px', color: 'var(--fg-primary)', ...DIFF_TEXT_STYLE };
   return (
-    <Box style={{ padding: '8px 12px', color: 'var(--fg-primary)', ...DIFF_TEXT_STYLE }}>
+    <Box style={containerStyle}>
       {changes.map((change, index) => {
         if (change.removed) {
           return (

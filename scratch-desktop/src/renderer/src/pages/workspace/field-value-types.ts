@@ -21,6 +21,19 @@ export const DIFF_TEXT_STYLE: React.CSSProperties = {
   wordBreak: 'break-word',
 };
 
+/**
+ * Reading-optimized counterpart to `DIFF_TEXT_STYLE` for long-form prose (the
+ * `ContentDiffWithMap` body). Inherits the app's UI font (no `fontFamily`) at a
+ * comfortable size and line-height so a multi-paragraph body reads like prose
+ * rather than a code block, while keeping the same wrapping behavior.
+ */
+export const PROSE_TEXT_STYLE: React.CSSProperties = {
+  fontSize: 14,
+  lineHeight: 1.7,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+};
+
 export function getAddedBg(diffKind: FieldValueDiffKind): string {
   return diffKind === 'unreviewed' ? DIFF_WORKING_BG : DIFF_UNPUBLISHED_BG;
 }
