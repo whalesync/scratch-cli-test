@@ -1,9 +1,21 @@
 # Connector-scoped publishing in the desktop app
 
-- **Status:** Planned
+- **Status:** Resolved
 - **Created:** 2026-06-30
 - **Author:** Chris Hoefgen
 - **Linear:** [DEV-10596 — Support connector scoped publishing in the desktop app](https://linear.app/whalesync/issue/DEV-10596/support-connector-scoped-publishing-in-the-desktop-app) (XS)
+
+## Resolution
+
+**Shipped** in MR [!2956](https://gitlab.com/whalesync/spinner/-/merge_requests/2956) (branch `dev-10596-implement-connector-scoped-publishing`) — a single desktop + CLI MR, no server change (the `scratchmd` binary is bundled with the desktop app). Implemented per the design below, with these deltas from the original plan:
+
+- **`files download --connection`** was added alongside `files upload --connection` for stale-recovery isolation (Key decision 3) — via a `HardConflictScope::Connection` variant that scopes the hard-conflict exit decision to the target connector.
+- **Scoped Accept/Discard replaced the review-first block** — the follow-up noted under Key decision 2 was pulled into this MR. The connector modal now offers the same **"Discard and publish" / "Accept and publish"** buttons as the workspace flow, backed by new `files accept-all --connection` / `files reject-all --connection` flags that act on only the chosen connector's data folders. A shared `narrow_contexts_to_connection` helper backs `upload`/`accept-all`/`reject-all`.
+- **Tests:** Rust unit coverage for the connection-scope decision; a `scratch-cli-tests` publish-lifecycle suite over two connections mapping **disjoint, multi-folder** tables (single-connection publish, cross-connection isolation, partial-failure recovery, quarantine to `failed-patches.json`); and `accept-all`/`reject-all --connection` scoping + `--connection`/`--folder` mutual-exclusion coverage.
+
+Verified: `cargo build`/`test`/`fmt`; desktop `yarn build`/`typecheck`/`lint`/vitest. Real-UI QA completed by the requester before the MR; the CLI integration suite runs against a live server in CI.
+
+The remainder of this document is the original implementation plan, retained for history.
 
 ## Problem
 
@@ -24,6 +36,8 @@ What is **not** connector-scopeable today (the one gap we close):
 
 1. **Full isolation** — add a `files upload --connection <id>` CLI flag so the chosen connector publishes regardless of other connectors' server state. (The alternative — reuse the workspace-wide upload and scope only plan/run/reconcile — was rejected because another connector being `blocked_dirty`/`blocked_stale` would block the chosen connector at upload.)
 2. **Review-first block for unreviewed edits** — when the chosen connector has unreviewed local edits, the modal blocks with "review them first" + **Cancel only**. It must **never** run the workspace-wide accept-all/discard-all, which would mutate *other* connectors' edits (a "keep the user in control of what gets published" violation). Note: `files accept-all`/`reject-all`/`discard-all` already accept a `--folder` scope, so a future enhancement could offer scoped accept/discard — out of scope here.
+
+3. **Stale-recovery isolation (added during implementation)** — also add `files download --connection <id>`. When the chosen connector's own scoped upload returns `blocked_stale`/`blocked_dirty`, the "Download and publish" recovery must pull in a way that refuses only if the *target* connector hard-conflicts, not if some *other* connector does. `files download` is workspace-wide by design (DEV-10523) and `--file-path` only scopes the hard-conflict exit decision; `--connection` mirrors that at connection granularity (via a `HardConflictScope::Connection` variant). Without it, the workspace-wide recovery pull could refuse on an unrelated connector's hard conflict, leaking the isolation this feature is built around.
 
 ## Single MR, no server dependency
 

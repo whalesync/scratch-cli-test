@@ -11,9 +11,14 @@ import {
 } from "../src/helpers";
 import {
   AUTHOR_IDS,
+  REVIEW_IDS,
   setupAuthorsTable,
+  setupProductsTable,
+  setupReviewsTable,
   setupTestTable,
   teardownAuthorsTable,
+  teardownProductsTable,
+  teardownReviewsTable,
   teardownTestTable,
 } from "../src/postgres";
 
@@ -1109,5 +1114,968 @@ describeIfPostgres(
         throw err;
       }
     }, 240_000);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// DEV-10596 — connector-scoped publish. `files upload --connection <id|dir>`
+// narrows the two-pass upload to ONE connection so the chosen connector
+// publishes regardless of any OTHER connection's state. Two connections (both
+// linking `integration_blog_posts` to the same Postgres) prove the scoping:
+// each has its own connector-account id + dir name, so an upload scoped to one
+// must never touch the other.
+// ---------------------------------------------------------------------------
+describeIfPostgres(
+  "Connector-scoped upload — files upload --connection (DEV-10596)",
+  () => {
+    let workspaceId: string;
+    let workspaceDir: string;
+    let connA: { id: string; dirName: string };
+    let connB: { id: string; dirName: string };
+    let hasFailed = false;
+
+    /** Edit the AI-tools post's author under one connection dir, then accept it. */
+    function editAndAcceptAiToolsAuthor(
+      connDirName: string,
+      newAuthor: string,
+    ): void {
+      const connRoot = path.join(workspaceDir, connDirName);
+      const target = findJsonFiles(connRoot)
+        .map((p) => ({
+          p,
+          data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<
+            string,
+            unknown
+          >,
+        }))
+        .find(
+          (r) => r.data.title === "The Rise of AI-Powered Development Tools",
+        );
+      if (!target) {
+        throw new Error(`AI-tools post not found under ${connDirName}`);
+      }
+      target.data.author = newAuthor;
+      fs.writeFileSync(target.p, JSON.stringify(target.data, null, 2));
+      const wsRelPath = path.relative(workspaceDir, target.p);
+      const acceptResult = cli.json<{ status: string }>(
+        ["files", "accept", wsRelPath],
+        { cwd: workspaceDir },
+      );
+      expect(acceptResult.status).toBe("accepted");
+    }
+
+    beforeAll(async () => {
+      await setupTestTable();
+
+      const ws = cli.json<{ id: string }>([
+        "workspaces",
+        "create",
+        uniqueName("publish-conn-scope"),
+      ]);
+      workspaceId = ws.id;
+
+      const addConnection = (): string =>
+        cli.json<{ id: string }>([
+          "connections",
+          "--workspace",
+          workspaceId,
+          "add",
+          "--service",
+          TEST_CONNECTOR_SERVICE,
+          "--param",
+          `connectionString=${postgresUrl}`,
+        ]).id;
+      const connAId = addConnection();
+      const connBId = addConnection();
+
+      const parentDir = path.join(cli.home, "test-publish-conn-scope");
+      fs.mkdirSync(parentDir, { recursive: true });
+      const initResult = cli.json<{ directory: string }>(
+        ["workspaces", "init", workspaceId],
+        { cwd: parentDir },
+      );
+      workspaceDir = path.join(parentDir, initResult.directory);
+
+      const linkBlogPosts = (connectionId: string): void => {
+        const tables = cli.json<Array<{ id: string; displayName: string }>>([
+          "linked",
+          "--workspace",
+          workspaceId,
+          "available",
+          connectionId,
+        ]);
+        const blogPosts = tables.find(
+          (t) => t.displayName === "integration_blog_posts",
+        )!;
+        const tableIdParts = blogPosts.id.split(",");
+        const linked = cli.json<{ id: string }>(
+          [
+            "linked",
+            "--workspace",
+            workspaceId,
+            "add",
+            "--connection-id",
+            connectionId,
+            ...tableIdParts.flatMap((p: string) => ["--table-id", p]),
+            "--name",
+            blogPosts.displayName,
+          ],
+          { cwd: workspaceDir },
+        );
+        cli.run(["linked", "--workspace", workspaceId, "pull", linked.id], {
+          cwd: workspaceDir,
+        });
+      };
+      linkBlogPosts(connAId);
+      linkBlogPosts(connBId);
+      cli.run(["files", "download"], { cwd: workspaceDir });
+
+      const marker = readMarker(workspaceDir);
+      const dirNameById = new Map(
+        marker.connections.map((c) => [c.id, c.dirName]),
+      );
+      connA = { id: connAId, dirName: dirNameById.get(connAId)! };
+      connB = { id: connBId, dirName: dirNameById.get(connBId)! };
+    }, 180_000);
+
+    afterAll(async () => {
+      const shouldPreserve = preserveOnFailure && hasFailed;
+      if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
+      if (workspaceDir && !shouldPreserve) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      await teardownTestTable();
+    });
+
+    it("rejects `--connection` combined with `--file-path` (upload)", () => {
+      const result = cli.run(
+        [
+          "files",
+          "upload",
+          "--connection",
+          connA.id,
+          "--file-path",
+          `${connA.dirName}/x.json`,
+        ],
+        { cwd: workspaceDir, expectError: true },
+      );
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain(
+        "mutually exclusive",
+      );
+    });
+
+    it("rejects `--connection` combined with `--file-path` (download)", () => {
+      const result = cli.run(
+        [
+          "files",
+          "download",
+          "--connection",
+          connA.id,
+          "--file-path",
+          `${connA.dirName}/x.json`,
+        ],
+        { cwd: workspaceDir, expectError: true },
+      );
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain(
+        "mutually exclusive",
+      );
+    });
+
+    it("rejects an unknown `--connection`", () => {
+      const result = cli.run(
+        ["files", "upload", "--connection", "ca_does_not_exist"],
+        { cwd: workspaceDir, expectError: true },
+      );
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain(
+        "No connection matching",
+      );
+    });
+
+    it("uploads ONLY the connection named by its account id", () => {
+      try {
+        editAndAcceptAiToolsAuthor(connA.dirName, "Author-A-Scoped");
+        editAndAcceptAiToolsAuthor(connB.dirName, "Author-B-Scoped");
+
+        const result = cli.json<{
+          status: string;
+          connections: Array<{
+            connectionName: string;
+            status: string;
+            filesUpdated: number;
+          }>;
+        }>(["files", "upload", "--connection", connA.id], {
+          cwd: workspaceDir,
+        });
+
+        // Connection B was never in scope, so the result carries A alone.
+        expect(result.connections).toHaveLength(1);
+        expect(result.connections[0].connectionName).toBe(connA.dirName);
+        expect(result.connections[0].status).toBe("uploaded");
+        expect(result.connections[0].filesUpdated).toBe(1);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+
+    it("uploads the other connection when scoped by its dir name", () => {
+      try {
+        // `--connection` also accepts the connection dir name (the same convention
+        // `files reconcile-after-publish --connection` uses). Connection B's edit
+        // is still staged-but-unuploaded after the id-scoped call above.
+        const result = cli.json<{
+          connections: Array<{ connectionName: string; status: string }>;
+        }>(["files", "upload", "--connection", connB.dirName], {
+          cwd: workspaceDir,
+        });
+        expect(result.connections).toHaveLength(1);
+        expect(result.connections[0].connectionName).toBe(connB.dirName);
+        expect(result.connections[0].status).toBe("uploaded");
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// DEV-10596 — connector-scoped publish LIFECYCLE, MULTI-FOLDER. Each connection
+// maps TWO data folders, and the two connections map DISJOINT tables:
+//   - Connection A (always-valid)  → integration_blog_posts + integration_products
+//   - Connection B (failure-prone) → integration_authors    + integration_reviews
+// This proves the connector-scoped guarantees hold across a connection's WHOLE
+// folder set, not just a single table:
+//   1. Publishing one connection publishes ALL of its folders end-to-end.
+//   2. The OTHER connection's folders are never impacted (data + staged edits
+//      survive unchanged), and it publishes independently afterward.
+//   3. Partial publishing — a `files publish` where connection A succeeds and
+//      connection B is rejected by the connector — leaves the workspace valid
+//      and recoverable: A's folders all land, B's rejected row is quarantined in
+//      failed-patches.json (never lost), A is untouched by B's failure, and a
+//      follow-up publish recovers B cleanly.
+//
+// The failure is induced with `integration_authors.name VARCHAR(20)`: a >20-char
+// value passes accept + upload (git-only) but is rejected by Postgres at run-job
+// time. Because A and B are separate connections (separate repos + pipelines), A
+// lands while B fails IN THE SAME `files publish` — a genuine partial success.
+// ---------------------------------------------------------------------------
+describeIfPostgres(
+  "Connector-scoped publish lifecycle (multi-folder) — isolation + partial-failure recovery (DEV-10596)",
+  () => {
+    let workspaceId: string;
+    let workspaceDir: string;
+    // Connection A = always-valid (blog_posts + products); B = failure-prone (authors + reviews).
+    let connA: { id: string; dirName: string };
+    let connB: { id: string; dirName: string };
+
+    // One record per folder (4 total), each located by a distinctive field.
+    let blogPost: { abs: string; ws: string }; // A / integration_blog_posts
+    let blogPostId: string;
+    let product: { abs: string; ws: string }; // A / integration_products
+    let productId: string;
+    let alice: { abs: string; ws: string }; // B / integration_authors (VARCHAR(20) failure vector)
+    let review: { abs: string; ws: string }; // B / integration_reviews
+
+    const longName = "A".repeat(30); // 30 chars > VARCHAR(20) → connector rejects
+    let hasFailed = false;
+
+    function editField(absPath: string, field: string, value: unknown): void {
+      const data = JSON.parse(fs.readFileSync(absPath, "utf-8")) as Record<
+        string,
+        unknown
+      >;
+      data[field] = value;
+      fs.writeFileSync(absPath, JSON.stringify(data, null, 2) + "\n");
+    }
+
+    function acceptOne(wsPath: string): void {
+      const res = cli.json<{ status: string; filesAccepted: number }>(
+        ["files", "accept", wsPath],
+        { cwd: workspaceDir },
+      );
+      expect(res.status).toBe("accepted");
+      expect(res.filesAccepted).toBe(1);
+    }
+
+    async function selectScalar(
+      sql: string,
+      params: unknown[],
+    ): Promise<string> {
+      const client = new Client({ connectionString: postgresUrl });
+      await client.connect();
+      try {
+        const res = await client.query<{ v: string }>(sql, params);
+        expect(res.rowCount).toBe(1);
+        return res.rows[0].v;
+      } finally {
+        await client.end();
+      }
+    }
+
+    // Per-folder Postgres readbacks (one per mapped table).
+    const blogAuthorInPg = (): Promise<string> =>
+      selectScalar(
+        `SELECT author AS v FROM integration_blog_posts WHERE post_id = $1`,
+        [blogPostId],
+      );
+    const productCategoryInPg = (): Promise<string> =>
+      selectScalar(
+        `SELECT category AS v FROM integration_products WHERE product_id = $1`,
+        [productId],
+      );
+    const aliceNameInPg = (): Promise<string> =>
+      selectScalar(
+        `SELECT name AS v FROM integration_authors WHERE author_id = $1`,
+        [AUTHOR_IDS.alice],
+      );
+    const reviewBodyInPg = (): Promise<string> =>
+      selectScalar(
+        `SELECT body AS v FROM integration_reviews WHERE review_id = $1`,
+        [REVIEW_IDS.first],
+      );
+
+    beforeAll(async () => {
+      await setupTestTable();
+      await setupProductsTable();
+      await setupAuthorsTable();
+      await setupReviewsTable();
+
+      const ws = cli.json<{ id: string }>([
+        "workspaces",
+        "create",
+        uniqueName("publish-multifolder"),
+      ]);
+      workspaceId = ws.id;
+
+      const addConnection = (): string =>
+        cli.json<{ id: string }>([
+          "connections",
+          "--workspace",
+          workspaceId,
+          "add",
+          "--service",
+          TEST_CONNECTOR_SERVICE,
+          "--param",
+          `connectionString=${postgresUrl}`,
+        ]).id;
+      const connAId = addConnection();
+      const connBId = addConnection();
+
+      const parentDir = path.join(cli.home, "test-publish-multifolder");
+      fs.mkdirSync(parentDir, { recursive: true });
+      const initResult = cli.json<{ directory: string }>(
+        ["workspaces", "init", workspaceId],
+        { cwd: parentDir },
+      );
+      workspaceDir = path.join(parentDir, initResult.directory);
+
+      const linkTable = (connectionId: string, displayName: string): void => {
+        const tables = cli.json<Array<{ id: string; displayName: string }>>([
+          "linked",
+          "--workspace",
+          workspaceId,
+          "available",
+          connectionId,
+        ]);
+        const table = tables.find((t) => t.displayName === displayName);
+        if (!table) {
+          throw new Error(
+            `${displayName} not found in available tables: ${tables.map((t) => t.displayName).join(", ")}`,
+          );
+        }
+        const tableIdParts = table.id.split(",");
+        const linked = cli.json<{ id: string }>(
+          [
+            "linked",
+            "--workspace",
+            workspaceId,
+            "add",
+            "--connection-id",
+            connectionId,
+            ...tableIdParts.flatMap((p: string) => ["--table-id", p]),
+            "--name",
+            table.displayName,
+          ],
+          { cwd: workspaceDir },
+        );
+        cli.run(["linked", "--workspace", workspaceId, "pull", linked.id], {
+          cwd: workspaceDir,
+        });
+      };
+      // A maps two folders; B maps two DISJOINT folders (no shared table).
+      linkTable(connAId, "integration_blog_posts");
+      linkTable(connAId, "integration_products");
+      linkTable(connBId, "integration_authors");
+      linkTable(connBId, "integration_reviews");
+      cli.run(["files", "download"], { cwd: workspaceDir });
+
+      const marker = readMarker(workspaceDir);
+      const dirNameById = new Map(
+        marker.connections.map((c) => [c.id, c.dirName]),
+      );
+      connA = { id: connAId, dirName: dirNameById.get(connAId)! };
+      connB = { id: connBId, dirName: dirNameById.get(connBId)! };
+
+      const recordsUnder = (
+        dirName: string,
+      ): Array<{ p: string; data: Record<string, unknown> }> =>
+        findJsonFiles(path.join(workspaceDir, dirName)).map((p) => ({
+          p,
+          data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<
+            string,
+            unknown
+          >,
+        }));
+
+      const aRecords = recordsUnder(connA.dirName);
+      const blogHit = aRecords.find(
+        (r) => r.data.title === "The Rise of AI-Powered Development Tools",
+      );
+      const productHit = aRecords.find((r) => r.data.name === "Widget A");
+      if (!blogHit || !productHit) {
+        throw new Error("blog/product records not found under connection A");
+      }
+      blogPost = { abs: blogHit.p, ws: path.relative(workspaceDir, blogHit.p) };
+      blogPostId = String(blogHit.data.post_id);
+      product = {
+        abs: productHit.p,
+        ws: path.relative(workspaceDir, productHit.p),
+      };
+      productId = String(productHit.data.product_id);
+
+      const bRecords = recordsUnder(connB.dirName);
+      const aliceHit = bRecords.find(
+        (r) => r.data.author_id === AUTHOR_IDS.alice,
+      );
+      const reviewHit = bRecords.find(
+        (r) => r.data.review_id === REVIEW_IDS.first,
+      );
+      if (!aliceHit || !reviewHit) {
+        throw new Error("alice/review records not found under connection B");
+      }
+      alice = { abs: aliceHit.p, ws: path.relative(workspaceDir, aliceHit.p) };
+      review = {
+        abs: reviewHit.p,
+        ws: path.relative(workspaceDir, reviewHit.p),
+      };
+      expect(aliceHit.data.name).toBe("Alice");
+    }, 240_000);
+
+    afterAll(async () => {
+      const shouldPreserve = preserveOnFailure && hasFailed;
+      if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
+      if (workspaceDir && !shouldPreserve) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      await teardownReviewsTable();
+      await teardownAuthorsTable();
+      await teardownProductsTable();
+      await teardownTestTable();
+    });
+
+    // --- Requirement 1 & 2: publish one connection (all its folders); the other untouched. ---
+
+    it("stages a valid accepted change in BOTH folders of BOTH connections", () => {
+      try {
+        editField(blogPost.abs, "author", "Author-One");
+        acceptOne(blogPost.ws);
+        editField(product.abs, "category", "cat-one");
+        acceptOne(product.ws);
+        editField(alice.abs, "name", "AliceOne");
+        acceptOne(alice.ws);
+        editField(review.abs, "body", "body-one");
+        acceptOne(review.ws);
+
+        // accepted-patches.json is per CONNECTION and aggregates its folders → 2 each.
+        expect(
+          readAcceptedPatches(workspaceDir, connA.dirName).patches,
+        ).toHaveLength(2);
+        expect(
+          readAcceptedPatches(workspaceDir, connB.dirName).patches,
+        ).toHaveLength(2);
+        expect(
+          cli.json<{ count: number }>(["files", "unreviewed"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    });
+
+    it("`upload --connection A` stages both of A's folders and nothing from B", () => {
+      try {
+        const result = cli.json<{
+          connections: Array<{
+            connectionName: string;
+            status: string;
+            filesUpdated: number;
+          }>;
+        }>(["files", "upload", "--connection", connA.id], {
+          cwd: workspaceDir,
+        });
+        expect(result.connections).toHaveLength(1);
+        expect(result.connections[0].connectionName).toBe(connA.dirName);
+        expect(result.connections[0].status).toBe("uploaded");
+        // Both of A's folders had a changed record.
+        expect(result.connections[0].filesUpdated).toBe(2);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+
+    it("`files publish` lands BOTH of A's folders and touches NEITHER of B's (Req 1 & 2)", async () => {
+      try {
+        const publishResult = cli.json<{
+          status: string;
+          publishedConnections: string[];
+          skippedNoDiff: string[];
+          failedConnections: unknown[];
+        }>(["files", "publish"], { cwd: workspaceDir });
+
+        expect(publishResult.status).toBe("published");
+        expect(publishResult.publishedConnections).toContain(connA.dirName);
+        expect(publishResult.publishedConnections).not.toContain(connB.dirName);
+        expect(publishResult.skippedNoDiff).toContain(connB.dirName);
+        expect(publishResult.failedConnections).toHaveLength(0);
+
+        // Req 1: both of A's folders reached Postgres.
+        expect(await blogAuthorInPg()).toBe("Author-One");
+        expect(await productCategoryInPg()).toBe("cat-one");
+        // Req 2: both of B's folders are untouched.
+        expect(await aliceNameInPg()).toBe("Alice");
+        expect(await reviewBodyInPg()).toBe("Loved every bit of it");
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 180_000);
+
+    it("connection B keeps BOTH staged folder edits (recoverable)", () => {
+      try {
+        expect(
+          readAcceptedPatches(workspaceDir, connA.dirName).patches,
+        ).toHaveLength(0);
+        expect(
+          readAcceptedPatches(workspaceDir, connB.dirName).patches,
+        ).toHaveLength(2);
+        // Only B's two changes remain unpublished.
+        expect(
+          cli.json<{ count: number }>(["files", "unpublished"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(2);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    });
+
+    it("publishing connection B later lands BOTH of its folders (Req 2)", async () => {
+      try {
+        const uploadResult = cli.json<{
+          connections: Array<{ connectionName: string; filesUpdated: number }>;
+        }>(["files", "upload", "--connection", connB.id], {
+          cwd: workspaceDir,
+        });
+        expect(uploadResult.connections).toHaveLength(1);
+        expect(uploadResult.connections[0].connectionName).toBe(connB.dirName);
+        expect(uploadResult.connections[0].filesUpdated).toBe(2);
+
+        const publishResult = cli.json<{
+          status: string;
+          publishedConnections: string[];
+        }>(["files", "publish"], { cwd: workspaceDir });
+        expect(publishResult.status).toBe("published");
+        expect(publishResult.publishedConnections).toContain(connB.dirName);
+
+        // Both of B's folders landed; A stayed put.
+        expect(await aliceNameInPg()).toBe("AliceOne");
+        expect(await reviewBodyInPg()).toBe("body-one");
+        expect(await blogAuthorInPg()).toBe("Author-One");
+        expect(await productCategoryInPg()).toBe("cat-one");
+        expect(
+          readAcceptedPatches(workspaceDir, connA.dirName).patches,
+        ).toHaveLength(0);
+        expect(
+          readAcceptedPatches(workspaceDir, connB.dirName).patches,
+        ).toHaveLength(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 180_000);
+
+    // --- Requirement 3: partial publish (connection B rejected) is recoverable. ---
+
+    it("a publish where A succeeds and B is rejected is a valid partial success (Req 3)", async () => {
+      try {
+        // A: valid edits in both folders. B: a constraint-violating edit in authors.
+        editField(blogPost.abs, "author", "Author-Three");
+        acceptOne(blogPost.ws);
+        editField(product.abs, "category", "cat-three");
+        acceptOne(product.ws);
+        editField(alice.abs, "name", longName);
+        acceptOne(alice.ws);
+        expect(
+          cli.json<{ count: number }>(["files", "unreviewed"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(0);
+
+        cli.json(["files", "upload", "--connection", connA.id], {
+          cwd: workspaceDir,
+        });
+        cli.json(["files", "upload", "--connection", connB.id], {
+          cwd: workspaceDir,
+        });
+
+        const publishResult = cli.json<{
+          status: string;
+          publishedConnections: string[];
+          failedConnections: unknown[];
+          warnings: Array<{
+            name: string;
+            warning: { phase: string; failedCount: number };
+          }>;
+        }>(["files", "publish"], { cwd: workspaceDir });
+
+        expect(publishResult.status).toBe("published");
+        expect(publishResult.publishedConnections).toContain(connA.dirName);
+        expect(publishResult.failedConnections).toHaveLength(0);
+        const bWarning = publishResult.warnings.find(
+          (w) => w.name === connB.dirName,
+        );
+        expect(bWarning).toBeDefined();
+        expect(bWarning?.warning.phase).toBe("run-job");
+        expect(bWarning?.warning.failedCount).toBeGreaterThan(0);
+        // A published cleanly — no warning.
+        expect(
+          publishResult.warnings.find((w) => w.name === connA.dirName),
+        ).toBeUndefined();
+
+        // A's BOTH folders landed; B's rejected row did NOT.
+        expect(await blogAuthorInPg()).toBe("Author-Three");
+        expect(await productCategoryInPg()).toBe("cat-three");
+        expect(await aliceNameInPg()).toBe("AliceOne");
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 180_000);
+
+    it("B's rejected row is quarantined in failed-patches.json; A is fully clean (Req 3)", () => {
+      try {
+        expect(
+          readAcceptedPatches(workspaceDir, connB.dirName).patches,
+        ).toHaveLength(0);
+        const failed = readFailedPatches(workspaceDir, connB.dirName);
+        expect(failed.patches).toHaveLength(1);
+        const entry = failed.patches[0];
+        expect(entry.path).toBe(
+          path.relative(path.join(workspaceDir, connB.dirName), alice.abs),
+        );
+        expect(entry.kind).toBe("update");
+        expect(entry.patch).toEqual([
+          { op: "add", path: "/name", value: longName },
+        ]);
+        expect(entry.error).toBeDefined();
+        expect(entry.error).toContain("value too long");
+
+        expect(
+          cli.json<{ count: number }>(["files", "unreviewed"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(1);
+
+        // A is fully published and clean — untouched by B's failure.
+        expect(
+          readAcceptedPatches(workspaceDir, connA.dirName).patches,
+        ).toHaveLength(0);
+        const aWorktree = path.join(workspaceDir, connA.dirName);
+        expect(
+          execFileSync("git", ["-C", aWorktree, "status", "--porcelain"], {
+            encoding: "utf-8",
+          }).trim(),
+        ).toBe("");
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    });
+
+    it("recovery: fixing B's rejected value and republishing lands it (Req 3)", async () => {
+      try {
+        editField(alice.abs, "name", "AliceFixed"); // 10 chars, valid
+        acceptOne(alice.ws);
+        expect(
+          readAcceptedPatches(workspaceDir, connB.dirName).patches,
+        ).toHaveLength(1);
+
+        cli.json(["files", "upload", "--connection", connB.id], {
+          cwd: workspaceDir,
+        });
+        const publishResult = cli.json<{
+          status: string;
+          publishedConnections: string[];
+        }>(["files", "publish"], { cwd: workspaceDir });
+        expect(publishResult.status).toBe("published");
+        expect(publishResult.publishedConnections).toContain(connB.dirName);
+
+        expect(await aliceNameInPg()).toBe("AliceFixed");
+        // A remains at its last published values throughout B's recovery.
+        expect(await blogAuthorInPg()).toBe("Author-Three");
+        expect(await productCategoryInPg()).toBe("cat-three");
+
+        expect(
+          readAcceptedPatches(workspaceDir, connB.dirName).patches,
+        ).toHaveLength(0);
+        expect(
+          readFailedPatches(workspaceDir, connB.dirName).patches,
+        ).toHaveLength(0);
+        const bWorktree = path.join(workspaceDir, connB.dirName);
+        expect(
+          execFileSync("git", ["-C", bWorktree, "status", "--porcelain"], {
+            encoding: "utf-8",
+          }).trim(),
+        ).toBe("");
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 180_000);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// DEV-10596 — connector-scoped BULK REVIEW. `files accept-all --connection` and
+// `files reject-all --connection` accept/reject every unreviewed change across
+// ONLY the named connection's data folders, leaving other connections untouched.
+// This is what the desktop's connector-scoped "Accept and publish" / "Discard
+// and publish" buttons call. Two connections (both linking blog_posts to the
+// same Postgres) prove the scoping.
+// ---------------------------------------------------------------------------
+describeIfPostgres(
+  "Connector-scoped bulk review — files accept-all/reject-all --connection (DEV-10596)",
+  () => {
+    let workspaceId: string;
+    let workspaceDir: string;
+    let connA: { id: string; dirName: string };
+    let connB: { id: string; dirName: string };
+    let hasFailed = false;
+
+    /** Edit the AI-tools post's author under one connection dir (leaves it UNREVIEWED). */
+    function editAiToolsAuthor(connDirName: string, newAuthor: string): void {
+      const target = findJsonFiles(path.join(workspaceDir, connDirName))
+        .map((p) => ({
+          p,
+          data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<
+            string,
+            unknown
+          >,
+        }))
+        .find(
+          (r) => r.data.title === "The Rise of AI-Powered Development Tools",
+        );
+      if (!target) {
+        throw new Error(`AI-tools post not found under ${connDirName}`);
+      }
+      target.data.author = newAuthor;
+      fs.writeFileSync(target.p, JSON.stringify(target.data, null, 2) + "\n");
+    }
+
+    beforeAll(async () => {
+      await setupTestTable();
+
+      const ws = cli.json<{ id: string }>([
+        "workspaces",
+        "create",
+        uniqueName("bulk-review-scope"),
+      ]);
+      workspaceId = ws.id;
+
+      const addConnection = (): string =>
+        cli.json<{ id: string }>([
+          "connections",
+          "--workspace",
+          workspaceId,
+          "add",
+          "--service",
+          TEST_CONNECTOR_SERVICE,
+          "--param",
+          `connectionString=${postgresUrl}`,
+        ]).id;
+      const connAId = addConnection();
+      const connBId = addConnection();
+
+      const parentDir = path.join(cli.home, "test-bulk-review-scope");
+      fs.mkdirSync(parentDir, { recursive: true });
+      const initResult = cli.json<{ directory: string }>(
+        ["workspaces", "init", workspaceId],
+        { cwd: parentDir },
+      );
+      workspaceDir = path.join(parentDir, initResult.directory);
+
+      const linkBlogPosts = (connectionId: string): void => {
+        const tables = cli.json<Array<{ id: string; displayName: string }>>([
+          "linked",
+          "--workspace",
+          workspaceId,
+          "available",
+          connectionId,
+        ]);
+        const blogPosts = tables.find(
+          (t) => t.displayName === "integration_blog_posts",
+        )!;
+        const tableIdParts = blogPosts.id.split(",");
+        const linked = cli.json<{ id: string }>(
+          [
+            "linked",
+            "--workspace",
+            workspaceId,
+            "add",
+            "--connection-id",
+            connectionId,
+            ...tableIdParts.flatMap((p: string) => ["--table-id", p]),
+            "--name",
+            blogPosts.displayName,
+          ],
+          { cwd: workspaceDir },
+        );
+        cli.run(["linked", "--workspace", workspaceId, "pull", linked.id], {
+          cwd: workspaceDir,
+        });
+      };
+      linkBlogPosts(connAId);
+      linkBlogPosts(connBId);
+      cli.run(["files", "download"], { cwd: workspaceDir });
+
+      const marker = readMarker(workspaceDir);
+      const dirNameById = new Map(
+        marker.connections.map((c) => [c.id, c.dirName]),
+      );
+      connA = { id: connAId, dirName: dirNameById.get(connAId)! };
+      connB = { id: connBId, dirName: dirNameById.get(connBId)! };
+    }, 180_000);
+
+    afterAll(async () => {
+      const shouldPreserve = preserveOnFailure && hasFailed;
+      if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
+      if (workspaceDir && !shouldPreserve) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      await teardownTestTable();
+    });
+
+    it("`accept-all --connection` accepts ONLY the named connection's edits", () => {
+      try {
+        editAiToolsAuthor(connA.dirName, "Accepted-A");
+        editAiToolsAuthor(connB.dirName, "Pending-B");
+        // Both connections now have one unreviewed edit.
+        expect(
+          cli.json<{ count: number }>(["files", "unreviewed"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(2);
+
+        cli.run(["files", "accept-all", "--connection", connA.id], {
+          cwd: workspaceDir,
+        });
+
+        // Only B's edit is still unreviewed; A's was accepted.
+        expect(
+          cli.json<{ count: number }>(["files", "unreviewed"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(1);
+        expect(
+          readAcceptedPatches(workspaceDir, connA.dirName).patches,
+        ).toHaveLength(1);
+        expect(
+          readAcceptedPatches(workspaceDir, connB.dirName).patches,
+        ).toHaveLength(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+
+    it("`reject-all --connection` reverts ONLY the named connection's edits", () => {
+      try {
+        // B still has its unreviewed edit from the previous test.
+        cli.run(["files", "reject-all", "--connection", connB.id], {
+          cwd: workspaceDir,
+        });
+
+        // B's edit reverted → nothing unreviewed anywhere.
+        expect(
+          cli.json<{ count: number }>(["files", "unreviewed"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(0);
+        // A's accepted patch is untouched by rejecting B; B accepted nothing.
+        expect(
+          readAcceptedPatches(workspaceDir, connA.dirName).patches,
+        ).toHaveLength(1);
+        expect(
+          readAcceptedPatches(workspaceDir, connB.dirName).patches,
+        ).toHaveLength(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+
+    it("rejects `--connection` combined with `--folder` (accept-all + reject-all)", () => {
+      const accept = cli.run(
+        [
+          "files",
+          "accept-all",
+          "--connection",
+          connA.id,
+          "--folder",
+          `${connA.dirName}/x`,
+        ],
+        { cwd: workspaceDir, expectError: true },
+      );
+      expect(accept.exitCode).not.toBe(0);
+      expect(`${accept.stdout}\n${accept.stderr}`).toContain(
+        "mutually exclusive",
+      );
+
+      const reject = cli.run(
+        [
+          "files",
+          "reject-all",
+          "--connection",
+          connA.id,
+          "--folder",
+          `${connA.dirName}/x`,
+        ],
+        { cwd: workspaceDir, expectError: true },
+      );
+      expect(reject.exitCode).not.toBe(0);
+      expect(`${reject.stdout}\n${reject.stderr}`).toContain(
+        "mutually exclusive",
+      );
+    });
   },
 );

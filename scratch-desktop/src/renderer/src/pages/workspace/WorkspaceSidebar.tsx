@@ -25,6 +25,7 @@ import type { WorkspaceConnection } from '../../types/local-files';
 import { isExperimentEnabled } from '../../types/user';
 import { FolderTree } from './FolderTree';
 import { ScratchFoldersSection } from './ScratchFoldersSection';
+import type { SingleConnectionPublishTarget } from './single-connection-publish-target';
 import type { StartPullOptions } from './use-pull-tracker';
 import { LocalFolder } from './WorkspaceContent';
 
@@ -44,6 +45,8 @@ interface WorkspaceSidebarProps {
   onScratchFoldersChanged: () => void;
   /** Start a folder-scoped pull via the workspace's background tracker (DEV-10501). */
   onRequestFolderPull?: (options: StartPullOptions) => void;
+  /** DEV-10596: publish only the chosen connector's approved changes (right-click connector node). */
+  onRequestPublishConnector?: (target: SingleConnectionPublishTarget) => void;
   onOpenConnectionsPanel?: () => void;
   connectionsPanelOpen?: boolean;
   onTogglePublishHistoryPanel?: () => void;
@@ -72,6 +75,7 @@ export function WorkspaceSidebar({
   workspacePath,
   onScratchFoldersChanged,
   onRequestFolderPull,
+  onRequestPublishConnector,
   onOpenConnectionsPanel,
   connectionsPanelOpen,
   onTogglePublishHistoryPanel,
@@ -180,6 +184,7 @@ export function WorkspaceSidebar({
               workspacePath={workspacePath}
               isDevToolsEnabled={isDevToolsEnabled}
               onRequestFolderPull={onRequestFolderPull}
+              onRequestPublishConnector={onRequestPublishConnector}
               validationByFolder={validateEnabled ? validationByFolder : undefined}
               reviewByFolder={reviewByFolder}
               onRerunValidation={onRerunValidation}

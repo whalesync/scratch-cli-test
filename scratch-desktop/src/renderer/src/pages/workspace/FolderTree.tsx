@@ -13,6 +13,10 @@ import type { WorkspaceConnection } from '../../types/local-files';
 import { ColumnDefinitionsModal } from './ColumnDefinitionsModal';
 import { DataFolderInfoModal } from './DataFolderInfoModal';
 import classes from './FolderTree.module.css';
+import {
+  resolveSingleConnectionPublishTarget,
+  type SingleConnectionPublishTarget,
+} from './single-connection-publish-target';
 import type { StartPullOptions } from './use-pull-tracker';
 import { LocalFolder } from './WorkspaceContent';
 
@@ -164,6 +168,8 @@ interface FolderTreeNodeProps {
   onRequestPull: (request: PullRequest) => void;
   onShowFolderInfo: (request: FolderInfoRequest) => void;
   onViewInService: (folder: DataFolder) => void;
+  /** DEV-10596: publish only this connector's approved changes (right-click connector node). */
+  onRequestPublishConnector?: (target: SingleConnectionPublishTarget) => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
   reviewByFolder?: Map<string, { unreviewed: number; approved: number }>;
 }
@@ -183,6 +189,7 @@ function FolderTreeNodeRow({
   onRequestPull,
   onShowFolderInfo,
   onViewInService,
+  onRequestPublishConnector,
   validationByFolder,
   reviewByFolder,
 }: FolderTreeNodeProps) {
@@ -203,6 +210,14 @@ function FolderTreeNodeRow({
       const localFolderPath = node.folder ? normalizeFolderPath(node.folder.name) : null;
       const mappedFolder = localFolderPath ? dataFolderByLocalPath.get(localFolderPath) : undefined;
       const connectionFolders = depth === 0 ? (dataFoldersByConnection.get(node.name) ?? []) : [];
+
+      // DEV-10596: resolve the connector-scoped publish target once (depth-0
+      // connector node only). `ok:false` (e.g. no `connectorAccountId`) withholds
+      // the "Publish <connector>" item rather than offering a no-op.
+      const publishConnectorTarget =
+        depth === 0 && connectionFolders.length > 0
+          ? resolveSingleConnectionPublishTarget(node.name, connectionFolders)
+          : null;
 
       const items: Array<{
         id: string;
@@ -234,6 +249,10 @@ function FolderTreeNodeRow({
         }
         if (onRerunValidation) {
           items.push({ id: 'rerun-validation-connection', label: 'Rerun validation (all tables)' });
+        }
+        // DEV-10596: publish only this connector's approved changes.
+        if (onRequestPublishConnector && publishConnectorTarget?.ok) {
+          items.push({ id: 'publish-connector', label: `Publish ${node.name}` });
         }
         items.push({ id: 'pull-sep', label: '', type: 'separator' });
       }
@@ -273,6 +292,9 @@ function FolderTreeNodeRow({
       }
 
       window.scratchDesktop.showNativeContextMenu(items, (id) => {
+        if (id === 'publish-connector' && publishConnectorTarget?.ok) {
+          onRequestPublishConnector?.(publishConnectorTarget.target);
+        }
         if (id === 'pull' && mappedFolder) {
           onRequestPull({
             title: `Pull Table (Incremental) — ${node.name}`,
@@ -339,6 +361,7 @@ function FolderTreeNodeRow({
       onClearFolderIndex,
       onRerunValidation,
       onRequestPull,
+      onRequestPublishConnector,
       onShowColumnDefs,
       onShowFolderInfo,
       onViewInService,
@@ -563,6 +586,7 @@ function FolderTreeNodeRow({
               onRequestPull={onRequestPull}
               onShowFolderInfo={onShowFolderInfo}
               onViewInService={onViewInService}
+              onRequestPublishConnector={onRequestPublishConnector}
               validationByFolder={validationByFolder}
               reviewByFolder={reviewByFolder}
             />
@@ -586,6 +610,8 @@ interface FolderTreeProps {
   isDevToolsEnabled: boolean;
   /** Start a folder-scoped pull via the workspace's background tracker (DEV-10501). */
   onRequestFolderPull?: (options: StartPullOptions) => void;
+  /** DEV-10596: publish only the chosen connector's approved changes (right-click connector node). */
+  onRequestPublishConnector?: (target: SingleConnectionPublishTarget) => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
   reviewByFolder?: Map<string, { unreviewed: number; approved: number }>;
   onRerunValidation?: (scope: RerunValidationScope) => void;
@@ -601,6 +627,7 @@ export function FolderTree({
   workspacePath,
   isDevToolsEnabled,
   onRequestFolderPull,
+  onRequestPublishConnector,
   validationByFolder,
   reviewByFolder,
   onRerunValidation,
@@ -729,6 +756,7 @@ export function FolderTree({
           onRequestPull={handlePullRequest}
           onShowFolderInfo={handleShowFolderInfo}
           onViewInService={handleViewInService}
+          onRequestPublishConnector={onRequestPublishConnector}
           validationByFolder={validationByFolder}
           reviewByFolder={reviewByFolder}
         />

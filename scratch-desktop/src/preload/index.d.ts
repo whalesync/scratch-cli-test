@@ -100,6 +100,7 @@ interface ScratchDesktopAPI {
   acceptAllChanges: (
     workspacePath: string,
     folderPath?: string,
+    connectionId?: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   discardAllChanges: (
     workspacePath: string,
@@ -108,6 +109,7 @@ interface ScratchDesktopAPI {
   rejectAllChanges: (
     workspacePath: string,
     folderPath?: string,
+    connectionId?: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   acceptRecord: (
     workspacePath: string,
@@ -134,7 +136,7 @@ interface ScratchDesktopAPI {
   ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
   uploadWorkspaceChanges: (
     workspacePath: string,
-    opts?: { filePath?: string },
+    opts?: { filePath?: string; connectionId?: string },
   ) => Promise<
     | {
         status: 'uploaded' | 'no_changes' | 'up_to_date';
@@ -228,7 +230,7 @@ interface ScratchDesktopAPI {
    */
   pullWorkspaceChanges: (
     workspacePath: string,
-    opts?: { onDelete?: string; filePath?: string },
+    opts?: { onDelete?: string; filePath?: string; connectionId?: string },
   ) => Promise<
     | {
         status: 'downloaded' | 'up_to_date' | 'downloaded_with_stashed_conflicts';

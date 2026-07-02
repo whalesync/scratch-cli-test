@@ -48,6 +48,16 @@ pub enum FilesCommands {
         /// `downloaded_with_stashed_conflicts` so the target can be published.
         #[arg(long = "file-path")]
         file_path: Option<String>,
+        /// Connection-scoped "Download and publish" recovery (DEV-10596): a
+        /// connector-account id OR a connection dir name. Like `--file-path`,
+        /// the whole workspace still pulls; this only SCOPES the hard-conflict
+        /// exit decision to the target CONNECTION — the pull exits non-zero
+        /// (`blocked_conflict`) iff a record IN THIS CONNECTION hard-conflicts.
+        /// If only OTHER connections conflict it exits zero with
+        /// `downloaded_with_stashed_conflicts`. Mutually exclusive with
+        /// `--file-path`.
+        #[arg(long = "connection")]
+        connection: Option<String>,
     },
     /// Accept all current working-tree record changes (writes to accepted-patches.json)
     #[command(name = "accept-all")]
@@ -56,6 +66,12 @@ pub enum FilesCommands {
         /// When unset, accepts across every connection in the workspace.
         #[arg(long)]
         folder: Option<PathBuf>,
+        /// Connection-scoped accept: a connector-account id OR a connection dir
+        /// name. Accepts every unreviewed change across ONLY this connection's
+        /// data folders (other connections are untouched). Mutually exclusive
+        /// with `--folder`.
+        #[arg(long = "connection")]
+        connection: Option<String>,
         /// Skip refreshing the per-folder SQLite index for the accepted records.
         /// By default, `index refresh-files-full` runs for each affected folder so the grid stays current.
         #[arg(long = "skip-folder-index")]
@@ -86,6 +102,12 @@ pub enum FilesCommands {
         /// When unset, rejects across every connection in the workspace.
         #[arg(long)]
         folder: Option<PathBuf>,
+        /// Connection-scoped reject: a connector-account id OR a connection dir
+        /// name. Rejects every unreviewed change across ONLY this connection's
+        /// data folders (other connections are untouched). Mutually exclusive
+        /// with `--folder`.
+        #[arg(long = "connection")]
+        connection: Option<String>,
         /// Skip refreshing the per-folder SQLite index for the rejected records.
         /// By default, `index refresh-files-full` runs for each affected folder so the grid stays current.
         #[arg(long = "skip-folder-index")]
@@ -188,6 +210,14 @@ pub enum FilesCommands {
         /// this flag the full workspace upload (two-pass dirty gate) runs.
         #[arg(long = "file-path")]
         file_path: Option<String>,
+        /// Connection-scoped publish: a connector-account id OR a connection
+        /// dir name (the same value `files reconcile-after-publish --connection`
+        /// accepts). Narrows the upload to ONLY this connection, running the
+        /// normal two-pass dirty gate over just that one — so the chosen
+        /// connector publishes regardless of any OTHER connection's dirty/stale
+        /// server state (DEV-10596). Mutually exclusive with `--file-path`.
+        #[arg(long = "connection")]
+        connection: Option<String>,
     },
     /// Publish accepted changes to external connectors (plan-job + run-job).
     ///
@@ -555,6 +585,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             on_delete,
             skip_folder_index,
             file_path,
+            connection,
         } => {
             run_download(
                 &cwd,
@@ -563,13 +594,22 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
                 on_delete,
                 skip_folder_index,
                 file_path,
+                connection,
             )
             .await
         }
         FilesCommands::AcceptAll {
             folder,
+            connection,
             skip_folder_index,
-        } => run_accept_all(&cwd, server_url, folder.as_deref(), json, skip_folder_index),
+        } => run_accept_all(
+            &cwd,
+            server_url,
+            folder.as_deref(),
+            connection.as_deref(),
+            json,
+            skip_folder_index,
+        ),
         FilesCommands::DiscardAll {
             folder,
             skip_folder_index,
@@ -577,8 +617,16 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Discard { paths } => run_discard(&cwd, &paths, json),
         FilesCommands::RejectAll {
             folder,
+            connection,
             skip_folder_index,
-        } => run_reject_all(&cwd, server_url, folder.as_deref(), json, skip_folder_index),
+        } => run_reject_all(
+            &cwd,
+            server_url,
+            folder.as_deref(),
+            connection.as_deref(),
+            json,
+            skip_folder_index,
+        ),
         FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
         FilesCommands::AcceptField { folder, field } => {
             run_accept_field(&cwd, &folder, &field, json)
@@ -603,7 +651,18 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Upload {
             skip_folder_index,
             file_path,
-        } => run_upload(&cwd, server_url, json, skip_folder_index, file_path).await,
+            connection,
+        } => {
+            run_upload(
+                &cwd,
+                server_url,
+                json,
+                skip_folder_index,
+                file_path,
+                connection,
+            )
+            .await
+        }
         FilesCommands::Publish => run_publish(&cwd, server_url, json).await,
         FilesCommands::RevertPlan {
             plan_id,
@@ -656,7 +715,13 @@ async fn run_download(
     on_delete: OnDeleteAction,
     skip_folder_index: bool,
     file_path: Option<String>,
+    connection: Option<String>,
 ) -> anyhow::Result<()> {
+    // DEV-10596: `--connection` and `--file-path` both scope the hard-conflict
+    // exit decision, in incompatible ways — reject the combination up front.
+    if connection.is_some() && file_path.is_some() {
+        anyhow::bail!("--connection and --file-path are mutually exclusive");
+    }
     let started = std::time::Instant::now();
     let (workspace_marker, workspace_dir, _initial_contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url, json)?;
@@ -738,17 +803,31 @@ async fn run_download(
     // `refresh_workbook_for_contexts`, whose focus-sync warn-and-skip is left
     // unchanged on purpose.
 
-    // Single-record mode (`--file-path`, the "Download and publish" flow):
-    // validate the path resolves to a connection up front (fail fast at the
-    // boundary) and normalize it for the scoped hard-conflict decision below.
-    // The pull itself is NOT scoped — every connection still pulls so siblings
-    // are brought up to date; only the exit-code decision targets this record.
-    let scoped_target_path: Option<String> = match file_path.as_deref() {
-        Some(raw) => {
+    // Scoped "Download and publish" recovery: validate the scope resolves up
+    // front (fail fast at the boundary). The pull itself is NEVER scoped — every
+    // connection still pulls so siblings are brought up to date; only the
+    // exit-code (hard-conflict) decision is scoped.
+    //   - `--file-path` (DEV-10413/DEV-10523): scope to the single target record.
+    //   - `--connection` (DEV-10596): scope to every record in one connection.
+    let hard_conflict_scope: HardConflictScope = match (file_path.as_deref(), connection.as_deref())
+    {
+        (Some(raw), _) => {
             let (ctx, relpath) = resolve_connection_and_relpath(&contexts, raw)?;
-            Some(format!("{}/{}", ctx.conn_dir_name, relpath))
+            HardConflictScope::Record(format!("{}/{}", ctx.conn_dir_name, relpath))
         }
-        None => None,
+        (None, Some(connection)) => {
+            let ctx = contexts
+                .iter()
+                .find(|c| c.connection_id == connection || c.conn_dir_name == connection)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "No connection matching '{}' in this workspace (expected a connector-account id or connection dir name).",
+                        connection
+                    )
+                })?;
+            HardConflictScope::Connection(ctx.conn_dir_name.clone())
+        }
+        (None, None) => HardConflictScope::Workspace,
     };
 
     let mut results = Vec::new();
@@ -880,7 +959,7 @@ async fn run_download(
     // to reconstruct). The user's content was stashed to `unreviewed-changes.json`.
     // Clean connections already pulled fully (and were reindexed above); we only
     // decide the exit code here.
-    match decide_hard_conflict_outcome(&all_hard_conflict_paths, scoped_target_path.as_deref()) {
+    match decide_hard_conflict_outcome(&all_hard_conflict_paths, &hard_conflict_scope) {
         HardConflictDecision::None => {}
         HardConflictDecision::Block => {
             print_blocked_conflict_result(
@@ -894,15 +973,31 @@ async fn run_download(
                 all_hard_conflict_paths.len()
             );
         }
-        // Single-record pull where only OTHER records conflict: the target is
-        // ready to publish. Surface the stashed conflicts as a non-blocking
-        // notice and exit zero.
+        // Scoped pull (record or connection) where only OUT-OF-SCOPE records
+        // conflict: the target is ready to publish. Surface the stashed
+        // conflicts as a non-blocking notice and exit zero.
         HardConflictDecision::NonBlockingNotice => {
             result.status = "downloaded_with_stashed_conflicts".to_string();
         }
     }
 
     print_download_result(&sync_result, &result, started.elapsed().as_millis(), json)
+}
+
+/// What part of the workspace a `files download` should scope its hard-conflict
+/// exit decision to. The pull itself is always workspace-wide; only the
+/// `blocked_conflict` exit-code decision honors this scope.
+#[derive(Debug, PartialEq, Eq)]
+enum HardConflictScope {
+    /// No scope (`files download`): any hard conflict anywhere blocks.
+    Workspace,
+    /// `--file-path`: block only if THIS record (a workspace-relative
+    /// `<conn_dir_name>/…` path) hard-conflicts.
+    Record(String),
+    /// `--connection` (DEV-10596): block only if a record IN THIS CONNECTION
+    /// (holds the `conn_dir_name`, matched as a `<conn_dir_name>/…` prefix)
+    /// hard-conflicts.
+    Connection(String),
 }
 
 /// How `run_download` should treat the DEV-10523 hard conflicts collected
@@ -913,9 +1008,10 @@ enum HardConflictDecision {
     /// No hard conflicts — proceed normally.
     None,
     /// Block with a non-zero `blocked_conflict` exit: a workspace-wide pull with
-    /// any hard conflict, or a single-record pull whose TARGET itself conflicts.
+    /// any hard conflict, or a scoped pull whose TARGET (record or connection)
+    /// itself conflicts.
     Block,
-    /// Single-record pull where only OTHER records conflict — exit zero with a
+    /// Scoped pull where only OUT-OF-SCOPE records conflict — exit zero with a
     /// non-blocking `downloaded_with_stashed_conflicts` notice so the target can
     /// still be published.
     NonBlockingNotice,
@@ -923,22 +1019,30 @@ enum HardConflictDecision {
 
 fn decide_hard_conflict_outcome(
     hard_conflict_paths: &[String],
-    scoped_target_path: Option<&str>,
+    scope: &HardConflictScope,
 ) -> HardConflictDecision {
     if hard_conflict_paths.is_empty() {
         return HardConflictDecision::None;
     }
-    match scoped_target_path {
+    let target_conflicts = match scope {
         // Workspace-wide pull: any hard conflict blocks.
-        None => HardConflictDecision::Block,
-        // Single-record pull: block only if the target itself hard-conflicts.
-        Some(target) => {
-            if hard_conflict_paths.iter().any(|path| path == target) {
-                HardConflictDecision::Block
-            } else {
-                HardConflictDecision::NonBlockingNotice
-            }
+        HardConflictScope::Workspace => true,
+        // Single-record pull: block only if the target record itself conflicts.
+        HardConflictScope::Record(target) => hard_conflict_paths.iter().any(|path| path == target),
+        // Connection-scoped pull: block only if a record in the target
+        // connection conflicts. Hard-conflict paths are workspace-relative
+        // (`<conn_dir_name>/…`), so test the connection-dir prefix.
+        HardConflictScope::Connection(conn_dir_name) => {
+            let prefix = format!("{}/", conn_dir_name);
+            hard_conflict_paths
+                .iter()
+                .any(|path| path == conn_dir_name || path.starts_with(&prefix))
         }
+    };
+    if target_conflicts {
+        HardConflictDecision::Block
+    } else {
+        HardConflictDecision::NonBlockingNotice
     }
 }
 
@@ -1160,14 +1264,48 @@ async fn sync_workspace_structure(
     Ok(result)
 }
 
+/// DEV-10596: narrow `contexts` to a single connection matched by connector-account
+/// id OR connection dir name — the convention `--connection` uses across `upload`,
+/// `download`, `accept-all`, and `reject-all`. Returns all contexts unchanged when
+/// `connection` is `None`; bails with a clear message if a value is given but
+/// matches no connection in the workspace.
+fn narrow_contexts_to_connection(
+    contexts: Vec<ConnectionContext>,
+    connection: Option<&str>,
+) -> anyhow::Result<Vec<ConnectionContext>> {
+    let Some(connection) = connection else {
+        return Ok(contexts);
+    };
+    let filtered: Vec<_> = contexts
+        .into_iter()
+        .filter(|c| c.connection_id == connection || c.conn_dir_name == connection)
+        .collect();
+    if filtered.is_empty() {
+        anyhow::bail!(
+            "No connection matching '{}' in this workspace (expected a connector-account id or connection dir name).",
+            connection
+        );
+    }
+    Ok(filtered)
+}
+
 async fn run_upload(
     cwd: &Path,
     server_url: &str,
     json: bool,
     skip_folder_index: bool,
     file_path: Option<String>,
+    connection: Option<String>,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
+
+    // DEV-10596: `--connection` (whole-connection scope) and `--file-path`
+    // (single-record scope) both narrow the upload, in incompatible ways —
+    // reject the combination up front rather than silently preferring one.
+    if connection.is_some() && file_path.is_some() {
+        anyhow::bail!("--connection and --file-path are mutually exclusive");
+    }
+
     let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url, json)?;
     let token = get_token(&workspace_server_url)?;
@@ -1175,6 +1313,14 @@ async fn run_upload(
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
+
+    // DEV-10596: connection-scoped publish. Narrow `contexts` to the single
+    // requested connection so the two-pass dirty gate below probes and applies
+    // ONLY this connection. Other connections' dirty/stale server state is
+    // therefore irrelevant; the chosen connector publishes regardless. The
+    // connection's OWN dirty/stale state still gates it (the probe runs over the
+    // narrowed list).
+    let contexts = narrow_contexts_to_connection(contexts, connection.as_deref())?;
 
     // Workspace-wide advisory lock: every mutating CLI op holds it for the
     // duration of its work. Released when `_lock` drops at end of scope. The
@@ -2383,6 +2529,7 @@ fn run_reject_all(
     cwd: &Path,
     server_url: &str,
     folder: Option<&Path>,
+    connection: Option<&str>,
     json: bool,
     skip_folder_index: bool,
 ) -> anyhow::Result<()> {
@@ -2392,6 +2539,15 @@ fn run_reject_all(
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
+
+    // DEV-10596: `--connection` (whole-connection scope) and `--folder` (single
+    // data-folder scope) both narrow the reject, in incompatible ways.
+    if connection.is_some() && folder.is_some() {
+        anyhow::bail!("--connection and --folder are mutually exclusive");
+    }
+    // When `--connection` is set, narrow to that connection and reject across all
+    // of its data folders (the folder-less loop below, over one context).
+    let contexts = narrow_contexts_to_connection(contexts, connection)?;
 
     let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
 
@@ -2465,6 +2621,7 @@ fn run_accept_all(
     cwd: &Path,
     server_url: &str,
     folder: Option<&Path>,
+    connection: Option<&str>,
     json: bool,
     skip_folder_index: bool,
 ) -> anyhow::Result<()> {
@@ -2474,6 +2631,15 @@ fn run_accept_all(
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
+
+    // DEV-10596: `--connection` (whole-connection scope) and `--folder` (single
+    // data-folder scope) both narrow the accept, in incompatible ways.
+    if connection.is_some() && folder.is_some() {
+        anyhow::bail!("--connection and --folder are mutually exclusive");
+    }
+    // When `--connection` is set, narrow to that connection and accept across all
+    // of its data folders (the folder-less loop below, over one context).
+    let contexts = narrow_contexts_to_connection(contexts, connection)?;
 
     let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
 

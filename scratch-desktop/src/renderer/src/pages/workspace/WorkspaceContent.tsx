@@ -18,6 +18,7 @@ import { FolderDataGrid } from './FolderDataGrid';
 import { PublishHistoryPanel } from './PublishHistoryPanel';
 import { ResizeHandle } from './ResizeHandle';
 import { SettingsPanel } from './SettingsPanel';
+import type { SingleConnectionPublishTarget } from './single-connection-publish-target';
 import type { StartPullOptions } from './use-pull-tracker';
 import { ValidationPanel } from './ValidationPanel';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
@@ -43,6 +44,8 @@ interface WorkspaceContentProps {
   onPullJobsStarted?: () => void;
   /** Start a folder-scoped pull via the workspace's background tracker (DEV-10501). */
   onRequestFolderPull?: (options: StartPullOptions) => void;
+  /** DEV-10596: publish only the chosen connector's approved changes (right-click connector node). */
+  onRequestPublishConnector?: (target: SingleConnectionPublishTarget) => void;
   onPublishFile?: (relativePath: string) => void;
   activateGlobalFilter?: { kind: 'unreviewed' | 'unpublished' | 'has-problems'; trigger: number } | null;
   onActivateGlobalFilterConsumed?: () => void;
@@ -93,6 +96,7 @@ export function WorkspaceContent({
   onConnectionsChanged,
   onPullJobsStarted,
   onRequestFolderPull,
+  onRequestPublishConnector,
   onPublishFile,
   activateGlobalFilter,
   onActivateGlobalFilterConsumed,
@@ -335,6 +339,7 @@ export function WorkspaceContent({
         workspacePath={localPath}
         onScratchFoldersChanged={onScratchFoldersChanged}
         onRequestFolderPull={onRequestFolderPull}
+        onRequestPublishConnector={onRequestPublishConnector}
         onOpenConnectionsPanel={handleOpenConnectionsPanel}
         connectionsPanelOpen={showConnectionsPanel}
         onTogglePublishHistoryPanel={() => setShowPublishHistoryPanel(!showPublishHistoryPanel)}

@@ -3067,35 +3067,73 @@ fn download_ignores_whitespace_or_key_order_only_local_reformat() {
 #[test]
 fn hard_conflict_decision_workspace_wide_blocks_on_any() {
     assert_eq!(
-        decide_hard_conflict_outcome(&[], None),
+        decide_hard_conflict_outcome(&[], &HardConflictScope::Workspace),
         HardConflictDecision::None
     );
     assert_eq!(
-        decide_hard_conflict_outcome(&["Conn/a.json".to_string()], None),
+        decide_hard_conflict_outcome(&["Conn/a.json".to_string()], &HardConflictScope::Workspace),
         HardConflictDecision::Block
     );
 }
 
 #[test]
 fn hard_conflict_decision_single_record_blocks_only_on_target() {
-    let target = "Conn/target.json";
+    let scope = HardConflictScope::Record("Conn/target.json".to_string());
     // No conflicts at all → proceed.
     assert_eq!(
-        decide_hard_conflict_outcome(&[], Some(target)),
+        decide_hard_conflict_outcome(&[], &scope),
         HardConflictDecision::None
     );
     // Only OTHER records conflict → non-blocking (the target can still publish).
     assert_eq!(
-        decide_hard_conflict_outcome(&["Conn/other.json".to_string()], Some(target)),
+        decide_hard_conflict_outcome(&["Conn/other.json".to_string()], &scope),
         HardConflictDecision::NonBlockingNotice
     );
     // The target itself conflicts → block.
     assert_eq!(
         decide_hard_conflict_outcome(
-            &["Conn/other.json".to_string(), target.to_string()],
-            Some(target)
+            &[
+                "Conn/other.json".to_string(),
+                "Conn/target.json".to_string()
+            ],
+            &scope
         ),
         HardConflictDecision::Block
+    );
+}
+
+#[test]
+fn hard_conflict_decision_connection_blocks_only_on_target_connection() {
+    // DEV-10596: connection-scoped "Download and publish" recovery. The scope
+    // holds the connection's dir name; hard-conflict paths are workspace-relative
+    // (`<conn_dir_name>/…`).
+    let scope = HardConflictScope::Connection("Webflow Site".to_string());
+    // No conflicts at all → proceed.
+    assert_eq!(
+        decide_hard_conflict_outcome(&[], &scope),
+        HardConflictDecision::None
+    );
+    // Only ANOTHER connection conflicts → non-blocking (the target can publish).
+    assert_eq!(
+        decide_hard_conflict_outcome(&["Airtable Base/rec.json".to_string()], &scope),
+        HardConflictDecision::NonBlockingNotice
+    );
+    // A record IN the target connection conflicts → block.
+    assert_eq!(
+        decide_hard_conflict_outcome(
+            &[
+                "Airtable Base/rec.json".to_string(),
+                "Webflow Site/Blog/post.json".to_string()
+            ],
+            &scope
+        ),
+        HardConflictDecision::Block
+    );
+    // A connection whose name is a PREFIX of the target's must not match
+    // (the trailing `/` guards against `Webflow` matching `Webflow Site`).
+    assert_eq!(
+        decide_hard_conflict_outcome(&["Webflow/rec.json".to_string()], &scope),
+        HardConflictDecision::NonBlockingNotice
     );
 }
 

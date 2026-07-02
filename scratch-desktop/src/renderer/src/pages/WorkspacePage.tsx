@@ -16,6 +16,7 @@ import {
   trackAutoDownloadCompleted,
   trackDeepLinkProcessed,
   trackPublishAll,
+  trackPublishConnector,
   trackPublishSingleRecord,
   trackPullAll,
   trackRedownloadWorkspace,
@@ -27,6 +28,7 @@ import { PublishChangesModal } from './workspace/PublishChangesModal';
 import { PullProgressModal } from './workspace/PullProgressModal';
 import { ReinitWorkspaceModal } from './workspace/ReinitWorkspaceModal';
 import { buildApprovedPublishBreakdown } from './workspace/review-publish-breakdown';
+import type { SingleConnectionPublishTarget } from './workspace/single-connection-publish-target';
 import {
   resolveSingleRecordPublishTarget,
   type SingleRecordPublishTarget,
@@ -103,6 +105,9 @@ export function WorkspacePage() {
   // DEV-10413: when set, the publish modal opens in single-record mode for this
   // record. Null = the workspace-wide "Publish all" flow.
   const [singleRecordPublish, setSingleRecordPublish] = useState<SingleRecordPublishTarget | null>(null);
+  // DEV-10596: when set, the publish modal opens in single-connection mode for
+  // this connector. Mutually exclusive with `singleRecordPublish`.
+  const [singleConnectionPublish, setSingleConnectionPublish] = useState<SingleConnectionPublishTarget | null>(null);
   // Whether the pull-progress detail modal is open. The pull itself is tracked by
   // `pullTracker` (below) independently of this, so closing the modal never stops
   // the pull — the user can keep working while it runs. (DEV-10501)
@@ -423,11 +428,28 @@ export function WorkspacePage() {
           return;
         }
         void trackPublishSingleRecord(workspaceId, resolved.target.connectionId);
+        setSingleConnectionPublish(null);
         setSingleRecordPublish(resolved.target);
         setPublishModalOpen(true);
       } catch (err) {
         showResolveError(err instanceof Error ? err.message : 'Failed to resolve the record’s connection.');
       }
+    },
+    [localPath, workspace?.id],
+  );
+
+  // DEV-10596: open the publish modal scoped to one connector. The target is
+  // already resolved by the FolderTree (its pure `resolveSingleConnectionPublishTarget`
+  // null-guards the connector account id), so this just records the analytics
+  // event and opens the modal, clearing any single-record target first.
+  const handlePublishConnector = useCallback(
+    (target: SingleConnectionPublishTarget) => {
+      const workspaceId = workspace?.id;
+      if (!localPath || !workspaceId) return;
+      void trackPublishConnector(workspaceId, target.connectionId);
+      setSingleRecordPublish(null);
+      setSingleConnectionPublish(target);
+      setPublishModalOpen(true);
     },
     [localPath, workspace?.id],
   );
@@ -830,6 +852,7 @@ export function WorkspacePage() {
         onClose={() => {
           setPublishModalOpen(false);
           setSingleRecordPublish(null);
+          setSingleConnectionPublish(null);
         }}
         workspaceName={workspace.name}
         workspaceId={workspace.id}
@@ -837,9 +860,11 @@ export function WorkspacePage() {
         invalidateWorkspaceLevelData={handleDataRefresh}
         currentFolderPath={selectedFolderPath}
         singleRecord={singleRecordPublish ?? undefined}
+        singleConnection={singleConnectionPublish ?? undefined}
         onViewProblems={(folderPath) => {
           setPublishModalOpen(false);
           setSingleRecordPublish(null);
+          setSingleConnectionPublish(null);
           setSelectedFolderPath(folderPath);
           gridFilterTriggerRef.current += 1;
           setGridFilterActivation({ kind: 'has-problems', trigger: gridFilterTriggerRef.current });
@@ -883,7 +908,7 @@ export function WorkspacePage() {
         isDownloaded={localPath !== null}
         downloading={downloading}
         reDownloading={reDownloading}
-        publishingAll={publishModalOpen}
+        publishingAll={publishModalOpen && !singleRecordPublish && !singleConnectionPublish}
         unreviewedCount={totalUnreviewedCount}
         approvedPendingPublishCount={totalApprovedPendingPublishCount}
         approvedPublishBreakdown={approvedPublishBreakdown}
@@ -896,8 +921,10 @@ export function WorkspacePage() {
             approvedPendingPublishCount: totalApprovedPendingPublishCount,
             unreviewedCount: totalUnreviewedCount,
           });
-          // R3: "Publish all" is always workspace-wide — clear any single-record target.
+          // R3: "Publish all" is always workspace-wide — clear any single-record
+          // or single-connection target.
           setSingleRecordPublish(null);
+          setSingleConnectionPublish(null);
           setPublishModalOpen(true);
         }}
         onPullAll={(mode) => {
@@ -949,6 +976,7 @@ export function WorkspacePage() {
           });
         }}
         onRequestFolderPull={handleStartPull}
+        onRequestPublishConnector={handlePublishConnector}
         onPublishFile={(cliPath) => {
           // DEV-10413: open the publish modal scoped to just this record.
           void handlePublishSingleRecord(cliPath);

@@ -260,6 +260,72 @@ export async function teardownAuthorsTable(): Promise<void> {
   }
 }
 
+const REVIEWS_TABLE = "integration_reviews";
+
+/**
+ * Fixed review IDs the multi-folder connector-scoped publish test references by
+ * hand, so it can target the same row across edit / publish / verify steps
+ * without discovering the UUID from the worktree.
+ */
+export const REVIEW_IDS = {
+  first: "44444444-4444-4444-4444-444444444444",
+  second: "55555555-5555-5555-5555-555555555555",
+} as const;
+
+/**
+ * Drop and recreate `integration_reviews` and seed two rows with deterministic
+ * UUIDs. A second, unconstrained table so a connection can map MULTIPLE data
+ * folders alongside `integration_authors` (DEV-10596 lifecycle suite).
+ */
+export async function setupReviewsTable(): Promise<void> {
+  const client = new Client({ connectionString: getConnectionString() });
+  await client.connect();
+
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${REVIEWS_TABLE} CASCADE`);
+
+    const sqlPath = path.resolve(__dirname, "../test_table_reviews.sql");
+    const createSql = fs.readFileSync(sqlPath, "utf-8");
+    await client.query(createSql);
+
+    const rows: Array<[string, string, number, string]> = [
+      [REVIEW_IDS.first, "Great product", 5, "Loved every bit of it"],
+      [REVIEW_IDS.second, "It was fine", 3, "Decent value for money"],
+    ];
+    for (const [review_id, title, rating, body] of rows) {
+      await client.query(
+        `INSERT INTO ${REVIEWS_TABLE} (review_id, title, rating, body) VALUES ($1, $2, $3, $4)`,
+        [review_id, title, rating, body],
+      );
+    }
+
+    const count = await client.query(
+      `SELECT COUNT(*) AS cnt FROM ${REVIEWS_TABLE}`,
+    );
+    const rowCount = parseInt(count.rows[0].cnt, 10);
+    if (rowCount !== rows.length) {
+      throw new Error(
+        `Expected ${rows.length} rows in ${REVIEWS_TABLE} but found ${rowCount}`,
+      );
+    }
+    console.log(`[postgres] ${REVIEWS_TABLE}: ${rowCount} rows loaded`);
+  } finally {
+    await client.end();
+  }
+}
+
+/** Drop the integration_reviews table. */
+export async function teardownReviewsTable(): Promise<void> {
+  const client = new Client({ connectionString: getConnectionString() });
+  await client.connect();
+
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${REVIEWS_TABLE} CASCADE`);
+  } finally {
+    await client.end();
+  }
+}
+
 interface BlogPostRow {
   post_id: string;
   title: string;

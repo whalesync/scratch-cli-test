@@ -553,7 +553,7 @@ async function seedSchemaValidatorsAndPopulateProblems(workspacePath: string): P
  */
 async function performWorkspaceDownload(
   workspacePath: string,
-  opts?: { onDelete?: string; filePath?: string },
+  opts?: { onDelete?: string; filePath?: string; connectionId?: string },
 ): Promise<DownloadWorkspaceResult> {
   return withWorkspaceInternalMutation(workspacePath, async () => {
     const downloadResult = await pullWorkspaceChanges(workspacePath, opts);
@@ -854,24 +854,36 @@ function resolveBulkReviewFolderArgs(
   }
   return { ok: true, folderArgs: ['--folder', cliFolder] };
 }
-ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
-  const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
-  if (!folder.ok) return folder.result;
-  const args = ['files', 'accept-all', ...folder.folderArgs];
-  return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
-});
+ipcMain.handle(
+  'scratch:accept-all-changes',
+  async (_, workspacePath: string, folderPath?: string, connectionId?: string) => {
+    const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
+    if (!folder.ok) return folder.result;
+    // DEV-10596: `connectionId` scopes the accept to one connection's data folders
+    // (mutually exclusive with `folderPath`; the CLI also rejects the combination).
+    const connectionArgs = connectionId ? ['--connection', connectionId] : [];
+    const args = ['files', 'accept-all', ...folder.folderArgs, ...connectionArgs];
+    return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
+  },
+);
 ipcMain.handle('scratch:discard-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
   if (!folder.ok) return folder.result;
   const args = ['files', 'discard-all', ...folder.folderArgs];
   return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
-ipcMain.handle('scratch:reject-all-changes', async (_, workspacePath: string, folderPath?: string) => {
-  const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
-  if (!folder.ok) return folder.result;
-  const args = ['files', 'reject-all', ...folder.folderArgs];
-  return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
-});
+ipcMain.handle(
+  'scratch:reject-all-changes',
+  async (_, workspacePath: string, folderPath?: string, connectionId?: string) => {
+    const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
+    if (!folder.ok) return folder.result;
+    // DEV-10596: `connectionId` scopes the reject to one connection's data folders
+    // (mutually exclusive with `folderPath`; the CLI also rejects the combination).
+    const connectionArgs = connectionId ? ['--connection', connectionId] : [];
+    const args = ['files', 'reject-all', ...folder.folderArgs, ...connectionArgs];
+    return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
+  },
+);
 ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await runScratchmdCapture(['files', 'accept', recordPath], workspacePath);
@@ -925,11 +937,14 @@ ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: strin
   listUnreviewedChanges(workspacePath),
 );
 ipcMain.handle('scratch:list-unpushed-changes', async (_, workspacePath: string) => listUnpushedChanges(workspacePath));
-ipcMain.handle('scratch:upload-workspace-changes', async (_, workspacePath: string, opts?: { filePath?: string }) =>
-  // `files upload` reindexes the affected folders itself (per-path,
-  // scoped to the actually-changed records). No follow-up CLI call.
-  // `opts.filePath` (DEV-10413) scopes the upload to a single record.
-  withWorkspaceInternalMutation(workspacePath, () => uploadWorkspaceChanges(workspacePath, opts)),
+ipcMain.handle(
+  'scratch:upload-workspace-changes',
+  async (_, workspacePath: string, opts?: { filePath?: string; connectionId?: string }) =>
+    // `files upload` reindexes the affected folders itself (per-path,
+    // scoped to the actually-changed records). No follow-up CLI call.
+    // `opts.filePath` (DEV-10413) scopes the upload to a single record;
+    // `opts.connectionId` (DEV-10596) scopes it to a single connection.
+    withWorkspaceInternalMutation(workspacePath, () => uploadWorkspaceChanges(workspacePath, opts)),
 );
 // Single-record post-publish reconcile (DEV-10413). The scoped analogue of the
 // `files download` pull above — runs after a single-record publish lands so the
@@ -955,7 +970,7 @@ ipcMain.handle(
 );
 ipcMain.handle(
   'scratch:pull-workspace-changes',
-  async (_, workspacePath: string, opts?: { onDelete?: string; filePath?: string }) =>
+  async (_, workspacePath: string, opts?: { onDelete?: string; filePath?: string; connectionId?: string }) =>
     performWorkspaceDownload(workspacePath, opts),
 );
 ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));

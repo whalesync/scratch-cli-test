@@ -135,8 +135,9 @@ const scratchDesktop = {
   acceptAllChanges: (
     workspacePath: string,
     folderPath?: string,
+    connectionId?: string,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
-    invoke('scratch:accept-all-changes', workspacePath, folderPath),
+    invoke('scratch:accept-all-changes', workspacePath, folderPath, connectionId),
   discardAllChanges: (
     workspacePath: string,
     folderPath?: string,
@@ -145,8 +146,9 @@ const scratchDesktop = {
   rejectAllChanges: (
     workspacePath: string,
     folderPath?: string,
+    connectionId?: string,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
-    invoke('scratch:reject-all-changes', workspacePath, folderPath),
+    invoke('scratch:reject-all-changes', workspacePath, folderPath, connectionId),
   acceptRecord: (
     workspacePath: string,
     recordPath: string,
@@ -175,7 +177,7 @@ const scratchDesktop = {
     workspacePath: string,
   ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>
     invoke('scratch:list-unpushed-changes', workspacePath),
-  uploadWorkspaceChanges: (workspacePath: string, opts?: { filePath?: string }) =>
+  uploadWorkspaceChanges: (workspacePath: string, opts?: { filePath?: string; connectionId?: string }) =>
     invoke('scratch:upload-workspace-changes', workspacePath, opts),
   reconcilePublishedRecord: (
     workspacePath: string,
@@ -196,8 +198,10 @@ const scratchDesktop = {
     filesDeleted: number;
     failedCount: number;
   }> => invoke('scratch:reconcile-after-publish', workspacePath, connectionId, failedOpsJson),
-  pullWorkspaceChanges: (workspacePath: string, opts?: { onDelete?: string; filePath?: string }) =>
-    invoke('scratch:pull-workspace-changes', workspacePath, opts),
+  pullWorkspaceChanges: (
+    workspacePath: string,
+    opts?: { onDelete?: string; filePath?: string; connectionId?: string },
+  ) => invoke('scratch:pull-workspace-changes', workspacePath, opts),
   listLocalSyncs: (workspacePath: string): Promise<string[]> => invoke('scratch:list-local-syncs', workspacePath),
   validateLocalSync: (
     workspacePath: string,

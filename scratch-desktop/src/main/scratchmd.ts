@@ -832,15 +832,23 @@ export async function listUnpublishedChanges(workspacePath: string): Promise<Unr
  */
 export async function uploadWorkspaceChanges(
   workspacePath: string,
-  opts?: { filePath?: string },
+  opts?: { filePath?: string; connectionId?: string },
 ): Promise<UploadWorkspaceResult> {
   // `--file-path` (DEV-10413) scopes the upload to a single record (workspace-
   // relative path). The CLI then skips the dirty-gate probe and relaxes
-  // `refuse_if_dirty`, mirroring Scratch Web's single-file publish. Without it,
-  // the full workspace upload (two-pass dirty gate) runs.
+  // `refuse_if_dirty`, mirroring Scratch Web's single-file publish.
+  //
+  // `--connection` (DEV-10596) scopes the upload to a single connection: the
+  // two-pass dirty gate runs over ONLY that connection, so the chosen connector
+  // publishes regardless of any other connection's dirty/stale state. The two
+  // are mutually exclusive (the CLI also rejects the combination).
+  //
+  // Without either flag, the full workspace upload (two-pass dirty gate) runs.
   const args = ['--json', 'files', 'upload'];
   if (opts?.filePath) {
     args.push('--file-path', opts.filePath);
+  } else if (opts?.connectionId) {
+    args.push('--connection', opts.connectionId);
   }
   const result = await runScratchmdCapture(args, workspacePath);
   if (result.exitCode !== 0) {
@@ -897,10 +905,14 @@ export function parseUploadRefusalPayload(
  * FAILURE decision to that record — the whole workspace still pulls. With it,
  * the pull returns `blocked_conflict` iff the TARGET hard-conflicts; if only
  * other records conflict it returns `downloaded_with_stashed_conflicts`.
+ * `opts.connectionId` (DEV-10596, connector-scoped "Download and publish")
+ * does the same at connection granularity: the pull returns `blocked_conflict`
+ * iff a record in the TARGET CONNECTION hard-conflicts. The two are mutually
+ * exclusive (the CLI also rejects the combination).
  */
 export async function pullWorkspaceChanges(
   workspacePath: string,
-  opts?: { onDelete?: string; filePath?: string },
+  opts?: { onDelete?: string; filePath?: string; connectionId?: string },
 ): Promise<DownloadWorkspaceResult> {
   const args = ['--json', 'files', 'download'];
   if (opts?.onDelete) {
@@ -908,6 +920,8 @@ export async function pullWorkspaceChanges(
   }
   if (opts?.filePath) {
     args.push('--file-path', opts.filePath);
+  } else if (opts?.connectionId) {
+    args.push('--connection', opts.connectionId);
   }
   const result = await runScratchmdCapture(args, workspacePath);
   if (result.exitCode !== 0) {

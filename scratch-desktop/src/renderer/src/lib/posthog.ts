@@ -15,6 +15,7 @@ export enum PostHogEvents {
   PULL_TABLE = 'pull_table',
   PUBLISH_ALL = 'publish_all',
   PUBLISH_SINGLE_RECORD = 'publish_single_record',
+  PUBLISH_CONNECTOR = 'publish_connector',
   PUBLISH_UPLOAD_STARTED = 'publish_upload_started',
   PUBLISH_UPLOAD_COMPLETED = 'publish_upload_completed',
   PUBLISH_STARTED = 'publish_started',
@@ -176,6 +177,11 @@ export async function trackPublishAll(
 
 export async function trackPublishSingleRecord(workspaceId: string, connectionId: string): Promise<void> {
   await captureEvent(PostHogEvents.PUBLISH_SINGLE_RECORD, { workspaceId, connectionId });
+}
+
+// DEV-10596: connector-scoped publish (right-click "Publish <connector>").
+export async function trackPublishConnector(workspaceId: string, connectionId: string): Promise<void> {
+  await captureEvent(PostHogEvents.PUBLISH_CONNECTOR, { workspaceId, connectionId });
 }
 
 export async function trackPublishUploadStarted(workspaceId: string): Promise<void> {
