@@ -1,7 +1,16 @@
 import { Type, type TObject, type TSchema } from '@sinclair/typebox';
-import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  X_SCRATCH_AGENT_INSTRUCTIONS,
+  X_SCRATCH_ARRAY_KEYED_BY,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
-import { customFieldColumnKey } from './copper-custom-fields';
+import {
+  CUSTOM_FIELD_KEY_FIELD,
+  buildCopperCustomFieldsArrayKeyedByOptions,
+  isReadonlyCopperCustomField,
+} from './copper-custom-fields';
 import { buildCopperDefaultView } from './copper-default-view';
 import {
   COPPER_ENTITY_CONFIG,
@@ -20,12 +29,12 @@ import {
  * `GET /custom_field_definitions`.
  *
  * Copper returns custom-field values as a verbatim
- * `custom_fields: [{ custom_field_definition_id, value }]` array, but a Scratch
- * view can't make an array element an editable column. So the connector reshapes
- * that array into a keyed object (`{ cf_<id>: value }`, see
- * {@link reshapeCustomFieldsArrayToObject}) and this schema declares one typed
- * sub-property per definition — one editable column each — gathered under a
- * "Custom Fields" banner in the {@link buildCopperDefaultView default view}.
+ * `custom_fields: [{ custom_field_definition_id, value }]` array, which we store
+ * exactly as-is. The array is annotated with `x-scratch-array-keyed-by` so the
+ * generic engines expose each element as its own editable column addressed by
+ * `custom_field_definition_id` (see {@link ./copper-custom-fields}) — no reshape
+ * on disk — gathered under a "Custom Fields" banner in the
+ * {@link buildCopperDefaultView default view}.
  */
 
 // --- Field helpers ---
@@ -63,65 +72,39 @@ const contactArray = (valueKey: string): TSchema =>
 
 const tagsSchema = (): TSchema => Type.Array(Type.String());
 
-/** Copper custom-field data types that Copper computes / won't accept on write. */
-function isReadonlyCopperCustomField(definition: CopperCustomFieldDefinition): boolean {
-  return definition.is_computed === true || definition.data_type === 'Connect';
-}
-
-/** Permissive (nullable) schema for one Copper custom field, typed from its `data_type`. */
-function schemaForCopperCustomFieldDataType(definition: CopperCustomFieldDefinition): TSchema {
-  const annotations: Record<string, unknown> = { title: definition.name };
-  if (definition.available_options && definition.available_options.length > 0) {
-    annotations.description = `${definition.name} (options: ${definition.available_options
-      .map((option) => option.name)
-      .join(' | ')})`;
-  }
-  if (isReadonlyCopperCustomField(definition)) annotations[X_SCRATCH_READONLY] = true;
-
-  switch (definition.data_type) {
-    case 'Checkbox':
-      return Type.Union([Type.Boolean(), Type.Null()], annotations);
-    case 'Float':
-    case 'Currency':
-    case 'Percentage':
-      return Type.Union([Type.Number(), Type.Null()], annotations);
-    case 'MultiSelect':
-      return Type.Union([Type.Array(Type.Unknown()), Type.Null()], annotations);
-    case 'String':
-    case 'Text':
-    case 'URL':
-      return Type.Union([Type.String(), Type.Null()], annotations);
-    // Dropdown (option id), Date (epoch) and Connect (relation reference) are
-    // stored verbatim — permissive, exact value shapes confirmed in Pass 2.
-    default:
-      return Type.Union([Type.Unknown(), Type.Null()], annotations);
-  }
-}
+// Custom-field type hints, read-only detection, and the array-keyed-by options
+// live in ./copper-custom-fields (shared with the default view).
 
 /**
- * Build the keyed `custom_fields` object property: one typed sub-property per
- * discovered definition (keyed by `cf_<id>`), so the client renders each as its
- * own column. No `x-scratch-*` extension on the object → the column builder
- * expands the sub-properties; `additionalProperties: true` keeps any custom
- * field a definition omitted (stored verbatim).
+ * Build the verbatim `custom_fields` array property, annotated with
+ * `x-scratch-array-keyed-by` so the generic engines expand each element into its
+ * own editable column addressed by `custom_field_definition_id`. The element
+ * `value` is typed permissively (`unknown`) because a Copper record mixes value
+ * shapes across field types in one array — the per-column type hint for the
+ * renderer comes from the annotation's `columns`, not the JSON schema. Stored
+ * exactly as Copper returns it.
  */
-function buildCustomFieldsObjectProperty(definitions: CopperCustomFieldDefinition[]): TSchema {
-  const fieldProperties: Record<string, TSchema> = {};
-  for (const definition of definitions) {
-    fieldProperties[customFieldColumnKey(definition.id)] = schemaForCopperCustomFieldDataType(definition);
-  }
+function buildCustomFieldsArrayProperty(definitions: CopperCustomFieldDefinition[]): TSchema {
+  const elementSchema = Type.Object(
+    { [CUSTOM_FIELD_KEY_FIELD]: Type.Number(), value: Type.Unknown() },
+    { additionalProperties: true },
+  );
   return Type.Optional(
-    Type.Object(fieldProperties, {
-      additionalProperties: true,
-      description: 'Custom field values, keyed by `cf_<definitionId>` (see agent instructions for the legend).',
+    Type.Array(elementSchema, {
+      [X_SCRATCH_ARRAY_KEYED_BY]: buildCopperCustomFieldsArrayKeyedByOptions(definitions),
+      description: 'Custom field values, stored verbatim as `[{ custom_field_definition_id, value }]`.',
     }),
   );
 }
 
-/** Agent-readable legend: each custom field's column key, name, type and options. */
+/** Agent-readable legend: each custom field's definition id, name, type and options. */
 function buildCustomFieldsAgentInstructions(definitions: CopperCustomFieldDefinition[]): string {
+  const shapeHint =
+    'Custom field values are stored verbatim in the `custom_fields` array as ' +
+    '`[{ custom_field_definition_id, value }]`. Edit an element by its definition id ' +
+    '(path `custom_fields.[custom_field_definition_id=<id>].value`); never reorder or drop elements.';
   if (definitions.length === 0) {
-    return 'Custom field values are stored under the `custom_fields` object, keyed by `cf_<definitionId>`. This account has no custom fields defined.';
+    return `${shapeHint} This account has no custom fields defined.`;
   }
   const fieldLines = definitions.map((definition) => {
     const optionsSuffix =
@@ -129,14 +112,9 @@ function buildCustomFieldsAgentInstructions(definitions: CopperCustomFieldDefini
         ? `, options: ${definition.available_options.map((option) => option.name).join(' | ')}`
         : '';
     const readonlySuffix = isReadonlyCopperCustomField(definition) ? ', read-only' : '';
-    return `- ${definition.name} (custom_fields key: ${customFieldColumnKey(definition.id)}, definition id: ${definition.id}, type: ${definition.data_type}${optionsSuffix}${readonlySuffix})`;
+    return `- ${definition.name} (definition id: ${definition.id}, type: ${definition.data_type}${optionsSuffix}${readonlySuffix})`;
   });
-  return (
-    'Custom field values are stored under the `custom_fields` object, keyed by `cf_<definitionId>`. ' +
-    'Each key maps to one Copper custom-field definition below; the value shape depends on the field type. ' +
-    'Custom-field definitions for this account:\n' +
-    fieldLines.join('\n')
-  );
+  return `${shapeHint}\nCustom-field definitions for this account:\n${fieldLines.join('\n')}`;
 }
 
 /** Polymorphic parent reference used by Tasks and Projects (`{ id, type }`). */
@@ -313,9 +291,9 @@ function pinRequiredToIdOnly(schema: TObject): void {
 
 /**
  * Build a {@link BaseJsonTableSpec} for a Copper entity. The discovered custom
- * field definitions become one typed sub-property each on the keyed
- * `custom_fields` object (so each renders as its own editable column), an
- * id→name legend at the schema root for agents, and a "Custom Fields" banner
+ * field definitions become the `x-scratch-array-keyed-by` columns on the
+ * verbatim `custom_fields` array (so each renders as its own editable column),
+ * an id→name legend at the schema root for agents, and a "Custom Fields" banner
  * group in the default view.
  */
 export function buildCopperJsonTableSpec(
@@ -326,9 +304,9 @@ export function buildCopperJsonTableSpec(
   const config = COPPER_ENTITY_CONFIG[entityType];
   const properties = ENTITY_PROPERTY_BUILDERS[entityType]();
 
-  // Custom fields are reshaped from Copper's array into a keyed object on pull
-  // (see copper-custom-fields.ts); declare one typed sub-property per definition.
-  properties.custom_fields = buildCustomFieldsObjectProperty(customFieldDefinitions);
+  // Custom fields are stored verbatim as Copper's array; the annotation drives
+  // per-field editable columns (see copper-custom-fields.ts) — no reshape.
+  properties.custom_fields = buildCustomFieldsArrayProperty(customFieldDefinitions);
 
   const schema = Type.Object(properties, {
     $id: `copper/${entityType}`,

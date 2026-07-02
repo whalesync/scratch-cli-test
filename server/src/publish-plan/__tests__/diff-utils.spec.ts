@@ -1,3 +1,4 @@
+import { X_SCRATCH_ARRAY_KEYED_BY } from '@spinner/shared-types';
 import { computeChangedFields, pickByShape } from '../diff-utils';
 
 describe('computeChangedFields', () => {
@@ -248,5 +249,64 @@ describe('pickByShape', () => {
     const source = { items: [1, 2, 3] };
     const shape = { items: { 0: 'x' } };
     expect(pickByShape(source, shape)).toEqual({ items: [1, 2, 3] });
+  });
+});
+
+describe('computeChangedFields — keyed arrays (x-scratch-array-keyed-by)', () => {
+  // Copper-style schema: `custom_fields` is a verbatim [{custom_field_definition_id, value}] array,
+  // annotated so the diff isolates the single changed element instead of the whole array.
+  const schema = {
+    properties: {
+      name: { type: 'string' },
+      custom_fields: {
+        type: 'array',
+        [X_SCRATCH_ARRAY_KEYED_BY]: {
+          keyField: 'custom_field_definition_id',
+          valuePath: 'value',
+          columns: [
+            { key: 700123, name: 'Tier' },
+            { key: 700124, name: 'Renewal' },
+          ],
+        },
+      },
+    },
+  };
+
+  const main = {
+    name: 'Acme',
+    custom_fields: [
+      { custom_field_definition_id: 700123, value: 'Enterprise' },
+      { custom_field_definition_id: 700124, value: '2026-03-01' },
+    ],
+  };
+
+  it('diffs a keyed array element-wise into a sparse changed-elements array', () => {
+    const dirty = {
+      name: 'Acme',
+      custom_fields: [
+        { custom_field_definition_id: 700123, value: 'SMB' },
+        { custom_field_definition_id: 700124, value: '2026-03-01' },
+      ],
+    };
+    expect(computeChangedFields(main, dirty, schema)).toEqual({
+      custom_fields: [{ custom_field_definition_id: 700123, value: 'SMB' }],
+    });
+  });
+
+  it('omits an unchanged keyed array entirely', () => {
+    const dirty = { name: 'Acme Corp', custom_fields: main.custom_fields };
+    expect(computeChangedFields(main, dirty, schema)).toEqual({ name: 'Acme Corp' });
+  });
+
+  it('falls back to atomic array diff when no schema is passed', () => {
+    const dirty = {
+      name: 'Acme',
+      custom_fields: [
+        { custom_field_definition_id: 700123, value: 'SMB' },
+        { custom_field_definition_id: 700124, value: '2026-03-01' },
+      ],
+    };
+    // Without the schema, the whole array is treated as one changed value.
+    expect(computeChangedFields(main, dirty)).toEqual({ custom_fields: dirty.custom_fields });
   });
 });

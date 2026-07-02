@@ -39,7 +39,7 @@ describe('buildCopperDefaultView', () => {
     expect(bannerGroup(view, 'Custom Fields')).toBeUndefined();
   });
 
-  it('groups custom fields under a "Custom Fields" banner, keyed cf_<id>', () => {
+  it('groups custom fields under a "Custom Fields" banner, addressed by definition id', () => {
     const defs: CopperCustomFieldDefinition[] = [
       { id: 9001, name: 'Industry', data_type: 'Dropdown' },
       { id: 9002, name: 'Score', data_type: 'Float' },
@@ -48,21 +48,21 @@ describe('buildCopperDefaultView', () => {
     const view = viewFor('companies', defs);
 
     // Custom fields are NOT flat columns.
-    expect(flatCol(view, 'custom_fields.cf_9001')).toBeUndefined();
+    expect(flatCol(view, 'custom_fields.[custom_field_definition_id=9001].value')).toBeUndefined();
 
     const group = bannerGroup(view, 'Custom Fields');
     expect(group).toBeDefined();
     if (!group) return;
     expect(group.cols.map((c) => c.path)).toEqual([
-      'custom_fields.cf_9001',
-      'custom_fields.cf_9002',
-      'custom_fields.cf_9003',
+      'custom_fields.[custom_field_definition_id=9001].value',
+      'custom_fields.[custom_field_definition_id=9002].value',
+      'custom_fields.[custom_field_definition_id=9003].value',
     ]);
     // Column name comes from the definition; type from data_type.
     expect(group.cols[0]).toMatchObject({ name: 'Industry', type: 'string' });
     expect(group.cols[1]).toMatchObject({ name: 'Score', type: 'number' });
-    // Connect is read-only (derived from the schema sub-property).
-    expect(group.cols.find((c) => c.path === 'custom_fields.cf_9003')?.readonly).toBe(true);
-    expect(group.cols.find((c) => c.path === 'custom_fields.cf_9002')?.readonly).toBe(false);
+    // Connect is read-only (derived from the definition).
+    expect(group.cols.find((c) => c.path.endsWith('=9003].value'))?.readonly).toBe(true);
+    expect(group.cols.find((c) => c.path.endsWith('=9002].value'))?.readonly).toBeUndefined();
   });
 });

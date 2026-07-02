@@ -23,7 +23,6 @@ import {
   TablePreview,
 } from '../../types';
 import { CopperApiClient, CopperError } from './copper-api-client';
-import { reshapeCustomFieldsArrayToObject, reshapeCustomFieldsObjectToArray } from './copper-custom-fields';
 import { buildCopperJsonTableSpec, buildCopperReferenceTableSpec } from './copper-json-schema';
 import { COPPER_LOGO_DATA_URI } from './copper-logo';
 import {
@@ -149,9 +148,9 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
 
     for await (const batch of this.client.listEntities(entityType, undefined, startPage)) {
       await callback({
-        // Reshape each record's verbatim custom_fields array → keyed object so
-        // every custom field is an editable column (see copper-custom-fields.ts).
-        files: batch.records.map(reshapeCustomFieldsArrayToObject) as ConnectorFile[],
+        // Stored verbatim; each custom_fields element becomes an editable column
+        // via the schema's x-scratch-array-keyed-by annotation (copper-custom-fields.ts).
+        files: batch.records as ConnectorFile[],
         connectorProgress: { nextPage: batch.nextPage },
       });
     }
@@ -188,7 +187,7 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
 
       const record = await this.client.getEntity(entityType, numericId);
       if (record) {
-        buffer.push(reshapeCustomFieldsArrayToObject(record) as ConnectorFile);
+        buffer.push(record as ConnectorFile);
       }
 
       if (buffer.length >= PULL_BY_IDS_BATCH_SIZE) {
@@ -213,13 +212,11 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     const results: ConnectorFile[] = [];
 
     for (const file of files) {
-      // Strip read-only system fields, then reshape the keyed custom_fields
-      // object back into the [{custom_field_definition_id, value}] array Copper expects.
-      const body = reshapeCustomFieldsObjectToArray(stripReadonlyFields(file, readonlyKeys));
+      // Strip read-only system fields; the custom_fields array is sent verbatim
+      // (Copper ignores writes to its own computed fields).
+      const body = stripReadonlyFields(file, readonlyKeys);
       const created = await this.client.createEntity(entityType, body);
-      // Reshape Copper's array response back to the keyed object so the persisted
-      // record keeps the editable shape (and the new id flows back in).
-      results.push(reshapeCustomFieldsArrayToObject(created) as ConnectorFile);
+      results.push(created as ConnectorFile);
     }
 
     return results;
@@ -248,13 +245,14 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
       // here is a genuine read-only edit → surface it (DEV-10597). The no-diff
       // fallback re-sends the full record, where read-only system fields are
       // always present and must be stripped, not thrown on.
-      const stripped = changed
+      // The sparse `changed.custom_fields` is already the [{custom_field_definition_id,
+      // value}] array Copper expects (the publish diff is keyed-array-aware), so no
+      // reshape is needed on either the request or the verbatim response.
+      const body = changed
         ? extractChangedWritableFieldsOrThrowOnReadonly(changed, readonlyKeys)
         : stripReadonlyFields(file, readonlyKeys);
-      // Reshape any keyed custom_fields object back to Copper's array shape.
-      const body = reshapeCustomFieldsObjectToArray(stripped);
       const updated = await this.client.updateEntity(entityType, parseInt(id, 10), body);
-      results.push(reshapeCustomFieldsArrayToObject(updated) as ConnectorFile);
+      results.push(updated as ConnectorFile);
     }
 
     return results;

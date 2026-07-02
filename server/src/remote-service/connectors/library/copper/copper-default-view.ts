@@ -6,25 +6,29 @@ import {
   type TableViewBannerGroup,
   type TableViewCol,
 } from '@spinner/shared-types';
-import { customFieldColumnKey } from './copper-custom-fields';
+import {
+  copperCustomFieldColumnPath,
+  isReadonlyCopperCustomField,
+  tablePropertyTypeForCopperCustomFieldDataType,
+} from './copper-custom-fields';
 import { CopperCustomFieldDefinition } from './copper-types';
 
 /**
  * Default view for a Copper entity.
  *
- * The connector reshapes Copper's verbatim `custom_fields` array into a keyed
- * object (`{ cf_<id>: value }`) so each custom field becomes an editable column
- * (see `copper-custom-fields.ts`). This view lays the grid out around that:
- * the entity's **system fields render flat** (record id first), and the user's
- * **custom fields gather under a "Custom Fields" banner group** — a real,
- * pre-existing Copper concept (the set of fields the user defined in Settings →
- * Custom Fields), not an invented theme, so it satisfies the banner-group
- * contract.
+ * Copper's `custom_fields` array is stored verbatim; each element is exposed as
+ * an editable column via the `x-scratch-array-keyed-by` annotation (see
+ * `copper-custom-fields.ts`), addressed by the filtered path
+ * `custom_fields.[custom_field_definition_id=<id>].value`. This view lays the
+ * grid out around that: the entity's **system fields render flat** (record id
+ * first), and the user's **custom fields gather under a "Custom Fields" banner
+ * group** — a real, pre-existing Copper concept (the set of fields the user
+ * defined in Settings → Custom Fields), not an invented theme, so it satisfies
+ * the banner-group contract.
  *
- * Each column's `readonly` is read straight off the built schema's
- * `x-scratch-readonly` flag (the single source of truth — system timestamps /
- * ids, and computed / `Connect` custom fields), so the grid blocks edits that
- * publish would drop anyway.
+ * A system column's `readonly` is read off the built schema's `x-scratch-readonly`
+ * flag; a custom-field column's `readonly` comes from its definition (computed /
+ * `Connect` fields), so the grid blocks edits that publish would drop anyway.
  */
 export function buildCopperDefaultView(
   schemaProperties: Record<string, TSchema>,
@@ -45,51 +49,20 @@ export function buildCopperDefaultView(
     });
   }
 
-  // Custom fields, grouped under a banner. Each column points at the reshaped
-  // keyed-object sub-property; readonly comes from that sub-property's schema.
-  const customFieldSubSchemas = customFieldsSubSchemas(schemaProperties.custom_fields);
-  const customFieldCols: TableViewCol[] = [];
-  for (const definition of customFieldDefinitions) {
-    const columnKey = customFieldColumnKey(definition.id);
-    const subSchema = customFieldSubSchemas[columnKey] as Record<string, unknown> | undefined;
-    customFieldCols.push({
-      kind: 'col',
-      path: `custom_fields.${columnKey}`,
-      name: definition.name,
-      type: tablePropertyTypeForCopperCustomFieldDataType(definition.data_type),
-      readonly: subSchema?.[X_SCRATCH_READONLY] === true,
-    });
-  }
+  // Custom fields, grouped under a banner. Each column addresses its verbatim
+  // array element by definition id; readonly comes from the definition.
+  const customFieldCols: TableViewCol[] = customFieldDefinitions.map((definition) => ({
+    kind: 'col',
+    path: copperCustomFieldColumnPath(definition.id),
+    name: definition.name,
+    type: tablePropertyTypeForCopperCustomFieldDataType(definition.data_type),
+    readonly: isReadonlyCopperCustomField(definition) || undefined,
+  }));
   if (customFieldCols.length > 0) {
     cols.push({ kind: 'banner-group', name: 'Custom Fields', cols: customFieldCols });
   }
 
   return { name: 'Default', cols };
-}
-
-/** The `properties` map of the reshaped `custom_fields` keyed-object schema (or `{}`). */
-function customFieldsSubSchemas(customFieldsSchema: TSchema | undefined): Record<string, TSchema> {
-  return (customFieldsSchema as (TSchema & { properties?: Record<string, TSchema> }) | undefined)?.properties ?? {};
-}
-
-/** Map a Copper custom-field `data_type` to a table-view column type hint. */
-function tablePropertyTypeForCopperCustomFieldDataType(dataType: string): TablePropertyType {
-  switch (dataType) {
-    case 'Checkbox':
-      return 'checkbox';
-    case 'Float':
-    case 'Currency':
-    case 'Percentage':
-      return 'number';
-    case 'URL':
-      return 'url';
-    case 'MultiSelect':
-      return 'object';
-    // String / Text / Dropdown / Date / Connect render as strings (Date and
-    // Dropdown values are an epoch / option-id stored verbatim — see Pass 2).
-    default:
-      return 'string';
-  }
 }
 
 /** Map a built TypeBox schema (usually `Union([X, Null])`) to a column type hint. */

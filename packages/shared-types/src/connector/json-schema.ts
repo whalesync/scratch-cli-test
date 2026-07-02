@@ -63,6 +63,15 @@ export const X_SCRATCH_LAST_MODIFIED_FIELD = 'x-scratch-last-modified-field';
 // or object. Not surfaced in any human-facing UI.
 export const X_SCRATCH_AGENT_INSTRUCTIONS = 'x-scratch-agent-instructions';
 
+// Marks an array property whose elements should each become an individually
+// editable, individually diffable column — WITHOUT reshaping the array on disk.
+// The array is stored verbatim (as the external service returned it); this
+// annotation tells the generic column engine, the path read/write engine, and
+// the publish diff how to address elements by a stable key field instead. The
+// value is an `ArrayKeyedByOptions`. See `keyed-array.ts` for the addressing
+// grammar (`prop.[keyField=key].valuePath`) and the shared helpers.
+export const X_SCRATCH_ARRAY_KEYED_BY = 'x-scratch-array-keyed-by';
+
 /**
  * Options for an asset field annotation.
  */

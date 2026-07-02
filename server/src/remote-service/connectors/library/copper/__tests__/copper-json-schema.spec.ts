@@ -1,4 +1,10 @@
-import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  ArrayKeyedByOptions,
+  X_SCRATCH_AGENT_INSTRUCTIONS,
+  X_SCRATCH_ARRAY_KEYED_BY,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import { EntityId } from '../../../types';
 import { buildCopperJsonTableSpec } from '../copper-json-schema';
 import { CopperCustomFieldDefinition, CopperEntityType } from '../copper-types';
@@ -52,7 +58,7 @@ describe('buildCopperJsonTableSpec', () => {
     expect(properties.primary_contact_id?.[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'people' });
   });
 
-  it('exposes custom_fields as a keyed object (one sub-property per definition) on every entity', () => {
+  it('exposes custom_fields as a verbatim array with an x-scratch-array-keyed-by column per definition', () => {
     const defs: CopperCustomFieldDefinition[] = [{ id: 9001, name: 'Industry', data_type: 'Dropdown' }];
     for (const entityType of [
       'people',
@@ -63,14 +69,17 @@ describe('buildCopperJsonTableSpec', () => {
       'projects',
     ] as CopperEntityType[]) {
       const { properties } = specProperties(entityType, defs);
-      const customFields = properties.custom_fields as { type?: string; properties?: Record<string, unknown> };
-      expect(customFields.type).toBe('object');
-      // The definition becomes a `cf_<id>` sub-property → its own editable column.
-      expect(customFields.properties?.['cf_9001']).toBeDefined();
+      const customFields = properties.custom_fields as { type?: string; [key: string]: unknown };
+      // Stored verbatim as an array — never reshaped to an object on disk.
+      expect(customFields.type).toBe('array');
+      const keyedBy = customFields[X_SCRATCH_ARRAY_KEYED_BY] as ArrayKeyedByOptions;
+      expect(keyedBy.keyField).toBe('custom_field_definition_id');
+      expect(keyedBy.valuePath).toBe('value');
+      expect(keyedBy.columns).toContainEqual({ key: 9001, name: 'Industry', type: 'string', readonly: undefined });
     }
   });
 
-  it('types custom-field sub-properties from data_type and marks Connect/computed read-only', () => {
+  it('types keyed-array columns from data_type and marks Connect/computed read-only', () => {
     const defs: CopperCustomFieldDefinition[] = [
       { id: 1, name: 'Score', data_type: 'Float' },
       { id: 2, name: 'Active', data_type: 'Checkbox' },
@@ -78,26 +87,28 @@ describe('buildCopperJsonTableSpec', () => {
       { id: 4, name: 'Computed', data_type: 'Float', is_computed: true },
     ];
     const { properties } = specProperties('people', defs);
-    const subProps = (properties.custom_fields as { properties: Record<string, Record<string, unknown>> }).properties;
-    expect(JSON.stringify(subProps['cf_1'])).toContain('"type":"number"');
-    expect(JSON.stringify(subProps['cf_2'])).toContain('"type":"boolean"');
+    const keyedBy = properties.custom_fields[X_SCRATCH_ARRAY_KEYED_BY] as ArrayKeyedByOptions;
+    const columnByKey = new Map(keyedBy.columns.map((c) => [c.key, c]));
+    expect(columnByKey.get(1)?.type).toBe('number');
+    expect(columnByKey.get(2)?.type).toBe('checkbox');
     // Connect and is_computed fields are read-only (never sent on write).
-    expect(subProps['cf_3']?.[X_SCRATCH_READONLY]).toBe(true);
-    expect(subProps['cf_4']?.[X_SCRATCH_READONLY]).toBe(true);
-    expect(subProps['cf_1']?.[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(columnByKey.get(3)?.readonly).toBe(true);
+    expect(columnByKey.get(4)?.readonly).toBe(true);
+    expect(columnByKey.get(1)?.readonly).toBeUndefined();
   });
 
-  it('adds a cf_<id>->name/type legend for agents at the schema root', () => {
+  it('adds a definition-id legend for agents at the schema root', () => {
     const defs: CopperCustomFieldDefinition[] = [
       { id: 9001, name: 'Industry', data_type: 'Dropdown', available_options: [{ id: 1, name: 'SaaS' }] },
       { id: 9002, name: 'Renewal Date', data_type: 'Date' },
     ];
     const { spec } = specProperties('people', defs);
     const instructions = (spec.schema as unknown as Record<string, unknown>)[X_SCRATCH_AGENT_INSTRUCTIONS] as string;
-    expect(instructions).toContain('custom_fields key: cf_9001');
+    expect(instructions).toContain('custom_fields.[custom_field_definition_id=<id>].value');
+    expect(instructions).toContain('definition id: 9001');
     expect(instructions).toContain('Industry');
     expect(instructions).toContain('options: SaaS');
-    expect(instructions).toContain('custom_fields key: cf_9002');
+    expect(instructions).toContain('definition id: 9002');
   });
 
   it('models leads email as a single object, not an array', () => {

@@ -617,7 +617,7 @@ export class PublishPlanBuildService {
             const mainRaw = mainMap.get(filePath);
             const mainObj = mainRaw ? (JSON.parse(mainRaw) as Record<string, unknown>) : null;
             const changed = mainObj
-              ? computeChangedFields(mainObj, pass4ContentObj as Record<string, unknown>)
+              ? computeChangedFields(mainObj, pass4ContentObj as Record<string, unknown>, schema)
               : (pass4ContentObj as Record<string, unknown>);
 
             // For revert-edits whose ONLY changes were FK fields (all
