@@ -12,6 +12,7 @@ import { basename, dirname, extname, join, relative, sep } from 'path';
 import { parse } from 'yaml';
 
 import type { TableView } from '@spinner/shared-types';
+import { buildKeyedArrayColumnPath, parseFilterSegment } from '@spinner/shared-types';
 import { formatRecordJson } from '@spinner/shared-types/format';
 import {
   coerceCellInputTextAgainstExistingValueOrSchema,
@@ -23,6 +24,7 @@ import {
   buildColumnDefinitions,
   createFallbackTableView,
   getByPath,
+  setByPath,
   tableViewColumnPaths,
 } from '../shared/schema-columns';
 import {
@@ -686,6 +688,37 @@ export async function readSchema(workspacePath: string, folderName: string): Pro
 // ── Internal helpers ──
 
 /**
+ * A verbatim array property whose elements are individually editable columns
+ * (`x-scratch-array-keyed-by`, DEV-10637): the element key field and the optional
+ * value sub-path, so {@link flattenObject} can expand each element into its own
+ * per-element diff key.
+ */
+type KeyedArrayMeta = { keyField: string; valuePath?: string };
+type KeyedArrayPathMap = Map<string, KeyedArrayMeta>;
+
+/**
+ * Recover the keyed-array metadata (array path → `{ keyField, valuePath }`) from
+ * the folder's diff column ids. Each keyed-array column id is a filter-segment
+ * path — `custom_fields.[custom_field_definition_id=755332].value` — so a single
+ * pass over the column ids yields every keyed array and how to address it,
+ * guaranteeing the flattened keys match the rendered column ids exactly.
+ */
+export function deriveKeyedArrayPathsFromColumnIds(columnIds: string[]): KeyedArrayPathMap {
+  const map: KeyedArrayPathMap = new Map();
+  for (const columnId of columnIds) {
+    const segments = columnId.split('.');
+    const filterIndex = segments.findIndex((segment) => parseFilterSegment(segment) !== null);
+    if (filterIndex <= 0) continue; // no filter segment, or (impossibly) at the root
+    const filter = parseFilterSegment(segments[filterIndex]);
+    if (!filter) continue;
+    const arrayPath = segments.slice(0, filterIndex).join('.');
+    const valuePath = segments.slice(filterIndex + 1).join('.') || undefined;
+    map.set(arrayPath, { keyField: filter.field, valuePath });
+  }
+  return map;
+}
+
+/**
  * Flattens a nested object into dot-separated keys.
  * `{ id: "a", fields: { field1: "b" } }` → `{ id: "a", "fields.field1": "b" }`
  * Arrays and non-plain-object values are kept as leaf values (not recursed into).
@@ -693,13 +726,43 @@ export async function readSchema(workspacePath: string, folderName: string): Pro
  * When `leafPaths` is provided, any key path in the set is kept as a leaf value
  * even if the value is a plain object. This prevents flattening schema-leaf columns
  * (e.g. `originalSource` wrapped in `anyOf`) that should render as JSON.
+ *
+ * When `keyedArrayPaths` marks an array path as a keyed array
+ * (`x-scratch-array-keyed-by`, DEV-10637), that array is expanded into one
+ * per-element key — `custom_fields.[custom_field_definition_id=755332].value` —
+ * instead of a single whole-array leaf, so the diff (and its `__changedFields` /
+ * `__unpublishedFields` dots) is per element, matching the rendered columns. Any
+ * OTHER array stays an atomic leaf exactly as before.
  */
-function flattenObject(obj: Record<string, unknown>, prefix = '', leafPaths?: Set<string>): Record<string, unknown> {
+export function flattenObject(
+  obj: Record<string, unknown>,
+  prefix = '',
+  leafPaths?: Set<string>,
+  keyedArrayPaths?: KeyedArrayPathMap,
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     const flatKey = prefix ? `${prefix}.${key}` : key;
-    if (typeof value === 'object' && value !== null && !Array.isArray(value) && !leafPaths?.has(flatKey)) {
-      Object.assign(result, flattenObject(value as Record<string, unknown>, flatKey, leafPaths));
+    const keyedArrayMeta = Array.isArray(value) ? keyedArrayPaths?.get(flatKey) : undefined;
+    if (keyedArrayMeta) {
+      // Verbatim keyed array → one diff key per element, addressed by its key field.
+      for (const element of value as unknown[]) {
+        if (typeof element !== 'object' || element === null || Array.isArray(element)) continue;
+        const elementRecord = element as Record<string, unknown>;
+        const elementKey = elementRecord[keyedArrayMeta.keyField];
+        if (typeof elementKey !== 'string' && typeof elementKey !== 'number') continue;
+        const elementColumnId = buildKeyedArrayColumnPath(
+          flatKey,
+          keyedArrayMeta.keyField,
+          elementKey,
+          keyedArrayMeta.valuePath,
+        );
+        result[elementColumnId] = keyedArrayMeta.valuePath
+          ? getByPath(elementRecord, keyedArrayMeta.valuePath)
+          : elementRecord;
+      }
+    } else if (typeof value === 'object' && value !== null && !Array.isArray(value) && !leafPaths?.has(flatKey)) {
+      Object.assign(result, flattenObject(value as Record<string, unknown>, flatKey, leafPaths, keyedArrayPaths));
     } else {
       result[flatKey] = value;
     }
@@ -941,13 +1004,17 @@ function splitWorkspaceFolderPath(
   return { connectionDirName, folderRelPath };
 }
 
-function snapshotFromContent(content: string | null | undefined, leafPaths?: Set<string>): JsonFileSnapshot {
+function snapshotFromContent(
+  content: string | null | undefined,
+  leafPaths?: Set<string>,
+  keyedArrayPaths?: KeyedArrayPathMap,
+): JsonFileSnapshot {
   if (content == null) return { kind: 'missing' };
   const parsed = parseTopLevelJsonObject(content);
   if (!parsed.ok) {
     return { kind: 'invalid', error: parsed.error };
   }
-  return { kind: 'ok', flat: flattenObject(parsed.raw, '', leafPaths), raw: parsed.raw };
+  return { kind: 'ok', flat: flattenObject(parsed.raw, '', leafPaths, keyedArrayPaths), raw: parsed.raw };
 }
 
 /**
@@ -965,6 +1032,7 @@ async function readFolderApprovedAndPublishedSnapshots(
   folderPath: string,
   leafPaths: Set<string> | undefined,
   filenames: string[],
+  keyedArrayPaths?: KeyedArrayPathMap,
 ): Promise<{ approved: Map<string, JsonFileSnapshot>; published: Map<string, JsonFileSnapshot> }> {
   const approved = new Map<string, JsonFileSnapshot>();
   const published = new Map<string, JsonFileSnapshot>();
@@ -989,8 +1057,8 @@ async function readFolderApprovedAndPublishedSnapshots(
     return { approved, published };
   }
   for (const blob of blobs) {
-    approved.set(blob.filename, snapshotFromContent(blob.approved, leafPaths));
-    published.set(blob.filename, snapshotFromContent(blob.published, leafPaths));
+    approved.set(blob.filename, snapshotFromContent(blob.approved, leafPaths, keyedArrayPaths));
+    published.set(blob.filename, snapshotFromContent(blob.published, leafPaths, keyedArrayPaths));
   }
   return { approved, published };
 }
@@ -1063,7 +1131,11 @@ export async function readFailedRecordDetailsByFile(
   return byFile;
 }
 
-async function readJsonFileSnapshot(filePath: string, leafPaths?: Set<string>): Promise<JsonFileSnapshot> {
+async function readJsonFileSnapshot(
+  filePath: string,
+  leafPaths?: Set<string>,
+  keyedArrayPaths?: KeyedArrayPathMap,
+): Promise<JsonFileSnapshot> {
   let content: string;
   try {
     content = await readFile(filePath, 'utf-8');
@@ -1075,7 +1147,7 @@ async function readJsonFileSnapshot(filePath: string, leafPaths?: Set<string>): 
   if (!parsed.ok) {
     return { kind: 'invalid', error: parsed.error };
   }
-  return { kind: 'ok', flat: flattenObject(parsed.raw, '', leafPaths), raw: parsed.raw };
+  return { kind: 'ok', flat: flattenObject(parsed.raw, '', leafPaths, keyedArrayPaths), raw: parsed.raw };
 }
 
 export async function readFolderStatuses(folderPath: string, workspacePath: string): Promise<FolderStatuses> {
@@ -1125,7 +1197,7 @@ function makeDiffRow(
   return row as DiffRow;
 }
 
-function compareFlattenedRecordVersions(
+export function compareFlattenedRecordVersions(
   workingRow: Record<string, unknown> | undefined,
   dirtyRow: Record<string, unknown> | undefined,
   masterRow: Record<string, unknown> | undefined,
@@ -1537,6 +1609,10 @@ export async function readDiffGridDataPage(
   const view = await readConnectionView(workspacePath, cliFolder);
   const diffColumnIds = view ? tableViewColumnPaths(view) : schemaColumns.map((c) => c.id);
   const leafPaths = new Set(diffColumnIds);
+  // Verbatim keyed arrays (x-scratch-array-keyed-by) are diffed per element so
+  // each custom-field column gets its own unreviewed/unpublished dot — recovered
+  // straight from the filter-segment column ids (DEV-10637).
+  const keyedArrayPaths = deriveKeyedArrayPathsFromColumnIds(diffColumnIds);
 
   const workingPath = folderPath;
 
@@ -1546,8 +1622,8 @@ export async function readDiffGridDataPage(
   // (mr29 D5). Slice F retired the on-disk mirrors at
   // `.scratch/connections/{dirty,master}/`.
   const [workingFiles, approvedAndPublished, failedRecordDetailsByFile] = await Promise.all([
-    readNamedSnapshots(workingPath, cliResult.filenames, leafPaths),
-    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths, cliResult.filenames),
+    readNamedSnapshots(workingPath, cliResult.filenames, leafPaths, keyedArrayPaths),
+    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths, cliResult.filenames, keyedArrayPaths),
     readFailedRecordDetailsByFile(workspacePath, folderPath),
   ]);
   const { approved: approvedFiles, published: publishedFiles } = approvedAndPublished;
@@ -1669,11 +1745,12 @@ async function readNamedSnapshots(
   dir: string,
   filenames: string[],
   leafPaths: Set<string>,
+  keyedArrayPaths?: KeyedArrayPathMap,
 ): Promise<Map<string, JsonFileSnapshot>> {
   const map = new Map<string, JsonFileSnapshot>();
   await Promise.all(
     filenames.map(async (filename) => {
-      const snap = await readJsonFileSnapshot(join(dir, filename), leafPaths);
+      const snap = await readJsonFileSnapshot(join(dir, filename), leafPaths, keyedArrayPaths);
       if (snap.kind !== 'missing') {
         map.set(filename, snap);
       }
@@ -1821,15 +1898,18 @@ export async function readDiffRecordData(
   const relPath = relative(workspacePath, folderPath);
   const schema = await readConnectionSchema(workspacePath, relPath);
   const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
-  const leafPaths = new Set(schemaColumns.map((c) => c.id));
+  const columnIds = schemaColumns.map((c) => c.id);
+  const leafPaths = new Set(columnIds);
+  // Per-element diff keys for verbatim keyed arrays, same as the grid path (DEV-10637).
+  const keyedArrayPaths = deriveKeyedArrayPathsFromColumnIds(columnIds);
 
   // Working = fs read. Approved + published = napi read restricted to this
   // one filename (mr29 D5 — before this only the path key changed; the napi
   // call still loaded the entire folder's blobs into memory). Slice F retired
   // the per-version on-disk mirrors that this used to read directly.
   const [w, approvedAndPublished] = await Promise.all([
-    readJsonFileSnapshot(workingFile, leafPaths),
-    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths, [filename]),
+    readJsonFileSnapshot(workingFile, leafPaths, keyedArrayPaths),
+    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths, [filename], keyedArrayPaths),
   ]);
   const missingSnapshot: JsonFileSnapshot = { kind: 'missing' };
   const d = approvedAndPublished.approved.get(filename) ?? missingSnapshot;
@@ -1939,31 +2019,6 @@ async function readWorkingFileObject(filePath: string): Promise<Record<string, u
   return {};
 }
 
-/**
- * Walks `obj` to the parent object of the dot-separated `fieldName` leaf,
- * creating intermediate objects as needed, and returns that parent plus the
- * final leaf key so the caller can read or replace just that leaf.
- */
-function navigateToLeafParentCreatingIntermediates(
-  obj: Record<string, unknown>,
-  fieldName: string,
-): { leafParentObject: Record<string, unknown>; leafKey: string } {
-  const parts = fieldName.split('.');
-  let leafParentObject: Record<string, unknown> = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i];
-    if (
-      typeof leafParentObject[part] !== 'object' ||
-      leafParentObject[part] === null ||
-      Array.isArray(leafParentObject[part])
-    ) {
-      leafParentObject[part] = {};
-    }
-    leafParentObject = leafParentObject[part] as Record<string, unknown>;
-  }
-  return { leafParentObject, leafKey: parts[parts.length - 1] };
-}
-
 async function persistWorkingFileObject(filePath: string, obj: Record<string, unknown>): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
   // `formatRecordJson` is the one canonical serializer shared with the server's
@@ -1979,6 +2034,11 @@ async function persistWorkingFileObject(filePath: string, obj: Record<string, un
  * `coerceCellInputTextAgainstExistingValueOrSchema`), surgically replaces just
  * that leaf, and writes the file back. Returns the parsed value so callers can
  * mirror it into their optimistic UI state.
+ *
+ * `getByPath`/`setByPath` (not a plain object walk) address the leaf, so a
+ * keyed-array column path — `custom_fields.[custom_field_definition_id=700123].value`
+ * — updates the matching array element in place and keeps the array verbatim on
+ * disk, instead of clobbering it into an object (DEV-10637).
  */
 async function writeWorkingFileFieldFromInputText(
   filePath: string,
@@ -1987,10 +2047,8 @@ async function writeWorkingFileFieldFromInputText(
   schemaHint: SchemaLeafHint | null,
 ): Promise<{ value: unknown }> {
   const obj = await readWorkingFileObject(filePath);
-  const { leafParentObject, leafKey } = navigateToLeafParentCreatingIntermediates(obj, fieldName);
-  const parsed = coerceCellInputTextAgainstExistingValueOrSchema(leafParentObject[leafKey], schemaHint, inputText);
-  leafParentObject[leafKey] = parsed;
-  await persistWorkingFileObject(filePath, obj);
+  const parsed = coerceCellInputTextAgainstExistingValueOrSchema(getByPath(obj, fieldName), schemaHint, inputText);
+  await persistWorkingFileObject(filePath, setByPath(obj, fieldName, parsed));
   return { value: parsed };
 }
 

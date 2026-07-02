@@ -1,4 +1,4 @@
-import { X_SCRATCH_READONLY, X_SCRATCH_WRITE_ONCE } from '@spinner/shared-types';
+import { X_SCRATCH_ARRAY_KEYED_BY, X_SCRATCH_READONLY, X_SCRATCH_WRITE_ONCE } from '@spinner/shared-types';
 import { describe, expect, it } from 'vitest';
 import { buildColumnDefinitions } from '../build-column-definitions';
 import type { ColumnDefinition } from '../types';
@@ -258,5 +258,46 @@ describe('buildColumnDefinitions — edge cases', () => {
       },
     });
     expect(columns.map((c) => c.id)).toEqual(['meta.key', 'meta.value']);
+  });
+});
+
+describe('buildColumnDefinitions — keyed arrays (x-scratch-array-keyed-by)', () => {
+  const columns = buildColumnDefinitions({
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        custom_fields: {
+          type: 'array',
+          [X_SCRATCH_ARRAY_KEYED_BY]: {
+            keyField: 'custom_field_definition_id',
+            valuePath: 'value',
+            columns: [
+              { key: 700123, name: 'Tier', type: 'string' },
+              { key: 700124, name: 'Active', type: 'checkbox', readonly: true },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  it('expands one filtered-path column per annotated key instead of a single leaf', () => {
+    expect(columns.map((c) => c.id)).toEqual([
+      'name',
+      'custom_fields.[custom_field_definition_id=700123].value',
+      'custom_fields.[custom_field_definition_id=700124].value',
+    ]);
+  });
+
+  it('carries the annotation name, type hint and readonly onto each expanded column', () => {
+    const tier = byId(columns, 'custom_fields.[custom_field_definition_id=700123].value');
+    expect(tier.displayName).toBe('Tier');
+    expect(tier.dataType).toBe('string');
+    expect(tier.attributes.readOnly).toBe(false);
+
+    const active = byId(columns, 'custom_fields.[custom_field_definition_id=700124].value');
+    expect(active.dataType).toBe('boolean'); // 'checkbox' hint → boolean data type
+    expect(active.attributes.readOnly).toBe(true);
   });
 });

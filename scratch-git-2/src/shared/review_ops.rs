@@ -294,25 +294,123 @@ pub fn parse_json_value_at(
     }
 }
 
+/// A parsed keyed-array filter segment `[<field>=<value>]` — the grammar that
+/// lets a dot-path address one element of a VERBATIM on-disk array by a stable
+/// key field instead of a positional index (DEV-10637). Mirrors the TypeScript
+/// primitive in `@spinner/shared-types` `keyed-array.ts` (`FILTER_SEGMENT_PATTERN`
+/// / `coerceFilterValue`) so the desktop's editable path, the server publish
+/// diff, and this local review model all share one grammar.
+struct FilterSegment<'a> {
+    field: &'a str,
+    raw_value: &'a str,
+}
+
+/// Parse a single path segment as a keyed-array filter `[field=value]`, or
+/// `None` if it is an ordinary object key. `field` is `[^=.\]]+`, `value` is
+/// `[^=.\]]*`; the caller has already split the path on `.`, so neither can
+/// contain a `.`.
+fn parse_filter_segment(segment: &str) -> Option<FilterSegment<'_>> {
+    let inner = segment.strip_prefix('[')?.strip_suffix(']')?;
+    let eq = inner.find('=')?;
+    let field = &inner[..eq];
+    let raw_value = &inner[eq + 1..];
+    if field.is_empty() || field.contains(']') || raw_value.contains('=') || raw_value.contains(']')
+    {
+        return None;
+    }
+    Some(FilterSegment { field, raw_value })
+}
+
+/// Coerce a filter value (always a string in the path) to the JSON type the
+/// element's key field uses: an all-digits value becomes a number (e.g. Copper
+/// numeric definition ids), anything else stays a string. Mirrors
+/// `coerceFilterValue` in `@spinner/shared-types`.
+fn coerce_filter_value(raw_value: &str) -> JsonValue {
+    let digits = raw_value.strip_prefix('-').unwrap_or(raw_value);
+    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        if let Ok(n) = raw_value.parse::<i64>() {
+            return JsonValue::from(n);
+        }
+    }
+    JsonValue::String(raw_value.to_string())
+}
+
+/// Whether array `element` is the one a filter segment selects: its `field`
+/// value stringifies to `raw_value`. Scalars compare stringwise so a numeric key
+/// field matches its string path value (mirrors JS `String(el[field])`).
+fn element_matches_filter(element: &JsonValue, filter: &FilterSegment<'_>) -> bool {
+    element
+        .as_object()
+        .and_then(|obj| obj.get(filter.field))
+        .and_then(json_scalar_to_string)
+        .map(|s| s == filter.raw_value)
+        .unwrap_or(false)
+}
+
+/// Stringify a JSON scalar the way JS `String(value)` would for the values a key
+/// field can hold (number / string / bool). `None` for null / array / object,
+/// which never match a filter value.
+fn json_scalar_to_string(value: &JsonValue) -> Option<String> {
+    match value {
+        JsonValue::String(s) => Some(s.clone()),
+        JsonValue::Number(n) => Some(n.to_string()),
+        JsonValue::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// A freshly-created keyed-array element carrying just its key field (coerced to
+/// the right JSON type), ready for the caller to set a nested value on.
+fn new_keyed_array_element(filter: &FilterSegment<'_>) -> JsonValue {
+    let mut element = JsonMap::new();
+    element.insert(
+        filter.field.to_string(),
+        coerce_filter_value(filter.raw_value),
+    );
+    JsonValue::Object(element)
+}
+
 /// Read a nested field (dot-separated) from a JSON object. `metadata.author`
-/// drills into `metadata`'s child object.
+/// drills into `metadata`'s child object; a `[<field>=<value>]` segment selects
+/// one element of an array by a key field (Copper
+/// `custom_fields.[custom_field_definition_id=700123].value`). Ordinary arrays
+/// stay leaves — only a filter segment indexes into one.
 pub fn read_nested_json_value(
     object: &JsonMap<String, JsonValue>,
     field: &str,
 ) -> Option<JsonValue> {
-    let mut current = object.get(field.split('.').next()?)?;
-    let mut parts = field.split('.');
-    parts.next()?;
-
-    for part in parts {
-        current = current.as_object()?.get(part)?;
+    let parts: Vec<&str> = field.split('.').collect();
+    let (first, rest) = parts.split_first()?;
+    // The record root is always an object, so a filter segment can never be the
+    // FIRST path part — there is no array to address at the root.
+    if parse_filter_segment(first).is_some() {
+        return None;
     }
+    let start = object.get(*first)?;
+    read_nested_json_value_ref(start, rest).cloned()
+}
 
-    Some(current.clone())
+/// Reference-returning core of [`read_nested_json_value`] so a deep read clones
+/// only the final value, not every intermediate container.
+fn read_nested_json_value_ref<'a>(current: &'a JsonValue, parts: &[&str]) -> Option<&'a JsonValue> {
+    let Some((head, rest)) = parts.split_first() else {
+        return Some(current);
+    };
+    let next = match parse_filter_segment(head) {
+        Some(filter) => current
+            .as_array()?
+            .iter()
+            .find(|el| element_matches_filter(el, &filter))?,
+        None => current.as_object()?.get(*head)?,
+    };
+    read_nested_json_value_ref(next, rest)
 }
 
 /// Write a nested field (dot-separated) into a JSON object. `Some(v)` sets;
-/// `None` deletes. Empty intermediate objects are pruned.
+/// `None` deletes. Empty intermediate objects are pruned. A `[<field>=<value>]`
+/// segment addresses one element of an array by a key field (find-or-append),
+/// keeping the array VERBATIM instead of clobbering it into an object
+/// (DEV-10637); arrays are never auto-pruned.
 pub fn apply_nested_json_value(
     object: &mut JsonMap<String, JsonValue>,
     field: &str,
@@ -322,35 +420,79 @@ pub fn apply_nested_json_value(
     if parts.is_empty() {
         return;
     }
-    apply_nested_json_value_parts(object, &parts, value);
+    // Recurse over a `Value` view of the record so one walk handles both object
+    // keys and array filter segments; `mem::take` avoids cloning the map.
+    let mut root = JsonValue::Object(std::mem::take(object));
+    apply_nested_value_parts(&mut root, &parts, value);
+    if let JsonValue::Object(map) = root {
+        *object = map;
+    }
 }
 
-fn apply_nested_json_value_parts(
-    object: &mut JsonMap<String, JsonValue>,
+/// Returns true iff `current` is now an empty object that the caller should
+/// prune from its parent (preserving the pre-existing object-pruning behavior).
+/// Arrays never report prunable — a keyed array stays on disk even when empty.
+fn apply_nested_value_parts(
+    current: &mut JsonValue,
     parts: &[&str],
     value: Option<JsonValue>,
 ) -> bool {
-    if parts.len() == 1 {
+    let Some((head, rest)) = parts.split_first() else {
+        return false;
+    };
+
+    if let Some(filter) = parse_filter_segment(head) {
+        if !current.is_array() {
+            *current = JsonValue::Array(Vec::new());
+        }
+        let array = current.as_array_mut().expect("coerced to array above");
+        let existing = array
+            .iter()
+            .position(|el| element_matches_filter(el, &filter));
+        if rest.is_empty() {
+            // Leaf on a filter segment: the element itself is the value.
+            match (existing, value) {
+                (Some(i), Some(v)) => array[i] = v,
+                (Some(i), None) => {
+                    array.remove(i);
+                }
+                (None, Some(v)) => array.push(v),
+                (None, None) => {}
+            }
+        } else {
+            let index = match existing {
+                Some(i) => i,
+                None => {
+                    array.push(new_keyed_array_element(&filter));
+                    array.len() - 1
+                }
+            };
+            apply_nested_value_parts(&mut array[index], rest, value);
+        }
+        // Arrays are never auto-pruned — the verbatim array stays on disk.
+        return false;
+    }
+
+    if !current.is_object() {
+        *current = JsonValue::Object(JsonMap::new());
+    }
+    let object = current.as_object_mut().expect("coerced to object above");
+    if rest.is_empty() {
         match value {
             Some(value) => {
-                object.insert(parts[0].to_string(), value);
+                object.insert(head.to_string(), value);
             }
             None => {
-                object.remove(parts[0]);
+                object.remove(*head);
             }
         }
         return object.is_empty();
     }
-
-    let key = parts[0].to_string();
+    let key = head.to_string();
     let child = object
         .entry(key.clone())
         .or_insert_with(|| JsonValue::Object(JsonMap::new()));
-    if !child.is_object() {
-        *child = JsonValue::Object(JsonMap::new());
-    }
-    let should_prune =
-        apply_nested_json_value_parts(child.as_object_mut().unwrap(), &parts[1..], value);
+    let should_prune = apply_nested_value_parts(child, rest, value);
     if should_prune {
         object.remove(&key);
     }
@@ -2177,6 +2319,250 @@ mod tests {
         let mut bytes = serde_json::to_vec_pretty(v).unwrap();
         bytes.push(b'\n');
         bytes
+    }
+
+    /// Clone a `json!({...})` literal into the owned `JsonMap` the nested-value
+    /// walkers operate on.
+    fn obj(value: JsonValue) -> JsonMap<String, JsonValue> {
+        value.as_object().unwrap().clone()
+    }
+
+    // ---- Characterization: read_nested_json_value / apply_nested_json_value ----
+    // These lock in the REGULAR (object / scalar / atomic-array) behavior of the
+    // two dot-path walkers before the keyed-array filter-segment support is added,
+    // so that refactor can't silently change how ordinary fields read and write.
+
+    #[test]
+    fn read_nested_reads_top_level_and_dotted_paths() {
+        let record = obj(json!({ "name": "Acme", "metadata": { "author": "jane" } }));
+        assert_eq!(read_nested_json_value(&record, "name"), Some(json!("Acme")));
+        assert_eq!(
+            read_nested_json_value(&record, "metadata.author"),
+            Some(json!("jane"))
+        );
+    }
+
+    #[test]
+    fn read_nested_returns_none_for_missing_or_non_object_intermediate() {
+        let record = obj(json!({ "name": "Acme", "count": 3 }));
+        assert_eq!(read_nested_json_value(&record, "missing"), None);
+        assert_eq!(read_nested_json_value(&record, "metadata.author"), None);
+        // An intermediate that is a scalar (not an object) can't be drilled into.
+        assert_eq!(read_nested_json_value(&record, "count.value"), None);
+    }
+
+    #[test]
+    fn read_nested_returns_whole_array_atomically_and_never_indexes_it() {
+        let record =
+            obj(json!({ "tags": ["a", "b"], "custom_fields": [{ "id": 1, "value": "x" }] }));
+        // An array-valued field is returned whole (atomic) — arrays are leaves.
+        assert_eq!(
+            read_nested_json_value(&record, "tags"),
+            Some(json!(["a", "b"]))
+        );
+        assert_eq!(
+            read_nested_json_value(&record, "custom_fields"),
+            Some(json!([{ "id": 1, "value": "x" }]))
+        );
+        // A path that tries to index into the array yields nothing.
+        assert_eq!(read_nested_json_value(&record, "tags.0"), None);
+        assert_eq!(
+            read_nested_json_value(&record, "custom_fields.0.value"),
+            None
+        );
+    }
+
+    #[test]
+    fn apply_nested_sets_top_level_scalar_insert_and_replace() {
+        let mut record = obj(json!({ "name": "Acme" }));
+        apply_nested_json_value(&mut record, "industry", Some(json!("SaaS")));
+        apply_nested_json_value(&mut record, "name", Some(json!("Acme Corp")));
+        assert_eq!(
+            JsonValue::Object(record),
+            json!({ "name": "Acme Corp", "industry": "SaaS" })
+        );
+    }
+
+    #[test]
+    fn apply_nested_creates_intermediate_objects() {
+        let mut record = obj(json!({}));
+        apply_nested_json_value(&mut record, "metadata.author.name", Some(json!("jane")));
+        assert_eq!(
+            JsonValue::Object(record),
+            json!({ "metadata": { "author": { "name": "jane" } } })
+        );
+    }
+
+    #[test]
+    fn apply_nested_none_removes_key_and_prunes_emptied_parents() {
+        let mut record = obj(json!({ "name": "Acme", "metadata": { "author": "jane" } }));
+        apply_nested_json_value(&mut record, "name", None);
+        // Deleting the only field of `metadata` prunes the now-empty `metadata`.
+        apply_nested_json_value(&mut record, "metadata.author", None);
+        assert_eq!(JsonValue::Object(record), json!({}));
+    }
+
+    #[test]
+    fn apply_nested_overwrites_scalar_intermediate_with_object() {
+        let mut record = obj(json!({ "meta": 5 }));
+        apply_nested_json_value(&mut record, "meta.author", Some(json!("jane")));
+        assert_eq!(
+            JsonValue::Object(record),
+            json!({ "meta": { "author": "jane" } })
+        );
+    }
+
+    #[test]
+    fn apply_nested_sets_array_value_as_atomic_leaf() {
+        let mut record = obj(json!({ "tags": ["a"] }));
+        apply_nested_json_value(&mut record, "tags", Some(json!(["a", "b", "c"])));
+        assert_eq!(
+            JsonValue::Object(record),
+            json!({ "tags": ["a", "b", "c"] })
+        );
+    }
+
+    // ---- Keyed-array filter segments `[<field>=<value>]` (DEV-10637) ----
+
+    const CF: &str = "custom_fields.[custom_field_definition_id=755332].value";
+    const CF_OTHER: &str = "custom_fields.[custom_field_definition_id=755333].value";
+
+    fn copper_record() -> JsonMap<String, JsonValue> {
+        obj(json!({
+            "id": 401,
+            "custom_fields": [
+                { "custom_field_definition_id": 755332, "value": "Enterprise" },
+                { "custom_field_definition_id": 755333, "value": 9.5 },
+            ],
+        }))
+    }
+
+    #[test]
+    fn parse_filter_segment_accepts_valid_and_rejects_ordinary_keys() {
+        assert!(parse_filter_segment("custom_fields").is_none());
+        assert!(parse_filter_segment("[bad]").is_none()); // no '='
+        let seg = parse_filter_segment("[custom_field_definition_id=755332]").unwrap();
+        assert_eq!(seg.field, "custom_field_definition_id");
+        assert_eq!(seg.raw_value, "755332");
+        // Empty value is allowed (`[^=.\]]*`).
+        assert_eq!(parse_filter_segment("[k=]").unwrap().raw_value, "");
+    }
+
+    #[test]
+    fn coerce_filter_value_matches_typescript() {
+        assert_eq!(coerce_filter_value("755332"), json!(755332));
+        assert_eq!(coerce_filter_value("-5"), json!(-5));
+        assert_eq!(
+            coerce_filter_value("contact_source"),
+            json!("contact_source")
+        );
+        assert_eq!(coerce_filter_value("-"), json!("-"));
+        assert_eq!(coerce_filter_value(""), json!(""));
+    }
+
+    #[test]
+    fn read_keyed_array_element_by_key_field() {
+        let record = copper_record();
+        assert_eq!(
+            read_nested_json_value(&record, CF),
+            Some(json!("Enterprise"))
+        );
+        assert_eq!(read_nested_json_value(&record, CF_OTHER), Some(json!(9.5)));
+        // Whole-element read (no value sub-path).
+        assert_eq!(
+            read_nested_json_value(&record, "custom_fields.[custom_field_definition_id=755333]"),
+            Some(json!({ "custom_field_definition_id": 755333, "value": 9.5 }))
+        );
+    }
+
+    #[test]
+    fn read_keyed_array_missing_key_or_non_array_is_none() {
+        let record = copper_record();
+        assert_eq!(
+            read_nested_json_value(
+                &record,
+                "custom_fields.[custom_field_definition_id=999].value"
+            ),
+            None
+        );
+        // Filter applied to a non-array yields nothing.
+        let scalar = obj(json!({ "custom_fields": "oops" }));
+        assert_eq!(read_nested_json_value(&scalar, CF), None);
+    }
+
+    #[test]
+    fn apply_keyed_array_updates_matching_element_in_place_and_keeps_array() {
+        let mut record = copper_record();
+        apply_nested_json_value(&mut record, CF, Some(json!("SMB")));
+        assert_eq!(
+            JsonValue::Object(record),
+            json!({
+                "id": 401,
+                "custom_fields": [
+                    { "custom_field_definition_id": 755332, "value": "SMB" },
+                    { "custom_field_definition_id": 755333, "value": 9.5 },
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn apply_keyed_array_appends_element_with_coerced_key_when_absent() {
+        let mut record = copper_record();
+        apply_nested_json_value(
+            &mut record,
+            "custom_fields.[custom_field_definition_id=755334].value",
+            Some(json!("new")),
+        );
+        let cf = read_nested_json_value(&record, "custom_fields").unwrap();
+        // Numeric key coerced to a number on create; existing elements untouched.
+        assert_eq!(
+            cf.as_array().unwrap().last().unwrap(),
+            &json!({ "custom_field_definition_id": 755334, "value": "new" })
+        );
+        assert_eq!(cf.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn apply_keyed_array_creates_array_property_when_missing() {
+        let mut record = obj(json!({ "id": 1 }));
+        apply_nested_json_value(&mut record, CF, Some(json!("X")));
+        assert_eq!(
+            JsonValue::Object(record),
+            json!({
+                "id": 1,
+                "custom_fields": [{ "custom_field_definition_id": 755332, "value": "X" }],
+            })
+        );
+    }
+
+    #[test]
+    fn apply_keyed_array_string_key_stays_string_on_create() {
+        // GoHighLevel-style short-key (non-numeric) stays a string.
+        let mut record = obj(json!({}));
+        apply_nested_json_value(
+            &mut record,
+            "customFields.[id=contact_source].value",
+            Some(json!("web")),
+        );
+        assert_eq!(
+            JsonValue::Object(record),
+            json!({ "customFields": [{ "id": "contact_source", "value": "web" }] })
+        );
+    }
+
+    #[test]
+    fn apply_keyed_array_editing_two_then_reverting_one_is_independent() {
+        // The core "edit two, accept one" invariant at the walker level: setting
+        // one element's value never disturbs its siblings, so accept/reject can
+        // operate per element.
+        let mut record = copper_record();
+        apply_nested_json_value(&mut record, CF, Some(json!("SMB")));
+        apply_nested_json_value(&mut record, CF_OTHER, Some(json!(1.0)));
+        // Revert only the second element back to its original.
+        apply_nested_json_value(&mut record, CF_OTHER, Some(json!(9.5)));
+        assert_eq!(read_nested_json_value(&record, CF), Some(json!("SMB")));
+        assert_eq!(read_nested_json_value(&record, CF_OTHER), Some(json!(9.5)));
     }
 
     #[test]

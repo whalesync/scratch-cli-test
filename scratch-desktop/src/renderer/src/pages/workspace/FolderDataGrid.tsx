@@ -59,6 +59,7 @@ import {
   flattenTableViewColumns,
   getByPath,
   resolveDisplayString,
+  setByPath,
 } from '../../../../shared/schema-columns';
 // ValidationResultRow is no longer used — validation data comes from diffData.validationByCell
 import { getWordDiffSegments } from '../../../../shared/word-diff';
@@ -451,20 +452,6 @@ function formatReferenceDisplay(value: unknown, labels: Record<string, string>):
   if (typeof value === 'string') return labelForId(value);
   if (typeof value === 'number') return labelForId(String(value));
   return toDisplayString(value);
-}
-
-/** Immutably sets a value at a dot-separated path, returning a shallow clone of the affected objects. */
-function setByPath(obj: Record<string, unknown>, dotPath: string, value: unknown): Record<string, unknown> {
-  const parts = dotPath.split('.');
-  if (parts.length === 1) {
-    return { ...obj, [parts[0]]: value };
-  }
-  const [head, ...rest] = parts;
-  const child =
-    typeof obj[head] === 'object' && obj[head] !== null && !Array.isArray(obj[head])
-      ? (obj[head] as Record<string, unknown>)
-      : {};
-  return { ...obj, [head]: setByPath(child, rest.join('.'), value) };
 }
 
 function diffValuesEqual(a: unknown, b: unknown): boolean {

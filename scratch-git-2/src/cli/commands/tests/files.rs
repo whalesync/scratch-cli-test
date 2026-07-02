@@ -1355,6 +1355,196 @@ mod field_helpers {
             vec!["Conn/Posts/rec_1.json".to_string()]
         );
     }
+
+    // ---- Keyed-array (x-scratch-array-keyed-by) field ops (DEV-10637) ----
+    //
+    // A Copper `custom_fields` array is stored VERBATIM; each element is an
+    // editable column addressed by a filter-segment path. These tests prove the
+    // review model treats each element as its own reviewable unit even though the
+    // patch body diffs the array atomically — most importantly that accepting one
+    // element never publishes an un-accepted sibling edit.
+
+    const CF_TIER: &str = "custom_fields.[custom_field_definition_id=755332].value";
+    const CF_SCORE: &str = "custom_fields.[custom_field_definition_id=755333].value";
+
+    fn copper_main() -> HashMap<String, Vec<u8>> {
+        HashMap::from([(
+            "Companies/acme.json".to_string(),
+            json_pretty(
+                r#"{"id":401,"custom_fields":[
+                    {"custom_field_definition_id":755332,"value":"Enterprise"},
+                    {"custom_field_definition_id":755333,"value":9.5}
+                ]}"#,
+            ),
+        )])
+    }
+
+    #[test]
+    fn accept_keyed_array_element_stores_verbatim_array_with_only_that_element_edited() {
+        let ctx = empty_conn_ctx();
+        let main = copper_main();
+        // User edited only the Tier element in the working file.
+        let local = HashMap::from([(
+            "Companies/acme.json".to_string(),
+            json_pretty(
+                r#"{"id":401,"custom_fields":[
+                    {"custom_field_definition_id":755332,"value":"SMB"},
+                    {"custom_field_definition_id":755333,"value":9.5}
+                ]}"#,
+            ),
+        )]);
+        let mut file = AcceptedPatchesFile::default();
+
+        let result =
+            accept_field_in_folder(&ctx, "Companies", CF_TIER, &main, &mut file, &local).unwrap();
+
+        assert!(result.patches_changed);
+        assert_eq!(file.patches.len(), 1);
+        assert_eq!(file.patches[0].kind, PatchKind::Update);
+        // The atomic array diff replaces the whole verbatim array — with ONLY the
+        // Tier element changed. The array shape stays `[{id,value}]`, never reshaped.
+        assert_eq!(
+            file.patches[0].patch,
+            json!([{
+                "op": "add",
+                "path": "/custom_fields",
+                "value": [
+                    {"custom_field_definition_id":755332,"value":"SMB"},
+                    {"custom_field_definition_id":755333,"value":9.5}
+                ]
+            }])
+        );
+    }
+
+    #[test]
+    fn accept_one_keyed_array_element_never_publishes_the_other_unaccepted_edit() {
+        // THE KILLER SCENARIO. User edits BOTH Tier and Score, then accepts only
+        // Tier. The accepted (publishable) state must contain the Tier edit and
+        // the ORIGINAL Score — the un-accepted Score edit must not leak into
+        // publish just because it shares the array.
+        let ctx = empty_conn_ctx();
+        let main = copper_main();
+        let local = HashMap::from([(
+            "Companies/acme.json".to_string(),
+            json_pretty(
+                r#"{"id":401,"custom_fields":[
+                    {"custom_field_definition_id":755332,"value":"SMB"},
+                    {"custom_field_definition_id":755333,"value":1.0}
+                ]}"#,
+            ),
+        )]);
+        let mut file = AcceptedPatchesFile::default();
+
+        accept_field_in_folder(&ctx, "Companies", CF_TIER, &main, &mut file, &local).unwrap();
+
+        // Approved array: Tier edited to "SMB", Score STILL 9.5 (main), not 1.0.
+        assert_eq!(
+            file.patches[0].patch,
+            json!([{
+                "op": "add",
+                "path": "/custom_fields",
+                "value": [
+                    {"custom_field_definition_id":755332,"value":"SMB"},
+                    {"custom_field_definition_id":755333,"value":9.5}
+                ]
+            }])
+        );
+
+        // And the Score element is still unreviewed: accepting Score too folds it
+        // into the same entry, now carrying both edits.
+        accept_field_in_folder(&ctx, "Companies", CF_SCORE, &main, &mut file, &local).unwrap();
+        assert_eq!(file.patches.len(), 1);
+        assert_eq!(
+            file.patches[0].patch,
+            json!([{
+                "op": "add",
+                "path": "/custom_fields",
+                "value": [
+                    {"custom_field_definition_id":755332,"value":"SMB"},
+                    {"custom_field_definition_id":755333,"value":1.0}
+                ]
+            }])
+        );
+    }
+
+    #[test]
+    fn reject_keyed_array_element_restores_that_element_and_leaves_siblings() {
+        // No accepted patch (approved == main). User edited both elements; reject
+        // Tier restores Tier to main and leaves the still-unreviewed Score edit.
+        let ctx = empty_conn_ctx();
+        let main = copper_main();
+        let local = HashMap::from([(
+            "Companies/acme.json".to_string(),
+            json_pretty(
+                r#"{"id":401,"custom_fields":[
+                    {"custom_field_definition_id":755332,"value":"SMB"},
+                    {"custom_field_definition_id":755333,"value":1.0}
+                ]}"#,
+            ),
+        )]);
+        let file = AcceptedPatchesFile::default();
+
+        let (next_local, result) =
+            reject_field_in_folder(&ctx, "Companies", CF_TIER, &main, &file, &local).unwrap();
+
+        assert_eq!(result.changed_paths.len(), 1);
+        assert_eq!(
+            parsed(next_local.get("Companies/acme.json").unwrap()),
+            json!({"id":401,"custom_fields":[
+                {"custom_field_definition_id":755332,"value":"Enterprise"},
+                {"custom_field_definition_id":755333,"value":1.0}
+            ]}),
+            "Tier restored to main; Score edit (still unreviewed) untouched; array stays verbatim"
+        );
+    }
+
+    #[test]
+    fn discard_keyed_array_element_reverts_working_to_main_and_drops_from_patch() {
+        // An accepted Tier edit; discard reverts the working Tier to main's
+        // published value and drops the now-empty entry.
+        let ctx = empty_conn_ctx();
+        let main = copper_main();
+        let mut file = AcceptedPatchesFile {
+            patches: vec![entry(
+                "Companies/acme.json",
+                PatchKind::Update,
+                json!([{
+                    "op": "add",
+                    "path": "/custom_fields",
+                    "value": [
+                        {"custom_field_definition_id":755332,"value":"SMB"},
+                        {"custom_field_definition_id":755333,"value":9.5}
+                    ]
+                }]),
+            )],
+        };
+        let local = HashMap::from([(
+            "Companies/acme.json".to_string(),
+            json_pretty(
+                r#"{"id":401,"custom_fields":[
+                    {"custom_field_definition_id":755332,"value":"SMB"},
+                    {"custom_field_definition_id":755333,"value":9.5}
+                ]}"#,
+            ),
+        )]);
+
+        let (next_local, result) =
+            discard_field_in_folder(&ctx, "Companies", CF_TIER, &main, &mut file, &local).unwrap();
+
+        assert!(result.patches_changed);
+        assert!(
+            file.patches.is_empty(),
+            "discarding the only edited element drops the entry"
+        );
+        assert_eq!(
+            parsed(next_local.get("Companies/acme.json").unwrap()),
+            json!({"id":401,"custom_fields":[
+                {"custom_field_definition_id":755332,"value":"Enterprise"},
+                {"custom_field_definition_id":755333,"value":9.5}
+            ]}),
+            "working Tier reverted to main's published value"
+        );
+    }
 }
 
 /// Build a bare repo with two data folders (posts/, articles/) on both main and dirty,

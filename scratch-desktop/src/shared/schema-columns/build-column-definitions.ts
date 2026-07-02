@@ -1,4 +1,6 @@
 import {
+  buildKeyedArrayColumnPath,
+  getArrayKeyedByOptions,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_PREFIX,
@@ -144,6 +146,29 @@ function resolveObjectMember(prop: Record<string, unknown>): Record<string, unkn
   return undefined;
 }
 
+/**
+ * Map a keyed-array column's renderer type hint (a `TablePropertyType` such as
+ * `'checkbox'` / `'url'`) to a schema-level `ColumnDataType`. The element value is
+ * `unknown` in the JSON schema, so the annotation's hint is the best signal.
+ */
+function columnDataTypeFromHint(hint: string | undefined): ColumnDataType {
+  switch (hint) {
+    case 'checkbox':
+      return 'boolean';
+    case 'number':
+      return 'number';
+    case 'object':
+      return 'object';
+    case 'string':
+    case 'url':
+    case 'date':
+    case 'richtext':
+      return 'string';
+    default:
+      return 'unknown';
+  }
+}
+
 function walkProperties(schema: Record<string, unknown>, prefix: string): ColumnDefinition[] {
   const properties = schema.properties;
   if (!isPlainObject(properties)) return [];
@@ -158,6 +183,28 @@ function walkProperties(schema: Record<string, unknown>, prefix: string): Column
     if (!isPlainObject(rawProp)) continue;
     const id = prefix ? `${prefix}.${key}` : key;
     const effective = resolveEffectiveType(rawProp);
+
+    // Keyed array (x-scratch-array-keyed-by): the verbatim array is not a leaf —
+    // expand one editable column per annotated key, addressed by a filter segment
+    // (`custom_fields.[custom_field_definition_id=700123].value`). This is the
+    // generic counterpart of a connector reshaping the array to an object.
+    const keyedBy = getArrayKeyedByOptions(rawProp);
+    if (keyedBy) {
+      for (const column of keyedBy.columns) {
+        results.push({
+          id: buildKeyedArrayColumnPath(id, keyedBy.keyField, column.key, keyedBy.valuePath),
+          displayName: column.name,
+          dataType: columnDataTypeFromHint(column.type),
+          attributes: {
+            readOnly: column.readonly === true,
+            writeOnce: false,
+            required: false,
+            nested: true,
+          },
+        });
+      }
+      continue;
+    }
 
     // Check for a container object — either direct properties on the prop, or
     // properties inside an anyOf/oneOf member (nullable-object pattern).
