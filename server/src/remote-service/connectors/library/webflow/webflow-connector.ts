@@ -44,6 +44,7 @@ import { WebflowSchemaParser } from './webflow-schema-parser';
 import {
   CollectionItem,
   CollectionItemFieldData,
+  CollectionItemListNoPagination,
   CollectionItemWithIdInput,
   CollectionItemWithIdInputFieldData,
   Locale,
@@ -58,6 +59,24 @@ export const WEBFLOW_DEFAULT_BATCH_SIZE = 100;
 /** True for an axios error carrying an HTTP 404 (record not found). */
 function isWebflowNotFoundError(error: unknown): boolean {
   return isAxiosError(error) && error.response?.status === 404;
+}
+
+/**
+ * True for the Webflow "you can't live-PATCH an item that was never published"
+ * error. Webflow returns HTTP 409 with a message containing "Live PATCH updates"
+ * when a live update targets an item whose `lastPublished` is null — i.e. an item
+ * created via the staged endpoint, or authored as a draft in Webflow and never
+ * published. Because the live batch PATCH is atomic under `skipInvalidFiles:
+ * false`, a single such item makes Webflow reject the whole batch. See
+ * PUBLICATION_STATES.md rule #1 and DEV-10642.
+ */
+function isWebflowNeverPublishedError(error: unknown): boolean {
+  if (!isAxiosError(error) || error.response?.status !== 409) return false;
+  const message = (error.response?.data as { message?: unknown } | undefined)?.message;
+  // The v2 API puts the human-readable reason under `message`; fall back to the
+  // stringified body so a shape change can't silently disable the fallback.
+  const haystack = typeof message === 'string' ? message : JSON.stringify(error.response?.data ?? '');
+  return haystack.includes('Live PATCH updates');
 }
 
 /**
@@ -719,9 +738,9 @@ export class WebflowConnector extends Connector {
       items.push(item);
     }
 
-    const response = await this.client.updateItemsLive(collectionId, { skipInvalidFiles: false, items });
-    // `updateItemsLive` returns the persisted items as a list. Map them
-    // back to input order by id; missing rows fall back to the input file.
+    const response = await this.updateItemsLiveWithNeverPublishedFallback(collectionId, items);
+    // The update returns the persisted items as a list. Map them back to input
+    // order by id; missing rows fall back to the input file.
     const responseItems = response?.items;
     if (!Array.isArray(responseItems)) return files;
     const byId = new Map<string, ConnectorFile>();
@@ -730,6 +749,65 @@ export class WebflowConnector extends Connector {
       if (typeof id === 'string') byId.set(id, item as unknown as ConnectorFile);
     }
     return files.map((file) => byId.get(file.id as string) ?? file);
+  }
+
+  /**
+   * Publish a batch of item updates to Webflow's LIVE endpoint, degrading to a
+   * per-record retry when the batch is rejected only because one or more items
+   * have never been published.
+   *
+   * Webflow rejects the *entire* live PATCH batch with a 409 ("Live PATCH updates
+   * can't be applied to items that have never been published") if ANY item in it
+   * has never been published (the batch is atomic under `skipInvalidFiles:
+   * false`). Without this fallback a single never-published draft sinks every
+   * other record in the batch — the DEV-10642 report where 30 records "failed"
+   * even though the edits were fine. On that specific 409 we retry each item on
+   * its own: a live PATCH first, and — for the items that are themselves
+   * never-published — a STAGED PATCH instead. The staged update lands the edit on
+   * the item's draft without publishing it, matching its current Webflow state;
+   * we never auto-publish an item the user hasn't published.
+   *
+   * Connector Prime Directive: the item body is byte-for-byte identical on either
+   * endpoint — only the URL (`/items/live` vs `/items`) differs. No value is
+   * reshaped, renamed, or normalized to make the fallback work.
+   *
+   * Any error other than the never-published 409 propagates untouched, so genuine
+   * failures still surface (and are retried per-record by the publish pipeline).
+   */
+  private async updateItemsLiveWithNeverPublishedFallback(
+    collectionId: string,
+    items: CollectionItemWithIdInput[],
+  ): Promise<CollectionItemListNoPagination> {
+    try {
+      return await this.client.updateItemsLive(collectionId, { skipInvalidFiles: false, items });
+    } catch (error) {
+      if (!isWebflowNeverPublishedError(error)) throw error;
+
+      WSLogger.info({
+        source: 'WebflowConnector.updateRecords',
+        message:
+          'Live PATCH batch rejected because at least one item was never published; retrying each item individually with a staged fallback for never-published items',
+        tableId: collectionId,
+        data: { itemCount: items.length },
+      });
+
+      const persistedItems: CollectionItem[] = [];
+      for (const item of items) {
+        const singleItemRequest = { skipInvalidFiles: false, items: [item] };
+        let response: CollectionItemListNoPagination;
+        try {
+          response = await this.client.updateItemsLive(collectionId, singleItemRequest);
+        } catch (perItemError) {
+          if (!isWebflowNeverPublishedError(perItemError)) throw perItemError;
+          // This is one of the never-published items — update its staged draft
+          // instead of the (nonexistent) live version.
+          response = await this.client.updateItemsStaged(collectionId, singleItemRequest);
+        }
+        const returnedItems = response?.items;
+        if (Array.isArray(returnedItems)) persistedItems.push(...returnedItems);
+      }
+      return { items: persistedItems };
+    }
   }
 
   /**

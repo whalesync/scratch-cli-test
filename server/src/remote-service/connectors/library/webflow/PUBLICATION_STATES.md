@@ -157,6 +157,12 @@ directly in Webflow and never published. To edit such an item live, you must
 **publish it first** (or edit it via the **staged** `PATCH /items/{id}` endpoint
 instead of the live one).
 
+`updateRecords` handles this (DEV-10642): it publishes the batch live, and on the
+`409` retries each item individually — falling back to the **staged** batch
+endpoint (`PATCH /items`, no `/live`) for the items that are themselves
+never-published, so the edit lands on the draft without publishing it. See
+`updateItemsLiveWithNeverPublishedFallback` in `webflow-connector.ts`.
+
 ### 2. `lastPublished` only ever moves forward — it never resets
 
 Every live PATCH **re-publishes** the item and pushes `lastPublished` forward,
@@ -216,11 +222,14 @@ connector as it exists today. It does not prescribe a design.
   explicitly **not** read-only), and written back on publish. See
   `webflow-json-schema.ts` (the `isArchived` / `isDraft` properties) and
   `webflow-default-view.ts`.
-- **The never-published 409 is a latent edge.** An item **pulled from Webflow**
-  that was never published (`lastPublished: null`) will hit rule #1 if a Scratch
-  edit is published through `updateItemsLive`. Any state-control work needs to
-  decide how to handle this (publish-first, fall back to the staged endpoint, or
-  surface a clear error) rather than letting the `409` bubble up.
+- **The never-published 409 is handled (DEV-10642).** An item **pulled from
+  Webflow** that was never published (`lastPublished: null`) hits rule #1 if a
+  Scratch edit is published through `updateItemsLive` — and because the bulk live
+  PATCH is atomic, one such item used to fail the whole batch. `updateRecords`
+  now catches that specific `409` and retries each item on its own, falling back
+  to the **staged** endpoint for the never-published ones (the edit lands; the
+  item stays a draft — we never auto-publish). See
+  `updateItemsLiveWithNeverPublishedFallback`.
 - **A single derived "Status" is the natural UI.** Surfacing one
   Published / Draft / Archived control (computed via the precedence rule) is
   friendlier than two raw checkboxes, while the on-disk record keeps Webflow's

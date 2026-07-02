@@ -8,14 +8,35 @@ jest.mock('../../../display-names', () => ({
 }));
 
 // Mock the WebflowApiClient so the connector's internal `this.client` is the
-// mock — we only need its flat `updateItemsLive` method here.
+// mock — we need its live and staged batch-update methods here.
 const mockUpdateItemsLive = jest.fn().mockResolvedValue({});
+const mockUpdateItemsStaged = jest.fn().mockResolvedValue({});
 jest.mock('../webflow-api-client', () => ({
   WebflowApiClient: jest.fn().mockImplementation(() => ({
     updateItemsLive: mockUpdateItemsLive,
+    updateItemsStaged: mockUpdateItemsStaged,
   })),
   WebflowError: class WebflowError extends Error {},
 }));
+
+/**
+ * Build an axios-shaped Error that {@link isWebflowNeverPublishedError} matches:
+ * a 409 whose body message contains "Live PATCH updates". `axios.isAxiosError`
+ * only checks `isAxiosError === true`, so attaching that flag + `response` to a
+ * real Error is enough (and keeps `prefer-promise-reject-errors` happy).
+ */
+function neverPublishedError(): Error {
+  return Object.assign(new Error('Webflow 409'), {
+    isAxiosError: true,
+    response: {
+      status: 409,
+      data: {
+        message:
+          "Conflict with server data: Live PATCH updates can't be applied to items that have never been published",
+      },
+    },
+  });
+}
 
 // Mock html-minify
 jest.mock('src/wrappers/html-minify', () => ({
@@ -146,6 +167,74 @@ describe('WebflowConnector.updateRecords', () => {
     expect(mockUpdateItemsLive).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
       items: [{ id: 'correct-id', fieldData: { name: 'New Name' } }],
+    });
+  });
+
+  describe('never-published fallback (DEV-10642)', () => {
+    const files: ConnectorFile[] = [
+      { id: 'published', fieldData: { name: 'Live One' } } as ConnectorFile,
+      { id: 'never-published', fieldData: { name: 'Draft One' } } as ConnectorFile,
+    ];
+
+    it('falls back per-record and routes only the never-published item to the staged endpoint', async () => {
+      // Batch live PATCH rejects (atomic: one never-published item sinks it).
+      // Per-item: the published item succeeds live; the never-published one
+      // rejects live and is retried on the staged endpoint.
+      mockUpdateItemsLive.mockReset();
+      mockUpdateItemsLive.mockImplementation((_collectionId: string, req: { items: { id: string }[] }) => {
+        if (req.items.length > 1) return Promise.reject(neverPublishedError());
+        if (req.items[0].id === 'never-published') return Promise.reject(neverPublishedError());
+        return Promise.resolve({ items: req.items });
+      });
+      mockUpdateItemsStaged.mockReset();
+      mockUpdateItemsStaged.mockImplementation((_collectionId: string, req: { items: unknown[] }) =>
+        Promise.resolve({ items: req.items }),
+      );
+
+      const result = await connector.updateRecords(tableSpec, files);
+
+      // First call is the optimistic batch of both items.
+      expect(mockUpdateItemsLive).toHaveBeenNthCalledWith(1, 'col1', {
+        skipInvalidFiles: false,
+        items: [
+          { id: 'published', fieldData: { name: 'Live One' } },
+          { id: 'never-published', fieldData: { name: 'Draft One' } },
+        ],
+      });
+      // Then each item is retried on its own against the live endpoint.
+      expect(mockUpdateItemsLive).toHaveBeenNthCalledWith(2, 'col1', {
+        skipInvalidFiles: false,
+        items: [{ id: 'published', fieldData: { name: 'Live One' } }],
+      });
+      expect(mockUpdateItemsLive).toHaveBeenNthCalledWith(3, 'col1', {
+        skipInvalidFiles: false,
+        items: [{ id: 'never-published', fieldData: { name: 'Draft One' } }],
+      });
+      // Only the never-published item falls through to the staged endpoint, and
+      // its body is byte-for-byte the live body (Connector Prime Directive).
+      expect(mockUpdateItemsStaged).toHaveBeenCalledTimes(1);
+      expect(mockUpdateItemsStaged).toHaveBeenCalledWith('col1', {
+        skipInvalidFiles: false,
+        items: [{ id: 'never-published', fieldData: { name: 'Draft One' } }],
+      });
+      // Both records come back (published via live, draft via staged).
+      expect(result.map((f) => f.id).sort()).toEqual(['never-published', 'published']);
+    });
+
+    it('propagates non-never-published errors without any staged fallback', async () => {
+      mockUpdateItemsLive.mockReset();
+      mockUpdateItemsLive.mockRejectedValue(
+        Object.assign(new Error('Webflow 400'), {
+          isAxiosError: true,
+          response: { status: 400, data: { message: 'Validation error: slug is required' } },
+        }),
+      );
+      mockUpdateItemsStaged.mockReset();
+
+      await expect(connector.updateRecords(tableSpec, files)).rejects.toMatchObject({
+        response: { status: 400 },
+      });
+      expect(mockUpdateItemsStaged).not.toHaveBeenCalled();
     });
   });
 });

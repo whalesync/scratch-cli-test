@@ -243,6 +243,28 @@ export class WebflowApiClient {
     return response.data;
   }
 
+  /**
+   * Create items in the STAGED collection — `POST /collections/{id}/items`, with
+   * no `/live`. The items are created as unpublished (`lastPublished: null`), i.e.
+   * never published. Counterpart to `createItemsLive`; used to seed the
+   * never-published precondition in tests, and available for any future
+   * staged-create flow.
+   */
+  async createItemsStaged(
+    collectionId: string,
+    request: { skipInvalidFiles: boolean; items: CollectionItem[] },
+  ): Promise<CollectionItemListNoPagination> {
+    const { skipInvalidFiles, items } = request;
+    const response = await this.withRetry(() =>
+      this.http.post<CollectionItemListNoPagination>(
+        `/collections/${encodeURIComponent(collectionId)}/items`,
+        { items },
+        { params: { skipInvalidFiles } },
+      ),
+    );
+    return response.data;
+  }
+
   async updateItemsLive(
     collectionId: string,
     request: { skipInvalidFiles: boolean; items: CollectionItemWithIdInput[] },
@@ -251,6 +273,30 @@ export class WebflowApiClient {
     const response = await this.withRetry(() =>
       this.http.patch<CollectionItemListNoPagination>(
         `/collections/${encodeURIComponent(collectionId)}/items/live`,
+        { items },
+        { params: { skipInvalidFiles } },
+      ),
+    );
+    return response.data;
+  }
+
+  /**
+   * Update items on the STAGED collection — `PATCH /collections/{id}/items`, with
+   * no `/live`. This is the fallback for items that have never been published:
+   * Webflow rejects a live PATCH of such an item with a 409 ("Live PATCH updates
+   * can't be applied to items that have never been published"), so we land the
+   * edit on the staged draft instead. The item stays a draft — matching its
+   * current Webflow state — because a staged update never publishes. The request
+   * body is byte-for-byte identical to `updateItemsLive`; only the URL differs.
+   */
+  async updateItemsStaged(
+    collectionId: string,
+    request: { skipInvalidFiles: boolean; items: CollectionItemWithIdInput[] },
+  ): Promise<CollectionItemListNoPagination> {
+    const { skipInvalidFiles, items } = request;
+    const response = await this.withRetry(() =>
+      this.http.patch<CollectionItemListNoPagination>(
+        `/collections/${encodeURIComponent(collectionId)}/items`,
         { items },
         { params: { skipInvalidFiles } },
       ),

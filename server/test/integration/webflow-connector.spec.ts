@@ -19,6 +19,7 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
 }));
 
 import { X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { WebflowApiClient } from 'src/remote-service/connectors/library/webflow/webflow-api-client';
 import { WebflowConnector } from 'src/remote-service/connectors/library/webflow/webflow-connector';
 import { WEBFLOW_ASSETS_TABLE_ID_PREFIX } from 'src/remote-service/connectors/library/webflow/webflow-json-schema';
 import { WEBFLOW_PAGES_TABLE_ID_PREFIX } from 'src/remote-service/connectors/library/webflow/webflow-types';
@@ -238,6 +239,121 @@ describeIfKey('WebflowConnector — live API', () => {
         afterDelete.push(...files);
       });
       expect(afterDelete).toHaveLength(0);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Publishing an edit to a never-published item (DEV-10642)
+  //
+  // A CMS item created via the STAGED endpoint (or authored as a draft in
+  // Webflow) has `lastPublished: null`. The bulk live PATCH is atomic and 409s
+  // ("Live PATCH updates can't be applied to items that have never been
+  // published") if ANY item in the batch was never published — so one draft item
+  // used to sink the whole batch (the reported bug: ~30 records "failed"). The
+  // connector now catches that 409 and retries per-record, falling back to the
+  // staged endpoint for the never-published ones.
+  //
+  // This exercises the exact repro: a mixed batch of one published + one
+  // never-published item, published together in a single `updateRecords` call.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('never-published edit falls back to staged in a mixed batch (DEV-10642)', () => {
+    // The connector's createRecords always publishes live, so we reach past it to
+    // the api-client's staged create to manufacture the never-published item.
+    const apiClient = new WebflowApiClient(API_KEY as string);
+    let publishedId: string | undefined;
+    let neverPublishedId: string | undefined;
+
+    afterAll(async () => {
+      const ids = [publishedId, neverPublishedId].filter((id): id is string => Boolean(id));
+      if (ids.length > 0) {
+        try {
+          await connector.deleteRecords(
+            cmsSpec,
+            ids.map((id) => ({ id }) as ConnectorFile),
+          );
+        } catch {
+          // ignore — deleteRecords already tolerates never-published (live-delete 404)
+        }
+      }
+    });
+
+    it('publishes edits to both a published and a never-published item in one batch', async () => {
+      const collectionId = cmsSpec.id.remoteId[1];
+      const suffix = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+      // ── Seed A: a normally-published item (connector create == live publish) ─
+      const publishedName = `Scratch neverpub published ${suffix}`;
+      const publishedSlug = `scratch-neverpub-published-${suffix}`;
+      const createdPublished = await connector.createRecords(cmsSpec, [
+        { fieldData: { name: publishedName, slug: publishedSlug } } as ConnectorFile,
+      ]);
+      publishedId = (createdPublished[0] as Record<string, unknown>).id as string;
+      expect(publishedId).toBeDefined();
+      expect((createdPublished[0] as { lastPublished?: string | null }).lastPublished).toBeTruthy();
+
+      // ── Seed B: a never-published item (staged create → lastPublished null) ──
+      const draftName = `Scratch neverpub draft ${suffix}`;
+      const draftSlug = `scratch-neverpub-draft-${suffix}`;
+      const stagedCreate = await apiClient.createItemsStaged(collectionId, {
+        skipInvalidFiles: false,
+        items: [{ fieldData: { name: draftName, slug: draftSlug } }],
+      });
+      neverPublishedId = stagedCreate.items?.[0]?.id;
+      expect(neverPublishedId).toBeDefined();
+      // Precondition: it genuinely was never published.
+      expect(stagedCreate.items?.[0]?.lastPublished).toBeFalsy();
+
+      // Narrow both ids to `string` for the rest of the test (they are the outer
+      // `let`s that afterAll uses for cleanup).
+      if (!publishedId || !neverPublishedId) throw new Error('Test seed failed to produce both record ids');
+
+      // ── Act: publish an edit to BOTH in a single batch ──────────────────────
+      // Before the fix, the atomic bulk live PATCH rejected with 409 because of
+      // item B and failed the whole batch (item A included).
+      const publishedUpdatedName = `${publishedName} (updated)`;
+      const draftUpdatedName = `${draftName} (updated)`;
+      await expect(
+        connector.updateRecords(
+          cmsSpec,
+          [
+            {
+              id: publishedId,
+              fieldData: { name: publishedUpdatedName, slug: publishedSlug },
+            } as unknown as ConnectorFile,
+            {
+              id: neverPublishedId,
+              fieldData: { name: draftUpdatedName, slug: draftSlug },
+            } as unknown as ConnectorFile,
+          ],
+          [{ fieldData: { name: publishedUpdatedName } }, { fieldData: { name: draftUpdatedName } }],
+        ),
+      ).resolves.toBeDefined();
+
+      // ── Assert: both edits landed ───────────────────────────────────────────
+      const refetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(cmsSpec, [publishedId, neverPublishedId], async ({ files }) => {
+        refetched.push(...files);
+      });
+      const byId = new Map<string, ConnectorFile>();
+      for (const f of refetched) byId.set((f as Record<string, unknown>).id as string, f);
+
+      const publishedAfter = byId.get(publishedId) as
+        | { fieldData: { name: string }; lastPublished?: string | null }
+        | undefined;
+      const draftAfter = byId.get(neverPublishedId) as
+        | { fieldData: { name: string }; lastPublished?: string | null }
+        | undefined;
+
+      // The published item updated live and stays published.
+      expect(publishedAfter?.fieldData.name).toBe(publishedUpdatedName);
+      expect(publishedAfter?.lastPublished).toBeTruthy();
+
+      // The never-published item's edit landed via the staged endpoint, and it was
+      // NOT auto-published — `lastPublished` is still null. (Prime Directive: we
+      // only changed the endpoint, never the data, and never published for the user.)
+      expect(draftAfter?.fieldData.name).toBe(draftUpdatedName);
+      expect(draftAfter?.lastPublished).toBeFalsy();
     });
   });
 
