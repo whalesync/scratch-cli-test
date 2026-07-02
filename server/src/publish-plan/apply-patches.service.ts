@@ -68,6 +68,19 @@ export class ApplyPatchesService {
       else toWrite.push(entry);
     }
 
+    // 4b. Non-accumulation model (DEV-10630): force `dirty` back to `main` before
+    //     applying, so the branch becomes exactly `main` + THIS upload's patch. A
+    //     publish then ships precisely what the user is looking at, never mixed
+    //     with anything else that happened to be staged on `dirty` (e.g. an edit
+    //     they since discarded locally, which used to linger here and reappear in
+    //     the next publish plan). We intentionally no longer preserve other edits
+    //     on `dirty`. The step-5 base reads below therefore resolve against
+    //     `main` content, which is the point. Safe under the single-surface
+    //     assumption (a connection isn't concurrently synced / web-reviewed while
+    //     a publish runs); the DEV-10316 dirty gate stays on as the tripwire that
+    //     refuses rather than clobbers if that assumption is ever violated.
+    await this.scratchGitService.resetDirtyToMain(repoId);
+
     // 5. Read existing dirty contents for writes (merge patches need a base).
     const filesToCommit: { path: string; content: string }[] = [];
     for (const entry of toWrite) {

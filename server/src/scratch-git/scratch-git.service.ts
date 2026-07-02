@@ -191,6 +191,21 @@ export class ScratchGitService {
   }
 
   /**
+   * Force-reset the connection's `dirty` branch back to `main`, discarding every
+   * change currently staged on it. Whole-branch reset — for a single path use
+   * `discardChanges(repoId, path)`.
+   *
+   * Used by the publish flow (non-accumulation model, DEV-10630): each upload
+   * rebuilds `dirty` from `main` and applies only the current approved patch, so
+   * `dirty` is a pure projection of what this publish will do rather than an
+   * accumulator of prior edits. That is what stops a locally-discarded edit which
+   * still lingered on `dirty` from reappearing in the next publish plan.
+   */
+  async resetDirtyToMain(repoId: string): Promise<void> {
+    await this.scratchGitClient.resetRepo(repoId);
+  }
+
+  /**
    * Reconcile `dirty` onto `main`, re-applying the user's edits. `excludePaths`
    * are paths to **converge to `main`** (skip re-applying), used by the publish
    * reconcile to drop published / no-op / desktop-failed edits from `dirty` while

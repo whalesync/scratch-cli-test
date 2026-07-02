@@ -69,6 +69,10 @@ describe('ApplyPatchesService.applyPatches', () => {
 
     const scratchGitService = {
       resolveConnectionRepoPath: jest.fn().mockResolvedValue('org/wkb/ca'),
+      // DEV-10630 (non-accumulation): applyPatches force-resets dirty to main
+      // before applying, so a publish ships exactly this upload and nothing else
+      // that lingered on dirty.
+      resetDirtyToMain: jest.fn().mockResolvedValue(undefined),
       getRepoFile: jest.fn((_repo: string, _branch: string, path: string) =>
         Promise.resolve(existingContent[path] ? { content: existingContent[path] } : null),
       ),
@@ -134,6 +138,38 @@ describe('ApplyPatchesService.applyPatches', () => {
     const content = JSON.parse(commitCalls[0].files[0].content) as Record<string, unknown>;
     expect(content).toEqual({ id: 'rec1', name: 'New Name', industry: 'Tech' });
     expect(result.patchCount).toBe(1);
+  });
+
+  it('force-resets dirty to main before reading the base or writing (publish verbatim, DEV-10630)', async () => {
+    const { service, mocks } = buildService(
+      { patches: [{ path: 'Companies/rec1.json', patch: { name: 'New Name' } }] },
+      { existingContent: { 'Companies/rec1.json': JSON.stringify({ id: 'rec1', name: 'Old Name' }) } },
+    );
+
+    await service.applyPatches(defaultArgs());
+
+    const { resetDirtyToMain, getRepoFile, commitFilesToBranch } = mocks.scratchGitService;
+    expect(resetDirtyToMain).toHaveBeenCalledWith('org/wkb/ca');
+    // The reset must precede the base read AND the write: dirty is rebuilt from
+    // main so the publish plan reflects exactly this upload, never an edit that
+    // was staged on dirty earlier and since discarded locally.
+    expect(resetDirtyToMain.mock.invocationCallOrder[0]).toBeLessThan(getRepoFile.mock.invocationCallOrder[0]);
+    expect(resetDirtyToMain.mock.invocationCallOrder[0]).toBeLessThan(commitFilesToBranch.mock.invocationCallOrder[0]);
+  });
+
+  it('resets dirty to main even on a delete-only upload (DEV-10630)', async () => {
+    const { service, mocks, deleteCalls } = buildService({
+      patches: [{ path: 'Companies/rec1.json', patch: null }],
+    });
+
+    await service.applyPatches(defaultArgs());
+
+    const { resetDirtyToMain, deleteFilesFromBranch } = mocks.scratchGitService;
+    expect(resetDirtyToMain).toHaveBeenCalledWith('org/wkb/ca');
+    expect(deleteCalls).toHaveLength(1);
+    expect(resetDirtyToMain.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteFilesFromBranch.mock.invocationCallOrder[0],
+    );
   });
 
   it('writes a new file when the patch has no existing base', async () => {
