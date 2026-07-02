@@ -2,199 +2,219 @@
 
 - **Status:** In Progress
 - **Created:** 2026-06-29
+- **Revised:** 2026-07-02 — Phases 0–3 complete; the Table-view strategy (old Phases 4/5) is replaced by the sibling-surface strategy in §0.
 - **Author:** Chris Hoefgen
 - **Parent issue:** [DEV-10615 — [MAJOR] Revise desktop review UI](https://linear.app/whalesync/issue/DEV-10615/major-revise-desktop-review-ui)
-- **Child issues (all assigned to Chris Hoefgen):** Phase 0 [DEV-10617](https://linear.app/whalesync/issue/DEV-10617) · Phase 1 [DEV-10616](https://linear.app/whalesync/issue/DEV-10616) *(in progress)* · Phase 2 [DEV-10618](https://linear.app/whalesync/issue/DEV-10618) · Phase 3 [DEV-10619](https://linear.app/whalesync/issue/DEV-10619) · Phase 4 [DEV-10649](https://linear.app/whalesync/issue/DEV-10649) · Phase 5 [DEV-10620](https://linear.app/whalesync/issue/DEV-10620). See §8 for the build order.
+- **Child issues (all assigned to Chris Hoefgen):** Phase 0 [DEV-10617](https://linear.app/whalesync/issue/DEV-10617) ✅ · Phase 1 [DEV-10616](https://linear.app/whalesync/issue/DEV-10616) ✅ · Phase 2 [DEV-10618](https://linear.app/whalesync/issue/DEV-10618) ✅ · Phase 3 [DEV-10619](https://linear.app/whalesync/issue/DEV-10619) ✅ · Phases 4+5 [DEV-10649](https://linear.app/whalesync/issue/DEV-10649) (re-scoped 2026-07-02, done together) · Phase 6 [DEV-10620](https://linear.app/whalesync/issue/DEV-10620) (re-scoped 2026-07-02) · Phase 7 [DEV-10654](https://linear.app/whalesync/issue/DEV-10654) · Phase 8 [DEV-10655](https://linear.app/whalesync/issue/DEV-10655) · Phase 9 [DEV-10656](https://linear.app/whalesync/issue/DEV-10656) · [DEV-10626](https://linear.app/whalesync/issue/DEV-10626) (Playwright coverage reminder). See §8 for the build order.
 - **Design source:** [`new-review-designs/README.md`](./new-review-designs/README.md) and the `.dc.html` prototypes alongside it (flagship: `Whalesync App.dc.html`).
-- **Scope note:** This plan focuses **mostly on the dedicated review surface** — the screen the user lives on while reviewing pending changes (Table view, By-type view, filter chips, and the detail drawer). The app shell (top bar + sidebar) is covered only where it needs touching. Implementation will happen in **other sessions**, one merge request per phase.
-- **Already in flight:** **the detail drawer (Phase 1) has been started** under child issue [DEV-10616 — Record changes panel](https://linear.app/whalesync/issue/DEV-10616) — branch `dev-10616-record-changes-panel` (Conductor worktree `beirut`). It is deliberately picked up first because the drawer is the most independent chunk: it adds a new component beside the grid and does **not** depend on the FolderDataGrid restyle, filter chips, or By-type view. See §4 Phase 1 for what's built vs. remaining.
+- **Scope note:** This plan focuses **mostly on the dedicated review surface** — the screen the user lives on while reviewing pending changes (Table view, By-type view, filter chips, and the detail drawer). The app shell (top bar + sidebar) is covered only where it needs touching. Implementation happens in **other sessions**, one merge request per phase.
 
-> Each numbered phase below is intended to become its own **Linear child issue under DEV-10615**. Those issues will be generated once this plan is approved (DEV-10616 already exists for Phase 1). Not everything in the design will be built — the **Work Chunk Catalog** exists so we can decide, chunk by chunk, what is worth building before committing each phase.
+---
+
+## 0. Strategy revision (2026-07-02)
+
+**What changed:** the original Phases 4 and 5 planned to rework the Table view **inside `FolderDataGrid.tsx`** — flag-gating new cell rendering in its canvas draw loop (old Phase 4) and wrapping/restyling its chrome (old Phase 5). That strategy was attempted twice and abandoned: flag-gating new behavior inside the mature ~4,300-line component created numerous side effects and made the code very complex. The latest attempt is preserved, unmerged, on branch `before-after-diff-not-showing` (commit `b07d6d224`) — its shared `word-diff.ts` work is salvaged in Phase 4 below, and its draw-loop logic is reference material for the new grid.
+
+**The new strategy — a sibling surface:**
+
+1. **A new top-level component, `FolderReviewSurface`,** is rendered **instead of** `FolderDataGrid`. The choice lives in the parent — `WorkspaceContent.tsx`'s data-view branch — on the existing `DESKTOP_REVIEW_SURFACE_V2` flag (`useReviewSurfaceV2Enabled()`): flag on → `FolderReviewSurface`, flag off → `FolderDataGrid` untouched. Revert = flip one branch.
+2. **The new surface owns the entire new review UI:** the header chrome (context banner, subbar with view toggle / filter pills / live counters) and a **new, purpose-built canvas grid** (`ReviewTableGrid`, its own glide-data-grid instance). `FolderDataGrid`'s grid internals are used as *inspiration/reference* — its draw patterns, diff classification, and tokens — not forked wholesale.
+3. **`RecordChangesDrawer` and the By-type view become exclusive to the new surface.** All v2 wiring currently inside `FolderDataGrid` (the flag read, drawer single-click open, by-type data load, Table/By-type toggle, per-group bulk approve) moves into `FolderReviewSurface`, and `FolderDataGrid` is stripped back to pre-v2 behavior.
+4. **Scope of the new grid:** review-first **plus filters and inline cell editing** — rendering for all field types, review-state visualization, status pills, approve/reject/drawer integration, the existing filter pills, glide overlay editing, sort, and column resize. **Dropped by design:** the `FieldValuePanel` diff popover and the unified-diff mode (inline diffs replace both). **Deferred until dogfooding demands them:** columns show/hide picker, validation-gutter visuals, `targetRecord` search jump.
+
+`FolderDataGrid` is on a **deprecation path**: once the flag graduates, it (and its v1-only chrome — unified diff, `FieldValuePanel`) can be deleted. Until then the two surfaces coexist, kept from drifting by shared extracted modules (§3).
 
 ---
 
 ## 1. Guiding constraints
 
-1. **Don't break the existing structure.** The production review experience is a mature, canvas-based grid (`FolderDataGrid.tsx`, ~148 KB) plus a detail view (`RecordDetailView.tsx`, ~60 KB) and a publish modal (`PublishChangesModal.tsx`, ~72 KB). New surfaces are layered in **additively** and behind a flag where they replace something; we reach parity before removing anything.
-2. **Layer over multiple MRs.** Each phase is independently shippable and independently revertible. A half-landed redesign must still leave the app fully usable.
-3. **Reuse the foundations that already exist** (see §3). The design was authored directly on the desktop app's own tokens and primitives, so most of the work is *composition and grouping*, not building diff/colors/state from scratch.
-4. **Server-first only where required.** This work is almost entirely renderer-side. The review-state ladder (published → approved → local) and its CLI/IPC calls already exist; no new server endpoint is anticipated for the core review surface. Flag any phase that turns out to need a server change so it lands as a separate, earlier MR.
+1. **Never modify `FolderDataGrid` for v2.** The lesson of the failed attempts: the flag switch lives **above** it (in `WorkspaceContent`), the new UI is a **parallel sibling surface**, and `FolderDataGrid` returns to — and stays at — pre-v2 behavior. Flag-off users must see zero change through the entire sequence.
+2. **Layer over multiple MRs.** Each phase is independently shippable and independently revertible. New-surface phases ship **dark** (built, tested, unmounted) until the single cutover MR; a half-landed redesign must still leave the app fully usable.
+3. **Reuse the foundations that already exist** (see §3), and **extract shared modules rather than fork logic**: diff classification, row/result types, word-diff, tokens. The two grids may differ in draw code (that's the point) but never in what counts as a change.
+4. **Server-first only where required.** This work is entirely renderer-side. The review-state ladder (published → approved → local) and its CLI/IPC calls already exist; no new server endpoint is anticipated. Flag any phase that turns out to need a server change so it lands as a separate, earlier MR.
 
 ---
 
 ## 2. What already exists vs. what's new
 
-The single most important planning fact: **the new design is ~75% restyle/recompose of surfaces that already exist, and ~25% genuinely new capability.** Mapping the three design surfaces onto today's code:
+### Landed (Phases 0–3, all on `master`)
 
-### App shell (top bar + sidebar) — *mostly already exists*
-- **Top bar** — `WorkspaceHeader.tsx` already renders the workspace name, **Open in…**, **Pull all**, **Publish all · N** (carries the approved-pending count, `approvedPendingPublishCount`), and the **"N to review" pill** gated on `unreviewedCount` (DEV-10449/DEV-10615 lineage). The "Re-download files" action and exact pill styling are the only deltas.
-- **Sidebar** — `WorkspaceSidebar.tsx` + `FolderTree.tsx` already render the connector/folder tree with per-folder **needs-review (blue) / approved (gray) dots** (fed by `useReviewStats` → `ReviewStat`), the "N total files" footer, and the secondary nav (Connections / Validation / Publish History / Workspace Settings / user row).
-- **Verdict:** Treat the shell as **out of primary scope**. Pick up only the small restyle deltas if/when we want pixel parity (see optional Phase 5).
+- **Foundations** ✅ (`c714ab206`, DEV-10617) — the `DESKTOP_REVIEW_SURFACE_V2` per-user flag (`hooks/use-review-surface-v2.ts`, declared in shared-types `UserExperimentFlags` + server `UserFlag`) and the change-type grouping selectors (`review-surface/group-pending-changes-by-change-type.ts`, `review-surface/build-by-type-group-model.ts`, with tests).
+- **Detail drawer** ✅ (`ec656b846`, DEV-10616) — `RecordChangesDrawer.tsx`, the right-side review-and-act overlay (header stepper, changed-fields-only body, Approve · next → footer), plus `record-diff-helpers.ts` shared with the inline `RecordDetailView`. Self-loading via `readDiffRecordData`; approve/reject via `acceptRecord`/`rejectRecord`.
+- **By-type grouped view** ✅ (`535981b01`, DEV-10618) — `review-surface/ByTypeView.tsx` + `ByTypeGroupBlock` + `ByTypeGroupRow` (+ stories), one block per change type with "Approve all N" bulk actions; `reviewSurfaceViewMode: 'table' | 'by-type'` in `workspace-ui-store`.
+- **Description minimap** ✅ (`6416415c1`, DEV-10619) — `ContentDiffWithMap.tsx`, the "Changes only" ⇄ "Full + map" toggle with the tick-mark minimap rail, used by the drawer for long-form fields.
 
-### Review surface — *Table view exists; By-type view is new*
-- **Table view** ≈ today's `FolderDataGrid`. It already has: the **changed-cell wash** (`--modified-needs-review-bg`), **inline word diffs** (`getWordDiffSegments` in `shared/word-diff.ts`, drawn on canvas via `drawWordDiffText`), **created/deleted row tints** (`--create-*` / `--delete-*` tokens), **status dots**, **filter pills** (`GridFilter`: `needs-review` / `approved` / `has-problems`, global + per-column scope in `workspace-ui-store`), and **bulk approve / reject / discard** (`acceptGridFieldChanges`, `rejectAllChanges`, `discardAllChanges`, with a confirm modal). The design's Table view is a **restyle + a couple of additions** (per-change-type filter chips like *price / description / inventory / new / removed* with live counts; status pills), not a rebuild. The in-cell diff *rendering* itself — inline diffs for every field size (incl. long text), solid change-type fills, diff-aware column widths, and **dropping** the diff popover + Unified diff view — is reworked in **Phase 4** (the one phase that touches the canvas draw loop, flag-gated).
-- **By-type view** — **net new.** No grouped-by-change-type surface exists anywhere today. This is the headline new capability: group pending changes by *what changed* (a field, a create, a delete), with per-group summary pills and **"Approve all N"** bulk actions.
+All of these are currently **hosted inside `FolderDataGrid`** (flag-gated). The new phases re-home the drawer and By-type view into `FolderReviewSurface` and strip that hosting out.
 
-### Detail diff drawer — *new drawer in progress (DEV-10616); description minimap still new*
-- `RecordDetailView.tsx` provides the full per-record detail with **prev/next stepping** (`onSelectIndex`), **per-field diffs**, **per-field and per-record approve / reject / discard**, and the published/approved/local model. It renders **inline, replacing the grid** (driven by `selectedRecordFilename`).
-- **In progress:** rather than re-housing `RecordDetailView`, a **new `RecordChangesDrawer`** (right-side overlay) has been built as a fast review-and-act surface that coexists with the inline view (see §4 Phase 1). Single-click a changed row → drawer; double-click → inline editor. Shared diff helpers were extracted to `record-diff-helpers.ts` so both consume one model.
-- **Still new / ahead:** the **description block's "Changes only" vs "Full + map" toggle and the minimap rail** (tick marks at changed paragraphs + a scroll-tracking viewport box) — the most novel piece, prototyped in `reference/Post Diff Review v2.dc.html`. Not in the drawer yet (Phase 3 / chunk K).
+### Still to build (the new Phases 4–9)
+
+- **`ReviewTableGrid`** — the new canvas Table view: inline `del → ins` diffs at **every** field size, solid change-type cell fills, a status-pill column, diff-aware column widths, editing/sort/resize. Not a restyle of `FolderDataGrid` — a new, much smaller grid built to the v2 design directly, salvaging the abandoned `b07d6d224` draw logic.
+- **`FolderReviewSurface`** — the top-level host: header chrome (context banner, subbar), data hooks, drawer/By-type housing, bulk actions.
+- **Change-type filter chips** with live counts + drawer-stepper scoping (the design's remaining chrome).
 
 ---
 
 ## 3. Shared foundations (build/confirm once, reuse everywhere)
 
-These already exist in the codebase and are what makes the redesign tractable. Confirm and, where noted, extend them **before** the surface phases.
-
-| Foundation | Status today | Notes for the redesign |
+| Foundation | Status | Notes |
 | --- | --- | --- |
-| **Review-state tokens** (`--modified/create/delete-needs-review-{bg,stroke}`, `--highlight-fill/border`) | ✅ Defined in `src/renderer/src/theme/globals.css` | The design references these exact vars. No new palette needed. |
-| **Word-diff engine** (`getWordDiffSegments`) | ✅ `scratch-git-2`-shared `shared/word-diff.ts` | Powers inline `del`/`ins` cells. The design's "deleted precedes inserted" convention matches our segment model. |
-| **Review stats / counts** (`ReviewStat { unreviewed, approved }`, `useReviewStats`, `buildApprovedPublishBreakdown`) | ✅ `hooks/use-review-stats.ts`, `pages/workspace/review-publish-breakdown.ts` | Per-folder pending/approved counts arrive over IPC and refresh on a debounced "review-stats-may-have-changed" event. The design's live pending/approved counters bind to these. **Gap:** per-*change-type* counts (price vs description vs new vs removed) are **not** computed today — the By-type view needs a new client-side grouping derived from the already-loaded diff rows (no server change). |
-| **Review-state ladder actions** (accept / reject / discard, per-field / per-record / bulk) | ✅ Wired through `window.scratchDesktop.*` IPC → `scratchmd` CLI | All new bulk affordances ("Approve all N", "Discard all") reuse these. Respect the ladder ([REVIEW_MODEL](/scratch-git-2/docs/REVIEW_MODEL.md)) — a "reject" touches only the working tree, never the approved set. |
-| **Filter state** (`GridFilter`, `activeFilters` in `workspace-ui-store`) | ✅ Global + per-column scope | The design's filter chips extend this with *change-type* facets. Add new `FilterKind`s (or a parallel facet) rather than forking a second filter system. |
-| **Detail stepping + per-field diff** (`RecordDetailView`, `RecordFieldsGrid`, `diff-renderers.tsx`, `unified-diff-cell.ts`) | ✅ | The drawer reuses this wholesale; only the *housing* (drawer vs inline) and the *description minimap* are new. |
-| **Non-production design reference** (`components/base/ds/screens/*`) | ℹ️ Storybook `/design-sync` reproductions, **not** shipped UI | `WorkspaceShell.tsx`, `RecordDetailView.tsx` (ds), `PublishReviewModal.tsx` here are *mirrors* built so Claude Design had an accurate picture. Use them as a styling reference and a Storybook harness; **do not** wire them into the app. |
+| **Review-state tokens** (`--modified/create/delete-needs-review-{bg,stroke}`, `-approved` variants) | ✅ `theme/globals.css` | The new grid's solid fills use these exact vars. No new palette. |
+| **Word-diff engine** (`getWordDiffSegments`, `src/shared/word-diff.ts`) | ✅ · **Phase 4 extends** | Segment model gains `kind: 'unchanged' \| 'added' \| 'removed'` (salvaged from `b07d6d224` with tests) so the new grid can draw `del → ins`. Only production consumer today is `FolderDataGrid.drawWordDiffText` (mechanical adaptation, behavior identical). |
+| **Cell diff classification** (`getCellDiffState` + friends, today module-level in `FolderDataGrid.tsx` ~L589–700) | ⏳ **extract in Phase 5** → `pages/workspace/grid-cell-diff-state.ts` | Pure functions, zero component-state entanglement. Both grids import **one** implementation of "is this cell changed and what's the from-value" — the highest-value anti-drift extraction. |
+| **Diff grid types** (`DiffRow`, `DiffGridResult`, `CellValidationEntry`, today local to `FolderDataGrid.tsx` ~L105–168) | ⏳ **extract in Phase 5** → `pages/workspace/diff-grid-types.ts` | Type-only move; pins both surfaces to the one `readDiffGridData` IPC contract. |
+| **Review stats / counts** (`useReviewStats`, `buildApprovedPublishBreakdown`) | ✅ | The context banner's pending/approved counters bind to these + `DiffGridResult.filterCounts`. |
+| **Review-state ladder actions** (accept / reject / discard, per-field / per-record / bulk, via `window.scratchDesktop.*` IPC) | ✅ | All new-surface actions reuse these (moved call sites, not new IPC). Respect the ladder ([REVIEW_MODEL](/scratch-git-2/docs/REVIEW_MODEL.md)). |
+| **Filter state** (`GridFilter`, `activeFilters`, `reviewSurfaceViewMode` in `workspace-ui-store`) | ✅ | Store slices are shared; only one surface renders at a time. Change-type chips (Phase 9) extend `GridFilter`, never fork it. |
+| **Grouping selectors** (`group-pending-changes-by-change-type.ts`, `build-by-type-group-model.ts`) | ✅ | Feed the By-type view today and the Phase 9 chip counts tomorrow. |
+| **Drawer + minimap** (`RecordChangesDrawer`, `ContentDiffWithMap`, `record-diff-helpers.ts`) | ✅ | Re-housed (not rewritten) into the new surface. `record-diff-helpers.ts` **stays put** — `RecordDetailView` (v1) imports it too. |
 
-**Net:** there is **no new diff algorithm, no new color system, and no new review-state backend** to build. The new work is grouping, a new view, a drawer housing, and one novel minimap component.
-
----
-
-## 4. Phased plan (each phase → one Linear child issue → one MR)
-
-Phases are ordered to **lead with the most independent net-new surfaces** (the detail drawer, already in flight; then the By-type view and the description minimap) and to **defer every change that touches the Table view's header/chrome to the end** — and to **leave the app shell alone entirely** for now (moved to Future Work). Pick which phases to build from the Work Chunk Catalog in §5.
-
-> **Deliberate ordering decision (2026-06-29):** the Table-view changes — the **cell-body diff rendering (Phase 4)** and the **header/chrome (Phase 5)** (context banner, subbar, status pills, **and** change-type filter chips) — are intentionally sequenced **last**, *after* the drawer, By-type view, and minimap. Phase 5 stays *off* the canvas draw loop (it wraps the grid); **Phase 4 is the one deliberate exception that edits the `drawCell` loop** — flag-gated (`desktop-review-surface-v2`) so it ships dark. The app shell (top bar + sidebar) is **not** in scope right now and lives under Future Work. This keeps the early phases off the mature `FolderDataGrid` chrome and the app shell, lowering the risk of regressing surfaces users rely on today.
-
-### Phase 0 — Foundations & feature-flag scaffold *(small, do first)* — [DEV-10617](https://linear.app/whalesync/issue/DEV-10617)
-- Add a feature flag (OpenFeature/PostHog, per repo convention) — e.g. `desktop-review-surface-v2` — that gates the new surfaces so phases can ship dark and be toggled per-user.
-- Stand up a **client-side change-type grouping selector**: a pure function over the already-loaded diff rows that buckets each pending change into `{ field-modified (per column), created, deleted }` with counts. This is the data backbone the **By-type view (Phase 2)** and the **filter chips (Phase 5)** both consume. No server/IPC change.
-- Add Storybook stories for the new primitives as they land (the `base/ds` harness already exists).
-- **Risk:** low. **Touches:** new `pages/workspace/review-surface/*` module, `workspace-ui-store` (flag-scoped UI state), a new `*.ts` grouping helper + test.
-
-### Phase 1 — Detail drawer (`RecordChangesDrawer`) *(IN PROGRESS — DEV-10616)*
-**Started first because it is the most independent chunk** — a new component beside the grid that doesn't depend on the Table restyle, filter chips, or By-type view. Branch `dev-10616-record-changes-panel` (worktree `beirut`).
-
-**Built so far** (uncommitted on the branch):
-- New `pages/workspace/RecordChangesDrawer.tsx` (~509 lines) — a **right-side drawer overlay** (`Portal` → `#portal`, fixed scrim `rgba(33,37,41,.28)`, 640 px / max 92vw panel with the design's `-12px 0 40px` shadow). Faithful to the design: **header** ("← All changes" back chip, ↑/↓ stepper showing "i / N", close X), **title block** (record name + a state badge keyed exhaustively by `__rowStatus` → NEW/MODIFIED/REMOVED with the matching `--create/modified/delete-*` tokens, plus a session ✓ approved / ✕ rejected marker), **changed-fields-only body** (per-field `from → to` redline for modified, value-only for created, explanatory copy for deleted/invalid), and **footer** (Reject / "Keep record" for deletes, and **Approve · next →** auto-advance).
-- New `pages/workspace/record-diff-helpers.ts` — extracted the shared diff types/helpers (`DiffRecordData`, `DiffRow`, `DiffRowStatus`, `getRecordName`, `toDisplayString`, `rowHasUnreviewedChanges`) **out of** `RecordDetailView.tsx` so the drawer and the inline view share one source of truth (a `.ts`, not `.tsx`, to satisfy `react-refresh/only-export-components`).
-- `FolderDataGrid.tsx` wiring — a **single-click on a changed row** opens the drawer (after a 250 ms delay so a deliberate double-click still opens the inline editor); the stepper set is the page's **changed records only** (`changedRecordFilenames`), mutually exclusive with the inline `RecordDetailView` (opening one closes the other); drawer closes on folder change or when its record leaves the changed set.
-- `posthog.ts` — `trackOpenRecordChangesDrawer`.
-
-**Design choices that differ from the original plan assumption (worth noting):**
-- It is a **purpose-built drawer**, *not* a re-housing of `RecordDetailView`. The inline `RecordDetailView` stays as-is for the full per-field edit/inspect experience; the drawer is the fast review-and-act surface. They coexist.
-- The drawer currently does **record-level** approve/reject only — it does **not** yet include per-field inline editing or the description "Changes only / Full + map" minimap (that is Phase 3 / chunk K, still ahead).
-
-**Remaining for this phase (decide what's in DEV-10616 vs. a follow-up):**
-- Stepper scoping to the *filtered/grouped* set once the By-type view (Phase 2) and filter chips (Phase 5) land (today it's the page's changed set — fine as a standalone).
-- Feature-flag gate (if we want it dark until the rest of v2 catches up) — currently it's a live behavior change to row-click.
-- Keyboard ↑/↓ stepping + Esc to close (the footer hints "↑ ↓ to step"); confirm wired.
-- QA per `/qa-desktop-app` against the live test backend before committing (client-only change, real UI).
-- **Risk:** low–medium — additive new component, but it changes single-click row behavior app-wide; gate or confirm that's desired. **Touches:** `RecordChangesDrawer.tsx` (new), `record-diff-helpers.ts` (new), `FolderDataGrid.tsx`, `RecordDetailView.tsx` (helper extraction), `posthog.ts`.
-
-### Phase 2 — By-type grouped review view *(NEW capability, large)* ⭐ — [DEV-10618](https://linear.app/whalesync/issue/DEV-10618)
-- The headline net-new surface. Add the **"Table / By-type" view toggle** and the grouped view: one block per change type (each modified field, New, Removed), with a **group header** (color dot, name, count, optional summary pill such as "avg −10% · mostly lowered" for numeric fields), a right-aligned **"Approve all N"** bulk action (flips to "All approved ✓"), and **group rows** (status glyph, name, a compact diff/preview cell, trailing value). Row click opens the **drawer from Phase 1**, scoped to that group.
-- Built as a **sibling view** to the canvas grid (DOM, not canvas) selected by the view toggle — the grid stays the default; By-type is opt-in. Bulk actions reuse the existing accept/reject ladder and the Phase 0 grouping selector.
-- The **summary pill** computations (e.g. average % change, "mostly lowered") are per-field-type and may be scoped down to a first set (numeric % for price-like fields) with others added later — call this out in the issue as a sub-decision (chunk H).
-- **Risk:** medium — additive (new view), but it's the largest single chunk and introduces a second rendering path for the same data. *Mitigation:* consume the **one** Phase 0 grouping selector and reuse the Phase 1 drawer for the act-on-it step. **Touches:** new `review-surface/ByTypeView.tsx` + group/row components, `workspace-ui-store` (view mode), the grouping helper. **Does not touch the canvas grid's draw loop or the app shell.**
-
-### Phase 3 — Description "Changes only / Full + map" minimap *(NEW capability, large)* ⭐ — [DEV-10619](https://linear.app/whalesync/issue/DEV-10619)
-- The most novel component. Inside the **drawer's** description block (Phase 1), add the segmented **"Changes only" ⇄ "Full + map"** toggle:
-  - *Changes only* — render only changed paragraphs (inline redline), collapsing runs of unchanged paragraphs into a "▾ N unchanged paragraph(s)" divider. No background wash (everything shown is a change).
-  - *Full + map* — the full description in a scroll pane beside a **minimap rail** that draws a tick at each changed paragraph's true position (`offsetTop / scrollHeight`) plus a live **viewport box** that tracks the reader's scroll.
-- Self-contained component; reuses the word-diff engine for the inline redline. The scroll-position math is the non-trivial part (recompute on scroll + after layout), prototyped in `reference/Post Diff Review v2.dc.html`.
-- Slots into the drawer once Phase 1 lands; could also drop into the inline `RecordDetailView` as a standalone improvement.
-- **Risk:** medium (isolated component, but real interaction/measurement logic). **Touches:** new `DescriptionDiffWithMap.tsx`, hook into `RecordChangesDrawer` (and optionally `RecordDetailView`) field rendering.
-
-### Phase 4 — Table-view diff cell rendering (inline diffs, solid change fills, diff-aware widths) *(deferred; the one draw-loop exception)* — [DEV-10649](https://linear.app/whalesync/issue/DEV-10649)
-> **Also deferred to the end, and the single deliberate exception to "don't touch the draw loop."** Where Phase 5 restyles the chrome *around* the grid, Phase 4 reworks how the canvas grid *body* paints changed cells — so it edits `FolderDataGrid.tsx`'s `getCellContent`/`drawCell` directly. **Gated behind `desktop-review-surface-v2`**: with the flag off, today's popover + unified-diff behavior is unchanged.
-- **Inline-only diffs in the grid.** Always paint the change in the cell as deleted→inserted (`del old` before `ins new`, per the design), for **every** field size — extend the existing `drawWordDiffText` path (today limited to XS/S text fields) to M/L too.
-- **Drop the diff popover.** With the flag on, don't open the `FieldValuePanel` popover on cell click/hover; the inline diff makes it redundant.
-- **Hide the Unified diff view.** With the flag on, remove the `unifiedDiffMode` toggle and the 68px stacked before/after path (`drawUnifiedDiffCell`); inline diffs replace it.
-- **Solid change-type cell fills.** Fill the whole cell with the **existing** review-state `-bg` tokens applied as solid fills — modified `--modified-needs-review-bg`, created `--create-needs-review-bg`, removed `--delete-needs-review-bg` (+ their `-approved` variants for approved/unpublished). Consistent across modified/created/removed (today created/deleted use lower-opacity row tints). No new palette.
-- **Inline diff for long-form text.** Longer fields (e.g. description) render a one-line truncated token diff in the cell (reuse `getWordDiffSegments`) instead of falling through to plain rendering.
-- **Diff-aware column widths.** Widen a column when its cells carry diffs (the inline `del + ins` is wider than a single value) — hook the width calc (`FolderDataGrid.tsx` ~2006–2032) to bump width when a column has any `diffKind !== null` cell.
-- **Risk:** medium–high — the only phase that edits the mature canvas draw loop (`FolderDataGrid.tsx`, ~4.3k lines). *Mitigation:* flag-gated (ships dark); reuses the existing review-state tokens, `getWordDiffSegments`/`drawWordDiffText`, and `getCellDiffState` — this is rewiring, not new diff/color algorithms. **Touches:** `FolderDataGrid.tsx` (`getCellContent`, `drawCell`, column-width calc, popover trigger, `unifiedDiffMode` toggle), `unified-diff-cell.ts` + `FieldValuePanel.tsx` (gated off when flag on), `theme/globals.css` (only if a fill needs a token tweak). QA per `/qa-desktop-app` against the live test backend before committing.
-
-### Phase 5 — Table-view header & chrome (banner, subbar, status pills, filter chips) *(restyle + chips, deferred to last)* — [DEV-10620](https://linear.app/whalesync/issue/DEV-10620)
-> **Intentionally last.** Per the ordering decision in §4, every change to the Table view's header/chrome is sequenced after the drawer, By-type view, and minimap, so the early phases stay off the mature `FolderDataGrid` chrome. Build only what's still wanted once the net-new surfaces have landed.
-- **Restyle the review chrome** to match the design: the **context banner** ("Review before publishing to … · N pending · M approved", with **Discard all**), the **subbar** (the Table/By-type toggle's home, live approved/pending counts), and **status pills** (modified / created / removed). Keep the canvas grid body untouched (wrap it; don't reach into the draw loop).
-- **Change-type filter chips** (All / one per changed field type / new / removed) with a 6 px color dot and a **live count**, wired into the existing `activeFilters` system via new change-type facets (reusing Phase 0's grouping selector for counts/membership). Selecting a chip narrows the grid rows and **scopes the drawer's stepper** (closes chunk J's remaining piece).
-- **Risk:** medium — extends `GridFilter`/`FilterKind` and wraps `FolderDataGrid` chrome; must not regress the existing needs-review/approved/problems pills. **Touches:** `FolderDataGrid.tsx` surrounding chrome (or a new wrapper), `WorkspaceContent.tsx`, `workspace-ui-store.ts` filter facets, new banner/subbar/chip components.
-
-### Future work — App shell (top bar + sidebar) parity *(out of scope for now)*
-- **Not being touched right now** (explicit decision, 2026-06-29). If we later want full top-bar/sidebar parity with the design: the "N to review" / "Publish all · N" exact pill styling, the kebab menu, the "Re-download files" action, and the ~6 px rounded top-bar corners (the design's documented override of the DS square default).
-- The shell already covers the substance today (workspace name, Open in / Pull all / Publish all · N, the "N to review" pill, the folder tree with review dots, total-files footer, secondary nav), so this is pure cosmetic parity — deferred until the review surface itself is settled. **Would touch** `WorkspaceHeader.tsx`, `WorkspaceSidebar.tsx`.
+**Net:** still no new diff algorithm, color system, or review-state backend. The new work is one purpose-built grid, one host component, two header components, and the extractions that keep the two grids honest.
 
 ---
 
-## 5. Work Chunk Catalog (decide what's worth building)
+## 4. Phased plan (each phase → one Linear issue → one MR)
 
-Use this to green-light or cut chunks before each phase issue is written. Effort is rough (S/M/L/XL). "New vs restyle" tells you how much is genuinely new code.
+> **Ordering invariant:** the flag-on dogfooder (drawer + By-type working inside `FolderDataGrid` today) never regresses mid-sequence, and flag-off users never see any change. Phases 4–6 ship **dark**; Phase 7 is the **single atomic cutover**; Phase 8 is pure deletion of then-dead code.
 
-Rows are grouped by the phase that delivers them (see §4). Effort is rough (S/M/L/XL). "New vs restyle" tells you how much is genuinely new code.
+### Phase 0 — Foundations ✅ *(landed `c714ab206`, DEV-10617)*
+Flag + grouping selectors. See §2.
 
-| # | Chunk | Phase | Surface | New vs restyle | Maps to today | Effort | Optional? |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| A | Feature-flag scaffold + change-type grouping selector | 0 | cross-cutting | new (small) | nothing (grouping); flags exist | S | no — foundation |
-| I | Detail drawer (scrim + right panel + header/footer chrome) | 1 | detail-drawer | new | ✅ **built** — `RecordChangesDrawer.tsx` (DEV-10616) | M | **in progress** |
-| J | Drawer stepper scoped to changed set | 1 | detail-drawer | new | ✅ **built** — page changed set; filtered/grouped scoping in Phase 5 | S | **partly done** (DEV-10616) |
-| F | **By-type grouped view** (groups + group headers + group rows) | 2 | review-bytype | **new** | nothing | L | **decide** |
-| G | "Approve all N" / "All approved ✓" per-group bulk action | 2 | review-bytype | mixed | reuses `acceptGridFieldChanges` ladder | M | **decide** |
-| H | Summary pills (e.g. "avg −10% · mostly lowered") | 2 | review-bytype | new | nothing | M | **likely cut / phase later** |
-| K | **Description "Changes only / Full + map" + minimap rail** | 3 | description-diff | **new** | word-diff exists; minimap is new | L | **decide** |
-| M | Inline-only in-cell diffs (all field sizes) + drop popover + hide Unified view | 4 | review-table | mixed | `drawWordDiffText`/`getWordDiffSegments` exist; popover + unified exist to gate off | M | **greenlit** |
-| N | Inline diff for long-form text (one-line truncated token diff) | 4 | review-table | mixed | reuses word-diff; long text is plain/unified today | S | **greenlit** |
-| O | Solid change-type cell fills (modified/created/removed + approved variants) | 4 | review-table | restyle | `--*-needs-review-bg` tokens exist | S | **greenlit** |
-| P | Diff-aware column widening | 4 | review-table | new | width calc exists, not diff-aware | S | **greenlit** |
-| B | Context banner ("N pending · M approved" + Discard all) | 5 | review-table | restyle | `review-publish-breakdown.ts`, `useReviewStats`, `discardAllChanges` | S | **decide** |
-| C | Subbar with live approved/pending counts + view-toggle control | 5 | review-table | restyle | header counts already computed | S | **decide** |
-| D | Status pills (modified / created / removed) on rows | 5 | review-table | restyle | row `__rowStatus` already exists | S | yes |
-| E | Change-type filter chips (per-field / new / removed, live counts) | 5 | review-table | mixed | extends `GridFilter`/`activeFilters` | M | **decide** |
-| L | App-shell parity + "Re-download files" + kebab | Future | app-shell | restyle | `WorkspaceHeader`/`Sidebar` | S | **deferred — not now** |
+### Phase 1 — Detail drawer ✅ *(landed `ec656b846`, DEV-10616)*
+`RecordChangesDrawer` + `record-diff-helpers.ts`, wired into `FolderDataGrid` behind the flag (single-click on a changed row, 250 ms double-click disambiguation). The hosting moves in Phase 7; the remaining stepper-scoping work is folded into Phase 9.
 
-**Recommended minimum viable redesign:** A → I (in flight) → F → G (the net-new By-type view + a drawer to act on it, on the Phase 0 foundation). K (minimap), the Phase 5 table-chrome chunks (B/C/D/E), H (summary pills), and L (app shell) are the "decide later / deferred" set — with B–E intentionally sequenced last and L out of scope for now.
+### Phase 2 — By-type grouped review view ✅ *(landed `535981b01`, DEV-10618)*
+`ByTypeView` + group components, Table/By-type toggle, folder-wide pending load (cap 1000), per-group bulk approve. Hosting moves in Phase 7.
 
-**Phase 4 (chunks M–P)** is greenlit and grouped with the deferred Table-view work — built alongside/after Phase 5, and the one phase that reaches into the canvas draw loop (flag-gated).
+### Phase 3 — Description minimap ✅ *(landed `6416415c1`, DEV-10619)*
+`ContentDiffWithMap` ("Changes only" ⇄ "Full + map"), rendered by the drawer for long-form fields. Unaffected by the strategy revision — it lives inside the drawer.
+
+### Phase 4 — word-diff segment kinds *(tiny MR; salvage; tracked with Phase 5 in [DEV-10649](https://linear.app/whalesync/issue/DEV-10649))*
+- Cherry-pick `scratch-desktop/src/shared/word-diff.ts` + `word-diff.test.ts` from `b07d6d224`: the segment model changes from `changed: boolean` to `kind: 'unchanged' | 'added' | 'removed'` (today deletions are dropped entirely — the new grid needs them to draw `del → ins`).
+- Mechanically adapt `FolderDataGrid.drawWordDiffText` (~10 lines; its only production consumer) with **identical behavior**: skip `removed` segments, `added` = accent, exactly as today. Tests pin both old and new behavior.
+- **Why its own MR:** touches a shared module + its tests, and unblocks Phase 5 without dragging grid code along.
+- **Risk:** near-zero. **Touches:** `src/shared/word-diff.ts`, `word-diff.test.ts`, `FolderDataGrid.tsx` (mechanical). **Verify:** `yarn build && yarn lint && yarn test` from repo root.
+
+### Phase 5 — shared extractions + `ReviewTableGrid` *(ships dark)*
+- **Extract shared modules** (mechanical; `FolderDataGrid` switches to importing them, zero behavior change):
+  - `pages/workspace/diff-grid-types.ts` — `DiffRow` / `DiffGridResult` / `CellValidationEntry` (+ the optimistic-update helpers `applyAcceptedFieldChangeToFolderDiffData` et al., which the new grid's editing needs).
+  - `pages/workspace/grid-cell-diff-state.ts` — `getCellDiffState`, `resolveEffectivePath`, the readonly/write-once predicates.
+- **Build the new grid** under `pages/workspace/review-surface/`:
+  - `ReviewTableGrid.tsx` — own `DataEditor` with its own `getCellContent`/`drawCell`. Inline `del → ins` at every field size (long-form renders a one-line truncated token diff), solid change-type fills (incl. `-approved` variants), status-pill first column, diff-aware widths, glide built-in overlay editing, header-click sort, column resize, frozen title column, FK `referenceLabels` display, row-click → drawer (keep the 250 ms defer so double-click still edits). **No** popover, **no** unified-diff mode, **no** validation gutter, **no** columns picker. Target well under 1,000 lines.
+  - `review-table-cell-drawing.ts` — pure canvas helpers lifted from `b07d6d224`: the v2 `drawWordDiffText` (kind-aware, `showRemoved`, `wholeValue`, strike-through), status-pill drawing, solid-fill token resolution. Memoize `getWordDiffSegments` results keyed by `filename + columnId + values` — long-form diffs at paint time need it.
+  - `build-review-table-columns.ts` — pure column-model builder: TableView cols → `GridColumn[]` + label/path maps, default widths, `DIFF_COLUMN_WIDTH_MULTIPLIER` (1.6) widening from a `diffCarryingColumnIdSet` (lifted from `b07d6d224`), user `columnWidths` overrides (same store slice as v1, so resized widths stay consistent across surfaces).
+  - `use-folder-schema-and-table-view.ts` — `getFolderMetadata` load + `onConnectionFileChanged` hot-reload.
+- Storybook stories with fixture rows for **every cell state** (modified/created/removed × needs-review/approved, whole-value vs word-level, FK labels, readonly) — this is where canvas fidelity/perf risk gets drained before cutover.
+- **Risk:** low (unmounted). **Touches:** new files + `FolderDataGrid` import swaps only. **Verify:** `yarn build && yarn lint && yarn test`; Storybook review.
+
+### Phase 6 — `FolderReviewSurface` host + banner + subbar + hooks *(ships dark)*
+- `FolderReviewSurface.tsx` — the top-level host, **same props interface as `FolderDataGrid`** (makes the Phase 7 switch a ternary and revert a one-liner). Owns the body switch (`reviewSurfaceViewMode` → `ReviewTableGrid` | `ByTypeView`), pagination footer, bulk approve/reject/discard + confirm modal, and (from Phase 7) the drawer + `RecordDetailView` overlay housing.
+- `ReviewContextBanner.tsx` — "Review before publishing to {connector} · {folder}" + "N pending · M approved" + **Discard all**. The connector name is the banner's one new data need — derive from the folder path's first segment + the workspace connections already loaded in `WorkspaceContent`.
+- `ReviewSubbar.tsx` — Table/By-type toggle (bound to the existing store), the existing three filter pills (needs-review / approved / problems) driving the same `GridFilter` state, right-aligned live counters. Change-type chips join in Phase 9.
+- `use-review-surface-data.ts` — the shared data hook: (a) paged `readDiffGridData` for the table, (b) the folder-wide unreviewed load for By-type/chips (cap 1000) — one shared invalidation (`bumpReviewDataVersion`) so approve/reject/edit refresh both consistently. (They can't share one IPC result — the table pages at 100 with sort/filters; by-type is folder-wide — so we share *invalidation and types*, not bytes.)
+- `use-review-ladder-actions.ts` — all review IPC in one place: per-record approve/reject (drawer callbacks), per-group bulk, discard/reject-all, cell edit (`acceptFieldEditFromInputText` + coercion + optimistic apply).
+- Not mounted anywhere. May merge with Phase 5 into one MR if review size stays acceptable; keeping them split keeps each under ~1,200 new lines.
+- **Risk:** low (unmounted). **Verify:** `yarn build && yarn lint && yarn test`; stories for banner/subbar.
+
+### Phase 7 — cutover *(the one risk MR)*
+- `WorkspaceContent.tsx` data-view branch: `useReviewSurfaceV2Enabled() ? <FolderReviewSurface …/> : <FolderDataGrid …/>`.
+- Move into `FolderReviewSurface`, **largely verbatim from `FolderDataGrid`**: the drawer state machine + stepper + open/close effects; `handleRecordChangeReviewed`; the by-type load + group model + per-group bulk approve + `ByTypeView` render; the `RecordDetailView` overlay housing (so Record/Field deep-editing and ValidationPanel `showField` navigation keep working flag-on); `activateGlobalFilter` handling (the header "N to review" pill must keep filtering the new surface).
+- **Honor the prop contract**: `onIndexingProgress` (reindex-blocking UX) and `onPublishFile` must flow through the new hooks, or workspace-level behavior silently disappears for flag-on users.
+- **`FolderDataGrid` is untouched in this MR** — its v2 branches simply become unreachable (flag-on users no longer render it). That keeps this MR additive + one-line-switch, and revert trivially restores today's behavior.
+- **Accepted deltas at cutover** (confirm before merging): popover + unified-diff dropped by design; columns picker, validation-gutter visuals, `targetRecord` search jump deferred to Phase 9. If search jump turns out to be load-bearing for daily dogfooding, pull it forward into this MR (~80 lines: `findRecordOffset` → page jump + row highlight).
+- **Risk:** medium; revert = flip the one branch. **Verify:** `yarn build && yarn lint`; `/qa-desktop-app` **twice** — flag **ON** (new surface renders data; pills filter; single-click opens drawer; approve/reject advances + refreshes counts; By-type groups + "Approve all N" work; inline edit round-trips; publish gate "N to review" → Publish all intact) and flag **OFF** (FolderDataGrid behavior identical, no drawer, no toggle).
+
+### Phase 8 — strip `FolderDataGrid` to pre-v2 *(pure deletion)*
+- Remove the now-unreachable v2 tendrils. Checklist (line refs at `1aac2b5bf`): the v2 imports (flag hook, drawer, By-type components/model, v2 posthog trackers, `SegmentedControl`, `rowHasUnreviewedChanges`); constants `BY_TYPE_MAX_PENDING_RECORDS` + `RECORD_CHANGES_DRAWER_CLICK_DELAY_MS`; the flag/view-mode state block (~L928–949); the entire drawer block (L1550–1669); the by-type memos + load pipeline (L1917–1982); `handleRecordChangeReviewed` + per-group bulk approve (L2217–2329); the drawer-timer edits in `onCellClicked`/`onCellActivated` (restoring the literal pre-v2 handler bodies); the render branches — `showByTypeBody` guards, Table/By-type toggle (L3347–3364), the `!isByTypeReviewMode` columns-picker gate, the `ByTypeView` body (L3510–3528), the drawer portal (L3854–3875).
+- **Keep** (v1 or shared): `unifiedDiffMode` + `drawUnifiedDiffCell`, `FieldValuePanel`, validation gutter, columns picker, `record-diff-helpers.ts`, the `reviewSurfaceViewMode` store slice, the flag hook + declarations, everything under `review-surface/`.
+- Optionally `git mv` `RecordChangesDrawer.tsx` + `ContentDiffWithMap.tsx` into `review-surface/` now that they're v2-exclusive.
+- **Verify:** `grep -c "ReviewSurfaceV2\|ByType\|byType\|RecordChangesDrawer\|by-type" FolderDataGrid.tsx` → 0; `yarn build && yarn lint`; `/qa-desktop-app` flag-**OFF** regression pass (single-click = select + popover, double-click = editor, pills/kebab/unified-diffs/bulk actions/word-diff highlights/validation gutter all unchanged, exactly one `readDiffGridData` per page load) + flag-**ON** sanity (new surface unaffected).
+- **Risk:** low — everything deleted is dead after Phase 7. Kept separate so the cutover MR reads as additive and this one as subtractive.
+
+### Phase 9 — change-type filter chips + stepper scoping + dogfood parity
+- **Chips** (All / per-changed-field / new / removed, 6 px color dot, live count) in the subbar, counts from `groupPendingChangesByChangeType` over the folder-wide pending set. Selecting a chip narrows the table and **scopes the drawer's stepper** (closes old chunks E and J).
+- **Filtering mechanism:** recommend **client-side** — an active chip renders the table from the folder-wide pending set filtered to the group (cap 1000, matching By-type's existing truncation semantics) — over adding new server/main-process `FilterKind`s. Decide when writing the issue.
+- **Dogfood-driven parity**, scoped from Phase 7 feedback: `targetRecord` search jump, columns show/hide, a per-cell problem indicator if the gutter is missed, session ✓/✕ row markers from the design, keyboard polish.
+- **Risk:** low–medium. **Verify:** `yarn build && yarn lint`; `/qa-desktop-app` flag-on.
+
+### Future work — App shell (top bar + sidebar) parity *(out of scope, unchanged)*
+Pure cosmetic parity (pill styling, kebab, "Re-download files", rounded top-bar corners) — deferred until the review surface is settled. Would touch `WorkspaceHeader.tsx`, `WorkspaceSidebar.tsx`.
+
+### Future work — retire `FolderDataGrid`
+When the flag graduates to everyone: delete `FolderDataGrid` and its v1-only chrome (unified-diff mode, `FieldValuePanel`), un-fork any remaining duplication. Recorded here so the two-grid fork is understood as **temporary**.
+
+---
+
+## 5. Work Chunk Catalog
+
+| # | Chunk | Phase | New vs restyle | Status |
+| --- | --- | --- | --- | --- |
+| A | Feature-flag scaffold + change-type grouping selector | 0 | new (small) | ✅ done |
+| I | Detail drawer (scrim + right panel + chrome) | 1 | new | ✅ done |
+| J | Drawer stepper scoped to changed set | 1 | new | ✅ page + group scoping done; filter scoping → Phase 9 |
+| F | By-type grouped view | 2 | new | ✅ done |
+| G | "Approve all N" per-group bulk action | 2 | mixed | ✅ done |
+| K | Description "Changes only / Full + map" + minimap rail | 3 | new | ✅ done |
+| — | word-diff segment kinds (salvage `b07d6d224`) | 4 | new (tiny) | greenlit |
+| M | Inline-only in-cell diffs (all field sizes); popover + unified view simply don't exist in the new grid | 5 | new grid | greenlit — **re-homed into `ReviewTableGrid`** |
+| N | Inline diff for long-form text (one-line truncated token diff) | 5 | new grid | greenlit — re-homed |
+| O | Solid change-type cell fills (+ approved variants) | 5 | new grid | greenlit — re-homed |
+| P | Diff-aware column widening | 5 | new grid | greenlit — re-homed |
+| D | Status pills (modified / created / removed) on rows | 5 | new grid | greenlit — the new grid's first column |
+| B | Context banner ("N pending · M approved" + Discard all) | 6 | new | greenlit |
+| C | Subbar with live counts + view-toggle | 6 | new | greenlit |
+| E | Change-type filter chips (live counts) | 9 | mixed | **decide** at Phase 9 |
+| H | Summary pills (e.g. "avg −10% · mostly lowered") | — | new | **likely cut / later** |
+| L | App-shell parity + "Re-download files" + kebab | Future | restyle | deferred |
+
+**Recommended path:** Phases 4 → 5 → 6 → 7 → 8 form the core sequence (7 and 8 are not optional once 5–6 exist — dark code that never mounts is worse than no code). Phase 9's chips (E) and the parity items are decided from dogfood feedback; H and L remain cut/deferred.
 
 ---
 
 ## 6. Risks & mitigations
 
-- **Two rendering paths for the same data.** The By-type view (Phase 2) and the canvas grid render the same pending changes differently; they can drift. *Mitigation:* both consume the **one** Phase 0 grouping selector and the **one** review-state ladder — no duplicated diff/state logic.
-- **The grid is canvas, not DOM.** `FolderDataGrid` draws cells on a `<canvas>` (glide-data-grid). New chrome (banner, subbar, chips, By-type, drawer) is **DOM around / beside** the canvas — don't try to render the new surfaces *inside* the canvas. The chrome phases wrap the grid; they don't reach into its draw loop. **Exception — Phase 4** deliberately edits the `drawCell`/`getCellContent` loop to restyle changed cells (inline diffs, solid fills, diff-aware widths) and to drop the popover + Unified diff view — the *only* phase that does. Kept safe by the `desktop-review-surface-v2` flag (ships dark) and by reusing the existing word-diff engine + review-state tokens instead of new drawing primitives.
-- **New detail surface coexists with the inline view.** Phase 1 adds the `RecordChangesDrawer` *beside* the inline `RecordDetailView` (single-click → drawer, double-click → inline) rather than replacing it — but it does change single-click row behavior app-wide. *Mitigation:* confirm that single-click default is desired (or flag-gate it), and keep the inline path as the full-edit fallback.
-- **Filter-system fork.** Adding change-type facets (Phase 5) risks a parallel, divergent filter system. *Mitigation:* extend `GridFilter`/`FilterKind` in `workspace-ui-store`, don't fork.
-- **Publish gate assumption.** Publish is UI-gated on zero unreviewed changes; the review surface must keep that invariant visible (the "N to review" pill blocks "Publish all"). Don't let a new bulk action approve something the ladder wouldn't.
-- **Scope creep from the prototype.** The `.dc.html` files include ideas (some summary pills, concepts in `Bulk Diff Concepts.dc.html`) that may not be worth porting. The catalog flags these as optional/cut; confirm per phase.
+- **Two grids coexisting can drift.** `ReviewTableGrid` and `FolderDataGrid` render the same rows with different draw code. *Mitigation:* the semantics live in shared modules after Phases 4–5 (`grid-cell-diff-state.ts`, `diff-grid-types.ts`, `word-diff.ts`, `shared/schema-columns`, `shared/cell-value-coercion`); only DataEditor config + draw code differ (deliberately). The fork is temporary — see "retire `FolderDataGrid`" in §4.
+- **Cutover feature gaps for flag-on users.** At Phase 7 the dogfooder loses: popover + unified-diff (by design), columns picker, validation-gutter visuals, search jump (deferred). *Mitigation:* the list is explicit and confirmed before the cutover MR merges; anything load-bearing gets pulled forward (search jump is the likely candidate).
+- **Canvas perf with all-size diffs.** The abandoned attempt computed word-diff segments inside every paint — fine for short text, not for long-form at 100 rows. *Mitigation:* memoize segments keyed by `filename + columnId + values` in `review-table-cell-drawing.ts`; validate on a 100-row long-text page during Phase 5 Storybook work.
+- **Prop-contract regressions at the switch.** `onIndexingProgress`, `onPublishFile`, and `activateGlobalFilter` (the header "N to review" pill) must be honored by the new surface from day one or workspace-level behavior silently disappears flag-on. *Mitigation:* `FolderReviewSurface` keeps `FolderDataGrid`'s exact props interface; Phase 7's QA checklist covers all three.
+- **Filter-system fork.** Change-type chips (Phase 9) extend `GridFilter`/`activeFilters` in `workspace-ui-store` — never a parallel filter system.
+- **Publish gate assumption.** Publish stays UI-gated on zero unreviewed changes; no new bulk action may approve something the ladder wouldn't. A "reject" touches only the working tree, never the approved set.
 
 ---
 
-## 7. Open decisions (resolve while writing the phase issues)
+## 7. Open decisions
 
-1. **Which chunks ship?** Confirm the §5 catalog selection — especially F/G (By-type), K (minimap), and the deferred Phase 5 table-chrome chunks B/C/D/E (filter chips et al.). H (summary pills) and L (app shell) are presumed cut/deferred unless you say otherwise.
-2. **Default view.** Does the redesign make **By-type** the default review view, or keep the **Table/grid** as default with By-type opt-in? (Plan assumes grid-default, By-type opt-in, lowest risk.)
-3. **Drawer vs inline.** Is the **drawer** the new universal detail housing, or only used from the new review surfaces (leaving the inline panel elsewhere)?
-4. **Summary-pill scope (H).** If built, which field types get summary pills first (numeric % only, or more)?
-5. **Flag lifetime.** One umbrella flag for the whole v2 surface, or per-phase flags for finer rollout control?
-6. **Server changes.** Confirm the assumption that **no server MR is required** for the review surface (all counts/grouping are client-side over already-loaded diff data). If any chunk needs server-side grouping/counts, split it into an earlier server MR per the repo's server-first rule.
+**Resolved (2026-07-02):**
+1. ~~Table-view strategy~~ — sibling surface (`FolderReviewSurface`), never in-place inside `FolderDataGrid` (§0).
+2. ~~New grid technology~~ — own canvas glide-data-grid instance, salvaging `b07d6d224`.
+3. ~~New grid scope~~ — review-first **plus** filter pills and inline cell editing.
+4. ~~Flag~~ — the existing `DESKTOP_REVIEW_SURFACE_V2` (one umbrella flag; the switch just moves up to `WorkspaceContent`).
+5. ~~Server changes~~ — none required; all counts/grouping stay client-side.
+
+**Still open:**
+1. **Cutover gap acceptance (Phase 7):** confirm the deferred list — especially whether `targetRecord` search jump and the columns picker are daily-dogfooding load-bearing and must pull forward.
+2. **Chip filtering mechanism (Phase 9):** client-side over the folder-wide pending set (cap 1000, recommended) vs. new main-process `FilterKind`s.
+3. **Phase 5/6 MR split:** one MR or two, judged by review size when the code exists.
+4. **Flag retirement timing:** when the new surface graduates, schedule the `FolderDataGrid` deletion (§4 future work).
 
 ---
 
-## 8. Linear issue plan (generated on approval)
+## 8. Linear issue plan
 
-All child issues live under **DEV-10615** and are assigned to Chris Hoefgen. Created 2026-06-29; build order top-to-bottom:
+All child issues live under **DEV-10615**, assigned to Chris Hoefgen. Re-scoped/created 2026-07-02: DEV-10649 now tracks **Phases 4+5 together** (done together; Phase 4 still recommended as its own tiny MR), DEV-10620 tracks Phase 6, DEV-10654/10655/10656 track Phases 7/8/9 (each blocked by its predecessor in Linear), and DEV-10626 (Playwright coverage) was updated for the sibling-surface architecture.
 
-| Phase | Issue | Chunks | Size | Status |
-| --- | --- | --- | --- | --- |
-| 0 — Foundations (flag + grouping selector) | [DEV-10617](https://linear.app/whalesync/issue/DEV-10617) | A | S | Backlog |
-| 1 — Detail drawer (`RecordChangesDrawer`) | [DEV-10616](https://linear.app/whalesync/issue/DEV-10616) | I, J | — | In Progress |
-| 2 — By-type grouped view + per-group bulk approve | [DEV-10618](https://linear.app/whalesync/issue/DEV-10618) | F, G, H? | L | Backlog |
-| 3 — Description "Changes only / Full + map" minimap | [DEV-10619](https://linear.app/whalesync/issue/DEV-10619) | K | L | Backlog |
-| 4 — Table-view diff cell rendering (inline diffs, solid fills, diff-aware widths) | [DEV-10649](https://linear.app/whalesync/issue/DEV-10649) | M, N, O, P | M | Backlog *(deferred; gated by `desktop-review-surface-v2`)* |
-| 5 — Table-view header & chrome (banner, subbar, status pills, filter chips) | [DEV-10620](https://linear.app/whalesync/issue/DEV-10620) | B, C, D, E | M | Backlog *(deferred to last)* |
-| Future — App-shell parity | *(none — out of scope for now)* | L | S | — |
+| Phase | Issue | Size | Status |
+| --- | --- | --- | --- |
+| 0 — Foundations | [DEV-10617](https://linear.app/whalesync/issue/DEV-10617) | S | ✅ Done (`c714ab206`) |
+| 1 — Detail drawer | [DEV-10616](https://linear.app/whalesync/issue/DEV-10616) | M | ✅ Done (`ec656b846`) |
+| 2 — By-type view | [DEV-10618](https://linear.app/whalesync/issue/DEV-10618) | L | ✅ Done (`535981b01`) |
+| 3 — Description minimap | [DEV-10619](https://linear.app/whalesync/issue/DEV-10619) | L | ✅ Done (`6416415c1`) |
+| 4 — word-diff segment kinds | [DEV-10649](https://linear.app/whalesync/issue/DEV-10649) *(tracked with Phase 5)* | XS | Backlog |
+| 5 — shared extractions + `ReviewTableGrid` | [DEV-10649](https://linear.app/whalesync/issue/DEV-10649) *(re-scoped 2026-07-02)* | L | Backlog |
+| 6 — `FolderReviewSurface` host + banner + subbar + hooks | [DEV-10620](https://linear.app/whalesync/issue/DEV-10620) *(re-scoped 2026-07-02)* | M | Backlog |
+| 7 — cutover | [DEV-10654](https://linear.app/whalesync/issue/DEV-10654) | M | Backlog |
+| 8 — strip `FolderDataGrid` | [DEV-10655](https://linear.app/whalesync/issue/DEV-10655) | S | Backlog |
+| 9 — chips + stepper scoping + parity | [DEV-10656](https://linear.app/whalesync/issue/DEV-10656) | M | Backlog |
+| Tests — desktop Playwright coverage (post-cutover) | [DEV-10626](https://linear.app/whalesync/issue/DEV-10626) *(updated 2026-07-02)* | XS | Backlog |
+| Future — app-shell parity · retire `FolderDataGrid` | *(none — out of scope for now)* | — | — |
 
-Each issue links back to this plan and notes its feature-flag gate and the chunks it covers.
-
-> **Sequencing note:** Phase 1's drawer steps through the *changed set* today. The *filtered/grouped*-set scoping (chunk J's remaining piece) is folded into **Phase 5** (filter chips) and the By-type view (**Phase 2**) — once those define a narrowed set, feed it into the drawer's stepper so "↑/↓ within this filter/group" works. The drawer landed first and the later phases extend it, not the reverse.
+> **Sequencing note:** Phases 4–6 ship dark and are safe to land in any adjacent order (4 before 5; 5 before or with 6). Phase 7 is the only MR that changes what any user sees, and only for flag-on users; Phase 8 must follow promptly so the dead drawer/By-type copy inside `FolderDataGrid` never drifts from the live one. The drawer's stepper gains filter/group scoping in Phase 9, fed by whatever narrowed set the chips define.
