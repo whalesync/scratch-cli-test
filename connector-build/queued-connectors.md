@@ -10,6 +10,8 @@ The backlog of services **not yet provisioned** — research + scoring to pick w
 
 **Prepare order — Human Pick first.** Rows marked **✓ Human Pick** are Whalesync-supported connectors with **no Scratch equivalent**; prepare these FIRST, regardless of Score. Everything else is the AI-suggested backlog, ordered by Score. (Whalesync list: 34 connectors from its sitemap, minus Scratch's 28.)
 
+> **⚠️ First-pick rule for an UNATTENDED run — skip `research pending` rows.** Most top Human Picks (Apollo, Outreach, Mailchimp, Dynamics 365, Miro, Bubble, Basedash, Greenhouse, MySQL, Snowflake) are still `research pending` with **no verified free tier / gate** — and several are landmines for an unattended run (no free tier, card-gated, or **DB connectors that need a host, not a web signup**). For an unattended/overnight run, **pick the first row that is actually researched — a 🟢/🟡 gate and a non-blank "Free account" cell.** Good first targets: **ClickUp** (the standout unbuilt 9), then **Jira** / **Asana** (free-forever, REST, paste-able key). Leave the `research pending` Human Picks for an attended run (or research them first).
+
 ## Provisioning gates (two independent axes)
 
 **Payment gating** — how the free account is paywalled. Prefer 🟢 / 🟡, avoid 🔴:

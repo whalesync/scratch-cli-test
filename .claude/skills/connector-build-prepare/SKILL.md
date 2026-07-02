@@ -23,7 +23,7 @@ Say this up front, not when you hit it. (And when **batching** several, front-lo
 
 **Onboarding and other soft UI are NOT pauses — push through to the key.** Welcome/intro modals, "set up your profile / pick a use case" onboarding, consent banners, product tours, "create your first project" nudges: click through all of them (see step 5). The run is only done when you have a **validated** API key (or OAuth connection); don't stop short at a settings page that's merely gated behind onboarding.
 
-**When you pause, speak it.** Post a one-line ask (what you need, where), then **invoke the `/read` skill** so it's read aloud — the developer is likely away running several of these. Resume autonomously once they confirm. End the whole run with `/read` too.
+**When you pause, speak it — *if* the voice skill is installed.** Post a one-line ask (what you need, where); then, **only if a `/read` skill is available** (check the available-skills list), invoke it so the ask is read aloud — handy when the developer is away running several of these. `/read` is **optional**: if it isn't installed, just post the text ask and wait. Resume autonomously once they confirm. (Same for the end-of-run summary.)
 
 **Default: push each service ALL THE WAY through to a validated key — only park the ones that genuinely can't proceed.** Many services have **no blocking email gate** (or a non-blocking, optional confirmation — Baserow lets you straight into the app), so **don't stop them at a checkpoint waiting for a batch** — take them all the way to `done` (onboarding → token → validate). Park a service **only** when it hits a hard email gate (a code/link required *before* you can continue — Atlassian/Trello). Never hold a finishable service hostage to a slower one.
 
@@ -33,7 +33,7 @@ Say this up front, not when you hit it. (And when **batching** several, front-lo
 
 ## Batch / overnight provisioning — drive it with `/loop`
 
-Provisioning a batch (or pushing hard to reach N successes) is a **long, mostly-unattended** job — run it under the **`/loop` skill** (dynamic mode), e.g. `/loop /connector-build-prepare <connector>` or a loop prompt that walks the queue. `/loop` re-enters the task, so it **keeps working through [`queued-connectors.md`](/connector-build/queued-connectors.md)** (Human Picks first), **retries past transient signup obstacles** instead of giving up, and **survives context-window compaction** — parking only the genuinely-blocked services and pausing only for the gates above. Keep looping until the target count is met (or every finishable service in the queue is done). Don't let one flaky signup stop the batch.
+Provisioning a batch (or pushing hard to reach N successes) is a **long, mostly-unattended** job — run it under the **`/loop` skill** (dynamic mode), e.g. `/loop /connector-build-prepare <connector>` or a loop prompt that walks the queue. `/loop` re-enters the task, so it **keeps working through [`queued-connectors.md`](/connector-build/queued-connectors.md)** (Human Picks first), **retries past transient signup obstacles** instead of giving up, and **survives context-window compaction** — parking only the genuinely-blocked services and pausing only for the gates above. Keep looping until the target count is met (or every finishable service in the queue is done). Don't let one flaky signup stop the batch. **Stop-guard:** after **3 unsuccessful attempts on one service** (repeated signup error, an unclearable gate, no progress), **park it and move to the next** in the queue; if it's the last/only one, **stop after 3** and report the blocker. Don't burn the night on one stuck signup.
 
 ## The secret model — you never see the password
 
@@ -68,7 +68,7 @@ You locate the password/email fields (you *can* see the form), pass their select
 
 **5. Get the API / OAuth credentials — PUSH ALL THE WAY THROUGH to the key.** **Onboarding is your job, not a blocker.** A fresh account usually drops you into an onboarding flow (welcome modal → name → use-case radios → intro video/tour) that *gates the Settings page* — if you try Settings before finishing it, you bounce to login. **Click through every step** until you land in the real app, then open the developer/API settings. Use JS clicks (`$B js "[...document.querySelectorAll('button,[role=radio]')].find(e=>/let.s go|next|continue|skip|finish/i.test(e.innerText||''))?.click()"`), advancing step by step. **Do not stop at any soft blocker** — onboarding, cookie/consent banners, intro tours, "create your first project" nudges are all things you push past. **Only an *absolutely unbeatable* blocker pauses the run:** an email link you can't read, a captcha, hard 2FA, or a forced credit card.
    - Create/copy the API token (or register the OAuth client / mint a refresh token). **The token is often a readonly `password` input — read its `.value` via `$B js` and pipe straight to `set-secret`, never printing it:** return `'TKN:'+input.value`, then `grep -oE 'TKN:[^[:space:]]+' | sed 's/^TKN://'` into `set-secret CB_<SVC>_API_TOKEN`.
-   - **Validate before declaring victory:** `curl` the service API with the stored token and assert HTTP 200 (`( set -a; source .env.connector-build; set +a; curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CB_<SVC>_API_TOKEN" <api-url> )`). A working token is the proof the whole run succeeded. (Watch for deprecated API versions — e.g. Todoist's REST v2 / sync v9 now return 410; the live base is `api.todoist.com/api/v1`.)
+   - **Validate before declaring victory:** `curl` the service API with the stored token and assert HTTP 200 (`( set -a; source connector-build/.env.connector-build; set +a; curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CB_<SVC>_API_TOKEN" <api-url> )`). A working token is the proof the whole run succeeded. (Watch for deprecated API versions — e.g. Todoist's REST v2 / sync v9 now return 410; the live base is `api.todoist.com/api/v1`.)
    - For OAuth-redirect connectors, the credential proven later is the connection through the web app — record client id/secret here.
 
 **6. Build the login script** at `server/src/remote-service/connectors/library/<connector>/test/login.sh` (template below): it sources the helper, goes to the login page, enters email + password via the no-echo helper, submits, confirms the authenticated UI, and `$B state save <connector>`. Add a `logout` path.
@@ -111,7 +111,7 @@ if [ "${1:-}" = "logout" ]; then
 fi
 
 bash "$H" require "CB_${SVC}_LOGIN_EMAIL" "CB_${SVC}_PASSWORD" >/dev/null
-email="$(grep -E "^CB_${SVC}_LOGIN_EMAIL=" "$ROOT/.env.connector-build" | sed -E "s/^[^=]+='?([^']*)'?\$/\1/")"
+email="$(grep -E "^CB_${SVC}_LOGIN_EMAIL=" "$ROOT/connector-build/.env.connector-build" | sed -E "s/^[^=]+='?([^']*)'?\$/\1/")"
 
 "$B" goto "$LOGIN_URL" $BF >/dev/null; sleep 3
 "$B" fill 'input[type=email]' "$email" $BF >/dev/null
@@ -186,16 +186,16 @@ Classify every candidate on **two axes** (legend in `queued-connectors.md`) and 
 The email-confirmation gate (especially the emailed **short-lived code** — Atlassian/Trello blocks setup until it's entered) used to need a human. **It no longer does: the agent has mailbox access** via the **Gmail MCP tools**. Don't park at the gate — fetch the code/link yourself.
 
 **⚠️ PREREQUISITE — the `gmail-whalesync` MCP must be connected.** This skill reads the email gate through it. **Before relying on the mailbox, check that `mcp__gmail-whalesync__*` tools exist** (e.g. try `ToolSearch` for `mcp__gmail-whalesync__search_emails`, or look for it in the tool list). **If it is NOT defined, stop and prompt the developer to install it first:**
-> "The `gmail-whalesync` MCP isn't connected. Run `.claude/skills/connector-build-prepare/gmail-setup` (it connects `ivan@whalesync.com` project-scoped; the OAuth client JSON is in **1Password → "Gmail Auto-Label Desktop OAuth"**), then **restart this session** so the new MCP is picked up."
+> "The `gmail-whalesync` MCP isn't connected. Run `.claude/skills/connector-build-prepare/gmail-setup` (it connects **your own** `@whalesync.com` Gmail, project-scoped; the OAuth client JSON is in **1Password → "Gmail Auto-Label Desktop OAuth"**), then **restart this session** so the new MCP is picked up."
 
 Don't fall back to a personal inbox — wait for `gmail-whalesync`.
 
 **⚠️ Use the right Gmail MCP — there are two, and one redacts links:**
-- **`mcp__gmail-whalesync__*`** (`search_emails`, `read_email`) — the project-scoped **work-Gmail** server (`ivan@whalesync.com`, connected via `gmail-setup`). Returns the **raw email body, no redaction**. **Use this as the default**, and **always for magic-LINK verification** — the link's `?token=…`/`?qs=…` comes through intact so you can `navigate`/`$B goto` it.
+- **`mcp__gmail-whalesync__*`** (`search_emails`, `read_email`) — the project-scoped **work-Gmail** server (your own `@whalesync.com` account, connected via `gmail-setup`). Returns the **raw email body, no redaction**. **Use this as the default**, and **always for magic-LINK verification** — the link's `?token=…`/`?qs=…` comes through intact so you can `navigate`/`$B goto` it.
 - **`mcp__claude_ai_Gmail__*`** (`search_threads`, `get_thread`) — applies a **redaction layer** that **mangles secret-looking query-string tokens**. Codes in the body survive, but a **magic link comes back with its token replaced by a placeholder → unusable**. Treat as a **fallback for codes only**, never for links.
 - The two servers **don't share message-ID namespaces** — always *search within the same server* you'll read from; don't pass one server's id to the other.
 
-**CRITICAL — what mailbox you're reading (don't get confused):** `testing@whalesync.com` is a **group / forwarding address** — mail sent to it is forwarded to team members, including the **work account `ivan@whalesync.com`** that `gmail-whalesync` is connected to. You do **not** log into `testing@whalesync.com` directly; you read the **work mailbox** that receives the forwarded copy. So search `gmail-whalesync` and the verification emails appear there (often `from:testing@whalesync.com` because of the forwarding).
+**CRITICAL — what mailbox you're reading (don't get confused):** `testing@whalesync.com` is a **group / forwarding address** — mail sent to it is forwarded to team members, including **your own `@whalesync.com` account** that `gmail-whalesync` is connected to. You do **not** log into `testing@whalesync.com` directly; you read the **work mailbox** that receives the forwarded copy. So search `gmail-whalesync` and the verification emails appear there (often `from:testing@whalesync.com` because of the forwarding).
 
 **How to clear the gate (wire into step 4):**
 1. Submit the signup, then **immediately** (codes expire in ~10 min) search the mailbox, e.g. `gmail-whalesync__search_emails("verification newer_than:5m")` or `from:atlassian` / `seatable`. Take the **newest** match, then `gmail-whalesync__read_email(<id>)` for the body.

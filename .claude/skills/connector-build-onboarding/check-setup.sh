@@ -42,5 +42,6 @@ echo "      • Claude-for-Chrome extension: installed + connected via /connect-
 echo "      • gmail-whalesync MCP: connected (run gmail-setup if absent — see SKILL.md)"
 
 bold "Readiness rule"
-echo "  READY when: (gstack works  OR  Chrome+extension works)  AND  gmail-whalesync is connected."
-echo "  At least one browser is enough — you do NOT need both."
+echo "  READY when: gstack works  AND  Chrome+extension works  AND  gmail-whalesync is connected."
+echo "  BOTH browsers are required — they are each other's fallback for unattended runs."
+echo "  (Local voice model is optional.)"

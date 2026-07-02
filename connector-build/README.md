@@ -4,11 +4,11 @@ How we add new connectors to Scratch, mostly autonomously: an agent provisions a
 account on the service, then builds + exercises the connector end-to-end.
 
 ## Quick start (new teammate)
-1. **Run `/connector-build-onboarding` once.** It verifies your browser (gstack and/or the
-   Claude-for-Chrome extension) and the `gmail-whalesync` MCP, and tells you when you're ready.
+1. **Run `/connector-build-onboarding` once.** It verifies **both** browsers (gstack + the
+   Claude-for-Chrome extension — each other's fallback) and the `gmail-whalesync` MCP, and tells you when you're ready.
    *(Assumes the Scratch dev env is already set up — repo, `yarn install`, Docker, DB+migrations,
    `scratchmd` built, server runnable, node 22.)*
-2. **Pick the next connector** from [`queued-connectors.md`](./queued-connectors.md) — **Human Picks first**.
+2. **Pick the next connector** from [`queued-connectors.md`](./queued-connectors.md) — **Human Picks first, but skip `research pending` rows for an unattended run** (start with a researched, free-tier REST service like **ClickUp / Jira / Asana** — see the first-pick rule at the top of that doc).
 3. **`/connector-build-prepare <connector>`** — provisions a free test account, stores creds in
    `connector-build/.env.connector-build`, validates the API token. The run **tells you up front**
    whether it'll need you for a gate (see below).

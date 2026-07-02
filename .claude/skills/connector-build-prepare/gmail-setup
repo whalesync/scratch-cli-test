@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# gmail-setup — connect the work Gmail account (ivan@whalesync.com) as a local, project-scoped
+# gmail-setup — connect your work @whalesync.com Gmail account as a local, project-scoped
 # Gmail MCP server for THIS repo. Hardcoded to label "whalesync"; only asks for the OAuth secret.
 #
 # End to end:
@@ -66,7 +66,7 @@ if lsof -nP -iTCP:"$AUTH_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 # ---- 3. one-time browser auth ------------------------------------------------
-bold "Launching browser auth on http://localhost:$AUTH_PORT — sign in as ivan@whalesync.com and approve."
+bold "Launching browser auth on http://localhost:$AUTH_PORT — sign in as YOUR OWN @whalesync.com account and approve."
 echo "(If you see an 'unverified app' screen: Advanced -> Go to <project> (unsafe), or set the"
 echo " OAuth consent screen to Internal in Google Cloud.)"
 GMAIL_OAUTH_PATH="$OAUTH_PATH" GMAIL_CREDENTIALS_PATH="$CRED_PATH" "$NPX" -y "$PKG" auth

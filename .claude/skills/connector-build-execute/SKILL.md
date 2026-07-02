@@ -33,6 +33,9 @@ A connector is **not** built until ALL hold — verified in the service, not ass
 6. **Pass 2 edge cases run** (empty/null, long strings, unicode/emoji, large arrays, boundary numbers, archival, pagination mid-pull, incremental vs full) — see [Stage E](#stage-e--hunt-connector-specific-edge-cases-highest-value).
 7. **No `⬜` cell without a one-line concrete blocker.** A genuine human-gate (login/billing/2FA) is a valid blocker → pause + `/read`. **UI flakiness is NOT a blocker** — persist: retry, use `$B js` to click precise nodes, try the alternate UI path (e.g. a field manager), or seed via the API where the API allows it. "The UI was fiddly" is never an acceptable reason to skip a type.
 8. **Coverage audit before you finish.** Before the closing `/read`, write a short audit into the run summary: `covered N / total M cells`, and list every remaining `⬜` with its blocker. If the gate isn't met and nothing *human* is blocking you, **you are not done — keep going.**
+9. **Pass the adversarial review gate.** "Done by my own checkmarks" is not done — your summary self-grades, and the green cells routinely hide gaps in your own TODOs. Run the [adversarial review loop](#adversarial-review-gate--required-before-done) and only declare done when a fresh reviewer returns **PASS**.
+
+> **File attachments are GLOBALLY OUT OF SCOPE right now** (every connector). Don't build or test attachment read/write fidelity, and don't leave attachment cells as `⬜`-with-blocker or `❌` — mark them **`out-of-scope`**. This will become its own major milestone later; until then it is not a gap and the review gate won't flag it.
 
 Scale effort to the surface, not to your patience. A 15-field-type service means ~15 seed-and-round-trip cycles; do all 15.
 
@@ -73,6 +76,10 @@ A parallel run that silently stalls wastes time. Whenever you hit a gate above �
 
 A full build is long and meant to run mostly **unattended**, so keep it going through obstacles and across context limits by running it under the **`/loop` skill** (dynamic mode) — e.g. `/loop /connector-build-execute <connector>`. `/loop` self-paces and **re-enters the task**, so each iteration **resumes from `STATE.md`**, **pushes past transient obstacles** (a flaky UI click, a browser hiccup, a rate-limit backoff, a one-off API error) by retrying on the next pass instead of giving up, and **survives context-window compaction**. It should stop only for a genuine human gate (an emailed code it can't read, a card, a captcha, a destructive confirm) — surfaced with `/read`. **Don't let a transient failure end the run — that's what the loop is for.** Keep looping until the [Definition of done](#definition-of-done--strict-go-deep-not-broad-read-before-declaring-anything-built) gate is met or only human-blocked cells remain.
 
+**Loop stop-guards — don't spin forever.** Count an iteration **unsuccessful** if it ends with **no net progress** (no new ✅, no fix landed — e.g. a wedged browser, or the same error twice). Any real progress resets the counter. Then:
+- **After 3 unsuccessful runs on the current connector → move to the NEXT connector** in [`queued-connectors.md`](/connector-build/queued-connectors.md) (park the stuck one with a one-line blocker; come back later).
+- **If it's the last / only connector you're building → STOP after 3 unsuccessful runs.** Post exactly what's blocking (and `/read` it if that skill is installed). Don't keep looping a dead end.
+
 ## Prerequisite — browser preflight (HARD GATE, before any testing)
 
 Do this **before** pulling/pushing anything. The browser is not optional: create-in-service and UI-link discovery require it, so a CLI-only run does **not** finish a connector.
@@ -83,6 +90,10 @@ Do this **before** pulling/pushing anything. The browser is not optional: create
 3. **Claude-for-Chrome extension, headed** (`mcp__claude-in-chrome__*`) — drives the user's **real** Chrome; the user must connect it first via **`/connect-chrome`** (the agent can't trigger it). **CRITICAL — create your OWN tab with `tabs_create_mcp` and drive only that tab id**; never reuse whatever tab is open (parallel agents stomp each other). It's a shared, non-isolated browser, so for many parallel agents prefer gstack — but as rung 3 it's a fine fallback for a single run.
 
 All three require the **machine awake** (a browser is always driven) — that's a requirement, not a limitation. **Fall through the ladder: never let one option's flakiness end the run.** Try headless gstack → headed gstack → Chrome extension; only STOP for a human when **all** are unusable (or login can't be automated). If a coworker hasn't set up *any* browser, point them at **`/connector-build-onboarding`**.
+
+**Both browsers should be installed** (it's a `/connector-build-onboarding` requirement) so rung 3 is always a real fallback — an unattended run can't ask a human to install one at 2am. If gstack dies mid-run, **switch to the Chrome extension and keep going** rather than stalling.
+
+**gstack auto-recovery — run it yourself, don't wait to be told.** On the **first** sign of gstack trouble (a command times out, the page resets to `about:blank`, or you see `existing daemon has different config`), **immediately run the reset below, then retry once; if it still fails, fall to the Chrome extension.** This is automatic — never end (or stall) a run because gstack got wedged; that's the single most common silent overnight staller.
 
 **gstack recovery / gotchas (learned the hard way):**
 - **Run a SINGLE clean daemon.** Two daemons (e.g. a stray `--headed` attempt left running) cause `existing daemon has different config (proxy/headed mismatch)` and **every command is refused**. Reset: `pkill -f "gstack/browse/src/server.ts"`, `rm -f ~/.gstack/chromium-profile/SingletonLock ~/.gstack/chromium-profile/SingletonSocket`, then `$B connect`.
@@ -248,6 +259,8 @@ This skill is a **long-running, often nightly process**, and it can run **two wa
    # Zoho (user_provided_params, multi-DC): --service ZOHO --param zohoClientId=<id> --param zohoClientSecret=<s> --param zohoRefreshToken=<rt> --param zohoDataCenter=<US|EU|…>
    ```
    Confirm `Health: OK`. The CLI's `--service` help only lists a few names, but it passes the string through — a connector registered on the **running** server connects even if it isn't in that hint list (and even if `visible:false`). **OAuth-redirect services can't be connected from the CLI** — use the web app's browser OAuth flow. (Get the API key from the service's settings while you're logged in.)
+
+> **Leave `metadata.visible: false` — NEVER flip it to `true` yourself.** The connector is **fully testable while hidden** (the CLI connects/pulls/publishes regardless of `visible`), so you never need to. Going visible exposes the connector to all users and is a **human-only decision**, made after the adversarial review passes **and** a person has done their own check. Set it at scaffold time and leave it; if you find it `true`, set it back to `false` and note it.
 4. **Pull a table ASAP for desktop monitoring.** `scratchmd linked available [conn_id]` → `scratchmd linked add …` → `scratchmd linked pull <dfd_id> --mode full`. Pull at least one record-bearing table immediately so the developer sees records in the desktop app right away; pull the rest as you test them.
 5. **Clone the workspace (optional, for local CLI edits).** `scratchmd workspaces init <wkb_id> -o <dir>`. (The desktop app downloads its own copy; this is for driving edits from the shell.)
 6. **Enable CLI publishing** (one-time, gated by `User.settings.cliCanPublish`): Settings → Integrations, or local dev `UPDATE "User" SET settings = jsonb_set(COALESCE(settings,'{}'::jsonb),'{cliCanPublish}','true') WHERE email='<you>';`. Without it, publish 403s.
@@ -321,7 +334,7 @@ This is Pass 2's job. Document every quirk in **two** places:
 - A **simple, concrete edge case** (a specific field/behavior on this connector) → **add it automatically** to both files.
 - A **general, reusable testing *pattern*** (a new way to test connectors, not a fact about one) → **propose it and ask the user to confirm before adding** it to the playbook's "Testing patterns" section. These shape how every future run works, so they get a human check. (Example of such a pattern: connect the same service to two workbooks, change in one and push, then pull in the other to prove the write is real and round-trips.)
 
-Known shapes to pattern-match: **Notion** page content fetched record-by-record (not bulk); **YouTube** transcripts behind a separate fetch; **Webflow** live-vs-draft status as a dedicated operation. Also probe: rich-text/HTML, computed/read-only fields (dropped on publish by design — never silently strip *user* edits), enum id vs label, attachments, pagination (records created mid-pull), incremental vs full pull, archival/soft-delete, rate limits.
+Known shapes to pattern-match: **Notion** page content fetched record-by-record (not bulk); **YouTube** transcripts behind a separate fetch; **Webflow** live-vs-draft status as a dedicated operation. Also probe: rich-text/HTML, computed/read-only fields (dropped on publish by design — never silently strip *user* edits), enum id vs label, pagination (records created mid-pull), incremental vs full pull, archival/soft-delete, rate limits. (**Attachments are globally out of scope** — skip them, mark `out-of-scope`.)
 
 ---
 
@@ -381,8 +394,23 @@ Build it like the references — `notion-connector.spec.ts` (read-paths + snapsh
    one command (re-running heals a wiped account). Reference: `scripts/bootstrap-attio-test-data.ts`.
    This is what lets a brand-new dedicated account be stood up reproducibly.
 5. **Wire CI + flip the docs.** Add `<KEY>: "${INTEGRATION_TEST_<SVC>_*}"` to the post-deploy job in
-   `gitlab-ci/stages/06-environment-tests.yml`, create the masked GitLab variable, then update the
+   `gitlab-ci/stages/06-environment-tests.yml`, then update the
    STATE.md Integration-tests section and the `connector-build/existing-connectors.md` IT columns.
+
+> **The masked GitLab CI variable is a follow-up, NOT a gate.** Milestone 10 / the integration-test cell can be **✅ once the spec exists and passes locally** against the live account. Creating the masked CI var is a human step that can lag; note it as pending, but don't hold the connector (or the review gate) on it.
+
+---
+
+## Adversarial review gate — REQUIRED before "done"
+
+Your own ✅ checkmarks don't earn "done" — the summary self-grades, and green cells routinely hide gaps that sit one scroll down in your own TODOs (the canonical miss: marking "attachments ✅" while the TODO admits the field is all-null). So before declaring a connector done, **pass an adversarial review by a clean agent**, and loop on it:
+
+1. **Spawn a fresh subagent that runs [`/connector-build-review <connector>`](/.claude/skills/connector-build-review/SKILL.md)** — a clean head with no build context, whose job is to **disprove** your checkmarks (re-run the integration test, re-do live CRUD/pull, read the code for real bugs, catch ✅-vs-TODO contradictions). **Wait** for its PASS/FAIL verdict.
+2. **Apply its fixes** — but **re-verify each of its findings with your own live operation first** (the reviewer can over-claim too; don't "fix" a non-bug on its say-so). Land the real fixes, update STATE.md/LOG.md.
+3. **Re-run the gate in ANOTHER clean session** (a brand-new subagent, so it isn't anchored on the last round). Repeat 1–3.
+4. **Only declare done when a fresh review round returns PASS with zero real findings.** A fast PASS on a genuinely clean connector is the goal — the loop converges, it doesn't run forever.
+
+This is the gate that lets *someone other than you* trust the result; it is not optional.
 
 ---
 
