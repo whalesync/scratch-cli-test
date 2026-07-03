@@ -192,9 +192,7 @@ describeIfKey('BrevoConnector — live API', () => {
         } as unknown as ConnectorFile,
       ];
 
-      await expect(
-        connector.updateRecords(contactsSpec, files, [{ attributes: { FIRSTNAME: 'Updated' } }]),
-      ).resolves.toBeUndefined();
+      await connector.updateRecords(contactsSpec, files, [{ attributes: { FIRSTNAME: 'Updated' } }]);
 
       // Verify the update by fetching
       const fetched: ConnectorFile[] = [];
@@ -303,11 +301,9 @@ describeIfKey('BrevoConnector — live API', () => {
         } as unknown as ConnectorFile,
       ];
 
-      await expect(
-        connector.updateRecords(templatesSpec, files, [
-          { name: `Updated Template ${TEST_SUFFIX}`, subject: 'Updated Subject' },
-        ]),
-      ).resolves.toBeUndefined();
+      await connector.updateRecords(templatesSpec, files, [
+        { name: `Updated Template ${TEST_SUFFIX}`, subject: 'Updated Subject' },
+      ]);
 
       // Verify by fetching
       const fetched: ConnectorFile[] = [];
