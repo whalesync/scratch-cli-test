@@ -251,10 +251,10 @@ describe("Affinity tenant tables (pull)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Verify the fields-array → keyed-object transform applied at pull time.
+  // Verify the verbatim `fields` array is stored as-is at pull time.
   // For tenant records, fields live at the TOP LEVEL (no `entity` wrapper).
   // -------------------------------------------------------------------------
-  it("rekeys fields by remote field id at the top level for a pulled person", async () => {
+  it("stores fields as a verbatim array at the top level for a pulled person", async () => {
     const workspace = await createTestWorkspace(api, {
       service: "AFFINITY",
       credentials: affinityFixture.createConnectionCredentials(),
@@ -289,16 +289,22 @@ describe("Affinity tenant tables (pull)", () => {
     expect(content.id).toBe(8001);
     expect(content.firstName).toBe("Alice");
 
-    // Fields are an OBJECT keyed by remote field id, not the API's array form.
-    // The connector's `tenantRecordToFile` performs this transform so each
-    // field is addressable by its remote id (`fields.field-1234`).
+    // Fields are stored VERBATIM as the array Affinity returns — never
+    // reshaped to an object on disk (Connector Prime Directive; DEV-10637
+    // removed the earlier array→keyed-object reindex). Each element is
+    // addressable via the `x-scratch-array-keyed-by` annotation (keyed by
+    // `id`), so we locate a field by its remote id within the array.
     expect(content.fields).not.toBeNull();
-    expect(Array.isArray(content.fields)).toBe(false);
-    expect(content.fields).toHaveProperty("affinity-data-current-organization");
-    expect(content.fields).toHaveProperty("affinity-data-job-titles");
-    expect(
-      content.fields["affinity-data-current-organization"].value.data.name,
-    ).toBe("Tenant Co");
+    expect(Array.isArray(content.fields)).toBe(true);
+    const currentOrganizationField = content.fields.find(
+      (field: any) => field.id === "affinity-data-current-organization",
+    );
+    const jobTitlesField = content.fields.find(
+      (field: any) => field.id === "affinity-data-job-titles",
+    );
+    expect(currentOrganizationField).toBeDefined();
+    expect(jobTitlesField).toBeDefined();
+    expect(currentOrganizationField.value.data.name).toBe("Tenant Co");
   });
 
   // -------------------------------------------------------------------------
