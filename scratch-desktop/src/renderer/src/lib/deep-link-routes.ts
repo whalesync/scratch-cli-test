@@ -103,7 +103,9 @@ export async function mapDeepLinkToDesktopRoute(route: string, query: string): P
   if (segments[0] === 'oauth-callback') {
     const params = new URLSearchParams(query);
     const nextParams = new URLSearchParams();
-    for (const key of ['code', 'state', 'service', 'error', 'error_description', 'realmId']) {
+    // `instanceId` is the client-credentials (2-legged) install id, e.g. Wix — the
+    // alternative to `code` for providers whose install flow returns no auth code.
+    for (const key of ['code', 'instanceId', 'state', 'service', 'error', 'error_description', 'realmId']) {
       const value = params.get(key);
       if (value) nextParams.set(key, value);
     }

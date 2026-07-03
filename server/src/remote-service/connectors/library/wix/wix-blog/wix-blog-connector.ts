@@ -96,7 +96,11 @@ export class WixBlogConnector extends Connector {
         tokens: {
           accessToken: {
             value: accessToken,
-            expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes from now (Wix tokens expire in 5 minutes)
+            // Wix app (client-credentials) access tokens are valid 4 hours. This is
+            // only an SDK-side freshness hint — the host (getValidAccessToken) always
+            // hands us a freshly re-minted token, since the SDK can't refresh here
+            // (refreshToken role is NONE).
+            expiresAt: Date.now() + 4 * 60 * 60 * 1000,
           },
           refreshToken: {
             value: '',

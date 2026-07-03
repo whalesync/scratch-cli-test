@@ -63,6 +63,9 @@ function OAuthCallbackContent() {
       try {
         // Extract OAuth parameters from URL
         const code = searchParams.get('code');
+        // Client-credentials (2-legged) providers like Wix return no `code` — their
+        // external-install redirect hands back an install-scoped `instanceId` instead.
+        const instanceId = searchParams.get('instanceId');
         const oAuthStateString = searchParams.get('state');
         const error = searchParams.get('error');
 
@@ -109,8 +112,9 @@ function OAuthCallbackContent() {
           return;
         }
 
-        // Validate code is present for successful OAuth
-        if (!code) {
+        // Validate a success credential is present: an authorization `code` (classic
+        // flow) or an `instanceId` (client-credentials install flow, e.g. Wix).
+        if (!code && !instanceId) {
           setState({
             status: 'error',
             message: 'Missing required OAuth authorization code',
@@ -121,7 +125,8 @@ function OAuthCallbackContent() {
         // Desktop deep-link flow: redirect OAuth result back to desktop app if they originated there.
         if (oAuthState.returnPage?.startsWith('scratch://')) {
           const desktopUrl = new URL(oAuthState.returnPage);
-          desktopUrl.searchParams.set('code', code);
+          if (code) desktopUrl.searchParams.set('code', code);
+          if (instanceId) desktopUrl.searchParams.set('instanceId', instanceId);
           desktopUrl.searchParams.set('state', oAuthStateString);
           desktopUrl.searchParams.set('service', oAuthState.service);
           const realmId = searchParams.get('realmId');
@@ -139,7 +144,8 @@ function OAuthCallbackContent() {
         // desktop app above.
         if (isWhalesyncRedirectPrefix(oAuthState.redirectPrefix)) {
           const whalesyncUrl = new URL(oAuthState.redirectPrefix);
-          whalesyncUrl.searchParams.set('code', code);
+          if (code) whalesyncUrl.searchParams.set('code', code);
+          if (instanceId) whalesyncUrl.searchParams.set('instanceId', instanceId);
           whalesyncUrl.searchParams.set('state', oAuthStateString);
           whalesyncUrl.searchParams.set('service', oAuthState.service);
           const realmId = searchParams.get('realmId');

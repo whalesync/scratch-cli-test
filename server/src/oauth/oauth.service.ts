@@ -64,6 +64,12 @@ export interface OAuthCallbackRequest {
   code: string;
   state: string;
   realmId?: string;
+  /**
+   * Install-scoped identifier for `client_credentials` providers (Wix:
+   * `instanceId`). These 2-legged flows return no `code` — the external-install
+   * redirect hands back this id, which we mint the first access token from.
+   */
+  instanceId?: string;
 }
 
 @Injectable()
@@ -235,19 +241,30 @@ export class OAuthService {
       }
     }
 
-    // Exchange authorization code for access token (with overrides for custom OAuth).
-    // Token-exchange failures (bad/expired code, region mismatch, redirect-uri
-    // mismatch) are the provider's fault to explain — surface their message as a
-    // 400 so the user sees the reason instead of a generic 500.
+    // Acquire the access token. Token-acquisition failures (bad/expired code,
+    // region mismatch, redirect-uri mismatch, a rejected install) are the
+    // provider's fault to explain — surface their message as a 400 so the user
+    // sees the reason instead of a generic 500.
     let tokenResponse: OAuthTokenResponse;
     try {
-      tokenResponse = await provider.exchangeCodeForTokens(callbackData.code, {
-        clientId: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientId : undefined,
-        clientSecret: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientSecret : undefined,
-        shopDomain: statePayload.shopDomain,
-        codeVerifier: statePayload.codeVerifier,
-        dataCenter: statePayload.zohoDataCenter,
-      });
+      if (provider.strategyKind?.() === 'client_credentials') {
+        // 2-legged (client-credentials) connectors (e.g. Wix) return no
+        // authorization code — the external-install redirect hands back an
+        // install-scoped identifier (Wix: instanceId). Mint the first access
+        // token directly from it; there is no code exchange and no refresh token.
+        if (!callbackData.instanceId) {
+          throw new Error('The install did not complete (missing instance id). Please try connecting again.');
+        }
+        tokenResponse = await this.mintClientCredentialsToken(service, provider, callbackData.instanceId);
+      } else {
+        tokenResponse = await provider.exchangeCodeForTokens(callbackData.code, {
+          clientId: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientId : undefined,
+          clientSecret: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientSecret : undefined,
+          shopDomain: statePayload.shopDomain,
+          codeVerifier: statePayload.codeVerifier,
+          dataCenter: statePayload.zohoDataCenter,
+        });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'token exchange failed';
       WSLogger.warn({
@@ -383,31 +400,62 @@ export class OAuthService {
       account.encryptedCredentials as unknown as EncryptedData,
     );
 
-    if (!decryptedCredentials.oauthRefreshToken) {
-      throw new BadRequestException('No refresh token available');
-    }
-
     const provider = this.providers.get(account.service);
     if (!provider) {
       throw new BadRequestException(`No OAuth provider found for service: ${account.service}`);
     }
 
-    // Multi-region providers (Zoho) need the stored data center to refresh
-    // against the correct regional accounts host (persisted in oauthWorkspaceId).
-    const tokenResponse = await provider.refreshTokens(decryptedCredentials.oauthRefreshToken, {
-      dataCenter: decryptedCredentials.oauthWorkspaceId,
-    });
-
-    // Update the credentials
-    decryptedCredentials.oauthAccessToken = tokenResponse.access_token;
-    decryptedCredentials.oauthRefreshToken = tokenResponse.refresh_token || decryptedCredentials.oauthRefreshToken;
-    decryptedCredentials.oauthExpiresAt = this.expiresInToOAuthExpiresAt(tokenResponse.expires_in);
+    if (provider.strategyKind?.() === 'client_credentials') {
+      // 2-legged (client-credentials) connectors (e.g. Wix) have no refresh token —
+      // "refresh" is a re-mint from the stored install identifier (oauthWorkspaceId).
+      const installIdentifier = decryptedCredentials.oauthWorkspaceId;
+      if (!installIdentifier) {
+        // A connection created before this identifier was captured (e.g. a legacy
+        // Wix custom-auth account) can't be re-minted and must be reconnected.
+        throw new BadRequestException('This connection is missing its install identifier and must be reconnected.');
+      }
+      const tokenResponse = await this.mintClientCredentialsToken(account.service, provider, installIdentifier);
+      decryptedCredentials.oauthAccessToken = tokenResponse.access_token;
+      decryptedCredentials.oauthExpiresAt = this.expiresInToOAuthExpiresAt(tokenResponse.expires_in);
+      // No refresh token to persist for client-credentials.
+    } else {
+      if (!decryptedCredentials.oauthRefreshToken) {
+        throw new BadRequestException('No refresh token available');
+      }
+      // Multi-region providers (Zoho) need the stored data center to refresh
+      // against the correct regional accounts host (persisted in oauthWorkspaceId).
+      const tokenResponse = await provider.refreshTokens(decryptedCredentials.oauthRefreshToken, {
+        dataCenter: decryptedCredentials.oauthWorkspaceId,
+      });
+      decryptedCredentials.oauthAccessToken = tokenResponse.access_token;
+      decryptedCredentials.oauthRefreshToken = tokenResponse.refresh_token || decryptedCredentials.oauthRefreshToken;
+      decryptedCredentials.oauthExpiresAt = this.expiresInToOAuthExpiresAt(tokenResponse.expires_in);
+    }
 
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(decryptedCredentials);
     await this.db.client.connectorAccount.update({
       where: { id: connectorAccountId },
       data: { encryptedCredentials },
     });
+  }
+
+  /**
+   * Mint a fresh access token for a 2-legged (client-credentials) provider — e.g.
+   * Wix, whose token endpoint takes the app's `client_id`/`client_secret` plus the
+   * install-scoped `instanceId` and returns a short-lived bearer token with no
+   * refresh token. `installIdentifier` is that install-scoped id (Wix: instanceId),
+   * captured on the external-install redirect and persisted in `oauthWorkspaceId`.
+   * Both the initial connect and every later re-mint route through here.
+   */
+  private async mintClientCredentialsToken(
+    service: string,
+    provider: OAuthProvider,
+    installIdentifier: string,
+  ): Promise<OAuthTokenResponse> {
+    if (provider.strategyKind?.() !== 'client_credentials' || !provider.mintTokenFromInstall) {
+      throw new BadRequestException(`${service} does not use client-credentials authentication`);
+    }
+    return provider.mintTokenFromInstall(installIdentifier);
   }
 
   /**

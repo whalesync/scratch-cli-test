@@ -25,6 +25,9 @@ export function OAuthCallbackPage() {
     const handleCallback = async () => {
       try {
         const code = searchParams.get('code');
+        // Client-credentials (2-legged) providers like Wix return no `code` — their
+        // external-install redirect hands back an install-scoped `instanceId` instead.
+        const instanceId = searchParams.get('instanceId');
         const stateParam = searchParams.get('state');
         const service = searchParams.get('service');
         const realmId = searchParams.get('realmId') ?? undefined;
@@ -39,10 +42,10 @@ export function OAuthCallbackPage() {
           return;
         }
 
-        if (!code || !stateParam) {
+        if ((!code && !instanceId) || !stateParam) {
           setState({
             status: 'error',
-            message: 'Missing required OAuth parameters (code or state)',
+            message: 'Missing required OAuth parameters (code/instanceId or state)',
           });
           return;
         }
@@ -69,9 +72,10 @@ export function OAuthCallbackPage() {
         }
 
         const result = await scratchApiClient.oauth.callback(decodedService, {
-          code,
+          code: code ?? '',
           state: stateParam,
           realmId,
+          instanceId: instanceId ?? undefined,
         });
 
         setState({

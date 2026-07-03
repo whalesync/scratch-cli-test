@@ -39,6 +39,9 @@ export default function OAuthCallbackPage() {
       try {
         // Extract OAuth parameters from URL
         const code = searchParams.get('code');
+        // Client-credentials (2-legged) providers like Wix return no `code` — their
+        // external-install redirect hands back an install-scoped id instead.
+        const instanceId = searchParams.get('instanceId');
         const state = searchParams.get('state');
         const error = searchParams.get('error');
         const errorDescription = searchParams.get('error_description');
@@ -52,11 +55,12 @@ export default function OAuthCallbackPage() {
           return;
         }
 
-        // Validate required parameters
-        if (!code || !state) {
+        // Validate required parameters: `state` plus either an authorization `code`
+        // (classic flow) or an `instanceId` (client-credentials install flow).
+        if ((!code && !instanceId) || !state) {
           setState({
             status: 'error',
-            message: 'Missing required OAuth parameters (code or state)',
+            message: 'Missing required OAuth parameters (code/instanceId or state)',
           });
           return;
         }
@@ -83,7 +87,12 @@ export default function OAuthCallbackPage() {
 
         // QuickBooks includes realmId as a query parameter on the callback
         const realmId = searchParams.get('realmId') || undefined;
-        const result = await scratchApiClient.oauth.callback(service, { code, state, realmId });
+        const result = await scratchApiClient.oauth.callback(service, {
+          code: code ?? '',
+          state,
+          realmId,
+          instanceId: instanceId ?? undefined,
+        });
 
         setState({
           status: 'success',
