@@ -56,6 +56,9 @@ export interface UseReviewSurfaceData {
   isBlockingLoad: boolean;
   /** A refresh that keeps the current rows painted (post-action / passive refetch). */
   isBackgroundRefreshing: boolean;
+  /** The folder `diffData` currently belongs to (null while loading or unloaded) — distinguishes a
+   * settled load for the selected folder from stale data painted during a folder switch. */
+  loadedFolderPath: string | null;
   totalPages: number;
 
   // ── Folder-wide By-type load ──
@@ -90,6 +93,9 @@ export function useReviewSurfaceData({
   const [error, setError] = useState<string | null>(null);
   const [loadingMode, setLoadingMode] = useState<'idle' | 'blocking' | 'refreshing'>('idle');
   const [resolvedQueryKey, setResolvedQueryKey] = useState<string | null>(null);
+  // The folder path the current `diffData` actually belongs to — lets callers tell a settled load for
+  // the selected folder apart from stale data still painted during a folder switch.
+  const [loadedFolderPath, setLoadedFolderPath] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [reviewDataVersion, setReviewDataVersion] = useState(0);
 
@@ -160,6 +166,7 @@ export function useReviewSurfaceData({
       setDiffData(null);
       setError(null);
       setResolvedQueryKey(null);
+      setLoadedFolderPath(null);
       setLoadingMode('idle');
       return;
     }
@@ -183,6 +190,7 @@ export function useReviewSurfaceData({
       if (generation !== loadGenerationRef.current) return;
       setDiffData(result as DiffGridResult);
       setResolvedQueryKey(key);
+      setLoadedFolderPath(nextFolderPath);
       setError(null);
     } catch (err: unknown) {
       if (generation !== loadGenerationRef.current) return;
@@ -193,6 +201,7 @@ export function useReviewSurfaceData({
       setError(err instanceof Error ? err.message : 'Failed to load grid data');
       setDiffData(null);
       setResolvedQueryKey(null);
+      setLoadedFolderPath(null);
     } finally {
       if (generation === loadGenerationRef.current) {
         setLoadingMode('idle');
@@ -318,6 +327,7 @@ export function useReviewSurfaceData({
     error,
     isBlockingLoad,
     isBackgroundRefreshing,
+    loadedFolderPath,
     totalPages,
     byTypeDiffData,
     byTypeIsTruncated,

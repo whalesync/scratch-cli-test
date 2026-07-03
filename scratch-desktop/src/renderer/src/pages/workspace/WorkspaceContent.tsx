@@ -10,6 +10,7 @@ import type {
   ValidationStat,
   ValidatorConfig,
 } from '../../../../shared/validation-types';
+import { useReviewSurfaceV2Enabled } from '../../hooks/use-review-surface-v2';
 import { trackOpenConnectionsDialog, trackRerunValidation } from '../../lib/posthog';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
@@ -17,6 +18,7 @@ import { ConnectionsPanel } from './ConnectionsPanel';
 import { FolderDataGrid } from './FolderDataGrid';
 import { PublishHistoryPanel } from './PublishHistoryPanel';
 import { ResizeHandle } from './ResizeHandle';
+import { FolderReviewSurface } from './review-surface/FolderReviewSurface';
 import { SettingsPanel } from './SettingsPanel';
 import type { SingleConnectionPublishTarget } from './single-connection-publish-target';
 import type { StartPullOptions } from './use-pull-tracker';
@@ -117,6 +119,8 @@ export function WorkspaceContent({
   const showSettingsPanel = useWorkspaceUiStore((s) => s.showSettingsPanel);
   const setShowSettingsPanel = useWorkspaceUiStore((s) => s.setShowSettingsPanel);
   const showField = useWorkspaceUiStore((s) => s.showField);
+  // The Phase 7 cutover: flag-on users get the redesigned review surface instead of FolderDataGrid.
+  const reviewSurfaceV2Enabled = useReviewSurfaceV2Enabled();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
@@ -299,6 +303,20 @@ export function WorkspaceContent({
       />
     ) : showSettingsPanel ? (
       <SettingsPanel workbookId={workspace.id} />
+    ) : reviewSurfaceV2Enabled ? (
+      <FolderReviewSurface
+        workspaceId={workspace.id}
+        selectedFolderPath={selectedFolderPath}
+        workspacePath={localPath}
+        targetRecord={targetRecord}
+        workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
+        invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
+        onPublishFile={onPublishFile}
+        activateGlobalFilter={activateGlobalFilter}
+        onActivateGlobalFilterConsumed={onActivateGlobalFilterConsumed}
+        onIndexingProgress={onIndexingProgress}
+        connections={workspaceConnections}
+      />
     ) : (
       <FolderDataGrid
         workspaceId={workspace.id}

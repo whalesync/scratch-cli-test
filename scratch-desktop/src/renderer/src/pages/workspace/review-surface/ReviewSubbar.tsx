@@ -50,6 +50,7 @@ function FilterPill({
   return (
     <Box
       component="button"
+      aria-pressed={active}
       onClick={onClick}
       disabled={disabled}
       style={{

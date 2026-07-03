@@ -1,18 +1,21 @@
 import { ButtonSecondaryGhost, ButtonSecondaryOutline } from '@/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
 import { Box, Group, Loader, Modal } from '@mantine/core';
-import type { TableViewCol } from '@spinner/shared-types';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
-import { flattenTableViewColumns } from '../../../../../shared/schema-columns';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react';
+import { trackOpenRecordChangesDrawer } from '../../../lib/posthog';
 import { useWorkspaceUiStore, type FilterKind } from '../../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../../types/local-files';
-import { resolveEffectivePath } from '../grid-cell-diff-state';
-import { buildByTypeGroupModel, type ByTypeSourceColumn } from './build-by-type-group-model';
+import { applyAcceptedFieldChangeToFolderDiffData } from '../diff-grid-types';
+import { rowHasUnreviewedChanges } from '../record-diff-helpers';
+import { RecordChangesDrawer } from '../RecordChangesDrawer';
+import { RecordDetailView } from '../RecordDetailView';
+import { buildByTypeGroupModel, type ByTypeGroupModel, type ByTypeSourceColumn } from './build-by-type-group-model';
 import { ByTypeView } from './ByTypeView';
 import { ReviewContextBanner } from './ReviewContextBanner';
 import { ReviewSubbar } from './ReviewSubbar';
 import { ReviewTableGrid } from './ReviewTableGrid';
 import { useFolderSchemaAndTableView } from './use-folder-schema-and-table-view';
+import { useReviewDetailColumnMetadata } from './use-review-detail-column-metadata';
 import { useReviewLadderActions, type BulkReviewAction } from './use-review-ladder-actions';
 import { useReviewSurfaceData } from './use-review-surface-data';
 
@@ -23,14 +26,15 @@ import { useReviewSurfaceData } from './use-review-surface-data';
  * Phase 7 cutover is a one-line ternary and the revert a one-liner.
  *
  * It owns the header chrome (`ReviewContextBanner` + `ReviewSubbar`), the body switch
- * (`reviewSurfaceViewMode` → `ReviewTableGrid` | `ByTypeView`), the pagination footer, and the
- * bulk approve/reject/discard confirm modal — composing the two hooks
+ * (`reviewSurfaceViewMode` → `ReviewTableGrid` | `ByTypeView`), the pagination footer, the
+ * bulk approve/reject/discard confirm modal, and — since the Phase 7 cutover — the
+ * `RecordChangesDrawer` stepper (opened by a row / By-type group-row click) plus the
+ * `RecordDetailView` deep-edit overlay (opened by the store's record selection, e.g.
+ * ValidationPanel's "navigate to field"). It composes the two hooks
  * (`useReviewSurfaceData` + `useReviewLadderActions`) for all data and IPC.
  *
- * **Ships dark (Phase 6):** nothing mounts it until the Phase 7 cutover, which additionally moves
- * the `RecordChangesDrawer` + `RecordDetailView` overlay housing here. Until then the row-click /
- * group-row-click callbacks are deliberate no-op stubs, and `targetRecord` (search jump) /
- * `onPublishFile` (per-record publish) are accepted on the interface but wired at cutover.
+ * `targetRecord` (search jump) stays deferred to Phase 9; it is accepted on the interface for
+ * prop-contract parity with `FolderDataGrid` but not yet wired.
  */
 interface FolderReviewSurfaceProps {
   /** Included so the cutover memo invalidates when switching workbooks even if paths match. */
@@ -41,7 +45,7 @@ interface FolderReviewSurfaceProps {
   targetRecord?: { filename: string; trigger: string } | null;
   workspaceLevelDataInvalidationCounter: number;
   invalidateWorkspaceLevelData: () => void;
-  /** Per-record publish — wired into the `RecordDetailView` housing at the Phase 7 cutover. */
+  /** Per-record publish — flows through to the `RecordDetailView` housing. */
   onPublishFile?: (relativePath: string) => void;
   /** Activates a global filter (the header "N to review" pill) once the folder is ready. */
   activateGlobalFilter?: { kind: FilterKind; trigger: number } | null;
@@ -50,6 +54,21 @@ interface FolderReviewSurfaceProps {
   /** Workspace connections (threaded from `WorkspaceContent`) — names the banner's connector. */
   connections: WorkspaceConnection[];
 }
+
+// Root frame shared by the surface and its no-folder empty state, matching `FolderDataGrid`'s
+// bordered panel so both drop into the same slot: `flex: 1` + `minWidth: 0` fills the remaining
+// width (instead of sizing to the grid's content), and the border/radius/overflow give the frame.
+const REVIEW_SURFACE_FRAME_STYLE: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  minHeight: 0,
+  backgroundColor: 'var(--bg-base)',
+  border: '0.5px solid var(--fg-divider)',
+  borderRadius: 4,
+  overflow: 'hidden',
+};
 
 export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactElement {
   const {
@@ -72,6 +91,10 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   const validate = useWorkspaceUiStore((s) => s.validateEnabled);
   const page = useWorkspaceUiStore((s) => s.page);
   const setPage = useWorkspaceUiStore((s) => s.setPage);
+  // Deep-edit overlay selection (also set by ValidationPanel's "navigate to field"): drives RecordDetailView.
+  const selectedRecordFilename = useWorkspaceUiStore((s) => s.selectedRecordFilename);
+  const showGrid = useWorkspaceUiStore((s) => s.showGrid);
+  const showRecord = useWorkspaceUiStore((s) => s.showRecord);
 
   // Inside the host the v2 flag is implicitly on (the parent only renders us when it is), so By-type
   // mode is just the view-mode selection.
@@ -83,6 +106,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     diffData,
     error,
     isBlockingLoad,
+    loadedFolderPath,
     totalPages,
     byTypeDiffData,
     byTypeIsTruncated,
@@ -98,27 +122,17 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     onIndexingProgress,
   });
 
-  // By-type group inputs, built the same way `FolderDataGrid` does: from the FULL flattened view
-  // columns (so view-hidden columns with changes still group), a sparse effective-path map (WordPress
-  // `title` → `title.raw`), and the first column as the record's title. The table grid builds its own
-  // columns internally, so the host only computes what the By-type model needs.
-  const flatViewCols = useMemo<TableViewCol[]>(
-    () => (tableView ? flattenTableViewColumns(tableView) : []),
-    [tableView],
-  );
+  // Column metadata for the By-type model and the RecordDetailView deep-edit overlay — a shared,
+  // verbatim lift of `FolderDataGrid`'s column memos (`FolderDataGrid` keeps its own copies until the
+  // Phase 8 deletion). `flatViewColumns` is the FULL flattened view (so view-hidden columns with
+  // changes still group); `columnEffectivePaths` is the sparse WordPress `title` → `title.raw` map.
+  const columnMetadata = useReviewDetailColumnMetadata(tableView, diffData);
+  const { flatViewColumns, titleColumnId, columnLabels, columnEffectivePaths } = columnMetadata;
+
   const byTypeColumns = useMemo<ByTypeSourceColumn[]>(
-    () => flatViewCols.map((col) => ({ id: col.path, displayName: col.name ?? col.path })),
-    [flatViewCols],
+    () => flatViewColumns.map((col) => ({ id: col.path, displayName: col.name ?? col.path })),
+    [flatViewColumns],
   );
-  const titleColumnId = useMemo(() => flatViewCols[0]?.path ?? null, [flatViewCols]);
-  const columnEffectivePaths = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const col of flatViewCols) {
-      const effective = resolveEffectivePath(col.path, col);
-      if (effective !== col.path) map.set(col.path, effective);
-    }
-    return map;
-  }, [flatViewCols]);
   const byTypeGroups = useMemo(
     () =>
       byTypeDiffData
@@ -127,8 +141,18 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     [byTypeDiffData, byTypeColumns, columnEffectivePaths, titleColumnId],
   );
 
-  const { editCell, approveAllForGroup, approvingGroupKeys, runBulkAction, bulkActionLoading } = useReviewLadderActions(
-    {
+  // Deep-edit overlay: the store's record selection (set by the maximize action or ValidationPanel's
+  // "navigate to field") drives RecordDetailView, indexed into the current page's rows.
+  const detailRowIndex = useMemo(() => {
+    if (!selectedRecordFilename || !diffData) return null;
+    const index = diffData.rows.findIndex((row) => row.__filename === selectedRecordFilename);
+    return index >= 0 ? index : null;
+  }, [selectedRecordFilename, diffData]);
+  // No column picker in the new surface (deferred to Phase 9): every view column is "visible".
+  const visibleColumnPaths = useMemo(() => new Set(columnMetadata.columnOrder), [columnMetadata.columnOrder]);
+
+  const { editCell, approveAllForGroup, approvingGroupKeys, runBulkAction, bulkActionLoading, handleRecordReviewed } =
+    useReviewLadderActions({
       workspaceId,
       selectedFolderPath,
       workspacePath,
@@ -137,8 +161,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
       bumpReviewDataVersion,
       applyOptimisticDiff,
       invalidateWorkspaceLevelData,
-    },
-  );
+    });
 
   // The header "N to review" pill activates a global filter; the new surface has no column picker, so
   // this just sets the shared filter state (no column narrowing).
@@ -149,6 +172,22 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     setActiveFilters([{ scope: 'global', kind: activateGlobalFilter.kind }]);
     onActivateGlobalFilterConsumed?.();
   }, [activateGlobalFilter, setActiveFilters, onActivateGlobalFilterConsumed]);
+
+  // Default a freshly-opened folder that has records needing review to the "Needs review" filter, so
+  // the user lands straight on the work that needs attention. Applied once per folder, and only once
+  // a settled load for THAT folder has landed (`loadedFolderPath` guards against acting on the stale
+  // data still painted mid-switch) — never over a filter the user or the header pill already set.
+  const defaultedReviewFilterFolderRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedFolderPath || loadedFolderPath !== selectedFolderPath) return;
+    if (defaultedReviewFilterFolderRef.current === selectedFolderPath) return;
+    defaultedReviewFilterFolderRef.current = selectedFolderPath;
+    const pendingReviewCount = diffData?.filterCounts?.unreviewed ?? 0;
+    const hasGlobalFilter = activeFilters.some((filter) => filter.scope === 'global');
+    if (pendingReviewCount > 0 && !hasGlobalFilter) {
+      setActiveFilters([{ scope: 'global', kind: 'unreviewed' }]);
+    }
+  }, [selectedFolderPath, loadedFolderPath, diffData, activeFilters, setActiveFilters]);
 
   // A single global filter at a time: toggle the kind, dropping any other active global filter.
   const onToggleGlobalFilter = useCallback(
@@ -162,14 +201,113 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     [setActiveFilters],
   );
 
-  // Phase 7 wires these to the RecordChangesDrawer; dark no-op stubs until then. Typed with no params
-  // so they satisfy both callback signatures (`(filename)` and `(group, filename)`) without unused args.
-  const handleOpenRecordDrawer = useCallback(() => {
-    // Phase 7: opens RecordChangesDrawer scoped to the page's changed records.
+  // ── Record-changes drawer (the stepper overlay opened by a single click on a changed row) ──
+  // Local, modal-like state (per stores/CLAUDE.md), mutually exclusive with the RecordDetailView
+  // deep-edit overlay (which the store's `selectedRecordFilename` drives). `ReviewTableGrid` owns the
+  // single-vs-double-click debounce, so these handlers just open the drawer immediately.
+  const [recordChangesDrawerFilename, setRecordChangesDrawerFilename] = useState<string | null>(null);
+  // A By-type group's records when opened from there (the stepper cycles within the group); null means
+  // page-scoped (the table's changed records). Pruned as records are reviewed so the stepper never
+  // lands back on an already-approved record.
+  const [recordChangesDrawerFilenameSet, setRecordChangesDrawerFilenameSet] = useState<string[] | null>(null);
+
+  // Changed records on the current page, in the grid's displayed order (`ReviewTableGrid` renders
+  // `diffData.rows` verbatim), so the stepper matches what the user sees.
+  const changedRecordFilenames = useMemo(
+    () => (diffData?.rows ?? []).filter((row) => rowHasUnreviewedChanges(row)).map((row) => row.__filename),
+    [diffData?.rows],
+  );
+  const drawerFilenames = useMemo(
+    () => recordChangesDrawerFilenameSet ?? changedRecordFilenames,
+    [recordChangesDrawerFilenameSet, changedRecordFilenames],
+  );
+  const recordChangesDrawerIndex = useMemo(
+    () => (recordChangesDrawerFilename ? drawerFilenames.indexOf(recordChangesDrawerFilename) : -1),
+    [recordChangesDrawerFilename, drawerFilenames],
+  );
+
+  const closeRecordChangesDrawer = useCallback(() => {
+    setRecordChangesDrawerFilename(null);
+    setRecordChangesDrawerFilenameSet(null);
   }, []);
-  const handleOpenGroupRow = useCallback(() => {
-    // Phase 7: opens RecordChangesDrawer scoped to the By-type group's records.
-  }, []);
+
+  const handleOpenRecordDrawer = useCallback(
+    (filename: string) => {
+      const row = diffData?.rows.find((r) => r.__filename === filename);
+      setRecordChangesDrawerFilenameSet(null); // page-scoped
+      setRecordChangesDrawerFilename(filename);
+      void trackOpenRecordChangesDrawer(workspaceId, {
+        folderPath: selectedFolderPath,
+        rowStatus: row?.__rowStatus ?? 'unknown',
+      });
+    },
+    [diffData?.rows, workspaceId, selectedFolderPath],
+  );
+
+  const handleOpenGroupRow = useCallback(
+    (group: ByTypeGroupModel, filename: string) => {
+      setRecordChangesDrawerFilenameSet(group.recordFilenames); // group-scoped stepper
+      setRecordChangesDrawerFilename(filename);
+      void trackOpenRecordChangesDrawer(workspaceId, {
+        folderPath: selectedFolderPath,
+        rowStatus: group.rows.find((groupRow) => groupRow.filename === filename)?.rowStatus ?? 'unknown',
+      });
+    },
+    [workspaceId, selectedFolderPath],
+  );
+
+  // The record to show after the current one leaves the stepped set, computed from the set as it is
+  // now (before the async refetch resolves). Null when nothing remains, which closes the drawer.
+  const nextChangedRecordAfter = useCallback(
+    (filename: string): string | null => {
+      const index = drawerFilenames.indexOf(filename);
+      const remaining = drawerFilenames.filter((f) => f !== filename);
+      if (remaining.length === 0) return null;
+      return remaining[Math.min(Math.max(index, 0), remaining.length - 1)] ?? null;
+    },
+    [drawerFilenames],
+  );
+
+  const handleRecordChangeReviewed = useCallback(
+    (filename: string, action: 'approve' | 'reject') => {
+      // The reviewed record may be off the current page (drawer opened from a By-type group), so fall
+      // back to the folder-wide By-type set for the tracking snapshot.
+      const row =
+        diffData?.rows.find((r) => r.__filename === filename) ??
+        byTypeDiffData?.rows.find((r) => r.__filename === filename);
+      const trackProps = {
+        rowStatus: row?.__rowStatus ?? 'unknown',
+        changedFieldCount: row?.__changedFields.length ?? 0,
+      };
+      // Advance the stepper (or close when none remain) and drop the reviewed record from a
+      // group-scoped set so the stepper never lands back on it.
+      setRecordChangesDrawerFilename(nextChangedRecordAfter(filename));
+      setRecordChangesDrawerFilenameSet((set) => (set ? set.filter((f) => f !== filename) : set));
+      // The drawer already ran the accept/reject IPC; the hook only tracks + refreshes both surfaces
+      // and invalidates the workspace-level counts. Stepper advance stays here in the host.
+      handleRecordReviewed(action, trackProps);
+    },
+    [diffData?.rows, byTypeDiffData, nextChangedRecordAfter, handleRecordReviewed],
+  );
+
+  // Opening the deep-edit overlay (store selection) closes the drawer, so the two never co-render.
+  useEffect(() => {
+    if (selectedRecordFilename) closeRecordChangesDrawer();
+  }, [selectedRecordFilename, closeRecordChangesDrawer]);
+  // Close the drawer when the folder changes.
+  useEffect(() => {
+    closeRecordChangesDrawer();
+  }, [selectedFolderPath, closeRecordChangesDrawer]);
+  // Switching Table ⇄ By-type closes the drawer so a group-scoped stepper never lingers over the table.
+  useEffect(() => {
+    closeRecordChangesDrawer();
+  }, [reviewSurfaceViewMode, closeRecordChangesDrawer]);
+  // Close if the open record dropped out of the stepped set (approved/rejected, or its group emptied).
+  useEffect(() => {
+    if (recordChangesDrawerFilename && recordChangesDrawerIndex < 0) {
+      closeRecordChangesDrawer();
+    }
+  }, [recordChangesDrawerFilename, recordChangesDrawerIndex, closeRecordChangesDrawer]);
 
   // ── Bulk confirm modal (host owns the modal open/close flag) ──
   const [bulkActionConfirm, setBulkActionConfirm] = useState<BulkReviewAction | null>(null);
@@ -184,14 +322,19 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
 
   const folderLabel = selectedFolderPath?.split('/').filter(Boolean).pop() ?? 'this folder';
 
-  const body = ((): ReactElement => {
-    if (!selectedFolderPath || !workspacePath) {
-      return (
-        <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
-          <Text13Regular c="var(--fg-muted)">Select a folder to review its pending changes.</Text13Regular>
+  // No folder selected → the same clean "Select a folder to view data" panel as `FolderDataGrid`,
+  // not the review chrome (banner + subbar), which looks broken with nothing to review.
+  if (!selectedFolderPath || !workspacePath) {
+    return (
+      <Box style={REVIEW_SURFACE_FRAME_STYLE}>
+        <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Text13Regular c="dimmed">Select a folder to view data</Text13Regular>
         </Box>
-      );
-    }
+      </Box>
+    );
+  }
+
+  const body = ((): ReactElement => {
     if (isByTypeMode) {
       if (byTypeDiffData === null) {
         return (
@@ -238,7 +381,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   })();
 
   return (
-    <Box style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <Box style={REVIEW_SURFACE_FRAME_STYLE}>
       <ReviewContextBanner
         selectedFolderPath={selectedFolderPath}
         connections={connections}
@@ -259,6 +402,41 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
 
       <Box style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
         {body}
+        {detailRowIndex !== null && diffData && selectedFolderPath && workspacePath && (
+          <RecordDetailView
+            rows={diffData.rows}
+            selectedIndex={detailRowIndex}
+            folderPath={selectedFolderPath}
+            workspacePath={workspacePath}
+            schema={schema}
+            titleColumnId={titleColumnId}
+            columnOrder={columnMetadata.columnOrder}
+            columnLabels={columnLabels}
+            columnDescriptions={columnMetadata.columnDescriptions}
+            readonlyFields={columnMetadata.readonlyFields}
+            columnTypes={columnMetadata.columnTypes}
+            columnEffectivePaths={columnEffectivePaths}
+            columnGroups={columnMetadata.columnGroups}
+            allColumnPaths={columnMetadata.allColumnPaths}
+            visibleColumnPaths={visibleColumnPaths}
+            onSelectIndex={(nextIndex) => {
+              const nextFilename = diffData.rows[nextIndex]?.__filename;
+              if (nextFilename) showRecord(nextFilename);
+            }}
+            onClose={() => showGrid()}
+            workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
+            onRecordStructurallyChangedRefetchAll={() => {
+              bumpReviewDataVersion();
+              invalidateWorkspaceLevelData();
+            }}
+            onSingleFieldAcceptedApplyOptimistically={(filename, fieldName, nextValue) =>
+              applyOptimisticDiff((prev) =>
+                applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue),
+              )
+            }
+            onPublishFile={props.onPublishFile}
+          />
+        )}
       </Box>
 
       {!isByTypeMode && totalPages > 1 && (
@@ -359,6 +537,28 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
           </ButtonSecondaryGhost>
         </Group>
       </Modal>
+
+      {/* The changes drawer (a Portal) overlays whichever review body is shown — the canvas grid or
+          the By-type view — and is mutually exclusive with the deep-edit RecordDetailView. */}
+      {recordChangesDrawerFilename &&
+        recordChangesDrawerIndex >= 0 &&
+        selectedRecordFilename === null &&
+        selectedFolderPath &&
+        workspacePath && (
+          <RecordChangesDrawer
+            folderPath={selectedFolderPath}
+            workspacePath={workspacePath}
+            titleColumnId={titleColumnId}
+            columnLabels={columnLabels}
+            columnEffectivePaths={columnEffectivePaths}
+            changedFilenames={drawerFilenames}
+            currentIndex={recordChangesDrawerIndex}
+            onSelectIndex={(index) => setRecordChangesDrawerFilename(drawerFilenames[index] ?? null)}
+            onClose={closeRecordChangesDrawer}
+            onApproved={(filename) => handleRecordChangeReviewed(filename, 'approve')}
+            onRejected={(filename) => handleRecordChangeReviewed(filename, 'reject')}
+          />
+        )}
     </Box>
   );
 }
