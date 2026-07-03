@@ -154,11 +154,30 @@ Per env (`eu-test`, then `eu-production`):
   `versions.access` is correctly DENIED (token out of read-only reach — the core requirement).
   Byte length verified out-of-band by the operator (`wc -c` = 64). IAM grant + wiring come
   with the MR1 deploy.
-- **MR1 deploy** (full apply + VM redeploy): ✅ deployed to prod (2026-06-27) — lenient mode live.
-- **MR2** (server presents the token): ✅ implemented (config getter with defensive `.trim()`,
-  `Authorization` header in `callGitApi()` + `proxyToGitBackend()`, `.env.example`, 2 new client
-  tests). Server build + strict lint (changed files) + specs green. NOT yet committed/merged/deployed.
-- **MR3** (flip to strict): ⬜ not started.
+- **MR1 + MR2 code**: ✅ on master, deployed to prod via CI. Both Cloud Run token wiring
+  (api/cron/worker) is applied in **both** envs (`terraform apply` done 2026-07-02), so the
+  server presents the token.
+- **Token activation on the scratch-git VM** — this is the step CI does NOT do (the VM's
+  `deploy.sh`/`startup.sh` are frozen by `lifecycle.ignore_changes`, so the on-disk deploy
+  script must be updated + the container restarted per env). Status:
+  - **eu-test**: ✅ **activated + validated 2026-07-02** via Option A (scp updated `deploy.sh` →
+    blue/green redeploy). scratch-git boots `configured (MR1 lenient)`, server sends the token,
+    **0 `401`s** = token matches end-to-end.
+  - **eu-production**: ✅ **activated + DURABLE + validated 2026-07-03** via Option B
+    (`terraform apply -replace` of the instance — recreated VM bakes the token into `startup.sh`,
+    survives reboots). Both slots boot `configured (MR1 lenient)`; server sends the token;
+    **0 `401`s** = token matches end-to-end. Data disk (repos) survived the recreate.
+- **Durability (Option B)**:
+  - **eu-production**: ✅ done (the recreate above).
+  - **eu-test**: ✅ done 2026-07-02 (VM recreated ~23:25 UTC; both slots boot `configured`,
+    0 `401`s over 6h). Durable in both envs now.
+- **MR3** (flip lenient→strict): ✅ implemented (2026-07-03). `authorize_request` now rejects a
+  missing/non-`Bearer`/wrong token (only a valid `Bearer` token passes); startup log says
+  `configured (enforcing …)`; the two lenient tests now assert `401`. `cargo fmt` + full
+  `cargo test` green (7 auth tests). NOT yet committed/merged/deployed. On deploy, verify the
+  acceptance criteria: unauthenticated `curl` to a manage endpoint **and** a `:3101` git op →
+  `401`; server end-to-end still works (server sends a valid token → no `401`s); a `gcp-ro`
+  IAP port-forward can no longer mutate a repo.
 
 ### Deploy order (the safety-critical part)
 

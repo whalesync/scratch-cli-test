@@ -54,9 +54,9 @@ enum AuthorizationOutcome {
 /// middleware's own state). When it is `None` the APIs are unauthenticated — today's
 /// behavior, relied on by local dev, `cargo test`, and the smoke-test Docker stack.
 ///
-/// MR1 (this version) is intentionally LENIENT so it can deploy to prod before the server
-/// is updated to present the token: see [`authorize_request`]. `/` and `/health` are always
-/// exempt (the `deploy.sh` health probe and GCP TCP health checks).
+/// When configured, enforcement is STRICT: every request except `/` and `/health` (the
+/// `deploy.sh` health probe and GCP TCP health checks) must present a valid `Bearer` token —
+/// see [`authorize_request`].
 async fn require_auth(
     State(expected_bearer_token): State<Option<Arc<str>>>,
     request: Request,
@@ -78,19 +78,18 @@ async fn require_auth(
     }
 }
 
-/// MR1 LENIENT policy: a request that presents NO `Authorization` header is allowed (the
-/// server is still being rolled out to send the token), and a request with a correct bearer
-/// token is allowed; only a present-but-wrong token is rejected. MR3 will change the
-/// no-header case from `Allow` to `Reject` once every caller sends a valid token.
+/// STRICT policy (MR3): only a request presenting a correct `Bearer` token is allowed. A
+/// request with no `Authorization` header, a non-`Bearer` header, or a wrong token is
+/// rejected with 401. (This is the enforcing form; the earlier MR1 rollout allowed a missing
+/// header so the receiving end could deploy before the server was updated to present the token.)
 fn authorize_request(request: &Request, expected_bearer_token: &str) -> AuthorizationOutcome {
     match extract_bearer_token(request) {
-        None => AuthorizationOutcome::Allow,
         Some(provided_bearer_token)
             if bearer_tokens_match(provided_bearer_token, expected_bearer_token) =>
         {
             AuthorizationOutcome::Allow
         }
-        Some(_) => AuthorizationOutcome::Reject,
+        _ => AuthorizationOutcome::Reject,
     }
 }
 
@@ -150,9 +149,9 @@ pub async fn run() {
     // unauthenticated (legacy behavior; local dev, tests, smoke-test stack).
     let shared_auth_token: Option<Arc<str>> = config.shared_auth_token.as_deref().map(Arc::from);
     let auth_mode_description = if shared_auth_token.is_some() {
-        // MR1 is lenient: a configured token rejects WRONG tokens but still allows requests
-        // with no Authorization header. MR3 will flip this to fully enforcing.
-        "configured (MR1 lenient — requests without a token are allowed; wrong tokens are rejected)"
+        // Strict enforcement: every request (except `/` and `/health`) must present a valid
+        // `Bearer` token; missing or invalid tokens get 401.
+        "configured (enforcing — requests require a valid bearer token)"
     } else {
         "not configured — HTTP APIs are unauthenticated (legacy)"
     };
@@ -376,7 +375,7 @@ pub async fn run() {
 
 #[cfg(test)]
 mod auth_tests {
-    //! Tests for the DEV-10600 shared-bearer-token middleware (MR1, lenient policy).
+    //! Tests for the DEV-10600 shared-bearer-token middleware (strict policy).
     use super::*;
     use axum::body::Body;
     use axum::http::header::AUTHORIZATION;
@@ -428,19 +427,19 @@ mod auth_tests {
     }
 
     #[tokio::test]
-    async fn mr1_lenient_allows_request_with_no_authorization_header() {
-        // The crux of MR1: callers aren't sending the token yet, so a missing header passes.
-        // MR3 will flip this to 401.
+    async fn strict_rejects_request_with_no_authorization_header() {
+        // Strict enforcement: a request with no token is rejected (this was allowed during the
+        // MR1 lenient rollout).
         assert_eq!(
             status_of(configured_token(), "/api/repo/manage/abc/fsck", None).await,
-            StatusCode::OK
+            StatusCode::UNAUTHORIZED
         );
     }
 
     #[tokio::test]
-    async fn mr1_lenient_allows_non_bearer_authorization_header() {
-        // A header that isn't a well-formed `Bearer <token>` isn't recognized as a presented
-        // token, so MR1 treats it like "no token" and allows it. MR3 will reject it.
+    async fn strict_rejects_non_bearer_authorization_header() {
+        // A header that isn't a well-formed `Bearer <token>` isn't a presented token, so it is
+        // rejected like a missing one.
         assert_eq!(
             status_of(
                 configured_token(),
@@ -448,7 +447,7 @@ mod auth_tests {
                 Some("s3cret-token")
             )
             .await,
-            StatusCode::OK
+            StatusCode::UNAUTHORIZED
         );
     }
 
@@ -467,7 +466,7 @@ mod auth_tests {
 
     #[tokio::test]
     async fn rejects_request_with_wrong_bearer_token() {
-        // Even in lenient MR1, a present-but-wrong Bearer token is rejected.
+        // A present-but-wrong Bearer token is rejected.
         assert_eq!(
             status_of(
                 configured_token(),
