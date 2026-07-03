@@ -333,10 +333,16 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
       break;
     }
 
+    // A Notion `people` property holds not just individual users but also groups: a
+    // workspace/teamspace group can be mentioned in a person property, and the API then
+    // returns that member verbatim as `{ id, object: 'group', name }` (no `person`
+    // sub-object). `object` must therefore accept 'group' as well as 'user', otherwise
+    // enforce_schema rejects every group member ("user" was expected). The remaining
+    // fields are already optional, which covers the slimmer group shape.
     case 'people':
       innerValueSchema = Type.Array(
         Type.Object({
-          object: Type.Literal('user'),
+          object: Type.Union([Type.Literal('user'), Type.Literal('group')]),
           id: Type.String(),
           name: Type.Optional(Type.String()),
           avatar_url: Type.Optional(Type.Union([Type.String(), Type.Null()])),

@@ -277,6 +277,49 @@ describe('url/email properties are free-text — no format assertion', () => {
   });
 });
 
+describe('people property — accepts group members, not just users', () => {
+  // A Notion `people` property can hold workspace/teamspace GROUPS as well as individual
+  // users: a group mentioned in a person property is returned verbatim as
+  // `{ id, object: 'group', name }` (no `person` sub-object). If the member `object` were
+  // locked to the literal 'user', enforce_schema would reject every group member ("user"
+  // was expected) — the 19 false-positive errors on the Optemization design-partner
+  // workspace (DEV-10571).
+
+  /** The schema for a single item of the `people` array. */
+  function peopleMember(): SchemaNode {
+    return props(prop('people')).people.items as SchemaNode;
+  }
+
+  /** Every literal value the node accepts, whether modeled as const, enum, or an anyOf of those. */
+  function acceptedConsts(node: SchemaNode | undefined): unknown[] {
+    if (!node) return [];
+    if (Array.isArray(node.enum)) return [...(node.enum as unknown[])];
+    if (node.const !== undefined) return [node.const];
+    const variants = (node.anyOf as SchemaNode[]) ?? (node.allOf as SchemaNode[]) ?? [];
+    return variants.flatMap((variant) => acceptedConsts(variant));
+  }
+
+  it('models the member object field as a user|group union', () => {
+    const objectField = props(peopleMember()).object;
+    expect(acceptedConsts(objectField).sort()).toEqual(['group', 'user']);
+  });
+
+  it('keeps object constrained (a genuinely-wrong object like "page" still fails)', () => {
+    const objectField = props(peopleMember()).object;
+    // Must stay a closed set of the two known values — not widened to a free string,
+    // which would stop surfacing genuinely-bad data.
+    expect(acceptedConsts(objectField)).toHaveLength(2);
+    expect(objectField.type).toBeUndefined();
+  });
+
+  it('requires only object and id, so the slimmer group shape (no person) still validates', () => {
+    const member = peopleMember();
+    expect((member.required as string[]).sort()).toEqual(['id', 'object']);
+    // `person` (user-only) must remain optional, else groups would fail on its absence.
+    expect((member.required as string[]).includes('person')).toBe(false);
+  });
+});
+
 // ── Page-level envelope (unchanged behavior, kept as a guardrail) ──
 
 function buildDataSource(): DataSourceObjectResponse {
