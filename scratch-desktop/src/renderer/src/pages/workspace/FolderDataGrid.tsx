@@ -52,14 +52,13 @@ import {
   coerceCellInputTextAgainstExistingValueOrSchema,
   resolveSchemaLeafHint,
 } from '../../../../shared/cell-value-coercion';
-import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
+import type { FieldChangeClassification } from '../../../../shared/field-change-classification';
 import {
   createFallbackTableView,
   createFallbackTableViewFromColumnDefinitions,
   flattenTableViewColumns,
   getByPath,
   resolveDisplayString,
-  setByPath,
 } from '../../../../shared/schema-columns';
 // ValidationResultRow is no longer used — validation data comes from diffData.validationByCell
 import { getWordDiffSegments } from '../../../../shared/word-diff';
@@ -80,15 +79,30 @@ import {
   type GridFilter,
   type ReviewSurfaceViewMode,
 } from '../../stores/workspace-ui-store';
-import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
+import {
+  applyAcceptedFieldChangeToFolderDiffData,
+  type CellValidationEntry,
+  type DiffGridResult,
+  type DiffRow,
+  type RowStatus,
+} from './diff-grid-types';
 import { EditPropertyDialog } from './EditPropertyDialog';
-import { resolveCellFailedError } from './failed-fields';
 import { formatFieldDisplay } from './field-formatters';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
-import { InvalidJsonFilesModal, type InvalidJsonFileListEntry } from './InvalidJsonFilesModal';
-import { rowHasUnreviewedChanges } from './record-diff-helpers';
+import {
+  editableCellToString,
+  formatReferenceDisplay,
+  getCellDiffState,
+  inferCellKind,
+  isCellReadonly,
+  isColumnReadonly,
+  resolveEffectivePath,
+  resolveEffectiveType,
+} from './grid-cell-diff-state';
+import { InvalidJsonFilesModal } from './InvalidJsonFilesModal';
+import { rowHasUnreviewedChanges, toDisplayString } from './record-diff-helpers';
 import { RecordChangesDrawer } from './RecordChangesDrawer';
 import { RecordDetailView } from './RecordDetailView';
 import {
@@ -102,70 +116,8 @@ import { drawUnifiedDiffCell, UNIFIED_DIFF_ROW_HEIGHT } from './unified-diff-cel
 
 // ── Types ──
 
-type RowStatus =
-  | 'added'
-  | 'addedUnpublished'
-  | 'modified'
-  | 'unpublished'
-  | 'deleted'
-  | 'deletedUnpublished'
-  | 'unchanged'
-  | 'invalidJson';
-
-interface DiffRow {
-  [key: string]: unknown;
-  __rowStatus: RowStatus;
-  __changedFields: string[];
-  __fromFields: Record<string, unknown>;
-  __unpublishedFields: string[];
-  __masterFields: Record<string, unknown>;
-  __filename: string;
-  __parseError?: string;
-  /** DEV-10048: per-field connector rejection messages from a prior failed publish. */
-  __failedFields?: Record<string, string>;
-  /** DEV-10048: record-level connector rejection message from a prior failed publish. */
-  __failedError?: string;
-  __raw: Record<string, unknown>;
-}
-
-interface CellValidationEntry {
-  field_path: string;
-  validator_kind: string;
-  level: string;
-  message?: string | null;
-  description?: string | null;
-  fixable: boolean;
-}
-
-interface DiffGridResult {
-  rows: DiffRow[];
-  columns: ColumnDefinition[];
-  total: number;
-  summary: {
-    total: number;
-    added: number;
-    addedApproved: number;
-    modified: number;
-    unpublished: number;
-    deleted: number;
-    deletedApproved: number;
-    invalidJson: number;
-  };
-  filterCounts: { unreviewed: number; unpublished: number; errors: number };
-  focusColumnIds: { unreviewed: string[]; unpublished: string[]; errors: string[] };
-  invalidJsonFiles: InvalidJsonFileListEntry[];
-  /**
-   * Human-readable names for foreign-key (reference) cells (DEV-10530): column id
-   * -> raw referenced id -> the linked record's display name. A column appears
-   * only when its reference target resolves to a folder in this workspace; an id
-   * appears only when its linked record was found. Missing entries render the raw id.
-   */
-  referenceLabels?: Record<string, Record<string, string>>;
-  staleCount: number;
-  validationByCell: Record<string, CellValidationEntry[]>;
-  totalErrorCount: number;
-  totalProblemsStaleCount: number;
-}
+// `RowStatus` / `DiffRow` / `CellValidationEntry` / `DiffGridResult` + the optimistic-update
+// helpers now live in ./diff-grid-types (shared with ReviewTableGrid); imported above.
 
 type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
 
@@ -412,7 +364,8 @@ function drawWordDiffText(
 
   let x = startX;
   for (const seg of segments) {
-    ctx.fillStyle = seg.changed ? accentColor : baseColor;
+    if (seg.kind === 'removed') continue; // Removed pieces aren't in the rendered new value.
+    ctx.fillStyle = seg.kind === 'added' ? accentColor : baseColor;
     ctx.fillText(seg.text, x, y);
     x += ctx.measureText(seg.text).width;
     // Stop early once we're past the visible region; clipping handles correctness,
@@ -424,315 +377,9 @@ function drawWordDiffText(
 
 // ── Helpers ──
 
-function toDisplayString(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value);
-}
-
-/**
- * Format a foreign-key (reference) cell for display: swap each referenced id for
- * the linked record's name when known, joining multi-references with commas
- * (DEV-10530). `labels` maps a raw id string -> name; ids absent from it fall
- * back to the raw id. The raw value is still used for `data`/`copyData`, so
- * editing and copy operate on the verbatim id.
- */
-function formatReferenceDisplay(value: unknown, labels: Record<string, string>): string {
-  const labelForId = (id: string): string => labels[id] ?? id;
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => {
-        if (typeof entry === 'string') return labelForId(entry);
-        if (typeof entry === 'number') return labelForId(String(entry));
-        return toDisplayString(entry);
-      })
-      .join(', ');
-  }
-  if (typeof value === 'string') return labelForId(value);
-  if (typeof value === 'number') return labelForId(String(value));
-  return toDisplayString(value);
-}
-
-function diffValuesEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a == null || b == null) return a == null && b == null;
-  if (typeof a !== typeof b) return false;
-  if (typeof a === 'object') {
-    try {
-      return JSON.stringify(a) === JSON.stringify(b);
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-function deriveRowStatusAfterEdit(row: DiffRow): RowStatus {
-  if (
-    row.__rowStatus === 'added' ||
-    row.__rowStatus === 'addedUnpublished' ||
-    row.__rowStatus === 'deleted' ||
-    row.__rowStatus === 'deletedUnpublished' ||
-    row.__rowStatus === 'invalidJson'
-  ) {
-    return row.__rowStatus;
-  }
-  if (row.__changedFields.length > 0) {
-    return 'modified';
-  }
-  if (row.__unpublishedFields.length > 0) {
-    return 'unpublished';
-  }
-  return 'unchanged';
-}
-
-function recomputeSummaryCount(prev: DiffRow, next: DiffRow, status: RowStatus, count: number): number {
-  const wasStatus = prev.__rowStatus === status;
-  const isStatus = next.__rowStatus === status;
-  if (wasStatus === isStatus) return count;
-  return count + (isStatus ? 1 : -1);
-}
-
-function recomputeFilterCount(prevHad: boolean, nextHas: boolean, count: number): number {
-  if (prevHad === nextHas) return count;
-  return count + (nextHas ? 1 : -1);
-}
-
-function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: DiffRow): DiffGridResult {
-  const nextRows = result.rows.map((r) => (r.__filename === prevRow.__filename ? nextRow : r));
-
-  const prevHadUnreviewed =
-    prevRow.__rowStatus === 'added' ||
-    prevRow.__rowStatus === 'deleted' ||
-    prevRow.__rowStatus === 'invalidJson' ||
-    prevRow.__changedFields.length > 0;
-  const nextHasUnreviewed =
-    nextRow.__rowStatus === 'added' ||
-    nextRow.__rowStatus === 'deleted' ||
-    nextRow.__rowStatus === 'invalidJson' ||
-    nextRow.__changedFields.length > 0;
-  const prevHadUnpublished =
-    prevRow.__rowStatus === 'addedUnpublished' ||
-    prevRow.__rowStatus === 'deletedUnpublished' ||
-    prevRow.__unpublishedFields.length > 0;
-  const nextHasUnpublished =
-    nextRow.__rowStatus === 'addedUnpublished' ||
-    nextRow.__rowStatus === 'deletedUnpublished' ||
-    nextRow.__unpublishedFields.length > 0;
-
-  const summary: DiffGridResult['summary'] = {
-    total: result.summary.total,
-    added: recomputeFilterCount(
-      prevRow.__rowStatus === 'added' || prevRow.__rowStatus === 'addedUnpublished',
-      nextRow.__rowStatus === 'added' || nextRow.__rowStatus === 'addedUnpublished',
-      result.summary.added,
-    ),
-    addedApproved: recomputeSummaryCount(prevRow, nextRow, 'addedUnpublished', result.summary.addedApproved),
-    modified: recomputeSummaryCount(prevRow, nextRow, 'modified', result.summary.modified),
-    unpublished: recomputeSummaryCount(prevRow, nextRow, 'unpublished', result.summary.unpublished),
-    deleted: recomputeFilterCount(
-      prevRow.__rowStatus === 'deleted' || prevRow.__rowStatus === 'deletedUnpublished',
-      nextRow.__rowStatus === 'deleted' || nextRow.__rowStatus === 'deletedUnpublished',
-      result.summary.deleted,
-    ),
-    deletedApproved: recomputeSummaryCount(prevRow, nextRow, 'deletedUnpublished', result.summary.deletedApproved),
-    invalidJson: recomputeSummaryCount(prevRow, nextRow, 'invalidJson', result.summary.invalidJson),
-  };
-
-  const filterCounts = {
-    unreviewed: recomputeFilterCount(prevHadUnreviewed, nextHasUnreviewed, result.filterCounts.unreviewed),
-    unpublished: recomputeFilterCount(prevHadUnpublished, nextHasUnpublished, result.filterCounts.unpublished),
-    errors: result.filterCounts.errors,
-  };
-
-  return { ...result, rows: nextRows, summary, filterCounts };
-}
-
-function applyAcceptedFieldChangeToFolderDiffData(
-  result: DiffGridResult,
-  filename: string,
-  fieldName: string,
-  nextValue: unknown,
-): DiffGridResult {
-  const prevRow = result.rows.find((r) => r.__filename === filename);
-  if (!prevRow) return result;
-
-  const masterValue = prevRow.__masterFields[fieldName];
-  const masterHadField = Object.prototype.hasOwnProperty.call(prevRow.__masterFields, fieldName);
-  const nextFromFields = { ...prevRow.__fromFields };
-  delete nextFromFields[fieldName];
-
-  const wasUnpublished = prevRow.__unpublishedFields.includes(fieldName);
-  const matchesMaster = masterHadField && diffValuesEqual(nextValue, masterValue);
-  const nextUnpublishedFields = wasUnpublished
-    ? matchesMaster
-      ? prevRow.__unpublishedFields.filter((f) => f !== fieldName)
-      : prevRow.__unpublishedFields
-    : matchesMaster
-      ? prevRow.__unpublishedFields
-      : [...prevRow.__unpublishedFields, fieldName];
-
-  const nextRaw = setByPath(prevRow.__raw, fieldName, nextValue);
-  const nextRow: DiffRow = {
-    ...prevRow,
-    __raw: nextRaw,
-    __changedFields: prevRow.__changedFields.filter((f) => f !== fieldName),
-    __fromFields: nextFromFields,
-    __unpublishedFields: nextUnpublishedFields,
-  };
-  nextRow.__rowStatus = deriveRowStatusAfterEdit(nextRow);
-
-  return replaceRowInResult(result, prevRow, nextRow);
-}
-
-interface CellDiffState {
-  diffKind: FieldValueDiffKind;
-  fromValue: string;
-  /** Populated only when diffKind !== null. */
-  classification: FieldChangeClassification | null;
-  /**
-   * DEV-10048: the connector's rejection message when a prior publish failed for
-   * this field (or record-level error on a failed record). Drives the per-field
-   * "failed to publish" warning. Undefined when the field has no failed-publish detail.
-   */
-  failedError?: string;
-}
-
-function getCellDiffState(row: DiffRow, fieldName: string, viewCol: TableViewCol | undefined): CellDiffState {
-  // Row-level statuses (added, deleted, invalidJson) are styled at the row level — don't
-  // overlay per-cell diff colours on top. Exception: an approved create ('addedUnpublished')
-  // with edited fields should still show per-cell diffs for those edits.
-  if (
-    row.__rowStatus === 'added' ||
-    (row.__rowStatus === 'addedUnpublished' && row.__changedFields.length === 0) ||
-    row.__rowStatus === 'deleted' ||
-    row.__rowStatus === 'deletedUnpublished' ||
-    row.__rowStatus === 'invalidJson'
-  ) {
-    return { diffKind: null, fromValue: '', classification: null };
-  }
-  // __changedFields / __unpublishedFields contain leaf-level paths (e.g. "title.raw").
-  // When the column has a selected subfield, check the effective path too.
-  const effectivePath = resolveEffectivePath(fieldName, viewCol);
-  const isUnreviewed =
-    row.__changedFields.includes(fieldName) ||
-    (effectivePath !== fieldName && row.__changedFields.includes(effectivePath));
-  const isUnpublished =
-    !isUnreviewed &&
-    (row.__unpublishedFields.includes(fieldName) ||
-      (effectivePath !== fieldName && row.__unpublishedFields.includes(effectivePath)));
-  // Use the path that actually appears in the diff arrays for value lookups.
-  const diffKey = row.__changedFields.includes(effectivePath)
-    ? effectivePath
-    : row.__unpublishedFields.includes(effectivePath)
-      ? effectivePath
-      : fieldName;
-  // DEV-10048: a prior publish rejected this record. A per-field message (from
-  // failed-patches.json's fieldErrors) takes precedence; otherwise the record-level
-  // error applies to whichever field the user is re-editing on this failed record.
-  const failedError = resolveCellFailedError({
-    failedFields: row.__failedFields,
-    recordError: row.__failedError,
-    effectivePath,
-    fieldName,
-    hasDiff: isUnreviewed || isUnpublished,
-  });
-  if (isUnreviewed) {
-    const rawFrom = row.__fromFields[diffKey];
-    return {
-      diffKind: 'unreviewed',
-      fromValue: toDisplayString(rawFrom),
-      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, effectivePath), viewCol),
-      failedError,
-    };
-  }
-  if (isUnpublished) {
-    const rawFrom = row.__masterFields[diffKey];
-    return {
-      diffKind: 'unpublished',
-      fromValue: toDisplayString(rawFrom),
-      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, effectivePath), viewCol),
-      failedError,
-    };
-  }
-  return { diffKind: null, fromValue: '', classification: null, failedError };
-}
-
-/** When a subfield is selected on a view column, returns the full dot-path to the subfield; otherwise the root colId. */
-function resolveEffectivePath(colId: string, viewCol: TableViewCol | undefined): string {
-  if (viewCol?.selectedSubfield != null && viewCol.subfields?.[viewCol.selectedSubfield]) {
-    return `${colId}.${viewCol.subfields[viewCol.selectedSubfield].relativePath}`;
-  }
-  return colId;
-}
-
-/** Returns true if the column (or the currently selected subfield) is readonly. */
-function isColumnReadonly(viewCol: TableViewCol | undefined): boolean {
-  if (viewCol?.readonly) return true;
-  if (viewCol?.selectedSubfield != null && viewCol.subfields?.[viewCol.selectedSubfield]) {
-    return viewCol.subfields[viewCol.selectedSubfield].readonly === true;
-  }
-  return false;
-}
-
-/** Returns true if the column (or the active subfield) is write-once (editable only on new records). */
-function isColumnWriteOnce(viewCol: TableViewCol | undefined): boolean {
-  if (viewCol?.writeOnce) return true;
-  if (viewCol?.selectedSubfield != null && viewCol.subfields?.[viewCol.selectedSubfield]) {
-    return viewCol.subfields[viewCol.selectedSubfield].writeOnce === true;
-  }
-  return false;
-}
-
-/** A row is "new" when it has no published master (created locally, not yet published). */
-function isNewRecordRow(row: DiffRow | undefined): boolean {
-  return row?.__rowStatus === 'added' || row?.__rowStatus === 'addedUnpublished';
-}
-
-/**
- * Effective cell editability. A readonly column is never editable; a write-once
- * column is editable only while the record is new (no published master) and
- * locks once it exists remotely. See X_SCRATCH_WRITE_ONCE.
- */
-function isCellReadonly(viewCol: TableViewCol | undefined, row: DiffRow | undefined): boolean {
-  return isColumnReadonly(viewCol) || (isColumnWriteOnce(viewCol) && !isNewRecordRow(row));
-}
-
-/** Returns the effective TablePropertyType, preferring the active subfield's type when one is selected. */
-function resolveEffectiveType(viewCol: TableViewCol | undefined): TablePropertyType | undefined {
-  if (viewCol?.selectedSubfield != null && viewCol.subfields?.[viewCol.selectedSubfield]) {
-    return viewCol.subfields[viewCol.selectedSubfield].type ?? viewCol.type;
-  }
-  return viewCol?.type;
-}
-
-function inferCellKind(value: unknown, propertyType?: TablePropertyType): GridCellKind {
-  if (propertyType === 'checkbox') return GridCellKind.Boolean;
-  if (propertyType === 'number') return GridCellKind.Number;
-  if (propertyType === 'url') return GridCellKind.Uri;
-  // Fall back to runtime type detection when view type is unset or generic
-  if (propertyType == null || propertyType === 'string' || propertyType === 'object') {
-    if (typeof value === 'boolean') return GridCellKind.Boolean;
-    if (typeof value === 'number') return GridCellKind.Number;
-  }
-  return GridCellKind.Text;
-}
-
-function editableCellToString(cell: EditableGridCell): string {
-  switch (cell.kind) {
-    case GridCellKind.Text:
-    case GridCellKind.Markdown:
-    case GridCellKind.Uri:
-      return cell.data;
-    case GridCellKind.Number:
-      return cell.data == null ? '' : String(cell.data);
-    case GridCellKind.Boolean:
-      return cell.data == null ? '' : String(cell.data);
-    default:
-      return '';
-  }
-}
+// `toDisplayString` now comes from ./record-diff-helpers; `formatReferenceDisplay`, the cell
+// diff-state predicates, and the cell-content helpers from ./grid-cell-diff-state (imported
+// above). The optimistic-update helpers below moved to ./diff-grid-types.
 
 function isInsideGridEditorOverlay(target: Element): boolean {
   return Boolean(target.closest('.gdg-clip-region') || target.closest('.gdg-input'));
