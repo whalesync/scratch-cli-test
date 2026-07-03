@@ -149,6 +149,16 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
   `"YYYY-MM-DD"`. The schema must emit `format: 'date'` (not `'date-time'`) for these,
   decided from `options.result.type` (`date` vs `dateTime`); otherwise every value fails
   the `date-time` conformance check. (`airtableFieldHasTime` in `airtable-json-schema.ts`.)
+- **Object-valued computed fields — aiText & formula/lookup errors** (DEV-10652).
+  Some Airtable values are JSON **objects**, not scalars, so the generated schema must
+  union these shapes or every value fails `enforce_schema` (`{…} is not of type "string"`):
+  aiText fields (`AI_TEXT`, and looked up via `multipleLookupValues`) return
+  `{ state, value, isStale }` (`value` string-or-null); formula / rollup / lookup fields
+  that error return `{ error: "#ERROR!" }` (or `{ specialValue: "NaN" }`). Handled by
+  `aiTextSchema` + a broadened `formulaErrorSchema`, unioned into the text/checkbox/aiText
+  formula-result cases and the `multipleLookupValues` item type in `airtable-json-schema.ts`.
+  Values are stored verbatim per the Connector Prime Directive — the fix is schema-only and
+  takes effect on re-pull (which regenerates `schema.json`). Display polish: DEV-10665.
 
 ## Gotchas
 - (connector-specific operational notes)

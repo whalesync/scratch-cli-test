@@ -156,7 +156,12 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
       if (lookupResultType === AirtableDataType.MULTIPLE_ATTACHMENTS) {
         schema = multipleAttachmentsSchema(description);
       } else {
-        schema = Type.Array(Type.String(), { description });
+        // A lookup surfaces an array of the looked-up field's values, so type the
+        // items by the lookup's result type (reusing the formula/rollup mapping).
+        // This covers looked-up aiText objects and per-item formula errors, which a
+        // flat Array(String) would wrongly reject; exotic result types fall back to
+        // Unknown items — strictly fewer false positives than String.
+        schema = Type.Array(formulaResultTypeToSchema(lookupResultType, description), { description });
       }
       break;
     }
@@ -196,6 +201,10 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
 
     case AirtableDataType.MULTIPLE_ATTACHMENTS:
       schema = multipleAttachmentsSchema(description);
+      break;
+
+    case AirtableDataType.AI_TEXT:
+      schema = aiTextSchema(description);
       break;
 
     case AirtableDataType.CREATED_BY:
@@ -267,6 +276,25 @@ function multipleAttachmentsSchema(description: string): TSchema {
 }
 
 /**
+ * Airtable `aiText` field value. The API returns an object, e.g.
+ * `{ state: "generated", value: "…", isStale: true }`. `value` is string-or-null
+ * (null while empty / not yet generated); observed `state` values include
+ * "generated" and "empty". Extra keys (e.g. `errorType` on failed generations)
+ * still validate — TypeBox `Type.Object` does not set `additionalProperties: false`
+ * — which is what we want for a readonly, service-computed source field.
+ */
+function aiTextSchema(description: string): TSchema {
+  return Type.Object(
+    {
+      state: Type.String(),
+      value: Type.Union([Type.String(), Type.Null()]),
+      isStale: Type.Optional(Type.Boolean()),
+    },
+    { description },
+  );
+}
+
+/**
  * Returns the CONNECTOR_DATA_TYPE value for a field.
  * For formula/rollup/lookup fields, appends the result type: e.g. "formula-number".
  */
@@ -281,9 +309,14 @@ function formulaConnectorDataType(field: AirtableFieldsV2): string {
   return field.type;
 }
 
-/** Airtable returns formula errors as an object, e.g. { specialValue: "#ERROR!" } */
+/**
+ * Airtable returns formula / rollup / lookup errors as an object in one of two
+ * shapes: `{ error: "#ERROR!" }` (formula evaluation error) or
+ * `{ specialValue: "NaN" }` (numeric special values). Accept either so a raw
+ * error value passes schema conformance instead of flooding `enforce_schema`.
+ */
 function formulaErrorSchema(): TSchema {
-  return Type.Object({ specialValue: Type.String() });
+  return Type.Union([Type.Object({ error: Type.String() }), Type.Object({ specialValue: Type.String() })]);
 }
 
 /**
@@ -298,7 +331,7 @@ function formulaResultTypeToSchema(resultType: AirtableDataType | undefined, des
     case AirtableDataType.URL:
     case AirtableDataType.PHONE_NUMBER:
     case AirtableDataType.RICH_TEXT:
-      return Type.String({ description });
+      return Type.Union([Type.String(), formulaErrorSchema()], { description });
 
     case AirtableDataType.NUMBER:
     case AirtableDataType.PERCENT:
@@ -312,7 +345,10 @@ function formulaResultTypeToSchema(resultType: AirtableDataType | undefined, des
       return Type.Union([Type.Integer(), formulaErrorSchema()], { description });
 
     case AirtableDataType.CHECKBOX:
-      return Type.Boolean({ description });
+      return Type.Union([Type.Boolean(), formulaErrorSchema()], { description });
+
+    case AirtableDataType.AI_TEXT:
+      return Type.Union([aiTextSchema(description), formulaErrorSchema()], { description });
 
     case AirtableDataType.DATE:
       return Type.Union([Type.String({ format: 'date' }), formulaErrorSchema()], { description });
