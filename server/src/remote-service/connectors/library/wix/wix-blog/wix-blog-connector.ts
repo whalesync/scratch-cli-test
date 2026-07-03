@@ -155,7 +155,45 @@ export class WixBlogConnector extends Connector {
     _options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     WSLogger.info({ source: 'WixBlogConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
-    await callback({ files: [], connectorProgress: progress });
+
+    // Full scan of the site's draft posts. A published post keeps its editable
+    // draft, and omitting `status` returns draft posts of all statuses, so this
+    // covers published + unpublished. Offset-paged (Wix caps a page at 100); the
+    // running offset is checkpointed in `connectorProgress` so a crashed pull
+    // resumes mid-scan instead of restarting.
+    const pageSize = WIX_DEFAULT_BATCH_SIZE;
+    const resumeOffset = (progress as { offset?: unknown }).offset;
+    let offset = typeof resumeOffset === 'number' ? resumeOffset : 0;
+
+    for (;;) {
+      const response = await this.withRetry(() =>
+        this.wixClient.draftPosts.listDraftPosts({
+          paging: { limit: pageSize, offset },
+          // Pull the post body too, so the record on disk is complete and round-trips
+          // through createRecords/updateRecords (which write the same fieldset).
+          fieldsets: ['RICH_CONTENT'],
+        }),
+      );
+
+      const draftPosts = response.draftPosts ?? [];
+      offset += draftPosts.length;
+
+      // Prefer the reported total to decide when to stop; fall back to a short page.
+      const total = response.metaData?.total;
+      const hasMore = typeof total === 'number' ? offset < total : draftPosts.length === pageSize;
+
+      // Emit the page verbatim — the raw Wix DraftPost shape on disk (Connector
+      // Prime Directive), keyed by `_id` to match the write path.
+      await callback({
+        files: draftPosts as unknown as ConnectorFile[],
+        connectorProgress: hasMore ? { offset } : {},
+      });
+
+      if (!hasMore) {
+        break;
+      }
+    }
+
     return {};
   }
 
