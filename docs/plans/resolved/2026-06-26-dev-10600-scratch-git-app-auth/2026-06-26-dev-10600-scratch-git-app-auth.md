@@ -1,9 +1,13 @@
 # DEV-10600 — App-level auth for the scratch-git manage/write REST API
 
-**Status:** MR1 implemented on branch `dev-10600-scratch-git-auth` (Rust receiving end =
-lenient, all terraform, runbook, this plan). `cargo test` green (7 new auth tests +
-full suite), `terraform fmt` clean, shell scripts syntax-checked. NOT yet committed/merged
-or deployed. MR2 and MR3 not started.
+**Status:** Resolved — all three MRs (MR1 lenient receiving end + terraform, MR2 server
+presents the token, MR3 strict enforcement) are landed and **deployed to prod**. Token
+activated durably on both scratch-git VMs (Option B recreate). Both envs boot
+`configured (enforcing)`; server↔git shows 0 `401`s (legit traffic unaffected). **Acceptance
+verified in prod 2026-07-05**: a `gcp-ro` read-only SA port-forwarding to `:3100` gets `401`
+on a manage endpoint (no token → 401, wrong token → 401), while `/health` stays `200` — a
+read-only credential can no longer mutate a repo, and the `sudo gitops-*` read-only wrappers
+are unaffected.
 **Linear:** [DEV-10600](https://linear.app/whalesync/issue/DEV-10600) (High, S)
 **Author:** Curtis Fonger
 
@@ -171,13 +175,12 @@ Per env (`eu-test`, then `eu-production`):
   - **eu-production**: ✅ done (the recreate above).
   - **eu-test**: ✅ done 2026-07-02 (VM recreated ~23:25 UTC; both slots boot `configured`,
     0 `401`s over 6h). Durable in both envs now.
-- **MR3** (flip lenient→strict): ✅ implemented (2026-07-03). `authorize_request` now rejects a
-  missing/non-`Bearer`/wrong token (only a valid `Bearer` token passes); startup log says
-  `configured (enforcing …)`; the two lenient tests now assert `401`. `cargo fmt` + full
-  `cargo test` green (7 auth tests). NOT yet committed/merged/deployed. On deploy, verify the
-  acceptance criteria: unauthenticated `curl` to a manage endpoint **and** a `:3101` git op →
-  `401`; server end-to-end still works (server sends a valid token → no `401`s); a `gcp-ro`
-  IAP port-forward can no longer mutate a repo.
+- **MR3** (flip lenient→strict): ✅ landed + **deployed to prod**. Both envs boot
+  `configured (enforcing)` (test build @2026-07-05 15:30, prod build `761b46ee`/`latest`
+  @2026-07-03 22:20). **Acceptance verified in prod 2026-07-05** via a `gcp-ro` IAP
+  port-forward to `:3100`: `/health` → `200`; manage `fsck` with no token → `401`; with a
+  wrong token → `401`. Server-side `401`s = 0 in both envs (legit traffic unaffected).
+  DEV-10600 acceptance criteria met.
 
 ### Deploy order (the safety-critical part)
 
