@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { OAuthAppCredentials } from '../oauth-app-version';
 import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
 
 /**
@@ -17,20 +17,10 @@ import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
  */
 @Injectable()
 export class ShopifyOAuthProvider implements OAuthProvider {
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
   private readonly scopes =
     'read_products,write_products,read_orders,read_customers,read_inventory,read_content,write_content,read_files,read_metaobjects';
 
-  constructor(private readonly configService: ConfigService) {
-    this.clientId = this.configService.get<string>('SHOPIFY_CLIENT_ID') || '';
-    this.clientSecret = this.configService.get<string>('SHOPIFY_CLIENT_SECRET') || '';
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
-  }
-
-  generateAuthUrl(userId: string, state: string, overrides?: { clientId?: string; shopDomain?: string }): string {
-    const clientId = overrides?.clientId || this.clientId;
+  generateAuthUrl(state: string, credentials: OAuthAppCredentials, overrides?: { shopDomain?: string }): string {
     const shopDomain = overrides?.shopDomain;
 
     if (!shopDomain) {
@@ -40,9 +30,9 @@ export class ShopifyOAuthProvider implements OAuthProvider {
     const normalizedDomain = this.normalizeShopDomain(shopDomain);
 
     const params = new URLSearchParams({
-      client_id: clientId,
+      client_id: credentials.clientId,
       scope: this.scopes,
-      redirect_uri: this.redirectUri,
+      redirect_uri: credentials.redirectUri,
       state: state,
     });
 
@@ -51,10 +41,9 @@ export class ShopifyOAuthProvider implements OAuthProvider {
 
   async exchangeCodeForTokens(
     code: string,
-    overrides?: { clientId?: string; clientSecret?: string; shopDomain?: string },
+    credentials: OAuthAppCredentials,
+    overrides?: { shopDomain?: string },
   ): Promise<OAuthTokenResponse> {
-    const clientId = overrides?.clientId || this.clientId;
-    const clientSecret = overrides?.clientSecret || this.clientSecret;
     const shopDomain = overrides?.shopDomain;
 
     if (!shopDomain) {
@@ -66,8 +55,8 @@ export class ShopifyOAuthProvider implements OAuthProvider {
     const response = await axios.post<{ access_token: string; scope: string }>(
       `https://${normalizedDomain}/admin/oauth/access_token`,
       {
-        client_id: clientId,
-        client_secret: clientSecret,
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
         code: code,
       },
       {
@@ -94,10 +83,6 @@ export class ShopifyOAuthProvider implements OAuthProvider {
 
   getServiceName(): string {
     return 'shopify';
-  }
-
-  getRedirectUri(): string {
-    return this.redirectUri;
   }
 
   /**

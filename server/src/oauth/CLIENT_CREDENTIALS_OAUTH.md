@@ -33,9 +33,9 @@ expected to recur, so the abstraction below is deliberately service-agnostic.
 export type OAuthStrategyKind = 'authorization_code' | 'client_credentials';
 
 export interface OAuthProvider {
-  // ...existing methods...
+  // ...existing methods (all now take a versioned OAuthAppCredentials)...
   strategyKind?(): OAuthStrategyKind;                                   // default: 'authorization_code'
-  mintTokenFromInstall?(installIdentifier: string): Promise<OAuthTokenResponse>;
+  mintTokenFromInstall?(installIdentifier: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse>;
 }
 ```
 
@@ -43,6 +43,11 @@ export interface OAuthProvider {
   so every pre-existing provider is untouched (invisible, backward-compatible).
 - A `'client_credentials'` provider implements **`mintTokenFromInstall()`** and
   leaves `exchangeCodeForTokens`/`refreshTokens` throwing (never called for it).
+- Like every other provider method, `mintTokenFromInstall` receives the **versioned**
+  `OAuthAppCredentials` (client_id/secret) resolved by `OAuthAppCredentialResolver` — a
+  token can only be minted for an install with the **same app** that created it, so the
+  credentials MUST be the generation the connection was created under (see
+  `oauth-app-version.ts`). The provider never reads `*_CLIENT_ID` from the environment.
 - `mintTokenFromInstall` MUST return a concrete `expires_in` — vendors typically
   omit it from the token response, and an undefined expiry would make the token
   look valid forever and never get re-minted (silent auth failure after it lapses).
@@ -56,8 +61,8 @@ strategy, keyed off `provider.strategyKind?.()`:
    `callbackData.instanceId` instead of exchanging a `code`.
 2. **`refreshOAuthTokens`** — re-mint from the stored install identifier
    (`oauthWorkspaceId`) instead of requiring a refresh token.
-3. **`mintClientCredentialsToken(service, provider, installIdentifier)`** — the
-   shared helper both call.
+3. **`mintClientCredentialsToken(service, provider, installIdentifier, credentials)`** —
+   the shared helper both call (it forwards the resolved app-generation credentials).
 
 `getValidAccessToken` / `isTokenExpired` are **unchanged** — they already delegate
 freshness to `refreshOAuthTokens`, which now re-mints transparently.
@@ -189,11 +194,13 @@ the migration is now small and mechanical:
 
 1. **Rewrite (or add) the provider** under `server/src/oauth/providers/`:
    - `strategyKind() => 'client_credentials'`.
-   - `mintTokenFromInstall(installIdentifier)` → POST the service's client-credentials
-     token endpoint; return `{ access_token, expires_in: <hardcode the documented
-     TTL>, workspace_id: installIdentifier }`.
-   - `generateAuthUrl()` → build the service's **external install link**, baking our
-     `state` into the return/callback URL so it round-trips.
+   - `mintTokenFromInstall(installIdentifier, credentials)` → POST the service's
+     client-credentials token endpoint using `credentials.clientId`/`clientSecret`;
+     return `{ access_token, expires_in: <hardcode the documented TTL>,
+     workspace_id: installIdentifier }`.
+   - `generateAuthUrl(state, credentials)` → build the service's **external install
+     link** from `credentials.clientId`/`redirectUri`, baking our `state` into the
+     return/callback URL so it round-trips.
    - `exchangeCodeForTokens`/`refreshTokens` → `Promise.reject(...)` (unused).
 2. **Register** it in `oauth.module.ts` + the `providers` map in `oauth.service.ts`
    under the uppercased service key. **No other orchestrator changes** — the

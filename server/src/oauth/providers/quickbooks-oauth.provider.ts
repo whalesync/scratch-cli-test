@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { OAuthAppCredentials } from '../oauth-app-version';
 import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
 
 const QBO_AUTH_URL = 'https://appcenter.intuit.com/connect/oauth2';
@@ -23,24 +23,13 @@ const QBO_TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer
  */
 @Injectable()
 export class QuickBooksOAuthProvider implements OAuthProvider {
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
   private readonly scopes = 'com.intuit.quickbooks.accounting';
 
-  constructor(private readonly configService: ConfigService) {
-    this.clientId = this.configService.get<string>('QUICKBOOKS_CLIENT_ID') || '';
-    this.clientSecret = this.configService.get<string>('QUICKBOOKS_CLIENT_SECRET') || '';
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
-  }
-
-  generateAuthUrl(userId: string, state: string, overrides?: { clientId?: string }): string {
-    const clientId = overrides?.clientId || this.clientId;
-
+  generateAuthUrl(state: string, credentials: OAuthAppCredentials): string {
     const params = new URLSearchParams({
-      client_id: clientId,
+      client_id: credentials.clientId,
       scope: this.scopes,
-      redirect_uri: this.redirectUri,
+      redirect_uri: credentials.redirectUri,
       response_type: 'code',
       state: state,
     });
@@ -48,14 +37,8 @@ export class QuickBooksOAuthProvider implements OAuthProvider {
     return `${QBO_AUTH_URL}?${params.toString()}`;
   }
 
-  async exchangeCodeForTokens(
-    code: string,
-    overrides?: { clientId?: string; clientSecret?: string },
-  ): Promise<OAuthTokenResponse> {
-    const clientId = overrides?.clientId || this.clientId;
-    const clientSecret = overrides?.clientSecret || this.clientSecret;
-
-    const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  async exchangeCodeForTokens(code: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
+    const basicAuth = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString('base64');
 
     const response = await axios.post<{
       access_token: string;
@@ -68,7 +51,7 @@ export class QuickBooksOAuthProvider implements OAuthProvider {
       new URLSearchParams({
         grant_type: 'authorization_code',
         code: code,
-        redirect_uri: this.redirectUri,
+        redirect_uri: credentials.redirectUri,
       }).toString(),
       {
         headers: {
@@ -88,8 +71,8 @@ export class QuickBooksOAuthProvider implements OAuthProvider {
     };
   }
 
-  async refreshTokens(refreshToken: string): Promise<OAuthTokenResponse> {
-    const basicAuth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+  async refreshTokens(refreshToken: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
+    const basicAuth = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString('base64');
 
     const response = await axios.post<{
       access_token: string;
@@ -121,9 +104,5 @@ export class QuickBooksOAuthProvider implements OAuthProvider {
 
   getServiceName(): string {
     return 'quickbooks';
-  }
-
-  getRedirectUri(): string {
-    return this.redirectUri;
   }
 }

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { OAuthAppCredentials } from '../oauth-app-version';
 import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
 
 const PIPEDRIVE_AUTH_URL = 'https://oauth.pipedrive.com/oauth/authorize';
@@ -26,27 +26,16 @@ const PIPEDRIVE_TOKEN_URL = 'https://oauth.pipedrive.com/oauth/token';
  *   we don't persist it — the connector talks to the global host.
  * - A single Pipedrive app allows only one callback URL, which is why test and
  *   prod are separate apps (test = private, prod = public) with their own creds
- *   per env.
+ *   per env. The inbound install flow passes its install-endpoint redirect via the
+ *   resolved credentials' redirect_uri (which must match the URL the code was issued to).
  */
 @Injectable()
 export class PipedriveOAuthProvider implements OAuthProvider {
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
-
-  constructor(private readonly configService: ConfigService) {
-    this.clientId = this.configService.get<string>('PIPEDRIVE_CLIENT_ID') || '';
-    this.clientSecret = this.configService.get<string>('PIPEDRIVE_CLIENT_SECRET') || '';
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
-  }
-
-  generateAuthUrl(_userId: string, state: string, overrides?: { clientId?: string }): string {
-    const clientId = overrides?.clientId || this.clientId;
-
+  generateAuthUrl(state: string, credentials: OAuthAppCredentials): string {
     // No `scope` param — Pipedrive derives scopes from the app's Developer Hub config.
     const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: this.redirectUri,
+      client_id: credentials.clientId,
+      redirect_uri: credentials.redirectUri,
       response_type: 'code',
       state: state,
     });
@@ -54,16 +43,8 @@ export class PipedriveOAuthProvider implements OAuthProvider {
     return `${PIPEDRIVE_AUTH_URL}?${params.toString()}`;
   }
 
-  async exchangeCodeForTokens(
-    code: string,
-    overrides?: { clientId?: string; clientSecret?: string; redirectUri?: string },
-  ): Promise<OAuthTokenResponse> {
-    const clientId = overrides?.clientId || this.clientId;
-    const clientSecret = overrides?.clientSecret || this.clientSecret;
-    // The token request's redirect_uri must match the URL the code was issued to.
-    const redirectUri = overrides?.redirectUri || this.redirectUri;
-
-    const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  async exchangeCodeForTokens(code: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
+    const basicAuth = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString('base64');
 
     const response = await axios.post<{
       access_token: string;
@@ -76,7 +57,8 @@ export class PipedriveOAuthProvider implements OAuthProvider {
       new URLSearchParams({
         grant_type: 'authorization_code',
         code: code,
-        redirect_uri: redirectUri,
+        // The token request's redirect_uri must match the URL the code was issued to.
+        redirect_uri: credentials.redirectUri,
       }).toString(),
       {
         headers: {
@@ -94,8 +76,8 @@ export class PipedriveOAuthProvider implements OAuthProvider {
     };
   }
 
-  async refreshTokens(refreshToken: string): Promise<OAuthTokenResponse> {
-    const basicAuth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+  async refreshTokens(refreshToken: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
+    const basicAuth = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString('base64');
 
     const response = await axios.post<{
       access_token: string;
@@ -129,9 +111,5 @@ export class PipedriveOAuthProvider implements OAuthProvider {
 
   getServiceName(): string {
     return 'pipedrive';
-  }
-
-  getRedirectUri(): string {
-    return this.redirectUri;
   }
 }

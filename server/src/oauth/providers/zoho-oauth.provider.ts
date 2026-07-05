@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios, { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import {
   normalizeZohoDataCenter,
   ZOHO_DATA_CENTER_HOSTS,
 } from '../../remote-service/connectors/library/zoho/zoho-types';
+import { OAuthAppCredentials } from '../oauth-app-version';
 import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
 
 const LOG_SOURCE = 'ZohoOAuthProvider';
@@ -42,27 +42,16 @@ interface ZohoOAuthTokenResponse {
  */
 @Injectable()
 export class ZohoOAuthProvider implements OAuthProvider {
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
-
-  constructor(private readonly configService: ConfigService) {
-    this.clientId = this.configService.get<string>('ZOHO_CLIENT_ID') || '';
-    this.clientSecret = this.configService.get<string>('ZOHO_CLIENT_SECRET') || '';
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
-  }
-
   /** Accounts host (where authorize/token/refresh live) for the selected data center. */
   private accountsDomain(dataCenter?: string): string {
     return ZOHO_DATA_CENTER_HOSTS[normalizeZohoDataCenter(dataCenter)].accountsDomain;
   }
 
-  generateAuthUrl(_userId: string, state: string, overrides?: { clientId?: string; dataCenter?: string }): string {
-    const clientId = overrides?.clientId || this.clientId;
+  generateAuthUrl(state: string, credentials: OAuthAppCredentials, overrides?: { dataCenter?: string }): string {
     const params = new URLSearchParams({
-      client_id: clientId,
+      client_id: credentials.clientId,
       scope: ZOHO_SCOPES,
-      redirect_uri: this.redirectUri,
+      redirect_uri: credentials.redirectUri,
       response_type: 'code',
       // Required for Zoho to issue a refresh token (offline access) and to
       // re-consent so a refresh token is returned on every authorize.
@@ -75,34 +64,35 @@ export class ZohoOAuthProvider implements OAuthProvider {
 
   async exchangeCodeForTokens(
     code: string,
-    overrides?: { clientId?: string; clientSecret?: string; dataCenter?: string },
+    credentials: OAuthAppCredentials,
+    overrides?: { dataCenter?: string },
   ): Promise<OAuthTokenResponse> {
     return this.requestToken(overrides?.dataCenter, {
       grant_type: 'authorization_code',
-      client_id: overrides?.clientId || this.clientId,
-      client_secret: overrides?.clientSecret || this.clientSecret,
-      redirect_uri: this.redirectUri,
+      client_id: credentials.clientId,
+      client_secret: credentials.clientSecret,
+      redirect_uri: credentials.redirectUri,
       code,
     });
   }
 
-  async refreshTokens(refreshToken: string, opts?: { dataCenter?: string }): Promise<OAuthTokenResponse> {
+  async refreshTokens(
+    refreshToken: string,
+    credentials: OAuthAppCredentials,
+    opts?: { dataCenter?: string },
+  ): Promise<OAuthTokenResponse> {
     // Zoho's refresh response does NOT return a new refresh token — the caller
     // keeps the existing one (OAuthService falls back to it when undefined).
     return this.requestToken(opts?.dataCenter, {
       grant_type: 'refresh_token',
-      client_id: this.clientId,
-      client_secret: this.clientSecret,
+      client_id: credentials.clientId,
+      client_secret: credentials.clientSecret,
       refresh_token: refreshToken,
     });
   }
 
   getServiceName(): string {
     return 'zoho';
-  }
-
-  getRedirectUri(): string {
-    return this.redirectUri;
   }
 
   /**

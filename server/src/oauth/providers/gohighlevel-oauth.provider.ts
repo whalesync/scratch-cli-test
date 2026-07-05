@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios, { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
+import { OAuthAppCredentials } from '../oauth-app-version';
 import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
 
 const LOG_SOURCE = 'GoHighLevelOAuthProvider';
@@ -77,51 +77,38 @@ interface GoHighLevelOAuthTokenResponse {
  */
 @Injectable()
 export class GoHighLevelOAuthProvider implements OAuthProvider {
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
-
-  constructor(private readonly configService: ConfigService) {
-    this.clientId = this.configService.get<string>('GOHIGHLEVEL_CLIENT_ID') || '';
-    this.clientSecret = this.configService.get<string>('GOHIGHLEVEL_CLIENT_SECRET') || '';
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
-  }
-
-  generateAuthUrl(_userId: string, state: string, overrides?: { clientId?: string }): string {
+  generateAuthUrl(state: string, credentials: OAuthAppCredentials): string {
     const params = new URLSearchParams({
       response_type: 'code',
-      client_id: overrides?.clientId || this.clientId,
-      redirect_uri: this.redirectUri,
+      client_id: credentials.clientId,
+      redirect_uri: credentials.redirectUri,
       scope: GOHIGHLEVEL_SCOPES,
       state,
     });
     return `${GOHIGHLEVEL_CHOOSE_LOCATION_URL}?${params.toString()}`;
   }
 
-  async exchangeCodeForTokens(
-    code: string,
-    overrides?: { clientId?: string; clientSecret?: string; redirectUri?: string },
-  ): Promise<OAuthTokenResponse> {
+  async exchangeCodeForTokens(code: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
     return this.requestToken({
       grant_type: 'authorization_code',
-      client_id: overrides?.clientId || this.clientId,
-      client_secret: overrides?.clientSecret || this.clientSecret,
+      client_id: credentials.clientId,
+      client_secret: credentials.clientSecret,
       code,
       // Location-level install: the token (and its locationId) is scoped to the
       // single sub-account the user picked on the chooselocation screen.
       user_type: 'Location',
       // The token request's redirect_uri must match the URL the code was issued to.
-      // App-initiated uses REDIRECT_URI; the inbound install flow passes the install
-      // endpoint URL (the marketplace's configured redirect) as the override.
-      redirect_uri: overrides?.redirectUri || this.redirectUri,
+      // App-initiated uses the app's REDIRECT_URI; the inbound install flow resolves
+      // credentials with the install endpoint URL as the redirect.
+      redirect_uri: credentials.redirectUri,
     });
   }
 
-  async refreshTokens(refreshToken: string): Promise<OAuthTokenResponse> {
+  async refreshTokens(refreshToken: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
     return this.requestToken({
       grant_type: 'refresh_token',
-      client_id: this.clientId,
-      client_secret: this.clientSecret,
+      client_id: credentials.clientId,
+      client_secret: credentials.clientSecret,
       refresh_token: refreshToken,
       user_type: 'Location',
     });
@@ -129,10 +116,6 @@ export class GoHighLevelOAuthProvider implements OAuthProvider {
 
   getServiceName(): string {
     return 'gohighlevel';
-  }
-
-  getRedirectUri(): string {
-    return this.redirectUri;
   }
 
   /**

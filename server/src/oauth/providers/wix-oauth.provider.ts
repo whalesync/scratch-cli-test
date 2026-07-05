@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { OAuthAppCredentials } from '../oauth-app-version';
 import { OAuthProvider, OAuthStrategyKind, OAuthTokenResponse } from '../oauth-provider.interface';
 
 /**
@@ -19,6 +20,13 @@ import { OAuthProvider, OAuthStrategyKind, OAuthTokenResponse } from '../oauth-p
  *     response carries no `expires_in`, so we supply it ourselves. "Refresh" is
  *     just a re-mint with the same `instance_id`.
  *
+ * The `client_id`/`client_secret`/`redirect` come from the versioned
+ * {@link OAuthAppCredentials} the orchestrator resolves and passes in — the same as
+ * every other provider — so which Wix app is used is a versioned decision (see
+ * OAuthAppCredentialResolver). `WIX_SHARE_URL_ID` (unlisted apps only) is read from
+ * config: it is not a credential and is only consulted when building an install link
+ * for the current app generation, so it need not be versioned.
+ *
  * Connect UX (kept close to the previous app-initiated flow):
  *   1. {@link generateAuthUrl} builds Wix's app-installer URL, with our own OAuth
  *      `state` baked into the `postInstallationUrl` (the callback page).
@@ -34,9 +42,6 @@ import { OAuthProvider, OAuthStrategyKind, OAuthTokenResponse } from '../oauth-p
  */
 @Injectable()
 export class WixOAuthProvider implements OAuthProvider {
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
   /** Only for *unlisted* apps — the GUID from the app dashboard's Share Install Link. */
   private readonly shareUrlId?: string;
   private readonly tokenUrl = 'https://www.wixapis.com/oauth2/token';
@@ -44,10 +49,6 @@ export class WixOAuthProvider implements OAuthProvider {
   private readonly accessTokenTtlSeconds = 4 * 60 * 60;
 
   constructor(private readonly configService: ConfigService) {
-    this.clientId = this.configService.get<string>('WIX_CLIENT_ID') || '';
-    this.clientSecret = this.configService.get<string>('WIX_CLIENT_SECRET') || '';
-    // TODO: Move this to a per environment variable. e.g. WIX_REDIRECT_URI_PROD, WIX_REDIRECT_URI_DEV, etc.
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || 'http://localhost:3000/oauth/callback';
     this.shareUrlId = this.configService.get<string>('WIX_SHARE_URL_ID') || undefined;
   }
 
@@ -62,12 +63,12 @@ export class WixOAuthProvider implements OAuthProvider {
    * `instanceId` to it. `URL`/`URLSearchParams` handle the (correct) nested
    * encoding so `state` survives the round-trip intact.
    */
-  generateAuthUrl(userId: string, state: string): string {
-    const callbackUrl = new URL(this.redirectUri);
+  generateAuthUrl(state: string, credentials: OAuthAppCredentials): string {
+    const callbackUrl = new URL(credentials.redirectUri);
     callbackUrl.searchParams.set('state', state);
 
     const params = new URLSearchParams({
-      appId: this.clientId,
+      appId: credentials.clientId,
       postInstallationUrl: callbackUrl.toString(),
     });
     // Unlisted apps must identify their share install link; listed apps omit it.
@@ -79,19 +80,20 @@ export class WixOAuthProvider implements OAuthProvider {
   }
 
   /**
-   * Mint a fresh app access token from the install-scoped `instanceId`.
+   * Mint a fresh app access token from the install-scoped `instanceId`, using the
+   * app generation's `credentials`.
    *
    *   POST https://www.wixapis.com/oauth2/token
    *   { grant_type: 'client_credentials', client_id, client_secret, instance_id }
    *   → { access_token }   // valid 4h; no expires_in, no refresh token
    */
-  async mintTokenFromInstall(instanceId: string): Promise<OAuthTokenResponse> {
+  async mintTokenFromInstall(instanceId: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
     const response = await axios.post<{ access_token?: string }>(
       this.tokenUrl,
       {
         grant_type: 'client_credentials',
-        client_id: this.clientId,
-        client_secret: this.clientSecret,
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
         instance_id: instanceId,
       },
       {
@@ -144,9 +146,5 @@ export class WixOAuthProvider implements OAuthProvider {
 
   getServiceName(): string {
     return 'wix';
-  }
-
-  getRedirectUri(): string {
-    return this.redirectUri;
   }
 }

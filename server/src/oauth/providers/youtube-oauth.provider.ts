@@ -1,24 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { OAuthAppCredentials } from '../oauth-app-version';
 import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
 
 @Injectable()
 export class YouTubeOAuthProvider implements OAuthProvider {
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
-
-  constructor(private readonly configService: ConfigService) {
-    this.clientId = this.configService.get<string>('GOOGLE_CLIENT_ID') || '';
-    this.clientSecret = this.configService.get<string>('GOOGLE_CLIENT_SECRET') || '';
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
-  }
-
-  generateAuthUrl(userId: string, state: string, overrides?: { clientId?: string }): string {
+  generateAuthUrl(state: string, credentials: OAuthAppCredentials): string {
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    const clientId = overrides?.clientId || this.clientId;
-    authUrl.searchParams.set('client_id', clientId);
-    authUrl.searchParams.set('redirect_uri', this.redirectUri);
+    authUrl.searchParams.set('client_id', credentials.clientId);
+    authUrl.searchParams.set('redirect_uri', credentials.redirectUri);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/youtube.force-ssl');
     authUrl.searchParams.set('state', state);
@@ -30,21 +19,18 @@ export class YouTubeOAuthProvider implements OAuthProvider {
     return authUrl.toString();
   }
 
-  async exchangeCodeForTokens(
-    code: string,
-    overrides?: { clientId?: string; clientSecret?: string },
-  ): Promise<OAuthTokenResponse> {
+  async exchangeCodeForTokens(code: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
     const response = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
-        client_id: overrides?.clientId || this.clientId,
-        client_secret: overrides?.clientSecret || this.clientSecret,
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
         code,
         grant_type: 'authorization_code',
-        redirect_uri: this.redirectUri,
+        redirect_uri: credentials.redirectUri,
       }),
     });
 
@@ -65,15 +51,15 @@ export class YouTubeOAuthProvider implements OAuthProvider {
     };
   }
 
-  async refreshTokens(refreshToken: string): Promise<OAuthTokenResponse> {
+  async refreshTokens(refreshToken: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
     const response = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
-        client_id: this.clientId,
-        client_secret: this.clientSecret,
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
         refresh_token: refreshToken,
         grant_type: 'refresh_token',
       }),
@@ -96,18 +82,6 @@ export class YouTubeOAuthProvider implements OAuthProvider {
 
   getServiceName(): string {
     return 'youtube';
-  }
-
-  getRedirectUri(): string {
-    return this.redirectUri;
-  }
-
-  getClientId(): string {
-    return this.clientId;
-  }
-
-  getClientSecret(): string {
-    return this.clientSecret;
   }
 
   private extractUserIdFromIdToken(idToken: string): string | undefined {

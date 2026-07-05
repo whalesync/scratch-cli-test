@@ -141,6 +141,14 @@ model ConnectorAccount {
   modifier                  String? // ID of the custom connector or other modifier entity
   extras                    Json? // Additional service-specific configuration
   version                   Int                    @default(1) // Connector code version snapshotted at creation (DEV-10302)
+  // Which generation of OAuth *app* credentials issued this connection's tokens. Distinct
+  // from `version` above (that tracks connector CODE structure; this tracks the OAuth app
+  // identity). Read at token-refresh/re-exchange time to pick the matching client_id/secret,
+  // so rotating a connector's OAuth app affects only new connections while existing ones keep
+  // refreshing against the app that issued their refresh token. Only meaningful for
+  // authType = OAUTH (ignored otherwise). What each version maps to is per-connector — see
+  // oauth-app-version.ts / OAuthAppCredentialResolver.
+  oauthAppVersion           Int                    @default(1)
   // Set while a code-migration is quiescing this connection (DEV-9698 T4). Non-null = the
   // connection is locked: live edits + new job enqueues for it are rejected with 409, and a
   // re-run (or the migration's own release in `finally`) clears it. The timestamp records when

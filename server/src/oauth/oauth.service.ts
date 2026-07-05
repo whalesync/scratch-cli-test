@@ -38,6 +38,8 @@ import { Actor } from 'src/users/types';
 import { DbService } from '../db/db.service';
 import { DecryptedCredentials } from '../remote-service/connector-account/types/encrypted-credentials.interface';
 import { EncryptedData } from '../utils/encryption';
+import { OAuthAppCredentialResolver } from './oauth-app-credential-resolver.service';
+import { asOAuthAppVersion, OAuthAppCredentials, OAuthAppVersion } from './oauth-app-version';
 import { OAuthProvider, OAuthTokenResponse } from './oauth-provider.interface';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
 import { GoHighLevelOAuthProvider } from './providers/gohighlevel-oauth.provider';
@@ -94,6 +96,7 @@ export class OAuthService {
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
     private readonly config: ScratchConfigService,
+    private readonly credentialResolver: OAuthAppCredentialResolver,
   ) {
     // Register OAuth providers
     this.providers.set('AIRTABLE', this.airtableProvider);
@@ -154,13 +157,24 @@ export class OAuthService {
       codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
     }
 
+    // Which OAuth app generation this new connection (or re-auth) is minted against —
+    // legacy Scratch apps vs the unified Whalesync apps. Stamped into state so the
+    // callback exchanges the code with the SAME app's credentials and records the
+    // version on the connection (so future token refreshes use the matching app).
+    const connectionMethod = options.connectionMethod ?? 'OAUTH_SYSTEM';
+    const oauthAppVersion = this.credentialResolver.getCurrentVersionForNewConnections(service);
+    const credentials = this.resolveOAuthAppCredentials(service, oauthAppVersion, connectionMethod, {
+      customClientId: options.customClientId,
+      customClientSecret: options.customClientSecret,
+    });
+
     const statePayload: OAuthStatePayload = {
       redirectPrefix: options.redirectPrefix,
       userId: actor.userId,
       organizationId: actor.organizationId,
       workbookId: options.workbookId,
       service,
-      connectionMethod: options.connectionMethod ?? 'OAUTH_SYSTEM',
+      connectionMethod,
       customClientId: options.customClientId,
       customClientSecret: options.customClientSecret,
       connectionName: options.connectionName,
@@ -171,12 +185,12 @@ export class OAuthService {
       zohoDataCenter: options.zohoDataCenter,
       youtubeAdditionalChannels: options.youtubeAdditionalChannels,
       codeVerifier,
+      oauthAppVersion,
       ts: Date.now(),
     };
     const state = Buffer.from(JSON.stringify(statePayload)).toString('base64');
 
-    const authUrl = provider.generateAuthUrl(actor.userId, state, {
-      clientId: options.connectionMethod === 'OAUTH_CUSTOM' ? options.customClientId : undefined,
+    const authUrl = provider.generateAuthUrl(state, credentials, {
       shopDomain,
       codeChallenge,
       dataCenter: options.zohoDataCenter,
@@ -245,21 +259,29 @@ export class OAuthService {
     // region mismatch, redirect-uri mismatch, a rejected install) are the
     // provider's fault to explain — surface their message as a 400 so the user
     // sees the reason instead of a generic 500.
+    //
+    // Resolve the credentials for the SAME OAuth app generation the authorize URL / install
+    // link used (carried in state). Missing/older states default to the legacy apps.
+    const oauthAppVersion = asOAuthAppVersion(statePayload.oauthAppVersion);
+    const credentials = this.resolveOAuthAppCredentials(service, oauthAppVersion, statePayload.connectionMethod, {
+      customClientId: statePayload.customClientId,
+      customClientSecret: statePayload.customClientSecret,
+    });
+
     let tokenResponse: OAuthTokenResponse;
     try {
       if (provider.strategyKind?.() === 'client_credentials') {
         // 2-legged (client-credentials) connectors (e.g. Wix) return no
         // authorization code — the external-install redirect hands back an
-        // install-scoped identifier (Wix: instanceId). Mint the first access
-        // token directly from it; there is no code exchange and no refresh token.
+        // install-scoped identifier (Wix: instanceId). Mint the first access token
+        // directly from it (using the resolved app-generation credentials); there
+        // is no code exchange and no refresh token.
         if (!callbackData.instanceId) {
           throw new Error('The install did not complete (missing instance id). Please try connecting again.');
         }
-        tokenResponse = await this.mintClientCredentialsToken(service, provider, callbackData.instanceId);
+        tokenResponse = await this.mintClientCredentialsToken(service, provider, callbackData.instanceId, credentials);
       } else {
-        tokenResponse = await provider.exchangeCodeForTokens(callbackData.code, {
-          clientId: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientId : undefined,
-          clientSecret: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientSecret : undefined,
+        tokenResponse = await provider.exchangeCodeForTokens(callbackData.code, credentials, {
           shopDomain: statePayload.shopDomain,
           codeVerifier: statePayload.codeVerifier,
           dataCenter: statePayload.zohoDataCenter,
@@ -288,7 +310,9 @@ export class OAuthService {
     }
 
     if (existingConnectorAccount) {
-      await this.updateOAuthAccount(existingConnectorAccount, actor, tokenResponse, {
+      // Re-auth upgrades the connection to whatever app generation state carried, so an
+      // explicit reconnect after a cutover moves the user onto the Whalesync app.
+      await this.updateOAuthAccount(existingConnectorAccount, actor, tokenResponse, oauthAppVersion, {
         connectionMethod: statePayload.connectionMethod,
         customClientId: statePayload.customClientId,
         customClientSecret: statePayload.customClientSecret,
@@ -308,6 +332,7 @@ export class OAuthService {
         statePayload.workbookId as WorkbookId,
         actor,
         tokenResponse,
+        oauthAppVersion,
         {
           connectionMethod: statePayload.connectionMethod,
           customClientId: statePayload.customClientId,
@@ -349,12 +374,19 @@ export class OAuthService {
    * the URL the code was issued for (required by providers that validate it).
    */
   async exchangeInboundCodeForTokens(service: string, code: string, redirectUri?: string): Promise<OAuthTokenResponse> {
-    const provider = this.providers.get(service.toUpperCase());
+    const serviceKey = service.toUpperCase();
+    const provider = this.providers.get(serviceKey);
     if (!provider) {
       throw new BadRequestException(`Unsupported OAuth service: ${service}`);
     }
+    // Inbound installs always create new connections, so use the current app generation.
+    // The marketplace issued the code to the install endpoint, so the token request's
+    // redirect_uri must be that endpoint — fold it into the resolved credentials.
+    const version = this.credentialResolver.getCurrentVersionForNewConnections(serviceKey);
+    const systemCredentials = this.credentialResolver.resolveSystemAppCredentials(serviceKey, version);
+    const credentials: OAuthAppCredentials = redirectUri ? { ...systemCredentials, redirectUri } : systemCredentials;
     try {
-      return await provider.exchangeCodeForTokens(code, { redirectUri });
+      return await provider.exchangeCodeForTokens(code, credentials, {});
     } catch (error) {
       const message = error instanceof Error ? error.message : 'token exchange failed';
       WSLogger.warn({
@@ -378,7 +410,10 @@ export class OAuthService {
     actor: Actor,
     tokenResponse: OAuthTokenResponse,
   ): Promise<ConnectorAccount> {
-    return this.createOAuthAccount(service, workbookId, actor, tokenResponse, { connectionMethod: 'OAUTH_SYSTEM' });
+    const oauthAppVersion = this.credentialResolver.getCurrentVersionForNewConnections(service);
+    return this.createOAuthAccount(service, workbookId, actor, tokenResponse, oauthAppVersion, {
+      connectionMethod: 'OAUTH_SYSTEM',
+    });
   }
 
   /**
@@ -405,16 +440,29 @@ export class OAuthService {
       throw new BadRequestException(`No OAuth provider found for service: ${account.service}`);
     }
 
+    // Both re-mint and refresh MUST use the credentials of the OAuth app that issued this
+    // connection's tokens — the connection records which app generation that was, so
+    // swapping the current app never breaks existing connections. Custom (BYO) apps use
+    // their stored client id/secret (also fixes the prior bug where custom creds were
+    // ignored on refresh).
+    const credentials = this.resolveOAuthAppCredentialsForConnection(account, decryptedCredentials);
+
     if (provider.strategyKind?.() === 'client_credentials') {
       // 2-legged (client-credentials) connectors (e.g. Wix) have no refresh token —
-      // "refresh" is a re-mint from the stored install identifier (oauthWorkspaceId).
+      // "refresh" is a re-mint from the stored install identifier (oauthWorkspaceId),
+      // using that app generation's credentials.
       const installIdentifier = decryptedCredentials.oauthWorkspaceId;
       if (!installIdentifier) {
         // A connection created before this identifier was captured (e.g. a legacy
         // Wix custom-auth account) can't be re-minted and must be reconnected.
         throw new BadRequestException('This connection is missing its install identifier and must be reconnected.');
       }
-      const tokenResponse = await this.mintClientCredentialsToken(account.service, provider, installIdentifier);
+      const tokenResponse = await this.mintClientCredentialsToken(
+        account.service,
+        provider,
+        installIdentifier,
+        credentials,
+      );
       decryptedCredentials.oauthAccessToken = tokenResponse.access_token;
       decryptedCredentials.oauthExpiresAt = this.expiresInToOAuthExpiresAt(tokenResponse.expires_in);
       // No refresh token to persist for client-credentials.
@@ -424,7 +472,7 @@ export class OAuthService {
       }
       // Multi-region providers (Zoho) need the stored data center to refresh
       // against the correct regional accounts host (persisted in oauthWorkspaceId).
-      const tokenResponse = await provider.refreshTokens(decryptedCredentials.oauthRefreshToken, {
+      const tokenResponse = await provider.refreshTokens(decryptedCredentials.oauthRefreshToken, credentials, {
         dataCenter: decryptedCredentials.oauthWorkspaceId,
       });
       decryptedCredentials.oauthAccessToken = tokenResponse.access_token;
@@ -445,17 +493,21 @@ export class OAuthService {
    * install-scoped `instanceId` and returns a short-lived bearer token with no
    * refresh token. `installIdentifier` is that install-scoped id (Wix: instanceId),
    * captured on the external-install redirect and persisted in `oauthWorkspaceId`.
+   * `credentials` are the resolved app-generation credentials — they MUST be the app
+   * the install was created under, since a token is minted from the app's own secret
+   * plus the install id (a different generation cannot mint for another app's install).
    * Both the initial connect and every later re-mint route through here.
    */
   private async mintClientCredentialsToken(
     service: string,
     provider: OAuthProvider,
     installIdentifier: string,
+    credentials: OAuthAppCredentials,
   ): Promise<OAuthTokenResponse> {
     if (provider.strategyKind?.() !== 'client_credentials' || !provider.mintTokenFromInstall) {
       throw new BadRequestException(`${service} does not use client-credentials authentication`);
     }
-    return provider.mintTokenFromInstall(installIdentifier);
+    return provider.mintTokenFromInstall(installIdentifier, credentials);
   }
 
   /**
@@ -466,6 +518,7 @@ export class OAuthService {
     workbookId: WorkbookId,
     actor: Actor,
     tokenResponse: OAuthTokenResponse,
+    oauthAppVersion: OAuthAppVersion,
     connectionInfo?: {
       connectionMethod: 'OAUTH_SYSTEM' | 'OAUTH_CUSTOM';
       customClientId?: string;
@@ -540,6 +593,7 @@ export class OAuthService {
           connectionInfo?.connectionName ??
           `${capitalize(service)} (${connectionInfo?.connectionMethod === 'OAUTH_CUSTOM' ? 'Private OAuth' : 'OAuth'})`,
         authType: AuthType.OAUTH,
+        oauthAppVersion,
         repoPath,
         encryptedCredentials: encryptedCredentials as Prisma.InputJsonValue,
         extras: extras as Prisma.InputJsonValue | undefined,
@@ -574,6 +628,7 @@ export class OAuthService {
     connectorAccount: ConnectorAccount,
     actor: Actor,
     tokenResponse: OAuthTokenResponse,
+    oauthAppVersion: OAuthAppVersion,
     connectionInfo?: {
       connectionMethod: 'OAUTH_SYSTEM' | 'OAUTH_CUSTOM';
       customClientId?: string;
@@ -611,6 +666,10 @@ export class OAuthService {
       where: { id: connectorAccount.id },
       data: {
         encryptedCredentials: encryptedCredentials as Prisma.InputJsonValue,
+        // Re-auth re-mints against the current app generation — record it so future
+        // refreshes use that app (this is how an explicit reconnect upgrades a
+        // legacy connection onto the unified Whalesync app).
+        oauthAppVersion,
         ...(extras ? { extras: { ...extras } } : {}),
         healthStatus: 'OK', // assume healthy because this connection is created via a successful oauth flow
         healthStatusLastCheckedAt: new Date(),
@@ -702,18 +761,45 @@ export class OAuthService {
   }
 
   /**
-   * Returns the YouTube OAuth client configuration (client ID, secret, and redirect URI).
-   * Used by the YouTube connector service to initialize the Google API client for making
-   * authenticated requests. Exposes the provider's configuration without token data.
+   * Resolve the OAuth app credentials to use for a NEW connection or a re-auth, given
+   * the chosen app generation and (for custom/BYO apps) the user-supplied client
+   * id/secret carried in the OAuth state. Centralizes the "system app at version N vs
+   * custom app" decision so the initiate and callback paths stay in lock-step.
    */
-  getYouTubeOAuthCredentials(): { clientId: string; clientSecret: string; redirectUri: string } {
-    const youtubeProvider = this.youTubeProvider;
+  private resolveOAuthAppCredentials(
+    service: string,
+    oauthAppVersion: OAuthAppVersion,
+    connectionMethod: 'OAUTH_SYSTEM' | 'OAUTH_CUSTOM',
+    custom: { customClientId?: string; customClientSecret?: string },
+  ): OAuthAppCredentials {
+    if (connectionMethod === 'OAUTH_CUSTOM') {
+      if (!custom.customClientId || !custom.customClientSecret) {
+        throw new BadRequestException('Custom OAuth connection requires a client id and secret');
+      }
+      return this.credentialResolver.resolveCustomAppCredentials(custom.customClientId, custom.customClientSecret);
+    }
+    return this.credentialResolver.resolveSystemAppCredentials(service, oauthAppVersion);
+  }
 
-    return {
-      clientId: youtubeProvider.getClientId(),
-      clientSecret: youtubeProvider.getClientSecret(),
-      redirectUri: youtubeProvider.getRedirectUri(),
-    };
+  /**
+   * Resolve the OAuth app credentials for an EXISTING connection (the refresh path). A
+   * connection with stored custom (BYO) client creds uses those; otherwise it uses the
+   * system app of the generation stamped on the connection at connect time.
+   */
+  private resolveOAuthAppCredentialsForConnection(
+    account: ConnectorAccount,
+    decryptedCredentials: DecryptedCredentials,
+  ): OAuthAppCredentials {
+    if (decryptedCredentials.customOAuthClientId && decryptedCredentials.customOAuthClientSecret) {
+      return this.credentialResolver.resolveCustomAppCredentials(
+        decryptedCredentials.customOAuthClientId,
+        decryptedCredentials.customOAuthClientSecret,
+      );
+    }
+    return this.credentialResolver.resolveSystemAppCredentials(
+      account.service,
+      asOAuthAppVersion(account.oauthAppVersion),
+    );
   }
 
   /**

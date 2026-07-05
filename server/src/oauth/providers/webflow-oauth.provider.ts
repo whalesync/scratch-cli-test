@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios, { isAxiosError } from 'axios';
+import { OAuthAppCredentials } from '../oauth-app-version';
 import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
 
 /**
@@ -39,17 +39,7 @@ type WebflowOauthScope =
 
 @Injectable()
 export class WebflowOAuthProvider implements OAuthProvider {
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
-
-  constructor(private readonly configService: ConfigService) {
-    this.clientId = this.configService.get<string>('WEBFLOW_CLIENT_ID') || '';
-    this.clientSecret = this.configService.get<string>('WEBFLOW_CLIENT_SECRET') || '';
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
-  }
-
-  generateAuthUrl(userId: string, state: string): string {
+  generateAuthUrl(state: string, credentials: OAuthAppCredentials): string {
     // Scopes needed for CMS access.
     const requestedScopes: WebflowOauthScope[] = [
       'authorized_user:read',
@@ -67,8 +57,8 @@ export class WebflowOAuthProvider implements OAuthProvider {
     // byte-identical to the SDK's `qs.stringify` output.
     const queryParameters: Array<[string, string]> = [
       ['response_type', 'code'],
-      ['client_id', this.clientId],
-      ['redirect_uri', this.redirectUri],
+      ['client_id', credentials.clientId],
+      ['redirect_uri', credentials.redirectUri],
       ['state', state],
       ['scope', requestedScopes.join(' ')],
     ];
@@ -77,16 +67,16 @@ export class WebflowOAuthProvider implements OAuthProvider {
     return `https://webflow.com/oauth/authorize?${queryString}`;
   }
 
-  async exchangeCodeForTokens(code: string): Promise<OAuthTokenResponse> {
+  async exchangeCodeForTokens(code: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
     try {
       const response = await axios.post<{ access_token: string }>(
         'https://api.webflow.com/oauth/access_token',
         {
-          client_id: this.clientId,
-          client_secret: this.clientSecret,
+          client_id: credentials.clientId,
+          client_secret: credentials.clientSecret,
           code,
           grant_type: 'authorization_code',
-          redirect_uri: this.redirectUri,
+          redirect_uri: credentials.redirectUri,
         },
         {
           headers: {
@@ -122,9 +112,5 @@ export class WebflowOAuthProvider implements OAuthProvider {
 
   getServiceName(): string {
     return 'webflow';
-  }
-
-  getRedirectUri(): string {
-    return this.redirectUri;
   }
 }

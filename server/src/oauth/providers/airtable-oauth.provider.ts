@@ -1,27 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { OAuthAppCredentials } from '../oauth-app-version';
 import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
 
 @Injectable()
 export class AirtableOAuthProvider implements OAuthProvider {
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly redirectUri: string;
-
-  constructor(private readonly configService: ConfigService) {
-    this.clientId = this.configService.get<string>('AIRTABLE_CLIENT_ID') || '';
-    this.clientSecret = this.configService.get<string>('AIRTABLE_CLIENT_SECRET') || '';
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
-  }
-
-  generateAuthUrl(
-    userId: string,
-    state: string,
-    overrides?: { clientId?: string; shopDomain?: string; codeChallenge?: string },
-  ): string {
+  generateAuthUrl(state: string, credentials: OAuthAppCredentials, overrides?: { codeChallenge?: string }): string {
     const authUrl = new URL('https://airtable.com/oauth2/v1/authorize');
-    authUrl.searchParams.set('client_id', this.clientId);
-    authUrl.searchParams.set('redirect_uri', this.redirectUri);
+    authUrl.searchParams.set('client_id', credentials.clientId);
+    authUrl.searchParams.set('redirect_uri', credentials.redirectUri);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('state', state);
     // `schema.bases:write` is required to create tables/fields (the sync-draft
@@ -39,20 +25,21 @@ export class AirtableOAuthProvider implements OAuthProvider {
 
   async exchangeCodeForTokens(
     code: string,
-    overrides?: { clientId?: string; clientSecret?: string; shopDomain?: string; codeVerifier?: string },
+    credentials: OAuthAppCredentials,
+    overrides?: { codeVerifier?: string },
   ): Promise<OAuthTokenResponse> {
     const params: Record<string, string> = {
       grant_type: 'authorization_code',
       code,
-      redirect_uri: this.redirectUri,
-      client_id: this.clientId,
+      redirect_uri: credentials.redirectUri,
+      client_id: credentials.clientId,
     };
 
     if (overrides?.codeVerifier) {
       params.code_verifier = overrides.codeVerifier;
     }
 
-    const encodedCredentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+    const encodedCredentials = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString('base64');
 
     const response = await fetch('https://airtable.com/oauth2/v1/token', {
       method: 'POST',
@@ -71,8 +58,8 @@ export class AirtableOAuthProvider implements OAuthProvider {
     return response.json() as Promise<OAuthTokenResponse>;
   }
 
-  async refreshTokens(refreshToken: string): Promise<OAuthTokenResponse> {
-    const encodedCredentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+  async refreshTokens(refreshToken: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse> {
+    const encodedCredentials = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString('base64');
 
     const response = await fetch('https://airtable.com/oauth2/v1/token', {
       method: 'POST',
@@ -83,7 +70,7 @@ export class AirtableOAuthProvider implements OAuthProvider {
       body: new URLSearchParams({
         grant_type: 'refresh_token',
         refresh_token: refreshToken,
-        client_id: this.clientId,
+        client_id: credentials.clientId,
       }),
     });
 
@@ -97,9 +84,5 @@ export class AirtableOAuthProvider implements OAuthProvider {
 
   getServiceName(): string {
     return 'airtable';
-  }
-
-  getRedirectUri(): string {
-    return this.redirectUri;
   }
 }

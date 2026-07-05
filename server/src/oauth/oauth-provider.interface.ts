@@ -1,3 +1,5 @@
+import { OAuthAppCredentials } from './oauth-app-version';
+
 /**
  * Which OAuth grant family a provider uses, so the orchestrator can branch on the
  * *strategy* rather than on a hardcoded service list.
@@ -16,51 +18,60 @@
  */
 export type OAuthStrategyKind = 'authorization_code' | 'client_credentials';
 
+/**
+ * A per-service OAuth provider: pure HTTP mechanics for one external service's OAuth
+ * endpoints. Providers hold NO credentials of their own — the caller resolves the
+ * versioned {@link OAuthAppCredentials} (via OAuthAppCredentialResolver) and passes them
+ * in, so which OAuth *app* is used is always an explicit, versioned decision made in one
+ * place rather than each provider reaching into the environment.
+ */
 export interface OAuthProvider {
   /**
-   * Generate OAuth authorization URL for the service.
+   * Generate the URL the user's browser is redirected to.
    *
-   * `dataCenter` is for multi-region providers (e.g. Zoho's US/EU/IN/… data
-   * centers) whose authorize/token hosts differ per region; it's the analog of
-   * Shopify's `shopDomain`, selected by the user in the connect form and threaded
-   * through the OAuth state.
+   * Uses `credentials.clientId` and `credentials.redirectUri`. `overrides` carries the
+   * per-connection knobs that aren't part of the app identity: `shopDomain` (Shopify),
+   * `codeChallenge` (PKCE — Airtable), and `dataCenter` for multi-region providers
+   * (Zoho's US/EU/IN/… hosts, the analog of Shopify's `shopDomain`).
    *
-   * For a `'client_credentials'` provider this URL is not an OAuth *authorize*
-   * URL but the vendor's external *install* link (e.g. Wix's app-installer URL);
-   * the redirect it lands on carries an install identifier, not a `code`.
+   * For a `'client_credentials'` provider this URL is not an OAuth *authorize* URL but
+   * the vendor's external *install* link (e.g. Wix's app-installer URL); the redirect it
+   * lands on carries an install identifier, not a `code`.
    */
   generateAuthUrl(
-    userId: string,
     state: string,
-    overrides?: { clientId?: string; shopDomain?: string; codeChallenge?: string; dataCenter?: string },
+    credentials: OAuthAppCredentials,
+    overrides?: { shopDomain?: string; codeChallenge?: string; dataCenter?: string },
   ): string;
 
   /**
-   * Exchange authorization code for access token.
+   * Exchange an authorization code for access/refresh tokens using `credentials`.
    *
-   * `redirectUri` overrides the provider's default redirect URI for this one
-   * exchange. Needed by the marketplace-initiated ("inbound") flow, whose code is
-   * bound to the install endpoint (`/oauth/install/:service`) rather than the
-   * app-initiated callback — the token request's `redirect_uri` must match the URL
-   * the code was issued to. Ignored by providers that don't send `redirect_uri`.
+   * The token request's `redirect_uri` (for providers that send one) comes from
+   * `credentials.redirectUri`, so the marketplace-initiated ("inbound") flow overrides
+   * it by resolving credentials with the install endpoint as the redirect — providers
+   * don't take a separate redirect override. Not used by `'client_credentials'`
+   * providers (they have no code to exchange and may reject this).
    */
   exchangeCodeForTokens(
     code: string,
-    overrides?: {
-      clientId?: string;
-      clientSecret?: string;
-      shopDomain?: string;
-      codeVerifier?: string;
-      dataCenter?: string;
-      redirectUri?: string;
-    },
+    credentials: OAuthAppCredentials,
+    overrides?: { shopDomain?: string; codeVerifier?: string; dataCenter?: string },
   ): Promise<OAuthTokenResponse>;
 
   /**
-   * Refresh access token using refresh token. `opts.dataCenter` lets a
-   * multi-region provider route the refresh to the correct regional host.
+   * Refresh an access token using the stored refresh token and `credentials`. The
+   * credentials MUST be the ones that issued the refresh token (a refresh token from one
+   * OAuth app cannot be refreshed with another app's client id/secret) — the caller
+   * resolves them from the connection's stored {@link OAuthAppVersion}. `opts.dataCenter`
+   * routes a multi-region provider's refresh to the correct regional host. Not used by
+   * `'client_credentials'` providers (they re-mint via {@link mintTokenFromInstall}).
    */
-  refreshTokens(refreshToken: string, opts?: { dataCenter?: string }): Promise<OAuthTokenResponse>;
+  refreshTokens(
+    refreshToken: string,
+    credentials: OAuthAppCredentials,
+    opts?: { dataCenter?: string },
+  ): Promise<OAuthTokenResponse>;
 
   /**
    * Get the service name
@@ -68,29 +79,28 @@ export interface OAuthProvider {
   getServiceName(): string;
 
   /**
-   * Get the OAuth redirect URI for this service
-   */
-  getRedirectUri(): string;
-
-  /**
-   * Which OAuth grant family this provider uses. Optional: a provider that omits
-   * it is treated as `'authorization_code'`, so existing providers are unaffected.
-   * A `'client_credentials'` provider implements {@link mintTokenFromInstall}
-   * instead of `exchangeCodeForTokens`/`refreshTokens` (those may throw).
+   * Which OAuth grant family this provider uses. Optional: a provider that omits it is
+   * treated as `'authorization_code'`, so existing providers are unaffected. A
+   * `'client_credentials'` provider implements {@link mintTokenFromInstall} instead of
+   * `exchangeCodeForTokens`/`refreshTokens` (those may throw).
    */
   strategyKind?(): OAuthStrategyKind;
 
   /**
-   * Mint a fresh access token for a `'client_credentials'` (2-legged) provider.
+   * Mint a fresh access token for a `'client_credentials'` (2-legged) provider, using
+   * `credentials` — the app generation's client id/secret. Because the token is minted
+   * from the app's own credentials plus the install identifier, the credentials MUST be
+   * the ones the install was created under (a different app generation cannot mint for
+   * another app's install), so the caller resolves them from the connection's stored
+   * {@link OAuthAppVersion} exactly like the refresh path.
    *
    * `installIdentifier` is the install-scoped id captured on the external-install
-   * redirect (Wix: `instanceId`); the same id is stored on the connector account
-   * (in `oauthWorkspaceId`) and passed back here whenever the token needs
-   * re-minting. Implementations MUST return a concrete `expires_in` (the vendor
-   * response often omits it) so the token's expiry can be tracked and it gets
-   * re-minted before it goes stale.
+   * redirect (Wix: `instanceId`); the same id is stored on the connector account (in
+   * `oauthWorkspaceId`) and passed back here whenever the token needs re-minting.
+   * Implementations MUST return a concrete `expires_in` (the vendor response often omits
+   * it) so the token's expiry can be tracked and it gets re-minted before it goes stale.
    */
-  mintTokenFromInstall?(installIdentifier: string): Promise<OAuthTokenResponse>;
+  mintTokenFromInstall?(installIdentifier: string, credentials: OAuthAppCredentials): Promise<OAuthTokenResponse>;
 }
 
 export interface OAuthTokenResponse {

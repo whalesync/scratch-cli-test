@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { OAuthAppCredentials } from '../../oauth-app-version';
 import { WixOAuthProvider } from '../wix-oauth.provider';
 
 jest.mock('axios');
@@ -7,13 +8,14 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 const REDIRECT_URI = 'https://test.scratch.md/oauth/callback';
 
-function makeProvider(overrides: Record<string, string> = {}): WixOAuthProvider {
-  const env: Record<string, string> = {
-    WIX_CLIENT_ID: 'wix-app-id',
-    WIX_CLIENT_SECRET: 'wix-app-secret',
-    REDIRECT_URI,
-    ...overrides,
-  };
+const credentials: OAuthAppCredentials = {
+  clientId: 'wix-app-id',
+  clientSecret: 'wix-app-secret',
+  redirectUri: REDIRECT_URI,
+};
+
+/** Wix reads only WIX_SHARE_URL_ID from config now; client id/secret/redirect are passed in. */
+function makeProvider(env: Record<string, string> = {}): WixOAuthProvider {
   const config = { get: (key: string) => env[key] } as unknown as ConfigService;
   return new WixOAuthProvider(config);
 }
@@ -27,7 +29,7 @@ describe('WixOAuthProvider', () => {
 
   describe('generateAuthUrl', () => {
     it('builds the Wix app-installer URL with appId and a postInstallationUrl carrying our state', () => {
-      const url = new URL(makeProvider().generateAuthUrl('user1', 'STATE+123/=='));
+      const url = new URL(makeProvider().generateAuthUrl('STATE+123/==', credentials));
 
       expect(url.origin).toBe('https://www.wix.com');
       expect(url.pathname).toBe('/app-installer');
@@ -43,7 +45,7 @@ describe('WixOAuthProvider', () => {
     });
 
     it('includes shareUrlId for unlisted apps when configured', () => {
-      const url = new URL(makeProvider({ WIX_SHARE_URL_ID: 'share-guid' }).generateAuthUrl('user1', 'S'));
+      const url = new URL(makeProvider({ WIX_SHARE_URL_ID: 'share-guid' }).generateAuthUrl('S', credentials));
       expect(url.searchParams.get('shareUrlId')).toBe('share-guid');
     });
   });
@@ -52,7 +54,7 @@ describe('WixOAuthProvider', () => {
     it('posts client_credentials with instance_id and returns a 4h token tagged with the instance', async () => {
       mockedAxios.post.mockResolvedValue({ data: { access_token: 'at', token_type: 'Bearer' } });
 
-      const result = await makeProvider().mintTokenFromInstall('inst-123');
+      const result = await makeProvider().mintTokenFromInstall('inst-123', credentials);
 
       expect(result).toEqual({ access_token: 'at', expires_in: 4 * 60 * 60, workspace_id: 'inst-123' });
       const [calledUrl, body] = mockedAxios.post.mock.calls[0];
@@ -67,7 +69,9 @@ describe('WixOAuthProvider', () => {
 
     it('throws when Wix returns no access token', async () => {
       mockedAxios.post.mockResolvedValue({ data: {} });
-      await expect(makeProvider().mintTokenFromInstall('inst-123')).rejects.toThrow(/did not return an access token/);
+      await expect(makeProvider().mintTokenFromInstall('inst-123', credentials)).rejects.toThrow(
+        /did not return an access token/,
+      );
     });
   });
 
