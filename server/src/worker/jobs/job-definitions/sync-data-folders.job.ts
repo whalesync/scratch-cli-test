@@ -18,6 +18,7 @@ import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.ser
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
+import { ScratchGitConflictError } from '../../../scratch-git/scratch-git.client';
 import { ScratchGitService } from '../../../scratch-git/scratch-git.service';
 import { findTransformerConfigsV2 } from '../../../sync/sync-execution';
 import { SyncService } from '../../../sync/sync.service';
@@ -434,15 +435,55 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       },
     });
 
-    try {
-      await this.scratchGitService.runGitGc(data.workbookId);
-    } catch (err) {
-      WSLogger.warn({
-        source: 'SyncDataFoldersJob',
-        message: 'Failed to run Git GC',
-        workbookId: data.workbookId,
-        error: err,
-      });
+    // Compact the git repos the sync actually wrote to. Sync writes every record into its
+    // destination folders, so those folders' repos are the ones worth GCing. In the V2
+    // per-connection-repo architecture each connector-backed folder lives in its own
+    // `org_/wkb_/coa_` repo (and a connector-less scratch folder lives in the per-workbook
+    // scratch repo), so we resolve and dedupe the destination repos rather than GCing a bare
+    // workbook id — `wkb_<id>.git` does not exist and used to ENOENT/500 on every sync (DEV-10671).
+    const destinationRepoIdsWrittenBySync = new Set<string>();
+    for (const syncTablePair of sync.syncTablePairs) {
+      try {
+        const destinationRepoId = await this.scratchGitService.resolveRepoPathForFolder(
+          syncTablePair.destinationDataFolder.connectorAccountId,
+          data.workbookId,
+        );
+        destinationRepoIdsWrittenBySync.add(destinationRepoId);
+      } catch (err) {
+        WSLogger.warn({
+          source: 'SyncDataFoldersJob',
+          message: 'Failed to resolve destination repo for Git GC',
+          workbookId: data.workbookId,
+          destinationDataFolderId: syncTablePair.destinationDataFolder.id,
+          error: err,
+        });
+      }
+    }
+
+    for (const destinationRepoId of destinationRepoIdsWrittenBySync) {
+      try {
+        await this.scratchGitService.runGitGc(destinationRepoId);
+      } catch (err) {
+        if (err instanceof ScratchGitConflictError) {
+          // A GC from a prior run of this job (e.g. one that stalled and was retried by BullMQ) is
+          // still in progress on scratch-git. GC is idempotent maintenance, so skipping this run is
+          // harmless — the next sync/pull will GC again. Mirrors pull-linked-folder-files.job.
+          WSLogger.debug({
+            source: 'SyncDataFoldersJob',
+            message: 'Git GC already in progress, skipping',
+            workbookId: data.workbookId,
+            repoId: destinationRepoId,
+          });
+        } else {
+          WSLogger.warn({
+            source: 'SyncDataFoldersJob',
+            message: 'Failed to run Git GC',
+            workbookId: data.workbookId,
+            repoId: destinationRepoId,
+            error: err,
+          });
+        }
+      }
     }
 
     WSLogger.info({
