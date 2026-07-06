@@ -355,6 +355,38 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     [diffData?.rows, byTypeDiffData, nextChangedRecordAfter, handleRecordReviewed],
   );
 
+  // Per-field Approve inside the drawer. Always reflects the accept in the grid diff optimistically; and
+  // when the accepted field was the record's LAST unreviewed change, advances the stepper exactly like a
+  // record-level Approve. Without this, the record drops out of the page-scoped changed set on the next
+  // render, `recordChangesDrawerIndex` falls to -1, and the index<0 effect closes the drawer — bouncing a
+  // field-by-field reviewer out of the stepper instead of stepping them to the next changed record.
+  const handleSingleFieldAccepted = useCallback(
+    (filename: string, fieldName: string, nextValue: unknown) => {
+      applyOptimisticDiff((prev) => applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue));
+
+      const rowBeforeAccept = diffData?.rows.find((row) => row.__filename === filename);
+      // Per-field Approve is only offered for modified/unpublished records, so the added/deleted/invalidJson
+      // guards are belt-and-suspenders — those keep unreviewed status regardless of their changed-field set.
+      const acceptRemovesLastUnreviewedChange =
+        !!rowBeforeAccept &&
+        rowBeforeAccept.__rowStatus !== 'added' &&
+        rowBeforeAccept.__rowStatus !== 'deleted' &&
+        rowBeforeAccept.__rowStatus !== 'invalidJson' &&
+        rowBeforeAccept.__changedFields.filter((changedFieldPath) => changedFieldPath !== fieldName).length === 0;
+      if (acceptRemovesLastUnreviewedChange) {
+        // `nextChangedRecordAfter` reads the current `drawerFilenames` (still including `filename`, since the
+        // optimistic-diff state update hasn't re-rendered yet); null closes the drawer via the render guard.
+        setRecordChangesDrawerFilename((current) =>
+          current === filename ? nextChangedRecordAfter(filename) : current,
+        );
+        // Mirror record-level review: drop the finished record from a group-scoped set so the stepper never
+        // lands back on it. No-op for the page-scoped drawer (the set is null).
+        setRecordChangesDrawerFilenameSet((set) => (set ? set.filter((f) => f !== filename) : set));
+      }
+    },
+    [applyOptimisticDiff, diffData?.rows, nextChangedRecordAfter],
+  );
+
   // Opening the deep-edit overlay (store selection) closes the drawer, so the two never co-render.
   useEffect(() => {
     if (selectedRecordFilename) closeRecordChangesDrawer();
@@ -633,11 +665,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
             onClose={closeRecordChangesDrawer}
             onApproved={(filename) => handleRecordChangeReviewed(filename, 'approve')}
             onRejected={(filename) => handleRecordChangeReviewed(filename, 'reject')}
-            onSingleFieldAccepted={(filename, fieldName, nextValue) =>
-              applyOptimisticDiff((prev) =>
-                applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue),
-              )
-            }
+            onSingleFieldAccepted={handleSingleFieldAccepted}
             onFieldReviewedRefetchAll={() => {
               bumpReviewDataVersion();
               invalidateWorkspaceLevelData();
