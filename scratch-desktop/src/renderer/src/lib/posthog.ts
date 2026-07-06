@@ -48,7 +48,7 @@ export type CloudSyncSurface = 'open' | 'create';
 
 export type PickParentFolderFlow = 'download' | 'create';
 
-type PostHogInstance = Awaited<typeof import('posthog-js')>['default'];
+type PostHogInstance = Awaited<typeof import('posthog-js/dist/module.no-external')>['default'];
 let posthogInstance: PostHogInstance | null = null;
 
 async function getPostHog(): Promise<PostHogInstance | null> {
@@ -60,14 +60,23 @@ async function getPostHog(): Promise<PostHogInstance | null> {
     return null;
   }
 
-  const { default: posthog } = await import('posthog-js');
+  // Load the core SDK plus the bundled rrweb recorder extension. We use the "no-external" build so
+  // no code is fetched from PostHog's CDN at runtime — packaged Electron serves the renderer from a
+  // file:// origin, where that runtime recorder fetch is blocked, so bundling is what makes session
+  // replay work in the desktop app (DEV-10676). The core module.no-external alone is NOT enough:
+  // the SDK needs __PosthogExtensions__.initSessionRecording to actually start rrweb, and only the
+  // posthog-recorder side-effect import registers it (module.full.no-external omits it in this
+  // version, which leaves replay stuck in "lazy_loading" capturing nothing).
+  const [{ default: posthog }] = await Promise.all([
+    import('posthog-js/dist/module.no-external'),
+    import('posthog-js/dist/posthog-recorder'),
+  ]);
   posthog.init(key, {
     api_host: (import.meta.env.VITE_POSTHOG_HOST as string) || 'https://us.i.posthog.com',
     person_profiles: 'identified_only',
     defaults: '2025-05-24',
     capture_pageview: false,
     autocapture: false,
-    disable_session_recording: true,
   });
 
   // Super-properties: PostHog attaches these to every event automatically,
