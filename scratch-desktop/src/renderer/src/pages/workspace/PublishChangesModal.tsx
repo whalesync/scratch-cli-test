@@ -1797,8 +1797,8 @@ export function PublishChangesModal({
                     {singleRecord
                       ? 'This record has validation errors that may prevent it from publishing.'
                       : singleConnection
-                        ? `${validationCounts.errors} record${validationCounts.errors === 1 ? '' : 's'} in this connector contain validation errors that may prevent them from publishing.`
-                        : `${validationCounts.errors} record${validationCounts.errors === 1 ? '' : 's'} contain validation errors that may prevent them from publishing.`}
+                        ? `${validationCounts.errors} record${validationCounts.errors === 1 ? '' : 's'} in this connector ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`
+                        : `${validationCounts.errors} record${validationCounts.errors === 1 ? '' : 's'} ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`}
                   </Text>
                 )}
                 {unreviewedEntries.length > 0 && (
