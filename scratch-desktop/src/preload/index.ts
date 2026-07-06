@@ -54,8 +54,13 @@ type ScratchCommandEvent =
     };
 
 type DiffGridFilter =
-  | { scope: 'global'; kind: 'unreviewed' | 'unpublished' }
-  | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string }
+  | { scope: 'global'; kind: 'unreviewed' | 'unpublished' | 'pending' | 'has-problems' }
+  | {
+      scope: 'column';
+      kind: 'unreviewed' | 'unpublished' | 'pending' | 'has-problems';
+      columnId: string;
+      columnTitle: string;
+    }
   | { scope: 'text'; columnId: string; columnTitle: string; value: string };
 
 const scratchDeepLink = {
@@ -522,7 +527,7 @@ const scratchFiles = {
       deleted: number;
       invalidJson: number;
     };
-    filterCounts: { unreviewed: number; unpublished: number };
+    filterCounts: { unreviewed: number; unpublished: number; pending: number };
     focusColumnIds: { unreviewed: string[]; unpublished: string[] };
     invalidJsonFiles: Array<{
       filename: string;

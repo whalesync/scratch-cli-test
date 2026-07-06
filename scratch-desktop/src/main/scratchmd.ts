@@ -503,6 +503,9 @@ export interface ReadRecordsFolderSummary {
   total: number;
   approved_changes: number;
   unapproved_changes: number;
+  /// De-duplicated union of the two counts above (`approvedChanges = 1 OR
+  /// unapprovedChanges = 1`) — the honest folder-wide "Pending" count.
+  pending_changes: number;
   /// Row-status counts mirroring the desktop's DiffGridSummary buckets;
   /// computed full-folder by `query_summary` in folder_index without loading
   /// any blobs. See `shared/folder_index.rs::query_summary`.
@@ -547,6 +550,7 @@ export type ReadRecordsFilterOp =
   | { op: 'approvedChanges' }
   | { op: 'unapprovedChanges' }
   | { op: 'hasErrors' }
+  | { op: 'pending' }
   | { op: 'eq' | 'lt' | 'gt' | 'contains'; field: string; value: string };
 
 export interface ReadRecordsOptions {

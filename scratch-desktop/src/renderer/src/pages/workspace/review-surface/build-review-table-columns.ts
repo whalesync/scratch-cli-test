@@ -55,15 +55,17 @@ export interface ReviewTableColumnModel {
 
 /**
  * Build the review grid's columns. The first column is always the status pill column; the rest
- * come from the view's non-hidden columns (the review surface has no column-picker, so
- * `visibleColumnIds` is deliberately ignored — show/hide is deferred). Columns that carry a diff
- * (per `focusColumnIds` or any row's changed/unpublished fields, matched on the effective path)
- * are widened; a user's persisted `columnWidths[path]` always overrides the computed width.
+ * come from the view's non-hidden columns, further narrowed to `visibleColumnIds` when the column
+ * picker (or the "just changed columns" default) has a selection — `null` shows every non-hidden
+ * column. The title column is always kept (it anchors the frozen first data column). Columns that
+ * carry a diff (per `focusColumnIds` or any row's changed/unpublished fields, matched on the
+ * effective path) are widened; a user's persisted `columnWidths[path]` always overrides the width.
  */
 export function buildReviewTableColumns(
   tableView: TableView | null,
   diffData: DiffGridResult,
   columnWidths: Record<string, number>,
+  visibleColumnIds: string[] | null,
 ): ReviewTableColumnModel {
   let flatCols = tableView ? flattenTableViewColumns(tableView) : [];
   if (flatCols.length === 0) {
@@ -71,7 +73,14 @@ export function buildReviewTableColumns(
     flatCols = flattenTableViewColumns(createFallbackTableViewFromColumnDefinitions(diffData.columns));
   }
   const titleColumnId = flatCols[0]?.path ?? null;
-  const visibleCols = flatCols.filter((col) => !col.hidden);
+  const nonHiddenCols = flatCols.filter((col) => !col.hidden);
+  const visibleCols =
+    visibleColumnIds === null
+      ? nonHiddenCols
+      : (() => {
+          const visibleColumnIdSet = new Set(visibleColumnIds);
+          return nonHiddenCols.filter((col) => col.path === titleColumnId || visibleColumnIdSet.has(col.path));
+        })();
 
   const columnLabels = new Map<string, string>();
   const columnEffectivePaths = new Map<string, string>();

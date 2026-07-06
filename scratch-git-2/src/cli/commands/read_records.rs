@@ -21,6 +21,7 @@ fn parse_filter(raw: &str) -> anyhow::Result<FilterSpec> {
         "approvedChanges" => Ok(FilterSpec::ApprovedChanges),
         "unapprovedChanges" => Ok(FilterSpec::UnapprovedChanges),
         "hasErrors" => Ok(FilterSpec::HasErrors),
+        "pending" => Ok(FilterSpec::Pending),
         "eq" | "lt" | "gt" | "contains" => {
             let field = v
                 .get("field")

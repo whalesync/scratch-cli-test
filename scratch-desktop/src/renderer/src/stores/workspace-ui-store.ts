@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 // ── Filter types (re-exported for FolderDataGrid and other consumers) ──
 
-export type FilterKind = 'unreviewed' | 'unpublished' | 'has-problems';
+export type FilterKind = 'unreviewed' | 'unpublished' | 'pending' | 'has-problems';
 
 export type GridFilter =
   | { scope: 'global'; kind: FilterKind }

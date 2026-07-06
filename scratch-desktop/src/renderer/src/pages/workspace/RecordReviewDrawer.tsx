@@ -5,6 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { getByPath } from '../../../../shared/schema-columns';
 import { ButtonPrimarySolid, ButtonSecondaryGhost, IconButtonGhost } from '../../components/base/buttons';
 import {
+  Text12Medium,
   Text12Regular,
   Text13Regular,
   TextMono12Regular,
@@ -15,9 +16,17 @@ import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { isLongFormContent } from './content-paragraph-diff';
 import { ContentDiffWithMap } from './ContentDiffWithMap';
-import { getRecordName, toDisplayString, type DiffRecordData, type DiffRowStatus } from './record-diff-helpers';
+import { FieldReviewActions } from './diff-renderers';
+import {
+  applyAcceptedFieldChangeToOpenRecordData,
+  getRecordName,
+  rowHasUnreviewedChanges,
+  toDisplayString,
+  type DiffRecordData,
+  type DiffRowStatus,
+} from './record-diff-helpers';
 
-interface RecordChangesDrawerProps {
+interface RecordReviewDrawerProps {
   folderPath: string;
   workspacePath: string;
   titleColumnId: string | null;
@@ -25,17 +34,21 @@ interface RecordChangesDrawerProps {
   columnLabels?: Map<string, string>;
   /** Map from column id to subfield-aware effective path (e.g. "title" → "title.raw"). */
   columnEffectivePaths?: Map<string, string>;
-  /** Ordered filenames (grid order) of the records with unapproved changes — the set the drawer steps through. */
+  /** Ordered filenames (grid order) of the records the drawer steps through. */
   changedFilenames: string[];
   /** Index into `changedFilenames` of the record currently shown. */
   currentIndex: number;
-  /** Step the drawer to another record in the changed set (the header ↑/↓ stepper and arrow keys). */
+  /** Step the drawer to another record in the set (the header ↑/↓ stepper and arrow keys). */
   onSelectIndex: (index: number) => void;
   onClose: () => void;
-  /** Called after a successful approve; the parent advances to the next changed record and refreshes the grid. */
+  /** Called after a successful record-level approve; the parent advances and refreshes the grid. */
   onApproved: (filename: string) => void;
-  /** Called after a successful reject; the parent advances and refreshes the grid. */
+  /** Called after a successful record-level reject; the parent advances and refreshes the grid. */
   onRejected: (filename: string) => void;
+  /** Optimistically apply a single accepted field to the grid diff (mirrors RecordDetailView). */
+  onSingleFieldAccepted?: (filename: string, fieldName: string, nextValue: unknown) => void;
+  /** A per-field reject changed the record's structure — the host refetches both surfaces. */
+  onFieldReviewedRefetchAll?: () => void;
 }
 
 interface StateBadge {
@@ -86,44 +99,58 @@ const STATE_BADGE_BY_ROW_STATUS: Record<DiffRowStatus, StateBadge> = {
 
 const EMPTY_VALUE_PLACEHOLDER = '(empty)';
 
+/** Which fields the body shows: only the changed ones, or every column and its value. */
+type DrawerFieldMode = 'changes' | 'all';
+
 /**
- * Shared shell for a single field block: an uppercase mono field label above the
- * field's diff content, with the divider/padding chrome. Used by both the compact
- * `ChangedFieldBlock` and the long-form `ContentDiffWithMap` block so the field
- * label looks identical regardless of which renderer the field routes to.
+ * Shared shell for a single field block: an uppercase mono field label (with optional per-field
+ * review actions on the right) above the field's diff/value content, with the divider/padding chrome.
  */
-function FieldBlockShell({ label, children }: { label: string; children: ReactNode }): ReactNode {
+function FieldBlockShell({
+  label,
+  actions,
+  children,
+}: {
+  label: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}): ReactNode {
   return (
     <Box style={{ borderTop: '0.5px solid var(--fg-divider)', padding: '12px 0' }}>
-      <TextMono12Regular
-        c="var(--fg-muted)"
-        style={{ textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}
-      >
-        {label}
-      </TextMono12Regular>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" style={{ marginBottom: 6, gap: 8 }}>
+        <TextMono12Regular
+          c="var(--fg-muted)"
+          style={{ textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block' }}
+        >
+          {label}
+        </TextMono12Regular>
+        {actions}
+      </Group>
       {children}
     </Box>
   );
 }
 
 /**
- * A single changed field rendered under an uppercase mono label. For modified
- * records it shows the approved value struck through, an arrow, then the new
- * local value; for created records it shows only the new value.
+ * A single changed field rendered under an uppercase mono label. For modified records it shows the
+ * approved value struck through, an arrow, then the new local value; for created records only the
+ * new value. `actions` renders the per-field Approve / Reject controls when the field is reviewable.
  */
 function ChangedFieldBlock({
   label,
   fromValue,
   toValue,
   kind,
+  actions,
 }: {
   label: string;
   fromValue?: string;
   toValue: string;
   kind: 'modified' | 'created';
+  actions?: ReactNode;
 }): ReactNode {
   return (
-    <FieldBlockShell label={label}>
+    <FieldBlockShell label={label} actions={actions}>
       {kind === 'modified' ? (
         <Group gap={8} align="baseline" wrap="wrap">
           <Text13Regular
@@ -146,7 +173,76 @@ function ChangedFieldBlock({
   );
 }
 
-export const RecordChangesDrawer = memo(function RecordChangesDrawer({
+/** A plain (unchanged) field: its label and current value, no review actions. */
+function PlainFieldBlock({ label, value }: { label: string; value: string }): ReactNode {
+  return (
+    <FieldBlockShell label={label}>
+      <Text13Regular
+        c={value.length > 0 ? 'var(--fg-secondary)' : 'var(--fg-muted)'}
+        style={{ wordBreak: 'break-word' }}
+      >
+        {value.length > 0 ? value : EMPTY_VALUE_PLACEHOLDER}
+      </Text13Regular>
+    </FieldBlockShell>
+  );
+}
+
+/** The footer "Changes / All fields" segmented toggle. */
+function FieldModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: DrawerFieldMode;
+  onChange: (mode: DrawerFieldMode) => void;
+}): ReactNode {
+  const options: { value: DrawerFieldMode; label: string }[] = [
+    { value: 'changes', label: 'Changes' },
+    { value: 'all', label: 'All fields' },
+  ];
+  return (
+    <Box style={{ display: 'inline-flex', gap: 2, border: '1px solid var(--fg-divider)', borderRadius: 4, padding: 1 }}>
+      {options.map(({ value, label }) => {
+        const active = mode === value;
+        return (
+          <Box
+            key={value}
+            component="button"
+            aria-label={label}
+            aria-pressed={active}
+            onClick={() => onChange(value)}
+            style={{
+              padding: '2px 10px',
+              border: 'none',
+              borderRadius: 3,
+              backgroundColor: active ? 'var(--highlight-fill)' : 'transparent',
+              outline: active ? '1px solid var(--highlight-border)' : 'none',
+              cursor: active ? 'default' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              lineHeight: 1,
+            }}
+          >
+            <Text12Medium
+              c={active ? 'var(--highlight-text)' : 'var(--fg-muted)'}
+              fw={active ? 500 : undefined}
+              component="span"
+            >
+              {label}
+            </Text12Medium>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
+/**
+ * The v2 review surface's right-side record panel. Steps through a set of records (grid order),
+ * showing either just a record's changed fields or every column and its value (the bottom toggle;
+ * a record with nothing to review opens in All-fields mode). Changed fields carry per-field
+ * Approve / Reject (mirroring RecordDetailView) alongside the record-level Approve / Reject footer.
+ */
+export const RecordReviewDrawer = memo(function RecordReviewDrawer({
   folderPath,
   workspacePath,
   titleColumnId,
@@ -158,22 +254,32 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
   onClose,
   onApproved,
   onRejected,
-}: RecordChangesDrawerProps) {
+  onSingleFieldAccepted,
+  onFieldReviewedRefetchAll,
+}: RecordReviewDrawerProps) {
   const [recordData, setRecordData] = useState<DiffRecordData | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [fieldMode, setFieldMode] = useState<DrawerFieldMode>('changes');
+  // Bumped after a per-field reject to reload this record's three-state diff from disk.
+  const [reloadTick, setReloadTick] = useState(0);
   // In-session approve/reject markers, keyed by filename. The grid refetch removes
   // an approved/rejected record from the changed set; until that lands (or if the
   // user wraps back to it) this lets the title block show the ✓/✕ marker.
   const [sessionMarkerByFilename, setSessionMarkerByFilename] = useState<Record<string, 'approved' | 'rejected'>>({});
   const loadedRecordKeyRef = useRef<string | null>(null);
+  // Whether the initial default field-mode has been applied for this drawer instance. The default
+  // (a record with nothing to review opens in All-fields mode) is applied only to the FIRST record
+  // shown; after that the chosen mode persists as the user cycles / approves / rejects records.
+  const hasDefaultedFieldModeRef = useRef(false);
 
   const changedRecordCount = changedFilenames.length;
   const currentFilename = changedFilenames[currentIndex] ?? null;
 
   // Load the current record's three-state diff. Keyed on the filename value (not the
   // changedFilenames array reference) so a grid refetch that produces a new array but
-  // keeps the same current record does not trigger a redundant reload.
+  // keeps the same current record does not trigger a redundant reload; `reloadTick`
+  // forces a reload in place after a per-field reject.
   useEffect(() => {
     if (!currentFilename) {
       setRecordData(null);
@@ -190,6 +296,12 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
         if (cancelled) return;
         setRecordData(result);
         loadedRecordKeyRef.current = recordKey;
+        // Only the first record shown sets the default mode; cycling/approve/reject keep the
+        // user's current Changes / All fields choice.
+        if (!hasDefaultedFieldModeRef.current) {
+          hasDefaultedFieldModeRef.current = true;
+          setFieldMode(rowHasUnreviewedChanges(result?.row) ? 'changes' : 'all');
+        }
       })
       .catch(() => {
         if (cancelled) return;
@@ -202,7 +314,7 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
     return () => {
       cancelled = true;
     };
-  }, [currentFilename, folderPath, workspacePath]);
+  }, [currentFilename, folderPath, workspacePath, reloadTick]);
 
   const stepBy = useCallback(
     (delta: number) => {
@@ -212,7 +324,7 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
     [changedRecordCount, currentIndex, onSelectIndex],
   );
 
-  // While the drawer is open: ↑/↓ cycle between changed records (wrapping), Esc closes.
+  // While the drawer is open: ↑/↓ cycle between records (wrapping), Esc closes.
   // Capture phase so the grid underneath doesn't also move its cell selection.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -267,29 +379,103 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
     [columnLabels, columnIdByEffectivePath],
   );
 
-  const modifiedFieldBlocks = useMemo<ReactNode[]>(() => {
-    if (!recordData) return [];
-    const displayData = recordData.displayData ?? {};
-    return recordData.row.__changedFields.map((fieldPath) => {
-      const fromValue = toDisplayString(recordData.row.__fromFields[fieldPath]);
-      const toValue = toDisplayString(getByPath(displayData, fieldPath));
-      const label = labelForChangedField(fieldPath);
-      // Long-form bodies (multi-paragraph descriptions) read terribly as a single
-      // struck-through-then-new block, so route them to the rich paragraph diff +
-      // minimap. Short fields stay on the compact from → to redline.
+  // ── Per-field review (accept / reject one changed field), mirroring RecordDetailView ──
+  const approveField = useCallback(
+    (fieldPath: string, value: string) => {
+      if (!currentFilename || busy) return;
+      const filenameForAction = currentFilename;
+      setBusy(true);
+      void window.scratchFiles
+        .acceptUnreviewedFieldEdit(folderPath, workspacePath, filenameForAction, fieldPath, value)
+        .then((result) => {
+          setRecordData((prev) =>
+            prev ? applyAcceptedFieldChangeToOpenRecordData(prev, fieldPath, result.value) : prev,
+          );
+          onSingleFieldAccepted?.(filenameForAction, fieldPath, result.value);
+        })
+        .catch((err: unknown) => {
+          console.error('[acceptUnreviewedFieldEdit] approve field failed:', err);
+          notifications.show({
+            color: 'red',
+            title: 'Failed to approve field',
+            message: err instanceof Error ? err.message : 'Unknown error',
+          });
+        })
+        .finally(() => setBusy(false));
+    },
+    [busy, currentFilename, folderPath, workspacePath, onSingleFieldAccepted],
+  );
+
+  const rejectField = useCallback(
+    (fieldPath: string) => {
+      if (!currentFilename || busy) return;
+      setBusy(true);
+      void window.scratchFiles
+        .revertUnreviewedFieldEditToApproved(folderPath, workspacePath, currentFilename, fieldPath)
+        .then(() => {
+          setReloadTick((tick) => tick + 1);
+          onFieldReviewedRefetchAll?.();
+        })
+        .catch((err: unknown) => {
+          console.error('[revertUnreviewedFieldEditToApproved] reject field failed:', err);
+          notifications.show({
+            color: 'red',
+            title: 'Failed to reject field',
+            message: err instanceof Error ? err.message : 'Unknown error',
+          });
+        })
+        .finally(() => setBusy(false));
+    },
+    [busy, currentFilename, folderPath, workspacePath, onFieldReviewedRefetchAll],
+  );
+
+  // A single changed field's block (diff + per-field Approve / Reject). `effectivePath` is the leaf
+  // key used both to read the value and as the field name for the accept/reject IPC.
+  const renderChangedFieldBlock = useCallback(
+    (key: string, label: string, effectivePath: string): ReactNode => {
+      if (!recordData) return null;
+      const displayData = recordData.displayData ?? {};
+      const fromValue = toDisplayString(recordData.row.__fromFields[effectivePath]);
+      const toValue = toDisplayString(getByPath(displayData, effectivePath));
+      const actions = (
+        <FieldReviewActions
+          diffKind="unreviewed"
+          onApprove={busy ? undefined : () => approveField(effectivePath, toValue)}
+          onUndo={busy ? undefined : () => rejectField(effectivePath)}
+        />
+      );
+      // Long-form bodies (multi-paragraph descriptions) read terribly as a single struck-through
+      // block, so route them to the rich paragraph diff + minimap; short fields stay compact.
       if (isLongFormContent(fromValue, toValue)) {
         return (
-          <FieldBlockShell key={fieldPath} label={label}>
+          <FieldBlockShell key={key} label={label} actions={actions}>
             <ContentDiffWithMap fromValue={fromValue} toValue={toValue} diffKind="unreviewed" />
           </FieldBlockShell>
         );
       }
       return (
-        <ChangedFieldBlock key={fieldPath} label={label} fromValue={fromValue} toValue={toValue} kind="modified" />
+        <ChangedFieldBlock
+          key={key}
+          label={label}
+          fromValue={fromValue}
+          toValue={toValue}
+          kind="modified"
+          actions={actions}
+        />
       );
-    });
-  }, [recordData, labelForChangedField]);
+    },
+    [recordData, busy, approveField, rejectField],
+  );
 
+  // Changed-only view: one block per unreviewed field, each with Approve / Reject.
+  const changedFieldBlocks = useMemo<ReactNode[]>(() => {
+    if (!recordData) return [];
+    return recordData.row.__changedFields.map((fieldPath) =>
+      renderChangedFieldBlock(fieldPath, labelForChangedField(fieldPath), fieldPath),
+    );
+  }, [recordData, labelForChangedField, renderChangedFieldBlock]);
+
+  // Created-record view: the new record's non-empty field values (record-level review only).
   const createdFieldBlocks = useMemo<ReactNode[]>(() => {
     if (!recordData) return [];
     const displayData = recordData.displayData ?? {};
@@ -305,6 +491,24 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
         />
       ));
   }, [recordData, columnLabels]);
+
+  // All-fields view: every column and its value; changed columns render their diff + Approve/Reject.
+  const allFieldBlocks = useMemo<ReactNode[]>(() => {
+    if (!recordData) return [];
+    const displayData = recordData.displayData ?? {};
+    const changedEffectivePaths = new Set(recordData.row.__changedFields);
+    const isReviewableRecord = rowStatus === 'modified' || rowStatus === 'unpublished';
+    return recordData.columns.map((column) => {
+      const effectivePath = columnEffectivePaths?.get(column.id) ?? column.id;
+      const label = columnLabels?.get(column.id) ?? column.displayName ?? column.id;
+      if (isReviewableRecord && changedEffectivePaths.has(effectivePath)) {
+        return renderChangedFieldBlock(column.id, label, effectivePath);
+      }
+      return (
+        <PlainFieldBlock key={column.id} label={label} value={toDisplayString(getByPath(displayData, effectivePath))} />
+      );
+    });
+  }, [recordData, rowStatus, columnEffectivePaths, columnLabels, renderChangedFieldBlock]);
 
   const runRecordAction = useCallback(
     (action: 'approve' | 'reject') => {
@@ -370,6 +574,8 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
           </Text13Regular>
         </Group>
       );
+    } else if (fieldMode === 'all') {
+      bodyContent = allFieldBlocks.length > 0 ? <>{allFieldBlocks}</> : <PlainFieldBlock label="" value="" />;
     } else if (rowStatus === 'added' || rowStatus === 'addedUnpublished') {
       bodyContent =
         createdFieldBlocks.length > 0 ? (
@@ -381,8 +587,8 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
         );
     } else {
       bodyContent =
-        modifiedFieldBlocks.length > 0 ? (
-          <>{modifiedFieldBlocks}</>
+        changedFieldBlocks.length > 0 ? (
+          <>{changedFieldBlocks}</>
         ) : (
           <Box style={{ padding: '12px 0' }}>
             <Text13Regular c="var(--fg-muted)">No field changes to review.</Text13Regular>
@@ -393,6 +599,7 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
 
   const rejectButtonLabel = isDeletedRecord ? 'Keep record' : 'Reject';
   const approveButtonLabel = changedRecordCount > 1 ? 'Approve · next →' : 'Approve';
+  const hasRecordLevelReview = rowHasUnreviewedChanges(recordData?.row);
 
   return (
     <Portal target="#portal">
@@ -411,7 +618,7 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
           onClick={(event) => event.stopPropagation()}
           style={{
             position: 'relative',
-            width: 640,
+            width: 960,
             maxWidth: '92vw',
             height: '100%',
             backgroundColor: 'var(--bg-base)',
@@ -439,7 +646,7 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
             <Group gap={6} align="center" wrap="nowrap">
               <IconButtonGhost
                 size="compact-xs"
-                aria-label="Previous changed record"
+                aria-label="Previous record"
                 onClick={() => stepBy(-1)}
                 disabled={changedRecordCount <= 1}
               >
@@ -450,7 +657,7 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
               </Text12Regular>
               <IconButtonGhost
                 size="compact-xs"
-                aria-label="Next changed record"
+                aria-label="Next record"
                 onClick={() => stepBy(1)}
                 disabled={changedRecordCount <= 1}
               >
@@ -490,7 +697,7 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
             </Group>
           </Box>
 
-          {/* Body — changed fields only */}
+          {/* Body */}
           <ScrollArea style={{ flex: 1 }}>
             {loading ? (
               <Box style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0' }}>
@@ -508,23 +715,27 @@ export const RecordChangesDrawer = memo(function RecordChangesDrawer({
             wrap="nowrap"
             style={{ padding: '12px 16px', borderTop: '0.5px solid var(--fg-divider)' }}
           >
-            <Text12Regular c="var(--fg-muted)">↑ ↓ to step</Text12Regular>
+            <FieldModeToggle mode={fieldMode} onChange={setFieldMode} />
             <Group gap={8} align="center" wrap="nowrap">
-              <ButtonSecondaryGhost
-                size="compact-sm"
-                c="red.8"
-                onClick={() => runRecordAction('reject')}
-                disabled={busy || !currentFilename}
-              >
-                {rejectButtonLabel}
-              </ButtonSecondaryGhost>
-              <ButtonPrimarySolid
-                size="compact-sm"
-                onClick={() => runRecordAction('approve')}
-                disabled={busy || !currentFilename}
-              >
-                {approveButtonLabel}
-              </ButtonPrimarySolid>
+              {hasRecordLevelReview && (
+                <>
+                  <ButtonSecondaryGhost
+                    size="compact-sm"
+                    c="red.8"
+                    onClick={() => runRecordAction('reject')}
+                    disabled={busy || !currentFilename}
+                  >
+                    {rejectButtonLabel}
+                  </ButtonSecondaryGhost>
+                  <ButtonPrimarySolid
+                    size="compact-sm"
+                    onClick={() => runRecordAction('approve')}
+                    disabled={busy || !currentFilename}
+                  >
+                    {approveButtonLabel}
+                  </ButtonPrimarySolid>
+                </>
+              )}
             </Group>
           </Group>
         </Box>

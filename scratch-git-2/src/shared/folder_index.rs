@@ -44,6 +44,10 @@ pub enum FilterSpec {
     ApprovedChanges,
     UnapprovedChanges,
     HasErrors,
+    /// Records with any pending change: approved-not-yet-published OR
+    /// unreviewed working-tree edits — i.e. `approvedChanges = 1 OR
+    /// unapprovedChanges = 1`. Powers the review surface's "Pending" pill.
+    Pending,
     Field {
         column: String,
         op: FieldOp,
@@ -118,6 +122,9 @@ pub struct FolderSummary {
     pub approved_changes: i64,
     /// Working file differs from `apply(refs/heads/main blob, patch_entry_or_empty)`.
     pub unapproved_changes: i64,
+    /// Records with any pending change (`approvedChanges = 1 OR unapprovedChanges
+    /// = 1`) — the de-duplicated union of the two counts above.
+    pub pending_changes: i64,
     /// Row-status bucket counts, computed from `(working_mtime, master_present,
     /// accepted_kind, unapprovedChanges, parse_error)` — see `query_summary` for
     /// the CASE discriminator. Mirrors the desktop's `DiffGridSummary` shape so
@@ -1435,6 +1442,10 @@ fn build_where_clause(filters: &[FilterSpec]) -> anyhow::Result<(String, Vec<Dyn
             FilterSpec::ApprovedChanges => clauses.push("approvedChanges = 1".into()),
             FilterSpec::UnapprovedChanges => clauses.push("unapprovedChanges = 1".into()),
             FilterSpec::HasErrors => clauses.push("has_errors = 1".into()),
+            // Parenthesized so the OR composes safely with the AND-joined clause list.
+            FilterSpec::Pending => {
+                clauses.push("(approvedChanges = 1 OR unapprovedChanges = 1)".into())
+            }
             FilterSpec::Field { column, op, value } => {
                 let col_q = quote_ident(column);
                 match op {
@@ -1534,6 +1545,13 @@ fn query_summary(conn: &Connection, table: &str) -> anyhow::Result<FolderSummary
         [],
         |r| r.get(0),
     )?;
+    // Union count (not approved_changes + unapproved_changes, which double-counts a
+    // record changed on both axes) — the honest total behind the "Pending" pill.
+    let pending_changes: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM {tq} WHERE approvedChanges = 1 OR unapprovedChanges = 1"),
+        [],
+        |r| r.get(0),
+    )?;
 
     // Bucket discriminator. Order matters: every row matches exactly one CASE
     // branch. Keep in sync with `compareRecordSnapshots` in
@@ -1595,6 +1613,7 @@ fn query_summary(conn: &Connection, table: &str) -> anyhow::Result<FolderSummary
         total,
         approved_changes,
         unapproved_changes,
+        pending_changes,
         added,
         added_approved,
         modified,
@@ -3651,6 +3670,58 @@ mod tests {
         let result = run_query(&opts(&ws, "conn/posts")).unwrap();
         assert_eq!(result.summary.approved_changes, 0);
         assert_eq!(result.summary.unapproved_changes, 1);
+    }
+
+    #[test]
+    fn test_pending_filter_is_union_of_approved_and_unapproved() {
+        // Pending = approvedChanges OR unapprovedChanges. Set up one approved-only record and one
+        // unapproved-only record: each single-axis filter isolates its own record, while Pending
+        // returns their union and `pending_changes` counts the de-duplicated union.
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working_dir = ws.join("conn").join("posts");
+
+        // rec1: approved-only (Create patch, working matches the patch content exactly).
+        write_json(&working_dir, "rec1.json", r#"{"title":"new"}"#);
+        seed_patch_file(
+            &ws,
+            "conn",
+            serde_json::json!([{
+                "path": "posts/rec1.json",
+                "kind": "create",
+                "patch": { "title": "new" },
+            }]),
+        );
+        // rec2: unapproved-only (a working-only edit with no patch entry).
+        write_json(&working_dir, "rec2.json", r#"{"title":"draft"}"#);
+
+        let filenames_for = |filter: FilterSpec| -> Vec<String> {
+            let mut filtered_opts = opts(&ws, "conn/posts");
+            filtered_opts.filters = vec![filter];
+            run_query(&filtered_opts).unwrap().filenames
+        };
+
+        assert_eq!(
+            filenames_for(FilterSpec::ApprovedChanges),
+            vec!["rec1.json"]
+        );
+        assert_eq!(
+            filenames_for(FilterSpec::UnapprovedChanges),
+            vec!["rec2.json"]
+        );
+        assert_eq!(
+            filenames_for(FilterSpec::Pending),
+            vec!["rec1.json", "rec2.json"]
+        );
+
+        // The folder-wide count de-duplicates the union of the two axes.
+        assert_eq!(
+            run_query(&opts(&ws, "conn/posts"))
+                .unwrap()
+                .summary
+                .pending_changes,
+            2
+        );
     }
 
     /// DEV-10518: a changed schema.json hash clears only the folder's `enforce_schema` results,

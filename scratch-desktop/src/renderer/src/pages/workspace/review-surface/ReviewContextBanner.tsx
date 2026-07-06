@@ -90,7 +90,7 @@ export function ReviewContextBanner({
             {title}
           </TextTitle4>
           <TextMono12Regular fz="11px" c={hasChanges ? BANNER_SUBTITLE_GOLD : 'var(--fg-muted)'}>
-            {pendingCount.toLocaleString()} pending · {approvedCount.toLocaleString()} approved
+            {pendingCount.toLocaleString()} needs review · {approvedCount.toLocaleString()} approved
           </TextMono12Regular>
         </Box>
       </Box>

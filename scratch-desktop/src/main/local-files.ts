@@ -393,7 +393,7 @@ export type RowStatus =
   | 'deletedUnpublished'
   | 'unchanged'
   | 'invalidJson';
-export type DiffGridFilterKind = 'unreviewed' | 'unpublished' | 'has-problems';
+export type DiffGridFilterKind = 'unreviewed' | 'unpublished' | 'pending' | 'has-problems';
 
 export type DiffGridFilter =
   | { scope: 'global'; kind: DiffGridFilterKind }
@@ -445,6 +445,8 @@ export interface DiffGridResult {
   filterCounts: {
     unreviewed: number;
     unpublished: number;
+    /** Folder-wide de-duplicated union of unreviewed + unpublished (the "Pending" pill count). */
+    pending: number;
     errors: number;
   };
   focusColumnIds: {
@@ -1565,6 +1567,9 @@ export async function readDiffGridDataPage(
         cliFilters.push({ op: 'unapprovedChanges' });
       } else if (f.kind === 'unpublished') {
         cliFilters.push({ op: 'approvedChanges' });
+      } else if (f.kind === 'pending') {
+        // Union (needs-review OR approved) — a single CLI op so paging + counts stay folder-wide.
+        cliFilters.push({ op: 'pending' });
       } else if (f.kind === 'has-problems') {
         cliFilters.push({ op: 'hasErrors' });
       }
@@ -1674,6 +1679,7 @@ export async function readDiffGridDataPage(
   const filterCounts = {
     unreviewed: cliResult.summary.unapproved_changes,
     unpublished: cliResult.summary.approved_changes,
+    pending: cliResult.summary.pending_changes,
     errors: cliResult.total_error_count,
   };
 

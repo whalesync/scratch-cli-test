@@ -25,7 +25,7 @@ function makeResult(over: Partial<DiffGridResult> = {}): DiffGridResult {
       deletedApproved: 0,
       invalidJson: 0,
     },
-    filterCounts: { unreviewed: 0, unpublished: 0, errors: 0 },
+    filterCounts: { unreviewed: 0, unpublished: 0, pending: 0, errors: 0 },
     focusColumnIds: { unreviewed: [], unpublished: [], errors: [] },
     invalidJsonFiles: [],
     staleCount: 0,
@@ -73,7 +73,7 @@ function widthOf(columns: readonly GridColumn[], id: string): number | undefined
 
 describe('buildReviewTableColumns', () => {
   it('prepends the status column and drops hidden columns', () => {
-    const { columns, titleColumnId } = buildReviewTableColumns(VIEW, makeResult(), {});
+    const { columns, titleColumnId } = buildReviewTableColumns(VIEW, makeResult(), {}, null);
     expect(columns[0]).toMatchObject({ id: STATUS_COL_ID, width: STATUS_COL_WIDTH, hasMenu: false });
     expect(titleColumnId).toBe('title');
     expect(columns.map((c) => c.id)).not.toContain('hiddenCol');
@@ -81,7 +81,7 @@ describe('buildReviewTableColumns', () => {
   });
 
   it('computes default widths: title doubled, date widened, base clamped', () => {
-    const { columns } = buildReviewTableColumns(VIEW, makeResult(), {});
+    const { columns } = buildReviewTableColumns(VIEW, makeResult(), {}, null);
     expect(widthOf(columns, 'title')).toBe(240); // base 120 * 2
     expect(widthOf(columns, 'price')).toBe(120); // clamped base
     expect(widthOf(columns, 'when')).toBe(186); // round(120 * 1.3) + 30
@@ -92,7 +92,7 @@ describe('buildReviewTableColumns', () => {
       focusColumnIds: { unreviewed: ['price'], unpublished: [], errors: [] },
       rows: [makeRow({ __rowStatus: 'modified', __changedFields: ['notes', 'addr.city'] })],
     });
-    const { columns } = buildReviewTableColumns(VIEW, result, {});
+    const { columns } = buildReviewTableColumns(VIEW, result, {}, null);
     expect(widthOf(columns, 'price')).toBe(Math.round(120 * DIFF_COLUMN_WIDTH_MULTIPLIER)); // focus hint
     expect(widthOf(columns, 'notes')).toBe(Math.round(120 * DIFF_COLUMN_WIDTH_MULTIPLIER)); // row changed field
     expect(widthOf(columns, 'addr')).toBe(Math.round(120 * DIFF_COLUMN_WIDTH_MULTIPLIER)); // matched via effective path
@@ -101,19 +101,33 @@ describe('buildReviewTableColumns', () => {
 
   it('lets a user column-width override beat both the default and the diff multiplier', () => {
     const result = makeResult({ focusColumnIds: { unreviewed: ['price'], unpublished: [], errors: [] } });
-    const { columns } = buildReviewTableColumns(VIEW, result, { price: 500 });
+    const { columns } = buildReviewTableColumns(VIEW, result, { price: 500 }, null);
     expect(widthOf(columns, 'price')).toBe(500);
   });
 
   it('builds the label and effective-path maps (drilling into subfields)', () => {
-    const { columnLabels, columnEffectivePaths } = buildReviewTableColumns(VIEW, makeResult(), {});
+    const { columnLabels, columnEffectivePaths } = buildReviewTableColumns(VIEW, makeResult(), {}, null);
     expect(columnLabels.get('title')).toBe('Title');
     expect(columnEffectivePaths.get('title')).toBe('title');
     expect(columnEffectivePaths.get('addr')).toBe('addr.city');
   });
 
+  it('narrows to visibleColumnIds (always keeping the title/status columns) and null shows all', () => {
+    // Narrowed: only the title + explicitly-visible columns survive; hidden stays gone.
+    const narrowed = buildReviewTableColumns(VIEW, makeResult(), {}, ['price']);
+    expect(narrowed.columns.map((c) => c.id)).toEqual([STATUS_COL_ID, 'title', 'price']);
+
+    // The title column is kept even when not listed in visibleColumnIds.
+    const withoutTitle = buildReviewTableColumns(VIEW, makeResult(), {}, ['notes']);
+    expect(withoutTitle.columns.map((c) => c.id)).toEqual([STATUS_COL_ID, 'title', 'notes']);
+
+    // null = every non-hidden column.
+    const all = buildReviewTableColumns(VIEW, makeResult(), {}, null);
+    expect(all.columns.map((c) => c.id)).toEqual([STATUS_COL_ID, 'title', 'price', 'when', 'notes', 'addr']);
+  });
+
   it('falls back to the diff columns when there is no view, and yields only the status column when empty', () => {
-    const empty = buildReviewTableColumns(null, makeResult(), {});
+    const empty = buildReviewTableColumns(null, makeResult(), {}, null);
     expect(empty.columns.map((c) => c.id)).toEqual([STATUS_COL_ID]);
     expect(empty.titleColumnId).toBeNull();
 
@@ -123,7 +137,7 @@ describe('buildReviewTableColumns', () => {
       dataType: 'string',
       attributes: { readOnly: false, writeOnce: false, required: false, nested: false },
     };
-    const withCols = buildReviewTableColumns(null, makeResult({ columns: [colDef] }), {});
+    const withCols = buildReviewTableColumns(null, makeResult({ columns: [colDef] }), {}, null);
     expect(withCols.columns.length).toBeGreaterThan(1);
     expect(withCols.titleColumnId).not.toBeNull();
   });

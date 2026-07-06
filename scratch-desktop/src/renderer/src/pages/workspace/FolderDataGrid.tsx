@@ -103,8 +103,8 @@ import {
 } from './grid-cell-diff-state';
 import { InvalidJsonFilesModal } from './InvalidJsonFilesModal';
 import { rowHasUnreviewedChanges, toDisplayString } from './record-diff-helpers';
-import { RecordChangesDrawer } from './RecordChangesDrawer';
 import { RecordDetailView } from './RecordDetailView';
+import { RecordReviewDrawer } from './RecordReviewDrawer';
 import {
   buildByTypeGroupModel,
   byTypeGroupKey,
@@ -3506,7 +3506,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         detailRowIndex === null &&
         selectedFolderPath &&
         workspacePath && (
-          <RecordChangesDrawer
+          <RecordReviewDrawer
             folderPath={selectedFolderPath}
             workspacePath={workspacePath}
             titleColumnId={titleColumnId}

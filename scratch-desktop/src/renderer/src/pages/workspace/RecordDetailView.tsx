@@ -29,11 +29,11 @@ import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../componen
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import {
+  applyAcceptedFieldChangeToOpenRecordData,
   getRecordName,
   rowHasUnreviewedChanges,
   toDisplayString,
   type DiffRecordData,
-  type DiffRow,
 } from './record-diff-helpers';
 import { RecordFieldsGrid, type FieldValueViewMode, type RecordFieldRow } from './RecordFieldsGrid';
 
@@ -83,45 +83,6 @@ interface RecordDetailViewProps {
   visibleColumnPaths?: Set<string>;
 }
 
-function diffValuesEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a == null || b == null) return a == null && b == null;
-  if (typeof a !== typeof b) return false;
-  if (typeof a === 'object') {
-    try {
-      return JSON.stringify(a) === JSON.stringify(b);
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-function deriveRowStatusAfterEdit(row: DiffRow): DiffRow['__rowStatus'] {
-  if (
-    row.__rowStatus === 'added' ||
-    row.__rowStatus === 'addedUnpublished' ||
-    row.__rowStatus === 'deleted' ||
-    row.__rowStatus === 'deletedUnpublished' ||
-    row.__rowStatus === 'invalidJson'
-  ) {
-    return row.__rowStatus;
-  }
-  if (row.__changedFields.length > 0) {
-    return 'modified';
-  }
-  if (row.__unpublishedFields.length > 0) {
-    return 'unpublished';
-  }
-  return 'unchanged';
-}
-
-/**
- * Writes a `.`-delimited field path into a nested object, creating intermediate
- * plain objects as needed. Mirrors setNestedValue in src/main/local-files.ts so
- * that optimistic updates to displayData match what readDiffRecordData would
- * see on disk. Top-level fields and nested dot paths are both supported.
- */
 /**
  * Walks a folder schema (which may be wrapped as `{ schema: { properties: ... } }`)
  * by `.`-delimited field path and returns the `contentMediaType` declared on the leaf
@@ -142,60 +103,6 @@ function getFieldContentMediaType(folderSchema: Record<string, unknown> | null, 
   }
   const cmt = current?.contentMediaType;
   return typeof cmt === 'string' ? cmt : undefined;
-}
-
-function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): void {
-  const parts = path.split('.');
-  let cursor: Record<string, unknown> = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const key = parts[i];
-    const existing = cursor[key];
-    if (typeof existing !== 'object' || existing === null || Array.isArray(existing)) {
-      const next: Record<string, unknown> = {};
-      cursor[key] = next;
-      cursor = next;
-    } else {
-      cursor = existing as Record<string, unknown>;
-    }
-  }
-  cursor[parts[parts.length - 1]] = value;
-}
-
-function applyAcceptedFieldChangeToOpenRecordData(
-  prev: DiffRecordData,
-  fieldName: string,
-  nextValue: unknown,
-): DiffRecordData {
-  const prevRow = prev.row;
-
-  const masterValue = prevRow.__masterFields[fieldName];
-  const masterHadField = Object.prototype.hasOwnProperty.call(prevRow.__masterFields, fieldName);
-  const nextFromFields = { ...prevRow.__fromFields };
-  delete nextFromFields[fieldName];
-
-  const wasUnpublished = prevRow.__unpublishedFields.includes(fieldName);
-  const matchesMaster = masterHadField && diffValuesEqual(nextValue, masterValue);
-  const nextUnpublishedFields = wasUnpublished
-    ? matchesMaster
-      ? prevRow.__unpublishedFields.filter((f) => f !== fieldName)
-      : prevRow.__unpublishedFields
-    : matchesMaster
-      ? prevRow.__unpublishedFields
-      : [...prevRow.__unpublishedFields, fieldName];
-
-  const nextRow: DiffRow = {
-    ...prevRow,
-    [fieldName]: nextValue,
-    __changedFields: prevRow.__changedFields.filter((f) => f !== fieldName),
-    __fromFields: nextFromFields,
-    __unpublishedFields: nextUnpublishedFields,
-  };
-  nextRow.__rowStatus = deriveRowStatusAfterEdit(nextRow);
-
-  const nextDisplayData = prev.displayData ? { ...prev.displayData } : {};
-  setNestedValue(nextDisplayData, fieldName, nextValue);
-
-  return { ...prev, row: nextRow, displayData: nextDisplayData };
 }
 
 /**

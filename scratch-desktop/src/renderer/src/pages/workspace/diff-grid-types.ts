@@ -62,7 +62,7 @@ export interface DiffGridResult {
     deletedApproved: number;
     invalidJson: number;
   };
-  filterCounts: { unreviewed: number; unpublished: number; errors: number };
+  filterCounts: { unreviewed: number; unpublished: number; pending: number; errors: number };
   focusColumnIds: { unreviewed: string[]; unpublished: string[]; errors: string[] };
   invalidJsonFiles: InvalidJsonFileListEntry[];
   /**
@@ -169,6 +169,12 @@ function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: D
   const filterCounts = {
     unreviewed: recomputeFilterCount(prevHadUnreviewed, nextHasUnreviewed, result.filterCounts.unreviewed),
     unpublished: recomputeFilterCount(prevHadUnpublished, nextHasUnpublished, result.filterCounts.unpublished),
+    // Pending = needs-review OR approved; recompute from the union of both axes.
+    pending: recomputeFilterCount(
+      prevHadUnreviewed || prevHadUnpublished,
+      nextHasUnreviewed || nextHasUnpublished,
+      result.filterCounts.pending,
+    ),
     errors: result.filterCounts.errors,
   };
 

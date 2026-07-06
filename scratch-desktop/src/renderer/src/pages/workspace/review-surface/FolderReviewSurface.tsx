@@ -7,8 +7,8 @@ import { useWorkspaceUiStore, type FilterKind } from '../../../stores/workspace-
 import type { WorkspaceConnection } from '../../../types/local-files';
 import { applyAcceptedFieldChangeToFolderDiffData } from '../diff-grid-types';
 import { rowHasUnreviewedChanges } from '../record-diff-helpers';
-import { RecordChangesDrawer } from '../RecordChangesDrawer';
 import { RecordDetailView } from '../RecordDetailView';
+import { RecordReviewDrawer } from '../RecordReviewDrawer';
 import { buildByTypeGroupModel, type ByTypeGroupModel, type ByTypeSourceColumn } from './build-by-type-group-model';
 import { ByTypeView } from './ByTypeView';
 import { ReviewContextBanner } from './ReviewContextBanner';
@@ -91,6 +91,9 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   const validate = useWorkspaceUiStore((s) => s.validateEnabled);
   const page = useWorkspaceUiStore((s) => s.page);
   const setPage = useWorkspaceUiStore((s) => s.setPage);
+  // Column visibility (null = auto: all columns, or just changed+title while a review filter is on).
+  const visibleColumnIds = useWorkspaceUiStore((s) => s.visibleColumnIds);
+  const setVisibleColumnIds = useWorkspaceUiStore((s) => s.setVisibleColumnIds);
   // Deep-edit overlay selection (also set by ValidationPanel's "navigate to field"): drives RecordDetailView.
   const selectedRecordFilename = useWorkspaceUiStore((s) => s.selectedRecordFilename);
   const showGrid = useWorkspaceUiStore((s) => s.showGrid);
@@ -148,8 +151,54 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     const index = diffData.rows.findIndex((row) => row.__filename === selectedRecordFilename);
     return index >= 0 ? index : null;
   }, [selectedRecordFilename, diffData]);
-  // No column picker in the new surface (deferred to Phase 9): every view column is "visible".
-  const visibleColumnPaths = useMemo(() => new Set(columnMetadata.columnOrder), [columnMetadata.columnOrder]);
+  // ── Column visibility + picker (ported from FolderDataGrid) ──
+  // A global review filter (Pending, or an externally-activated unreviewed/unpublished) narrows the
+  // default column set to just the changed columns + the title; All shows every column.
+  const globalFilterKind = activeFilters.find((filter) => filter.scope === 'global')?.kind ?? null;
+  const isReviewFilterActive =
+    globalFilterKind === 'pending' || globalFilterKind === 'unreviewed' || globalFilterKind === 'unpublished';
+
+  // Column ids carrying a diff, ordered by the view's column order for a stable display.
+  const changedColumnIds = useMemo(() => {
+    if (!diffData) return [];
+    const changed = new Set<string>([...diffData.focusColumnIds.unreviewed, ...diffData.focusColumnIds.unpublished]);
+    return columnMetadata.columnOrder.filter((path) => changed.has(path));
+  }, [diffData, columnMetadata.columnOrder]);
+
+  // The columns the grid actually renders. `visibleColumnIds` non-null = user's explicit choice;
+  // null = auto (changed+title while reviewing, else all columns).
+  const effectiveVisibleColumnIds = useMemo<string[] | null>(() => {
+    if (visibleColumnIds !== null) return visibleColumnIds;
+    if (isReviewFilterActive && changedColumnIds.length > 0) {
+      const anchorColumnId = titleColumnId ?? columnMetadata.columnOrder[0] ?? null;
+      return anchorColumnId
+        ? [anchorColumnId, ...changedColumnIds.filter((path) => path !== anchorColumnId)]
+        : changedColumnIds;
+    }
+    return null;
+  }, [visibleColumnIds, isReviewFilterActive, changedColumnIds, titleColumnId, columnMetadata.columnOrder]);
+
+  // What the ColumnPickerMenu and RecordDetailView treat as "visible" (the effective set, or all).
+  const effectiveVisibleColumnList = effectiveVisibleColumnIds ?? columnMetadata.columnOrder;
+  const visibleColumnPaths = useMemo(() => new Set(effectiveVisibleColumnList), [effectiveVisibleColumnList]);
+
+  // Banner groups reshaped for ColumnPickerMenu (`Map<path, groupName>` → `{ name, columnIds }[]`).
+  const columnGroupsForPicker = useMemo(() => {
+    const columnIdsByGroupName = new Map<string, string[]>();
+    const groupNameOrder: string[] = [];
+    for (const path of columnMetadata.columnOrder) {
+      const groupName = columnMetadata.columnGroups.get(path);
+      if (!groupName) continue;
+      let ids = columnIdsByGroupName.get(groupName);
+      if (!ids) {
+        ids = [];
+        columnIdsByGroupName.set(groupName, ids);
+        groupNameOrder.push(groupName);
+      }
+      ids.push(path);
+    }
+    return groupNameOrder.map((name) => ({ name, columnIds: columnIdsByGroupName.get(name) ?? [] }));
+  }, [columnMetadata.columnOrder, columnMetadata.columnGroups]);
 
   const { editCell, approveAllForGroup, approvingGroupKeys, runBulkAction, bulkActionLoading, handleRecordReviewed } =
     useReviewLadderActions({
@@ -173,7 +222,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     onActivateGlobalFilterConsumed?.();
   }, [activateGlobalFilter, setActiveFilters, onActivateGlobalFilterConsumed]);
 
-  // Default a freshly-opened folder that has records needing review to the "Needs review" filter, so
+  // Default a freshly-opened folder that has pending/approved changes to the "Pending" filter, so
   // the user lands straight on the work that needs attention. Applied once per folder, and only once
   // a settled load for THAT folder has landed (`loadedFolderPath` guards against acting on the stale
   // data still painted mid-switch) — never over a filter the user or the header pill already set.
@@ -182,23 +231,37 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     if (!selectedFolderPath || loadedFolderPath !== selectedFolderPath) return;
     if (defaultedReviewFilterFolderRef.current === selectedFolderPath) return;
     defaultedReviewFilterFolderRef.current = selectedFolderPath;
-    const pendingReviewCount = diffData?.filterCounts?.unreviewed ?? 0;
+    const pendingCount = diffData?.filterCounts?.pending ?? 0;
     const hasGlobalFilter = activeFilters.some((filter) => filter.scope === 'global');
-    if (pendingReviewCount > 0 && !hasGlobalFilter) {
-      setActiveFilters([{ scope: 'global', kind: 'unreviewed' }]);
+    if (pendingCount > 0 && !hasGlobalFilter) {
+      setActiveFilters([{ scope: 'global', kind: 'pending' }]);
     }
   }, [selectedFolderPath, loadedFolderPath, diffData, activeFilters, setActiveFilters]);
 
-  // A single global filter at a time: toggle the kind, dropping any other active global filter.
-  const onToggleGlobalFilter = useCallback(
-    (kind: FilterKind) => {
+  // "By field" is only meaningful when there's something to review — if the pending count drops to
+  // zero while it's active (all approved/rejected), fall back to the table so it's never left empty.
+  useEffect(() => {
+    if (
+      reviewSurfaceViewMode === 'by-type' &&
+      loadedFolderPath === selectedFolderPath &&
+      (diffData?.filterCounts?.pending ?? 0) === 0
+    ) {
+      setReviewSurfaceViewMode('table');
+    }
+  }, [reviewSurfaceViewMode, loadedFolderPath, selectedFolderPath, diffData, setReviewSurfaceViewMode]);
+
+  // Exclusive global filter for the subbar pills: `null` = All (clear). Selecting a scope also
+  // resets column narrowing to auto so the default (changed+title when reviewing, all otherwise)
+  // recomputes for the new scope.
+  const onSelectGlobalFilter = useCallback(
+    (kind: 'pending' | 'has-problems' | null) => {
       setActiveFilters((prev) => {
-        const alreadyActive = prev.some((filter) => filter.scope === 'global' && filter.kind === kind);
         const withoutGlobal = prev.filter((filter) => filter.scope !== 'global');
-        return alreadyActive ? withoutGlobal : [...withoutGlobal, { scope: 'global', kind }];
+        return kind === null ? withoutGlobal : [...withoutGlobal, { scope: 'global', kind }];
       });
+      setVisibleColumnIds(null);
     },
-    [setActiveFilters],
+    [setActiveFilters, setVisibleColumnIds],
   );
 
   // ── Record-changes drawer (the stepper overlay opened by a single click on a changed row) ──
@@ -234,7 +297,9 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   const handleOpenRecordDrawer = useCallback(
     (filename: string) => {
       const row = diffData?.rows.find((r) => r.__filename === filename);
-      setRecordChangesDrawerFilenameSet(null); // page-scoped
+      // Changed records step through the page's changed set; a no-change record opens on its own
+      // (1/1) so clicking any row reveals its full record in the drawer's All-fields mode.
+      setRecordChangesDrawerFilenameSet(rowHasUnreviewedChanges(row) ? null : [filename]);
       setRecordChangesDrawerFilename(filename);
       void trackOpenRecordChangesDrawer(workspaceId, {
         folderPath: selectedFolderPath,
@@ -374,6 +439,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         diffData={diffData}
         tableView={tableView}
         schema={schema}
+        visibleColumnIds={effectiveVisibleColumnIds}
         onOpenRecordDrawer={handleOpenRecordDrawer}
         onCellEdited={editCell}
       />
@@ -395,9 +461,19 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         onViewModeChange={setReviewSurfaceViewMode}
         filterCounts={filterCounts}
         activeFilters={activeFilters}
-        onToggleGlobalFilter={onToggleGlobalFilter}
+        onSelectGlobalFilter={onSelectGlobalFilter}
         validate={validate}
         disabled={isBlockingLoad}
+        columnPicker={{
+          allColumns: columnMetadata.columnOrder,
+          visibleColumns: effectiveVisibleColumnList,
+          titleColumnId,
+          unreviewedColumnIds: diffData?.focusColumnIds.unreviewed ?? [],
+          approvedColumnIds: diffData?.focusColumnIds.unpublished ?? [],
+          columnLabels,
+          columnGroups: columnGroupsForPicker,
+          onChangeVisible: setVisibleColumnIds,
+        }}
       />
 
       <Box style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
@@ -545,7 +621,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         selectedRecordFilename === null &&
         selectedFolderPath &&
         workspacePath && (
-          <RecordChangesDrawer
+          <RecordReviewDrawer
             folderPath={selectedFolderPath}
             workspacePath={workspacePath}
             titleColumnId={titleColumnId}
@@ -557,6 +633,15 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
             onClose={closeRecordChangesDrawer}
             onApproved={(filename) => handleRecordChangeReviewed(filename, 'approve')}
             onRejected={(filename) => handleRecordChangeReviewed(filename, 'reject')}
+            onSingleFieldAccepted={(filename, fieldName, nextValue) =>
+              applyOptimisticDiff((prev) =>
+                applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue),
+              )
+            }
+            onFieldReviewedRefetchAll={() => {
+              bumpReviewDataVersion();
+              invalidateWorkspaceLevelData();
+            }}
           />
         )}
     </Box>

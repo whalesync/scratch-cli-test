@@ -2,6 +2,7 @@ import DataEditor, {
   GridCellKind,
   type DataEditorRef,
   type DrawCellCallback,
+  type DrawHeaderCallback,
   type EditableGridCell,
   type GridColumn,
   type GridSelection,
@@ -24,7 +25,7 @@ import {
   resolveEffectivePath,
   resolveEffectiveType,
 } from '../grid-cell-diff-state';
-import { rowHasUnreviewedChanges, toDisplayString } from '../record-diff-helpers';
+import { toDisplayString } from '../record-diff-helpers';
 import {
   buildReviewTableColumns,
   GRID_THEME,
@@ -69,6 +70,8 @@ export interface ReviewTableGridProps {
   diffData: DiffGridResult;
   tableView: TableView | null;
   schema: Record<string, unknown> | null;
+  /** The columns to render, narrowed by the picker / "just changed" default; null = all non-hidden. */
+  visibleColumnIds: string[] | null;
   /** Open the record-changes drawer for a row (deferred so a double-click edits instead). */
   onOpenRecordDrawer: (filename: string) => void;
   /** A committed cell edit. The host coerces the raw input text and applies it optimistically. */
@@ -78,9 +81,11 @@ export interface ReviewTableGridProps {
 export function ReviewTableGrid({
   diffData,
   tableView,
+  visibleColumnIds,
   onOpenRecordDrawer,
   onCellEdited,
 }: ReviewTableGridProps): ReactElement {
+  const sort = useWorkspaceUiStore((s) => s.sort);
   const setSort = useWorkspaceUiStore((s) => s.setSort);
   const columnWidths = useWorkspaceUiStore((s) => s.columnWidths);
   const setColumnWidths = useWorkspaceUiStore((s) => s.setColumnWidths);
@@ -96,8 +101,8 @@ export function ReviewTableGrid({
   const referenceLabels = diffData.referenceLabels;
 
   const { columns, viewColMap, titleColumnId } = useMemo(
-    () => buildReviewTableColumns(tableView, diffData, columnWidths),
-    [tableView, diffData, columnWidths],
+    () => buildReviewTableColumns(tableView, diffData, columnWidths, visibleColumnIds),
+    [tableView, diffData, columnWidths, visibleColumnIds],
   );
 
   // The validation level per record. `validationByCell` arrives keyed by filename (each value is
@@ -172,7 +177,11 @@ export function ReviewTableGrid({
       // Created/deleted/invalid rows get a solid change-type fill on every cell; modified rows are
       // filled per changed cell via diffTheme below (unchanged cells stay clear).
       const rowBg = getStatusCellTint(status);
-      const rowTextColor = getStatusCellStroke(status);
+      // Deleted rows: keep the title/id column at full strength so the record stays identifiable,
+      // but fade every other cell's text so the eye reads "gone" (on top of the strikethrough).
+      const isDeletedRow = status === 'deleted' || status === 'deletedUnpublished';
+      const rowTextColor =
+        isDeletedRow && colId !== titleColumnId ? getCssVar('--fg-muted') : getStatusCellStroke(status);
       const viewCol = viewColMap.get(colId);
       const isReadOnly = isCellReadonly(viewCol, r);
       const rowTheme = { ...(rowBg ? { bgCell: rowBg } : {}), ...(rowTextColor ? { textDark: rowTextColor } : {}) };
@@ -248,7 +257,7 @@ export function ReviewTableGrid({
         themeOverride,
       };
     },
-    [rows, columns, viewColMap, referenceLabels],
+    [rows, columns, viewColMap, referenceLabels, titleColumnId],
   );
 
   const drawCell: DrawCellCallback = useCallback(
@@ -343,6 +352,27 @@ export function ReviewTableGrid({
     [rows, columns, viewColMap, recordValidationLevelByFilename],
   );
 
+  // Draw a sort-direction caret (↑/↓) in the sorted column's header, right-aligned — the review
+  // surface's equivalent of FolderDataGrid's sort indicator, now on the column heading itself.
+  const drawHeader: DrawHeaderCallback = useCallback(
+    (args, drawContent) => {
+      drawContent();
+      const colId = columns[args.columnIndex]?.id;
+      if (!colId || sort.column !== colId || !sort.direction) return true;
+      const { ctx, rect, theme } = args;
+      const pad = theme.cellHorizontalPadding ?? 8;
+      ctx.save();
+      ctx.fillStyle = theme.textHeader;
+      ctx.font = `${theme.headerFontStyle} ${theme.fontFamily}`;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(sort.direction === 'desc' ? '↓' : '↑', rect.x + rect.width - pad, rect.y + rect.height / 2);
+      ctx.restore();
+      return true;
+    },
+    [columns, sort],
+  );
+
   const onHeaderClicked = useCallback(
     (colIndex: number) => {
       // The dark grid only records the sort intent in the shared store; the host re-derives the
@@ -378,17 +408,17 @@ export function ReviewTableGrid({
 
   const onCellClicked = useCallback(
     (cell: Item) => {
-      // Open the changes drawer on a single click of any cell in a row with unapproved changes,
-      // deferred briefly and cancelled by onCellActivated so a double-click edits instead.
+      // Open the record drawer on a single click of any row — changed records open on their changes,
+      // no-change records in All-fields mode (the host decides). Deferred briefly and cancelled by
+      // onCellActivated so a double-click edits the cell instead.
       clearRecordChangesDrawerOpenTimer();
       const clickedRow = rows[cell[1]] as DiffRow | undefined;
-      if (clickedRow && rowHasUnreviewedChanges(clickedRow)) {
-        const filename = clickedRow.__filename;
-        recordChangesDrawerOpenTimerRef.current = window.setTimeout(() => {
-          recordChangesDrawerOpenTimerRef.current = null;
-          onOpenRecordDrawer(filename);
-        }, RECORD_CHANGES_DRAWER_CLICK_DELAY_MS);
-      }
+      if (!clickedRow) return;
+      const filename = clickedRow.__filename;
+      recordChangesDrawerOpenTimerRef.current = window.setTimeout(() => {
+        recordChangesDrawerOpenTimerRef.current = null;
+        onOpenRecordDrawer(filename);
+      }, RECORD_CHANGES_DRAWER_CLICK_DELAY_MS);
     },
     [rows, clearRecordChangesDrawerOpenTimer, onOpenRecordDrawer],
   );
@@ -432,6 +462,7 @@ export function ReviewTableGrid({
           rows={rows.length}
           getCellContent={getCellContent}
           drawCell={drawCell}
+          drawHeader={drawHeader}
           width={gridSize.width}
           height={gridSize.height}
           smoothScrollX

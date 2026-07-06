@@ -8,11 +8,26 @@ const meta: Meta<typeof ReviewSubbar> = {
   args: {
     viewMode: 'table',
     onViewModeChange: () => {},
-    filterCounts: { unreviewed: 12, unpublished: 5, errors: 2 },
+    filterCounts: { unreviewed: 12, unpublished: 5, pending: 15, errors: 2 },
     activeFilters: [],
-    onToggleGlobalFilter: () => {},
+    onSelectGlobalFilter: () => {},
     validate: true,
     disabled: false,
+    columnPicker: {
+      allColumns: ['title', 'status', 'owner', 'notes'],
+      visibleColumns: ['title', 'status', 'owner', 'notes'],
+      titleColumnId: 'title',
+      unreviewedColumnIds: ['status'],
+      approvedColumnIds: ['owner'],
+      columnLabels: new Map([
+        ['title', 'Title'],
+        ['status', 'Status'],
+        ['owner', 'Owner'],
+        ['notes', 'Notes'],
+      ]),
+      columnGroups: [],
+      onChangeVisible: () => {},
+    },
   },
   parameters: { layout: 'fullscreen' },
 };
@@ -22,16 +37,17 @@ type Story = StoryObj<typeof ReviewSubbar>;
 
 export const Default: Story = {};
 
-export const ByTypeSelected: Story = {
+export const ByFieldSelected: Story = {
   args: { viewMode: 'by-type' },
 };
 
-export const NeedsReviewFilterActive: Story = {
-  args: { activeFilters: [{ scope: 'global', kind: 'unreviewed' }] as GridFilter[] },
+export const PendingFilterActive: Story = {
+  args: { activeFilters: [{ scope: 'global', kind: 'pending' }] as GridFilter[] },
 };
 
-export const ApprovedFilterActive: Story = {
-  args: { activeFilters: [{ scope: 'global', kind: 'unpublished' }] as GridFilter[] },
+/** No pending or approved changes — the "By field" toggle option is disabled. */
+export const NothingPending: Story = {
+  args: { filterCounts: { unreviewed: 0, unpublished: 0, pending: 0, errors: 0 } },
 };
 
 /** Validation off for the workbook — the Problems pill is hidden entirely. */
@@ -41,5 +57,5 @@ export const ValidationOff: Story = {
 
 /** Validation on but no problems — the Problems pill shows but is disabled. */
 export const NoProblems: Story = {
-  args: { filterCounts: { unreviewed: 12, unpublished: 5, errors: 0 } },
+  args: { filterCounts: { unreviewed: 12, unpublished: 5, pending: 15, errors: 0 } },
 };
