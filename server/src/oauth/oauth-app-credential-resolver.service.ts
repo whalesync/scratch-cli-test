@@ -81,13 +81,8 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
     1: {
       clientIdEnvVar: 'GOHIGHLEVEL_CLIENT_ID',
       clientSecretEnvVar: 'GOHIGHLEVEL_CLIENT_SECRET',
-      redirectUri: scratchRedirectUri,
+      redirectUri: (config) => whalesyncRedirectUri(config, 'gohighlevel'),
     },
-    // 2: {
-    //   clientIdEnvVar: 'GOHIGHLEVEL_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'GOHIGHLEVEL_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'TODO'),
-    // },
   },
   [Service.NOTION]: {
     1: {
@@ -107,11 +102,6 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientSecretEnvVar: 'SHOPIFY_CLIENT_SECRET',
       redirectUri: scratchRedirectUri,
     },
-    // 2: {
-    //   clientIdEnvVar: 'SHOPIFY_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'SHOPIFY_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'shopify'),
-    // },
   },
   [Service.SUPABASE]: {
     1: {
@@ -167,27 +157,16 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
     1: {
       clientIdEnvVar: 'QUICKBOOKS_CLIENT_ID',
       clientSecretEnvVar: 'QUICKBOOKS_CLIENT_SECRET',
-      redirectUri: scratchRedirectUri,
+      redirectUri: (config) => whalesyncRedirectUri(config, 'quickbooks'),
     },
-    // 2: {
-    //   clientIdEnvVar: 'QUICKBOOKS_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'QUICKBOOKS_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'quickbooks'),
-    // },
   },
   // Linear's env vars carry the `_OAUTH_` infix (LINEAR_API_KEY is a separate secret).
   [Service.LINEAR]: {
     1: {
       clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID',
       clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET',
-      redirectUri: scratchRedirectUri,
+      redirectUri: (config) => whalesyncRedirectUri(config, 'linear'),
     },
-    // There is a whalesync linear secret, but it's unused and rotten, so we should just promote this version.
-    // 2: {
-    //   clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'linear'),
-    // },
   },
   [Service.ZOHO]: {
     1: {
