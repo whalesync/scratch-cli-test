@@ -122,7 +122,7 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
     2: {
       clientIdEnvVar: 'SUPABASE_CLIENT_ID_V2',
       clientSecretEnvVar: 'SUPABASE_CLIENT_SECRET_V2',
-      redirectUri: (config) => whalesyncRedirectUri(config, 'supabase'),
+      redirectUri: (config) => whalesyncRedirectUri(config, 'supabase-oauth'),
     },
   },
   [Service.WEBFLOW]: {
@@ -182,11 +182,12 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET',
       redirectUri: scratchRedirectUri,
     },
-    2: {
-      clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID_V2',
-      clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET_V2',
-      redirectUri: (config) => whalesyncRedirectUri(config, 'linear'),
-    },
+    // There is a whalesync linear secret, but it's unused and rotten, so we should just promote this version.
+    // 2: {
+    //   clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'linear'),
+    // },
   },
   [Service.ZOHO]: {
     1: {
