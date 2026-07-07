@@ -69,8 +69,8 @@ The current flow, for reference (all file paths relative to repo root):
   callback back to a Scratch workspace: *we told ourselves, in advance, where the tokens belong.*
 - **Provider abstraction** — `OAuthProvider` (`server/src/oauth/oauth-provider.interface.ts`):
   `generateAuthUrl`, `exchangeCodeForTokens`, `refreshTokens`, `getRedirectUri`. Examples:
-  `providers/notion-oauth.provider.ts`, `providers/shopify-oauth.provider.ts` (domain-scoped),
-  `providers/zoho-oauth.provider.ts` (multi-region), `providers/airtable-oauth.provider.ts` (PKCE).
+  `providers/notion-oauth.provider.ts`, `providers/zoho-oauth.provider.ts` (multi-region),
+  `providers/airtable-oauth.provider.ts` (PKCE).
   All read a single shared `REDIRECT_URI` env var.
 - **Callback (web)** — the provider redirects to `https://<host>/oauth/callback`
   (`client/src/app/oauth/callback/page.tsx`, a **public** route). It decodes `state.returnPage`:
@@ -408,7 +408,7 @@ let `installId` flow to whichever surface the user picks.
 | Area | File |
 | --- | --- |
 | OAuth controller / service / provider iface | `server/src/oauth/oauth.controller.ts`, `oauth.service.ts`, `oauth-provider.interface.ts` |
-| Provider examples | `server/src/oauth/providers/{notion,shopify,zoho,airtable}-oauth.provider.ts` |
+| Provider examples | `server/src/oauth/providers/{notion,zoho,airtable}-oauth.provider.ts` |
 | State payload | `packages/shared-types/src/dto/oauth/oauth-state-payload.ts`, `server/src/oauth/types.ts` |
 | ConnectorAccount model | `server/prisma/schema.prisma` (~L141) |
 | Credential encryption | `server/src/utils/encryption.ts` |

@@ -36,7 +36,7 @@ At-a-glance progress through the build journey, so anyone can see where this con
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | |
 | 7 | **Edge cases & quirks tested** (Pass 2 tricky parts) | ⬜ | |
 | 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics — e.g. custom fields, plugin fields, real-vs-meta) | ⬜ | |
-| 9 | **OAuth** (final / pre-release — OAuth client created with the user, *or* requirements documented) | ⬜ | API-key covers all testing; this is the last step |
+| 9 | **OAuth** (final / pre-release — OAuth client created with the user, *or* requirements documented) | ➖ | **Not supported — removed.** Shopify OAuth requires Shopify app-store approval that isn't forthcoming, so Scratch offers only the `user_provided_params` (custom-app Admin API token) path. |
 
 ## TODOs — known pending tasks
 Living checklist of what's left: gaps found while adopting human-built code, unfinished entities/fields, deferred edge cases, and follow-up issues. Check items off as they land. Coarser than the coverage matrix; broader than **Open issues** (which is only for broken ❌ cells with Linear links).
@@ -164,13 +164,10 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 ## Open issues
 - (link Linear issues for ❌ cells)
 
-## OAuth (final milestone — create the client with the user, or document what it takes)
-API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-release nicety done *with* the user. Fill this in when you reach Milestone 9.
-- **Requires:** <dev account? app registration? review/approval? specific scopes?>
-- **Endpoints:** authorize `<url>` · token `<url>` · redirect URI = Scratch callback `REDIRECT_URI` (`<https://test.scratch.md/oauth/callback>`)
-- **App / client:** <where the app is registered; client id/secret in `server/.env` as `<SERVICE>_CLIENT_ID`/`_SECRET` — never paste the secret here>
-- **Status:** <not started | documented (requirements only) | client created | provider wired (CONNECTOR_GUIDE → Server — OAuth)>
-- **Blockers:** <approval pending / paid dev account / none>
+## OAuth (not supported — removed)
+Scratch does **not** support Shopify OAuth. Shopify's OAuth flow requires the app to be approved for / listed in the Shopify App Store, and that approval isn't forthcoming, so the OAuth provider, its app-credential entry, and the connect-time OAuth path were removed. Shopify connects only via `user_provided_params`: the user creates a custom app in their store and pastes its Admin API access token (`shpat_…`) plus the shop domain.
+- **Status:** removed (do not re-wire without app-store approval).
+- **If revisited:** requires a Shopify Partner app that passes App Store review; authorize `https://{shop}.myshopify.com/admin/oauth/authorize`, token `https://{shop}.myshopify.com/admin/oauth/access_token`, offline tokens (no refresh). See git history for the prior `ShopifyOAuthProvider` implementation.
 
 ## UI quick-links (time-savers for the gstack browser)
 Direct URLs to common screens so the agent jumps straight there instead of clicking through the UI. Fill these in as you discover them during a browser pass (e.g. you find the clients table is at `x.com/ui/clients` → record it here).

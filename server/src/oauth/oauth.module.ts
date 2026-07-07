@@ -15,7 +15,6 @@ import { LinearOAuthProvider } from './providers/linear-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { PipedriveOAuthProvider } from './providers/pipedrive-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
-import { ShopifyOAuthProvider } from './providers/shopify-oauth.provider';
 import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
 import { WebflowOAuthProvider } from './providers/webflow-oauth.provider';
 import { WixOAuthProvider } from './providers/wix-oauth.provider';
@@ -39,7 +38,6 @@ import { ZohoOAuthProvider } from './providers/zoho-oauth.provider';
     AirtableOAuthProvider,
     GoHighLevelOAuthProvider,
     NotionOAuthProvider,
-    ShopifyOAuthProvider,
     SupabaseOAuthProvider,
     WebflowOAuthProvider,
     WixOAuthProvider,

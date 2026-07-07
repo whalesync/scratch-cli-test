@@ -72,7 +72,7 @@ freshness to `refreshOAuthTokens`, which now re-mints transparently.
 Nothing new persisted. The install identifier is stored in the existing
 `DecryptedCredentials.oauthWorkspaceId` (it flows there via
 `OAuthTokenResponse.workspace_id` in `createOAuthAccount`, exactly like Zoho's data
-center and Shopify's shop domain). `authType` stays `AuthType.OAUTH`; there is **no
+center). `authType` stays `AuthType.OAUTH`; there is **no
 Prisma migration** and **no new UI-facing `AuthMethod`** — the Connect UX is byte
 -identical to `'oauth'` (a single Connect button), so the connector keeps
 `supportedAuthMethods: ['oauth']`. The reuse lives entirely in the provider layer.

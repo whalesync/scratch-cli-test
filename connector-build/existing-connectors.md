@@ -35,7 +35,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [Pipedrive](../server/src/remote-service/connectors/library/pipedrive/STATE.md) | ✅ | ✅ | 🟠 | ✅ | 👁️ | Trial → paid | ✅ | ❌ | |
 | [Postgres](../server/src/remote-service/connectors/library/postgres/STATE.md) | ❌ | ✅ | ✅ | ✅ | 🔒 | Self-host | ✅† | ❌ | |
 | [QuickBooks](../server/src/remote-service/connectors/library/quickbooks/STATE.md) | ✅ | ❌ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
-| [Shopify](../server/src/remote-service/connectors/library/shopify/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
+| [Shopify](../server/src/remote-service/connectors/library/shopify/STATE.md) | ❌ | ✅ | 🟠 | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
 | [Stripe](../server/src/remote-service/connectors/library/stripe/STATE.md) | 🟠 | ✅ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
 | [Supabase](../server/src/remote-service/connectors/library/supabase/STATE.md) | ✅ | ✅ | 🟠 | ✅ | 👁️ | Free tier | ❌ | ❌ | |
 | [Webflow](../server/src/remote-service/connectors/library/webflow/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ✅ | |
@@ -48,7 +48,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 >
 > **`†` Postgres — partial.** Coverage is `postgres-create-schema.spec.ts` + `postgres-incremental-pull.spec.ts` only (schema-creation + incremental pull), and they run against the CI job's **own `postgres:16` sidecar**, not a third-party service. There is no core CRUD connector spec.
 >
-> **OAuth `🟠` on connectors with no Last Run is provisional.** For connectors the `/connector-build-execute` skill hasn't reviewed, `🟠` means "OAuth not implemented (`supportedAuthMethods` is `user_provided_params` only) and the service is expected to offer it" — the available-vs-not call is confirmed on a skill pass. `❌` is reserved for connectors with no OAuth path at all (connection-string DBs: Postgres; basic/app-password: WordPress; the schema-driven Generic API).
+> **OAuth `🟠` on connectors with no Last Run is provisional.** For connectors the `/connector-build-execute` skill hasn't reviewed, `🟠` means "OAuth not implemented (`supportedAuthMethods` is `user_provided_params` only) and the service is expected to offer it" — the available-vs-not call is confirmed on a skill pass. `❌` is reserved for connectors with no OAuth path at all (connection-string DBs: Postgres; basic/app-password: WordPress; the schema-driven Generic API), plus connectors where OAuth exists at the service but Scratch deliberately does not support it (Shopify — its OAuth needs Shopify app-store approval that isn't forthcoming, so only the `user_provided_params` custom-app token is offered).
 >
 > **CS / IP — `✅` is code-verified; `🟠`/`❌` are best-effort.** `✅` means the connector implements it: **CS** (createTable/createFields) = Airtable, Notion, Postgres; **IP** (`incrementalPull` + `supportsIncrementalPull`) = Airtable, HubSpot, Intercom, Linear, Moco, Notion, Pipedrive, Postgres, Supabase, Webflow, WordPress, Zoho. For the rest, `🟠` = the service supports it (partial schema creation such as custom fields counts) but the connector doesn't yet, and `❌` = no schema-creation / no modified-since concept — both confirmed on a `/connector-build-execute` pass. **Affinity IP = `❌`** is evidence-based (DEV-10159: the modified-since filter is silently ignored on persons/companies/list-entries).
 >

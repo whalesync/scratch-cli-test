@@ -575,6 +575,7 @@ connectorRegistry.register({
   advancedSettings: [],
   supportedAuthMethods: ['user_provided_params'],
   rateLimiterSpec: { points: 4, duration: 1 },
+  // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Shopify', Service.SHOPIFY);
@@ -584,14 +585,9 @@ connectorRegistry.register({
       throw new ConnectorInstantiationError('Shop domain is required for Shopify', Service.SHOPIFY);
     }
     const { shopDomain } = ctx.connectorAccount.extras;
-    if (ctx.connectorAccount.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new ShopifyConnector({ shopDomain, accessToken }, { rateLimiter });
-    } else {
-      if (!ctx.decryptedCredentials?.apiKey) {
-        throw new ConnectorInstantiationError('Access token (API key) is required for Shopify', Service.SHOPIFY);
-      }
-      return new ShopifyConnector({ shopDomain, accessToken: ctx.decryptedCredentials.apiKey }, { rateLimiter });
+    if (!ctx.decryptedCredentials?.apiKey) {
+      throw new ConnectorInstantiationError('Access token (API key) is required for Shopify', Service.SHOPIFY);
     }
+    return new ShopifyConnector({ shopDomain, accessToken: ctx.decryptedCredentials.apiKey }, { rateLimiter });
   },
 });

@@ -59,9 +59,16 @@ describe('OAuthAppCredentialResolver', () => {
       });
     });
 
-    it('has no generation 2 for connectors not yet rolled out (e.g. Shopify)', () => {
+    it('has no generation 2 for connectors not yet rolled out (e.g. GoHighLevel)', () => {
+      const resolver = makeResolver({ GOHIGHLEVEL_CLIENT_ID: 'g1', GOHIGHLEVEL_CLIENT_SECRET: 'g1s', ...REDIRECTS });
+      expect(() => resolver.resolveSystemAppCredentials(Service.GOHIGHLEVEL, 2)).toThrow(/GOHIGHLEVEL has no v2/);
+    });
+
+    it('has no registered OAuth app for Shopify (OAuth support removed)', () => {
       const resolver = makeResolver({ SHOPIFY_CLIENT_ID: 's1', SHOPIFY_CLIENT_SECRET: 's1s', ...REDIRECTS });
-      expect(() => resolver.resolveSystemAppCredentials(Service.SHOPIFY, 2)).toThrow(/SHOPIFY has no v2/);
+      expect(() => resolver.resolveSystemAppCredentials(Service.SHOPIFY, DEFAULT_OAUTH_APP_VERSION)).toThrow(
+        /No system OAuth app/,
+      );
     });
 
     it('honors the irregular env-var base names (GOOGLE_* for YouTube, LINEAR_OAUTH_*, WIX_* for WIX_BLOG)', () => {
@@ -117,7 +124,7 @@ describe('OAuthAppCredentialResolver', () => {
       const resolver = makeResolver({});
       expect(resolver.getCurrentVersionForNewConnections(Service.AIRTABLE)).toBe(2);
       expect(resolver.getCurrentVersionForNewConnections(Service.NOTION)).toBe(2);
-      expect(resolver.getCurrentVersionForNewConnections(Service.SHOPIFY)).toBe(1);
+      expect(resolver.getCurrentVersionForNewConnections(Service.GOHIGHLEVEL)).toBe(1);
     });
 
     it('throws for a service with no registered OAuth app', () => {

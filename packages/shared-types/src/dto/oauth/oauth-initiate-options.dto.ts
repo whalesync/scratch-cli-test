@@ -18,7 +18,6 @@ export const oauthInitiateOptionsSchema = z.object({
   returnPage: z.string().optional(),
   connectorAccountId: z.string().optional(),
   workbookId: z.string().min(1),
-  shopDomain: z.string().optional(),
   quickbooksSandbox: z.boolean().optional(),
   /** Zoho multi-datacenter selection (US | EU | IN | AU | JP | CA | CN | SA). */
   zohoDataCenter: z.string().optional(),

@@ -8,10 +8,8 @@ import {
 import { AuthType, ConnectorAccount, Prisma } from '@prisma/client';
 import {
   createConnectorAccountId,
-  isShopifyConnectorExtras,
   parseYouTubeAdditionalChannels,
   QuickBooksConnectorExtras,
-  ShopifyConnectorExtras,
   SupabaseProjectCredentials,
   ValidatedOAuthInitiateOptionsDto,
   WorkbookId,
@@ -47,7 +45,6 @@ import { LinearOAuthProvider } from './providers/linear-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { PipedriveOAuthProvider } from './providers/pipedrive-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
-import { ShopifyOAuthProvider } from './providers/shopify-oauth.provider';
 import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
 import { WebflowOAuthProvider } from './providers/webflow-oauth.provider';
 import { WixOAuthProvider } from './providers/wix-oauth.provider';
@@ -83,7 +80,6 @@ export class OAuthService {
     private readonly airtableProvider: AirtableOAuthProvider,
     private readonly gohighlevelProvider: GoHighLevelOAuthProvider,
     private readonly notionProvider: NotionOAuthProvider,
-    private readonly shopifyProvider: ShopifyOAuthProvider,
     private readonly supabaseProvider: SupabaseOAuthProvider,
     private readonly webflowProvider: WebflowOAuthProvider,
     private readonly wixProvider: WixOAuthProvider,
@@ -102,7 +98,6 @@ export class OAuthService {
     this.providers.set('AIRTABLE', this.airtableProvider);
     this.providers.set('GOHIGHLEVEL', this.gohighlevelProvider);
     this.providers.set('NOTION', this.notionProvider);
-    this.providers.set('SHOPIFY', this.shopifyProvider);
     this.providers.set('SUPABASE', this.supabaseProvider);
     this.providers.set('WEBFLOW', this.webflowProvider);
     this.providers.set('WIX_BLOG', this.wixProvider);
@@ -119,6 +114,7 @@ export class OAuthService {
    * then generates the authorization URL that the client should redirect the user to.
    * Supports both system-managed OAuth apps and custom OAuth client credentials.
    */
+  // eslint-disable-next-line @typescript-eslint/require-await
   async initiateOAuth(
     service: string,
     actor: Actor,
@@ -135,17 +131,6 @@ export class OAuthService {
     const provider = this.providers.get(service);
     if (!provider) {
       throw new BadRequestException(`Unsupported OAuth service: ${service}`);
-    }
-
-    // For reauthorization, look up the shop domain from the existing account's extras
-    let shopDomain = options.shopDomain;
-    if (options.connectorAccountId && service === 'SHOPIFY' && !shopDomain) {
-      const existingAccount = await this.db.client.connectorAccount.findUnique({
-        where: { id: options.connectorAccountId },
-      });
-      if (existingAccount && isShopifyConnectorExtras(existingAccount.extras)) {
-        shopDomain = existingAccount.extras.shopDomain;
-      }
     }
 
     // Embed connection method and optional custom client info into state (base64 JSON)
@@ -180,7 +165,6 @@ export class OAuthService {
       connectionName: options.connectionName,
       returnPage: options.returnPage,
       connectorAccountId: options.connectorAccountId,
-      shopDomain,
       quickbooksSandbox: options.quickbooksSandbox,
       zohoDataCenter: options.zohoDataCenter,
       youtubeAdditionalChannels: options.youtubeAdditionalChannels,
@@ -191,7 +175,6 @@ export class OAuthService {
     const state = Buffer.from(JSON.stringify(statePayload)).toString('base64');
 
     const authUrl = provider.generateAuthUrl(state, credentials, {
-      shopDomain,
       codeChallenge,
       dataCenter: options.zohoDataCenter,
     });
@@ -282,7 +265,6 @@ export class OAuthService {
         tokenResponse = await this.mintClientCredentialsToken(service, provider, callbackData.instanceId, credentials);
       } else {
         tokenResponse = await provider.exchangeCodeForTokens(callbackData.code, credentials, {
-          shopDomain: statePayload.shopDomain,
           codeVerifier: statePayload.codeVerifier,
           dataCenter: statePayload.zohoDataCenter,
         });
@@ -529,7 +511,6 @@ export class OAuthService {
     },
   ) {
     const serviceKey = service.toUpperCase();
-    const isShopify = serviceKey === Service.SHOPIFY;
     const isQuickBooks = serviceKey === Service.QUICKBOOKS;
     const isYouTube = serviceKey === Service.YOUTUBE;
 
@@ -539,12 +520,12 @@ export class OAuthService {
     });
 
     // Prepare credentials for encryption
-    // For Shopify/QuickBooks, workspace-specific IDs are stored in extras (not encrypted)
+    // For QuickBooks, workspace-specific IDs are stored in extras (not encrypted)
     const credentials: DecryptedCredentials = {
       oauthAccessToken: tokenResponse.access_token,
       oauthRefreshToken: tokenResponse.refresh_token,
       oauthExpiresAt: this.expiresInToOAuthExpiresAt(tokenResponse.expires_in),
-      oauthWorkspaceId: isShopify || isQuickBooks ? undefined : tokenResponse.workspace_id,
+      oauthWorkspaceId: isQuickBooks ? undefined : tokenResponse.workspace_id,
       customOAuthClientId:
         connectionInfo?.connectionMethod === 'OAUTH_CUSTOM' ? connectionInfo.customClientId : undefined,
       customOAuthClientSecret:
@@ -567,11 +548,9 @@ export class OAuthService {
     const accountId = createConnectorAccountId();
     const repoPath = getDefaultRepoPath(workbook.organizationId, workbookId, accountId);
 
-    // Store non-sensitive metadata in extras for direct querying (e.g. GDPR shop/redact lookups)
-    let extras: ShopifyConnectorExtras | QuickBooksConnectorExtras | YouTubeConnectorExtras | undefined;
-    if (isShopify && tokenResponse.workspace_id) {
-      extras = { shopDomain: tokenResponse.workspace_id };
-    } else if (isQuickBooks && tokenResponse.workspace_id) {
+    // Store non-sensitive metadata in extras for direct querying
+    let extras: QuickBooksConnectorExtras | YouTubeConnectorExtras | undefined;
+    if (isQuickBooks && tokenResponse.workspace_id) {
       extras = { realmId: tokenResponse.workspace_id, sandbox: connectionInfo?.quickbooksSandbox ?? false };
     } else if (isYouTube) {
       // Brand/managed channels the OAuth identity doesn't own — parsed from the
@@ -636,16 +615,15 @@ export class OAuthService {
       connectionName?: string;
     },
   ): Promise<void> {
-    const isShopify = connectorAccount.service === 'SHOPIFY';
     const isQuickBooks = connectorAccount.service === 'QUICKBOOKS';
 
     // Prepare credentials for encryption
-    // For Shopify/QuickBooks, workspace-specific IDs are stored in extras (not encrypted)
+    // For QuickBooks, workspace-specific IDs are stored in extras (not encrypted)
     const credentials: DecryptedCredentials = {
       oauthAccessToken: tokenResponse.access_token,
       oauthRefreshToken: tokenResponse.refresh_token,
       oauthExpiresAt: this.expiresInToOAuthExpiresAt(tokenResponse.expires_in),
-      oauthWorkspaceId: isShopify || isQuickBooks ? undefined : tokenResponse.workspace_id,
+      oauthWorkspaceId: isQuickBooks ? undefined : tokenResponse.workspace_id,
       customOAuthClientId:
         connectionInfo?.connectionMethod === 'OAUTH_CUSTOM' ? connectionInfo.customClientId : undefined,
       customOAuthClientSecret:
@@ -655,10 +633,8 @@ export class OAuthService {
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(credentials);
 
     // Store non-sensitive metadata in extras for direct querying
-    let extras: ShopifyConnectorExtras | QuickBooksConnectorExtras | undefined;
-    if (isShopify && tokenResponse.workspace_id) {
-      extras = { shopDomain: tokenResponse.workspace_id };
-    } else if (isQuickBooks && tokenResponse.workspace_id) {
+    let extras: QuickBooksConnectorExtras | undefined;
+    if (isQuickBooks && tokenResponse.workspace_id) {
       extras = { realmId: tokenResponse.workspace_id };
     }
 

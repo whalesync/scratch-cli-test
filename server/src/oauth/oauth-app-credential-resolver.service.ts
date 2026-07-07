@@ -48,7 +48,6 @@ type OAuthAppServiceKey =
   | typeof Service.NOTION
   | typeof Service.PIPEDRIVE
   | typeof Service.QUICKBOOKS
-  | typeof Service.SHOPIFY
   | typeof Service.SUPABASE
   | typeof Service.WEBFLOW
   | typeof Service.WIX_BLOG
@@ -94,13 +93,6 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientIdEnvVar: 'NOTION_CLIENT_ID_V2',
       clientSecretEnvVar: 'NOTION_CLIENT_SECRET_V2',
       redirectUri: (config) => whalesyncRedirectUri(config, 'notion'),
-    },
-  },
-  [Service.SHOPIFY]: {
-    1: {
-      clientIdEnvVar: 'SHOPIFY_CLIENT_ID',
-      clientSecretEnvVar: 'SHOPIFY_CLIENT_SECRET',
-      redirectUri: scratchRedirectUri,
     },
   },
   [Service.SUPABASE]: {

@@ -31,9 +31,9 @@ interface ZohoOAuthTokenResponse {
  * Zoho is split across data centers (US/EU/IN/AU/JP/CA/CN/SA); the **authorize,
  * token, and refresh endpoints all live on that DC's accounts host**
  * (`accounts.zoho.com` / `.eu` / …). The user selects their DC in the connect
- * form (threaded here via `overrides.dataCenter` / `opts.dataCenter`, the same
- * pattern as Shopify's `shopDomain`); the OAuthService persists the DC so
- * refreshes route to the correct host. `access_type=offline` + `prompt=consent`
+ * form (threaded here via `overrides.dataCenter` / `opts.dataCenter`, a
+ * per-connection knob that isn't part of the app identity); the OAuthService
+ * persists the DC so refreshes route to the correct host. `access_type=offline` + `prompt=consent`
  * are required for Zoho to return a refresh token.
  *
  * The CRM API host (`zohoapis.<dc>`) is derived from the DC by the connector,

@@ -30,9 +30,8 @@ export interface OAuthProvider {
    * Generate the URL the user's browser is redirected to.
    *
    * Uses `credentials.clientId` and `credentials.redirectUri`. `overrides` carries the
-   * per-connection knobs that aren't part of the app identity: `shopDomain` (Shopify),
-   * `codeChallenge` (PKCE — Airtable), and `dataCenter` for multi-region providers
-   * (Zoho's US/EU/IN/… hosts, the analog of Shopify's `shopDomain`).
+   * per-connection knobs that aren't part of the app identity: `codeChallenge` (PKCE —
+   * Airtable) and `dataCenter` for multi-region providers (Zoho's US/EU/IN/… hosts).
    *
    * For a `'client_credentials'` provider this URL is not an OAuth *authorize* URL but
    * the vendor's external *install* link (e.g. Wix's app-installer URL); the redirect it
@@ -41,7 +40,7 @@ export interface OAuthProvider {
   generateAuthUrl(
     state: string,
     credentials: OAuthAppCredentials,
-    overrides?: { shopDomain?: string; codeChallenge?: string; dataCenter?: string },
+    overrides?: { codeChallenge?: string; dataCenter?: string },
   ): string;
 
   /**
@@ -56,7 +55,7 @@ export interface OAuthProvider {
   exchangeCodeForTokens(
     code: string,
     credentials: OAuthAppCredentials,
-    overrides?: { shopDomain?: string; codeVerifier?: string; dataCenter?: string },
+    overrides?: { codeVerifier?: string; dataCenter?: string },
   ): Promise<OAuthTokenResponse>;
 
   /**

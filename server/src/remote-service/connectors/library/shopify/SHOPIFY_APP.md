@@ -1,13 +1,14 @@
 # Shopify App Configuration
 
+> **Note:** Scratch does **not** support Shopify OAuth (the connect-time OAuth flow was removed — it requires Shopify App Store approval that isn't forthcoming). Users connect with a `user_provided_params` custom-app Admin API token instead. The Shopify Partner app described here now exists **only** to receive Shopify's mandatory GDPR compliance webhooks; its client secret is used solely to verify those webhooks' HMAC signatures.
+
 ## Environment Variables
 
-Both values come from the app's **Client credentials** section in the Shopify app dashboard (under "Configuration" > "Client credentials"):
+The value comes from the app's **Client credentials** section in the Shopify app dashboard (under "Configuration" > "Client credentials"):
 
-| Variable                | Description                                                                                |
-| ----------------------- | ------------------------------------------------------------------------------------------ |
-| `SHOPIFY_CLIENT_ID`     | OAuth client ID, used for the OAuth authorization flow                                     |
-| `SHOPIFY_CLIENT_SECRET` | OAuth client secret, used for OAuth token exchange and HMAC webhook signature verification |
+| Variable                | Description                                                              |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `SHOPIFY_CLIENT_SECRET` | App client secret, used only for HMAC signature verification of the GDPR compliance webhooks |
 
 Each environment (test/prod) has its own app with its own credentials.
 

@@ -13,7 +13,6 @@ export type OAuthStatePayload = {
   connectionName?: string;
   returnPage?: string;
   connectorAccountId?: string;
-  shopDomain?: string;
   quickbooksSandbox?: boolean;
   zohoDataCenter?: string; // Zoho multi-DC: US | EU | IN | AU | JP | CA | CN | SA
   youtubeAdditionalChannels?: string; // YouTube: raw extra channel-id list (parsed into extras.additionalChannels)
