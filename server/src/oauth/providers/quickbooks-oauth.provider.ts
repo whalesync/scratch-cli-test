@@ -19,7 +19,8 @@ const QBO_TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer
  * - Token endpoint uses Basic auth: Base64(clientId:clientSecret)
  * - The `realmId` (company ID) is returned as a query parameter on the OAuth callback,
  *   and is stored in the state payload so it's available during token exchange
- * - Scope: com.intuit.quickbooks.accounting for read access to all accounting data
+ * - Scope: com.intuit.quickbooks.accounting — a single read+write scope granting
+ *   full access to all accounting data (covers both pull and publish)
  */
 @Injectable()
 export class QuickBooksOAuthProvider implements OAuthProvider {

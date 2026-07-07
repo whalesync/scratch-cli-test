@@ -32,7 +32,7 @@ At-a-glance progress through the build journey, so anyone can see where this con
 | 2 | **Connected** (connection created, health OK) | ⬜ | |
 | 3 | **First fetch** (pulled ≥1 record) | ⬜ | |
 | 4 | **All entities seeded & fetched** (every main entity has a record, pulled in) | ⬜ | |
-| 5 | **Full write CRUD** (create + edit + delete exercised, push) | ⬜ | |
+| 5 | **Full write CRUD** (create + edit + delete exercised, push) | 🔄 | CRUD implemented + unit-tested (DEV-10653). 20/23 entities writable (13 txn = create/update/hard-delete; 7 name-list = create/update/deactivate; CompanyInfo update-only; TaxCode/TaxRate read-only). **Live sandbox push QA still pending** (no `❌`→`✅` on push cells until a manual CLI round-trip is confirmed in QBO). |
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | |
 | 7 | **Edge cases & quirks tested** (Pass 2 tricky parts) | ⬜ | |
 | 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics — e.g. custom fields, plugin fields, real-vs-meta) | ⬜ | |
@@ -41,8 +41,10 @@ At-a-glance progress through the build journey, so anyone can see where this con
 ## TODOs — known pending tasks
 Living checklist of what's left: gaps found while adopting human-built code, unfinished entities/fields, deferred edge cases, and follow-up issues. Check items off as they land. Coarser than the coverage matrix; broader than **Open issues** (which is only for broken ❌ cells with Linear links).
 
-- [ ] <pending task> <(link issue if any)>
-- [ ] <…>
+- [x] **Write support: create / update / delete** (DEV-10653) — implemented + unit-tested against the fake. See [Gotchas](#gotchas) for the QBO-specific write mechanics.
+- [ ] **Live sandbox push QA** — round-trip create/edit/delete through the CLI (`files accept → upload → publish`) against a real QBO sandbox and confirm in the service, per entity family. Needs an OAuth sandbox connection (creds path isn't supported for QBO).
+- [ ] **Live integration spec** — none yet; OAuth-only makes CI hard. Consider a sandbox-backed spec (see Integration tests section).
+- [ ] `getNewFile` templates cover the common entities (name-list + Invoice/Estimate/SalesReceipt/Bill/PurchaseOrder); extend to remaining transactions if create UX needs it.
 
 ## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
 These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
@@ -148,17 +150,26 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - (none yet — see SKILL.md → Stage E for what to hunt for)
 
 ## Gotchas
-- (connector-specific operational notes)
+- **Write mechanics (DEV-10653).** Three QBO-specific patterns, all handled in `quickbooks-connector.ts`:
+  - **SyncToken optimistic concurrency.** Every write must carry the record's `SyncToken`, which increments on *every* change — including edits made in QBO's own UI — so a token captured at pull time can be stale by write time. The connector writes optimistically with the stored token and, on QBO's `400` stale-object rejection (fault code `5010`, `QuickBooksApiClient.isStaleObjectError`), re-fetches the current token and retries once.
+  - **Sparse updates are mandatory.** Updates always POST with `sparse: true` so only changed fields are written. A **non-sparse** update nulls every omitted field (silent data loss). The connector uses the publish pipeline's `changedFields` diff as the payload (full-record fallback only for legacy plans).
+  - **Full nested containers on edit.** A sparse update replaces each supplied *top-level* field **wholesale** — it does not deep-merge nested objects or arrays. The publish diff is deep-sparse (`computeChangedFields` recurses), so a one-sub-field edit yields e.g. `{ BillAddr: { City: 'X' } }` or a partial `Line`; sending that as-is would null the omitted siblings/lines. For any changed key whose value is an object or array, the connector re-sends that field's **entire** current value from the record file (`files[i]` is the same fully-transformed content the diff is masked from, so no merge is needed). Covers `Line`, addresses (`BillAddr`/`ShipAddr`), `PrimaryPhone`/`PrimaryEmailAddr`, refs, etc.
+- **Delete family split.** `deleteRecords` routes by `ENTITY_WRITE_CAPABILITIES[entity].deleteBehavior`: transactions are hard-deleted via `POST /{entity}?operation=delete`; name-list entities can't be hard-deleted, so they're **deactivated** (`Active: false` sparse update) — reversible, honoring "default to non-destructive". `CompanyInfo`/`TaxCode`/`TaxRate` have no delete path and fail fast with a clear message.
+- **One endpoint for create + update + delete.** All three POST to the same collection path (`/v3/company/{realmId}/{entity}`); create omits `Id`, update includes `Id`+`SyncToken`+`sparse`, delete adds `?operation=delete`. QBO has no bulk write API in scope, so `getBatchSize()` is 1.
+- **Required fields on sparse UPDATE (not just create).** QBO rejects a sparse update on some entities unless their required fields are present, even when unchanged: Bill needs `VendorRef`, Purchase needs `PaymentType`+`AccountRef`, Deposit needs `DepositToAccountRef`, Term needs `Type`+`DueDays` (else "Please select the day of the month for 'Date-driven'"). Without this, editing only a Bill's `PrivateNote` 400s. Handled by `ENTITY_REQUIRED_UPDATE_FIELDS` (quickbooks-types.ts): the connector carries those fields from the record file into every sparse update. Most entities (Invoice/Estimate/Customer/…) need nothing extra — the list is a small, empirically-verified allow-list, not "re-send everything". Caught by the live matrix.
+- **`testConnection` must `SELECT *` from CompanyInfo.** QBO's query parser rejects selecting an individual column on the CompanyInfo singleton: `SELECT CompanyName FROM CompanyInfo` → `400` "Property CompanyName not found for Entity CompanyInfo" (code 4001). Use `SELECT * FROM CompanyInfo`. (Pre-existing bug caught by the live integration spec on 2026-07-06.)
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
 
-- **Live spec:** none yet — 📄 ❌ (no `server/test/integration/quickbooks-connector.spec.ts`).
-- **Runs in CI pipeline:** ❌.
-- **Credentials / env vars:** — (no live suite).
-- **Capabilities covered:** schemas ❌ · pull ❌ · publish (CRUD) ❌ · error handling ❌.
-- **State model:** n/a — no live suite.
-- **Notes:** No live integration spec yet. Fake available at `test-api-fakes/quickbooks`. **OAuth-only** (access token 1h, refresh token rotates ~100 days) → a live CI suite is unmaintainable; keep it fake-backed.
+- **Live spec:** 📄 ✅ exists — `server/test/integration/quickbooks-connector.spec.ts` (DEV-10653). Self-skips when creds are absent.
+- **Runs in CI pipeline:** ❌ — OAuth-only. Not wired into the pipeline, but the spec **self-refreshes** its access token at startup so it's runnable by hand anytime (`cd server && yarn test:integration -- quickbooks-connector`).
+- **Credentials / env vars:** `QUICKBOOKS_REALM_ID` + either `QUICKBOOKS_ACCESS_TOKEN` (pasted, ~1h) **or** `QUICKBOOKS_CLIENT_ID` + `QUICKBOOKS_CLIENT_SECRET` + `QUICKBOOKS_REFRESH_TOKEN` (durable; the suite mints a fresh token via the OAuth token endpoint). Optional `QUICKBOOKS_SANDBOX=false` for production. All in `.env.integration`.
+- **Two live specs:** `quickbooks-connector.spec.ts` (focused regressions: nested-object address edit + `Line` edit, both asserting siblings survive) and `quickbooks-connector-matrix.spec.ts` (a data-driven create→edit→delete round-trip over **every writable entity**). Shared creds/refresh/query helpers in `quickbooks-live-helpers.ts`.
+- **Capabilities covered:** schemas ✅ · pull (by-id) ✅ · **full write matrix** ✅ — all 20 writable entities (13 transactions create/update/hard-delete + 7 name-list create/update/deactivate), plus CompanyInfo update-only ✅ and TaxCode/TaxRate read-only gating ✅ · sparse nested-container + `Line` regressions ✅.
+- **Verified live:** 2026-07-06 against a QBO sandbox (realm `9341457409764164`) — **29/29 green** (6 focused + 23 matrix). The runs caught **three** pre-existing bugs, all now fixed: (1) `testConnection` CompanyInfo single-column `SELECT`; (2) sparse update nulling nested-object/array siblings; (3) sparse update rejected without required fields on Bill/Purchase/Deposit/Term (see Gotchas).
+- **State model:** the specs create their own records and clean up (transactions hard-deleted; name-list records deactivated). No reliance on pre-seeded content beyond the sandbox's default sample FK targets (a Customer, Vendor, Item, Employee, and Income/Expense/Bank accounts).
+- **Notes:** Two live specs exist (see above). A fake is also available at `test-api-fakes/quickbooks` — it supports **write** routes (POST create/update with sparse-merge + SyncToken increment + `5010` stale-object simulation, and `?operation=delete`) in addition to GET/query, and backs the connector + api-client unit tests (`__tests__/quickbooks-connector.spec.ts`, `quickbooks-api-client.spec.ts`, `quickbooks-json-schema.spec.ts`). The live specs are **not** wired into the post-deploy pipeline because QBO is **OAuth-only** (access token 1h; refresh token rotates ~100 days) — they self-skip without creds and are run by hand, minting a fresh token from the stored refresh token.
 - [ ] **Confirm CS + IP** (next connector-build pass) — the Create-schema / Incremental-polling values in `docs/connector-build.md` are best-effort (not code-verified). Probe the service API (partial schema creation — e.g. custom fields — counts as 🟠) and update the table to ✅/🟠/❌.
 
 ## Open issues

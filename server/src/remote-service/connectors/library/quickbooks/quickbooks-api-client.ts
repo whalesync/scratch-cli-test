@@ -66,9 +66,12 @@ export class QuickBooksApiClient {
    */
   async testConnection(): Promise<void> {
     try {
+      // Use `SELECT *` — QBO's query parser rejects selecting an individual
+      // column on the CompanyInfo singleton (`SELECT CompanyName FROM CompanyInfo`
+      // → 400 "Property CompanyName not found for Entity CompanyInfo", code 4001).
       await this.rateLimitedRequest(() =>
         this.client.get<QuickBooksQueryResponse>('/query', {
-          params: { query: 'SELECT CompanyName FROM CompanyInfo' },
+          params: { query: 'SELECT * FROM CompanyInfo' },
         }),
       );
     } catch (error) {
@@ -122,5 +125,83 @@ export class QuickBooksApiClient {
       }
       throw error;
     }
+  }
+
+  /**
+   * Create a new entity.
+   *
+   * QBO create and update both POST to the same collection endpoint
+   * (`/v3/company/{realmId}/{entity}`); the presence of `Id` + `SyncToken` in the
+   * body is what makes it an update. `body` here must therefore NOT carry an `Id`
+   * or `SyncToken`. Returns the created object as QBO stored it (with the
+   * server-assigned `Id` and initial `SyncToken`).
+   */
+  async createEntity(entityType: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const response = await this.rateLimitedRequest(() =>
+      this.client.post<Record<string, Record<string, unknown>>>(`/${entityType.toLowerCase()}`, body),
+    );
+    return response.data[entityType] ?? {};
+  }
+
+  /**
+   * Update an existing entity.
+   *
+   * `body` must include `Id`, the current `SyncToken`, and `sparse: true` — a
+   * sparse update patches only the supplied fields and leaves everything else
+   * intact. (A non-sparse update nulls every omitted field, which would be silent
+   * data loss.) The caller (connector) is responsible for supplying a current
+   * `SyncToken` and retrying on a stale-object error via {@link isStaleObjectError}.
+   * Returns the updated object as QBO stored it (with the incremented `SyncToken`).
+   */
+  async updateEntity(entityType: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const response = await this.rateLimitedRequest(() =>
+      this.client.post<Record<string, Record<string, unknown>>>(`/${entityType.toLowerCase()}`, body),
+    );
+    return response.data[entityType] ?? {};
+  }
+
+  /**
+   * Permanently delete a transaction entity via `?operation=delete`.
+   *
+   * Only transaction entities (Invoice, Bill, Payment, …) support this; name-list
+   * entities cannot be hard-deleted (the connector routes those to a deactivating
+   * `Active: false` update instead). Requires the current `SyncToken`. Returns
+   * `true` on success and `false` if the record was already gone (404), so the
+   * caller can treat an already-deleted record as a no-op.
+   */
+  async deleteTransaction(entityType: string, id: string, syncToken: string): Promise<boolean> {
+    try {
+      await this.rateLimitedRequest(() =>
+        this.client.post(
+          `/${entityType.toLowerCase()}`,
+          { Id: id, SyncToken: syncToken },
+          { params: { operation: 'delete' } },
+        ),
+      );
+      return true;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Detect QBO's optimistic-concurrency "stale object" rejection.
+   *
+   * SyncToken increments on every change to a record — including edits made in
+   * QBO's own UI — so a token captured at pull time can be stale by write time.
+   * QBO rejects the write with HTTP 400 and Fault error code `5010`
+   * ("Stale Object Error"). The connector catches this, re-fetches the current
+   * SyncToken, and retries once.
+   */
+  static isStaleObjectError(error: unknown): boolean {
+    if (!axios.isAxiosError(error) || error.response?.status !== 400) return false;
+    const fault = (error.response?.data as { Fault?: { Error?: { code?: string; Message?: string }[] } } | undefined)
+      ?.Fault;
+    return (fault?.Error ?? []).some(
+      (e) => e.code === '5010' || (e.Message ?? '').toLowerCase().includes('stale object'),
+    );
   }
 }

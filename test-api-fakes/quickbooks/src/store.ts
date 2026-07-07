@@ -8,7 +8,7 @@ interface QueuedError {
   body: unknown;
 }
 
-class Store {
+export class Store {
   /** Map<PascalCaseEntityType, Map<id, entity>> */
   entities: Map<string, Map<string, QuickBooksEntity>> = new Map();
   companyInfo: Record<string, unknown> = { CompanyName: "Test Company" };
@@ -37,6 +37,9 @@ class Store {
     if (!entity.Id) {
       entity.Id = this.generateId();
     }
+    if (entity.SyncToken === undefined) {
+      entity.SyncToken = "0";
+    }
     this.entities.get(entityType)!.set(entity.Id, entity);
     return entity;
   }
@@ -48,6 +51,24 @@ class Store {
   listEntities(entityType: string): QuickBooksEntity[] {
     const entityMap = this.entities.get(entityType);
     return entityMap ? Array.from(entityMap.values()) : [];
+  }
+
+  /** Store (create or replace) an entity by its Id. */
+  putEntity(entityType: string, entity: QuickBooksEntity): void {
+    if (!this.entities.has(entityType)) {
+      this.entities.set(entityType, new Map());
+    }
+    this.entities.get(entityType)!.set(entity.Id, entity);
+  }
+
+  deleteEntity(entityType: string, id: string): boolean {
+    return this.entities.get(entityType)?.delete(id) ?? false;
+  }
+
+  /** Increment a SyncToken (stored as a numeric string), defaulting undefined to "0". */
+  static nextSyncToken(current: unknown): string {
+    const n = typeof current === "string" ? parseInt(current, 10) : typeof current === "number" ? current : 0;
+    return String((Number.isFinite(n) ? n : 0) + 1);
   }
 
   queueError(statusCode: number, body: unknown): void {

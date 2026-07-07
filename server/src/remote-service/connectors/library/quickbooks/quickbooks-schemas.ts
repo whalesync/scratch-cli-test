@@ -9,7 +9,9 @@
  *
  * Generated at: 2026-03-13T14:08:57.636Z
  *
- * All fields are marked readonly (read-only connector).
+ * Only `Id` is marked readonly here; the connector applies the remaining
+ * read-only annotations (computed + system fields) at build time in
+ * `quickbooks-json-schema.ts`.
  * All schemas have additionalProperties: true to handle undocumented fields.
  */
 import { type TSchema, Type } from '@sinclair/typebox';
