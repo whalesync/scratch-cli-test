@@ -95,11 +95,11 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientSecretEnvVar: 'NOTION_CLIENT_SECRET',
       redirectUri: scratchRedirectUri,
     },
-    // 2: {
-    //   clientIdEnvVar: 'NOTION_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'NOTION_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'notion'),
-    // },
+    2: {
+      clientIdEnvVar: 'NOTION_CLIENT_ID_V2',
+      clientSecretEnvVar: 'NOTION_CLIENT_SECRET_V2',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'notion'),
+    },
   },
   [Service.SHOPIFY]: {
     1: {
@@ -119,11 +119,11 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientSecretEnvVar: 'SUPABASE_CLIENT_SECRET',
       redirectUri: scratchRedirectUri,
     },
-    // 2: {
-    //   clientIdEnvVar: 'SUPABASE_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'SUPABASE_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'supabase TODO CHECK'),
-    // },
+    2: {
+      clientIdEnvVar: 'SUPABASE_CLIENT_ID_V2',
+      clientSecretEnvVar: 'SUPABASE_CLIENT_SECRET_V2',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'supabase'),
+    },
   },
   [Service.WEBFLOW]: {
     1: {
@@ -131,11 +131,11 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientSecretEnvVar: 'WEBFLOW_CLIENT_SECRET',
       redirectUri: scratchRedirectUri,
     },
-    // 2: {
-    //   clientIdEnvVar: 'WEBFLOW_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'WEBFLOW_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'webflow'),
-    // },
+    2: {
+      clientIdEnvVar: 'WEBFLOW_CLIENT_ID_V2',
+      clientSecretEnvVar: 'WEBFLOW_CLIENT_SECRET_V2',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'webflow'),
+    },
   },
   // Service key is WIX_BLOG but the env vars are WIX_* (the map decouples the two).
   [Service.WIX_BLOG]: {
@@ -144,11 +144,11 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientSecretEnvVar: 'WIX_CLIENT_SECRET',
       redirectUri: scratchRedirectUri,
     },
-    // 2: {
-    //   clientIdEnvVar: 'WIX_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'WIX_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'wix'),
-    // },
+    2: {
+      clientIdEnvVar: 'WIX_CLIENT_ID_V2',
+      clientSecretEnvVar: 'WIX_CLIENT_SECRET_V2',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'wix'),
+    },
   },
   // YouTube authenticates against a Google OAuth app, hence GOOGLE_* (not YOUTUBE_*).
   [Service.YOUTUBE]: {
@@ -182,11 +182,11 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET',
       redirectUri: scratchRedirectUri,
     },
-    // 2: {
-    //   clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'linear'),
-    // },
+    2: {
+      clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID_V2',
+      clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET_V2',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'linear'),
+    },
   },
   [Service.ZOHO]: {
     1: {
@@ -194,11 +194,11 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientSecretEnvVar: 'ZOHO_CLIENT_SECRET',
       redirectUri: scratchRedirectUri,
     },
-    // 2: {
-    //   clientIdEnvVar: 'ZOHO_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'ZOHO_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'zoho'),
-    // },
+    2: {
+      clientIdEnvVar: 'ZOHO_CLIENT_ID_V2',
+      clientSecretEnvVar: 'ZOHO_CLIENT_SECRET_V2',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'zoho'),
+    },
   },
   [Service.PIPEDRIVE]: {
     1: {
@@ -206,6 +206,10 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientSecretEnvVar: 'PIPEDRIVE_CLIENT_SECRET',
       redirectUri: scratchRedirectUri,
     },
+    // TODO: Switch pipedrive over to whalesync creds.
+    // Secrets are already populated, but the oauth app is awaiting approval from the migration away from iapp.
+    // Once that's done, you should just have to uncomment this. To test locally, make sure you have defined these
+    // vars in your .env
     // 2: {
     //   clientIdEnvVar: 'PIPEDRIVE_CLIENT_ID_V2',
     //   clientSecretEnvVar: 'PIPEDRIVE_CLIENT_SECRET_V2',

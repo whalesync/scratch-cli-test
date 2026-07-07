@@ -46,9 +46,22 @@ describe('OAuthAppCredentialResolver', () => {
       });
     });
 
-    it('declares generation 2 only for Airtable in this cutover — other services are v1-only', () => {
-      const resolver = makeResolver({ NOTION_CLIENT_ID: 'n1', NOTION_CLIENT_SECRET: 'n1s', ...REDIRECTS });
-      expect(() => resolver.resolveSystemAppCredentials(Service.NOTION, 2)).toThrow(/NOTION has no v2/);
+    it('resolves generation-2 for a newly rolled-out connector (Notion → …/connector/notion)', () => {
+      const resolver = makeResolver({
+        NOTION_CLIENT_ID_V2: 'n2-id',
+        NOTION_CLIENT_SECRET_V2: 'n2-secret',
+        ...REDIRECTS,
+      });
+      expect(resolver.resolveSystemAppCredentials(Service.NOTION, 2)).toEqual({
+        clientId: 'n2-id',
+        clientSecret: 'n2-secret',
+        redirectUri: 'https://app.whalesync.com/oauth-callback/connector/notion',
+      });
+    });
+
+    it('has no generation 2 for connectors not yet rolled out (e.g. Shopify)', () => {
+      const resolver = makeResolver({ SHOPIFY_CLIENT_ID: 's1', SHOPIFY_CLIENT_SECRET: 's1s', ...REDIRECTS });
+      expect(() => resolver.resolveSystemAppCredentials(Service.SHOPIFY, 2)).toThrow(/SHOPIFY has no v2/);
     });
 
     it('honors the irregular env-var base names (GOOGLE_* for YouTube, LINEAR_OAUTH_*, WIX_* for WIX_BLOG)', () => {
@@ -100,10 +113,11 @@ describe('OAuthAppCredentialResolver', () => {
   });
 
   describe('getCurrentVersionForNewConnections', () => {
-    it('returns the newest declared generation — 2 for Airtable (cutover), 1 for the v1-only services', () => {
+    it('returns the newest declared generation — 2 for rolled-out connectors, 1 for the rest', () => {
       const resolver = makeResolver({});
       expect(resolver.getCurrentVersionForNewConnections(Service.AIRTABLE)).toBe(2);
-      expect(resolver.getCurrentVersionForNewConnections(Service.NOTION)).toBe(1);
+      expect(resolver.getCurrentVersionForNewConnections(Service.NOTION)).toBe(2);
+      expect(resolver.getCurrentVersionForNewConnections(Service.SHOPIFY)).toBe(1);
     });
 
     it('throws for a service with no registered OAuth app', () => {
