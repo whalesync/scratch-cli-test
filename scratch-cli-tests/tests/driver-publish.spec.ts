@@ -39,6 +39,20 @@ describeIfPostgres("driver: publish", () => {
     runDriver({ count: 1, editCount: 0, deleteCount: 1 });
   });
 
+  it("delete: removes multiple records in one publish cycle", () => {
+    // Seed 3, delete the first 2, leave the third untouched. Exercises a
+    // multi-record delete batch (the single-delete case above only proves one).
+    runDriver({ count: 3, editCount: 0, deleteCount: 2 });
+  });
+
+  it("mixed batch: edit + create + delete land together in one publish cycle", () => {
+    // Seed 2 posts, edit both, delete the first (its edit is superseded by the
+    // delete), and create a new post — all accepted and published in a single
+    // cycle. Verifies the publish plan handles all three patch kinds together:
+    // post-1 deleted, post-2 edited, one new post created.
+    runDriver({ count: 2, editCount: 2, createCount: 1, deleteCount: 1 });
+  });
+
   it.skip("pseudo-ref FK to existing record: backfills authorId from @/ path", () => {
     // Post 1 gets authorId = "@/public/authors/author-1.json"; after publish the
     // backfill phase resolves it to the existing author's remote id (1).

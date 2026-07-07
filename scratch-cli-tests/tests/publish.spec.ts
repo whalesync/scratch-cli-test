@@ -2079,3 +2079,546 @@ describeIfPostgres(
     });
   },
 );
+
+/**
+ * Stand up a workspace with `integration_authors` linked, pulled, and
+ * downloaded, and locate Alice's record file on disk. Shared by the two
+ * delete-focused suites below (the review-ladder walk-back and the
+ * connector-rejected delete) so their setup stays identical. Assumes the
+ * caller has already seeded `integration_authors` (via `setupAuthorsTable`).
+ */
+async function linkAuthorsWorkspaceAndFindAlice(prefix: string): Promise<{
+  workspaceId: string;
+  workspaceDir: string;
+  connDirName: string;
+  aliceAbsPath: string;
+  aliceWorkspacePath: string;
+}> {
+  const ws = cli.json<{ id: string }>([
+    "workspaces",
+    "create",
+    uniqueName(prefix),
+  ]);
+  const workspaceId = ws.id;
+
+  const conn = cli.json<{ id: string }>([
+    "connections",
+    "--workspace",
+    workspaceId,
+    "add",
+    "--service",
+    TEST_CONNECTOR_SERVICE,
+    "--param",
+    `connectionString=${postgresUrl}`,
+  ]);
+  const connectionId = conn.id;
+
+  const parentDir = path.join(cli.home, `test-${prefix}`);
+  fs.mkdirSync(parentDir, { recursive: true });
+  const initResult = cli.json<{ directory: string }>(
+    ["workspaces", "init", workspaceId],
+    { cwd: parentDir },
+  );
+  const workspaceDir = path.join(parentDir, initResult.directory);
+
+  const tables = cli.json<Array<{ id: string; displayName: string }>>([
+    "linked",
+    "--workspace",
+    workspaceId,
+    "available",
+    connectionId,
+  ]);
+  const authorsTable = tables.find(
+    (t) => t.displayName === "integration_authors",
+  );
+  if (!authorsTable) {
+    throw new Error(
+      `integration_authors not found in available tables: ${tables.map((t) => t.displayName).join(", ")}`,
+    );
+  }
+  const tableIdParts = authorsTable.id.split(",");
+  const linked = cli.json<{ id: string }>(
+    [
+      "linked",
+      "--workspace",
+      workspaceId,
+      "add",
+      "--connection-id",
+      connectionId,
+      ...tableIdParts.flatMap((p: string) => ["--table-id", p]),
+      "--name",
+      authorsTable.displayName,
+    ],
+    { cwd: workspaceDir },
+  );
+  cli.run(["linked", "--workspace", workspaceId, "pull", linked.id], {
+    cwd: workspaceDir,
+  });
+  cli.run(["files", "download"], { cwd: workspaceDir });
+
+  const marker = readMarker(workspaceDir);
+  const connDirName = marker.connections[0]!.dirName;
+
+  const aliceFile = findJsonFiles(workspaceDir)
+    .map((p) => ({
+      p,
+      data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>,
+    }))
+    .find((r) => r.data.author_id === AUTHOR_IDS.alice);
+  if (!aliceFile) {
+    throw new Error(
+      `Expected Alice's record (${AUTHOR_IDS.alice}) not found after pull`,
+    );
+  }
+
+  return {
+    workspaceId,
+    workspaceDir,
+    connDirName,
+    aliceAbsPath: aliceFile.p,
+    aliceWorkspacePath: path.relative(workspaceDir, aliceFile.p),
+  };
+}
+
+// The publish-delete happy path is covered end-to-end by the driver suite
+// (scratch-cli-tests/tests/driver-publish.spec.ts). These two suites cover the
+// two paths the driver does NOT: walking a staged delete back down the review
+// ladder, and a delete the external connector rejects at run-job time.
+describeIfPostgres(
+  "Delete review ladder — reject and restore-deleted-record walk a staged delete back",
+  () => {
+    let workspaceId: string;
+    let workspaceDir: string;
+    let connDirName: string;
+    let aliceAbsPath: string;
+    let aliceWorkspacePath: string;
+    let hasFailed = false;
+
+    beforeAll(async () => {
+      await setupAuthorsTable();
+      ({
+        workspaceId,
+        workspaceDir,
+        connDirName,
+        aliceAbsPath,
+        aliceWorkspacePath,
+      } = await linkAuthorsWorkspaceAndFindAlice("delete-ladder"));
+    }, 120_000);
+
+    afterAll(async () => {
+      const shouldPreserve = preserveOnFailure && hasFailed;
+      if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
+      if (workspaceDir && !shouldPreserve) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      await teardownAuthorsTable();
+    });
+
+    it("reject restores a working-tree deletion that was never accepted", () => {
+      try {
+        // Delete the file on disk only (no accept) — a pending unreviewed delete.
+        fs.rmSync(aliceAbsPath);
+        expect(fs.existsSync(aliceAbsPath)).toBe(false);
+        const unreviewed = cli.json<{ count: number }>(
+          ["files", "unreviewed"],
+          {
+            cwd: workspaceDir,
+          },
+        );
+        expect(unreviewed.count).toBe(1);
+
+        // reject restores the working file to its approved (== published) state.
+        cli.run(["files", "reject", aliceWorkspacePath], { cwd: workspaceDir });
+        expect(fs.existsSync(aliceAbsPath)).toBe(true);
+        const restored = JSON.parse(fs.readFileSync(aliceAbsPath, "utf-8")) as {
+          name: string;
+        };
+        expect(restored.name).toBe("Alice");
+        const after = cli.json<{ count: number }>(["files", "unreviewed"], {
+          cwd: workspaceDir,
+        });
+        expect(after.count).toBe(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+
+    it("accepting a deletion stages a kind:delete patch (patch is null)", () => {
+      try {
+        fs.rmSync(aliceAbsPath);
+        const accept = cli.json<{ status: string; filesAccepted: number }>(
+          ["files", "accept", aliceWorkspacePath],
+          { cwd: workspaceDir },
+        );
+        expect(accept.status).toBe("accepted");
+        expect(accept.filesAccepted).toBe(1);
+
+        const accepted = readAcceptedPatches(workspaceDir, connDirName);
+        expect(accepted.patches).toHaveLength(1);
+        expect(accepted.patches[0].kind).toBe("delete");
+        expect(accepted.patches[0].patch).toBeNull();
+
+        // Staged for publish (approved-but-unpublished), and the file stays gone.
+        const unpublished = cli.json<{ count: number }>(
+          ["files", "unpublished"],
+          {
+            cwd: workspaceDir,
+          },
+        );
+        expect(unpublished.count).toBe(1);
+        expect(fs.existsSync(aliceAbsPath)).toBe(false);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+
+    it("restore-deleted-record brings the file back and drops the delete entry", () => {
+      try {
+        const restore = cli.json<{ status: string; filesRestored: number }>(
+          ["files", "restore-deleted-record", aliceWorkspacePath],
+          { cwd: workspaceDir },
+        );
+        expect(restore.status).toBe("restored");
+        expect(restore.filesRestored).toBe(1);
+
+        // File is back with the published value, and the delete patch is gone —
+        // nothing left to publish, nothing left unreviewed.
+        expect(fs.existsSync(aliceAbsPath)).toBe(true);
+        const restored = JSON.parse(fs.readFileSync(aliceAbsPath, "utf-8")) as {
+          name: string;
+        };
+        expect(restored.name).toBe("Alice");
+        expect(
+          readAcceptedPatches(workspaceDir, connDirName).patches,
+        ).toHaveLength(0);
+        expect(
+          cli.json<{ count: number }>(["files", "unpublished"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(0);
+        expect(
+          cli.json<{ count: number }>(["files", "unreviewed"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+  },
+);
+
+// A delete the connector rejects at run-job time (Postgres foreign-key
+// violation) must be quarantined, NOT silently succeed — the delete mirror of
+// the DEV-10048 edit-rejection suite above. A child table (never linked into
+// Scratch) holds a row referencing Alice, so `DELETE FROM integration_authors
+// WHERE author_id = <alice>` fails with a foreign-key constraint error.
+describeIfPostgres(
+  "Publish a connector-rejected delete — quarantine to failed-patches.json (FK violation)",
+  () => {
+    const CHILD_TABLE = "integration_author_refs";
+    let workspaceId: string;
+    let workspaceDir: string;
+    let connDirName: string;
+    let aliceAbsPath: string;
+    let aliceWorkspacePath: string;
+    let prePublishMainHash: string;
+    let hasFailed = false;
+
+    beforeAll(async () => {
+      await setupAuthorsTable();
+
+      // A child row referencing Alice so the remote DELETE is rejected. The
+      // child table is intentionally NOT linked into Scratch — it exists only to
+      // enforce the foreign key at publish time.
+      const client = new Client({ connectionString: postgresUrl });
+      await client.connect();
+      try {
+        await client.query(`DROP TABLE IF EXISTS ${CHILD_TABLE} CASCADE`);
+        await client.query(
+          `CREATE TABLE ${CHILD_TABLE} (
+             ref_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+             author_id UUID NOT NULL REFERENCES integration_authors(author_id)
+           )`,
+        );
+        await client.query(
+          `INSERT INTO ${CHILD_TABLE} (author_id) VALUES ($1)`,
+          [AUTHOR_IDS.alice],
+        );
+      } finally {
+        await client.end();
+      }
+
+      ({
+        workspaceId,
+        workspaceDir,
+        connDirName,
+        aliceAbsPath,
+        aliceWorkspacePath,
+      } = await linkAuthorsWorkspaceAndFindAlice("delete-fail"));
+    }, 120_000);
+
+    afterAll(async () => {
+      const shouldPreserve = preserveOnFailure && hasFailed;
+      if (shouldPreserve) {
+        console.log(
+          `[preserve] Keeping workbook ${workspaceId} and local dir ${workspaceDir} for inspection`,
+        );
+      }
+      if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
+      if (workspaceDir && !shouldPreserve) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      const client = new Client({ connectionString: postgresUrl });
+      await client.connect();
+      try {
+        await client.query(`DROP TABLE IF EXISTS ${CHILD_TABLE} CASCADE`);
+      } finally {
+        await client.end();
+      }
+      await teardownAuthorsTable();
+    });
+
+    it("accept + upload a delete of a referenced row succeed (rejection is deferred to run-job)", () => {
+      try {
+        const connWorktree = path.join(workspaceDir, connDirName);
+        prePublishMainHash = execFileSync(
+          "git",
+          ["-C", connWorktree, "rev-parse", "refs/heads/main"],
+          { encoding: "utf-8" },
+        ).trim();
+
+        // Delete the file, accept it (kind:delete), and upload to the dirty
+        // branch. Upload writes git, not the DB, so no FK check fires yet.
+        fs.rmSync(aliceAbsPath);
+        const accept = cli.json<{ status: string; filesAccepted: number }>(
+          ["files", "accept", aliceWorkspacePath],
+          { cwd: workspaceDir },
+        );
+        expect(accept.status).toBe("accepted");
+        expect(accept.filesAccepted).toBe(1);
+        expect(
+          readAcceptedPatches(workspaceDir, connDirName).patches[0].kind,
+        ).toBe("delete");
+
+        // Upload succeeds even though the delete will be rejected downstream.
+        const upload = cli.run(["files", "upload"], { cwd: workspaceDir });
+        expect(upload.exitCode).toBe(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+
+    it("publish surfaces the connector's FK rejection instead of silently succeeding", async () => {
+      try {
+        // Mirror DEV-10243/DEV-10048: a per-row rejection is recoverable, so
+        // publish exits 0 (cli.json returning at all proves exit 0) and reports
+        // a run-job warning rather than a clean, silent "published".
+        const publishResult = cli.json<{
+          status: string;
+          failedConnections: Array<unknown>;
+          warnings: Array<{
+            name: string;
+            warning: { phase: string; message: string; failedCount: number };
+          }>;
+        }>(["files", "publish"], { cwd: workspaceDir });
+
+        expect(publishResult.failedConnections).toHaveLength(0);
+        expect(publishResult.warnings.length).toBeGreaterThan(0);
+        const warning = publishResult.warnings.find(
+          (w) => w.name === connDirName,
+        );
+        expect(warning).toBeDefined();
+        expect(warning?.warning.phase).toBe("run-job");
+        expect(warning?.warning.failedCount).toBeGreaterThan(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 180_000);
+
+    it("the rejected delete is quarantined in failed-patches.json (DEV-10048)", () => {
+      try {
+        // accepted-patches.json is cleared for the path; the delete moves to
+        // failed-patches.json carrying the connector's record-level error.
+        expect(
+          readAcceptedPatches(workspaceDir, connDirName).patches,
+        ).toHaveLength(0);
+
+        const afterFail = readFailedPatches(workspaceDir, connDirName);
+        expect(afterFail.patches).toHaveLength(1);
+        const entry = afterFail.patches[0];
+        const expectedConnectionRelativePath = path.relative(
+          path.join(workspaceDir, connDirName),
+          aliceAbsPath,
+        );
+        expect(entry.path).toBe(expectedConnectionRelativePath);
+        expect(entry.kind).toBe("delete");
+        expect(entry.patch).toBeNull();
+        expect(entry.error).toBeDefined();
+        expect(entry.error?.toLowerCase()).toContain("foreign key");
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    });
+
+    it("publish left refs/heads/main unmoved (the delete never committed)", () => {
+      try {
+        const connWorktree = path.join(workspaceDir, connDirName);
+        const postPublishMainHash = execFileSync(
+          "git",
+          ["-C", connWorktree, "rev-parse", "refs/heads/main"],
+          { encoding: "utf-8" },
+        ).trim();
+        expect(postPublishMainHash).toBe(prePublishMainHash);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    });
+
+    it("Alice's row still exists in Postgres (the delete did not land)", async () => {
+      try {
+        const client = new Client({ connectionString: postgresUrl });
+        await client.connect();
+        try {
+          const res = await client.query<{ name: string }>(
+            `SELECT name FROM integration_authors WHERE author_id = $1`,
+            [AUTHOR_IDS.alice],
+          );
+          expect(res.rowCount).toBe(1);
+          expect(res.rows[0].name).toBe("Alice");
+        } finally {
+          await client.end();
+        }
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+  },
+);
+
+// Publishing a delete must be idempotent: once the row is gone, re-running
+// publish and download converges to the same state instead of erroring or
+// re-issuing the delete. Guards the "make operations idempotent and resumable"
+// invariant for the delete path specifically.
+describeIfPostgres(
+  "Publishing a delete is idempotent — re-publish and re-download are clean no-ops",
+  () => {
+    let workspaceId: string;
+    let workspaceDir: string;
+    let connDirName: string;
+    let aliceAbsPath: string;
+    let aliceWorkspacePath: string;
+    let hasFailed = false;
+
+    beforeAll(async () => {
+      await setupAuthorsTable();
+      ({
+        workspaceId,
+        workspaceDir,
+        connDirName,
+        aliceAbsPath,
+        aliceWorkspacePath,
+      } = await linkAuthorsWorkspaceAndFindAlice("delete-idempotent"));
+    }, 120_000);
+
+    afterAll(async () => {
+      const shouldPreserve = preserveOnFailure && hasFailed;
+      if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
+      if (workspaceDir && !shouldPreserve) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      await teardownAuthorsTable();
+    });
+
+    it("delete publishes successfully and removes the row from Postgres", async () => {
+      try {
+        fs.rmSync(aliceAbsPath);
+        cli.run(["files", "accept", aliceWorkspacePath], { cwd: workspaceDir });
+        cli.run(["files", "upload"], { cwd: workspaceDir });
+
+        const publishResult = cli.json<{
+          status: string;
+          publishedConnections: string[];
+        }>(["files", "publish"], { cwd: workspaceDir });
+        expect(publishResult.status).toBe("published");
+        expect(publishResult.publishedConnections).toContain(connDirName);
+
+        // The delete landed: the row is gone and reconcile cleared the patch.
+        const client = new Client({ connectionString: postgresUrl });
+        await client.connect();
+        try {
+          const res = await client.query(
+            `SELECT 1 FROM integration_authors WHERE author_id = $1`,
+            [AUTHOR_IDS.alice],
+          );
+          expect(res.rowCount).toBe(0);
+        } finally {
+          await client.end();
+        }
+        expect(
+          readAcceptedPatches(workspaceDir, connDirName).patches,
+        ).toHaveLength(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 180_000);
+
+    it("re-publishing with nothing staged is a no-op (no re-issued delete)", () => {
+      try {
+        // The server-side plan is empty now that the delete already landed, so
+        // publish reports "nothing to do" rather than failing on the
+        // already-deleted row.
+        const idempotent = cli.json<{
+          status: string;
+          publishedConnections: string[];
+        }>(["files", "publish"], { cwd: workspaceDir });
+        expect(["no_changes", "no_diff"]).toContain(idempotent.status);
+        expect(idempotent.publishedConnections).toHaveLength(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+
+    it("re-downloading keeps the record gone and the working tree clean", () => {
+      try {
+        cli.run(["files", "download"], { cwd: workspaceDir });
+        expect(fs.existsSync(aliceAbsPath)).toBe(false);
+        expect(
+          cli.json<{ count: number }>(["files", "unreviewed"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(0);
+        expect(
+          cli.json<{ count: number }>(["files", "unpublished"], {
+            cwd: workspaceDir,
+          }).count,
+        ).toBe(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+  },
+);
