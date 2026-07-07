@@ -11,23 +11,25 @@
  * introducing a new app generation affects only new connections while existing ones keep
  * refreshing against the app that issued their refresh token.
  *
- * Today there is a single generation. Rotating a connector onto a different OAuth app is
- * simply the next generation — what each generation maps to lives in
- * {@link OAuthAppCredentialResolver}.
+ * Rotating a connector onto a different OAuth app is simply the next generation — what each
+ * generation maps to lives in {@link OAuthAppCredentialResolver}.
  */
 
 /**
- * The known OAuth app generations, in ascending order. The per-service credential map
- * constrains its version keys to this union, so a service can only declare — and callers
- * can only request — a known generation. A service rolls forward independently by declaring
- * its next generation's env vars; new connections use the newest generation it declares.
+ * The known OAuth app generations, in ascending order — opaque, incrementing numbers with no
+ * inherent meaning. What each generation maps to (its client id/secret env vars and redirect)
+ * lives entirely in {@link OAuthAppCredentialResolver}. The per-service credential map constrains
+ * its version keys to this union, so a service can only declare — and callers can only request —
+ * a known generation. New connections use the newest generation a service declares; existing
+ * connections keep their stamped generation (see
+ * OAuthAppCredentialResolver.getCurrentVersionForNewConnections).
  */
-export const OAUTH_APP_VERSIONS = [1] as const;
+export const OAUTH_APP_VERSIONS = [1, 2] as const;
 
 /** A validated OAuth app generation (one of {@link OAUTH_APP_VERSIONS}). */
 export type OAuthAppVersion = (typeof OAUTH_APP_VERSIONS)[number];
 
-/** The generation new connections are minted at, and the fallback for missing/unknown values. */
+/** The fallback generation for a missing/unknown stored or wire value (see {@link asOAuthAppVersion}). */
 export const DEFAULT_OAUTH_APP_VERSION: OAuthAppVersion = 1;
 
 /**

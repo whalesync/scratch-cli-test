@@ -189,6 +189,13 @@ resource "google_cloud_run_v2_service" "api_service" {
             "NOTION_PAGE_SIZE" : "100",
             "POSTHOG_HOST" : "https://us.i.posthog.com",
             "REDIRECT_URI" : "https://${var.client_domain}/oauth/callback",
+            # REDIRECT_URI_SCRATCH is the same scratch.md callback as REDIRECT_URI — a clearer name
+            # for the "scratch-direct" OAuth redirect (generation 1 + custom apps) that the
+            # OAuthAppCredentialResolver reads. REDIRECT_URI is kept for now (oauth-install still uses it).
+            "REDIRECT_URI_SCRATCH" : "https://${var.client_domain}/oauth/callback",
+            # Whalesync base URL (no path) for generation-2 OAuth; the server appends the
+            # per-connector callback path (/oauth-callback/connector/<connectorType>).
+            "REDIRECT_URI_WHALESYNC" : var.whalesync_oauth_base_url,
             "REDIS_HOST" : module.redis.host,
             "REDIS_PORT" : module.redis.port,
             "RUNNING_IN_CLOUD" : "true",
@@ -222,6 +229,8 @@ resource "google_cloud_run_v2_service" "api_service" {
         for_each = [
           "AIRTABLE_CLIENT_ID",
           "AIRTABLE_CLIENT_SECRET",
+          "AIRTABLE_CLIENT_ID_V2",
+          "AIRTABLE_CLIENT_SECRET_V2",
           "CLERK_PUBLISHABLE_KEY",
           "CLERK_SECRET_KEY",
           "DATABASE_URL",
@@ -454,6 +463,13 @@ resource "google_cloud_run_v2_service" "cron_service" {
             "NOTION_PAGE_SIZE" : "100",
             "POSTHOG_HOST" : "https://us.i.posthog.com",
             "REDIRECT_URI" : "https://${var.client_domain}/oauth/callback",
+            # REDIRECT_URI_SCRATCH is the same scratch.md callback as REDIRECT_URI — a clearer name
+            # for the "scratch-direct" OAuth redirect (generation 1 + custom apps) that the
+            # OAuthAppCredentialResolver reads. REDIRECT_URI is kept for now (oauth-install still uses it).
+            "REDIRECT_URI_SCRATCH" : "https://${var.client_domain}/oauth/callback",
+            # Whalesync base URL (no path) for generation-2 OAuth; the server appends the
+            # per-connector callback path (/oauth-callback/connector/<connectorType>).
+            "REDIRECT_URI_WHALESYNC" : var.whalesync_oauth_base_url,
             "REDIS_HOST" : module.redis.host,
             "REDIS_PORT" : module.redis.port,
             "RUNNING_IN_CLOUD" : "true",
@@ -483,6 +499,8 @@ resource "google_cloud_run_v2_service" "cron_service" {
         for_each = [
           "AIRTABLE_CLIENT_ID",
           "AIRTABLE_CLIENT_SECRET",
+          "AIRTABLE_CLIENT_ID_V2",
+          "AIRTABLE_CLIENT_SECRET_V2",
           "CLERK_PUBLISHABLE_KEY",
           "CLERK_SECRET_KEY",
           "DATABASE_URL",
@@ -694,6 +712,13 @@ resource "google_cloud_run_v2_service" "worker_service" {
             "NOTION_PAGE_SIZE" : "100",
             "POSTHOG_HOST" : "https://us.i.posthog.com",
             "REDIRECT_URI" : "https://${var.client_domain}/oauth/callback",
+            # REDIRECT_URI_SCRATCH is the same scratch.md callback as REDIRECT_URI — a clearer name
+            # for the "scratch-direct" OAuth redirect (generation 1 + custom apps) that the
+            # OAuthAppCredentialResolver reads. REDIRECT_URI is kept for now (oauth-install still uses it).
+            "REDIRECT_URI_SCRATCH" : "https://${var.client_domain}/oauth/callback",
+            # Whalesync base URL (no path) for generation-2 OAuth; the server appends the
+            # per-connector callback path (/oauth-callback/connector/<connectorType>).
+            "REDIRECT_URI_WHALESYNC" : var.whalesync_oauth_base_url,
             "REDIS_HOST" : module.redis.host,
             "REDIS_PORT" : module.redis.port,
             "RUNNING_IN_CLOUD" : "true",
@@ -723,6 +748,8 @@ resource "google_cloud_run_v2_service" "worker_service" {
         for_each = [
           "AIRTABLE_CLIENT_ID",
           "AIRTABLE_CLIENT_SECRET",
+          "AIRTABLE_CLIENT_ID_V2",
+          "AIRTABLE_CLIENT_SECRET_V2",
           "CLERK_PUBLISHABLE_KEY",
           "CLERK_SECRET_KEY",
           "DATABASE_URL",

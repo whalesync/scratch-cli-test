@@ -1,21 +1,35 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { max } from 'lodash';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { OAuthAppCredentials, OAuthAppVersion } from './oauth-app-version';
 
-/**
- * The env var that holds the redirect_uri when a service/generation doesn't override it.
- * A generation whose OAuth app registers a different callback declares its own via
- * {@link OAuthAppEnvVarNames.redirectUriEnvVar}.
- */
-const DEFAULT_REDIRECT_URI_ENV_VAR = 'REDIRECT_URI';
+/** The redirect_uri env var per OAuth app generation family (scratch-direct vs whalesync-proxy). */
+enum REDIRECT_URI_ENV_VAR {
+  SCRATCH = 'REDIRECT_URI_SCRATCH',
+  WHALESYNC = 'REDIRECT_URI_WHALESYNC',
+}
 
-/** The env var names that hold one OAuth app generation's credentials for one service. */
+/** The env var names that hold one OAuth app generation's client credentials for one service. */
 interface OAuthAppEnvVarNames {
   readonly clientIdEnvVar: string;
   readonly clientSecretEnvVar: string;
-  /** Optional per-generation redirect override; defaults to {@link DEFAULT_REDIRECT_URI_ENV_VAR}. */
-  readonly redirectUriEnvVar?: string;
+  readonly redirectUri: (configService: ConfigService) => string;
+}
+
+function scratchRedirectUri(configService: ConfigService): string {
+  return configService.get<string>(REDIRECT_URI_ENV_VAR.SCRATCH) ?? '';
+}
+
+/**
+ * Build the Whalesync OAuth callback URL for a connector. Unlike Scratch's flat callback, the
+ * Whalesync callback is per-connector: `<base>/oauth-callback/connector/<connectorType>`, where
+ * `<base>` is the REDIRECT_URI_WHALESYNC env var (e.g. https://app.whalesync.com — set per env).
+ * NOTE! Connector type is Whalesync's IDs.
+ */
+function whalesyncRedirectUri(configService: ConfigService, wsConnectorId: string): string {
+  const base = configService.get<string>(REDIRECT_URI_ENV_VAR.WHALESYNC) ?? '';
+  return `${base}/oauth-callback/connector/${wsConnectorId}`;
 }
 
 /**
@@ -26,91 +40,191 @@ interface OAuthAppEnvVarNames {
  */
 type OAuthAppEnvVarNamesByVersion = { 1: OAuthAppEnvVarNames } & Partial<Record<OAuthAppVersion, OAuthAppEnvVarNames>>;
 
-/** The OAuth-capable services, as a const tuple so the map below is exhaustively typed. */
-const OAUTH_APP_SERVICE_KEYS = [
-  Service.AIRTABLE,
-  Service.GOHIGHLEVEL,
-  Service.NOTION,
-  Service.SHOPIFY,
-  Service.SUPABASE,
-  Service.WEBFLOW,
-  Service.WIX_BLOG,
-  Service.YOUTUBE,
-  Service.QUICKBOOKS,
-  Service.LINEAR,
-  Service.ZOHO,
-  Service.PIPEDRIVE,
-] as const;
-
-type OAuthAppServiceKey = (typeof OAUTH_APP_SERVICE_KEYS)[number];
+// type OAuthAppServiceKey = (typeof OAUTH_APP_SERVICE_KEYS)[number];
+type OAuthAppServiceKey =
+  | typeof Service.AIRTABLE
+  | typeof Service.GOHIGHLEVEL
+  | typeof Service.LINEAR
+  | typeof Service.NOTION
+  | typeof Service.PIPEDRIVE
+  | typeof Service.QUICKBOOKS
+  | typeof Service.SHOPIFY
+  | typeof Service.SUPABASE
+  | typeof Service.WEBFLOW
+  | typeof Service.WIX_BLOG
+  | typeof Service.YOUTUBE
+  | typeof Service.ZOHO;
 
 /**
- * The single source of truth mapping (service, generation) → the env vars holding that
- * app generation's credentials. `Record<OAuthAppServiceKey, ...>` forces every OAuth
- * service to appear; each declares a base generation (1) and, as it rolls forward, its
- * newer generations. New connections use the newest generation a service declares (see
- * {@link OAuthAppCredentialResolver.getCurrentVersionForNewConnections}).
+ * Secrets for authorizing an OAuth connection.
  *
- * There is a single generation today. Rotating a connector onto a different OAuth app adds
- * its next generation here (with its own env vars, and a redirect override only if that
- * app's registered callback differs from REDIRECT_URI).
+ * These are versioned for each connector.
+ * - The latest version will be used for a new connection.
+ * - Existing connections store their version.
+ *
+ * NOTE: A version can be deleted once there are no more connections in the DB that uses it, except for the most recent.
  */
 const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNamesByVersion> = {
   [Service.AIRTABLE]: {
-    1: { clientIdEnvVar: 'AIRTABLE_CLIENT_ID', clientSecretEnvVar: 'AIRTABLE_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'AIRTABLE_CLIENT_ID',
+      clientSecretEnvVar: 'AIRTABLE_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    2: {
+      clientIdEnvVar: 'AIRTABLE_CLIENT_ID_V2',
+      clientSecretEnvVar: 'AIRTABLE_CLIENT_SECRET_V2',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'airtable'),
+    },
   },
   [Service.GOHIGHLEVEL]: {
-    1: { clientIdEnvVar: 'GOHIGHLEVEL_CLIENT_ID', clientSecretEnvVar: 'GOHIGHLEVEL_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'GOHIGHLEVEL_CLIENT_ID',
+      clientSecretEnvVar: 'GOHIGHLEVEL_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'GOHIGHLEVEL_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'GOHIGHLEVEL_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'TODO'),
+    // },
   },
   [Service.NOTION]: {
-    1: { clientIdEnvVar: 'NOTION_CLIENT_ID', clientSecretEnvVar: 'NOTION_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'NOTION_CLIENT_ID',
+      clientSecretEnvVar: 'NOTION_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'NOTION_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'NOTION_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'notion'),
+    // },
   },
   [Service.SHOPIFY]: {
-    1: { clientIdEnvVar: 'SHOPIFY_CLIENT_ID', clientSecretEnvVar: 'SHOPIFY_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'SHOPIFY_CLIENT_ID',
+      clientSecretEnvVar: 'SHOPIFY_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'SHOPIFY_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'SHOPIFY_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'shopify'),
+    // },
   },
   [Service.SUPABASE]: {
-    1: { clientIdEnvVar: 'SUPABASE_CLIENT_ID', clientSecretEnvVar: 'SUPABASE_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'SUPABASE_CLIENT_ID',
+      clientSecretEnvVar: 'SUPABASE_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'SUPABASE_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'SUPABASE_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'supabase TODO CHECK'),
+    // },
   },
   [Service.WEBFLOW]: {
-    1: { clientIdEnvVar: 'WEBFLOW_CLIENT_ID', clientSecretEnvVar: 'WEBFLOW_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'WEBFLOW_CLIENT_ID',
+      clientSecretEnvVar: 'WEBFLOW_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'WEBFLOW_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'WEBFLOW_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'webflow'),
+    // },
   },
   // Service key is WIX_BLOG but the env vars are WIX_* (the map decouples the two).
   [Service.WIX_BLOG]: {
-    1: { clientIdEnvVar: 'WIX_CLIENT_ID', clientSecretEnvVar: 'WIX_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'WIX_CLIENT_ID',
+      clientSecretEnvVar: 'WIX_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'WIX_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'WIX_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'wix'),
+    // },
   },
   // YouTube authenticates against a Google OAuth app, hence GOOGLE_* (not YOUTUBE_*).
   [Service.YOUTUBE]: {
-    1: { clientIdEnvVar: 'GOOGLE_CLIENT_ID', clientSecretEnvVar: 'GOOGLE_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'GOOGLE_CLIENT_ID',
+      clientSecretEnvVar: 'GOOGLE_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'GOOGLE_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'GOOGLE_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'sheets TODO'),
+    // },
   },
   [Service.QUICKBOOKS]: {
-    1: { clientIdEnvVar: 'QUICKBOOKS_CLIENT_ID', clientSecretEnvVar: 'QUICKBOOKS_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'QUICKBOOKS_CLIENT_ID',
+      clientSecretEnvVar: 'QUICKBOOKS_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'QUICKBOOKS_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'QUICKBOOKS_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'quickbooks'),
+    // },
   },
   // Linear's env vars carry the `_OAUTH_` infix (LINEAR_API_KEY is a separate secret).
   [Service.LINEAR]: {
-    1: { clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID', clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID',
+      clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'LINEAR_OAUTH_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'LINEAR_OAUTH_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'linear'),
+    // },
   },
   [Service.ZOHO]: {
-    1: { clientIdEnvVar: 'ZOHO_CLIENT_ID', clientSecretEnvVar: 'ZOHO_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'ZOHO_CLIENT_ID',
+      clientSecretEnvVar: 'ZOHO_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'ZOHO_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'ZOHO_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'zoho'),
+    // },
   },
   [Service.PIPEDRIVE]: {
-    1: { clientIdEnvVar: 'PIPEDRIVE_CLIENT_ID', clientSecretEnvVar: 'PIPEDRIVE_CLIENT_SECRET' },
+    1: {
+      clientIdEnvVar: 'PIPEDRIVE_CLIENT_ID',
+      clientSecretEnvVar: 'PIPEDRIVE_CLIENT_SECRET',
+      redirectUri: scratchRedirectUri,
+    },
+    // 2: {
+    //   clientIdEnvVar: 'PIPEDRIVE_CLIENT_ID_V2',
+    //   clientSecretEnvVar: 'PIPEDRIVE_CLIENT_SECRET_V2',
+    //   redirectUri: (config) => whalesyncRedirectUri(config, 'pipedrive'),
+    // },
   },
 };
 
 /**
- * Resolves the OAuth *app* credentials (client_id, client_secret, redirect_uri) to use
- * for a given service and {@link OAuthAppVersion}. This is the sole choke point for
- * system OAuth credentials: providers no longer read `*_CLIENT_ID` env vars directly,
- * so no code path can obtain credentials without naming the generation it wants.
+ * Resolves the OAuth *app* credentials. Providers *must* not read `*_CLIENT_ID` env vars directly.
  */
 @Injectable()
 export class OAuthAppCredentialResolver {
   constructor(private readonly configService: ConfigService) {}
 
   /**
-   * The system-managed app credentials for `service` at `version`. Throws if the targeted
-   * generation isn't configured (empty client id/secret) so a misconfiguration fails
-   * loudly at the boundary rather than sending an empty client_id to the provider.
+   * Resolves the credentials requested.
+   *
+   * Throws if the requested client id/secret aren't configured.
    */
   resolveSystemAppCredentials(service: string, version: OAuthAppVersion): OAuthAppCredentials {
     const serviceKey = service.toUpperCase();
@@ -125,7 +239,7 @@ export class OAuthAppCredentialResolver {
 
     const clientId = this.configService.get<string>(envVars.clientIdEnvVar) ?? '';
     const clientSecret = this.configService.get<string>(envVars.clientSecretEnvVar) ?? '';
-    const redirectUri = this.readRedirectUri(envVars.redirectUriEnvVar);
+    const redirectUri = envVars.redirectUri(this.configService);
 
     if (!clientId || !clientSecret) {
       throw new Error(
@@ -139,7 +253,7 @@ export class OAuthAppCredentialResolver {
 
   /**
    * Credentials for a user-supplied custom OAuth app (the "bring your own app" /
-   * OAUTH_CUSTOM path). The redirect is always the default system callback, since a
+   * OAUTH_CUSTOM path). The redirect is always the default scratch.md callback, since a
    * custom app registers that same URL. App versioning does not apply to custom apps —
    * the connection carries the client id/secret directly.
    */
@@ -147,16 +261,13 @@ export class OAuthAppCredentialResolver {
     return {
       clientId: customClientId,
       clientSecret: customClientSecret,
-      redirectUri: this.readRedirectUri(),
+      redirectUri: this.configService.get<string>(REDIRECT_URI_ENV_VAR.SCRATCH) ?? '',
     };
   }
 
   /**
-   * The generation that NEW connections (and re-authorizations) for `service` should be
-   * minted at: the newest generation the service declares. Generations are incremented
-   * numerically, so declaring a service's next generation in the credential map is what
-   * cuts its new connections over — existing connections keep their stamped generation and
-   * refresh against it.
+   * The Oauth app that a new connection should use (the most recent).
+   * Throws an error if it is missing secrets.
    */
   getCurrentVersionForNewConnections(service: string): OAuthAppVersion {
     const serviceKey = service.toUpperCase();
@@ -164,16 +275,10 @@ export class OAuthAppCredentialResolver {
     if (!envVarsByVersion) {
       throw new Error(`No system OAuth app is configured for service "${serviceKey}"`);
     }
-    const declaredVersions = Object.keys(envVarsByVersion).map(Number);
-    return Math.max(...declaredVersions) as OAuthAppVersion;
-  }
-
-  /** Whether `service` has a registered, versioned system OAuth app. */
-  isVersionedOAuthService(service: string): boolean {
-    return (OAUTH_APP_SERVICE_KEYS as readonly string[]).includes(service.toUpperCase());
-  }
-
-  private readRedirectUri(redirectUriEnvVar?: string): string {
-    return this.configService.get<string>(redirectUriEnvVar ?? DEFAULT_REDIRECT_URI_ENV_VAR) ?? '';
+    const maxVersion = max(Object.keys(envVarsByVersion).map(Number));
+    if (maxVersion === undefined) {
+      throw new Error(`No max OAuth version for service "${serviceKey}"`);
+    }
+    return maxVersion as OAuthAppVersion;
   }
 }

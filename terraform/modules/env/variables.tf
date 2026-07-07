@@ -216,6 +216,11 @@ variable "client_domain" {
   description = "Domain name for the client service (e.g., 'app.scratch.md')."
 }
 
+variable "whalesync_oauth_base_url" {
+  type        = string
+  description = "Whalesync base URL (no path) for generation-2 OAuth redirects, e.g. 'https://app.whalesync.com'. The server appends the per-connector callback path (/oauth-callback/connector/<connectorType>)."
+}
+
 variable "enable_client_cdn" {
   type        = bool
   default     = true

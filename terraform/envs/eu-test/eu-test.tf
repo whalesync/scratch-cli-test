@@ -20,6 +20,7 @@ module "eu_test" {
   # Load Balancer
   enable_client_load_balancer = true
   client_domain               = "test.scratch.md"
+  whalesync_oauth_base_url    = "https://test.whalesync.com"
   enable_client_cdn           = true
   api_domain                  = "test-api.scratch.md"
 

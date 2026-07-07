@@ -9,21 +9,46 @@ function makeResolver(env: Record<string, string>): OAuthAppCredentialResolver {
   return new OAuthAppCredentialResolver(config);
 }
 
-const REDIRECT = 'https://test.scratch.md/oauth/callback';
+// The redirect comes from a per-generation env var. REDIRECT_URI_SCRATCH is a full, flat callback
+// used as-is. REDIRECT_URI_WHALESYNC is only the base URL — the resolver appends the per-connector
+// path `/oauth-callback/connector/<connectorType>`.
+const SCRATCH_REDIRECT = 'https://test.scratch.md/oauth/callback';
+const WHALESYNC_BASE = 'https://app.whalesync.com';
+const REDIRECTS = { REDIRECT_URI_SCRATCH: SCRATCH_REDIRECT, REDIRECT_URI_WHALESYNC: WHALESYNC_BASE };
 
 describe('OAuthAppCredentialResolver', () => {
   describe('resolveSystemAppCredentials', () => {
-    it('resolves the app credentials from the service env vars', () => {
+    it('resolves the generation-1 app credentials, redirecting through REDIRECT_URI_SCRATCH', () => {
       const resolver = makeResolver({
         AIRTABLE_CLIENT_ID: 'the-id',
         AIRTABLE_CLIENT_SECRET: 'the-secret',
-        REDIRECT_URI: REDIRECT,
+        ...REDIRECTS,
       });
       expect(resolver.resolveSystemAppCredentials(Service.AIRTABLE, DEFAULT_OAUTH_APP_VERSION)).toEqual({
         clientId: 'the-id',
         clientSecret: 'the-secret',
-        redirectUri: REDIRECT,
+        redirectUri: SCRATCH_REDIRECT,
       });
+    });
+
+    it('resolves generation-2 from the *_V2 env vars, with a per-connector Whalesync callback appended to the base', () => {
+      const resolver = makeResolver({
+        AIRTABLE_CLIENT_ID: 'v1-id',
+        AIRTABLE_CLIENT_SECRET: 'v1-secret',
+        AIRTABLE_CLIENT_ID_V2: 'v2-id',
+        AIRTABLE_CLIENT_SECRET_V2: 'v2-secret',
+        ...REDIRECTS,
+      });
+      expect(resolver.resolveSystemAppCredentials(Service.AIRTABLE, 2)).toEqual({
+        clientId: 'v2-id',
+        clientSecret: 'v2-secret',
+        redirectUri: 'https://app.whalesync.com/oauth-callback/connector/airtable',
+      });
+    });
+
+    it('declares generation 2 only for Airtable in this cutover — other services are v1-only', () => {
+      const resolver = makeResolver({ NOTION_CLIENT_ID: 'n1', NOTION_CLIENT_SECRET: 'n1s', ...REDIRECTS });
+      expect(() => resolver.resolveSystemAppCredentials(Service.NOTION, 2)).toThrow(/NOTION has no v2/);
     });
 
     it('honors the irregular env-var base names (GOOGLE_* for YouTube, LINEAR_OAUTH_*, WIX_* for WIX_BLOG)', () => {
@@ -34,7 +59,7 @@ describe('OAuthAppCredentialResolver', () => {
         LINEAR_OAUTH_CLIENT_SECRET: 'ln-secret',
         WIX_CLIENT_ID: 'wix-id',
         WIX_CLIENT_SECRET: 'wix-secret',
-        REDIRECT_URI: REDIRECT,
+        ...REDIRECTS,
       });
       expect(resolver.resolveSystemAppCredentials(Service.YOUTUBE, DEFAULT_OAUTH_APP_VERSION).clientId).toBe('yt-id');
       expect(resolver.resolveSystemAppCredentials(Service.LINEAR, DEFAULT_OAUTH_APP_VERSION).clientId).toBe('ln-id');
@@ -42,19 +67,21 @@ describe('OAuthAppCredentialResolver', () => {
     });
 
     it('accepts a lowercase service key (normalizes to the registry key)', () => {
-      const resolver = makeResolver({ NOTION_CLIENT_ID: 'id', NOTION_CLIENT_SECRET: 'secret', REDIRECT_URI: REDIRECT });
+      const resolver = makeResolver({ NOTION_CLIENT_ID: 'id', NOTION_CLIENT_SECRET: 'secret', ...REDIRECTS });
       expect(resolver.resolveSystemAppCredentials('notion', DEFAULT_OAUTH_APP_VERSION).clientId).toBe('id');
     });
 
-    it('throws when the app credentials are not configured (empty env)', () => {
-      const resolver = makeResolver({ REDIRECT_URI: REDIRECT });
-      expect(() => resolver.resolveSystemAppCredentials(Service.AIRTABLE, DEFAULT_OAUTH_APP_VERSION)).toThrow(
-        /AIRTABLE v1 are not configured/,
-      );
+    it('throws when the targeted generation is not configured (e.g. v2 not provisioned yet)', () => {
+      const resolver = makeResolver({
+        AIRTABLE_CLIENT_ID: 'v1-id',
+        AIRTABLE_CLIENT_SECRET: 'v1-secret',
+        ...REDIRECTS,
+      });
+      expect(() => resolver.resolveSystemAppCredentials(Service.AIRTABLE, 2)).toThrow(/AIRTABLE v2 are not configured/);
     });
 
     it('throws for a service with no registered OAuth app', () => {
-      const resolver = makeResolver({ REDIRECT_URI: REDIRECT });
+      const resolver = makeResolver({ ...REDIRECTS });
       expect(() => resolver.resolveSystemAppCredentials('HUBSPOT', DEFAULT_OAUTH_APP_VERSION)).toThrow(
         /No system OAuth app/,
       );
@@ -62,21 +89,21 @@ describe('OAuthAppCredentialResolver', () => {
   });
 
   describe('resolveCustomAppCredentials', () => {
-    it('returns the user-supplied client id/secret with the default system redirect', () => {
-      const resolver = makeResolver({ REDIRECT_URI: REDIRECT });
+    it('returns the user-supplied client id/secret with the scratch-direct redirect', () => {
+      const resolver = makeResolver({ ...REDIRECTS });
       expect(resolver.resolveCustomAppCredentials('byo-id', 'byo-secret')).toEqual({
         clientId: 'byo-id',
         clientSecret: 'byo-secret',
-        redirectUri: REDIRECT,
+        redirectUri: SCRATCH_REDIRECT,
       });
     });
   });
 
   describe('getCurrentVersionForNewConnections', () => {
-    it('mints new connections at the newest generation a service declares (max declared key)', () => {
+    it('returns the newest declared generation — 2 for Airtable (cutover), 1 for the v1-only services', () => {
       const resolver = makeResolver({});
-      // Only one generation is declared today, so the max declared key is 1.
-      expect(resolver.getCurrentVersionForNewConnections(Service.AIRTABLE)).toBe(DEFAULT_OAUTH_APP_VERSION);
+      expect(resolver.getCurrentVersionForNewConnections(Service.AIRTABLE)).toBe(2);
+      expect(resolver.getCurrentVersionForNewConnections(Service.NOTION)).toBe(1);
     });
 
     it('throws for a service with no registered OAuth app', () => {
@@ -84,20 +111,12 @@ describe('OAuthAppCredentialResolver', () => {
       expect(() => resolver.getCurrentVersionForNewConnections('HUBSPOT')).toThrow(/No system OAuth app/);
     });
   });
-
-  describe('isVersionedOAuthService', () => {
-    it('is true for OAuth connectors and false otherwise', () => {
-      const resolver = makeResolver({});
-      expect(resolver.isVersionedOAuthService(Service.AIRTABLE)).toBe(true);
-      expect(resolver.isVersionedOAuthService('airtable')).toBe(true);
-      expect(resolver.isVersionedOAuthService('HUBSPOT')).toBe(false);
-    });
-  });
 });
 
 describe('asOAuthAppVersion', () => {
   it('narrows known generations and falls back to the default for missing/unknown values', () => {
     expect(asOAuthAppVersion(1)).toBe(1);
+    expect(asOAuthAppVersion(2)).toBe(2);
     expect(asOAuthAppVersion(undefined)).toBe(DEFAULT_OAUTH_APP_VERSION);
     expect(asOAuthAppVersion(null)).toBe(DEFAULT_OAUTH_APP_VERSION);
     expect(asOAuthAppVersion(99)).toBe(DEFAULT_OAUTH_APP_VERSION);

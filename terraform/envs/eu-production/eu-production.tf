@@ -20,6 +20,7 @@ module "eu_production" {
   # Load Balancer
   enable_client_load_balancer = true
   client_domain               = "app.scratch.md"
+  whalesync_oauth_base_url    = "https://app.whalesync.com"
   enable_client_cdn           = true
   api_domain                  = "api.scratch.md"
 
