@@ -1,8 +1,26 @@
 locals {
-  default_labels = var.default_labels != null ? var.default_labels : {
+  base_labels = var.default_labels != null ? var.default_labels : {
     "terraform" = "true"
     "env"       = var.env_name
   }
+
+  # Governance labels required by Vanta's "gcp-compute-engine-labeled" test (test id gcp-compute-engine-labeled):
+  # every GCP Compute Engine instance must carry environment, owner, project, dataclassification, and application
+  # labels, all non-empty and lowercase per GCP's label rules. We merge them into the provider-wide default_labels
+  # below rather than onto each resource, so they land on every labelable resource in both envs at once — including
+  # the two instances the test flags (the scratch-git VM and the cloudsql-proxy bastion) and any future GCE
+  # instance — with a single source of truth. This also pre-empts the equivalent labeling checks for other resource
+  # types (disks, buckets, Cloud SQL, etc.). See modules/env/providers.tf where default_labels is set on the
+  # provider. Refine `application`/`owner` per-resource later if finer attribution is wanted.
+  required_governance_labels = {
+    "environment"        = coalesce(var.app_env, var.env_name)
+    "owner"              = "engineering"
+    "project"            = "scratch"
+    "dataclassification" = var.vanta_contains_user_data ? "confidential" : "internal"
+    "application"        = "scratch"
+  }
+
+  default_labels = merge(local.base_labels, local.required_governance_labels)
 
   artifact_registry_url = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${var.env_name}-registry"
 
