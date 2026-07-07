@@ -42,12 +42,12 @@ export enum ConnectorHealthStatus {
 /**
  * The external app that owns and manages a workbook, if any. A `null`
  * `Workspace.managedBy` means a standalone Scratch workbook (not managed by any
- * app); `ws_crm` means it is managed by Whalesync's CRM Mirror (via dusky), which
+ * app); `ws_export` means it is managed by Whalesync's export (via dusky), which
  * constrains its config. Mirrors the `WorkbookManager` Prisma enum in
  * server/prisma/schema.prisma.
  */
 export enum WorkbookManager {
-  WS_CRM = 'ws_crm',
+  WS_EXPORT = 'ws_export',
 }
 
 export enum ActionType {

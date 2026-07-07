@@ -9,7 +9,7 @@
  * folder is linked to a connector account.
  *
  * Caller is responsible for restricting this to CRM-mirror workspaces
- * (`managedBy === ws_crm`); this helper only does the per-connection max.
+ * (`managedBy === ws_export`); this helper only does the per-connection max.
  */
 export function largestConnectionSideRecordCount(
   foldersWithConnectorAccountAndRecordCount: ReadonlyArray<{

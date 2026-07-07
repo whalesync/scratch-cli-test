@@ -108,14 +108,14 @@ describe('WorkbookProvisioningService', () => {
     expect(capturedCreateData().usersWithAsDefault).toBeUndefined();
   });
 
-  it('passes the managing app through to the workbook row (e.g. ws_crm from Whalesync)', async () => {
+  it('passes the managing app through to the workbook row (e.g. ws_export from Whalesync)', async () => {
     await service.createWorkbookWithConfigRepo({
       name: 'CRM Workbook',
       ownerUserId: OWNER_USER_ID,
       organizationId: ORGANIZATION_ID,
-      managedByApp: WorkbookManager.WS_CRM,
+      managedByApp: WorkbookManager.WS_EXPORT,
     });
 
-    expect(capturedCreateData().managedBy).toBe(WorkbookManager.WS_CRM);
+    expect(capturedCreateData().managedBy).toBe(WorkbookManager.WS_EXPORT);
   });
 });

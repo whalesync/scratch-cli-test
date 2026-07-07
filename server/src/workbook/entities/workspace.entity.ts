@@ -50,7 +50,7 @@ export const WorkspaceEntity = {
       // load-dependent semantics as `recordCount` — undefined when folders aren't loaded.
       whalesyncEligibleRecordCount: !workbook.dataFolders
         ? undefined
-        : workbook.managedBy === WorkbookManager.WS_CRM
+        : workbook.managedBy === WorkbookManager.WS_EXPORT
           ? largestConnectionSideRecordCount(workbook.dataFolders)
           : 0,
     };

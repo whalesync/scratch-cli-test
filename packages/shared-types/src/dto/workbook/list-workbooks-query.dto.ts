@@ -17,7 +17,7 @@ export const workbookListQuerySchema = z.object({
   connectorAccountId: z.string().optional(),
   sortBy: z.enum(['name', 'createdAt', 'updatedAt']).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
-  // Filter the list to workbooks managed by a specific app (e.g. `ws_crm` for
+  // Filter the list to workbooks managed by a specific app (e.g. `ws_export` for
   // Whalesync's CRM Mirror). Omit to return all workbooks regardless of manager.
   // The enum enforces the valid values at the API boundary.
   managedBy: z.nativeEnum(WorkbookManager).optional(),

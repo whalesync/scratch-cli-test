@@ -98,7 +98,7 @@ export class DataFolderService {
 
   /**
    * The record count Whalesync attributes to an organization's plan: summed across every CRM-mirror
-   * workspace (`managedBy === ws_crm`) it owns, taking the LARGER of each workspace's two connection
+   * workspace (`managedBy === ws_export`) it owns, taking the LARGER of each workspace's two connection
    * sides rather than the sum. A CRM mirror keeps the same records synced across both connections, so
    * each record exists as a file on both sides; the user thinks of it as one record, so we count it
    * once per workspace by taking the bigger side. Non-CRM-mirror workspaces are ignored entirely.
@@ -113,7 +113,7 @@ export class DataFolderService {
       by: ['workbookId', 'connectorAccountId'],
       where: {
         connectorAccountId: { not: null },
-        workbook: { organizationId, isPendingDelete: false, managedBy: WorkbookManager.ws_crm },
+        workbook: { organizationId, isPendingDelete: false, managedBy: WorkbookManager.ws_export },
       },
       _sum: { recordCount: true },
     });

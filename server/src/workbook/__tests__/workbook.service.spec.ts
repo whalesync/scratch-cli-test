@@ -171,15 +171,15 @@ describe('WorkbookService', () => {
       await expect(service.create({ name: 'Test Workbook' }, ACTOR)).rejects.toThrow(InternalServerErrorException);
     });
 
-    it('passes the managing app through to the provisioning service (e.g. ws_crm from Whalesync)', async () => {
+    it('passes the managing app through to the provisioning service (e.g. ws_export from Whalesync)', async () => {
       workbookProvisioningService.createWorkbookWithConfigRepo.mockResolvedValue(
         createMockWorkbook(2) as unknown as WorkbookCluster.Workbook,
       );
 
-      await service.create({ name: 'CRM Workbook', managedBy: WorkbookManager.WS_CRM }, ACTOR);
+      await service.create({ name: 'CRM Workbook', managedBy: WorkbookManager.WS_EXPORT }, ACTOR);
 
       expect(workbookProvisioningService.createWorkbookWithConfigRepo).toHaveBeenCalledWith(
-        expect.objectContaining({ managedByApp: WorkbookManager.WS_CRM }),
+        expect.objectContaining({ managedByApp: WorkbookManager.WS_EXPORT }),
       );
     });
 
