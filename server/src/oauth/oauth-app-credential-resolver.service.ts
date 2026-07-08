@@ -80,7 +80,7 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
     1: {
       clientIdEnvVar: 'GOHIGHLEVEL_CLIENT_ID',
       clientSecretEnvVar: 'GOHIGHLEVEL_CLIENT_SECRET',
-      redirectUri: (config) => whalesyncRedirectUri(config, 'gohighlevel'),
+      redirectUri: (config) => whalesyncRedirectUri(config, 'hl'),
     },
   },
   [Service.NOTION]: {
@@ -149,7 +149,9 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
     1: {
       clientIdEnvVar: 'QUICKBOOKS_CLIENT_ID',
       clientSecretEnvVar: 'QUICKBOOKS_CLIENT_SECRET',
-      redirectUri: (config) => whalesyncRedirectUri(config, 'quickbooks'),
+      // TODO: Replace this with a whalesync redirect once we get access.
+      // redirectUri: (config) => whalesyncRedirectUri(config, 'quickbooks'),
+      redirectUri: scratchRedirectUri,
     },
   },
   // Linear's env vars carry the `_OAUTH_` infix (LINEAR_API_KEY is a separate secret).
