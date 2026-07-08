@@ -97,6 +97,54 @@ const COLLABORATOR_SUBFIELDS: TableViewSubfield[] = [
   { relativePath: 'id', name: 'Id', type: 'string' },
 ];
 
+// The declarative transformer that flattens Airtable's service-COMPUTED value
+// shapes to clean display text: an aiText wrapper `{ state, value, isStale }` →
+// its `value` (blank when empty), a numeric special-value wrapper
+// `{ specialValue: "Infinity" | "NaN" }` → that string (a real result, shown, not
+// blanked), a genuine error wrapper `{ error: "#ERROR!" }` → blank, a plain
+// scalar → itself, and a `multipleLookupValues` array → the non-blank items
+// joined. The renderer runs it through the generic, fail-closed applier in
+// `@spinner/shared-types/transform`, so the frontend stays connector-agnostic.
+// Display-only: these fields are all readonly, so the verbatim value on disk is
+// untouched and nothing is lost by showing the flattened string.
+const COMPUTED_FIELD_DISPLAY_TRANSFORMER: NonNullable<TableViewCol['displayTransformer']> = {
+  type: 'computed-field',
+  options: { valueKeys: ['value', 'specialValue'], blankOnKeys: ['error'] },
+};
+
+// Airtable result types whose value can arrive wrapped (aiText), errored, or as
+// a numeric special value (`{ specialValue: "Infinity" }` from `1/0`) — i.e. the
+// shapes the plain grid cell renders as raw JSON. A formula/rollup/lookup landing
+// on one of these earns the computed-field transformer. Text and numeric results
+// are both here: text renders as a string either way (lossless), and numeric
+// results MUST route through the text cell so Infinity / NaN show instead of a
+// broken number cell. Date / checkbox / url / richtext are deliberately excluded
+// so their formatted cells (and link / markdown rendering) are preserved; a rare
+// error object on those still shows raw.
+const TRANSFORMABLE_RESULT_TYPES = new Set<string>([
+  AirtableDataType.SINGLE_LINE_TEXT,
+  AirtableDataType.MULTILINE_TEXT,
+  AirtableDataType.EMAIL,
+  AirtableDataType.PHONE_NUMBER,
+  AirtableDataType.NUMBER,
+  AirtableDataType.PERCENT,
+  AirtableDataType.CURRENCY,
+  AirtableDataType.DURATION,
+  AirtableDataType.RATING,
+  AirtableDataType.AUTO_NUMBER,
+  AirtableDataType.COUNT,
+]);
+
+// Airtable field types that host a computed value which may be wrapped (aiText),
+// errored, or arrive as an array (lookups). The result type decides whether the
+// column earns a display transformer — see `computedFieldDisplayTransformer`.
+const COMPUTED_WRAPPER_HOST_TYPES = new Set<string>([
+  AirtableDataType.FORMULA,
+  AirtableDataType.ROLLUP,
+  AirtableDataType.LOOKUP,
+  AirtableDataType.MULTIPLE_LOOKUP_VALUES,
+]);
+
 // ── Helpers ──
 
 /** Order fields with the primary field first, then the rest in their original order. */
@@ -125,18 +173,55 @@ function mapType(connectorDataType: string | undefined): TablePropertyType | und
   return undefined;
 }
 
+/**
+ * Return the computed-field display transformer for an Airtable field, or
+ * undefined when the column should keep its typed rendering. A field earns it
+ * when its stored value is an aiText wrapper, a numeric result (which can arrive
+ * as `{ specialValue: "Infinity" }`), or a plain-text computed scalar — and any
+ * of these may also arrive errored or as a lookup array — the shapes that
+ * otherwise render as raw JSON or a broken numeric cell.
+ */
+function computedFieldDisplayTransformer(
+  field: AirtableFieldsV2,
+): NonNullable<TableViewCol['displayTransformer']> | undefined {
+  const rawFieldType = field.type as AirtableDataType;
+  if (rawFieldType === AirtableDataType.AI_TEXT) return COMPUTED_FIELD_DISPLAY_TRANSFORMER;
+
+  if (COMPUTED_WRAPPER_HOST_TYPES.has(rawFieldType)) {
+    const resultType = field.options?.result?.type as AirtableDataType | undefined;
+    if (resultType === AirtableDataType.AI_TEXT || (resultType && TRANSFORMABLE_RESULT_TYPES.has(resultType))) {
+      return COMPUTED_FIELD_DISPLAY_TRANSFORMER;
+    }
+  }
+
+  return undefined;
+}
+
 /** Build a TableViewCol for an Airtable field. */
 function buildCol(field: AirtableFieldsV2, fieldSchema: TSchema | undefined): TableViewCol {
   const connectorDataType = fieldSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
   const isReadonly = fieldSchema?.[X_SCRATCH_READONLY] === true;
+  const displayTransformer = computedFieldDisplayTransformer(field);
 
   const col: TableViewCol = {
     kind: 'col',
     path: `fields.${field.name}`,
     name: field.name,
-    type: mapType(connectorDataType),
+    // A column with a displayTransformer DISPLAYS the flattened scalar string, so
+    // it must render through the grid's text cell — the only cell kind that
+    // consults `displayTransformer`. A mapped 'number' / 'object' type would
+    // instead route to a cell that renders the raw wrapper/array and ignore the
+    // transformer entirely. Columns without a transformer keep their mapped type.
+    type: displayTransformer ? 'string' : mapType(connectorDataType),
     readonly: isReadonly || undefined,
   };
+
+  if (displayTransformer) {
+    // Computed fields (aiText / formula-of-text / lookup) are flattened by the
+    // transformer; collaborator subfields don't apply to them.
+    col.displayTransformer = displayTransformer;
+    return col;
+  }
 
   // Collaborator fields are objects with {id, email, name} — default to showing email
   if (connectorDataType && COLLABORATOR_TYPES.has(connectorDataType)) {

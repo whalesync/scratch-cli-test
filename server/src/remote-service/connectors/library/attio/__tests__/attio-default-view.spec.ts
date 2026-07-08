@@ -206,12 +206,18 @@ describe('buildAttioDefaultView (object)', () => {
     });
 
     it('extracts type-specific payload keys (domain, email, actor-reference)', () => {
+      // Helper narrows the DisplayTransformerConfig union to the jsonpath arm so
+      // `.options.expression` is accessible (a computed-field arm has no expression).
+      const expressionOf = (col: TableViewCol): string | undefined => {
+        const transformer = col.displayTransformer;
+        return transformer?.type === 'jsonpath' ? transformer.options.expression : undefined;
+      };
       const domains = view.cols.find((c) => c.kind === 'col' && c.path === 'values.domains') as TableViewCol;
-      expect(domains.displayTransformer?.options.expression).toBe('$[0].domain');
+      expect(expressionOf(domains)).toBe('$[0].domain');
       const emails = view.cols.find((c) => c.kind === 'col' && c.path === 'values.email_addresses') as TableViewCol;
-      expect(emails.displayTransformer?.options.expression).toBe('$[0].email_address');
+      expect(expressionOf(emails)).toBe('$[0].email_address');
       const team = view.cols.find((c) => c.kind === 'col' && c.path === 'values.team') as TableViewCol;
-      expect(team.displayTransformer?.options.expression).toBe('$[0].referenced_actor_id');
+      expect(expressionOf(team)).toBe('$[0].referenced_actor_id');
     });
 
     it('does not attach a transformer to types without an extraction expression', () => {

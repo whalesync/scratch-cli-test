@@ -220,3 +220,63 @@ describe('buildAirtableDefaultView', () => {
     expect(groups).toHaveLength(0);
   });
 });
+
+describe('buildAirtableDefaultView: computed-field display transformers', () => {
+  function makeFieldWithResult(id: string, name: string, type: AirtableDataType, resultType?: AirtableDataType) {
+    return { id, name, type, options: resultType ? { result: { type: resultType } } : undefined } as AirtableFieldsV2;
+  }
+
+  const fields: AirtableFieldsV2[] = [
+    makeFieldWithResult('f1', 'Name', AirtableDataType.SINGLE_LINE_TEXT),
+    makeFieldWithResult('f2', 'Summary', AirtableDataType.AI_TEXT),
+    makeFieldWithResult('f3', 'Text Formula', AirtableDataType.FORMULA, AirtableDataType.SINGLE_LINE_TEXT),
+    makeFieldWithResult('f4', 'AI Formula', AirtableDataType.FORMULA, AirtableDataType.AI_TEXT),
+    makeFieldWithResult('f5', 'Number Formula', AirtableDataType.FORMULA, AirtableDataType.NUMBER),
+    makeFieldWithResult('f6', 'Date Rollup', AirtableDataType.ROLLUP, AirtableDataType.DATE_TIME),
+    makeFieldWithResult('f7', 'AI Lookup', AirtableDataType.MULTIPLE_LOOKUP_VALUES, AirtableDataType.AI_TEXT),
+    makeFieldWithResult('f8', 'Number Lookup', AirtableDataType.MULTIPLE_LOOKUP_VALUES, AirtableDataType.NUMBER),
+  ];
+
+  const table = { id: 'tbl', name: 'T', primaryFieldId: 'f1', fields } as AirtableTableV2;
+
+  const fieldsSchema: Record<string, ReturnType<typeof makeSchema>> = {
+    Name: makeSchema(AirtableDataType.SINGLE_LINE_TEXT),
+    Summary: makeSchema(AirtableDataType.AI_TEXT, { readonly: true }),
+    'Text Formula': makeSchema('formula-singleLineText', { readonly: true }),
+    'AI Formula': makeSchema('formula-aiText', { readonly: true }),
+    'Number Formula': makeSchema('formula-number', { readonly: true }),
+    'Date Rollup': makeSchema('rollup-dateTime', { readonly: true }),
+    'AI Lookup': makeSchema(AirtableDataType.MULTIPLE_LOOKUP_VALUES, { readonly: true }),
+    'Number Lookup': makeSchema(AirtableDataType.MULTIPLE_LOOKUP_VALUES, { readonly: true }),
+  };
+
+  const view = buildAirtableDefaultView(table, fieldsSchema);
+  const colByPath = (path: string) => view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol;
+
+  const EXPECTED_TRANSFORMER = {
+    type: 'computed-field',
+    options: { valueKeys: ['value', 'specialValue'], blankOnKeys: ['error'] },
+  };
+
+  it.each([
+    ['fields.Summary', 'direct aiText'],
+    ['fields.Text Formula', 'formula-of-text'],
+    ['fields.AI Formula', 'formula-of-aiText'],
+    ['fields.AI Lookup', 'lookup-of-aiText'],
+    ['fields.Number Formula', 'formula-of-number (Infinity / NaN / #ERROR!)'],
+    ['fields.Number Lookup', 'lookup-of-number'],
+  ])('attaches a string computed-field transformer to %s (%s)', (path) => {
+    const col = colByPath(path);
+    expect(col.type).toBe('string');
+    expect(col.displayTransformer).toEqual(EXPECTED_TRANSFORMER);
+  });
+
+  it.each([
+    ['fields.Name', 'plain text field', undefined],
+    ['fields.Date Rollup', 'rollup-of-date keeps its formatted date cell', 'date'],
+  ])('does NOT attach a transformer to %s (%s)', (path, _desc, expectedType) => {
+    const col = colByPath(path);
+    expect(col.displayTransformer).toBeUndefined();
+    expect(col.type).toBe(expectedType);
+  });
+});

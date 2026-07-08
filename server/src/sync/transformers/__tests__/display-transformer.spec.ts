@@ -114,6 +114,93 @@ describe('applyDisplayTransformer (fail-closed display)', () => {
   });
 });
 
+describe('applyDisplayTransformer: computed-field (Airtable aiText / formula-error shapes)', () => {
+  // Mirrors the transformer the Airtable connector attaches to aiText /
+  // formula-of-text / numeric / lookup columns: aiText `value` and numeric
+  // `specialValue` are shown, genuine `error` wrappers blanked.
+  const computedField: DisplayTransformerConfig = {
+    type: 'computed-field',
+    options: { valueKeys: ['value', 'specialValue'], blankOnKeys: ['error'] },
+  };
+
+  it('unwraps an aiText object to its generated text', () => {
+    expect(applyDisplayTransformer(computedField, { state: 'generated', value: 'Hello there', isStale: true })).toEqual(
+      { ok: true, value: 'Hello there' },
+    );
+  });
+
+  it('blanks an empty aiText object (value:null / state:empty)', () => {
+    expect(applyDisplayTransformer(computedField, { state: 'empty', value: null })).toEqual({ ok: true, value: '' });
+  });
+
+  it('blanks a formula error wrapper instead of showing raw JSON', () => {
+    expect(applyDisplayTransformer(computedField, { error: '#ERROR!' })).toEqual({ ok: true, value: '' });
+  });
+
+  it('shows a numeric specialValue (Infinity / NaN) as its string, not blank', () => {
+    expect(applyDisplayTransformer(computedField, { specialValue: 'Infinity' })).toEqual({
+      ok: true,
+      value: 'Infinity',
+    });
+    expect(applyDisplayTransformer(computedField, { specialValue: 'NaN' })).toEqual({ ok: true, value: 'NaN' });
+  });
+
+  it('passes a bare scalar formula result through as its display string', () => {
+    expect(applyDisplayTransformer(computedField, 'plain text')).toEqual({ ok: true, value: 'plain text' });
+    expect(applyDisplayTransformer(computedField, 42)).toEqual({ ok: true, value: '42' });
+    expect(applyDisplayTransformer(computedField, false)).toEqual({ ok: true, value: 'false' });
+  });
+
+  it('joins a multipleLookupValues array, dropping blank/error items', () => {
+    const lookup = [
+      { state: 'generated', value: 'first' },
+      { state: 'empty', value: null },
+      { error: '#ERROR!' },
+      { state: 'generated', value: 'second' },
+    ];
+    expect(applyDisplayTransformer(computedField, lookup)).toEqual({ ok: true, value: 'first, second' });
+  });
+
+  it('joins a lookup array of plain scalars', () => {
+    expect(applyDisplayTransformer(computedField, ['a', 'b', 'c'])).toEqual({ ok: true, value: 'a, b, c' });
+  });
+
+  it('blanks an empty lookup array', () => {
+    expect(applyDisplayTransformer(computedField, [])).toEqual({ ok: true, value: '' });
+  });
+
+  it('FAILS CLOSED on a wrapper object missing the valueKey (surfaces the odd shape)', () => {
+    // Not an error wrapper and no `value` key — show the raw value rather than lie.
+    expect(applyDisplayTransformer(computedField, { state: 'generated' })).toEqual({ ok: false });
+  });
+
+  it('FAILS CLOSED when the value key holds a nested object', () => {
+    expect(applyDisplayTransformer(computedField, { value: { nested: true } })).toEqual({ ok: false });
+  });
+
+  it('FAILS CLOSED on null / undefined (raw fallback shows blank)', () => {
+    expect(applyDisplayTransformer(computedField, null)).toEqual({ ok: false });
+    expect(applyDisplayTransformer(computedField, undefined)).toEqual({ ok: false });
+  });
+
+  it('does NOT throw on a stale config missing valueKeys (fails closed, never crashes the grid)', () => {
+    // A view pulled by an earlier server stored the old `{ valueKey }` shape; the
+    // updated applier must fail closed on the wrapper, not throw `not iterable`.
+    const staleConfig = { type: 'computed-field', options: { valueKey: 'value', blankOnKeys: ['error'] } };
+    const cfg = staleConfig as unknown as DisplayTransformerConfig;
+    expect(() => applyDisplayTransformer(cfg, { state: 'generated', value: 'hi' })).not.toThrow();
+    expect(applyDisplayTransformer(cfg, { state: 'generated', value: 'hi' })).toEqual({ ok: false });
+    // Scalars still render even with a malformed config (no object unwrap needed).
+    expect(applyDisplayTransformer(cfg, 'plain')).toEqual({ ok: true, value: 'plain' });
+  });
+
+  it('does NOT throw when options is entirely absent (fails closed)', () => {
+    const brokenConfig = { type: 'computed-field' } as unknown as DisplayTransformerConfig;
+    expect(() => applyDisplayTransformer(brokenConfig, { value: 'x' })).not.toThrow();
+    expect(applyDisplayTransformer(brokenConfig, { value: 'x' })).toEqual({ ok: false });
+  });
+});
+
 describe('shared-types barrel isolation (keeps jsonpath out of barrel consumers)', () => {
   // The transform runtime (and its jsonpath-rfc9535 dependency) must stay behind
   // the `@spinner/shared-types/transform` subpath, never re-exported from the
