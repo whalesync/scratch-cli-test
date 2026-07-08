@@ -40,12 +40,31 @@ const GOHIGHLEVEL_API_BASE_URL = 'https://services.leadconnectorhq.com';
 const GOHIGHLEVEL_API_VERSION_HEADER = '2021-07-28';
 
 /**
- * Retry policy for the rate limiter: treat HTTP 429 as rate-limited and honor a
- * `Retry-After` header when present (else fall back to the limiter's backoff).
- * HighLevel's burst limit is 100 req / 10s per app per location.
+ * True when an error is HighLevel rate-limiting us: an HTTP 429. Kept as its own
+ * named predicate so the retry policy composes as plain English (429 OR a
+ * transient search error) without conflating the two conditions.
  */
-const GOHIGHLEVEL_RETRY_OPTS: WithRetryOpts = {
-  isRateLimited: (error) => axios.isAxiosError(error) && error.response?.status === 429,
+function isGoHighLevelRateLimitError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 429;
+}
+
+/**
+ * Retry policy for the rate limiter. Retries two DISTINCT, independently-scoped
+ * failures:
+ *  - HTTP 429 rate-limiting (honoring a `Retry-After` header when present, else
+ *    the limiter's exponential backoff). HighLevel's burst limit is 100 req/10s
+ *    per app per location.
+ *  - HighLevel's own TRANSIENT search-index errors — a narrowly-scoped 400 from
+ *    `POST /contacts/search` (see {@link isTransientGoHighLevelSearchError}).
+ *
+ * The two are kept as SEPARATE predicates on purpose: widening the transient-
+ * search case never loosens what counts as rate-limited, and genuine 4xx
+ * validation errors still surface immediately. `getRetryAfterS` stays 429-only —
+ * the wrapped transient 400 is a {@link GoHighLevelError}, not an AxiosError, so
+ * it returns undefined and the retry falls back to exponential backoff.
+ */
+export const GOHIGHLEVEL_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => isGoHighLevelRateLimitError(error) || isTransientGoHighLevelSearchError(error),
   getRetryAfterS: (error) => {
     if (!axios.isAxiosError(error)) return undefined;
     const header: unknown = error.response?.headers?.['retry-after'];
@@ -94,6 +113,42 @@ export function isGoHighLevelNotFoundError(error: unknown): boolean {
     return /not found/i.test(message);
   }
   return axios.isAxiosError(error) && error.response?.status === 404;
+}
+
+/**
+ * True when an error is HighLevel's own TRANSIENT search failure: a
+ * `POST /contacts/search` 400 whose body message is the generic
+ * "Error occurred while searching for contact" (a server-side `HttpException`
+ * carrying a `traceId`). HighLevel's Elasticsearch-backed search intermittently
+ * errors on their side; the identical request a moment later succeeds, so it is
+ * safe to retry — unlike a request-validation 400 (a bad field) or the
+ * "Contact not found for id" absence signal (see {@link isGoHighLevelNotFoundError}),
+ * which are deterministic and must surface. Scoped narrowly to that exact body
+ * signature so genuine bad requests still throw.
+ *
+ * (Non-429 HTTP errors reach here wrapped as a {@link GoHighLevelError} by the
+ * response interceptor; the raw AxiosError branch is a defensive fallback.)
+ *
+ * NOTE: scoped to the CONTACTS search message. If the same transient failure ever
+ * surfaces on opportunities / object-record search, broaden the regex to
+ * `/error occurred while searching for/i` — do not pre-broaden it now.
+ */
+export function isTransientGoHighLevelSearchError(error: unknown): boolean {
+  const readBodyMessage = (data: unknown, fallbackMessage: string): string =>
+    typeof data === 'object' && data !== null && 'message' in data && typeof data.message === 'string'
+      ? data.message
+      : fallbackMessage;
+  const isTransientSearchMessage = (message: string): boolean =>
+    /error occurred while searching for contact/i.test(message);
+
+  if (error instanceof GoHighLevelError) {
+    return error.statusCode === 400 && isTransientSearchMessage(readBodyMessage(error.responseData, error.message));
+  }
+  if (axios.isAxiosError(error)) {
+    const response = error.response;
+    return response?.status === 400 && isTransientSearchMessage(readBodyMessage(response.data, error.message));
+  }
+  return false;
 }
 
 /**
