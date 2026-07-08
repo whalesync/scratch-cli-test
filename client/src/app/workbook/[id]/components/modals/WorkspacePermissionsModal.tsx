@@ -1,16 +1,17 @@
 'use client';
 
 import { Badge } from '@/app/components/base/badge';
-import { ButtonPrimarySolid } from '@/app/components/base/buttons';
+import { ButtonPrimarySolid, DevToolButtonGhost } from '@/app/components/base/buttons';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
+import { useDevTools } from '@/hooks/use-dev-tools';
 import { useWorkbook } from '@/hooks/use-workbook';
 import { useWorkspacePermissions } from '@/hooks/use-workspace-permissions';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { ActionIcon, Group, Table, Text, TextInput, Tooltip } from '@mantine/core';
+import { ActionIcon, Group, Stack, Table, Text, TextInput, Tooltip } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { WorkbookId, WorkspaceInviteId, WorkspacePermissionId } from '@spinner/shared-types';
-import { Trash2Icon, UserPlusIcon, UserRoundXIcon } from 'lucide-react';
+import { Trash2Icon, UserPlusIcon, UserRoundXIcon, UserStar } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -23,6 +24,7 @@ interface WorkspacePermissionsModalProps {
 export function WorkspacePermissionsModal({ opened, onClose, workbookId }: WorkspacePermissionsModalProps) {
   const router = useRouter();
   const { user } = useScratchPadUser();
+  const { isDevToolsEnabled } = useDevTools();
   const { workbook } = useWorkbook(opened ? workbookId : null);
   const { permissions, invites, isLoading, addPermission, removePermission, removeInvite } = useWorkspacePermissions(
     opened ? workbookId : null,
@@ -30,6 +32,33 @@ export function WorkspacePermissionsModal({ opened, onClose, workbookId }: Works
   const [email, setEmail] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [isAddingSelf, setIsAddingSelf] = useState(false);
+
+  // Admin-only convenience: admins already have implicit access to every workbook
+  // server-side, so this lets them grant themselves an explicit permission row in
+  // one click (e.g. when debugging a user's workspace) instead of typing their own
+  // email. Hidden once they already appear in the list to avoid duplicate rows.
+  const currentUserAlreadyHasPermission = permissions.some((p) => p.userId === user?.id);
+  const canAddSelfAsAdmin = Boolean(
+    isDevToolsEnabled && user?.isAdmin && user?.email && !currentUserAlreadyHasPermission,
+  );
+
+  const handleAddSelf = async () => {
+    if (!user?.email) return;
+    setIsAddingSelf(true);
+    try {
+      await addPermission({ email: user.email, role: 'editor' });
+    } catch (e) {
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to add yourself to the workspace',
+        color: 'red',
+      });
+      console.error(e);
+    } finally {
+      setIsAddingSelf(false);
+    }
+  };
 
   const handleAdd = async () => {
     const trimmed = email.trim();
@@ -104,13 +133,20 @@ export function WorkspacePermissionsModal({ opened, onClose, workbookId }: Works
           error={addError}
           style={{ flex: 1 }}
         />
-        <ButtonPrimarySolid
-          leftSection={<StyledLucideIcon Icon={UserPlusIcon} size="sm" />}
-          onClick={handleAdd}
-          loading={isAdding}
-        >
-          Add User
-        </ButtonPrimarySolid>
+        <Stack>
+          <ButtonPrimarySolid
+            leftSection={<StyledLucideIcon Icon={UserPlusIcon} size="sm" />}
+            onClick={handleAdd}
+            loading={isAdding}
+          >
+            Add User
+          </ButtonPrimarySolid>
+          {canAddSelfAsAdmin && (
+            <DevToolButtonGhost size="xs" onClick={handleAddSelf} loading={isAddingSelf} leftSection={<UserStar />}>
+              Add Me
+            </DevToolButtonGhost>
+          )}
+        </Stack>
       </Group>
 
       {isLoading ? (
