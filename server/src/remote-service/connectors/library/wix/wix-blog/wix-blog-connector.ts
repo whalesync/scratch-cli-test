@@ -179,8 +179,13 @@ export class WixBlogConnector extends Connector {
       offset += draftPosts.length;
 
       // Prefer the reported total to decide when to stop; fall back to a short page.
+      // An empty page always terminates the scan: if Wix's `total` over-reports what
+      // it actually paginates (posts deleted mid-scan, an eventually-consistent
+      // counter, or permission-filtered results), `offset += 0` never advances past
+      // `offset < total`, which would otherwise loop forever re-fetching empty pages.
       const total = response.metaData?.total;
-      const hasMore = typeof total === 'number' ? offset < total : draftPosts.length === pageSize;
+      const hasMore =
+        draftPosts.length > 0 && (typeof total === 'number' ? offset < total : draftPosts.length === pageSize);
 
       // Emit the page verbatim — the raw Wix DraftPost shape on disk (Connector
       // Prime Directive), keyed by `_id` to match the write path.
