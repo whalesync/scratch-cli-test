@@ -214,8 +214,8 @@ services:
       NOTION_CLIENT_SECRET: fake_key
       WEBFLOW_CLIENT_ID: fake_id
       WEBFLOW_CLIENT_SECRET: fake_key
-      GOOGLE_CLIENT_ID: fake_id
-      GOOGLE_CLIENT_SECRET: fake_key
+      YOUTUBE_CLIENT_ID: fake_id
+      YOUTUBE_CLIENT_SECRET: fake_key
       SHOPIFY_CLIENT_ID: fake_id
       SHOPIFY_CLIENT_SECRET: fake_key
       SUPABASE_CLIENT_ID: fake_id

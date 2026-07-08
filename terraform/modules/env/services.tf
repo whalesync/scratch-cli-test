@@ -282,6 +282,8 @@ resource "google_cloud_run_v2_service" "api_service" {
           "WIX_SHARE_URL_ID",
           "SUPABASE_CLIENT_ID",
           "SUPABASE_CLIENT_SECRET",
+          "YOUTUBE_CLIENT_ID",
+          "YOUTUBE_CLIENT_SECRET",
           "ZOHO_CLIENT_ID",
           "ZOHO_CLIENT_SECRET",
         ]
@@ -559,6 +561,8 @@ resource "google_cloud_run_v2_service" "cron_service" {
           "WIX_SHARE_URL_ID",
           "SUPABASE_CLIENT_ID",
           "SUPABASE_CLIENT_SECRET",
+          "YOUTUBE_CLIENT_ID",
+          "YOUTUBE_CLIENT_SECRET",
           "ZOHO_CLIENT_ID",
           "ZOHO_CLIENT_SECRET",
         ]
@@ -819,6 +823,8 @@ resource "google_cloud_run_v2_service" "worker_service" {
           "WIX_SHARE_URL_ID",
           "SUPABASE_CLIENT_ID",
           "SUPABASE_CLIENT_SECRET",
+          "YOUTUBE_CLIENT_ID",
+          "YOUTUBE_CLIENT_SECRET",
           "ZOHO_CLIENT_ID",
           "ZOHO_CLIENT_SECRET",
         ]

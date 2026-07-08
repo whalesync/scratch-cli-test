@@ -132,26 +132,18 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       redirectUri: (config) => whalesyncRedirectUri(config, 'wix'),
     },
   },
-  // YouTube authenticates against a Google OAuth app, hence GOOGLE_* (not YOUTUBE_*).
   [Service.YOUTUBE]: {
     1: {
-      clientIdEnvVar: 'GOOGLE_CLIENT_ID',
-      clientSecretEnvVar: 'GOOGLE_CLIENT_SECRET',
-      redirectUri: scratchRedirectUri,
+      clientIdEnvVar: 'YOUTUBE_CLIENT_ID',
+      clientSecretEnvVar: 'YOUTUBE_CLIENT_SECRET',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'youtube'),
     },
-    // 2: {
-    //   clientIdEnvVar: 'GOOGLE_CLIENT_ID_V2',
-    //   clientSecretEnvVar: 'GOOGLE_CLIENT_SECRET_V2',
-    //   redirectUri: (config) => whalesyncRedirectUri(config, 'sheets TODO'),
-    // },
   },
   [Service.QUICKBOOKS]: {
     1: {
       clientIdEnvVar: 'QUICKBOOKS_CLIENT_ID',
       clientSecretEnvVar: 'QUICKBOOKS_CLIENT_SECRET',
-      // TODO: Replace this with a whalesync redirect once we get access.
-      // redirectUri: (config) => whalesyncRedirectUri(config, 'quickbooks'),
-      redirectUri: scratchRedirectUri,
+      redirectUri: (config) => whalesyncRedirectUri(config, 'quickbooks'),
     },
   },
   // Linear's env vars carry the `_OAUTH_` infix (LINEAR_API_KEY is a separate secret).

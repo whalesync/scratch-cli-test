@@ -71,10 +71,10 @@ describe('OAuthAppCredentialResolver', () => {
       );
     });
 
-    it('honors the irregular env-var base names (GOOGLE_* for YouTube, LINEAR_OAUTH_*, WIX_* for WIX_BLOG)', () => {
+    it('honors the irregular env-var base names (LINEAR_OAUTH_*, WIX_* for WIX_BLOG)', () => {
       const resolver = makeResolver({
-        GOOGLE_CLIENT_ID: 'yt-id',
-        GOOGLE_CLIENT_SECRET: 'yt-secret',
+        YOUTUBE_CLIENT_ID: 'yt-id',
+        YOUTUBE_CLIENT_SECRET: 'yt-secret',
         LINEAR_OAUTH_CLIENT_ID: 'ln-id',
         LINEAR_OAUTH_CLIENT_SECRET: 'ln-secret',
         WIX_CLIENT_ID: 'wix-id',
