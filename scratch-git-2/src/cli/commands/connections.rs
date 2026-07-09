@@ -86,6 +86,11 @@ fn service_auth_fields(service: &str) -> Option<Vec<AuthField>> {
             display_name: "API Key",
             required: true,
         }]),
+        "ATTIO" => Some(vec![AuthField {
+            key: "apiKey",
+            display_name: "Access Token",
+            required: true,
+        }]),
         _ => None,
     }
 }
@@ -96,7 +101,7 @@ pub enum ConnectionsCommands {
     List,
     /// Authorize a new connection
     Add {
-        /// Service type (AIRTABLE, WEBFLOW, SHOPIFY, MOCO, AUDIENCEFUL, WORDPRESS, POSTGRES, SUPABASE, PIPEDRIVE)
+        /// Service type (AIRTABLE, WEBFLOW, SHOPIFY, MOCO, AUDIENCEFUL, WORDPRESS, POSTGRES, SUPABASE, PIPEDRIVE, ATTIO)
         #[arg(long)]
         service: String,
         /// Credential parameter as key=value (repeatable)
