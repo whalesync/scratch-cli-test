@@ -71,16 +71,38 @@ async function pullAllContacts(connector: GoHighLevelConnector, spec: BaseJsonTa
 }
 
 /** Poll the search-backed pull until `predicate` matches a contact (eventual
- * consistency: a just-written contact can take a moment to be searchable). */
+ * consistency: a just-written contact can take a moment to be searchable).
+ *
+ * When `idForGetByIdFallback` is supplied, each iteration ALSO tries the
+ * get-by-id read path and returns as soon as EITHER path matches. Get-by-id is
+ * not subject to GHL's search-index lag, so it rescues the poll when a
+ * just-created contact is retrievable by id before it becomes searchable — the
+ * failure mode that made this create read-back flaky (search never caught up
+ * within the ~60s window). The get-by-id call is guarded because GHL can
+ * transiently 400 (not 404) a contact for a short moment right after create,
+ * and that must not abort the poll; it also omits nothing we assert (get-by-id
+ * returns the same full contact, including firstName). */
 async function waitForContact(
   connector: GoHighLevelConnector,
   spec: BaseJsonTableSpec,
   predicate: (c: Record<string, unknown>) => boolean,
-  { tries = 20, delayMs = 3000 } = {},
+  {
+    tries = 20,
+    delayMs = 3000,
+    idForGetByIdFallback,
+  }: { tries?: number; delayMs?: number; idForGetByIdFallback?: string } = {},
 ): Promise<Record<string, unknown> | null> {
   for (let attempt = 0; attempt < tries; attempt++) {
     const match = (await pullAllContacts(connector, spec)).find((c) => predicate(c as Record<string, unknown>));
     if (match) return match as Record<string, unknown>;
+    if (idForGetByIdFallback !== undefined) {
+      try {
+        const byId = await getContactById(connector, spec, idForGetByIdFallback);
+        if (byId && predicate(byId)) return byId;
+      } catch {
+        // Get-by-id can transiently 400 a just-created contact; ignore and keep polling.
+      }
+    }
     await sleep(delayMs);
   }
   return null;
@@ -250,7 +272,9 @@ describeIfCreds('GoHighLevelConnector — live API', () => {
       expect(contactId.length).toBeGreaterThan(0);
       createdIds.push(contactId);
 
-      const afterCreate = await waitForContact(connector, contactsSpec, (c) => c.id === contactId);
+      const afterCreate = await waitForContact(connector, contactsSpec, (c) => c.id === contactId, {
+        idForGetByIdFallback: contactId,
+      });
       expect(afterCreate).not.toBeNull();
       expect(afterCreate?.firstName).toBe('Scratch');
 
