@@ -112,3 +112,39 @@ describe('PostHogService.trackWhalesyncAccountLinked', () => {
     expect(linkEvent?.properties.is_whalesync_shadow_user).toBeUndefined();
   });
 });
+
+describe('PostHogService.trackClerkAccountLinked', () => {
+  let service: PostHogService;
+  let mockClient: MockPostHogClient;
+
+  beforeEach(() => {
+    const configService = {
+      getPostHogApiKey: () => undefined,
+      getPostHogHost: () => undefined,
+      isPosthogAnaltyicsEnabled: () => false,
+    } as unknown as ScratchConfigService;
+    service = new PostHogService(configService);
+
+    mockClient = { identify: jest.fn(), capture: jest.fn() };
+    (service as unknown as { postHog: MockPostHogClient }).postHog = mockClient;
+  });
+
+  it('fires a clerk_account_linked event carrying the real clerk id and the whalesync id (DEV-10731)', () => {
+    // A Whalesync shadow user that just signed in natively for the first time and was adopted.
+    const adoptedShadowUser = makeUser({
+      id: 'usr_shadow',
+      clerkId: 'user_realclerkid',
+      whalesyncUserId: 'wsu-123',
+      email: 'ada@example.com',
+    });
+
+    service.trackClerkAccountLinked(adoptedShadowUser, 'user_realclerkid');
+
+    const linkEvent = capturedEvents(mockClient).find((event) => event.event === 'clerk_account_linked');
+    expect(linkEvent).toBeDefined();
+    expect(linkEvent?.properties.clerk_id).toBe('user_realclerkid');
+    expect(linkEvent?.properties.whalesync_user_id).toBe('wsu-123');
+    // A link, not a creation or re-identification — no identify() call.
+    expect(mockClient.identify).not.toHaveBeenCalled();
+  });
+});

@@ -151,6 +151,22 @@ export class PostHogService implements OnModuleDestroy {
     });
   }
 
+  /**
+   * Fires when a Whalesync shadow user is adopted into a native Clerk identity by the email-match path
+   * (`UsersService.getOrCreateUserFromClerk`) — a purely-Whalesync account and the real Clerk login
+   * that shares its address became one dual-identity account. The mirror of
+   * {@link trackWhalesyncAccountLinked}: a link, not a creation, so it is a dedicated event rather than
+   * another ACCOUNT_USER_CREATED. The real Clerk id is recorded as `clerk_id`.
+   */
+  public trackClerkAccountLinked(user: User, clerkId: string): void {
+    this.captureEvent(PostHogEventName.CLERK_ACCOUNT_LINKED, user, {
+      clerk_id: clerkId,
+      whalesync_user_id: user.whalesyncUserId,
+      email: user.email,
+      role: user.role,
+    });
+  }
+
   /*******************************************************
    * Workbook events
    *******************************************************/
@@ -518,6 +534,13 @@ export enum PostHogEventName {
    * { whalesync_user_id, email, role } and a `$set` of `whalesync_user_id` on the person.
    */
   WHALESYNC_ACCOUNT_LINKED = 'whalesync_account_linked',
+  /**
+   * DEV-10731: a Whalesync shadow user (synthetic ws_ clerkId) signed into Scratch natively for the
+   * first time, so their existing row was adopted into a real Clerk identity by the email-match path
+   * in `UsersService.getOrCreateUserFromClerk` — the mirror of WHALESYNC_ACCOUNT_LINKED. A link, not
+   * a creation. Properties: { clerk_id, whalesync_user_id, email, role }.
+   */
+  CLERK_ACCOUNT_LINKED = 'clerk_account_linked',
   CONNECTOR_ACCOUNT_CREATED = 'connector_created',
   CONNECTOR_ACCOUNT_UPDATED = 'connector_updated',
   CONNECTOR_ACCOUNT_REMOVED = 'connector_deleted',

@@ -70,7 +70,19 @@ export class UsersService {
     name?: string,
     email?: string,
   ): Promise<UserCluster.User | null> {
-    const user = await this.findByClerkId(clerkUserId);
+    let user = await this.findByClerkId(clerkUserId);
+
+    // DEV-10731: on a clerkId miss, reconcile by email before creating. A Whalesync shadow row
+    // (synthetic ws_<uuid> clerkId) may already own this address; blind-creating collides on the
+    // @unique email → Prisma P2002 → the "Error loading user" 401. Adopt that row into the real
+    // Clerk identity instead — the symmetric mirror of adoptExistingUserIntoWhalesyncIdentity.
+    if (!user && email) {
+      const normalizedEmail = email.trim().toLowerCase();
+      const userOwningEmail = await this.findByEmail(normalizedEmail);
+      if (userOwningEmail) {
+        user = await this.adoptExistingUserIntoClerkIdentity(userOwningEmail, clerkUserId);
+      }
+    }
 
     if (user) {
       // make sure the user has an api token
@@ -405,6 +417,57 @@ export class UsersService {
     await this.slackNotificationService.sendMessage(
       SlackFormatters.whalesyncAccountLinked(linkedUser, whalesyncUserId),
     );
+
+    return linkedUser;
+  }
+
+  /**
+   * Links an existing Scratch user to a native Clerk identity by setting its `clerkId` (the "adopt by
+   * email" path for {@link getOrCreateUserFromClerk} — the symmetric mirror of
+   * {@link adoptExistingUserIntoWhalesyncIdentity}). Deliberately touches ONLY `clerkId`: the user's
+   * `whalesyncUserId`, email, organization, workbooks and subscription are preserved, so a Whalesync
+   * shadow row (synthetic `ws_<whalesyncUserId>` clerkId) becomes dual-identity (native Clerk +
+   * Whalesync) rather than being duplicated into a `@unique` email collision. Fires a dedicated
+   * `clerk_account_linked` PostHog event and a Slack notification rather than `identifyNewUser` — the
+   * user already exists and was identified when their shadow row was created; this is a link, not a
+   * creation. Safe from DB constraints: the incoming `clerkUserId` was just missed on `findByClerkId`
+   * (so it is unowned and `@unique` clerkId is satisfied), and the email is left untouched.
+   */
+  private async adoptExistingUserIntoClerkIdentity(
+    existingUser: UserCluster.User,
+    clerkUserId: string,
+  ): Promise<UserCluster.User> {
+    const replacingRealClerkIdentity = !!existingUser.clerkId && !existingUser.clerkId.startsWith('ws_');
+    const logContext = {
+      source: 'UsersService',
+      userId: existingUser.id,
+      previousClerkId: existingUser.clerkId,
+      clerkId: clerkUserId,
+      whalesyncUserId: existingUser.whalesyncUserId,
+    };
+    if (replacingRealClerkIdentity) {
+      // Anomalous: the email is already owned by a row with a real (non-shadow) Clerk id. Per Clerk's
+      // unique-verified-email invariant this is the same human with a rotated/stale id, so re-link —
+      // but surface it (warn) because overwriting a real login is not the expected shadow-adopt case.
+      WSLogger.warn({
+        ...logContext,
+        message: 'Re-linking a Scratch user to a new real Clerk identity by email match',
+      });
+    } else {
+      WSLogger.info({
+        ...logContext,
+        message: 'Adopting a Whalesync shadow user into a native Clerk identity by email match',
+      });
+    }
+
+    const linkedUser = await this.db.client.user.update({
+      where: { id: existingUser.id },
+      data: { clerkId: clerkUserId },
+      include: UserCluster._validator.include,
+    });
+
+    this.postHogService.trackClerkAccountLinked(linkedUser, clerkUserId);
+    await this.slackNotificationService.sendMessage(SlackFormatters.clerkAccountLinked(linkedUser, clerkUserId));
 
     return linkedUser;
   }

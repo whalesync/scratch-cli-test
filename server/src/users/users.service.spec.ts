@@ -52,6 +52,20 @@ describe('UsersService — Whalesync shadow users', () => {
     } as unknown as UserCluster.User;
   }
 
+  // A non-expired WEBSOCKET token so the getOrCreateUserFromClerk token-ensuring block is a no-op
+  // (the user already has a valid websocket token), keeping the adopt/hit tests focused on identity.
+  function makeFutureWebsocketToken(): UserCluster.User['apiTokens'][number] {
+    return {
+      id: 'tok_ws_1',
+      type: 'WEBSOCKET',
+      token: 'ws-token-value',
+      userId: 'usr_shadow_1',
+      scopes: [],
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60),
+    } as unknown as UserCluster.User['apiTokens'][number];
+  }
+
   beforeEach(() => {
     dbService = {
       client: {
@@ -66,11 +80,15 @@ describe('UsersService — Whalesync shadow users', () => {
           create: jest.fn().mockResolvedValue({ id: 'wkb_1' }),
         },
         apiToken: {
-          create: jest.fn(),
+          create: jest.fn().mockResolvedValue(makeFutureWebsocketToken()),
           deleteMany: jest.fn(),
         },
         organization: {
           delete: jest.fn(),
+        },
+        // Queried by the native create path (getOrCreateUserFromClerk → redeemWorkspaceInvites).
+        workspaceInvites: {
+          findMany: jest.fn().mockResolvedValue([]),
         },
       },
     } as unknown as jest.Mocked<DbService>;
@@ -78,6 +96,7 @@ describe('UsersService — Whalesync shadow users', () => {
     postHogService = {
       identifyNewUser: jest.fn(),
       trackWhalesyncAccountLinked: jest.fn(),
+      trackClerkAccountLinked: jest.fn(),
     } as unknown as jest.Mocked<PostHogService>;
 
     slackNotificationService = { sendMessage: jest.fn().mockResolvedValue(undefined) };
@@ -90,12 +109,16 @@ describe('UsersService — Whalesync shadow users', () => {
       dbService,
       postHogService,
       {} as never, // configService — unused by these methods
-      slackNotificationService as never, // slackNotificationService — used by the adopt path
-      {} as never, // emailService — unused
+      slackNotificationService as never, // slackNotificationService — used by the adopt paths
+      {} as never, // emailService — unused (invite redemption finds no invites in these tests)
       workbookProvisioningService,
-      {} as never, // experimentsService — unused by the shadow-user path (no auto-trial)
+      // experimentsService — the native create path checks the auto-trial flag (off here → no trial).
+      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as never,
       // stripePaymentService — the shadow-user path assigns the Whalesync plan via this method.
-      { ensureWhalesyncPlanSubscription: jest.fn().mockResolvedValue(undefined) } as never,
+      {
+        createTrialSubscription: jest.fn(),
+        ensureWhalesyncPlanSubscription: jest.fn().mockResolvedValue(undefined),
+      } as never,
     );
   });
 
@@ -256,6 +279,111 @@ describe('UsersService — Whalesync shadow users', () => {
       // Name unchanged and email blocked → no write at all; the existing row is returned untouched.
       expect(result).toBe(legacyShadowUser);
       expect(dbService.client.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getOrCreateUserFromClerk', () => {
+    it('adopts a Whalesync shadow user that owns the email, updating only its clerkId (DEV-10731)', async () => {
+      // No user by clerkId (the shadow row stores ws_…), but a shadow user owns the email → adopt it
+      // into the real Clerk identity instead of colliding on the @unique email (the 401 root cause).
+      (dbService.client.user.findFirst as jest.Mock).mockResolvedValue(null);
+      const shadowUser = makeShadowUser();
+      (dbService.client.user.findUnique as jest.Mock).mockResolvedValue(shadowUser);
+      const adoptedUser = makeShadowUser({ clerkId: 'user_realclerkid', apiTokens: [makeFutureWebsocketToken()] });
+      (dbService.client.user.update as jest.Mock).mockResolvedValue(adoptedUser);
+
+      const result = await service.getOrCreateUserFromClerk('user_realclerkid', 'Ada Lovelace', 'ada@example.com');
+
+      expect(result).toBe(adoptedUser);
+      // No new user — we link the existing shadow row.
+      expect(dbService.client.user.create).not.toHaveBeenCalled();
+      // The email/name are unchanged, so the only write is the adopt itself.
+      expect(dbService.client.user.update).toHaveBeenCalledTimes(1);
+      const updateCallArgs = (dbService.client.user.update as jest.Mock).mock.calls[0] as unknown[];
+      const updateArgs = updateCallArgs[0] as { where: { id: string }; data: Record<string, unknown> };
+      expect(updateArgs.where.id).toBe('usr_shadow_1');
+      // Only clerkId is set — whalesyncUserId / email / org are preserved (dual-identity account).
+      expect(updateArgs.data).toEqual({ clerkId: 'user_realclerkid' });
+      // Adopt is a link, not a creation: no identifyNewUser, no Whalesync-side link event.
+      expect(postHogService.identifyNewUser).not.toHaveBeenCalled();
+      expect(postHogService.trackWhalesyncAccountLinked).not.toHaveBeenCalled();
+      // ...but it DOES fire the dedicated Clerk-link event with the linked user and the real clerkId.
+      expect(postHogService.trackClerkAccountLinked).toHaveBeenCalledWith(adoptedUser, 'user_realclerkid');
+      // ...and posts a Slack notification carrying both the Scratch user id and the clerkId.
+      expect(slackNotificationService.sendMessage).toHaveBeenCalledTimes(1);
+      const slackCallArgs = slackNotificationService.sendMessage.mock.calls[0] as unknown[];
+      const slackMessage = slackCallArgs[0] as string;
+      expect(slackMessage).toContain('usr_shadow_1');
+      expect(slackMessage).toContain('user_realclerkid');
+    });
+
+    it('re-links (and warns) when the email is owned by a row with a real, non-ws_ clerkId', async () => {
+      // Anomalous: email owned by a row that already has a real Clerk id (stale/rotated). Still adopt,
+      // but the helper logs at warn rather than info; behavior (the update + link event) is unchanged.
+      (dbService.client.user.findFirst as jest.Mock).mockResolvedValue(null);
+      (dbService.client.user.findUnique as jest.Mock).mockResolvedValue(makeNativeUser({ clerkId: 'user_old' }));
+      const relinked = makeNativeUser({ clerkId: 'user_new', apiTokens: [makeFutureWebsocketToken()] });
+      (dbService.client.user.update as jest.Mock).mockResolvedValue(relinked);
+
+      const result = await service.getOrCreateUserFromClerk('user_new', 'Ada Lovelace', 'ada@example.com');
+
+      expect(result).toBe(relinked);
+      expect(dbService.client.user.create).not.toHaveBeenCalled();
+      expect(dbService.client.user.update).toHaveBeenCalledTimes(1);
+      expect(firstCallData(dbService.client.user.update as jest.Mock)).toEqual({ clerkId: 'user_new' });
+      expect(postHogService.trackClerkAccountLinked).toHaveBeenCalledWith(relinked, 'user_new');
+    });
+
+    it('creates a new user when no existing row owns the email', async () => {
+      // No user by clerkId and nobody owns the email → the original native create path runs unchanged.
+      (dbService.client.user.findFirst as jest.Mock).mockResolvedValue(null);
+      (dbService.client.user.findUnique as jest.Mock).mockResolvedValue(null);
+      const created = makeNativeUser({
+        id: 'usr_created',
+        clerkId: 'user_new',
+        apiTokens: [makeFutureWebsocketToken()],
+      });
+      (dbService.client.user.create as jest.Mock).mockResolvedValue(created);
+
+      const result = await service.getOrCreateUserFromClerk('user_new', 'New User', 'new@example.com');
+
+      expect(result).toBe(created);
+      expect(dbService.client.user.create).toHaveBeenCalledTimes(1);
+      // A genuine new native signup: identify, but no adopt (no clerkId update / link event).
+      expect(postHogService.identifyNewUser).toHaveBeenCalledWith(created);
+      expect(dbService.client.user.update).not.toHaveBeenCalled();
+      expect(postHogService.trackClerkAccountLinked).not.toHaveBeenCalled();
+    });
+
+    it('returns the existing user directly on a clerkId hit, never reconciling by email', async () => {
+      const existing = makeNativeUser({ apiTokens: [makeFutureWebsocketToken()] });
+      (dbService.client.user.findFirst as jest.Mock).mockResolvedValue(existing);
+
+      const result = await service.getOrCreateUserFromClerk('user_realclerkid', 'Ada Lovelace', 'ada@example.com');
+
+      expect(result).toBe(existing);
+      // Found by clerkId → no email reconciliation, no create, no adopt.
+      expect(dbService.client.user.findUnique).not.toHaveBeenCalled();
+      expect(dbService.client.user.create).not.toHaveBeenCalled();
+      expect(dbService.client.user.update).not.toHaveBeenCalled();
+      expect(postHogService.trackClerkAccountLinked).not.toHaveBeenCalled();
+    });
+
+    it('skips email reconciliation entirely when no email is provided', async () => {
+      (dbService.client.user.findFirst as jest.Mock).mockResolvedValue(null);
+      const created = makeNativeUser({
+        id: 'usr_created',
+        clerkId: 'user_new',
+        apiTokens: [makeFutureWebsocketToken()],
+      });
+      (dbService.client.user.create as jest.Mock).mockResolvedValue(created);
+
+      await service.getOrCreateUserFromClerk('user_new', 'New User');
+
+      // No email → cannot collide by email, so findByEmail (findUnique) is never called; straight to create.
+      expect(dbService.client.user.findUnique).not.toHaveBeenCalled();
+      expect(dbService.client.user.create).toHaveBeenCalledTimes(1);
+      expect(postHogService.trackClerkAccountLinked).not.toHaveBeenCalled();
     });
   });
 

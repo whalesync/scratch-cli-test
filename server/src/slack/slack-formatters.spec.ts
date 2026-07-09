@@ -286,6 +286,36 @@ describe('SlackFormatters', () => {
     });
   });
 
+  describe('clerkAccountLinked', () => {
+    const createTestUser = (overrides: Partial<Pick<UserCluster.User, 'id' | 'email' | 'name'>>): UserCluster.User => {
+      return {
+        id: overrides.id || 'usr_shadow_1',
+        email: overrides.email,
+        name: overrides.name,
+        apiTokens: [],
+        organization: null,
+      } as unknown as UserCluster.User;
+    };
+
+    it('includes the Scratch user id, email, and the real clerk id', () => {
+      const user = createTestUser({ id: 'usr_shadow_1', email: 'ada@example.com', name: 'Ada Lovelace' });
+
+      const result = SlackFormatters.clerkAccountLinked(user, 'user_realclerkid');
+
+      expect(result).toBe(
+        '🔗 *Native Clerk sign-in linked to shadow user*\n👤 ada@example.com (usr_shadow_1)\n🔑 Clerk id: user_realclerkid',
+      );
+    });
+
+    it('falls back to name then id when the email is missing', () => {
+      const withName = SlackFormatters.clerkAccountLinked(createTestUser({ id: 'usr_1', name: 'Ada' }), 'user_1');
+      expect(withName).toContain('👤 Ada (usr_1)');
+
+      const withoutNameOrEmail = SlackFormatters.clerkAccountLinked(createTestUser({ id: 'usr_2' }), 'user_2');
+      expect(withoutNameOrEmail).toContain('👤 usr_2 (usr_2)');
+    });
+  });
+
   describe('SlackFormatters class', () => {
     it('should not be instantiable (utility class pattern)', () => {
       // The constructor is private, so we can't test instantiation directly
@@ -294,6 +324,7 @@ describe('SlackFormatters', () => {
       expect(typeof SlackFormatters.newUserSignup).toBe('function');
       expect(typeof SlackFormatters.userIdentifier).toBe('function');
       expect(typeof SlackFormatters.whalesyncAccountLinked).toBe('function');
+      expect(typeof SlackFormatters.clerkAccountLinked).toBe('function');
     });
   });
 });
