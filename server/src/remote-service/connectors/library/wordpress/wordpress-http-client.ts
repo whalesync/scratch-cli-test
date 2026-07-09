@@ -13,9 +13,21 @@ import {
   WordPressGetTaxonomiesApiResponse,
   WordPressGetTypesApiResponse,
   WordPressMediaUploadResponse,
+  WordPressPollRecordsResult,
   WordPressRecord,
   WordPressSiteTimezone,
 } from './wordpress-types';
+
+/**
+ * Parse a WordPress count header (`X-WP-Total` / `X-WP-TotalPages`) into a
+ * non-negative integer, or `undefined` when the header is absent or malformed.
+ * Axios exposes header values as strings, but we accept `number`/`unknown`
+ * defensively so a mocked or proxied response can't throw here.
+ */
+export function parseWordPressCountHeader(value: unknown): number | undefined {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? parseInt(value, 10) : NaN;
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
 
 /**
  * Client for making HTTP requests to WordPress REST API.
@@ -158,13 +170,18 @@ export class WordPressHttpClient {
    * `modified_after`; taxonomy collections never reach this path (the connector
    * demotes them to a full scan). Offset pagination and the `status=any` /
    * `context=edit` params are unchanged.
+   *
+   * Returns the page of records alongside the collection-wide `X-WP-Total` /
+   * `X-WP-TotalPages` counts (parsed, or `undefined` when the site omits them)
+   * so the connector can stop paginating once it has seen every record — a
+   * short-page check alone loops forever against a site that ignores `offset`.
    */
   async pollRecords(
     tableId: string,
     offset: number,
     pageSize: number,
     modifiedAfter?: string,
-  ): Promise<WordPressRecord[]> {
+  ): Promise<WordPressPollRecordsResult> {
     const searchParams: { name: string; value: string }[] = [];
     searchParams.push({ name: 'per_page', value: String(pageSize) });
     if (offset > 0) {
@@ -179,7 +196,13 @@ export class WordPressHttpClient {
     searchParams.push({ name: 'context', value: 'edit' }); // Return raw content and all fields
     const url = this.generateUrl(this.endpoint, tableId, null, searchParams);
     const response = await this.client.get<WordPressRecord[]>(url);
-    return response.data;
+    // Axios lowercases header keys. Headers may be absent (proxy/plugin stripped
+    // them, or a mocked response) — optional-chain so we never throw here.
+    return {
+      records: response.data,
+      total: parseWordPressCountHeader(response.headers?.['x-wp-total']),
+      totalPages: parseWordPressCountHeader(response.headers?.['x-wp-totalpages']),
+    };
   }
 
   /**

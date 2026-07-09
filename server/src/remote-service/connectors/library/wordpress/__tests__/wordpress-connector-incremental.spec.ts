@@ -78,7 +78,7 @@ describe('WordPressConnector.pullRecordFiles (incremental)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     // One short page (< page size) ends the pagination loop after one call.
-    mockPollRecords.mockResolvedValue([{ id: 1, modified: '2026-05-14T13:00:00' }]);
+    mockPollRecords.mockResolvedValue({ records: [{ id: 1, modified: '2026-05-14T13:00:00' }], total: 1 });
     mockGetSiteTimezone.mockResolvedValue({}); // UTC unless a test overrides
     connector = new WordPressConnector('user', 'pass', 'https://example.com/wp-json/');
   });

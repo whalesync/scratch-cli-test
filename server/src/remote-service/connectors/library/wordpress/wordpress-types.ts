@@ -2,6 +2,22 @@
 
 export type WordPressRecord = { [Key in string]?: unknown } & { id?: number };
 
+/**
+ * Result of a single {@link WordPressHttpClient.pollRecords} page fetch: the
+ * page of records plus the collection-wide counts WordPress reports in the
+ * `X-WP-Total` / `X-WP-TotalPages` response headers. Both counts are optional
+ * because a site (or a proxy/plugin) can omit the headers; the connector's
+ * pagination loop treats an absent `total` as "unknown" and falls back to its
+ * short-page / offset-ignoring guards.
+ */
+export interface WordPressPollRecordsResult {
+  records: WordPressRecord[];
+  /** Parsed `X-WP-Total` — total records matching the query, or `undefined`. */
+  total?: number;
+  /** Parsed `X-WP-TotalPages` — total pages for the current page size, or `undefined`. */
+  totalPages?: number;
+}
+
 export type WordPressDownloadProgress = {
   nextOffset: number | undefined;
 };

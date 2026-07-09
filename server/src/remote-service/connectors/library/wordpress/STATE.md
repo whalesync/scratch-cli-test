@@ -102,7 +102,7 @@ Max records (or fields) per API request, **per operation** — services often di
 
 | Operation | Max per request | Mechanism (endpoint / cursor) | Notes |
 |---|---|---|---|
-| Read (list) | 100 records/page | `GET /wp/v2/{type}` offset pagination | `WORDPRESS_POLLING_PAGE_SIZE` |
+| Read (list) | 100 records/page | `GET /wp/v2/{type}` offset pagination | `WORDPRESS_POLLING_PAGE_SIZE`. Loop stops on a short page **or** `offset >= X-WP-Total`. A site that ignores `offset` (returns the same page again) fails the pull with `WordPressOffsetIgnoredError`; `WORDPRESS_MAX_PULL_PAGES` (1000) is a final runaway backstop (`WordPressMaxPagesReachedError`). See DEV-10733. |
 | Create | 25 records/request | `POST /batch/v1` (`require-all-validate`) | `media`/`users` not creatable; media is created via `POST /wp/v2/media` (asset upload) |
 | Update | 25 records/request | `POST /batch/v1` (`require-all-validate`) | **`media` can't batch** — its route doesn't opt into `allow_batch`, so it falls back to per-record `PATCH /wp/v2/media/{id}` (`WORDPRESS_BATCH_UNSUPPORTED_TABLE_IDS`) |
 | Delete | 25 ids/request | `POST /batch/v1` (`require-all-validate`) | **`media` can't batch** — falls back to per-record `DELETE /wp/v2/media/{id}?force=true` |
@@ -163,6 +163,8 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 
 ## Open issues
 - (link Linear issues for ❌ cells)
+- **DEV-10733** (fixed) — `pullRecordFiles` looped forever on sites that ignore the `offset` param (never read `X-WP-Total`). Now terminates on `offset >= total`, fails fast on a repeated page, and has a `WORDPRESS_MAX_PULL_PAGES` backstop.
+- **DEV-10732** (follow-up, not in this repo) — port the same offset-ignoring pagination fix to the Bottlenose connector.
 
 ## OAuth (final milestone — create the client with the user, or document what it takes)
 API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-release nicety done *with* the user. Fill this in when you reach Milestone 9.

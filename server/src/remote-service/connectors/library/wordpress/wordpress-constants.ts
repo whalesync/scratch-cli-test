@@ -3,6 +3,15 @@
 export const WORDPRESS_POLLING_PAGE_SIZE = 100;
 export const WORDPRESS_STATUS_COLUMN_ID = 'status';
 
+// Runaway-pagination backstop for `pullRecordFiles`: the maximum number of
+// pages a single pull will fetch before it gives up and fails. This is NOT a
+// usage cap — a healthy site completes far earlier via the short-page check or
+// the `X-WP-Total` (`offset >= total`) check. It only exists to guarantee
+// termination when a site both ignores the `offset` param AND omits the
+// `X-WP-Total` header (so the offset-ignoring / total checks can't catch it).
+// At 100 records/page this covers 100k records before the backstop trips.
+export const WORDPRESS_MAX_PULL_PAGES = 1000;
+
 // Last-modified field exposed by post-type and media collections (in the
 // site's timezone). Taxonomy collections (categories/tags/terms) do NOT expose
 // this field, so they have no incremental-pull support and demote to a full

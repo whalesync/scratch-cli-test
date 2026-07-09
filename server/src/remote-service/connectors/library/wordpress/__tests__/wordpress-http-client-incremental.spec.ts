@@ -86,3 +86,38 @@ describe('WordPressHttpClient.getSiteTimezone', () => {
     await expect(client.getSiteTimezone()).resolves.toEqual({});
   });
 });
+
+describe('WordPressHttpClient.pollRecords total-count headers', () => {
+  let mockGet: jest.Mock;
+  let client: WordPressHttpClient;
+
+  beforeEach(() => {
+    mockGet = jest.fn();
+    (createApiClient as jest.Mock).mockReturnValue({ get: mockGet });
+    client = new WordPressHttpClient('https://example.com/wp-json/', 'user', 'pass');
+  });
+
+  it('parses X-WP-Total and X-WP-TotalPages from the response headers', async () => {
+    mockGet.mockResolvedValue({ data: [{ id: 1 }], headers: { 'x-wp-total': '468', 'x-wp-totalpages': '5' } });
+    await expect(client.pollRecords('categories', 0, 100)).resolves.toEqual({
+      records: [{ id: 1 }],
+      total: 468,
+      totalPages: 5,
+    });
+  });
+
+  it('leaves total/totalPages undefined when the headers are absent', async () => {
+    mockGet.mockResolvedValue({ data: [{ id: 1 }] });
+    await expect(client.pollRecords('categories', 0, 100)).resolves.toEqual({
+      records: [{ id: 1 }],
+      total: undefined,
+      totalPages: undefined,
+    });
+  });
+
+  it('leaves total undefined for a malformed header value', async () => {
+    mockGet.mockResolvedValue({ data: [], headers: { 'x-wp-total': 'not-a-number' } });
+    const result = await client.pollRecords('categories', 0, 100);
+    expect(result.total).toBeUndefined();
+  });
+});

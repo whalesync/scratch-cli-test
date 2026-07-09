@@ -2,6 +2,7 @@ import { TObject } from '@sinclair/typebox';
 import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
+import { WSLogger } from 'src/logger';
 import TurndownService from 'turndown';
 import { extractStandaloneEntity } from '../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -27,11 +28,13 @@ import {
   WORDPRESS_BATCH_SIZE,
   WORDPRESS_BATCH_UNSUPPORTED_TABLE_IDS,
   WORDPRESS_CREATE_UNSUPPORTED_TABLE_IDS,
+  WORDPRESS_MAX_PULL_PAGES,
   WORDPRESS_ORG_V2_PATH,
   WORDPRESS_POLLING_PAGE_SIZE,
   WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS,
   WORDPRESS_STATUS_COLUMN_ID,
 } from './wordpress-constants';
+import { WordPressMaxPagesReachedError, WordPressOffsetIgnoredError } from './wordpress-errors';
 import { WordPressHttpClient } from './wordpress-http-client';
 import { formatWordPressModifiedAfter } from './wordpress-incremental';
 import { buildWordPressJsonTableSpec } from './wordpress-json-schema';
@@ -211,7 +214,11 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
   ): Promise<PullRecordFilesResult> {
     const [tableId] = tableSpec.id.remoteId;
     let offset = progress?.nextOffset ?? 0;
-    let hasMore = true;
+    let pageCount = 0;
+    // Id-set signature of the previous page. A correctly paginating endpoint
+    // never returns the same ids at a higher offset, so a repeat means the site
+    // is ignoring `offset` (see WordPressOffsetIgnoredError).
+    let previousPageRecordIdSignature: string | undefined;
 
     // Capture the watermark BEFORE the first API call so changes made mid-pull
     // aren't lost on the next run; idempotent commits absorb the small
@@ -234,23 +241,87 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
       modifiedAfter = formatWordPressModifiedAfter(options.since, siteTimezone);
     }
 
-    while (hasMore) {
-      const response = await this.client.pollRecords(tableId, offset, WORDPRESS_POLLING_PAGE_SIZE, modifiedAfter);
+    // Pagination terminates in one of two ways:
+    //  - Clean completion: a short page (fewer than a full page, incl. empty) or
+    //    `offset >= total` (X-WP-Total) means we've seen every record.
+    //  - Surfaced failure (throw): the site returns the same page at a higher
+    //    offset (ignores `offset`) or we hit the page-count backstop. Failing
+    //    fast beats silently reporting success with incomplete data — a broken
+    //    site would otherwise loop forever hammering the API.
+    while (true) {
+      const { records, total } = await this.client.pollRecords(
+        tableId,
+        offset,
+        WORDPRESS_POLLING_PAGE_SIZE,
+        modifiedAfter,
+      );
 
-      if (!Array.isArray(response)) {
-        throw new Error(`Unexpected response format from WordPress: expected array, got ${typeof response}`);
+      if (!Array.isArray(records)) {
+        throw new Error(`Unexpected response format from WordPress: expected array, got ${typeof records}`);
       }
 
-      const returnedCount = response.length;
-      if (returnedCount < WORDPRESS_POLLING_PAGE_SIZE) {
-        hasMore = false;
-        await callback({ files: response as unknown as ConnectorFile[], connectorProgress: { nextOffset: undefined } });
-      } else {
-        offset += returnedCount;
-        await callback({ files: response as unknown as ConnectorFile[], connectorProgress: { nextOffset: offset } });
+      pageCount += 1;
+      const returnedCount = records.length;
+      const currentPageRecordIdSignature = this.buildRecordIdSignature(records);
+
+      // Offset-ignoring guard (throw before advancing / committing this page):
+      // an identical non-empty page at a higher offset can't be honest pagination.
+      if (returnedCount > 0 && currentPageRecordIdSignature === previousPageRecordIdSignature) {
+        WSLogger.error({
+          source: 'WordPressConnector',
+          message: 'WordPress returned a duplicate page at a higher offset; site is ignoring the offset parameter',
+          tableId,
+          offset,
+          returnedCount,
+          total,
+        });
+        throw new WordPressOffsetIgnoredError(tableId, offset);
+      }
+      if (returnedCount > 0) {
+        previousPageRecordIdSignature = currentPageRecordIdSignature;
+      }
+
+      offset += returnedCount;
+      const isShortPage = returnedCount < WORDPRESS_POLLING_PAGE_SIZE;
+      const reachedTotal = typeof total === 'number' && offset >= total;
+      const done = isShortPage || reachedTotal;
+
+      // Backstop (throw): headerless site that also ignores offset — the checks
+      // above can't catch it, so cap the page count to guarantee termination.
+      if (!done && pageCount >= WORDPRESS_MAX_PULL_PAGES) {
+        WSLogger.error({
+          source: 'WordPressConnector',
+          message: `WordPress pull hit the ${WORDPRESS_MAX_PULL_PAGES}-page backstop without completing`,
+          tableId,
+          offset,
+          total,
+        });
+        throw new WordPressMaxPagesReachedError(tableId, WORDPRESS_MAX_PULL_PAGES);
+      }
+
+      await callback({
+        files: records as unknown as ConnectorFile[],
+        connectorProgress: { nextOffset: done ? undefined : offset },
+      });
+
+      if (done) {
+        break;
       }
     }
     return newWatermark ? { newWatermark } : {};
+  }
+
+  /**
+   * Build an order-independent signature of a page's record ids. Used by the
+   * pagination loop to detect an offset-ignoring site (same page returned at a
+   * higher offset). Sorting normalizes order so a reordered-but-identical page
+   * still matches; a missing id contributes the empty string.
+   */
+  private buildRecordIdSignature(records: WordPressRecord[]): string {
+    return records
+      .map((record) => String(record.id ?? ''))
+      .sort()
+      .join(',');
   }
 
   async pullRecordFilesByIds(
