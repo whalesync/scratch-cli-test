@@ -249,13 +249,16 @@ function ServiceBlock({
   const handleReauthorize = useCallback(async () => {
     if (!connectorAccount || connectorAccount.authType !== AuthType.OAUTH) return;
     try {
-      const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
       await initiateDesktopOAuth(connectorAccount.service, {
         workbookId,
-        redirectPrefix: webUrl,
+        // Absolute exit URL the OAuth callback forwards the result to — the desktop deep link.
+        resultForwardUrl: `scratch://oauth-callback`,
+        // TODO(DEV-10734): remove these two — unused now that forwarding uses `resultForwardUrl`.
+        // https://linear.app/whalesync/issue/DEV-10734
+        redirectPrefix: 'TODO(DEV-10734): Remove Unused parameter',
+        returnPage: 'TODO(DEV-10734): Remove Unused parameter',
         connectionMethod: 'OAUTH_SYSTEM',
         connectionName: connectorAccount.displayName,
-        returnPage: `scratch://oauth-callback`,
         connectorAccountId: connectorAccount.id,
       });
     } catch (error) {
@@ -360,13 +363,16 @@ function EmptyServiceBlock({
   const handleReauthorize = useCallback(async () => {
     if (connectorAccount.authType !== AuthType.OAUTH) return;
     try {
-      const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
       await initiateDesktopOAuth(connectorAccount.service, {
         workbookId,
-        redirectPrefix: webUrl,
+        // Absolute exit URL the OAuth callback forwards the result to — the desktop deep link.
+        resultForwardUrl: `scratch://oauth-callback`,
+        // TODO(DEV-10734): remove these two — unused now that forwarding uses `resultForwardUrl`.
+        // https://linear.app/whalesync/issue/DEV-10734
+        redirectPrefix: 'TODO(DEV-10734): Remove Unused parameter',
+        returnPage: 'TODO(DEV-10734): Remove Unused parameter',
         connectionMethod: 'OAUTH_SYSTEM',
         connectionName: connectorAccount.displayName,
-        returnPage: `scratch://oauth-callback`,
         connectorAccountId: connectorAccount.id,
       });
     } catch (error) {

@@ -112,16 +112,20 @@ export function CreateConnectionModal({
     try {
       const isCustom = authMethod === 'oauth_custom';
       const connectionName = newDisplayName ?? undefined;
-      const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
 
       const oauthOptions: OAuthInitiateOptionsDto = {
-        redirectPrefix: webUrl,
+        // Absolute exit URL the OAuth callback forwards the result to — the desktop deep link.
+        resultForwardUrl: 'scratch://oauth-callback',
+        // TODO(DEV-10734): remove these two — unused now that forwarding uses `resultForwardUrl`.
+        // `redirectPrefix` is only sent to satisfy the still-required schema field; the desktop
+        // `returnPage` was the old forward target. https://linear.app/whalesync/issue/DEV-10734
+        redirectPrefix: 'TODO(DEV-10734): Remove Unused parameter',
+        returnPage: 'TODO(DEV-10734): Remove Unused parameter',
         workbookId,
         connectionMethod: isCustom ? 'OAUTH_CUSTOM' : 'OAUTH_SYSTEM',
         customClientId: isCustom ? customClientId : undefined,
         customClientSecret: isCustom ? customClientSecret : undefined,
         connectionName,
-        returnPage: 'scratch://oauth-callback',
       };
       // Assign credential field values to the options
       for (const field of currentFields) {

@@ -256,9 +256,14 @@ function ServiceBlock({ group, workbookId, connectorAccount }: ServiceBlockProps
     try {
       await initiateOAuth(connectorAccount.service, {
         workbookId,
-        redirectPrefix: `${window.location.protocol}//${window.location.host}`,
+        // Absolute exit URL the OAuth callback forwards the result to (the token-exchange page).
+        resultForwardUrl: `${window.location.protocol}//${window.location.host}/oauth/callback-step-2`,
+        // TODO(DEV-10734): remove — unused; only sent to satisfy the still-required schema field.
+        // https://linear.app/whalesync/issue/DEV-10734
+        redirectPrefix: 'TODO(DEV-10734): Remove Unused parameter',
         connectionMethod: 'OAUTH_SYSTEM',
         connectionName: connectorAccount.displayName,
+        // Still used: /oauth/callback-step-2 reads this for the in-app landing after connect.
         returnPage: window.location.pathname,
         connectorAccountId: connectorAccount.id,
       });
@@ -353,9 +358,14 @@ function EmptyServiceBlock({ connectorAccount, workbookId }: EmptyServiceBlockPr
     try {
       await initiateOAuth(connectorAccount.service, {
         workbookId,
-        redirectPrefix: `${window.location.protocol}//${window.location.host}`,
+        // Absolute exit URL the OAuth callback forwards the result to (the token-exchange page).
+        resultForwardUrl: `${window.location.protocol}//${window.location.host}/oauth/callback-step-2`,
+        // TODO(DEV-10734): remove — unused; only sent to satisfy the still-required schema field.
+        // https://linear.app/whalesync/issue/DEV-10734
+        redirectPrefix: 'TODO(DEV-10734): Remove Unused parameter',
         connectionMethod: 'OAUTH_SYSTEM',
         connectionName: connectorAccount.displayName,
+        // Still used: /oauth/callback-step-2 reads this for the in-app landing after connect.
         returnPage: window.location.pathname,
         connectorAccountId: connectorAccount.id,
       });

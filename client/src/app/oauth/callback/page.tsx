@@ -1,5 +1,33 @@
 'use client';
 
+/**
+ * =============================================================================
+ *   ⚠️  LEGACY OAuth landing page — this is NOT the active OAuth callback.  ⚠️
+ * =============================================================================
+ *
+ * Since the migration to Whalesync-owned OAuth apps, the `redirect_uri` registered
+ * with the OAuth provider for every current connector is Whalesync's connector
+ * callback, NOT this page:
+ *
+ *     https://app.whalesync.com/oauth-callback/connector/<type>
+ *     (dusky:  pages/oauth-callback/connector/[connectorType].tsx)
+ *
+ * THAT page holds the real routing: it decodes the OAuth `state`, runs
+ * `deriveScratchOAuthDestination`, and forwards the result to the state's
+ * `resultForwardUrl` (web → /oauth/callback-step-2, desktop → scratch://oauth-callback).
+ *
+ * This page (`/oauth/callback`) is the OLD, pre-migration `redirect_uri`. It is
+ * reached ONLY by OAuth flows that still authorize against a legacy, Scratch-owned
+ * OAuth app registered against this URL — no current connector uses it. It is kept
+ * solely so those pre-migration flows keep working, and is slated for deletion once
+ * every OAuth app is migrated to Whalesync-owned (OAuth cleanup: DEV-10734).
+ *
+ * ➜ DO NOT add or change routing logic here — the active equivalent is dusky's
+ *   connector callback above. Anything you touch here affects legacy flows only.
+ *   (The token exchange itself happens downstream at /oauth/callback-step-2.)
+ * =============================================================================
+ */
+
 import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text13Regular, TextTitle2 } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
@@ -39,6 +67,9 @@ const isWhalesyncRedirectPrefix = (redirectPrefix: string | undefined): boolean 
 };
 
 /**
+ * LEGACY — see the banner at the top of this file; the active routing lives in dusky's connector
+ * callback, not here. This page is the pre-migration `redirect_uri`.
+ *
  * This is the page that we go back to during an OAuth authorization flow after the user has just gone out to the OAuth
  * authorization screen for a provider (e.g. Webflow). It reads the original host/port that the request came from in the
  * OAuth state param, then redirects back there to finish the flow.
