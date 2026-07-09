@@ -5,10 +5,21 @@ import { z } from 'zod';
  */
 export const oauthInitiateOptionsSchema = z.object({
   /**
-   * The `(http|https)://<host>(:<port>)` part of the URL for the browser location kicking off an
-   * OAuth request, so the client knows where to redirect back to (stored in the URL `state` param)
-   * after the remote OAuth service redirects back. Mainly used to redirect back to `localhost` for
-   * OAuth services that don't support it natively.
+   * Absolute URL the OAuth callback forwards the result to (the "exit") once the provider redirects
+   * back. Web: `${origin}/oauth/callback-step-2`. Desktop: `scratch://oauth-callback`. Whalesync
+   * (Live Export): its own landing page. NEVER the OAuth redirect_uri / connector callback itself,
+   * or the handler would forward to itself. Subject to the callback's host-based redirect allowlist.
+   * Optional for now: every initiator still also sends the legacy `redirectPrefix` during the
+   * transition, so old and new callbacks both work regardless of deploy order.
+   */
+  resultForwardUrl: z.string().min(1).optional(),
+  /**
+   * The `(http|https)://<host>(:<port>)` origin of the browser location kicking off an OAuth request,
+   * so the callback knows which origin to bounce back to (stored in the URL `state` param). Mainly to
+   * redirect back to `localhost` for OAuth services that don't support it natively.
+   *
+   * @deprecated Superseded by `resultForwardUrl`. Still required — and still sent by every initiator —
+   * during the transition; it becomes optional and is then removed at cutoff.
    */
   redirectPrefix: z.string().min(1),
   connectionMethod: z.enum(['OAUTH_SYSTEM', 'OAUTH_CUSTOM']).optional(),

@@ -154,6 +154,7 @@ export class OAuthService {
     });
 
     const statePayload: OAuthStatePayload = {
+      resultForwardUrl: options.resultForwardUrl,
       redirectPrefix: options.redirectPrefix,
       userId: actor.userId,
       organizationId: actor.organizationId,
