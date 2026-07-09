@@ -44,6 +44,11 @@ export class UsersController {
 
     const flagValues = await this.experimentsService.resolveClientFeatureFlagsForUser(req.user);
 
+    // DEV-10735: minimum supported desktop version for this user (undefined = no
+    // minimum). The desktop app compares its own version against this and forces
+    // an upgrade when it's older.
+    const minimumDesktopClientVersion = await this.experimentsService.getMinimumSupportedDesktopVersion(req.user);
+
     // Get monthly publish count for the organization
     const billableActions: BillableActions = {
       monthlyPublishCount: req.user.organizationId
@@ -51,7 +56,7 @@ export class UsersController {
         : 0,
     };
 
-    return new User(req.user, flagValues, billableActions);
+    return new User(req.user, flagValues, billableActions, minimumDesktopClientVersion);
   }
 
   @Patch('current/settings')

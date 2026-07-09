@@ -224,6 +224,23 @@ export class ExperimentsService implements OnModuleDestroy {
   }
 
   /**
+   * Resolves the minimum supported desktop-app version for a user from the
+   * `MINIMUM_SUPPORTED_DESKTOP_VERSION` flag's PostHog JSON payload (DEV-10735).
+   * The payload is expected to be a bare semver string (e.g. `"0.2.0"`). Returns
+   * the trimmed string when a non-empty string payload is present, or `undefined`
+   * otherwise. Fail-open by design: no flag, an empty/non-string payload, a
+   * PostHog outage, or an evaluation error all yield `undefined` ("no minimum")
+   * so the desktop app never locks a user out because the flag service hiccuped.
+   */
+  public async getMinimumSupportedDesktopVersion(user: PartialUser): Promise<string | undefined> {
+    const payload = await this.getJsonFlag(UserFlag.MINIMUM_SUPPORTED_DESKTOP_VERSION, '', user);
+    if (typeof payload === 'string' && payload.trim() !== '') {
+      return payload.trim();
+    }
+    return undefined;
+  }
+
+  /**
    * Gets a JSON payload for a given feature flag. JSON and Array types are the same for the client.
    * NOTE, in Posthog the payload is separate from the feature flag value. getStringFlag() will return the variant name, while getJsonFlag() will return the payload.
    * @param flag - The feature flag to get the value for

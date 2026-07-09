@@ -29,6 +29,7 @@ export enum PostHogEvents {
   APP_EXITED = 'app_exited',
   CHECK_FOR_UPDATES = 'check_for_updates',
   INSTALL_UPDATE = 'install_update',
+  FORCE_UPGRADE_REQUIRED = 'force_upgrade_required',
   DEEP_LINK_PROCESSED = 'deep_link_processed',
   WORKSPACE_CLOUD_SYNC_DETECTED = 'workspace_cloud_sync_detected',
   OPEN_CONNECTIONS_DIALOG = 'open_connections_dialog',
@@ -259,6 +260,13 @@ export async function trackInstallUpdate(props: { targetVersion: string }): Prom
   // sendImmediately: quitAndInstall() restarts the app moments after the click,
   // so we need the request to leave via sendBeacon rather than the batch queue.
   await captureEvent(PostHogEvents.INSTALL_UPDATE, props, { sendImmediately: true });
+}
+
+export async function trackForceUpgradeRequired(props: {
+  currentVersion: string;
+  minimumVersion: string;
+}): Promise<void> {
+  await captureEvent(PostHogEvents.FORCE_UPGRADE_REQUIRED, props);
 }
 
 export async function trackDeepLinkProcessed(props: {

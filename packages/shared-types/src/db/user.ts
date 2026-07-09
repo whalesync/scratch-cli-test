@@ -47,5 +47,15 @@ export interface User {
   lastWorkbookId?: string;
   waitlistApproved: boolean;
   serverBuildVersion?: string;
+  /**
+   * The minimum desktop-app version the server still supports, as a semver
+   * string (e.g. `"0.2.0"`). Sourced from the `MINIMUM_SUPPORTED_DESKTOP_VERSION`
+   * PostHog flag and evaluated per-user, so it can be rolled out to a subset of
+   * users. When the running desktop build is older than this, the desktop app
+   * locks its UI and forces an upgrade (DEV-10735). Absent/empty means there is
+   * no minimum — clients must treat a missing value as "no force-upgrade" so a
+   * flag-service outage never locks users out. Only the desktop app enforces it.
+   */
+  minimumDesktopClientVersion?: string;
   workspacePermissions?: WorkspacePermission[];
 }

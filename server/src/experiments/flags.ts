@@ -101,6 +101,19 @@ export enum UserFlag {
    * surface v2" — Client-only UI
    */
   DESKTOP_REVIEW_SURFACE_V2 = 'DESKTOP_REVIEW_SURFACE_V2',
+  /**
+   * DEV-10735 minimum supported desktop-app version. The flag's PostHog JSON
+   * payload is a semver string (e.g. `"0.2.0"`); when set, the desktop app locks
+   * its UI and forces an upgrade for any build older than that version. Evaluated
+   * per-user (via `ExperimentsService.getMinimumSupportedDesktopVersion`) so a new
+   * minimum can be rolled out to a subset of users — e.g. force-deprecating
+   * versions older than a week when reworking OAuth params. Surfaced on
+   * `/users/current` as `minimumDesktopClientVersion`, NOT in `experimentalFlags`,
+   * so it is intentionally absent from `ClientUserFlags`. Fail-open: an empty
+   * payload, a PostHog outage, or a non-string payload all yield "no minimum" so a
+   * flag-service blip never locks users out.
+   */
+  MINIMUM_SUPPORTED_DESKTOP_VERSION = 'MINIMUM_SUPPORTED_DESKTOP_VERSION',
 }
 
 /**

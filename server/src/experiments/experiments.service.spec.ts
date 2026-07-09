@@ -5,6 +5,7 @@ import { UserFlag } from './flags';
 
 interface MockPostHogClient {
   isFeatureEnabled: jest.Mock;
+  getFeatureFlagPayload: jest.Mock;
   shutdown: jest.Mock;
 }
 
@@ -35,7 +36,11 @@ function makeService(environment: ScratchEnvironment): ExperimentsService {
 }
 
 function injectPostHog(service: ExperimentsService): MockPostHogClient {
-  const mockClient: MockPostHogClient = { isFeatureEnabled: jest.fn(), shutdown: jest.fn() };
+  const mockClient: MockPostHogClient = {
+    isFeatureEnabled: jest.fn(),
+    getFeatureFlagPayload: jest.fn(),
+    shutdown: jest.fn(),
+  };
   (service as unknown as { posthog: MockPostHogClient }).posthog = mockClient;
   return mockClient;
 }
@@ -107,5 +112,48 @@ describe('ExperimentsService — DESKTOP_REVIEW_SURFACE_V2 (DEV-10617)', () => {
 
     expect(flags[UserFlag.DESKTOP_REVIEW_SURFACE_V2]).toBe(true);
     expect(posthog.isFeatureEnabled).toHaveBeenCalledWith(UserFlag.DESKTOP_REVIEW_SURFACE_V2, 'usr_1');
+  });
+});
+
+describe('ExperimentsService — getMinimumSupportedDesktopVersion (DEV-10735)', () => {
+  it('returns the trimmed semver string from the flag payload', async () => {
+    const service = makeService('production');
+    const posthog = injectPostHog(service);
+    posthog.getFeatureFlagPayload.mockResolvedValue('  0.2.0  ');
+
+    const result = await service.getMinimumSupportedDesktopVersion(makeUser());
+
+    expect(result).toBe('0.2.0');
+    expect(posthog.getFeatureFlagPayload).toHaveBeenCalledWith(UserFlag.MINIMUM_SUPPORTED_DESKTOP_VERSION, 'usr_1');
+  });
+
+  it('is undefined when PostHog is disabled (no credentials) — fail-open, never force an upgrade', async () => {
+    const service = makeService('production');
+
+    expect(await service.getMinimumSupportedDesktopVersion(makeUser())).toBeUndefined();
+  });
+
+  it('is undefined for an empty payload', async () => {
+    const service = makeService('production');
+    const posthog = injectPostHog(service);
+    posthog.getFeatureFlagPayload.mockResolvedValue('');
+
+    expect(await service.getMinimumSupportedDesktopVersion(makeUser())).toBeUndefined();
+  });
+
+  it('is undefined for a non-string payload', async () => {
+    const service = makeService('production');
+    const posthog = injectPostHog(service);
+    posthog.getFeatureFlagPayload.mockResolvedValue({ minVersion: '0.2.0' });
+
+    expect(await service.getMinimumSupportedDesktopVersion(makeUser())).toBeUndefined();
+  });
+
+  it('is undefined when the flag lookup throws — fail-open on a PostHog outage', async () => {
+    const service = makeService('production');
+    const posthog = injectPostHog(service);
+    posthog.getFeatureFlagPayload.mockRejectedValue(new Error('posthog down'));
+
+    expect(await service.getMinimumSupportedDesktopVersion(makeUser())).toBeUndefined();
   });
 });

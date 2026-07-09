@@ -5,9 +5,11 @@ import { HashRouter, Navigate, Route, Routes, useNavigate, useParams } from 'rea
 import { SWRConfig } from 'swr';
 import { ButtonPrimaryLight } from './components/base/buttons';
 import { DeepLinkBridge } from './components/DeepLinkBridge';
+import { ForceUpgradeSplash } from './components/ForceUpgradeSplash';
 import { Layout } from './components/Layout';
 import { ServerConnectionSplash } from './components/ServerConnectionSplash';
 import { useCurrentUser } from './hooks/use-current-user';
+import { useForceUpgrade } from './hooks/use-force-upgrade';
 import { listLocalWorkspaces } from './lib/local-workspaces';
 import { scratchApiClient } from './lib/scratch-api-client';
 import { LoginPage } from './pages/LoginPage';
@@ -172,6 +174,7 @@ function StartupRedirect({ children }: { children: React.ReactNode }) {
 
 function AppRoutes() {
   const { user, isLoading, error, refreshUser } = useCurrentUser();
+  const { isUpgradeRequired, currentVersion, minimumVersion } = useForceUpgrade(user?.minimumDesktopClientVersion);
 
   if (isLoading) {
     return (
@@ -193,6 +196,18 @@ function AppRoutes() {
         </Alert>
         <ButtonPrimaryLight onClick={() => void refreshUser()}>Try again</ButtonPrimaryLight>
       </Stack>
+    );
+  }
+
+  // DEV-10735: when the running build is older than the server's minimum
+  // supported version, lock the entire app behind the force-upgrade screen.
+  // Rendered inside PostHogProvider so the upgrade prompt is attributed to the
+  // signed-in user.
+  if (isUpgradeRequired) {
+    return (
+      <PostHogProvider user={user}>
+        <ForceUpgradeSplash currentVersion={currentVersion} minimumVersion={minimumVersion} />
+      </PostHogProvider>
     );
   }
 

@@ -51,9 +51,20 @@ export class User {
 
   serverBuildVersion: string;
 
+  // DEV-10735: the minimum desktop-app version the server still supports (semver
+  // string, e.g. "0.2.0"). Sourced per-user from the
+  // MINIMUM_SUPPORTED_DESKTOP_VERSION PostHog flag. Undefined means "no minimum"
+  // — the desktop app then never force-upgrades. Only the desktop app enforces it.
+  minimumDesktopClientVersion?: string;
+
   workspacePermissions?: WorkspacePermission[];
 
-  constructor(user: UserCluster.User, experiments?: UserFlagValues, billableActions?: BillableActions) {
+  constructor(
+    user: UserCluster.User,
+    experiments?: UserFlagValues,
+    billableActions?: BillableActions,
+    minimumDesktopClientVersion?: string,
+  ) {
     this.id = user.id;
     this.createdAt = user.createdAt;
     this.updatedAt = user.updatedAt;
@@ -80,6 +91,7 @@ export class User {
     this.organization = user.organization ? new Organization(user.organization) : undefined;
     this.settings = user.settings as Record<string, string | number | boolean>;
     this.serverBuildVersion = BUILD_VERSION;
+    this.minimumDesktopClientVersion = minimumDesktopClientVersion;
 
     this.workspacePermissions = user.workspacePermissions?.map((wp) => ({
       id: wp.id as WorkspacePermissionId,
