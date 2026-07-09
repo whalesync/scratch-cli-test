@@ -9,7 +9,6 @@ Instructions for Claude Code when working in this repository. Subdirectory CLAUD
 - **Always run commands from the repo root** using Turborepo (see [Development Commands](#development-commands)).
 - **Always run `yarn build` and `yarn lint` from the repo root** after completing a series of code changes to verify nothing is broken. Format your changes before committing (e.g. `yarn prettier:check` / `--write` in the affected package) — CI runs `prettier:check` and there is no pre-commit hook to do it for you.
 - **Do not ignore pre-existing test or lint errors.** If `yarn test` or `yarn lint` fails on code you did not change, stop and ask the user how to proceed rather than silently ignoring the failures.
-- **Split desktop-app and server changes into separate merge requests** when a change touches both. Land the server MR first so the deployed backend already supports the desktop client before the client change ships — the desktop app (`/scratch-desktop`) talks to the deployed server, not your local one, so a desktop change that depends on a new/changed server endpoint will break in the wild if the server hasn't landed yet.
 - **QA desktop-app (client) changes with real UI before committing.** When you change the desktop app (`/scratch-desktop`), suggest the user run `/qa-desktop-app` to exercise the change through real UI interaction against the live test backend before committing, and optionally add a Playwright (`_electron`) test to cover the new behavior.
 - Look for **Skills** to help with specific tasks in the `.claude/skills` folder
 
