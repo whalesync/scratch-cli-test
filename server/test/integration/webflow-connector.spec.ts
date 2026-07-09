@@ -22,7 +22,10 @@ import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { WebflowApiClient } from 'src/remote-service/connectors/library/webflow/webflow-api-client';
 import { WebflowConnector } from 'src/remote-service/connectors/library/webflow/webflow-connector';
 import { WEBFLOW_ASSETS_TABLE_ID_PREFIX } from 'src/remote-service/connectors/library/webflow/webflow-json-schema';
-import { WEBFLOW_PAGES_TABLE_ID_PREFIX } from 'src/remote-service/connectors/library/webflow/webflow-types';
+import {
+  WEBFLOW_ORDERS_TABLE_ID_PREFIX,
+  WEBFLOW_PAGES_TABLE_ID_PREFIX,
+} from 'src/remote-service/connectors/library/webflow/webflow-types';
 import { BaseJsonTableSpec, ConnectorFile, TablePreview } from 'src/remote-service/connectors/types';
 
 jest.setTimeout(120_000);
@@ -36,14 +39,22 @@ function createConnector(): WebflowConnector {
 // Skip the entire suite if no key is configured (so CI stays green).
 const describeIfKey = API_KEY ? describe : describe.skip;
 
-// Pick a CMS collection (not Assets, not Pages) — those are the only tables that
-// support the full create/update/delete round-trip.
+// Pick a plain, writable CMS collection for the full create/update/delete
+// round-trip. Excludes the synthetic Assets/Pages/Orders tables, and — since
+// DEV-10729 stopped excluding them — the ecommerce collections (Products/SKUs/
+// Categories, grouped under /<Site>/Ecommerce), whose items Webflow may refuse to
+// create/edit/delete via the CMS items API. Secondary-locale tables (3-element
+// remoteId) are skipped too — their creates/deletes are disabled.
 function pickCmsCollection(tables: TablePreview[]): TablePreview {
   const cms = tables.find(
     (t) =>
-      !t.id.wsId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX) && !t.id.wsId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX),
+      t.id.remoteId.length === 2 &&
+      !t.id.wsId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX) &&
+      !t.id.wsId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX) &&
+      !t.id.wsId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX) &&
+      !(t.parentPath ?? '').endsWith('/Ecommerce'),
   );
-  if (!cms) throw new Error('No CMS collection found on the test Webflow site');
+  if (!cms) throw new Error('No plain CMS collection found on the test Webflow site');
   return cms;
 }
 

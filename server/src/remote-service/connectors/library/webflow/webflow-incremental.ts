@@ -26,7 +26,7 @@
 
 import { IncrementalPullSupport } from '@spinner/shared-types';
 import { WEBFLOW_ASSETS_TABLE_ID_PREFIX } from './webflow-json-schema';
-import { WEBFLOW_PAGES_TABLE_ID_PREFIX } from './webflow-types';
+import { WEBFLOW_ORDERS_TABLE_ID_PREFIX, WEBFLOW_PAGES_TABLE_ID_PREFIX } from './webflow-types';
 
 /**
  * Clock-skew safety margin subtracted from the watermark before formatting the
@@ -53,16 +53,18 @@ export function buildWebflowLastUpdatedFilter(since: Date): string {
 /**
  * True when a Webflow table's collection remote id refers to a real CMS
  * collection (whose List Collection Items endpoint accepts the `lastUpdated`
- * filter), as opposed to the synthetic site-level Assets or Pages tables (whose
- * list endpoints have no changed-since filter). `collectionRemoteId` is the
+ * filter), as opposed to the synthetic site-level Assets, Pages, or Orders tables
+ * (whose list endpoints have no changed-since filter). `collectionRemoteId` is the
  * second element of the table's remoteId / `DataFolder.tableId`
- * (`[siteId, collectionId]`); for the Assets and Pages tables it carries the
- * respective prefix, while a real collection id never does.
+ * (`[siteId, collectionId]`); for the Assets, Pages, and Orders tables it carries
+ * the respective prefix, while a real collection id never does. (Ecommerce
+ * Products/SKUs/Categories are ordinary CMS collections, so they ARE supported.)
  */
 export function isWebflowCollectionItemsTable(collectionRemoteId: string): boolean {
   return (
     !collectionRemoteId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX) &&
-    !collectionRemoteId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)
+    !collectionRemoteId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX) &&
+    !collectionRemoteId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX)
   );
 }
 

@@ -32,10 +32,12 @@ import {
   TablePreview,
 } from '../../types';
 import { WebflowApiClient } from './webflow-api-client';
+import { webflowEcommerceBasePath } from './webflow-folder-paths';
 import { buildWebflowLastUpdatedFilter, webflowIncrementalPullSupport } from './webflow-incremental';
 import {
   buildWebflowAssetsJsonTableSpec,
   buildWebflowJsonTableSpec,
+  buildWebflowOrdersJsonTableSpec,
   buildWebflowPagesJsonTableSpec,
   WEBFLOW_ASSETS_TABLE_ID_PREFIX,
   WEBFLOW_PAGES_TABLE_ID_PREFIX,
@@ -47,11 +49,13 @@ import {
   CollectionItemListNoPagination,
   CollectionItemWithIdInput,
   CollectionItemWithIdInputFieldData,
+  isWebflowEcommerceCollectionSlug,
   Locale,
+  OrderUpdate,
   Page,
   PageMetadataWrite,
   Site,
-  WEBFLOW_ECOMMERCE_COLLECTION_SLUGS,
+  WEBFLOW_ORDERS_TABLE_ID_PREFIX,
 } from './webflow-types';
 
 export const WEBFLOW_DEFAULT_BATCH_SIZE = 100;
@@ -106,6 +110,31 @@ function normalizeWebflowPageForFile(page: Page): ConnectorFile {
 /** The Webflow page fields writable via `updatePageSettings`. */
 const WEBFLOW_PAGE_WRITABLE_FIELD_KEYS = new Set(['title', 'slug', 'seo', 'openGraph']);
 
+/** The Webflow order fields writable via `updateOrder` (PATCH …/orders/{id}). */
+const WEBFLOW_ORDER_WRITABLE_FIELD_KEYS = new Set([
+  'comment',
+  'shippingProvider',
+  'shippingTracking',
+  'shippingTrackingURL',
+]);
+
+/**
+ * Throw if the user's sparse changed fields touch a read-only Webflow order field
+ * (DEV-10729, mirroring the Pages guard for DEV-10597). Only comment + the three
+ * shipping-tracking fields are writable; the order update silently ignores
+ * everything else, so without this guard an edit to a read-only field (status,
+ * customerInfo, totals, …) would vanish while the publish reported success.
+ * `orderId` is the identity, ignored.
+ */
+function assertNoReadonlyWebflowOrderFieldsChanged(changed: Record<string, unknown>): void {
+  const readonlyChangedFieldNames = Object.keys(changed).filter(
+    (key) => key !== 'orderId' && !WEBFLOW_ORDER_WRITABLE_FIELD_KEYS.has(key),
+  );
+  if (readonlyChangedFieldNames.length > 0) {
+    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+  }
+}
+
 /**
  * Throw if the user's sparse changed fields touch a read-only Webflow page field
  * (DEV-10597). Only title/slug/seo/openGraph are writable; the page-settings
@@ -134,7 +163,7 @@ export class WebflowConnector extends Connector {
     logo: 'https://static.scratch.md/connector-icons/webflow.svg',
     incrementalPull: true,
     incrementalPullInstructions:
-      'Incremental pull using Webflow’s last-updated filter. The Assets and Pages tables are not supported.',
+      'Incremental pull using Webflow’s last-updated filter. The Assets, Pages, and Ecommerce Orders tables are not supported.',
     credentialFields: {
       user_provided_params: [
         { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
@@ -182,10 +211,17 @@ export class WebflowConnector extends Connector {
       // nested inside each collection (DEV-10529). Resolve them once per site.
       const secondaryLocales = await this.getSecondaryLocales(site);
 
+      // A site is treated as Ecommerce-enabled when it exposes any of Webflow's
+      // reserved ecommerce collections (Products/SKUs/Categories). This gates the
+      // synthetic Orders table so it never appears on a non-ecommerce site (whose
+      // orders endpoint would be empty or error) (DEV-10729).
+      let siteHasEcommerce = false;
+
       for (const collection of collections) {
-        // Skip ecommerce collections (Products, Categories, SKUs)
-        if (collection.slug && WEBFLOW_ECOMMERCE_COLLECTION_SLUGS.includes(collection.slug)) {
-          continue;
+        // Ecommerce collections (Products/SKUs/Categories) are no longer excluded —
+        // `parseTablePreview` groups them under /<Site>/Ecommerce/ (DEV-10729).
+        if (isWebflowEcommerceCollectionSlug(collection.slug)) {
+          siteHasEcommerce = true;
         }
         tables.push(this.schemaParser.parseTablePreview(site, collection, this.structureVersion));
         // One additional table per secondary locale, nested under the primary
@@ -234,6 +270,30 @@ export class WebflowConnector extends Connector {
           isPagesTable: true,
         },
       });
+
+      // Add a site-level Ecommerce Orders table (DEV-10729) — only for
+      // ecommerce-enabled sites — grouped under /<Site>/Ecommerce/ alongside
+      // Products/SKUs/Categories. Orders can't be created or deleted via the API;
+      // only comment + shipping-tracking fields are editable.
+      if (siteHasEcommerce) {
+        const ordersTableId = `${WEBFLOW_ORDERS_TABLE_ID_PREFIX}${site.id}`;
+        tables.push({
+          id: {
+            wsId: ordersTableId,
+            remoteId: [site.id, ordersTableId],
+          },
+          displayName: `Orders`,
+          disabledCreates: true,
+          disabledDeletes: true,
+          disabledReason: 'Orders can only be edited (comment + shipping tracking); Webflow has no create/delete API',
+          parentPath: webflowEcommerceBasePath(site).join('/'),
+          metadata: {
+            siteId: site.id,
+            siteName: site.displayName,
+            isOrdersTable: true,
+          },
+        });
+      }
     }
 
     return tables;
@@ -372,6 +432,12 @@ export class WebflowConnector extends Connector {
       return {};
     }
 
+    // Handle Ecommerce orders table (full pull only — no changed-since filter)
+    if (collectionId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX)) {
+      await this.pullOrders(siteId, callback);
+      return {};
+    }
+
     // CMS collection items. Incremental pull filters the list by
     // `lastUpdated[gte] = since − skew`; a full pull leaves it unfiltered. Capture
     // the watermark BEFORE the first API call so an item changed mid-pull is
@@ -501,6 +567,46 @@ export class WebflowConnector extends Connector {
   }
 
   /**
+   * Pull all Ecommerce orders for a site via the Webflow Orders API. Full pull
+   * only — the orders list endpoint has no changed-since filter. Orders are stored
+   * verbatim (no date normalization: unlike Assets/Pages, there is no old-SDK
+   * baseline to reproduce for ecommerce).
+   */
+  private async pullOrders(
+    siteId: string,
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await this.client.listOrders(siteId, {
+        offset,
+        limit: WEBFLOW_DEFAULT_BATCH_SIZE,
+      });
+
+      const orders = response.orders || [];
+
+      if (orders.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      await callback({ files: orders as unknown as ConnectorFile[] });
+
+      const pagination = response.pagination;
+      if (pagination) {
+        const total = pagination.total || 0;
+        offset += orders.length;
+        hasMore = offset < total;
+      } else {
+        hasMore = orders.length === WEBFLOW_DEFAULT_BATCH_SIZE;
+        offset += orders.length;
+      }
+    }
+  }
+
+  /**
    * Fetch JSON Table Spec directly from the Webflow API for a collection or assets table.
    * Converts Webflow field types to JSON Schema types for AI consumption.
    * Uses field slugs as property keys.
@@ -522,6 +628,12 @@ export class WebflowConnector extends Connector {
       return buildWebflowPagesJsonTableSpec(id, site, this.structureVersion);
     }
 
+    // Handle Ecommerce orders table (discriminated by tableId prefix, same as assets).
+    if (collectionId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX)) {
+      const site = await this.client.getSite(siteId);
+      return buildWebflowOrdersJsonTableSpec(id, site, this.structureVersion);
+    }
+
     // Fetch site and collection directly from Webflow API
     const [site, collection] = await Promise.all([
       this.client.getSite(siteId),
@@ -536,7 +648,7 @@ export class WebflowConnector extends Connector {
     ids: string[],
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   ): Promise<void> {
-    const [, collectionId, cmsLocaleId] = tableSpec.id.remoteId;
+    const [siteId, collectionId, cmsLocaleId] = tableSpec.id.remoteId;
 
     // Handle assets table
     if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
@@ -579,6 +691,32 @@ export class WebflowConnector extends Connector {
             WSLogger.warn({
               source: 'WebflowConnector',
               message: `Page ${pageId} not found, skipping`,
+            });
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (buffer.length > 0) {
+        await callback({ files: buffer });
+      }
+      return;
+    }
+
+    // Handle Ecommerce orders table (fetch one order at a time by orderId)
+    if (collectionId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX)) {
+      const buffer: ConnectorFile[] = [];
+      for (const orderId of ids) {
+        try {
+          const order = await this.client.getOrder(siteId, orderId);
+          if (order) {
+            buffer.push(order as unknown as ConnectorFile);
+          }
+        } catch (error) {
+          if (isWebflowNotFoundError(error)) {
+            WSLogger.warn({
+              source: 'WebflowConnector',
+              message: `Order ${orderId} not found, skipping`,
             });
             continue;
           }
@@ -638,6 +776,10 @@ export class WebflowConnector extends Connector {
       throw new Error('Creating pages is not supported via the Webflow API');
     }
 
+    if (collectionId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX)) {
+      throw new Error('Creating orders is not supported via the Webflow API');
+    }
+
     // Secondary-locale tables disable creates (TablePreview.disabledCreates); this
     // guard surfaces the rule loudly if a create ever reaches here. A localized
     // variant is created together with its primary item — create in the primary.
@@ -679,7 +821,44 @@ export class WebflowConnector extends Connector {
     files: ConnectorFile[],
     changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<ConnectorFile[]> {
-    const [, collectionId, cmsLocaleId] = tableSpec.id.remoteId;
+    const [siteId, collectionId, cmsLocaleId] = tableSpec.id.remoteId;
+
+    // Handle Ecommerce orders table — update the limited writable fields one at a
+    // time (mirrors the pages branch below). Only comment + the three
+    // shipping-tracking fields are writable; everything else is read-only.
+    if (collectionId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX)) {
+      const orderResults: ConnectorFile[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const changed = changedFields?.[i];
+        // A changed field outside the writable set (status, customerInfo, totals, …)
+        // is a genuine read-only edit — surface it instead of silently dropping it
+        // (DEV-10729). The no-diff fallback (`?? file`) re-sends the full record,
+        // where read-only fields are always present and are simply not picked into
+        // the update body.
+        if (changed) assertNoReadonlyWebflowOrderFieldsChanged(changed);
+        const source = changed ?? file;
+        const orderId = file.orderId as string;
+
+        const update: OrderUpdate = {};
+        if (typeof source.comment === 'string') update.comment = source.comment;
+        if (typeof source.shippingProvider === 'string') update.shippingProvider = source.shippingProvider;
+        if (typeof source.shippingTracking === 'string') update.shippingTracking = source.shippingTracking;
+        if (typeof source.shippingTrackingURL === 'string') update.shippingTrackingURL = source.shippingTrackingURL;
+
+        if (Object.keys(update).length > 0) {
+          await this.client.updateOrder(siteId, orderId, update);
+          // Refetch via getOrder so the returned ConnectorFile is byte-equal to a
+          // fresh pull (same refetch pattern as the pages branch).
+          const refetched = await this.client.getOrder(siteId, orderId);
+          orderResults.push(refetched as unknown as ConnectorFile);
+        } else {
+          // No writable field changed — input file is already canonical.
+          orderResults.push(file);
+        }
+      }
+      return orderResults;
+    }
 
     // Handle pages table — update page settings one at a time
     if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
@@ -820,6 +999,10 @@ export class WebflowConnector extends Connector {
 
     if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
       throw new Error('Deleting pages is not supported via the Webflow API');
+    }
+
+    if (collectionId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX)) {
+      throw new Error('Deleting orders is not supported via the Webflow API');
     }
 
     // Secondary-locale tables disable deletes (TablePreview.disabledDeletes); this
@@ -1013,6 +1196,14 @@ export class WebflowConnector extends Connector {
       return records.map((record) => {
         const slug = record.slug as string | undefined;
         return slug || undefined;
+      });
+    }
+
+    // For orders, use the orderId as the filename (orders have no slug).
+    if (collectionId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX)) {
+      return records.map((record) => {
+        const orderId = record.orderId as string | undefined;
+        return orderId || undefined;
       });
     }
 

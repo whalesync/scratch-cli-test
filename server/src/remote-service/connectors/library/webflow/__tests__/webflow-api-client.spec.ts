@@ -171,6 +171,38 @@ describe('WebflowApiClient', () => {
     });
   });
 
+  describe('ecommerce orders (DEV-10729)', () => {
+    it('listOrders → GET /sites/{id}/orders with offset+limit and returns the wrapper verbatim', async () => {
+      mockGet.mockResolvedValue({ data: { orders: [{ orderId: 'o1' }], pagination: { total: 1 } } });
+      await expect(client.listOrders('s1', { offset: 0, limit: 100 })).resolves.toEqual({
+        orders: [{ orderId: 'o1' }],
+        pagination: { total: 1 },
+      });
+      expect(mockGet).toHaveBeenCalledWith('/sites/s1/orders', { params: { offset: 0, limit: 100 } });
+    });
+
+    it('listOrders passes the optional status filter through', async () => {
+      mockGet.mockResolvedValue({ data: { orders: [] } });
+      await client.listOrders('s1', { offset: 0, limit: 100, status: 'fulfilled' });
+      expect(mockGet).toHaveBeenCalledWith('/sites/s1/orders', {
+        params: { offset: 0, limit: 100, status: 'fulfilled' },
+      });
+    });
+
+    it('getOrder → GET /sites/{id}/orders/{orderId} with both segments encoded', async () => {
+      mockGet.mockResolvedValue({ data: { orderId: 'o/1' } });
+      await client.getOrder('s1', 'o/1');
+      expect(mockGet).toHaveBeenCalledWith('/sites/s1/orders/o%2F1');
+    });
+
+    it('updateOrder → PATCH /sites/{id}/orders/{orderId} with the writable-fields body', async () => {
+      mockPatch.mockResolvedValue({ data: { orderId: 'o1' } });
+      const body = { comment: 'note', shippingTracking: '1Z' };
+      await client.updateOrder('s1', 'o1', body);
+      expect(mockPatch).toHaveBeenCalledWith('/sites/s1/orders/o1', body);
+    });
+  });
+
   describe('date normalization (byte-identical to the old SDK Date coercion)', () => {
     it('getAsset normalizes createdOn/lastUpdated to canonical ISO (millis + Z)', async () => {
       mockGet.mockResolvedValue({

@@ -12,6 +12,9 @@ import {
   CollectionItemListNoPagination,
   CollectionItemWithIdInput,
   CollectionList,
+  Order,
+  OrderList,
+  OrderUpdate,
   Page,
   PageList,
   PageMetadataWrite,
@@ -355,6 +358,47 @@ export class WebflowApiClient {
   async updatePageSettings(pageId: string, body: PageMetadataWrite): Promise<Page> {
     const response = await this.withRetry(() => this.http.put<Page>(`/pages/${encodeURIComponent(pageId)}`, body));
     return normalizePageDates(response.data);
+  }
+
+  // --- Ecommerce: Orders ---
+
+  /**
+   * List a site's Ecommerce orders, page by page. Returns the raw response
+   * (`{ orders, pagination }`) verbatim. `status` optionally filters by order
+   * status. Orders have no changed-since filter, so this only supports offset
+   * pagination (the connector always full-pulls Orders).
+   */
+  async listOrders(siteId: string, params: { offset: number; limit: number; status?: string }): Promise<OrderList> {
+    const { offset, limit, status } = params;
+    const query: Record<string, string | number> = { offset, limit };
+    if (status !== undefined) {
+      query.status = status;
+    }
+    const response = await this.withRetry(() =>
+      this.http.get<OrderList>(`/sites/${encodeURIComponent(siteId)}/orders`, { params: query }),
+    );
+    return response.data;
+  }
+
+  /** Fetch one Ecommerce order by its `orderId`. Returned verbatim. */
+  async getOrder(siteId: string, orderId: string): Promise<Order> {
+    const response = await this.withRetry(() =>
+      this.http.get<Order>(`/sites/${encodeURIComponent(siteId)}/orders/${encodeURIComponent(orderId)}`),
+    );
+    return response.data;
+  }
+
+  /**
+   * Update the writable fields of an Ecommerce order (comment + shipping
+   * tracking). Webflow accepts only the {@link OrderUpdate} fields; the connector
+   * guards against read-only edits before calling this. Returns the updated order
+   * verbatim.
+   */
+  async updateOrder(siteId: string, orderId: string, body: OrderUpdate): Promise<Order> {
+    const response = await this.withRetry(() =>
+      this.http.patch<Order>(`/sites/${encodeURIComponent(siteId)}/orders/${encodeURIComponent(orderId)}`, body),
+    );
+    return response.data;
   }
 
   // --- Asset upload ---

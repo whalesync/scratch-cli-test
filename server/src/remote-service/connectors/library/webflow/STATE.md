@@ -41,8 +41,20 @@ At-a-glance progress through the build journey, so anyone can see where this con
 ## TODOs — known pending tasks
 Living checklist of what's left: gaps found while adopting human-built code, unfinished entities/fields, deferred edge cases, and follow-up issues. Check items off as they land. Coarser than the coverage matrix; broader than **Open issues** (which is only for broken ❌ cells with Linear links).
 
-- [ ] <pending task> <(link issue if any)>
-- [ ] <…>
+- [ ] **Ecommerce Inventory** (DEV-10729, deferred) — per-SKU sub-resource
+      (`GET/PATCH /collections/{skuCollectionId}/items/{skuId}/inventory` → `{ id, quantity, inventoryType }`).
+      There is **no site-level inventory list endpoint**, so a top-level Inventory table needs an
+      N+1 (enumerate SKU items → fetch inventory each) plus SKU-collection discovery — disproportionate
+      for the first ecommerce pass. Better as a fast-follow, or embedded into the SKU deep-fetch.
+- [ ] **Ecommerce order actions** (DEV-10729, deferred) — fulfill / unfulfill / refund
+      (`POST …/orders/{id}/{fulfill,unfulfill,refund}`) are action endpoints that don't map to the
+      field-edit model; only the four field-level writables (comment + shipping tracking) are wired.
+- [ ] **Verify Products/SKUs write via the CMS items API** — Products/SKUs/Categories are surfaced as
+      ordinary CMS collections (pull/edit/create/delete/FK reuse the collection machinery). Categories
+      write cleanly; **Webflow may reject create/edit of Product/SKU items via the CMS items API**
+      (their documented write path is the dedicated Ecommerce Products API). Writes are left enabled and
+      any rejection surfaces as a normal publish error (never silently dropped). If it proves a real
+      blocker, route Product/SKU writes through the Ecommerce Products endpoints as a follow-up.
 
 ## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
 These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
@@ -60,15 +72,25 @@ Every entity that is (or could be) fetched as a standalone top-level list. Inclu
 
 | Entity | Scratch table | Pull | Create→Push | Edit→Push | Delete | FK | Status |
 |---|---|:--:|:--:|:--:|:--:|:--:|---|
-| <Entity1> | <table name/shape> | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built / planned |
+| CMS collection items | `/<Site>/Collections/<Collection>` (v2) | ✅ | ✅ | ✅ | ✅ | ✅ | built |
+| Pages (SEO metadata) | `/<Site>/Pages` | ✅ | ➖ | ✅ (title/slug/seo/og) | ➖ | ➖ | built |
+| Assets | `/<Site>/Assets` | ✅ | ➖ | ➖ | ➖ | ➖ | built |
+| **Products** (Ecommerce) | `/<Site>/Ecommerce/Products` — CMS collection | ✅ | 🟠¹ | 🟠¹ | 🟠¹ | ✅ | built (DEV-10729) |
+| **SKUs** (Ecommerce) | `/<Site>/Ecommerce/SKUs` — CMS collection | ✅ | 🟠¹ | 🟠¹ | 🟠¹ | ✅ | built (DEV-10729) |
+| **Categories** (Ecommerce) | `/<Site>/Ecommerce/Categories` — CMS collection | ✅ | ✅ | ✅ | ✅ | ✅ | built (DEV-10729) |
+| **Orders** (Ecommerce) | `/<Site>/Ecommerce/Orders` — dedicated Orders API | ✅ | ➖ | ✅ (comment + shipping) | ➖ | ➖ | built (DEV-10729) |
+
+¹ Products/SKUs/Categories reuse the CMS collection-items machinery, so create/edit/delete are wired.
+Categories write cleanly; **Product/SKU writes via the CMS items API are unverified** — Webflow may reject
+them (its documented write path is the Ecommerce Products API). Rejections surface as normal publish errors;
+see TODOs.
 
 ### 3. Scoped / non-top-level entities — not directly fetchable as a top-level entity
 Entities that can't be a standalone Scratch table, for either reason: **(i) scoped to a parent** — reached only through it, so embed into the parent's deep fetch; or **(ii) weird in another way** that blocks top-level treatment — no list endpoint, export/search-only, returned only as a side-effect, requires an unsupported scope. Still data we want — never drop it.
 
 | Entity | Why not top-level | How we reach it | Status |
 |---|---|---|---|
-| Notes | **scoped** — only listed per parent (`GET /users/{id}/notes`), no global list | embed into each User record on its deep fetch | planned |
-| Audit log entries | **weird** — no list endpoint at all; only emitted on the export/webhook stream | special export-based codepath, not a normal pull | planned |
+| Ecommerce Inventory | **scoped + weird** — per-SKU (`GET/PATCH /collections/{skuCollectionId}/items/{skuId}/inventory`); **no site-level list endpoint** | enumerate SKU items → fetch inventory each (N+1), or embed into the SKU deep-fetch | planned (DEV-10729, deferred) |
 
 <!-- A green ✅ in any *push* column (Edit→Push / New→Push / Delete / FK-write) means you
      MANUALLY edited the record file on disk and pushed it through the CLI (files accept →
@@ -149,6 +171,8 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - **Secondary locales (DEV-10529):** Webflow CMS items in a secondary locale **share the same item `id`** as their primary-locale counterpart (distinguished only by `cmsLocaleId`), so primary + secondary cannot live in one folder. Each enabled secondary locale is surfaced as its own opt-in table, **nested inside** the primary collection at `/<Site>/Collections/<Collection>/<Locale>` (remoteId `[siteId, collectionId, cmsLocaleId]`). Pull passes `?cmsLocaleId=`; edit→publish sets per-item `cmsLocaleId` on the `PATCH …/items/live`. Creates + deletes are **disabled** on locale tables (a localized variant is added/removed with its primary item).
 - **Publishing an edit to a never-published item (DEV-10642):** the bulk live PATCH (`PATCH …/items/live`) is atomic and returns `409 "Live PATCH updates can't be applied to items that have never been published"` if **any** item in the batch was never published (created via the staged endpoint, or a Webflow-authored draft with `lastPublished: null`) — so one draft item used to sink the whole batch. `updateRecords` catches that `409` and retries each item individually, falling back to the **staged** batch endpoint (`PATCH …/items`, no `/live`) for the never-published ones. The edit lands on the draft; the item stays a draft (we never auto-publish). Body is identical on both endpoints — Prime Directive preserved. See `updateItemsLiveWithNeverPublishedFallback` + `PUBLICATION_STATES.md` rule #1.
 
+- **Ecommerce support (DEV-10729).** Webflow exposes **no `isEcommerce` flag** on the collection object, so ecommerce collections are detected by **slug**. Webflow's real reserved slugs are **singular** (`product`/`sku`/`category`); the connector matches **both** singular and plural (the original exclusion filter used plurals — likely a bug that meant it never matched). Products/SKUs/Categories are ordinary CMS collections, so they are surfaced with the **existing collection machinery** (pull/edit/create/delete/FK/incremental/schema/view) but routed to `/<Site>/Ecommerce/` instead of `/<Site>/Collections/`. FK between Products↔SKUs↔Categories comes through for free (they're Reference/MultiReference fields whose `validations.collectionId` targets the sibling ecommerce collection). **Orders** are a **separate Ecommerce API** (`GET /sites/{id}/orders`, `PATCH …/orders/{id}`), stored verbatim with a **permissive schema** (`additionalProperties: true`, the QuickBooks pattern) and modelled as pull + **limited-field update** (comment + the three shipping-tracking fields; everything else read-only, guarded exactly like Pages/DEV-10597). Orders have **no incremental** (no changed-since filter) and no create/delete API. The synthetic Orders table is added **only for ecommerce-enabled sites** (a site exposing any product/sku/category collection), so it never appears — nor errors — on a non-ecommerce site. Ecommerce always nests under `/<Site>/Ecommerce/` regardless of structure version (brand-new layout, additive, no folder-move migration). Inventory is deferred (see TODOs / scoped entities).
+
 ## Gotchas
 - **Locale tables are additive — no migration.** Primary tables stay `[siteId, collectionId]` and unchanged; locale tables only appear in the picker when the site has enabled secondary locales. They nest as a real DataFolder *inside* the primary collection folder (record→folder association is exact-path everywhere, so the parent never absorbs the child). One consequence: the `move_folder` op refuses to move a folder that contains a child DataFolder — irrelevant today (the v1→v2 folder restructure already ran), but a future collection move would need the locale subfolders handled first.
 - `listSites` may omit `site.locales`; the connector falls back to a single `getSite` per site when discovering locales.
@@ -156,13 +180,18 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
 
-- **Live spec:** `server/test/integration/webflow-connector.spec.ts` (+ `webflow-connector-assets.spec.ts`, `webflow-migration-live-pipeline.spec.ts`) — 📄 ✅. **Live-verified green 2026-06-18 (14/14, ran twice).**
+- **Live spec:** `server/test/integration/webflow-connector.spec.ts` (+ `webflow-connector-assets.spec.ts`, `webflow-connector-ecommerce.spec.ts`, `webflow-migration-live-pipeline.spec.ts`) — 📄 ✅. **Live-verified green 2026-06-18 (14/14, ran twice); ecommerce added + live-verified green 2026-07-09 (all 3 `webflow-connector*` suites = 26/26).**
 - **Runs in CI pipeline:** ✅ **wired** — `WEBFLOW_API_KEY` ← `INTEGRATION_TEST_WEBFLOW_API_KEY` (masked) in the post-deploy job.
 - **Test account / fixture:** dedicated site **"Scratch Integration Tests"** (`6a3410d723e972d61bb4c4c8`), login `testing@whalesync.com`. **Site-scoped** token (isolates writes to this site). ⚠️ Webflow tokens **expire after 365 days of inactivity**.
 - **Seeding required (one-time):**
   1. **A CMS collection** — the spec discovers the first non-Assets/Pages collection and self-provisions/cleans **its own items** there, but the *collection* must exist. Seeded `Scratch Int Test Posts` (`6a341279941bd7aba95c950c`) via `POST /v2/sites/{site}/collections {displayName, singularName}`. (CMS collections need the site/workspace plan to allow CMS.)
   2. **Publish the site once** — `POST /v2/sites/{site}/publish {publishToWebflowSubdomain:true}`. CMS **live** ops (create/archive) return **409 on a never-published site**; once published it stays published, so CI is unaffected.
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD: create→update→archive→unarchive→delete) ✅ · never-published live-PATCH fallback (DEV-10642: staged create → mixed-batch publish → per-record staged fallback, edit lands + stays draft) ✅ · error handling ✅ · assets (upload + reference shapes) ✅.
+- **Ecommerce (DEV-10729):** **unit** specs — `webflow-ecommerce.spec.ts` (slug detection, `/Ecommerce/` routing, Orders table spec), `webflow-connector-ecommerce-tables.spec.ts` (listTables routing + Orders-table gating), `webflow-connector-orders-update.spec.ts` (limited-field update + read-only guard), Orders cases in `webflow-api-client.spec.ts`. **Live** spec — `webflow-connector-ecommerce.spec.ts`: discovery+`/Ecommerce/` routing, ecommerce collection schemas, **cross-collection FK wiring (Products↔SKUs↔Categories)**, verbatim pull, **plus a live order comment update round-trip**, all against real ecommerce data. **The token's account HAS an ecommerce-enabled site** (Products/SKUs/Categories collections + an Orders table) — this is NOT the primary `6a3410…` fixture site but another site the token can see; live-verified green 2026-07-09 (45 SKUs, 1 order). The suite **gracefully no-ops** (warns + returns per test) if pointed at a site with no ecommerce, so CI stays green regardless.
+  - **Order write IS now live-covered.** A **$0 test order** (`orderId 83b-230`, `status: unfulfilled`) exists in the store, so the round-trip edits its `comment`, refetches to confirm, and **restores the original value in a `finally`** — runs by default (no env gate); skips gracefully when the store has 0 orders. Orders **can't be created via the API**, so this reuses the existing order (like the CMS suites reuse the store); editing an internal `comment` note is non-destructive and consistent with the create/delete/upload churn the sibling suites already do in CI. Order **fulfill/refund actions** and **shipping-field** writes stay out (unit-covered for the field set). The read-only-field guard is also exercised live (throws before any API call).
+  - **Schema conformance — verified with the REAL validator (2026-07-09).** Ran `scratchmd validation dry-run` (the Rust `enforce_schema`, the actual validator that populates `validation_results`) against **every real ecommerce record** using our generated table specs: **Products (6), Categories (10), SKUs (46), Orders (1) → 0 errors, 0 warnings** (with `--master == --record` to neutralize the readonly-check's no-master artifact). Negative controls confirmed the harness genuinely enforces our schemas (order `orderId`→number and SKU `fieldData.name`→number both flagged `not of type "string"`). So our generated JSON schemas match what Webflow returns. Invocation: `scratchmd validation dry-run --record <json> --master <same> --schema <FULL tablespec json> --validation '[{"validator":"enforce_schema","params":{}}]'` — note `--schema` takes the **full table spec** (enforce_schema reads `.schema`), not the bare JSON schema.
+  - **Do NOT judge conformance with a raw `@sinclair/typebox` `Value.Check`** — it hard-fails unregistered string formats (`Unknown format 'date-time'`) and so rejects every connector date field (order `acceptedOn`, collection `createdOn`/`lastUpdated`), which the real validator does NOT (it downgrades format failures to warnings and treats `null`/`""` as verbatim no-values, never flagged). The order's permissive schema (`additionalProperties: true`) correctly accepts all ~30 verbatim top-level fields.
+  - **⚠️ Existing-spec hardening:** `webflow-connector.spec.ts` (`pickCmsCollection`) and `webflow-connector-assets.spec.ts` (`isCmsCollection`) now **exclude ecommerce collections** (and Orders + secondary-locale tables) when choosing a plain, writable CMS collection for their create/delete and field-provision round-trips — because un-excluding ecommerce collections meant "the first CMS collection" could otherwise land on a Products/SKUs collection whose CMS-API writes Webflow may reject.
 - **State model:** Self-provisioning — creates/cleans its own CMS items (unique `scratch-…-<ts>` slugs); the assets suite self-provisions a temporary Image field (deleted in `afterAll`). Uploaded assets linger (no Webflow delete API).
 - **Notes:** A just-published site needs a moment to propagate before CMS live ops succeed (one-time 409 right after publishing) — irrelevant in CI since the site stays published. `WEBFLOW_IMAGE_COLLECTION_ID`/`WEBFLOW_IMAGE_FIELD_SLUG` stay optional (asset suite self-provisions).
 - [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP is settled (implemented).

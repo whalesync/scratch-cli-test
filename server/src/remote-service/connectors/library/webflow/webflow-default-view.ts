@@ -60,11 +60,14 @@ const PAGES_FIELD_PRIORITY: string[] = [
 const PAGES_HIDDEN_FIELDS = new Set(['parentId']);
 
 /**
- * Build a default TableView for a Webflow collection or assets table.
+ * Build a default TableView for a Webflow collection, assets, pages, or orders table.
  *
  * - collection_items: fieldData properties expanded first (as `fieldData.<name>`),
  *   then fixed item-level fields in priority order.
  * - assets: flat fields in priority order.
+ * - pages: flat fields + SEO / Open Graph banner groups.
+ * - orders: a fixed, curated column list (the order schema is permissive, so
+ *   columns are enumerated explicitly rather than derived from the schema).
  */
 export function buildWebflowDefaultView(schema: TSchema, entityType: string): TableView {
   const topLevel: Record<string, TSchema> =
@@ -78,7 +81,48 @@ export function buildWebflowDefaultView(schema: TSchema, entityType: string): Ta
     return { name: 'Default', cols: buildPagesView(topLevel) };
   }
 
+  if (entityType === 'orders') {
+    return { name: 'Default', cols: buildOrderCols() };
+  }
+
   return { name: 'Default', cols: buildCollectionItemCols(topLevel) };
+}
+
+// ── Orders ──
+
+/**
+ * A fixed, curated column set for the Ecommerce Orders table. The order schema is
+ * permissive (`additionalProperties: true`), so — unlike the other entity types —
+ * columns are enumerated here explicitly rather than derived from the schema. The
+ * four shipping/comment columns are editable; everything else is read-only.
+ */
+function buildOrderCols(): TableViewCol[] {
+  const ro = (path: string, name: string, type?: TablePropertyType): TableViewCol => ({
+    kind: 'col',
+    path,
+    name,
+    type,
+    readonly: true,
+  });
+  const editable = (path: string, name: string, type?: TablePropertyType): TableViewCol => ({
+    kind: 'col',
+    path,
+    name,
+    type,
+  });
+  return [
+    ro('orderId', 'Order Id'),
+    ro('status', 'Status'),
+    ro('customerInfo.email', 'Customer Email'),
+    ro('customerInfo.fullName', 'Customer Name'),
+    ro('purchasedItemsCount', 'Items', 'number'),
+    ro('acceptedOn', 'Placed', 'date'),
+    editable('comment', 'Comment'),
+    editable('shippingProvider', 'Shipping Provider'),
+    editable('shippingTracking', 'Shipping Tracking'),
+    editable('shippingTrackingURL', 'Shipping Tracking URL', 'url'),
+    ro('fulfilledOn', 'Fulfilled', 'date'),
+  ];
 }
 
 // ── Collection items ──

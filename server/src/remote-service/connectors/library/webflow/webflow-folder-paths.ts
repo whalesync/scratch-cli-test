@@ -12,6 +12,14 @@ import { Locale, Site } from './webflow-types';
 export const WEBFLOW_COLLECTIONS_FOLDER_SEGMENT = 'Collections';
 
 /**
+ * The folder segment that groups all Ecommerce entities under a site:
+ * `/<Site>/Ecommerce/{Products,SKUs,Categories,Orders}` (DEV-10729). Sibling of
+ * the `Collections`, `Pages`, and `Assets` folders. Single source of truth for
+ * the segment string, shared by the connector, schema builders, and schema parser.
+ */
+export const WEBFLOW_ECOMMERCE_FOLDER_SEGMENT = 'Ecommerce';
+
+/**
  * The connector structure version at which Webflow collections are nested under
  * `/<Site>/Collections/`. Accounts pinned below this stay on the flat v1 layout.
  * Mirrors the Webflow connector's `ConnectorRegistration.version` (DEV-10302).
@@ -49,6 +57,19 @@ export function webflowCollectionBasePath(site: Site, structureVersion: number):
   return structureVersion >= WEBFLOW_NESTED_STRUCTURE_VERSION
     ? [siteName, WEBFLOW_COLLECTIONS_FOLDER_SEGMENT]
     : [siteName];
+}
+
+/**
+ * The `basePath` (folder segments preceding the table's own name) for every
+ * Webflow **Ecommerce** entity — the CMS Products/SKUs/Categories collections and
+ * the Orders table — at `/<Site>/Ecommerce/<Name>` (DEV-10729).
+ *
+ * Unlike CMS collections, Ecommerce is always nested regardless of structure
+ * version: it is a brand-new layout with no flat v1 legacy to preserve, so it
+ * groups under `/<Site>/Ecommerce/` for both v1 and v2 accounts.
+ */
+export function webflowEcommerceBasePath(site: Site): string[] {
+  return [webflowSiteFolderName(site), WEBFLOW_ECOMMERCE_FOLDER_SEGMENT];
 }
 
 /**

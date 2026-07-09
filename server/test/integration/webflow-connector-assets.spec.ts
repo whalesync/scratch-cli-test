@@ -39,7 +39,10 @@ import { X_SCRATCH_ASSET_FIELD } from '@spinner/shared-types';
 import axios from 'axios';
 import { WebflowConnector } from 'src/remote-service/connectors/library/webflow/webflow-connector';
 import { WEBFLOW_ASSETS_TABLE_ID_PREFIX } from 'src/remote-service/connectors/library/webflow/webflow-json-schema';
-import { WEBFLOW_PAGES_TABLE_ID_PREFIX } from 'src/remote-service/connectors/library/webflow/webflow-types';
+import {
+  WEBFLOW_ORDERS_TABLE_ID_PREFIX,
+  WEBFLOW_PAGES_TABLE_ID_PREFIX,
+} from 'src/remote-service/connectors/library/webflow/webflow-types';
 import { BaseJsonTableSpec, ConnectorFile, TablePreview } from 'src/remote-service/connectors/types';
 
 jest.setTimeout(120_000);
@@ -66,10 +69,18 @@ function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${API_KEY ?? ''}`, accept: 'application/json' };
 }
 
+// A plain, schema-mutable CMS collection: not one of the synthetic Assets/Pages/
+// Orders tables, and (since DEV-10729) not an ecommerce collection under
+// /<Site>/Ecommerce — Webflow may refuse to add a temporary Image field to a
+// Products/SKUs/Categories collection, and secondary-locale tables (3-element
+// remoteId) aren't real collections either.
 function isCmsCollection(table: TablePreview): boolean {
   return (
+    table.id.remoteId.length === 2 &&
     !table.id.wsId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX) &&
-    !table.id.wsId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)
+    !table.id.wsId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX) &&
+    !table.id.wsId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX) &&
+    !(table.parentPath ?? '').endsWith('/Ecommerce')
   );
 }
 

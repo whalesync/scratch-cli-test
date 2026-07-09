@@ -16,17 +16,17 @@ import {
   X_SCRATCH_SUGGESTED_TRANSFORMER,
 } from '@spinner/shared-types';
 import _ from 'lodash';
-import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
+import { BaseJsonTableSpec, DotPath, dotPath, EntityId } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { buildWebflowDefaultView } from './webflow-default-view';
 import {
   findWebflowSecondaryLocaleByCmsLocaleId,
   webflowCollectionBasePath,
-  webflowSecondaryLocaleBasePath,
+  webflowEcommerceBasePath,
   webflowSecondaryLocaleFolderName,
   webflowSiteFolderName,
 } from './webflow-folder-paths';
-import { Collection, Field, FieldType, Site } from './webflow-types';
+import { Collection, Field, FieldType, isWebflowEcommerceCollectionSlug, Site } from './webflow-types';
 
 /**
  * Convert a Webflow field to a TypeBox JSON Schema.
@@ -225,6 +225,7 @@ export function buildWebflowJsonTableSpec(
 ): BaseJsonTableSpec {
   const [, collectionId, cmsLocaleId] = id.remoteId;
   const isSecondaryLocale = Boolean(cmsLocaleId);
+  const isEcommerce = isWebflowEcommerceCollectionSlug(collection.slug);
   const secondaryLocale = cmsLocaleId ? findWebflowSecondaryLocaleByCmsLocaleId(site, cmsLocaleId) : undefined;
   // For an unknown/deleted locale, fall back to the cmsLocaleId itself so the
   // folder is never empty-named and pull/publish still target the right locale.
@@ -317,6 +318,12 @@ export function buildWebflowJsonTableSpec(
     title: isSecondaryLocale ? `${collection.displayName} (${localeFolderName})` : collection.displayName,
   });
 
+  // The folder holding this collection's own records: Ecommerce collections group
+  // under /<Site>/Ecommerce/; others under /<Site>/Collections/ (v2) or /<Site>/ (v1).
+  const primaryCollectionBasePath = isEcommerce
+    ? webflowEcommerceBasePath(site)
+    : webflowCollectionBasePath(site, structureVersion);
+
   return {
     id,
     slug: collection.slug ?? id.wsId,
@@ -329,12 +336,12 @@ export function buildWebflowJsonTableSpec(
     mainContentPath,
     idPath: dotPath('id'),
     slugPath: dotPath('fieldData.slug'),
-    // v2 accounts nest collections under /<Site>/Collections/; v1 stay flat at
-    // /<Site>/. Single source of truth shared with the folder-move migration. A
-    // secondary locale nests one level deeper, inside its primary collection.
-    basePath: isSecondaryLocale
-      ? webflowSecondaryLocaleBasePath(site, collection.displayName, structureVersion)
-      : webflowCollectionBasePath(site, structureVersion),
+    // Ecommerce collections (Products/SKUs/Categories) group under
+    // /<Site>/Ecommerce/ (DEV-10729); other CMS collections under
+    // /<Site>/Collections/ (v2) or flat /<Site>/ (v1) — the latter shared with the
+    // folder-move migration. A secondary locale nests one level deeper, inside its
+    // primary collection folder either way (DEV-10529).
+    basePath: isSecondaryLocale ? [...primaryCollectionBasePath, collection.displayName] : primaryCollectionBasePath,
     structureVersion,
     generatedAt: new Date().toISOString(),
     defaultView: buildWebflowDefaultView(schema, 'collection_items'),
@@ -512,6 +519,89 @@ export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site, structu
     structureVersion,
     generatedAt: new Date().toISOString(),
     defaultView: buildWebflowDefaultView(schema, 'pages'),
+  };
+}
+
+/**
+ * Build a BaseJsonTableSpec schema for a Webflow site's **Ecommerce Orders**
+ * (DEV-10729), grouped under `/<Site>/Ecommerce/Orders`.
+ *
+ * Orders carry a large, deeply-nested payload (addresses, purchasedItems,
+ * stripeDetails, totals, downloadFiles, …). Rather than enumerate every field —
+ * which would risk `enforce_schema` noise whenever Webflow adds one — the object
+ * is **permissive** (`additionalProperties: true`, the QuickBooks pattern): the
+ * verbatim order validates while only the display-relevant and writable fields are
+ * modelled explicitly. The Prime Directive is preserved (nothing is reshaped).
+ *
+ * Editable surface = exactly the four fields Webflow's `PATCH …/orders/{id}`
+ * accepts: `comment`, `shippingProvider`, `shippingTracking`,
+ * `shippingTrackingURL`. Everything else is read-only. The identity is `orderId`
+ * (orders have no `id`).
+ */
+export function buildWebflowOrdersJsonTableSpec(id: EntityId, site: Site, structureVersion = 1): BaseJsonTableSpec {
+  const schema = Type.Object(
+    {
+      orderId: Type.String({ description: 'Unique order identifier (read-only)', [X_SCRATCH_READONLY]: true }),
+      status: makeWebflowFieldSchemaOptionalNullable(
+        Type.String({ description: 'Order status (read-only)', [X_SCRATCH_READONLY]: true }),
+      ),
+      // Writable fields (the only ones Webflow's Order update accepts).
+      comment: makeWebflowFieldSchemaOptionalNullable(Type.String({ description: 'Arbitrary note for your records' })),
+      shippingProvider: makeWebflowFieldSchemaOptionalNullable(
+        Type.String({ description: 'Company or method used to ship the order' }),
+      ),
+      shippingTracking: makeWebflowFieldSchemaOptionalNullable(
+        Type.String({ description: 'Tracking number for the order shipment' }),
+      ),
+      shippingTrackingURL: makeWebflowFieldSchemaOptionalNullable(
+        Type.String({ description: 'URL to track the order shipment', format: 'uri' }),
+      ),
+      // Read-only display fields.
+      customerInfo: Type.Optional(
+        Type.Union(
+          [
+            Type.Object(
+              {
+                fullName: makeWebflowFieldSchemaOptionalNullable(Type.String({ description: 'Customer full name' })),
+                email: makeWebflowFieldSchemaOptionalNullable(Type.String({ description: 'Customer email' })),
+              },
+              { additionalProperties: true },
+            ),
+            Type.Null(),
+          ],
+          { description: 'Customer contact info (read-only)', [X_SCRATCH_READONLY]: true },
+        ),
+      ),
+      purchasedItemsCount: makeWebflowFieldSchemaOptionalNullable(
+        Type.Number({ description: 'Total number of items purchased (read-only)', [X_SCRATCH_READONLY]: true }),
+      ),
+      acceptedOn: makeWebflowFieldSchemaOptionalNullable(
+        Type.String({ description: 'When the order was placed', format: 'date-time', [X_SCRATCH_READONLY]: true }),
+      ),
+      fulfilledOn: makeWebflowFieldSchemaOptionalNullable(
+        Type.String({ description: 'When the order was fulfilled', format: 'date-time', [X_SCRATCH_READONLY]: true }),
+      ),
+    },
+    {
+      $id: `webflow-orders/${site.id}`,
+      title: 'Orders',
+      // Preserve every other order field Webflow returns, verbatim (Prime Directive).
+      additionalProperties: true,
+    },
+  );
+
+  return {
+    id,
+    slug: id.wsId,
+    name: 'Orders',
+    schema,
+    idPath: dotPath('orderId'),
+    titlePath: dotPath('orderId'),
+    // Orders group under /<Site>/Ecommerce/ alongside Products/SKUs/Categories.
+    basePath: webflowEcommerceBasePath(site),
+    structureVersion,
+    generatedAt: new Date().toISOString(),
+    defaultView: buildWebflowDefaultView(schema, 'orders'),
   };
 }
 

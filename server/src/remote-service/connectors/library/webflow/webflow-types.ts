@@ -15,8 +15,25 @@
  * client returns strings, not `Date`s.
  */
 
-// Ecommerce collection slugs to filter out (these are auto-created by Webflow when ecommerce is enabled)
-export const WEBFLOW_ECOMMERCE_COLLECTION_SLUGS = ['products', 'categories', 'skus'];
+/**
+ * Slugs of the CMS collections Webflow auto-creates when Ecommerce is enabled
+ * (Products, SKUs, Categories). Webflow exposes no `isEcommerce` flag on the
+ * collection object, so the slug is the only available signal. Webflow's real
+ * reserved slugs are **singular** (`product`/`sku`/`category`); the **plural**
+ * forms are matched too, defensively — the original exclusion filter used plurals
+ * (DEV-10729). These collections are no longer excluded: they are surfaced as
+ * normal CMS-collection tables but grouped under the site's `/Ecommerce/` folder
+ * instead of `/Collections/`.
+ */
+export const WEBFLOW_ECOMMERCE_COLLECTION_SLUGS = ['product', 'products', 'sku', 'skus', 'category', 'categories'];
+
+/** True when a collection slug identifies a Webflow Ecommerce CMS collection. */
+export function isWebflowEcommerceCollectionSlug(slug: string | undefined): boolean {
+  return slug !== undefined && WEBFLOW_ECOMMERCE_COLLECTION_SLUGS.includes(slug);
+}
+
+/** Table ID prefix for Webflow site-level Orders tables (Ecommerce). */
+export const WEBFLOW_ORDERS_TABLE_ID_PREFIX = '__orders__';
 
 // Predefined metadata column IDs
 export const WEBFLOW_IS_DRAFT_COLUMN_ID = 'isDraft';
@@ -384,6 +401,55 @@ export interface AssetUpload {
   originalFileName?: string;
   createdOn?: string;
   lastUpdated?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Ecommerce — Orders
+// ---------------------------------------------------------------------------
+
+/**
+ * A Webflow Ecommerce order. Only the fields the connector reads or writes by
+ * name are enumerated; everything else Webflow returns (customerInfo, addresses,
+ * purchasedItems, stripeDetails, totals, downloadFiles, …) is preserved verbatim
+ * through the index signature and is never reshaped (Connector Prime Directive).
+ * `orderId` is the identity (there is no `id`). All the enumerated fields except
+ * `orderId` may be absent or `null` on a given order.
+ */
+export interface Order {
+  /** Unique identifier for the Order (its identity — there is no `id`). */
+  orderId: string;
+  /** Order lifecycle status (e.g. `pending`, `fulfilled`, `refunded`). */
+  status?: string;
+  /** Arbitrary note for your records (writable). */
+  comment?: string | null;
+  /** Company or method used to ship the order (writable). */
+  shippingProvider?: string | null;
+  /** Tracking number for the order shipment (writable). */
+  shippingTracking?: string | null;
+  /** URL to track the order shipment (writable). */
+  shippingTrackingURL?: string | null;
+  /** ISO string — when the order was placed. */
+  acceptedOn?: string | null;
+  /** ISO string — when the order was fulfilled, if it has been. */
+  fulfilledOn?: string | null;
+  [key: string]: unknown;
+}
+
+/** Wrapper returned by `listOrders`. */
+export interface OrderList {
+  orders?: Order[];
+  pagination?: CollectionItemListPagination;
+}
+
+/**
+ * Request body for the limited Order update (`PATCH /sites/{siteId}/orders/{orderId}`).
+ * These are the only fields Webflow's Order update accepts.
+ */
+export interface OrderUpdate {
+  comment?: string;
+  shippingProvider?: string;
+  shippingTracking?: string;
+  shippingTrackingURL?: string;
 }
 
 // ---------------------------------------------------------------------------
