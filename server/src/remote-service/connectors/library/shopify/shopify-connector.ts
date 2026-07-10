@@ -211,20 +211,24 @@ export class ShopifyConnector extends Connector {
           )
         : schema;
 
-    // Add virtual seo field for entities that store SEO as metafields
-    if (SEO_METAFIELD_ENTITIES.has(entityType) && resolvedSchema.properties && !('seo' in resolvedSchema.properties)) {
+    // SEO metafield entities (articles/pages/blogs) land the raw metafields verbatim as
+    // `seoTitle`/`seoDescription`, each shaped `{ value?: string | null } | null` (Connector
+    // Prime Directive — no reshape into a synthetic `seo` object). Inject those nested objects
+    // into the schema so the value stays editable via the `seoTitle.value`/`seoDescription.value`
+    // dot-paths. The default view groups them under an "SEO" banner (see shopify-default-view.ts).
+    if (
+      SEO_METAFIELD_ENTITIES.has(entityType) &&
+      resolvedSchema.properties &&
+      !('seoTitle' in resolvedSchema.properties)
+    ) {
+      const seoMetafieldObject = Type.Optional(
+        Type.Union([Type.Object({ value: Type.Union([Type.String(), Type.Null()]) }), Type.Null()]),
+      );
       resolvedSchema = Type.Object(
         {
           ...resolvedSchema.properties,
-          seo: Type.Optional(
-            Type.Union([
-              Type.Object({
-                title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              }),
-              Type.Null(),
-            ]),
-          ),
+          seoTitle: seoMetafieldObject,
+          seoDescription: seoMetafieldObject,
         },
         resolvedSchema.$id || resolvedSchema.title ? { $id: resolvedSchema.$id, title: resolvedSchema.title } : {},
       );

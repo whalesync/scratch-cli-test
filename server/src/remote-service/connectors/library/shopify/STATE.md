@@ -145,10 +145,28 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - Association endpoint (if any): <describe> — ⬜
 
 ## Edge cases discovered
-- (none yet — see SKILL.md → Stage E for what to hunt for)
+- **SEO metafields (articles/pages/blogs) — DEV-10637.** These entities have no native `seo`
+  field; SEO lives in the `global.title_tag` / `global.description_tag` metafields. We query
+  them as `seoTitle`/`seoDescription` aliases (`{ value }`) and store them **verbatim**
+  (Connector Prime Directive). The runtime schema injection (`shopify-connector.ts`) adds those
+  two nested objects so they stay editable at `seoTitle.value` / `seoDescription.value`; the
+  default view groups them under an "SEO" banner; on publish
+  `extractSeoMetafieldsFromVerbatimFields` converts them back into the metafields array. Products
+  and collections DO have a native `seo { title description }` field — untouched, already verbatim.
+- **Files images — DEV-10637.** A MediaImage keeps its nested `image { url … }` object verbatim;
+  we no longer flatten it to a top-level `url` (that flatten also dropped altText/width/height).
+  GenericFile/Video/ExternalVideo legitimately carry a top-level `url` and no `image`.
 
 ## Gotchas
-- (connector-specific operational notes)
+- **Historical data migration (DEV-10637):** records pulled before the verbatim switch still
+  carry the old `seo:{title,description}` (articles/pages/blogs) or flattened top-level file
+  `url` (MediaImage). `scratchmd files migrate-shopify-verbatim` (scratch-git-2 CLI) converts an
+  already-init'd local workspace to the new shape: it hard-aborts unless the Shopify connection is
+  clean (no unreviewed and no accepted-but-unpublished changes), rewrites the record files
+  (idempotent, `--apply`; dry-run by default), and commits them to `main`. It does NOT push — it
+  prints the exact `git push` for the operator (never force / never a history rewrite). It restores
+  only the container shape for images — altText/width/height were lost at pull time and need a
+  re-pull. A fresh re-pull is the simplest full-fidelity alternative to running the migration.
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).

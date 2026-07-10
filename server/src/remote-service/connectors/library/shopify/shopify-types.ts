@@ -255,7 +255,9 @@ export interface ShopifyPageInput {
   handle?: string;
   isPublished?: boolean;
   templateSuffix?: string;
-  seo?: { title?: string; description?: string };
+  /** Verbatim SEO metafield-alias fields (global.title_tag / global.description_tag). */
+  seoTitle?: { value?: string | null };
+  seoDescription?: { value?: string | null };
 }
 
 /**
@@ -265,7 +267,9 @@ export interface ShopifyBlogInput {
   title?: string;
   handle?: string;
   templateSuffix?: string;
-  seo?: { title?: string; description?: string };
+  /** Verbatim SEO metafield-alias fields (global.title_tag / global.description_tag). */
+  seoTitle?: { value?: string | null };
+  seoDescription?: { value?: string | null };
 }
 
 /**
@@ -281,7 +285,9 @@ export interface ShopifyArticleInput {
   templateSuffix?: string;
   blog?: { id: string };
   author?: { name: string };
-  seo?: { title?: string; description?: string };
+  /** Verbatim SEO metafield-alias fields (global.title_tag / global.description_tag). */
+  seoTitle?: { value?: string | null };
+  seoDescription?: { value?: string | null };
 }
 
 // ============= GraphQL Infrastructure =============

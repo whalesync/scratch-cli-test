@@ -74,7 +74,11 @@ const CONNECTION_PAGE_SIZE = 25;
 
 /**
  * Entity types that store SEO data as metafields (global.title_tag / global.description_tag)
- * rather than a native `seo` field. We synthesize a virtual `seo` object for these types.
+ * rather than a native `seo` field. For these types we query the metafields as the raw
+ * `seoTitle`/`seoDescription` aliases and land them VERBATIM on the record (Connector Prime
+ * Directive) — no reshape into a synthetic `seo` object. The schema/view layer makes those
+ * verbatim fields editable, and on publish {@link extractSeoMetafieldsFromVerbatimFields}
+ * converts them back into the metafields array the mutation expects.
  */
 export const SEO_METAFIELD_ENTITIES = new Set(['articles', 'pages', 'blogs']);
 
@@ -83,53 +87,33 @@ const SEO_METAFIELD_QUERY_FRAGMENT =
   ' seoTitle: metafield(namespace: "global", key: "title_tag") { value } seoDescription: metafield(namespace: "global", key: "description_tag") { value }';
 
 /**
- * Reshape raw API response nodes: extract seoTitle/seoDescription aliases into a
- * standard `seo: { title, description }` object and remove the alias fields.
+ * Convert the verbatim `seoTitle`/`seoDescription` metafield-alias fields (each shaped
+ * `{ value?: string | null } | null`, exactly as they land from a pull) into the Shopify
+ * metafields array format a create/update mutation expects. Merges with any existing
+ * `metafields` in the input, then removes the alias fields from the input object.
  */
-export function normalizeSeoMetafields(node: Record<string, unknown>): Record<string, unknown> {
-  const seoTitle = node.seoTitle as { value?: string } | null | undefined;
-  const seoDescription = node.seoDescription as { value?: string } | null | undefined;
-
-  const title = seoTitle?.value ?? null;
-  const description = seoDescription?.value ?? null;
-
-  if (title !== null || description !== null) {
-    node.seo = { title, description };
-  } else {
-    node.seo = null;
-  }
-
-  delete node.seoTitle;
-  delete node.seoDescription;
-  return node;
-}
-
-/**
- * Extract `seo` from a mutation input and convert it to Shopify metafields array format.
- * Merges with any existing `metafields` in the input. Removes `seo` from the input object.
- */
-export function extractSeoMetafields(input: Record<string, unknown>): Record<string, unknown> {
-  const seo = input.seo as { title?: string; description?: string } | null | undefined;
-  if (seo === undefined || seo === null) {
-    delete input.seo;
-    return input;
-  }
+export function extractSeoMetafieldsFromVerbatimFields(input: Record<string, unknown>): Record<string, unknown> {
+  const seoTitle = input.seoTitle as { value?: string | null } | null | undefined;
+  const seoDescription = input.seoDescription as { value?: string | null } | null | undefined;
 
   const metafields: Array<{ namespace: string; key: string; type: string; value: string }> = [];
 
-  if (seo.title !== undefined && seo.title !== null) {
-    metafields.push({ namespace: 'global', key: 'title_tag', type: 'single_line_text_field', value: seo.title });
+  const titleValue = seoTitle?.value;
+  if (titleValue !== undefined && titleValue !== null) {
+    metafields.push({ namespace: 'global', key: 'title_tag', type: 'single_line_text_field', value: titleValue });
   }
-  if (seo.description !== undefined && seo.description !== null) {
+  const descriptionValue = seoDescription?.value;
+  if (descriptionValue !== undefined && descriptionValue !== null) {
     metafields.push({
       namespace: 'global',
       key: 'description_tag',
       type: 'single_line_text_field',
-      value: seo.description,
+      value: descriptionValue,
     });
   }
 
-  delete input.seo;
+  delete input.seoTitle;
+  delete input.seoDescription;
 
   if (metafields.length > 0) {
     const existing = (input.metafields as Array<Record<string, unknown>>) ?? [];
@@ -333,18 +317,8 @@ export class ShopifyApiClient {
       }
     `;
 
-    const needsSeoNormalization = SEO_METAFIELD_ENTITIES.has(entityType);
-    for await (const page of this.paginatedList<Record<string, unknown>>(
-      queryString,
-      rootField,
-      pageSize,
-      resumeCursor,
-    )) {
-      if (needsSeoNormalization) {
-        page.nodes.forEach(normalizeSeoMetafields);
-      }
-      yield page;
-    }
+    // SEO metafields (seoTitle/seoDescription aliases) land verbatim — no reshape.
+    yield* this.paginatedList<Record<string, unknown>>(queryString, rootField, pageSize, resumeCursor);
   }
 
   /**
@@ -377,7 +351,9 @@ export class ShopifyApiClient {
   }
 
   /**
-   * List files with normalization.
+   * List files. Nodes are yielded verbatim (Connector Prime Directive) — a MediaImage keeps
+   * its nested `image { url … }` object rather than being flattened to a top-level `url`. We
+   * only drop nodes without an `id` (defensive; the API shouldn't return those).
    */
   private async *listFiles(
     pageSize: number,
@@ -399,20 +375,9 @@ export class ShopifyApiClient {
       pageSize,
       resumeCursor,
     )) {
-      const normalized = page.nodes
-        .filter((f) => f.id)
-        .map((f) => {
-          const file = { ...f };
-          // Normalize MediaImage nested url to top-level
-          if (!file.url && f.image) {
-            file.url = (f.image as { url?: string })?.url;
-            delete file.image;
-          }
-          return file;
-        });
-
-      if (normalized.length > 0) {
-        yield { nodes: normalized, endCursor: page.endCursor };
+      const nodesWithId = page.nodes.filter((f) => f.id);
+      if (nodesWithId.length > 0) {
+        yield { nodes: nodesWithId, endCursor: page.endCursor };
       }
     }
   }
@@ -552,10 +517,7 @@ export class ShopifyApiClient {
       }
     }
 
-    if (SEO_METAFIELD_ENTITIES.has(entityType)) {
-      allNodes.forEach(normalizeSeoMetafields);
-    }
-
+    // SEO metafields (seoTitle/seoDescription aliases) land verbatim — no reshape.
     return allNodes;
   }
 
@@ -771,7 +733,7 @@ export class ShopifyApiClient {
   // ============= Page Mutations =============
 
   private async createPage(input: ShopifyPageInput): Promise<Record<string, unknown>> {
-    const mutationInput = extractSeoMetafields({ ...input });
+    const mutationInput = extractSeoMetafieldsFromVerbatimFields({ ...input });
     const data = await this.query<{
       pageCreate: { page: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(PAGES_CREATE_MUTATION, { page: mutationInput });
@@ -786,7 +748,7 @@ export class ShopifyApiClient {
   }
 
   private async updatePage(id: string, input: ShopifyPageInput): Promise<Record<string, unknown>> {
-    const mutationInput = extractSeoMetafields({ ...input });
+    const mutationInput = extractSeoMetafieldsFromVerbatimFields({ ...input });
     const data = await this.query<{
       pageUpdate: { page: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(PAGES_UPDATE_MUTATION, { id, page: mutationInput });
@@ -809,7 +771,7 @@ export class ShopifyApiClient {
   // ============= Blog Mutations =============
 
   private async createBlog(input: ShopifyBlogInput): Promise<Record<string, unknown>> {
-    const mutationInput = extractSeoMetafields({ ...input });
+    const mutationInput = extractSeoMetafieldsFromVerbatimFields({ ...input });
     const data = await this.query<{
       blogCreate: { blog: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(BLOGS_CREATE_MUTATION, { blog: mutationInput });
@@ -824,7 +786,7 @@ export class ShopifyApiClient {
   }
 
   private async updateBlog(id: string, input: ShopifyBlogInput): Promise<Record<string, unknown>> {
-    const mutationInput = extractSeoMetafields({ ...input });
+    const mutationInput = extractSeoMetafieldsFromVerbatimFields({ ...input });
     const data = await this.query<{
       blogUpdate: { blog: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(BLOGS_UPDATE_MUTATION, { id, blog: mutationInput });
@@ -866,6 +828,14 @@ export class ShopifyApiClient {
       author: { name: authorName },
     };
 
+    // Carry the verbatim SEO metafield-alias fields through so they convert to metafields below.
+    if (input.seoTitle !== undefined) {
+      articleInput.seoTitle = input.seoTitle;
+    }
+    if (input.seoDescription !== undefined) {
+      articleInput.seoDescription = input.seoDescription;
+    }
+
     // Remove undefined values
     for (const key of Object.keys(articleInput)) {
       if (articleInput[key] === undefined) {
@@ -873,11 +843,8 @@ export class ShopifyApiClient {
       }
     }
 
-    // Convert seo to metafields
-    if (input.seo) {
-      articleInput.seo = input.seo;
-    }
-    extractSeoMetafields(articleInput);
+    // Convert verbatim seoTitle/seoDescription to metafields
+    extractSeoMetafieldsFromVerbatimFields(articleInput);
 
     const data = await this.query<{
       articleCreate: { article: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
@@ -893,7 +860,7 @@ export class ShopifyApiClient {
   }
 
   private async updateArticle(id: string, input: ShopifyArticleInput): Promise<Record<string, unknown>> {
-    const mutationInput = extractSeoMetafields({ ...input });
+    const mutationInput = extractSeoMetafieldsFromVerbatimFields({ ...input });
     const data = await this.query<{
       articleUpdate: { article: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(ARTICLES_UPDATE_MUTATION, { id, article: mutationInput });

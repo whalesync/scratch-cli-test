@@ -237,6 +237,61 @@ describe('buildShopifyDefaultView', () => {
     });
   });
 
+  describe('verbatim SEO metafield banner (articles/pages/blogs)', () => {
+    function buildArticlesSchema() {
+      const seoMetafieldObject = Type.Optional(
+        Type.Union([Type.Object({ value: Type.Union([Type.String(), Type.Null()]) }), Type.Null()]),
+      );
+      return Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.Optional(Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true })),
+        handle: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        body: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        seoTitle: seoMetafieldObject,
+        seoDescription: seoMetafieldObject,
+      });
+    }
+
+    const articlesView = buildShopifyDefaultView(buildArticlesSchema(), 'articles');
+
+    it('expands seoTitle/seoDescription into a single SEO banner group with .value dot-paths', () => {
+      const group = articlesView.cols.find(
+        (c) => c.kind === 'banner-group' && c.name === 'SEO',
+      ) as TableViewBannerGroup;
+      expect(group).toBeDefined();
+      expect(group.cols).toHaveLength(2);
+      expect(group.cols[0]).toMatchObject({ kind: 'col', path: 'seoTitle.value', name: 'Title' });
+      expect(group.cols[1]).toMatchObject({ kind: 'col', path: 'seoDescription.value', name: 'Description' });
+    });
+
+    it('produces exactly one banner group and no raw seoTitle/seoDescription columns', () => {
+      const groups = articlesView.cols.filter((c) => c.kind === 'banner-group');
+      expect(groups.length).toBe(1);
+
+      const rawSeoTitleCol = articlesView.cols.find((c) => c.kind === 'col' && c.path === 'seoTitle');
+      const rawSeoDescriptionCol = articlesView.cols.find((c) => c.kind === 'col' && c.path === 'seoDescription');
+      expect(rawSeoTitleCol).toBeUndefined();
+      expect(rawSeoDescriptionCol).toBeUndefined();
+    });
+
+    it('marks the banner columns readonly when the schema fields are readonly', () => {
+      const seoMetafieldObject = Type.Optional(
+        Type.Union([Type.Object({ value: Type.Union([Type.String(), Type.Null()]) }), Type.Null()], {
+          [X_SCRATCH_READONLY]: true,
+        }),
+      );
+      const readonlySchema = Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        seoTitle: seoMetafieldObject,
+        seoDescription: seoMetafieldObject,
+      });
+      const view = buildShopifyDefaultView(readonlySchema, 'pages');
+      const group = view.cols.find((c) => c.kind === 'banner-group' && c.name === 'SEO') as TableViewBannerGroup;
+      expect(group.cols[0]).toMatchObject({ path: 'seoTitle.value', readonly: true });
+      expect(group.cols[1]).toMatchObject({ path: 'seoDescription.value', readonly: true });
+    });
+  });
+
   describe('money object subfields', () => {
     const shippingView = buildShopifyDefaultView(buildShippingLineSchema(), 'order_shipping_lines');
 

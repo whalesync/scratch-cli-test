@@ -62,10 +62,21 @@ export function buildShopifyDefaultView(schema: TSchema, entityType: string): Ta
   const sorted = sortFields(fieldIds, priority);
   const cols: (TableViewCol | TableViewBannerGroup)[] = [];
 
+  let verbatimSeoBannerEmitted = false;
+
   for (const fieldId of sorted) {
     const fieldSchema = properties[fieldId];
     if (fieldId === 'seo') {
+      // Native `seo` object (products/collections) — expand its title/description into columns.
       cols.push(buildSeoBannerGroup(fieldSchema));
+    } else if (fieldId === 'seoTitle' || fieldId === 'seoDescription') {
+      // Verbatim SEO metafields (articles/pages/blogs) — `seoTitle`/`seoDescription`, each
+      // `{ value }`. Group both under one "SEO" banner and skip the raw object cols so we
+      // don't emit both. Emit the banner only once, at the first of the two fields seen.
+      if (!verbatimSeoBannerEmitted) {
+        cols.push(buildVerbatimSeoMetafieldBannerGroup(properties.seoTitle, properties.seoDescription));
+        verbatimSeoBannerEmitted = true;
+      }
     } else {
       cols.push(buildCol(fieldId, fieldSchema));
     }
@@ -202,6 +213,28 @@ function buildSeoBannerGroup(fieldSchema: TSchema): TableViewBannerGroup {
     cols: [
       { kind: 'col', path: 'seo.title', name: 'Title', readonly: isReadonly || undefined },
       { kind: 'col', path: 'seo.description', name: 'Description', readonly: isReadonly || undefined },
+    ],
+  };
+}
+
+/**
+ * Build a banner group for the verbatim SEO metafields (articles/pages/blogs), where the raw
+ * `seoTitle`/`seoDescription` metafield-alias objects (each `{ value }`) land on the record. The
+ * editable value sits at `seoTitle.value` / `seoDescription.value`, so the banner columns target
+ * those dot-paths. Readonly is taken per-field from each object's schema.
+ */
+function buildVerbatimSeoMetafieldBannerGroup(
+  seoTitleSchema: TSchema | undefined,
+  seoDescriptionSchema: TSchema | undefined,
+): TableViewBannerGroup {
+  const titleReadonly = seoTitleSchema?.[X_SCRATCH_READONLY] === true;
+  const descriptionReadonly = seoDescriptionSchema?.[X_SCRATCH_READONLY] === true;
+  return {
+    kind: 'banner-group',
+    name: 'SEO',
+    cols: [
+      { kind: 'col', path: 'seoTitle.value', name: 'Title', readonly: titleReadonly || undefined },
+      { kind: 'col', path: 'seoDescription.value', name: 'Description', readonly: descriptionReadonly || undefined },
     ],
   };
 }

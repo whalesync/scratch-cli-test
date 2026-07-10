@@ -1,153 +1,103 @@
-import { extractSeoMetafields, normalizeSeoMetafields } from '../shopify-api-client';
+import { extractSeoMetafieldsFromVerbatimFields } from '../shopify-api-client';
 
 describe('SEO metafield helpers', () => {
-  describe('normalizeSeoMetafields', () => {
-    it('reshapes seoTitle and seoDescription into seo object', () => {
-      const node: Record<string, unknown> = {
-        id: 'gid://shopify/Article/1',
-        title: 'Test Article',
-        seoTitle: { value: 'My SEO Title' },
-        seoDescription: { value: 'My SEO Description' },
-      };
-
-      normalizeSeoMetafields(node);
-
-      expect(node.seo).toEqual({ title: 'My SEO Title', description: 'My SEO Description' });
-      expect(node.seoTitle).toBeUndefined();
-      expect(node.seoDescription).toBeUndefined();
-    });
-
-    it('handles null metafield values', () => {
-      const node: Record<string, unknown> = {
-        id: 'gid://shopify/Page/1',
-        seoTitle: null,
-        seoDescription: null,
-      };
-
-      normalizeSeoMetafields(node);
-
-      expect(node.seo).toBeNull();
-      expect(node.seoTitle).toBeUndefined();
-      expect(node.seoDescription).toBeUndefined();
-    });
-
-    it('handles missing metafield aliases', () => {
-      const node: Record<string, unknown> = {
-        id: 'gid://shopify/Blog/1',
-      };
-
-      normalizeSeoMetafields(node);
-
-      expect(node.seo).toBeNull();
-      expect(node.seoTitle).toBeUndefined();
-      expect(node.seoDescription).toBeUndefined();
-    });
-
-    it('handles partial metafields — only title present', () => {
-      const node: Record<string, unknown> = {
-        id: 'gid://shopify/Page/2',
-        seoTitle: { value: 'Page Title' },
-        seoDescription: null,
-      };
-
-      normalizeSeoMetafields(node);
-
-      expect(node.seo).toEqual({ title: 'Page Title', description: null });
-    });
-
-    it('handles partial metafields — only description present', () => {
-      const node: Record<string, unknown> = {
-        id: 'gid://shopify/Page/3',
-        seoTitle: null,
-        seoDescription: { value: 'Page Description' },
-      };
-
-      normalizeSeoMetafields(node);
-
-      expect(node.seo).toEqual({ title: null, description: 'Page Description' });
-    });
-  });
-
-  describe('extractSeoMetafields', () => {
-    it('converts seo to metafields array', () => {
+  describe('extractSeoMetafieldsFromVerbatimFields', () => {
+    it('converts verbatim seoTitle/seoDescription into a metafields array', () => {
       const input: Record<string, unknown> = {
         title: 'My Page',
-        seo: { title: 'SEO Title', description: 'SEO Desc' },
+        seoTitle: { value: 'SEO Title' },
+        seoDescription: { value: 'SEO Desc' },
       };
 
-      extractSeoMetafields(input);
+      extractSeoMetafieldsFromVerbatimFields(input);
 
-      expect(input.seo).toBeUndefined();
+      expect(input.seoTitle).toBeUndefined();
+      expect(input.seoDescription).toBeUndefined();
       expect(input.metafields).toEqual([
         { namespace: 'global', key: 'title_tag', type: 'single_line_text_field', value: 'SEO Title' },
         { namespace: 'global', key: 'description_tag', type: 'single_line_text_field', value: 'SEO Desc' },
       ]);
     });
 
-    it('handles partial seo — only title', () => {
+    it('handles partial — only seoTitle present', () => {
       const input: Record<string, unknown> = {
         title: 'My Page',
-        seo: { title: 'SEO Title' },
+        seoTitle: { value: 'SEO Title' },
       };
 
-      extractSeoMetafields(input);
+      extractSeoMetafieldsFromVerbatimFields(input);
 
-      expect(input.seo).toBeUndefined();
+      expect(input.seoTitle).toBeUndefined();
       expect(input.metafields).toEqual([
         { namespace: 'global', key: 'title_tag', type: 'single_line_text_field', value: 'SEO Title' },
       ]);
     });
 
-    it('handles partial seo — only description', () => {
+    it('handles partial — only seoDescription present', () => {
       const input: Record<string, unknown> = {
         title: 'My Page',
-        seo: { description: 'SEO Desc' },
+        seoDescription: { value: 'SEO Desc' },
       };
 
-      extractSeoMetafields(input);
+      extractSeoMetafieldsFromVerbatimFields(input);
 
-      expect(input.seo).toBeUndefined();
+      expect(input.seoDescription).toBeUndefined();
       expect(input.metafields).toEqual([
         { namespace: 'global', key: 'description_tag', type: 'single_line_text_field', value: 'SEO Desc' },
       ]);
     });
 
-    it('is a no-op when seo is absent', () => {
+    it('emits no metafields when both fields are null', () => {
+      const input: Record<string, unknown> = {
+        title: 'My Page',
+        seoTitle: null,
+        seoDescription: null,
+      };
+
+      extractSeoMetafieldsFromVerbatimFields(input);
+
+      expect(input.seoTitle).toBeUndefined();
+      expect(input.seoDescription).toBeUndefined();
+      expect(input.metafields).toBeUndefined();
+    });
+
+    it('emits no metafields when a field is present but its value is null', () => {
+      const input: Record<string, unknown> = {
+        title: 'My Page',
+        seoTitle: { value: null },
+        seoDescription: { value: null },
+      };
+
+      extractSeoMetafieldsFromVerbatimFields(input);
+
+      expect(input.metafields).toBeUndefined();
+    });
+
+    it('is a no-op when both SEO fields are absent', () => {
       const input: Record<string, unknown> = {
         title: 'My Page',
         body: 'content',
       };
 
-      extractSeoMetafields(input);
+      extractSeoMetafieldsFromVerbatimFields(input);
 
-      expect(input.seo).toBeUndefined();
+      expect(input.seoTitle).toBeUndefined();
+      expect(input.seoDescription).toBeUndefined();
       expect(input.metafields).toBeUndefined();
       expect(input.title).toBe('My Page');
       expect(input.body).toBe('content');
     });
 
-    it('is a no-op when seo is null', () => {
-      const input: Record<string, unknown> = {
-        title: 'My Page',
-        seo: null,
-      };
-
-      extractSeoMetafields(input);
-
-      expect(input.seo).toBeUndefined();
-      expect(input.metafields).toBeUndefined();
-    });
-
     it('merges with existing metafields', () => {
       const input: Record<string, unknown> = {
         title: 'My Page',
-        seo: { title: 'SEO Title' },
+        seoTitle: { value: 'SEO Title' },
         metafields: [{ namespace: 'custom', key: 'foo', type: 'single_line_text_field', value: 'bar' }],
       };
 
-      extractSeoMetafields(input);
+      extractSeoMetafieldsFromVerbatimFields(input);
 
-      expect(input.seo).toBeUndefined();
+      expect(input.seoTitle).toBeUndefined();
       expect(input.metafields).toEqual([
         { namespace: 'custom', key: 'foo', type: 'single_line_text_field', value: 'bar' },
         { namespace: 'global', key: 'title_tag', type: 'single_line_text_field', value: 'SEO Title' },

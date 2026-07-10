@@ -295,6 +295,44 @@ pub enum FilesCommands {
         #[arg(long = "failed-ops-json")]
         failed_ops_json: Option<String>,
     },
+
+    /// One-time ops migration (DEV-10637): rewrite an already-pulled Shopify
+    /// workspace's record files into the VERBATIM on-disk format a fresh pull
+    /// now produces, then commit the result to the local `main` branch.
+    ///
+    /// Two historical reshapes are undone so a re-pull and this migration
+    /// converge: SEO metafields on articles/pages/blogs (`seo` →
+    /// `seoTitle`/`seoDescription`) and MediaImage files (top-level `url` →
+    /// `image.url`). Products/collections and every other entity are untouched.
+    ///
+    /// HARD SAFETY GUARD: aborts before touching anything if any Shopify
+    /// connection has unreviewed working-tree changes or accepted-but-
+    /// unpublished changes. Defaults to a DRY RUN — pass `--apply` to write and
+    /// commit. Pushing is never automated (scratchmd has no push primitive);
+    /// the exact `git push` command is printed for the operator to run.
+    #[command(name = "migrate-shopify-verbatim")]
+    MigrateShopifyVerbatim {
+        /// Actually write changed record files and commit them to `main`.
+        /// Without this flag the command is a DRY RUN that only reports
+        /// scanned / would-change / skipped counts.
+        #[arg(long)]
+        apply: bool,
+        /// Request a push after committing. No safe push primitive exists in
+        /// scratchmd, so this only makes the printed `git push` guidance more
+        /// prominent — it never force-pushes or rewrites history.
+        #[arg(long)]
+        push: bool,
+        /// Scope the migration to a single data folder
+        /// (e.g. "My Shopify/Articles"). Without it, every Shopify connection's
+        /// folders are migrated with the entity type inferred per folder.
+        #[arg(long)]
+        folder: Option<PathBuf>,
+        /// Explicit entity type for `--folder` (`articles`, `pages`, `blogs`,
+        /// `files`, …). Overrides the folder-name inference. Requires
+        /// `--folder`.
+        #[arg(long = "entity-type")]
+        entity_type: Option<String>,
+    },
 }
 
 #[derive(Clone)]
@@ -694,6 +732,19 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             server_url,
             &connection,
             failed_ops_json.as_deref(),
+            json,
+        ),
+        FilesCommands::MigrateShopifyVerbatim {
+            apply,
+            push,
+            folder,
+            entity_type,
+        } => run_migrate_shopify_verbatim(
+            &cwd,
+            apply,
+            push,
+            folder.as_deref(),
+            entity_type.as_deref(),
             json,
         ),
     }
@@ -4039,6 +4090,546 @@ fn print_workspace_needs_reinit_result(
     println!("Run `scratchmd workspaces init <workbook-id> --force` to reinitialize.");
     println!("Any unpublished edits will be discarded.");
     Ok(())
+}
+
+// ===========================================================================
+// Shopify verbatim-format migration (DEV-10637) — one-time ops tool.
+//
+// Rewrites already-pulled Shopify record files into the VERBATIM on-disk shape
+// a fresh pull now produces, commits the result to the local `main` branch, and
+// prints the exact push command (scratchmd has no safe push primitive, so it
+// never pushes / force-pushes on its own). Guards HARD against dirty state.
+// ===========================================================================
+
+/// The `service` string Shopify connections carry in the workspace marker
+/// (mirrors `Service.SHOPIFY` in the server's `service-constants.ts`). Compared
+/// case-insensitively at the call site.
+const SHOPIFY_SERVICE: &str = "SHOPIFY";
+
+/// Per-connection tally + touched paths from the migration pass.
+#[derive(Default)]
+struct ShopifyMigrationConnectionSummary {
+    connection_name: String,
+    scanned: usize,
+    changed: usize,
+    skipped: usize,
+    /// Workspace-relative (`<conn>/<rel>`) paths that were (or would be) rewritten.
+    changed_workspace_paths: Vec<String>,
+    /// Repo-relative paths of the rewritten records (used to stage the commit).
+    changed_repo_paths: Vec<String>,
+    /// Commit sha, when a commit was actually made (`--apply` + ≥1 change).
+    commit_sha: Option<String>,
+    /// The exact `git push` command an operator should run for this connection.
+    push_command: String,
+}
+
+/// Abort if ANY of the given connections has unreviewed working-tree changes or
+/// accepted-but-unpublished changes. This is the mandatory safety guard the
+/// operator requires: the migration rewrites record files in place, so it must
+/// only run against a fully clean, fully published Shopify workspace. Reuses the
+/// single canonical "unreviewed" detector
+/// (`review_ops::list_unreviewed_records_using_gix_status`) and the
+/// `accepted-patches.json` loader so it agrees exactly with the review model.
+fn assert_shopify_connections_are_clean(contexts: &[ConnectionContext]) -> anyhow::Result<()> {
+    let mut dirty_descriptions: Vec<String> = Vec::new();
+
+    for ctx in contexts {
+        let paths = ctx.to_paths();
+
+        let unreviewed_records =
+            crate::shared::review_ops::list_unreviewed_records_using_gix_status(&paths, false)?;
+        for record in &unreviewed_records {
+            dirty_descriptions.push(format!(
+                "{}/{} (unreviewed working-tree change: {})",
+                ctx.conn_dir_name, record.path, record.status
+            ));
+        }
+
+        let accepted_file = crate::shared::accepted_patches::load(&accepted_patches_dir(ctx))?;
+        for entry in &accepted_file.patches {
+            dirty_descriptions.push(format!(
+                "{}/{} (accepted-but-unpublished: {:?})",
+                ctx.conn_dir_name, entry.path, entry.kind
+            ));
+        }
+    }
+
+    if dirty_descriptions.is_empty() {
+        return Ok(());
+    }
+
+    let preview_limit = dirty_descriptions.len().min(50);
+    let preview = dirty_descriptions[..preview_limit]
+        .iter()
+        .map(|line| format!("  {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let overflow = if dirty_descriptions.len() > preview_limit {
+        format!(
+            "\n  ... and {} more",
+            dirty_descriptions.len() - preview_limit
+        )
+    } else {
+        String::new()
+    };
+
+    anyhow::bail!(
+        "Refusing to migrate: {} Shopify record(s) have unreviewed or accepted-but-unpublished \
+         changes. Resolve them first (accept-all / discard-all, then publish or discard), so a \
+         re-pull and this migration converge, then re-run:\n{}{}",
+        dirty_descriptions.len(),
+        preview,
+        overflow,
+    );
+}
+
+/// Atomically write `bytes` to `file_path` (temp file → fsync → rename), so a
+/// crash mid-write can't leave a record half-written. Mirrors the atomic write
+/// discipline used by `accepted-patches.json`.
+fn write_record_file_atomically(file_path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent = file_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("record path has no parent dir: {}", file_path.display()))?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create dir {}", parent.display()))?;
+    let file_name = file_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "record.json".to_string());
+    let tmp_path = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+    {
+        let mut file = std::fs::File::create(&tmp_path)
+            .with_context(|| format!("failed to open {}", tmp_path.display()))?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    std::fs::rename(&tmp_path, file_path)
+        .with_context(|| format!("failed to rename to {}", file_path.display()))?;
+    crate::shared::atomic_json_state::fsync_parent_directory_best_effort(file_path);
+    Ok(())
+}
+
+/// The Shopify entity type for a record, used to dispatch the transform. When
+/// `--entity-type` is given (only valid with `--folder`) it wins; otherwise the
+/// entity type is the folder name — the first path segment — lowercased. Shopify
+/// data-folder names are the entity display names (`Articles`, `Pages`, `Blogs`,
+/// `Files`, …), whose lowercased form equals the connector's entity slug, so the
+/// dispatch matches the server's `migrateShopifyRecordToVerbatimFormat` exactly.
+fn shopify_entity_type_for_record(rel_path: &str, entity_type_override: Option<&str>) -> String {
+    if let Some(explicit) = entity_type_override {
+        return explicit.to_string();
+    }
+    rel_path
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+/// Walk one Shopify connection's worktree records (optionally scoped to
+/// `repo_folder_filter`), apply the verbatim transform, and — when `apply` — write
+/// each changed record back atomically. Returns the tally + touched paths; the
+/// caller commits.
+fn migrate_one_shopify_connection(
+    ctx: &ConnectionContext,
+    repo_folder_filter: Option<&str>,
+    entity_type_override: Option<&str>,
+    apply: bool,
+) -> anyhow::Result<ShopifyMigrationConnectionSummary> {
+    let mut summary = ShopifyMigrationConnectionSummary {
+        connection_name: ctx.conn_dir_name.clone(),
+        push_command: format!(
+            "git --git-dir=\"{}\" push origin main",
+            ctx.bare_repo.display()
+        ),
+        ..Default::default()
+    };
+
+    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
+
+    // Deterministic order so the scanned/changed reporting is stable.
+    let mut record_rel_paths: Vec<&String> = file_path_to_contents_map_in_worktree
+        .keys()
+        .filter(|path| is_data_path_in_folder(path.as_str(), ""))
+        .filter(|path| match repo_folder_filter {
+            Some(folder) => is_data_path_in_folder(path.as_str(), folder),
+            None => true,
+        })
+        .collect();
+    record_rel_paths.sort();
+
+    for rel_path in record_rel_paths {
+        summary.scanned += 1;
+        let bytes = &file_path_to_contents_map_in_worktree[rel_path];
+
+        let parsed: JsonValue = match serde_json::from_slice(bytes) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!(
+                    "  ! skipped {}/{rel_path}: invalid JSON ({err})",
+                    ctx.conn_dir_name
+                );
+                summary.skipped += 1;
+                continue;
+            }
+        };
+        let JsonValue::Object(record_object) = parsed else {
+            // A record file must be a JSON object; anything else is left alone.
+            summary.skipped += 1;
+            continue;
+        };
+
+        let entity_type = shopify_entity_type_for_record(rel_path, entity_type_override);
+        let outcome =
+            crate::shared::shopify_verbatim_migration::migrate_shopify_record_to_verbatim_format(
+                record_object,
+                &entity_type,
+            );
+
+        if !outcome.changed {
+            summary.skipped += 1;
+            continue;
+        }
+
+        summary.changed += 1;
+        summary
+            .changed_workspace_paths
+            .push(format!("{}/{rel_path}", ctx.conn_dir_name));
+        summary.changed_repo_paths.push(rel_path.clone());
+
+        if apply {
+            let disk_path = ctx.worktree_dir.join(rel_path);
+            let serialized = crate::shared::review_ops::json_object_to_bytes(&outcome.record)?;
+            write_record_file_atomically(&disk_path, &serialized)?;
+        }
+    }
+
+    Ok(summary)
+}
+
+/// Stage exactly the migrated record files and commit them to the worktree's
+/// current branch (`main`), returning the new commit sha. Only the passed paths
+/// are staged, and the commit carries no `-a`, so unrelated worktree state
+/// (`.scratch/` schemas, etc.) is never swept in. The safety guard has already
+/// established the tree was otherwise clean.
+fn commit_migrated_records_to_main_branch(
+    worktree_dir: &Path,
+    changed_repo_paths: &[String],
+    commit_message: &str,
+) -> anyhow::Result<String> {
+    let worktree = worktree_dir.to_str().unwrap_or_default();
+
+    // Stage in chunks to stay well under the OS argv limit on large folders.
+    for chunk in changed_repo_paths.chunks(256) {
+        let mut args: Vec<String> = vec![
+            "-C".to_string(),
+            worktree.to_string(),
+            "add".to_string(),
+            "--".to_string(),
+        ];
+        args.extend(chunk.iter().cloned());
+        let output = crate::shared::git_exec::git_command()
+            .args(&args)
+            .output()
+            .context("failed to spawn git add for the Shopify migration commit")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "git add failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+    }
+
+    // Explicit identity: an ops worktree may have no user.name/user.email set.
+    let output = crate::shared::git_exec::git_command()
+        .args([
+            "-C",
+            worktree,
+            "-c",
+            "user.name=Scratch CLI",
+            "-c",
+            "user.email=cli@scratch.md",
+            "commit",
+            "-m",
+            commit_message,
+        ])
+        .output()
+        .context("failed to spawn git commit for the Shopify migration")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git commit failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let head = crate::shared::git_exec::git_command()
+        .args(["-C", worktree, "rev-parse", "HEAD"])
+        .output()
+        .context("failed to resolve HEAD after the Shopify migration commit")?;
+    if !head.status.success() {
+        anyhow::bail!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&head.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&head.stdout).trim().to_string())
+}
+
+fn run_migrate_shopify_verbatim(
+    cwd: &Path,
+    apply: bool,
+    push: bool,
+    folder: Option<&Path>,
+    entity_type: Option<&str>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+
+    if entity_type.is_some() && folder.is_none() {
+        anyhow::bail!("--entity-type requires --folder.");
+    }
+
+    let workspace_dir = markers::find_nearest_workspace(cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    check_workspace_layout_or_bail(&workspace_dir, &workspace_marker, json)?;
+    let all_contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
+
+    // Which connection dir names are Shopify (from the workspace marker).
+    let shopify_dir_names: HashSet<String> = workspace_marker
+        .connections
+        .iter()
+        .filter(|connection| connection.service.eq_ignore_ascii_case(SHOPIFY_SERVICE))
+        .map(|connection| connection.dir_name.clone())
+        .collect();
+    if shopify_dir_names.is_empty() {
+        anyhow::bail!("No Shopify connection found in this workspace.");
+    }
+
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
+    // Determine scope: either one folder inside one Shopify connection, or every
+    // Shopify connection's folders.
+    let scoped_folder: Option<(ConnectionContext, String)> = match folder {
+        Some(folder_path) => {
+            let (ctx, repo_folder, _display) =
+                resolve_folder_context(&workspace_dir, &all_contexts, folder_path)?;
+            if !shopify_dir_names.contains(&ctx.conn_dir_name) {
+                anyhow::bail!(
+                    "Folder '{}' is not inside a Shopify connection.",
+                    folder_path.display()
+                );
+            }
+            Some((ctx, repo_folder))
+        }
+        None => None,
+    };
+
+    // The connections we will actually migrate (and therefore must guard).
+    let contexts_to_migrate: Vec<ConnectionContext> = match &scoped_folder {
+        Some((ctx, _)) => vec![ctx.clone()],
+        None => all_contexts
+            .iter()
+            .filter(|ctx| shopify_dir_names.contains(&ctx.conn_dir_name))
+            .cloned()
+            .collect(),
+    };
+
+    // HARD SAFETY GUARD — abort before transforming anything if not clean.
+    assert_shopify_connections_are_clean(&contexts_to_migrate)?;
+
+    let commit_message = "Shopify verbatim-format migration (DEV-10637): seo→seoTitle/seoDescription; MediaImage url→image.url";
+
+    let mut summaries: Vec<ShopifyMigrationConnectionSummary> = Vec::new();
+    for ctx in &contexts_to_migrate {
+        let repo_folder_filter = scoped_folder
+            .as_ref()
+            .filter(|(scoped_ctx, _)| scoped_ctx.conn_dir_name == ctx.conn_dir_name)
+            .map(|(_, repo_folder)| repo_folder.as_str());
+
+        let mut summary =
+            migrate_one_shopify_connection(ctx, repo_folder_filter, entity_type, apply)?;
+
+        if apply && !summary.changed_repo_paths.is_empty() {
+            let sha = commit_migrated_records_to_main_branch(
+                &ctx.worktree_dir,
+                &summary.changed_repo_paths,
+                commit_message,
+            )?;
+            summary.commit_sha = Some(sha);
+        }
+
+        summaries.push(summary);
+    }
+
+    let elapsed_ms = started.elapsed().as_millis();
+    let total_scanned: usize = summaries.iter().map(|s| s.scanned).sum();
+    let total_changed: usize = summaries.iter().map(|s| s.changed).sum();
+    let total_skipped: usize = summaries.iter().map(|s| s.skipped).sum();
+    let committed_any = summaries.iter().any(|s| s.commit_sha.is_some());
+
+    // Push guidance: scratchmd has no safe push primitive, so we NEVER push /
+    // force-push. Print the exact fast-forward push command per connection that
+    // actually got a commit.
+    let push_commands: Vec<String> = summaries
+        .iter()
+        .filter(|s| s.commit_sha.is_some())
+        .map(|s| s.push_command.clone())
+        .collect();
+
+    let status = if total_changed == 0 {
+        "no_changes"
+    } else if apply {
+        "migrated"
+    } else {
+        "dry_run"
+    };
+
+    if json {
+        let connections_json: Vec<JsonValue> = summaries
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "connection": s.connection_name,
+                    "scanned": s.scanned,
+                    "changed": s.changed,
+                    "skipped": s.skipped,
+                    "committed": s.commit_sha.is_some(),
+                    "commit": s.commit_sha,
+                    "paths": s.changed_workspace_paths,
+                    "pushCommand": s.push_command,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": status,
+                "apply": apply,
+                "connections": connections_json,
+                "totalScanned": total_scanned,
+                "totalChanged": total_changed,
+                "totalSkipped": total_skipped,
+                "committed": committed_any,
+                "pushRequested": push,
+                "pushCommands": push_commands,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    // Human output.
+    if apply {
+        println!(
+            "Shopify verbatim migration ({}): scanned {}, changed {}, skipped {}. ({})",
+            if committed_any {
+                "applied + committed"
+            } else {
+                "applied"
+            },
+            total_scanned,
+            total_changed,
+            total_skipped,
+            format_elapsed(elapsed_ms)
+        );
+    } else {
+        println!(
+            "Shopify verbatim migration (DRY RUN — nothing written): scanned {}, would change {}, skipped {}. ({})",
+            total_scanned,
+            total_changed,
+            total_skipped,
+            format_elapsed(elapsed_ms)
+        );
+    }
+
+    for summary in &summaries {
+        if summary.changed == 0 {
+            continue;
+        }
+        println!();
+        match &summary.commit_sha {
+            Some(sha) => println!(
+                "  {}: {} record(s) rewritten, committed {}",
+                summary.connection_name,
+                summary.changed,
+                &sha[..sha.len().min(12)]
+            ),
+            None => println!(
+                "  {}: {} record(s) {}",
+                summary.connection_name,
+                summary.changed,
+                if apply {
+                    "rewritten"
+                } else {
+                    "would be rewritten"
+                }
+            ),
+        }
+        print_file_list(&summary.changed_workspace_paths);
+    }
+
+    if !apply && total_changed > 0 {
+        println!();
+        println!("Re-run with --apply to write these changes and commit them to `main`.");
+    }
+
+    if committed_any {
+        println!();
+        println!(
+            "Committed to local `main`. scratchmd has NO push primitive, so it did not push. \
+             To publish upstream, fast-forward push each connection's `main` (never --force):"
+        );
+        for command in &push_commands {
+            println!("  {command}");
+        }
+        if push {
+            println!();
+            println!(
+                "Note: --push was requested, but automated pushing is intentionally not wired \
+                 (a bad push here is high-risk). Run the command(s) above manually after review."
+            );
+        }
+        println!();
+        println!(
+            "If a push is rejected as non-fast-forward, the remote `main` has advanced — do NOT \
+             force. Reconcile (download) first, then re-run this migration."
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod migrate_shopify_verbatim_tests {
+    use super::shopify_entity_type_for_record;
+
+    #[test]
+    fn entity_type_is_the_lowercased_top_folder_name() {
+        // Shopify data folders are named after entity display names; lowercasing
+        // yields the connector's entity slug the transform dispatches on.
+        assert_eq!(
+            shopify_entity_type_for_record("Articles/gid___Article_1.json", None),
+            "articles"
+        );
+        assert_eq!(
+            shopify_entity_type_for_record("Files/gid___MediaImage_9.json", None),
+            "files"
+        );
+        assert_eq!(
+            shopify_entity_type_for_record("Products/p1.json", None),
+            "products"
+        );
+    }
+
+    #[test]
+    fn explicit_entity_type_override_wins() {
+        assert_eq!(
+            shopify_entity_type_for_record("SomeFolder/rec.json", Some("blogs")),
+            "blogs"
+        );
+    }
 }
 
 fn resolve_workspace_and_connections(

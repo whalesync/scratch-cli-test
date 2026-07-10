@@ -34,6 +34,11 @@ function productsTableSpec(): BaseJsonTableSpec {
   return { id, slug: 'products', name: 'Products', idPath: 'id', schema: {} } as unknown as BaseJsonTableSpec;
 }
 
+function pagesTableSpec(): BaseJsonTableSpec {
+  const id: EntityId = { wsId: 'pages', remoteId: ['pages'] };
+  return { id, slug: 'pages', name: 'Pages', idPath: 'id', schema: {} } as unknown as BaseJsonTableSpec;
+}
+
 describe('ShopifyConnector.updateRecords', () => {
   let connector: ShopifyConnector;
 
@@ -63,6 +68,21 @@ describe('ShopifyConnector.updateRecords', () => {
       /"createdAt" is read-only/,
     );
     expect(mockUpdateEntity).not.toHaveBeenCalled();
+  });
+
+  // DEV-10637: the verbatim SEO metafields land as `seoTitle`/`seoDescription` ({ value }).
+  // Editing seoTitle.value presents the whole seoTitle object as the sparse change; it is a
+  // writable field, so the connector forwards it to updateEntity (which converts it into the
+  // global.title_tag metafield mutation — covered in shopify-seo-metafields.spec.ts).
+  it('forwards a changed seoTitle for SEO metafield entities to updateEntity', async () => {
+    const files: ConnectorFile[] = [{ id: 'gid://shopify/Page/1', seoTitle: { value: 'Old Title' } }];
+    const changedFields: Record<string, unknown>[] = [{ seoTitle: { value: 'New Title' } }];
+
+    await connector.updateRecords(pagesTableSpec(), files, changedFields);
+
+    expect(mockUpdateEntity).toHaveBeenCalledWith('pages', 'gid://shopify/Page/1', {
+      seoTitle: { value: 'New Title' },
+    });
   });
 
   it('throws when a read-only field is changed alongside a writable one', async () => {
