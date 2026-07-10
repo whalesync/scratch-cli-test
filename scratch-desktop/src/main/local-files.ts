@@ -633,8 +633,13 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
 /**
  * Reads the schema for a data folder from its connection-relative path.
  * Schema lives at: <workspace>/.scratch/connections/scratch/<relPath>/schema.json
+ * Exported for the `files:read-connection-schema` IPC (the renderer uses it to
+ * gate schema-declared features per folder, e.g. the record-tree view).
  */
-async function readConnectionSchema(workspacePath: string, relPath: string): Promise<Record<string, unknown> | null> {
+export async function readConnectionSchema(
+  workspacePath: string,
+  relPath: string,
+): Promise<Record<string, unknown> | null> {
   try {
     const schemaPath = join(workspacePath, SCRATCH_DIR, CONNECTIONS_DIR, relPath, 'schema.json');
     const content = await readFile(schemaPath, 'utf-8');

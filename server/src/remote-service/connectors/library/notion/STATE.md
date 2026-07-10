@@ -43,6 +43,8 @@ Living checklist of what's left: gaps found while adopting human-built code, unf
 
 - [ ] <pending task> <(link issue if any)>
 - [ ] <…>
+- [ ] **Standalone-pages backup (DEV-10568):** live-verify that Search returns deeply-nested child pages under a shared root (coverage caveat in `docs/dev-10568/flat-folder-approach.md`); if gaps are found, consider a root-seeded fallback. Also confirm whether database rows surface with `database_id` or `data_source_id` parents in Search results (the exclusion handles both).
+- [ ] **Standalone-pages backup v1.1 candidates:** incremental pull via Search `sort: last_edited_time desc` + watermark early-stop; per-page (rather than per-Search-page) content checkpointing for very large workspaces.
 
 ## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
 These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
@@ -61,6 +63,7 @@ Every entity that is (or could be) fetched as a standalone top-level list. Inclu
 | Entity | Scratch table | Pull | Create→Push | Edit→Push | Delete | FK | Status |
 |---|---|:--:|:--:|:--:|:--:|:--:|---|
 | <Entity1> | <table name/shape> | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built / planned |
+| Standalone pages (non-database) | `Page Tree` — fixed table, sentinel `remoteId ['WS_STANDALONE_PAGES']`, flat folder; files title-named (id appended on duplicate titles, id fallback for untitled), record identity = page id; picker shows an `infoNote` tooltip. Schema declares `recordTree` (parent.page_id / parent.type / url) + `agentInstructions`; `scratchmd record-tree` derives the tree (incl. synced sibling database folders embedded in pages) and the desktop's "View page tree" modal renders it | ⬜ | ⬜ | ⬜ | ⬜ | ➖ | built (DEV-10568) — verbatim page objects (parent pointer preserved for a future tree *view*); `page_content` honors `excludePageContent`/`childContentMaxDepth`; database-owned pages (`database_id`/`data_source_id` parents) excluded. Writes: title edits (only writable property), deletes (trash), creates via the file's own `parent.page_id` (Notion API cannot create workspace-level pages — fails fast); `page_content` + `parent` read-only (block-writing unwired for DB tables too; no reparent via pages.update). See `notion-standalone-pages.ts` |
 
 ### 3. Scoped / non-top-level entities — not directly fetchable as a top-level entity
 Entities that can't be a standalone Scratch table, for either reason: **(i) scoped to a parent** — reached only through it, so embed into the parent's deep fetch; or **(ii) weird in another way** that blocks top-level treatment — no list endpoint, export/search-only, returned only as a side-effect, requires an unsupported scope. Still data we want — never drop it.
@@ -117,6 +120,7 @@ Max records (or fields) per API request, **per operation** — services often di
 
 ## Incremental polling
 - **Supported:** <YES / NO>. Driver field = `<last-modified field>` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns <SUPPORTED/NOT_SUPPORTED> when <condition>.
+- **Standalone-pages backup table:** NOT_SUPPORTED — it enumerates via `POST /v1/search`, which has no modified-since filter, so every pull is a full enumeration (cheap without content). Its `last_edited_time` deliberately does **not** carry `x-scratch-last-modified-field`.
 - **Mechanism:** <how a `since` pull is expressed — e.g. `If-Modified-Since` header / `updated_since` param / cursor> and **how the new watermark is derived** (server time captured before the first page? max record timestamp?). Note idempotency (mid-run edits re-pulled next time).
 - **Deletions:** <how deletes are detected on an incremental run — tombstone/deleted endpoint, or "not supported">.
 
@@ -131,6 +135,8 @@ Max records (or fields) per API request, **per operation** — services often di
 | Entity / area | Op | Method + path | Note (only if it matters) |
 |---|---|---|---|
 | `<Entity>` | list | `<GET /…>` | `<pagination / limit cap>` |
+| Standalone pages | list | `POST /v1/search` (`filter: {property:'object', value:'page'}`) | cursor pagination, 100/page; database-owned pages dropped client-side |
+| Standalone pages | content | `GET /v1/blocks/{id}/children` | same recursive block fetch as database pages (`pollRecordPageContentChildren`) |
 | `<Entity>` | get / create / update / delete | `<GET/POST/PUT/DELETE /…[/{id}]>` | `<scoping-param / value-key / required-on-create>` |
 | `<schema discovery>` | discover | `<GET /…>` | `<custom-field defs / object schema source>` |
 

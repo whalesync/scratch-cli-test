@@ -51,7 +51,7 @@ import type {
 } from '@spinner/shared-types';
 import { TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
 import { ScratchpadApiError } from '@spinner/shared-types/api-client';
-import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
+import { AlertTriangleIcon, InfoIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 
@@ -121,6 +121,11 @@ function TableLabel({ table }: { table: TablePreview }) {
           {table.disabled && (
             <Tooltip label={table.disabledReason ?? 'Not available'} multiline maw={250} position="right">
               <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
+            </Tooltip>
+          )}
+          {table.infoNote && (
+            <Tooltip label={table.infoNote} multiline maw={280} position="right">
+              <InfoIcon size={14} color="var(--mantine-color-dimmed)" />
             </Tooltip>
           )}
           {!table.disabled && (

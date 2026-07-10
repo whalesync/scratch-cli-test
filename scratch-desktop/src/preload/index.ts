@@ -217,6 +217,9 @@ const scratchDesktop = {
     invoke('scratch:start-run-local-sync', workspacePath, syncName),
   pullAllLinkedTables: (workspacePath: string): Promise<{ jobIds: string[] }> =>
     invoke('scratch:pull-all-linked-tables', workspacePath),
+  /** Derive the record tree of a folder whose schema declares `recordTree` parent-pointer paths. */
+  recordTree: (workspacePath: string, folder: string): Promise<unknown> =>
+    invoke('scratch:record-tree', workspacePath, folder),
   showInFolder: (folderPath: string): Promise<void> => invoke('scratch:show-in-folder', folderPath),
   /** Reveals a file in Finder / Explorer (shell.showItemInFolder). */
   showItemInFolder: (filePath: string): Promise<void> => invoke('scratch:show-item-in-folder', filePath),
@@ -467,6 +470,9 @@ const scratchFiles = {
   > => invoke('files:read-batch', filePaths, opts),
   readSchema: (workspacePath: string, folderName: string): Promise<Record<string, unknown> | null> =>
     invoke('files:read-schema', workspacePath, folderName),
+  /** Read a folder's connection schema.json (workspace-relative `<connection>/<folder>` path). */
+  readConnectionSchema: (workspacePath: string, relPath: string): Promise<Record<string, unknown> | null> =>
+    invoke('files:read-connection-schema', workspacePath, relPath),
   readConnectionView: (folderPath: string, workspacePath: string, viewName: string): Promise<unknown> =>
     invoke('files:read-connection-view', folderPath, workspacePath, viewName),
   readGridData: (

@@ -88,6 +88,29 @@ export function buildNotionDefaultView(schema: TSchema): TableView {
   return { name: 'Default', cols };
 }
 
+/**
+ * Build the default view for the standalone-pages backup table (DEV-10568).
+ * Same layout as the database default view, except `parent` is surfaced
+ * instead of hidden: on a database table the parent is the same database id on
+ * every row (noise), but on standalone pages it is the page-tree edge (page /
+ * workspace / block) the backup exists to preserve.
+ */
+export function buildNotionStandalonePagesDefaultView(schema: TSchema): TableView {
+  const view = buildNotionDefaultView(schema);
+  for (const col of view.cols) {
+    if (col.kind === 'col' && col.path === 'parent') {
+      col.hidden = undefined;
+      col.subfields = [
+        { relativePath: 'type', name: 'Type', type: 'string' },
+        { relativePath: 'page_id', name: 'Page Id', type: 'string' },
+        { relativePath: 'block_id', name: 'Block Id', type: 'string' },
+      ];
+      col.selectedSubfield = 0;
+    }
+  }
+  return view;
+}
+
 // ── Helpers ──
 
 /**

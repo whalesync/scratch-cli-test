@@ -18,6 +18,14 @@ export interface TablePreview {
   parentPath?: string;
   /** Human-readable reason why this table is disabled or has writes disabled. */
   disabledReason?: string;
+  /**
+   * Human-readable note shown as an info icon + tooltip next to the table in
+   * the table pickers (web and desktop). For tables that need explanation
+   * before being added — what the table contains, notable exclusions, cost
+   * caveats (e.g. Notion's fixed "Page Tree" table). Unlike `disabledReason`,
+   * the table is fully usable.
+   */
+  infoNote?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -67,6 +75,21 @@ export interface TableSchemaPreview {
   mainContentPath?: string;
   /** Lodash dot path to the slug field. */
   slugPath?: string;
+  /**
+   * Declares that this table's records form a tree through an in-record parent
+   * pointer (see `BaseJsonTableSpec.recordTree` on the server). Frontends use
+   * it generically — e.g. to offer a tree view of the folder's records.
+   */
+  recordTree?: {
+    /** Lodash dot path to the parent record's id (e.g. `'parent.page_id'`). */
+    parentIdPath: string;
+    /** Lodash dot path to the parent-kind discriminator (e.g. `'parent.type'`). */
+    parentKindPath?: string;
+    /** Lodash dot path to a record's own URL in the external service (e.g. `'url'`). */
+    recordUrlPath?: string;
+  };
+  /** Free-text guidance for AI agents working with this folder's files (see server `BaseJsonTableSpec`). */
+  agentInstructions?: string;
   /**
    * @deprecated DEV-10092 — superseded by `idPath`. A server predating the
    * path-field rename still sends this; readers should prefer `idPath` and fall

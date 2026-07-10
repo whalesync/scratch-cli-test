@@ -11,7 +11,8 @@ use clap::{Parser, Subcommand};
 
 use api::{ApiClient, DEFAULT_SERVER_URL};
 use commands::{
-    auth, connections, files, index, linked, read_records, routines, syncs, validation, workspaces,
+    auth, connections, files, index, linked, read_records, record_tree, routines, syncs,
+    validation, workspaces,
 };
 use config::project_config;
 
@@ -136,6 +137,19 @@ enum Commands {
         /// Validate stale records on this page and return per-row errors
         #[arg(long)]
         validate: bool,
+    },
+    /// Derive the parent/child tree of a folder whose schema declares a
+    /// `recordTree` parent pointer (e.g. the Notion "Page Tree" table).
+    /// Outputs JSON: { folder, totalRecords, parseErrors, roots }.
+    /// Example: scratchmd record-tree --folder my-conn/pages
+    #[command(name = "record-tree")]
+    RecordTree {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/pages")
+        #[arg(long)]
+        folder: String,
     },
     /// Manage the SQLite file index (build, inspect, reindex, find-stale, …)
     Index {
@@ -526,6 +540,8 @@ async fn main() {
             debug,
             validate,
         ),
+
+        Commands::RecordTree { workspace, folder } => record_tree::run(&workspace, &folder),
 
         Commands::Index { command } => match command {
             IndexCommands::FindStaleFiles { workspace, folder } => {

@@ -250,6 +250,11 @@ mod tests {
     }
 
     #[test]
+    fn commands_doc_lists_record_tree_command() {
+        assert!(COMMANDS_DOC.contains("record-tree --folder"));
+    }
+
+    #[test]
     fn routines_doc_covers_format_and_cli() {
         // File format: per-action step fields and the pull-only full-pull option.
         assert!(ROUTINES_DOC.contains("folders"));
@@ -461,6 +466,7 @@ Run `scratchmd <command> --help` for full flag details.
 | Command | Description |
 |---|---|
 | `paginate-records --folder <conn>/<folder>` | Query a folder's index — paginated filenames with filters/sort. Primary read API for the grid |
+| `record-tree --folder <conn>/<folder>` | Derive the parent/child tree of a folder whose schema declares `recordTree` parent-pointer paths (JSON: folder, totalRecords, parseErrors, roots) |
 
 ## index
 

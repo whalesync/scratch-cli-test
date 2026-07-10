@@ -3,6 +3,7 @@ import type { TableView } from '@spinner/shared-types';
 import type { AutoDownloadCompletedEvent } from '../shared/auto-download-events';
 import type { CliInstallEvent } from '../shared/cli-install-events';
 import type { AppWillQuitPayload } from '../shared/lifecycle-events';
+import type { RecordTreeResult } from '../shared/record-tree-types';
 import type { ReviewStatsMayHaveChangedEvent } from '../shared/review-stats-events';
 import type { ReviewStat } from '../shared/review-types';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
@@ -275,6 +276,8 @@ interface ScratchDesktopAPI {
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   startRunLocalSync: (workspacePath: string, syncName: string) => Promise<{ sessionId: string }>;
   pullAllLinkedTables: (workspacePath: string) => Promise<{ jobIds: string[] }>;
+  /** Derive the record tree of a folder whose schema declares `recordTree` parent-pointer paths. */
+  recordTree: (workspacePath: string, folder: string) => Promise<RecordTreeResult>;
   showInFolder: (folderPath: string) => Promise<void>;
   showItemInFolder: (filePath: string) => Promise<void>;
   showWorkspaceLog: (workspacePath: string) => Promise<void>;
@@ -420,6 +423,8 @@ interface ScratchFilesAPI {
     >
   >;
   readSchema: (workspacePath: string, folderName: string) => Promise<Record<string, unknown> | null>;
+  /** Read a folder's connection schema.json (workspace-relative `<connection>/<folder>` path). */
+  readConnectionSchema: (workspacePath: string, relPath: string) => Promise<Record<string, unknown> | null>;
   readConnectionView: (folderPath: string, workspacePath: string, viewName: string) => Promise<TableView | null>;
   readGridData: (
     folderPath: string,

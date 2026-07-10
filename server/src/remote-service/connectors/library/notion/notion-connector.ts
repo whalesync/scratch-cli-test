@@ -67,6 +67,13 @@ import { isFullDatabase, isFullDataSource, NotionDataSourceSearchResult } from '
 import { buildNotionLastEditedFilter, combineNotionFilters } from './notion-incremental';
 import { buildNotionJsonTableSpec, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
 import { NotionSchemaParser } from './notion-schema-parser';
+import {
+  buildNotionStandalonePagesTablePreview,
+  buildNotionStandalonePagesTableSpec,
+  isDatabaseOwnedNotionPage,
+  isNotionStandalonePagesTable,
+  NOTION_STANDALONE_PAGES_DISPLAY_NAME,
+} from './notion-standalone-pages';
 
 export const PAGE_CONTENT_COLUMN_NAME = 'Page Content';
 export const PAGE_CONTENT_COLUMN_ID = 'WS_PAGE_CONTENT';
@@ -262,12 +269,25 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
   async listTables(): Promise<TablePreview[]> {
     const response = await this.searchDataSources({ query: '', pageSize: 10 });
-    return response.results.map((ds) => this.schemaParser.parseDataSourceTablePreview(ds));
+    return [
+      // The fixed standalone-pages backup table is always offered, ahead of the
+      // searched databases, so it stays discoverable in the initial short list.
+      buildNotionStandalonePagesTablePreview(),
+      ...response.results.map((ds) => this.schemaParser.parseDataSourceTablePreview(ds)),
+    ];
   }
 
   async searchTables(searchTerm: string): Promise<{ tables: TablePreview[]; hasMore: boolean }> {
     const response = await this.searchDataSources({ query: searchTerm });
     const tables = response.results.map((ds) => this.schemaParser.parseDataSourceTablePreview(ds));
+    // The client swaps from listTables to searchTables output as the user
+    // types, so the fixed standalone-pages table must be findable here too —
+    // included whenever the term matches its display name (an empty term
+    // matches, mirroring the initial list).
+    const standalonePagesPreview = buildNotionStandalonePagesTablePreview();
+    if (standalonePagesPreview.displayName.toLowerCase().includes(searchTerm.trim().toLowerCase())) {
+      tables.unshift(standalonePagesPreview);
+    }
     return { tables, hasMore: response.has_more };
   }
 
@@ -295,6 +315,10 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * fall through `resolveDataSourceId`.
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
+    if (isNotionStandalonePagesTable(id)) {
+      // Fixed backup table — no data source to introspect; curated spec.
+      return buildNotionStandalonePagesTableSpec(id);
+    }
     const dataSourceId = await this.resolveDataSourceId(id.remoteId);
     const dataSource = await this.client.retrieveDataSource({ data_source_id: dataSourceId });
     if (!isFullDataSource(dataSource)) {
@@ -353,14 +377,27 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   }
 
   /**
-   * Notion supports incremental pulls unconditionally: every database page has
-   * a server-side `last_edited_time` system field, and `databases.query` can
-   * filter on it. There is no per-folder config to inspect (the field is not
-   * user-selectable), so this always returns `true` and a run only demotes to
-   * full at pull time if the user's own filter is a compound `and`/`or`
-   * (Notion's single-level nesting limit — see `pullRecordFiles`).
+   * Notion database tables support incremental pulls unconditionally: every
+   * database page has a server-side `last_edited_time` system field, and
+   * `databases.query` can filter on it. There is no per-folder config to
+   * inspect (the field is not user-selectable), so database tables always
+   * report supported and a run only demotes to full at pull time if the user's
+   * own filter is a compound `and`/`or` (Notion's single-level nesting limit —
+   * see `pullRecordFiles`).
+   *
+   * The standalone-pages backup table is the exception: it enumerates via the
+   * Search endpoint, which has no modified-since filter, so every pull is a
+   * full enumeration. A `null` tableSpec (REST layer with no schema on hand)
+   * keeps the optimistic pre-pages answer; the job re-checks with the real
+   * spec at pull time.
    */
-  override incrementalPullSupport(): IncrementalPullSupport {
+  override incrementalPullSupport(
+    _options: PullRecordFilesOptions,
+    tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    if (tableSpec && isNotionStandalonePagesTable(tableSpec.id)) {
+      return IncrementalPullSupport.NOT_SUPPORTED;
+    }
     return IncrementalPullSupport.SUPPORTED;
   }
 
@@ -371,6 +408,10 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     options: NotionPullOptions,
   ): Promise<PullRecordFilesResult> {
     WSLogger.info({ source: 'NotionConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
+
+    if (isNotionStandalonePagesTable(tableSpec.id)) {
+      return this.pullStandalonePageRecordFiles(callback, progress, options);
+    }
 
     const dataSourceId = await this.resolveDataSourceId(tableSpec.id.remoteId);
     let hasMore = true;
@@ -459,6 +500,79 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     return newWatermark ? { newWatermark } : {};
   }
 
+  /**
+   * Pull for the standalone-pages backup table (DEV-10568). Enumerates every
+   * page the integration can see via the Search endpoint — no walk of the page
+   * tree — then drops database-owned pages (rows of the per-database tables).
+   * Each kept page is stored verbatim; page body content rides along under
+   * `page_content` exactly like the database pull, honoring the same
+   * `excludePageContent` / `childContentMaxDepth` folder settings.
+   *
+   * Always a full enumeration (Search has no modified-since filter — see
+   * `incrementalPullSupport`), checkpointed per Search page through the same
+   * `nextCursor` progress the database pull uses, and trivially idempotent: a
+   * re-run converges on the same one-file-per-page-id folder.
+   */
+  private async pullStandalonePageRecordFiles(
+    callback: (params: { files: ConnectorFile[]; connectorProgress?: NotionDownloadProgress }) => Promise<void>,
+    progress: NotionDownloadProgress,
+    options: NotionPullOptions,
+  ): Promise<PullRecordFilesResult> {
+    if (options.filter) {
+      // The database pull's filter option is a `dataSources.query` filter; the
+      // Search endpoint accepts no record filter at all. Fail fast rather than
+      // silently pulling unfiltered data.
+      throw new Error(
+        `The Notion "${NOTION_STANDALONE_PAGES_DISPLAY_NAME}" table does not support folder filters — ` +
+          'remove the filter from the folder settings.',
+      );
+    }
+
+    let hasMore = true;
+    let nextCursor = progress?.nextCursor;
+
+    while (hasMore) {
+      const response = await this.client.search({
+        filter: { property: 'object', value: 'page' },
+        start_cursor: nextCursor,
+        page_size: options.pageSize ?? 100,
+      });
+
+      const standalonePages = response.results
+        .filter((result): result is PageObjectResponse => result.object === 'page' && 'parent' in result)
+        .filter((page) => !isDatabaseOwnedNotionPage(page));
+
+      const files: ConnectorFile[] = [];
+      for (const page of standalonePages) {
+        const connectorFile = page as unknown as ConnectorFile;
+
+        if (!options.excludePageContent) {
+          const maxChildDepth = options.childContentMaxDepth ?? NotionConnector.PAGE_CONTENT_MAX_DEPTH;
+          try {
+            const childrenData = await this.pollRecordPageContentChildren(page.id, maxChildDepth, page.id);
+            connectorFile['page_content'] = childrenData.children;
+          } catch (error) {
+            WSLogger.error({
+              source: 'NotionConnector',
+              message: `Failed to fetch content for page ${page.id}`,
+              error,
+            });
+          }
+        }
+        files.push(connectorFile);
+      }
+
+      hasMore = response.has_more;
+      nextCursor = response.next_cursor ?? undefined;
+
+      await callback({
+        files,
+        connectorProgress: { nextCursor },
+      });
+    }
+    return {};
+  }
+
   async pullRecordFilesByIds(
     _tableSpec: BaseJsonTableSpec,
     ids: string[],
@@ -519,6 +633,9 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * Returns the created pages.
    */
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
+    if (isNotionStandalonePagesTable(tableSpec.id)) {
+      return this.createStandalonePages(files);
+    }
     const results: ConnectorFile[] = [];
     const dataSourceId = await this.resolveDataSourceId(tableSpec.id.remoteId);
 
@@ -529,6 +646,44 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
       const newPage = await this.client.createPage({
         parent: { type: 'data_source_id', data_source_id: dataSourceId },
+        properties: properties as CreatePageParameters['properties'],
+      });
+      results.push(newPage as unknown as ConnectorFile);
+    }
+
+    return results;
+  }
+
+  /**
+   * Create standalone (non-database) pages. Each new record file names its own
+   * create destination through the verbatim `parent.page_id` pointer the table
+   * preserves — Notion then inserts the `child_page` block into that parent
+   * itself, so no block append is needed. Notion's public API cannot create
+   * workspace-level (or block-parented) pages, so a file without a `page_id`
+   * parent fails fast with a clear message rather than guessing a destination.
+   */
+  private async createStandalonePages(files: ConnectorFile[]): Promise<ConnectorFile[]> {
+    const results: ConnectorFile[] = [];
+
+    for (const file of files) {
+      const parent = file.parent as { type?: string; page_id?: string } | undefined;
+      const parentPageId = typeof parent?.page_id === 'string' ? parent.page_id.trim() : '';
+      const hasNonPageParentType = parent?.type !== undefined && parent.type !== 'page_id';
+      if (!parentPageId || hasNonPageParentType) {
+        throw new Error(
+          'Creating a standalone Notion page requires the record file to carry a "parent" of type "page_id" ' +
+            `naming the page it should live under (got parent ${JSON.stringify(parent ?? null)}). ` +
+            "Notion's API cannot create workspace-level pages.",
+        );
+      }
+
+      const rawProperties = (file.properties as Record<string, unknown>) || {};
+      // Same read-format → write-format transform as database-table creates
+      // (drops the type/id envelope keys; title is the only writable property).
+      const properties = this.transformPropertiesForUpdate(rawProperties);
+
+      const newPage = await this.client.createPage({
+        parent: { type: 'page_id', page_id: parentPageId },
         properties: properties as CreatePageParameters['properties'],
       });
       results.push(newPage as unknown as ConnectorFile);

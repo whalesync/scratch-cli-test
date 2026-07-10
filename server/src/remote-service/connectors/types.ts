@@ -25,6 +25,12 @@ export type TablePreview = {
   parentPath?: string;
   /** Human-readable reason why this table is disabled or has writes disabled */
   disabledReason?: string;
+  /**
+   * Human-readable note shown as an info icon + tooltip next to the table in
+   * the table pickers (web and desktop). For tables that need explanation
+   * before being added; unlike `disabledReason`, the table is fully usable.
+   */
+  infoNote?: string;
   metadata?: Record<string, unknown>;
 };
 
@@ -253,6 +259,41 @@ export type BaseJsonTableSpec = {
   slugPath?: DotPath;
   /** @deprecated Use slugPath instead */
   slugColumnRemoteId?: string;
+
+  /**
+   * Declares that this table's records form a tree through an in-record parent
+   * pointer, enabling generic tree derivations (the CLI `files tree` command
+   * and the desktop tree view) with no connector knowledge in the frontends.
+   * Serialized into the folder's `schema.json` like every other spec field.
+   * A record whose value at `parentIdPath` equals another record's id (at
+   * `idPath`) renders as that record's child; records without an in-folder
+   * parent are roots. Omit for flat tables.
+   */
+  recordTree?: {
+    /** Dot path to the parent record's id (e.g. Notion `parent.page_id`). */
+    parentIdPath: DotPath;
+    /**
+     * Dot path to the parent-kind discriminator (e.g. Notion `parent.type`,
+     * where only `page_id`-kind parents resolve in-folder). Used to label
+     * roots by why they are roots. Optional.
+     */
+    parentKindPath?: DotPath;
+    /**
+     * Dot path to a record's own URL in the external service (e.g. Notion's
+     * top-level `url`), letting tree UIs offer an "open in <service>" action
+     * per node. Optional.
+     */
+    recordUrlPath?: DotPath;
+  };
+
+  /**
+   * Free-text guidance for AI agents working with this folder's files,
+   * serialized into the folder's `schema.json` like every other spec field.
+   * Use it to explain what a non-obvious table contains and which CLI
+   * affordances exist for it (e.g. the Page Tree table pointing agents at
+   * `scratchmd record-tree`). Omit for ordinary tables.
+   */
+  agentInstructions?: string;
 
   // The root path of this connector including any sites, bases, collections that should precede the table
   // For Webflow this would be the site name and collection name

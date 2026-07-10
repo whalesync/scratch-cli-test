@@ -13,6 +13,7 @@ import type { WorkspaceConnection } from '../../types/local-files';
 import { ColumnDefinitionsModal } from './ColumnDefinitionsModal';
 import { DataFolderInfoModal } from './DataFolderInfoModal';
 import classes from './FolderTree.module.css';
+import { RecordTreeModal } from './RecordTreeModal';
 import {
   resolveSingleConnectionPublishTarget,
   type SingleConnectionPublishTarget,
@@ -153,6 +154,13 @@ interface FolderInfoRequest {
   workingCopyPath: string;
 }
 
+interface RecordTreeRequest {
+  /** Workspace-relative `<connection>/<folder>` path of the folder. */
+  folderRelPath: string;
+  /** Service display name for the modal's "Open in <service>" actions. */
+  serviceDisplayName: string;
+}
+
 interface FolderTreeNodeProps {
   node: TreeNode;
   depth: number;
@@ -167,6 +175,7 @@ interface FolderTreeNodeProps {
   dataFoldersByConnection: Map<string, DataFolder[]>;
   onRequestPull: (request: PullRequest) => void;
   onShowFolderInfo: (request: FolderInfoRequest) => void;
+  onViewRecordTree: (request: RecordTreeRequest) => void;
   onViewInService: (folder: DataFolder) => void;
   /** DEV-10596: publish only this connector's approved changes (right-click connector node). */
   onRequestPublishConnector?: (target: SingleConnectionPublishTarget) => void;
@@ -188,6 +197,7 @@ function FolderTreeNodeRow({
   dataFoldersByConnection,
   onRequestPull,
   onShowFolderInfo,
+  onViewRecordTree,
   onViewInService,
   onRequestPublishConnector,
   validationByFolder,
@@ -206,10 +216,25 @@ function FolderTreeNodeRow({
   }, [node.folder, hasChildren, onSelectFolder]);
 
   const showContextMenu = useCallback(
-    (path: string) => {
+    async (path: string) => {
       const localFolderPath = node.folder ? normalizeFolderPath(node.folder.name) : null;
       const mappedFolder = localFolderPath ? dataFolderByLocalPath.get(localFolderPath) : undefined;
       const connectionFolders = depth === 0 ? (dataFoldersByConnection.get(node.name) ?? []) : [];
+
+      // Workspace-relative `<connection>/<folder>` path — the key both the
+      // connection schema cache and the CLI use to address a folder.
+      const workspaceRelativeFolderPath =
+        workspacePath && path.startsWith(workspacePath) ? path.slice(workspacePath.length + 1) : null;
+
+      // Schema-gated: only folders whose stored schema declares `recordTree`
+      // (a generic contract — today Notion's Page Tree table) get a tree view.
+      let folderDeclaresRecordTree = false;
+      if (mappedFolder && node.folder && workspacePath && workspaceRelativeFolderPath) {
+        const folderSchema = await window.scratchFiles.readConnectionSchema(workspacePath, workspaceRelativeFolderPath);
+        folderDeclaresRecordTree = Boolean(
+          folderSchema && typeof folderSchema === 'object' && 'recordTree' in folderSchema,
+        );
+      }
 
       // DEV-10596: resolve the connector-scoped publish target once (depth-0
       // connector node only). `ok:false` (e.g. no `connectorAccountId`) withholds
@@ -265,6 +290,9 @@ function FolderTreeNodeRow({
       if (mappedFolder && node.folder) {
         items.push({ id: 'info-sep', label: '', type: 'separator' });
         items.push({ id: 'show-info', label: 'Get Info' });
+        if (folderDeclaresRecordTree) {
+          items.push({ id: 'view-record-tree', label: 'View page tree' });
+        }
         // Deep link to this table in the external service's own web UI. Only shown
         // for services that provide a constructible link (remoteWebUrl).
         if (mappedFolder.remoteWebUrl) {
@@ -345,6 +373,12 @@ function FolderTreeNodeRow({
         if (id === 'show-info' && mappedFolder && node.folder) {
           onShowFolderInfo({ folder: mappedFolder, localFolder: node.folder, workingCopyPath: path });
         }
+        if (id === 'view-record-tree' && workspaceRelativeFolderPath) {
+          onViewRecordTree({
+            folderRelPath: workspaceRelativeFolderPath,
+            serviceDisplayName: getServiceName(connectorsMetadata, mappedFolder?.connectorService ?? ''),
+          });
+        }
         if (id === 'view-in-service' && mappedFolder) {
           onViewInService(mappedFolder);
         }
@@ -364,6 +398,7 @@ function FolderTreeNodeRow({
       onRequestPublishConnector,
       onShowColumnDefs,
       onShowFolderInfo,
+      onViewRecordTree,
       onViewInService,
       workspacePath,
     ],
@@ -389,7 +424,7 @@ function FolderTreeNodeRow({
           folderPath
             ? (e: React.MouseEvent) => {
                 e.preventDefault();
-                showContextMenu(folderPath);
+                void showContextMenu(folderPath);
               }
             : undefined
         }
@@ -550,7 +585,7 @@ function FolderTreeNodeRow({
             component="span"
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
-              showContextMenu(folderPath);
+              void showContextMenu(folderPath);
             }}
             style={{
               display: 'flex',
@@ -585,6 +620,7 @@ function FolderTreeNodeRow({
               dataFoldersByConnection={dataFoldersByConnection}
               onRequestPull={onRequestPull}
               onShowFolderInfo={onShowFolderInfo}
+              onViewRecordTree={onViewRecordTree}
               onViewInService={onViewInService}
               onRequestPublishConnector={onRequestPublishConnector}
               validationByFolder={validationByFolder}
@@ -636,6 +672,7 @@ export function FolderTree({
   const rootChildren = useMemo(() => Array.from(tree.children.values()), [tree]);
   const [columnDefsFolder, setColumnDefsFolder] = useState<string | null>(null);
   const [folderInfoRequest, setFolderInfoRequest] = useState<FolderInfoRequest | null>(null);
+  const [recordTreeRequest, setRecordTreeRequest] = useState<RecordTreeRequest | null>(null);
   const connectionDirNameById = useMemo(
     () => new Map(workspaceConnections.map((connection) => [connection.id, connection.dirName])),
     [workspaceConnections],
@@ -675,6 +712,10 @@ export function FolderTree({
     },
     [workspaceId],
   );
+
+  const handleViewRecordTree = useCallback((request: RecordTreeRequest) => {
+    setRecordTreeRequest(request);
+  }, []);
 
   const handleViewInService = useCallback(
     (folder: DataFolder) => {
@@ -755,6 +796,7 @@ export function FolderTree({
           dataFoldersByConnection={dataFoldersByConnection}
           onRequestPull={handlePullRequest}
           onShowFolderInfo={handleShowFolderInfo}
+          onViewRecordTree={handleViewRecordTree}
           onViewInService={handleViewInService}
           onRequestPublishConnector={onRequestPublishConnector}
           validationByFolder={validationByFolder}
@@ -777,6 +819,22 @@ export function FolderTree({
           folder={folderInfoRequest.folder}
           workingCopyPath={folderInfoRequest.workingCopyPath}
           fileCount={folderInfoRequest.localFolder.fileCount}
+        />
+      )}
+
+      {recordTreeRequest && workspacePath && (
+        <RecordTreeModal
+          opened={true}
+          onClose={() => setRecordTreeRequest(null)}
+          workspacePath={workspacePath}
+          folderRelPath={recordTreeRequest.folderRelPath}
+          serviceDisplayName={recordTreeRequest.serviceDisplayName}
+          onSelectFolder={(folderPath) => {
+            // The sidebar's select callback TOGGLES (re-selecting the current
+            // folder deselects it); the modal needs "ensure selected"
+            // semantics, so skip the call when the folder is already selected.
+            if (selectedFolderPath !== folderPath) onSelectFolder(folderPath);
+          }}
         />
       )}
 

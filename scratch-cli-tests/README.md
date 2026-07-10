@@ -17,6 +17,7 @@ Black-box integration tests for the `scratchmd` Rust CLI binary (`scratch-git-2/
 | **Driver Publish** | Driver-based end-to-end publish flows over related `authors`/`posts` tables: edit, create, delete, publish, and post-publish reconciliation |
 | **Workspace Sync** | Detect added/removed connections on download, test `--on-delete=remove` and `keep` modes |
 | **Empty Folders**  | A sync from a never-populated (0-row) source folder completes instead of 404-ing — regression cover for the scratch-git `files-paginated` empty-folder fix (DEV-10496) |
+| **Record Tree**    | `record-tree` derives a folder's parent/child forest from schema-declared `recordTree` paths — node kinds/urls, embedded sibling folders, and the no-declaration error (local-only; synthetic workspace fixture, no server round-trip) |
 
 Each suite tests the full CLI stack: argument parsing, flag handling, credential loading, `--json` serialization, and exit codes.
 

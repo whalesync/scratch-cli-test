@@ -5,6 +5,7 @@ pub mod generate_docs;
 pub mod index;
 pub mod linked;
 pub mod read_records;
+pub mod record_tree;
 pub mod routines;
 pub mod syncs;
 pub mod validation;

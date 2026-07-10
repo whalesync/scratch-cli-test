@@ -24,6 +24,7 @@ import {
   listFiles,
   listFolders,
   readBatch,
+  readConnectionSchema,
   readConnectionViewByName,
   readDiffGridDataPage,
   readDiffRecordData,
@@ -986,6 +987,11 @@ ipcMain.handle('scratch:pull-all-linked-tables', async (_, workspacePath: string
     runScratchmdJson<{ jobIds: string[] }>(['--json', 'linked', 'pull-all'], workspacePath),
   ),
 );
+// Derive the record tree of a folder whose schema declares `recordTree`
+// parent-pointer paths (read-only one-shot — plain shell-out, no mutation lock).
+ipcMain.handle('scratch:record-tree', async (_, workspacePath: string, folder: string) =>
+  runScratchmdJson(['record-tree', '--folder', folder], workspacePath),
+);
 ipcMain.handle('scratch:watch-workspace-files', async (event, workspacePath: string) => {
   const folders = await listFolders(workspacePath);
   const folderPaths = folders.map((f) => f.path);
@@ -1279,6 +1285,9 @@ ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSi
 );
 ipcMain.handle('files:read-schema', async (_, workspacePath: string, folderName: string) =>
   readSchema(workspacePath, folderName),
+);
+ipcMain.handle('files:read-connection-schema', async (_, workspacePath: string, relPath: string) =>
+  readConnectionSchema(workspacePath, relPath),
 );
 ipcMain.handle('files:read-connection-view', async (_, folderPath: string, workspacePath: string, viewName: string) =>
   readConnectionViewByName(folderPath, workspacePath, viewName),

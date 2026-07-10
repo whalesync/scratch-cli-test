@@ -1,0 +1,7 @@
+.treeRow .rowActions {
+  visibility: hidden;
+}
+
+.treeRow:hover .rowActions {
+  visibility: visible;
+}

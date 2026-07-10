@@ -37,7 +37,7 @@ import type {
   WorkbookId,
 } from '@spinner/shared-types';
 import { settingAppliesToTable, TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
-import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
+import { AlertTriangleIcon, InfoIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { ConnectorSettingField } from './connector-setting-field';
@@ -130,6 +130,13 @@ function TableLabel({ table }: { table: TablePreview }) {
         <Tooltip label={table.disabledReason} multiline maw={300}>
           <span style={{ display: 'inline-flex' }}>
             <StyledLucideIcon Icon={AlertTriangleIcon} size={14} c="var(--mantine-color-orange-5)" />
+          </span>
+        </Tooltip>
+      )}
+      {table.infoNote && (
+        <Tooltip label={table.infoNote} multiline maw={300}>
+          <span style={{ display: 'inline-flex' }}>
+            <StyledLucideIcon Icon={InfoIcon} size={14} c="dimmed" />
           </span>
         </Tooltip>
       )}
