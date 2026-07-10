@@ -20,6 +20,8 @@ This runbook is paired with the **`/investigate-gcp-flow-log-alert` Claude skill
 
 > The old Notion "Firefighting / On-Call (GCP)" playbook that these alerts used to link is **deprecated** — do not use it. This runbook and the skill replace it.
 
+> This runbook is also the reference for the **Cloud IDS** alert (`intrusion_detection_system_alert`). Cloud IDS is currently **disabled** (`enable_intrusion_detection = false`); these log-based flow-log metrics replaced that (expensive) appliance, so it doesn't have its own runbook. If it is ever re-enabled and fires, treat it as a security signal and follow the same investigate → verdict → escalate path below.
+
 ## The three alerts
 
 | Alert (metric) | Fires when | Usual verdict |

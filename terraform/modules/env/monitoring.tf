@@ -13,7 +13,14 @@ locals {
   alert_database_id             = "${var.gcp_project_id}:${module.db_primary.instance_id}"
   db_connection_alert_threshold = var.db_connection_limit * 0.95
   alert_redis_id                = "projects/${var.gcp_project_id}/locations/${var.gcp_region}/instances/${local.redis_name}"
-  playbook_link                 = "https://www.notion.so/whalesync/Playbook-Firefighing-and-On-Call-GCP-c1914705f4ed45eba45d6c92e786ddfa?pvs=4"
+  # Runbook links (docs/ops/, GitLab master) — replace the deprecated Notion
+  # "Firefighting / On-Call (GCP)" playbook (DEV-10748).
+  runbook_base                     = "https://gitlab.com/whalesync/spinner/-/blob/master/docs/ops"
+  runbook_datastore_alerts         = "${local.runbook_base}/runbook-gcp-datastore-alerts.md"
+  runbook_cloud_run_service_errors = "${local.runbook_base}/runbook-gcp-cloud-run-service-errors.md"
+  runbook_scratch_git_vm           = "${local.runbook_base}/runbook-scratch-git-unresponsive-production.md"
+  runbook_scratch_git_disk         = "${local.runbook_base}/runbook-scratch-git-disk-usage.md"
+  runbook_flow_log_alerts          = "${local.runbook_base}/runbook-gcp-vpc-flow-log-alerts.md"
 
   # --- VPC Flow Log anomaly detection ---
   # VPC Flow Logs are already emitted on every subnet (see modules/vpc). These filters
@@ -195,7 +202,7 @@ resource "google_monitoring_alert_policy" "sqlproxy_cpu_too_high" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} CloudSQL Proxy CPU Utilization > 80%"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_datastore_alerts}"
   }
   combiner = "OR"
   conditions {
@@ -240,7 +247,7 @@ resource "google_monitoring_alert_policy" "db_cpu_too_high" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} DB CPU Utilization too high"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_datastore_alerts}"
 
   }
   combiner = "OR"
@@ -276,7 +283,7 @@ resource "google_monitoring_alert_policy" "db_out_of_disk_space" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} DB low on disk space"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_datastore_alerts}"
 
   }
   combiner = "OR"
@@ -312,7 +319,7 @@ resource "google_monitoring_alert_policy" "db_disk_read_io_high" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} DB Disk Read I/O above threshold"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_datastore_alerts}"
 
   }
   combiner = "OR"
@@ -349,7 +356,7 @@ resource "google_monitoring_alert_policy" "db_disk_write_io_high" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} DB Disk Write I/O above threshold"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_datastore_alerts}"
 
   }
   combiner = "OR"
@@ -385,7 +392,7 @@ resource "google_monitoring_alert_policy" "db_mem_usage_too_high" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} DB memory utilization > 95%"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_datastore_alerts}"
 
   }
   combiner = "OR"
@@ -422,7 +429,7 @@ resource "google_monitoring_alert_policy" "db_connections_too_high" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} DB Connections > 95% of max capacity"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_datastore_alerts}"
 
   }
   combiner = "OR"
@@ -462,7 +469,7 @@ resource "google_monitoring_alert_policy" "redis_mem_usage_too_high" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} Redis using too much Memory"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_datastore_alerts}"
 
   }
   combiner = "OR"
@@ -502,7 +509,7 @@ resource "google_monitoring_alert_policy" "client_high_5xx_error_count" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} Client Service - 5xx Errors"
-    content = "[Remediation Playbook](https://www.notion.so/whalesync/Playbook-Firefighting-and-On-Call-c1914705f4ed45eba45d6c92e786ddfa?pvs=4#d58b6663c58346058b8157bc9caf8919)"
+    content = "[Runbook](${local.runbook_cloud_run_service_errors})"
   }
   combiner = "OR"
   conditions {
@@ -542,7 +549,7 @@ resource "google_monitoring_alert_policy" "api_frontend_high_5xx_error_count" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} API Service - 5xx Errors"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_cloud_run_service_errors}"
   }
   combiner = "OR"
   conditions {
@@ -581,7 +588,7 @@ resource "google_monitoring_alert_policy" "cron_high_5xx_error_count" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} Cron Service - 5xx Errors"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_cloud_run_service_errors}"
   }
   combiner = "OR"
   conditions {
@@ -630,7 +637,7 @@ resource "google_monitoring_alert_policy" "worker_high_error_log_count" {
   count        = var.enable_alerts ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} Worker Service - High Error Log Count"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_cloud_run_service_errors}"
   }
   combiner = "OR"
   conditions {
@@ -689,7 +696,7 @@ resource "google_monitoring_alert_policy" "intrusion_detection_system_alert" {
   display_name = "Scratch ${local.display_env} Intrusion Detection System - Alert"
   documentation {
     subject = "Scratch ${local.display_env} Intrusion Detection System - Alert"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_flow_log_alerts}"
   }
   combiner = "OR"
   conditions {
@@ -727,7 +734,7 @@ resource "google_monitoring_alert_policy" "scratch_git_cpu_too_high" {
   count        = var.enable_alerts && var.enable_scratch_git ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} Scratch Git CPU Utilization > 90%"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_scratch_git_vm}"
   }
   combiner = "OR"
   conditions {
@@ -760,7 +767,7 @@ resource "google_monitoring_alert_policy" "scratch_git_memory_too_high" {
   count        = var.enable_alerts && var.enable_scratch_git ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} Scratch Git Memory Utilization > 85%"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_scratch_git_vm}"
   }
   combiner = "OR"
   conditions {
@@ -807,7 +814,7 @@ resource "google_monitoring_alert_policy" "scratch_git_disk_usage_too_high" {
   count        = var.enable_alerts && var.enable_scratch_git ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} Scratch Git Disk Utilization > 80%"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_scratch_git_disk}"
   }
   combiner = "OR"
   conditions {
@@ -854,7 +861,7 @@ resource "google_monitoring_alert_policy" "scratch_git_ops_agent_unresponsive" {
   count        = var.enable_alerts && var.enable_scratch_git ? 1 : 0
   documentation {
     subject = "Scratch ${local.display_env} Scratch Git Ops Agent has not reported for ${var.scratch_git_ops_agent_alert_duration} while the VM is running"
-    content = "Ops Playbook: ${local.playbook_link}"
+    content = "Runbook: ${local.runbook_scratch_git_vm}"
   }
   combiner = "AND_WITH_MATCHING_RESOURCE"
   severity = "CRITICAL"
@@ -978,7 +985,7 @@ resource "google_monitoring_alert_policy" "flow_log_suspicious_egress_ports_aler
     subject = "Scratch ${local.display_env} VPC Flow Logs - Egress to the internet on a sensitive port"
     content = <<-EOF
     A workload made an outbound connection to the public internet on a port that should never leave the VPC (SSH/Telnet/SMB/MySQL/Redis/RDP/MongoDB). This can indicate compromise, exfiltration, or misconfiguration. Investigate the source instance and destination IP.
-    Ops Playbook: ${local.playbook_link}
+    Runbook: ${local.runbook_flow_log_alerts}
     EOF
   }
   combiner = "OR"
@@ -1052,7 +1059,7 @@ resource "google_monitoring_alert_policy" "flow_log_unexpected_country_alert" {
     subject = "Scratch ${local.display_env} VPC Flow Logs - Traffic to/from an unexpected country"
     content = <<-EOF
     VPC traffic was observed to or from a country outside the expected allowlist. This can indicate access from an unexpected location or egress to an unexpected destination. Investigate the source/destination IPs and countries.
-    Ops Playbook: ${local.playbook_link}
+    Runbook: ${local.runbook_flow_log_alerts}
     EOF
   }
   combiner = "OR"
@@ -1135,7 +1142,7 @@ resource "google_monitoring_alert_policy" "flow_log_external_egress_spike_alert"
     subject = "Scratch ${local.display_env} VPC Flow Logs - Unusually high egress to the public internet"
     content = <<-EOF
     A single flow egressing the VPC to a public internet destination was unusually large (p99 flow size over the alert window exceeded the configured threshold). This can indicate data exfiltration. Investigate the source instances and destination IPs.
-    Ops Playbook: ${local.playbook_link}
+    Runbook: ${local.runbook_flow_log_alerts}
     EOF
   }
   combiner = "OR"
