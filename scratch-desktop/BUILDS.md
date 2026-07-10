@@ -135,6 +135,8 @@ To cut a **minor** or **major** prod release instead, run a pipeline manually:
 
 **Test releases run on a schedule, not on every merge.** The hourly **Hourly Test Releases** scheduled pipeline (`PIPELINE_NAME="Hourly Test Releases"`, branch `master`) cuts the **test** variant (`test-api.scratch.md`, `desktop-test` update channel) automatically, and **no-ops in seconds** when nothing under `scratch-desktop/`, `scratch-git-2/`, or `packages/shared-types/` changed since the last test release (set `FORCE_RELEASE=1` on a manual run of the schedule to force a build). To cut an **immediate** test release, open the latest `master` pipeline and click the manual ▶︎ `Bootstrap test desktop release` job — it appears on every master pipeline but no longer runs automatically. Test releases can also be triggered from an MR — see [Triggering a test release from an MR](#triggering-a-test-release-from-an-mr) below.
 
+**Test version numbers are floored at the prod line.** `bootstrap_release.sh` picks the next test version by bumping the highest existing `vX.Y.Z-test` tag, but never below the latest prod `vX.Y.Z` tag — so a test build is always numbered at or above the current prod release, and a freshly-seeded (or accidentally-reset) test channel can't regress to `v0.0.x`. Prod versions are derived only from the bare prod `vX.Y.Z` tags and are unaffected by the test line.
+
 `Finalize` blocks on the mac upload — if no team-tagged mac runner is online when the pipeline reaches the mac stage, Finalize fails and the release is not published, rather than silently shipping without mac artifacts.
 
 ### Triggering a test release from an MR
