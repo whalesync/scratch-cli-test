@@ -31,6 +31,10 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
 import { toPath } from 'lodash';
 import { NotionConnector } from 'src/remote-service/connectors/library/notion/notion-connector';
 import {
+  NOTION_STANDALONE_PAGES_TABLE_ID,
+  isNotionStandalonePagesTable,
+} from 'src/remote-service/connectors/library/notion/notion-standalone-pages';
+import {
   BaseJsonTableSpec,
   ConnectorFile,
   PullRecordFilesOptions,
@@ -53,6 +57,7 @@ const PRIMARY_DB_NAME = 'Scratch Integration Test';
 const ROUND_TRIP_TITLE_PREFIX = 'Spinner Roundtrip';
 
 function createConnector(): NotionConnector {
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   return new NotionConnector(API_KEY!);
 }
 
@@ -113,15 +118,28 @@ describeIfKey('NotionConnector — live API', () => {
     it('every table has a valid Notion-shaped EntityId', () => {
       for (const table of allTables) {
         expect(table.id.wsId.length).toBeGreaterThan(0);
-        // Under 2025-09-03 every table is a data source, surfaced as
-        // `remoteId = [databaseId, dataSourceId]` to match the Phase 2 backfill
-        // shape. Both elements must be valid Notion IDs (32 hex chars with
-        // optional dashes).
+        expect(table.displayName.length).toBeGreaterThan(0);
+
+        // The fixed "Page Tree" table (DEV-10568) is a synthetic, non-database
+        // backup of standalone pages, not a Notion data source. It carries a
+        // sentinel EntityId (`remoteId = ['WS_STANDALONE_PAGES']`, a single
+        // non-hex slot) rather than the `[databaseId, dataSourceId]` shape, so
+        // it's excluded from the data-source assertions below and checked on
+        // its own terms.
+        if (isNotionStandalonePagesTable(table.id)) {
+          expect(table.id.remoteId).toEqual([NOTION_STANDALONE_PAGES_TABLE_ID]);
+          expect((table.metadata as { notionType?: string } | undefined)?.notionType).toBe('standalone_pages');
+          continue;
+        }
+
+        // Under 2025-09-03 every (database-backed) table is a data source,
+        // surfaced as `remoteId = [databaseId, dataSourceId]` to match the
+        // Phase 2 backfill shape. Both elements must be valid Notion IDs (32
+        // hex chars with optional dashes).
         expect(table.id.remoteId).toHaveLength(2);
         for (const id of table.id.remoteId) {
           expect(id).toMatch(/^[0-9a-f-]{32,36}$/i);
         }
-        expect(table.displayName.length).toBeGreaterThan(0);
         expect((table.metadata as { notionType?: string } | undefined)?.notionType).toBe('data_source');
       }
     });
@@ -502,6 +520,7 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     // Verify create via pullRecordFilesByIds.
     const afterCreate = await fetchById(connector, tableSpec, pageId);
     expect(afterCreate).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(readTitle(afterCreate!, titlePropName)).toBe(initialTitle);
 
     // ── Update — Description (rich_text) — passes through transformPropertiesForUpdate ──
@@ -516,6 +535,7 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
 
     const afterUpdate = await fetchById(connector, tableSpec, pageId);
     expect(afterUpdate).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(readRichText(afterUpdate!, 'Description')).toBe(updatedDescription);
 
     // ── Delete (move to trash) ──
