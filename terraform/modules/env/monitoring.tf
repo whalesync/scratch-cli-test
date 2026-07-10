@@ -62,8 +62,16 @@ locals {
   ]
   # Country codes considered normal for traffic to/from the VPC. VPC Flow Logs use
   # ISO 3166-1 alpha-3 lowercase codes (e.g. "usa", "gbr", "irl"), not alpha-2.
-  # Feel free to add to this list as we get legitimate traffic flows to services in other regions.
-  flow_log_allowed_countries = ["usa", "can", "gbr", "irl", "deu", "bel", "fra"]
+  # Scope: our home region (GCP europe-west1 = Belgium) plus the major AWS/GCP/Azure
+  # regions and English-speaking countries where connectors legitimately egress (e.g. a
+  # customer's Supabase/Postgres/app). Keep this list minimal — every entry is a security
+  # detection blind spot; prefer the durable ASN-based fix (DEV-10747) over growing it.
+  flow_log_allowed_countries = [
+    "usa", "can",                             # North America
+    "bel", "irl", "gbr", "deu", "fra", "nld", # Western/Central Europe — major cloud regions
+    "swe", "fin", "che", "ita", "esp", "pol", # Nordics + Southern/Central Europe — major cloud regions
+    "aus", "nzl",                             # English-speaking (Oceania)
+  ]
   # Rendered filter fragments.
   flow_log_suspicious_ports_clause  = "(${join(" OR ", local.flow_log_suspicious_ports)})"
   flow_log_allowed_countries_clause = "(${join(" OR ", [for c in local.flow_log_allowed_countries : "\"${c}\""])})"
