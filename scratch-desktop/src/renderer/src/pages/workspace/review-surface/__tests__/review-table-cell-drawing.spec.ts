@@ -4,9 +4,11 @@ import {
   __clearWordDiffCacheForTest,
   getStatusDotVar,
   getWordDiffSegmentsCached,
+  isFullyApprovedRowStatus,
   STATUS_CELL_STROKE_VAR,
   STATUS_CELL_TINT_VAR,
   STATUS_DOT_VAR,
+  windowWordDiffSegmentsCached,
   wordDiffCacheKey,
 } from '../review-table-cell-drawing';
 
@@ -39,6 +41,40 @@ describe('getWordDiffSegmentsCached', () => {
   });
 });
 
+describe('windowWordDiffSegmentsCached', () => {
+  const deepFrom = 'Our flagship tote is made from 12oz organic cotton with reinforced stitching everywhere.';
+  const deepTo = 'Our flagship tote is made from 16oz organic cotton with reinforced stitching everywhere.';
+
+  it('returns the same windowed array reference for a repeated (key, budget) — memoized', () => {
+    __clearWordDiffCacheForTest();
+    const base = getWordDiffSegmentsCached('k', deepFrom, deepTo);
+    const first = windowWordDiffSegmentsCached('k', base, 24);
+    const second = windowWordDiffSegmentsCached('k', base, 24);
+    expect(second).toBe(first);
+  });
+
+  it('windows the segments (drops the unchanged prefix so the change is up front)', () => {
+    __clearWordDiffCacheForTest();
+    const base = getWordDiffSegmentsCached('k', deepFrom, deepTo);
+    const windowed = windowWordDiffSegmentsCached('k', base, 24);
+    // The window is shorter than the base, and its first segment no longer starts with the full
+    // unchanged prefix — it opens with an ellipsis so the change (12oz → 16oz) is visible.
+    expect(windowed.length).toBeLessThanOrEqual(base.length);
+    expect(windowed[0].text.startsWith('…')).toBe(true);
+  });
+
+  it('recomputes after the cache is cleared', () => {
+    __clearWordDiffCacheForTest();
+    const base = getWordDiffSegmentsCached('k', deepFrom, deepTo);
+    const before = windowWordDiffSegmentsCached('k', base, 24);
+    __clearWordDiffCacheForTest();
+    const base2 = getWordDiffSegmentsCached('k', deepFrom, deepTo);
+    const after = windowWordDiffSegmentsCached('k', base2, 24);
+    expect(after).not.toBe(before);
+    expect(after).toEqual(before);
+  });
+});
+
 describe('wordDiffCacheKey', () => {
   it('changes when any of filename / column / from / to changes', () => {
     const base = wordDiffCacheKey('a.json', 'title', 'old', 'new');
@@ -65,6 +101,24 @@ describe('getStatusDotVar', () => {
     expect(STATUS_DOT_VAR).toEqual(expected);
     for (const status of Object.keys(expected) as RowStatus[]) {
       expect(getStatusDotVar(status)).toBe(expected[status]);
+    }
+  });
+});
+
+describe('isFullyApprovedRowStatus', () => {
+  it('is true only for the approved-but-unpublished statuses', () => {
+    const expected: Record<RowStatus, boolean> = {
+      added: false,
+      addedUnpublished: true,
+      modified: false,
+      unpublished: true,
+      deleted: false,
+      deletedUnpublished: true,
+      unchanged: false,
+      invalidJson: false,
+    };
+    for (const status of Object.keys(expected) as RowStatus[]) {
+      expect(isFullyApprovedRowStatus(status)).toBe(expected[status]);
     }
   });
 });

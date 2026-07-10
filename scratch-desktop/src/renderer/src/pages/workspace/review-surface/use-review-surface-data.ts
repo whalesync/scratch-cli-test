@@ -245,7 +245,9 @@ export function useReviewSurfaceData({
       const result = await window.scratchFiles.readDiffGridData(selectedFolderPath, workspacePath, {
         offset: 0,
         limit: BY_TYPE_MAX_PENDING_RECORDS,
-        filters: [{ scope: 'global', kind: 'unreviewed' }],
+        // The pending union (unreviewed ∪ approved-but-unpublished) so the By-Field view can show
+        // approved changes with a ✓ alongside the ones still needing review (DEV-10687).
+        filters: [{ scope: 'global', kind: 'pending' }],
         validate: false,
       });
       if (generation !== byTypeLoadGenerationRef.current) return;
@@ -277,10 +279,11 @@ export function useReviewSurfaceData({
     loadByTypeDiffData,
   ]);
 
-  // filterCounts.unreviewed is the TRUE folder-wide pending total (not page-bounded), so this
-  // truncation check is honest even though rows are capped at BY_TYPE_MAX_PENDING_RECORDS.
+  // filterCounts.pending is the TRUE folder-wide union total (not page-bounded), matching the
+  // 'pending' filter the load uses, so this truncation check is honest even though rows are capped
+  // at BY_TYPE_MAX_PENDING_RECORDS.
   const byTypeLoadedRecordCount = byTypeDiffData?.rows.length ?? 0;
-  const byTypeTotalPendingRecordCount = byTypeDiffData?.filterCounts.unreviewed ?? 0;
+  const byTypeTotalPendingRecordCount = byTypeDiffData?.filterCounts.pending ?? 0;
   const byTypeIsTruncated = byTypeDiffData ? byTypeLoadedRecordCount < byTypeTotalPendingRecordCount : false;
 
   // ── Reindex-progress passthrough (mirrors FolderDataGrid) ──

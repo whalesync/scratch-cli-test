@@ -1,6 +1,8 @@
-import { ButtonCompactPrimary } from '@/components/base/buttons';
+import { ButtonSecondaryOutline } from '@/components/base/buttons';
 import { Text12Regular, TextMono12Regular, TextTitle4 } from '@/components/base/text';
-import { Box, Group, UnstyledButton } from '@mantine/core';
+import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
+import { Badge, Box, Group, UnstyledButton } from '@mantine/core';
+import { CheckIcon } from 'lucide-react';
 import { useState } from 'react';
 import { ByTypeGroupRow } from './ByTypeGroupRow';
 import type { ByTypeGroupModel } from './build-by-type-group-model';
@@ -34,6 +36,10 @@ export function ByTypeGroupBlock({
   const [showAllRows, setShowAllRows] = useState(false);
 
   const rowCount = group.rows.length;
+  // "Approve all N" acts only on the still-unreviewed rows; when a group is fully approved the
+  // action becomes an "All approved" badge (DEV-10687). The header count keeps counting all rows.
+  const unreviewedCount = group.rows.filter((row) => !row.approved).length;
+  const allApproved = rowCount > 0 && unreviewedCount === 0;
   const hasOverflow = rowCount > MAX_VISIBLE_ROWS_PER_GROUP;
   const visibleRows = showAllRows ? group.rows : group.rows.slice(0, MAX_VISIBLE_ROWS_PER_GROUP);
 
@@ -52,16 +58,32 @@ export function ByTypeGroupBlock({
         {/* Summary pill slot — deferred (DEV-10618 chunk H): a per-field-type
             summary such as "avg −10% · mostly lowered" for numeric columns. */}
         <Box style={{ flex: 1 }} />
-        {/* Override the default gold highlight border with a dark outline: the gold
-            blends the yellow fill into the light-gray group header. */}
-        <ButtonCompactPrimary
-          onClick={onApproveAll}
-          loading={isApproving}
-          disabled={isBulkApproveDisabled || isApproving}
-          styles={{ root: { borderColor: 'var(--fg-secondary)' } }}
-        >
-          Approve all {rowCount}
-        </ButtonCompactPrimary>
+        {allApproved ? (
+          <Badge
+            size="sm"
+            radius="sm"
+            leftSection={<StyledLucideIcon Icon={CheckIcon} size={12} />}
+            styles={{
+              root: {
+                backgroundColor: 'var(--create-needs-review-bg)',
+                color: 'var(--create-needs-review-stroke)',
+                textTransform: 'none',
+                fontWeight: 500,
+              },
+            }}
+          >
+            All approved
+          </Badge>
+        ) : (
+          <ButtonSecondaryOutline
+            size="compact-xs"
+            onClick={onApproveAll}
+            loading={isApproving}
+            disabled={isBulkApproveDisabled || isApproving}
+          >
+            Approve all {unreviewedCount}
+          </ButtonSecondaryOutline>
+        )}
       </Group>
 
       <Box style={{ padding: '4px 20px 12px' }}>

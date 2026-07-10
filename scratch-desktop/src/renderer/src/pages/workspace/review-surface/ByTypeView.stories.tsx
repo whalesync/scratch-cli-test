@@ -13,7 +13,7 @@ const fieldGroup = (
   title,
   dotColorVar: 'var(--modified-needs-review-stroke)',
   recordFilenames: rows.map((row) => row.filename),
-  rows: rows.map((row) => ({ ...row, rowStatus: 'modified' })),
+  rows: rows.map((row) => ({ ...row, rowStatus: 'modified', approved: false })),
 });
 
 const recordGroup = (
@@ -32,6 +32,7 @@ const recordGroup = (
     fromDisplay: '',
     toDisplay: '',
     rowStatus: kind === 'created' ? 'added' : kind === 'deleted' ? 'deleted' : 'invalidJson',
+    approved: false,
   })),
 });
 

@@ -1,6 +1,6 @@
 import { Box, Group, Loader, Portal, ScrollArea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Trash2, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getByPath } from '../../../../shared/schema-columns';
 import { ButtonPrimarySolid, ButtonSecondaryGhost, IconButtonGhost } from '../../components/base/buttons';
@@ -173,6 +173,16 @@ function ChangedFieldBlock({
   );
 }
 
+/** A right-aligned "✓ approved" marker shown in a field block in place of the Approve / Reject actions. */
+function ApprovedFieldMarker(): ReactNode {
+  return (
+    <Group gap={4} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
+      <StyledLucideIcon Icon={Check} size="sm" c="var(--create-needs-review-stroke)" />
+      <Text12Regular c="var(--create-needs-review-stroke)">approved</Text12Regular>
+    </Group>
+  );
+}
+
 /** A plain (unchanged) field: its label and current value, no review actions. */
 function PlainFieldBlock({ label, value }: { label: string; value: string }): ReactNode {
   return (
@@ -297,10 +307,16 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
         setRecordData(result);
         loadedRecordKeyRef.current = recordKey;
         // Only the first record shown sets the default mode; cycling/approve/reject keep the
-        // user's current Changes / All fields choice.
+        // user's current Changes / All fields choice. Open in Changes mode when there's anything to
+        // review OR anything already approved to show (approved fields render with a ✓ there); fall
+        // back to All-fields only when the record has nothing changed or approved.
         if (!hasDefaultedFieldModeRef.current) {
           hasDefaultedFieldModeRef.current = true;
-          setFieldMode(rowHasUnreviewedChanges(result?.row) ? 'changes' : 'all');
+          const row = result?.row;
+          // Unreviewed changes (added/deleted/invalid/modified) or approved-but-unpublished field
+          // edits both have something to show in Changes mode.
+          const hasReviewContent = rowHasUnreviewedChanges(row) || (row?.__unpublishedFields?.length ?? 0) > 0;
+          setFieldMode(hasReviewContent ? 'changes' : 'all');
         }
       })
       .catch(() => {
@@ -356,6 +372,14 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
     : (currentFilename ?? '').replace(/\.json$/, '');
   const badge = STATE_BADGE_BY_ROW_STATUS[rowStatus];
   const sessionMarker = currentFilename ? sessionMarkerByFilename[currentFilename] : undefined;
+  // A record whose changes are all approved-but-unpublished shows the "✓ approved" header marker
+  // regardless of whether it was approved in THIS session — the persisted status is the source of
+  // truth. An in-session marker (a just approved/rejected record whose grid refetch hasn't landed
+  // yet) still takes precedence.
+  const isFullyApprovedRecord =
+    rowStatus === 'unpublished' || rowStatus === 'addedUnpublished' || rowStatus === 'deletedUnpublished';
+  const headerReviewMarker: 'approved' | 'rejected' | undefined =
+    sessionMarker ?? (isFullyApprovedRecord ? 'approved' : undefined);
 
   // Reverse map (effective path → column id) so a changed leaf path like "title.raw"
   // can recover the column's display label ("Title").
@@ -467,6 +491,37 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
     [recordData, busy, approveField, rejectField],
   );
 
+  // An approved-but-unpublished field's block: the same redline, but read from the published value
+  // (`__masterFields`) → approved value, and marked "✓ approved" instead of carrying Approve / Reject
+  // (the user already approved it).
+  const renderApprovedFieldBlock = useCallback(
+    (key: string, label: string, effectivePath: string): ReactNode => {
+      if (!recordData) return null;
+      const displayData = recordData.displayData ?? {};
+      const fromValue = toDisplayString(recordData.row.__masterFields[effectivePath]);
+      const toValue = toDisplayString(getByPath(displayData, effectivePath));
+      const actions = <ApprovedFieldMarker />;
+      if (isLongFormContent(fromValue, toValue)) {
+        return (
+          <FieldBlockShell key={key} label={label} actions={actions}>
+            <ContentDiffWithMap fromValue={fromValue} toValue={toValue} diffKind="unpublished" />
+          </FieldBlockShell>
+        );
+      }
+      return (
+        <ChangedFieldBlock
+          key={key}
+          label={label}
+          fromValue={fromValue}
+          toValue={toValue}
+          kind="modified"
+          actions={actions}
+        />
+      );
+    },
+    [recordData],
+  );
+
   // Changed-only view: one block per unreviewed field, each with Approve / Reject.
   const changedFieldBlocks = useMemo<ReactNode[]>(() => {
     if (!recordData) return [];
@@ -474,6 +529,14 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
       renderChangedFieldBlock(fieldPath, labelForChangedField(fieldPath), fieldPath),
     );
   }, [recordData, labelForChangedField, renderChangedFieldBlock]);
+
+  // Approved-but-unpublished fields, shown alongside the unreviewed ones in Changes mode with a ✓.
+  const approvedFieldBlocks = useMemo<ReactNode[]>(() => {
+    if (!recordData) return [];
+    return recordData.row.__unpublishedFields.map((fieldPath) =>
+      renderApprovedFieldBlock(fieldPath, labelForChangedField(fieldPath), fieldPath),
+    );
+  }, [recordData, labelForChangedField, renderApprovedFieldBlock]);
 
   // Created-record view: the new record's non-empty field values (record-level review only).
   const createdFieldBlocks = useMemo<ReactNode[]>(() => {
@@ -586,9 +649,11 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
           </Box>
         );
     } else {
+      // Changes mode: unreviewed fields (Approve / Reject) followed by already-approved fields (✓).
+      const reviewBlocks = [...changedFieldBlocks, ...approvedFieldBlocks];
       bodyContent =
-        changedFieldBlocks.length > 0 ? (
-          <>{changedFieldBlocks}</>
+        reviewBlocks.length > 0 ? (
+          <>{reviewBlocks}</>
         ) : (
           <Box style={{ padding: '12px 0' }}>
             <Text13Regular c="var(--fg-muted)">No field changes to review.</Text13Regular>
@@ -619,7 +684,7 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
           style={{
             position: 'relative',
             width: 960,
-            maxWidth: '92vw',
+            maxWidth: '50vw',
             height: '100%',
             backgroundColor: 'var(--bg-base)',
             borderLeft: '0.5px solid var(--fg-divider)',
@@ -688,10 +753,10 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
               <Text12Regular c="var(--fg-muted)">
                 record {currentIndex + 1} of {changedRecordCount}
               </Text12Regular>
-              {sessionMarker === 'approved' && (
+              {headerReviewMarker === 'approved' && (
                 <Text12Regular c="var(--create-needs-review-stroke)">· ✓ approved</Text12Regular>
               )}
-              {sessionMarker === 'rejected' && (
+              {headerReviewMarker === 'rejected' && (
                 <Text12Regular c="var(--delete-needs-review-stroke)">· ✕ rejected</Text12Regular>
               )}
             </Group>
@@ -717,7 +782,7 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
           >
             <FieldModeToggle mode={fieldMode} onChange={setFieldMode} />
             <Group gap={8} align="center" wrap="nowrap">
-              {hasRecordLevelReview && (
+              {hasRecordLevelReview ? (
                 <>
                   <ButtonSecondaryGhost
                     size="compact-sm"
@@ -735,6 +800,15 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
                     {approveButtonLabel}
                   </ButtonPrimarySolid>
                 </>
+              ) : (
+                // Fully approved — nothing left to review; the primary action just advances the stepper.
+                <ButtonPrimarySolid
+                  size="compact-sm"
+                  onClick={() => stepBy(1)}
+                  disabled={!currentFilename || changedRecordCount <= 1}
+                >
+                  Next →
+                </ButtonPrimarySolid>
               )}
             </Group>
           </Group>

@@ -6,7 +6,6 @@ import { trackOpenRecordChangesDrawer } from '../../../lib/posthog';
 import { useWorkspaceUiStore, type FilterKind } from '../../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../../types/local-files';
 import { applyAcceptedFieldChangeToFolderDiffData } from '../diff-grid-types';
-import { rowHasUnreviewedChanges } from '../record-diff-helpers';
 import { RecordDetailView } from '../RecordDetailView';
 import { RecordReviewDrawer } from '../RecordReviewDrawer';
 import { buildByTypeGroupModel, type ByTypeGroupModel, type ByTypeSourceColumn } from './build-by-type-group-model';
@@ -274,15 +273,17 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   // lands back on an already-approved record.
   const [recordChangesDrawerFilenameSet, setRecordChangesDrawerFilenameSet] = useState<string[] | null>(null);
 
-  // Changed records on the current page, in the grid's displayed order (`ReviewTableGrid` renders
-  // `diffData.rows` verbatim), so the stepper matches what the user sees.
-  const changedRecordFilenames = useMemo(
-    () => (diffData?.rows ?? []).filter((row) => rowHasUnreviewedChanges(row)).map((row) => row.__filename),
+  // Pending records on the current page (anything not `unchanged` — unreviewed OR approved-but-
+  // unpublished), in the grid's displayed order (`ReviewTableGrid` renders `diffData.rows` verbatim)
+  // so the stepper matches what the user sees. Approved records are included so the drawer can step
+  // through them too (they show their ✓ fields and a "Next →" footer).
+  const pendingRecordFilenames = useMemo(
+    () => (diffData?.rows ?? []).filter((row) => row.__rowStatus !== 'unchanged').map((row) => row.__filename),
     [diffData?.rows],
   );
   const drawerFilenames = useMemo(
-    () => recordChangesDrawerFilenameSet ?? changedRecordFilenames,
-    [recordChangesDrawerFilenameSet, changedRecordFilenames],
+    () => recordChangesDrawerFilenameSet ?? pendingRecordFilenames,
+    [recordChangesDrawerFilenameSet, pendingRecordFilenames],
   );
   const recordChangesDrawerIndex = useMemo(
     () => (recordChangesDrawerFilename ? drawerFilenames.indexOf(recordChangesDrawerFilename) : -1),
@@ -297,9 +298,10 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   const handleOpenRecordDrawer = useCallback(
     (filename: string) => {
       const row = diffData?.rows.find((r) => r.__filename === filename);
-      // Changed records step through the page's changed set; a no-change record opens on its own
-      // (1/1) so clicking any row reveals its full record in the drawer's All-fields mode.
-      setRecordChangesDrawerFilenameSet(rowHasUnreviewedChanges(row) ? null : [filename]);
+      // Pending records (unreviewed or approved) step through the page's pending set; a truly
+      // unchanged record (or one not on the page) opens on its own (1/1) in All-fields mode.
+      const isPendingRow = !!row && row.__rowStatus !== 'unchanged';
+      setRecordChangesDrawerFilenameSet(isPendingRow ? null : [filename]);
       setRecordChangesDrawerFilename(filename);
       void trackOpenRecordChangesDrawer(workspaceId, {
         folderPath: selectedFolderPath,
@@ -410,7 +412,15 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   const [bulkActionConfirm, setBulkActionConfirm] = useState<BulkReviewAction | null>(null);
   const filterCounts = diffData?.filterCounts;
   const pendingCount = filterCounts?.unreviewed ?? 0;
-  const approvedCount = filterCounts?.unpublished ?? 0;
+  // The de-duplicated union of unreviewed + approved-but-unpublished records — the honest total of
+  // records "in play", and the set Discard-all reverts.
+  const affectedRecordCount = filterCounts?.pending ?? 0;
+  // "Approved" in the banner means FULLY approved: a record with approved-but-unpublished changes and
+  // no unreviewed edits left. Derived as union − needs-review so the two banner counts PARTITION the
+  // pending set — a record with both approved and still-unreviewed changes counts only as needs-review,
+  // instead of being double-counted across both figures (DEV-10687). `pending ⊇ unreviewed`, so this is
+  // never negative; clamp defensively.
+  const approvedCount = Math.max(0, affectedRecordCount - pendingCount);
 
   const confirmBulkAction = useCallback(() => {
     if (!bulkActionConfirm) return;
@@ -486,7 +496,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         pendingCount={pendingCount}
         approvedCount={approvedCount}
         onDiscardAll={() => setBulkActionConfirm('discard')}
-        discardDisabled={pendingCount + approvedCount === 0 || bulkActionLoading}
+        discardDisabled={affectedRecordCount === 0 || bulkActionLoading}
       />
       <ReviewSubbar
         viewMode={reviewSurfaceViewMode}
@@ -601,8 +611,8 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
           <Text13Medium>
             {bulkActionConfirm === 'discard' ? (
               <>
-                Discard {(pendingCount + approvedCount).toLocaleString()}{' '}
-                {pendingCount + approvedCount === 1 ? 'change' : 'changes'} in {folderLabel}?
+                Discard {affectedRecordCount.toLocaleString()} {affectedRecordCount === 1 ? 'change' : 'changes'} in{' '}
+                {folderLabel}?
               </>
             ) : (
               <>
@@ -622,8 +632,8 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
               published state. This cannot be undone.
             </Text13Regular>
             <Text12Regular c="var(--fg-muted)" mt="xs">
-              {pendingCount.toLocaleString()} pending + {approvedCount.toLocaleString()} approved ={' '}
-              {(pendingCount + approvedCount).toLocaleString()} changes will be discarded.
+              {affectedRecordCount.toLocaleString()} record{affectedRecordCount === 1 ? '' : 's'} with pending or
+              approved changes will be reverted.
             </Text12Regular>
           </>
         )}

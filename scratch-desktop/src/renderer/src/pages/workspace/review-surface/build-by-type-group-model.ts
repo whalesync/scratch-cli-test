@@ -42,6 +42,10 @@ export interface ByTypeSourceRow {
   __changedFields: string[];
   /** Approved-side values keyed by the same effective leaf paths as `__changedFields`. */
   __fromFields: Record<string, unknown>;
+  /** Approved-but-unpublished field keys (effective leaf paths), disjoint from `__changedFields` per record. */
+  __unpublishedFields: string[];
+  /** Published/master values keyed by effective leaf path — the "from" side for an approved field. */
+  __masterFields: Record<string, unknown>;
   /** The full working record, read at an effective path to get the "to" value. */
   __raw: Record<string, unknown>;
   __filename: string;
@@ -71,6 +75,12 @@ export interface ByTypeGroupRowModel {
   toDisplay: string;
   /** The row's status, so the view can label created/deleted/invalid rows. */
   rowStatus: ChangeRowStatus;
+  /**
+   * True when this record's change to the group's field is already approved-but-unpublished
+   * (working == approved, approved != published). Drives the green ✓ glyph and excludes the row
+   * from the group's "Approve all N". Record-level created/deleted/invalid rows are always false.
+   */
+  approved: boolean;
 }
 
 /** One renderable group block (a modified column, or the New / Removed / Needs-attention bucket). */
@@ -111,20 +121,25 @@ export function buildByTypeGroupModel(
 ): ByTypeGroupModel[] {
   const groups: ByTypeGroupModel[] = [];
 
-  // Field-modified groups, one per column, in input-column order. A row belongs
-  // iff its `__changedFields` (effective leaf paths) contains this column's
-  // effective path; the `from` / `to` values are read at that same path.
+  // Field groups, one per column, in input-column order. A row belongs iff this column's effective
+  // path is among its unreviewed changes (`__changedFields`) OR its approved-but-unpublished changes
+  // (`__unpublishedFields`) — the two sets are disjoint per record. The "to" side is always the
+  // working value; the "from" side is the approved value for an unreviewed change (`__fromFields`)
+  // or the published value for an approved one (`__masterFields`).
   for (const column of columns) {
     const effectivePath = columnEffectivePaths.get(column.id) ?? column.id;
     const memberRows: ByTypeGroupRowModel[] = [];
     for (const row of rows) {
-      if (!row.__changedFields.includes(effectivePath)) continue;
+      const isUnreviewed = row.__changedFields.includes(effectivePath);
+      const isApproved = !isUnreviewed && row.__unpublishedFields.includes(effectivePath);
+      if (!isUnreviewed && !isApproved) continue;
       memberRows.push({
         filename: row.__filename,
         recordName: getRecordName(row, titleColumnId),
-        fromDisplay: toDisplayString(row.__fromFields[effectivePath]),
+        fromDisplay: toDisplayString(isApproved ? row.__masterFields[effectivePath] : row.__fromFields[effectivePath]),
         toDisplay: toDisplayString(getByPath(row.__raw, effectivePath)),
         rowStatus: row.__rowStatus,
+        approved: isApproved,
       });
     }
     if (memberRows.length === 0) continue;
@@ -182,6 +197,9 @@ function buildRecordLevelRows(
       fromDisplay: '',
       toDisplay: '',
       rowStatus: row.__rowStatus,
+      // Record-level created/deleted/invalid rows are always unreviewed in this view (their
+      // approved-but-unpublished counterparts aren't grouped here — see DEV-10687 scope note).
+      approved: false,
     });
   }
   return matchingRows;

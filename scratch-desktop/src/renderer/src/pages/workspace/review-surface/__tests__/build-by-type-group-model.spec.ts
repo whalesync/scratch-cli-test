@@ -7,6 +7,8 @@ function row(
   options: {
     changedFields?: string[];
     fromFields?: Record<string, unknown>;
+    unpublishedFields?: string[];
+    masterFields?: Record<string, unknown>;
     raw?: Record<string, unknown>;
     filename?: string;
   } = {},
@@ -15,6 +17,8 @@ function row(
     __rowStatus: status,
     __changedFields: options.changedFields ?? [],
     __fromFields: options.fromFields ?? {},
+    __unpublishedFields: options.unpublishedFields ?? [],
+    __masterFields: options.masterFields ?? {},
     __raw: options.raw ?? {},
     __filename: options.filename ?? 'r.json',
   };
@@ -54,7 +58,16 @@ describe('buildByTypeGroupModel', () => {
         title: 'Name',
         dotColorVar: 'var(--modified-needs-review-stroke)',
         recordFilenames: ['a.json'],
-        rows: [{ filename: 'a.json', recordName: 'a', fromDisplay: 'Old', toDisplay: 'New', rowStatus: 'modified' }],
+        rows: [
+          {
+            filename: 'a.json',
+            recordName: 'a',
+            fromDisplay: 'Old',
+            toDisplay: 'New',
+            rowStatus: 'modified',
+            approved: false,
+          },
+        ],
       },
     ]);
   });
@@ -90,6 +103,7 @@ describe('buildByTypeGroupModel', () => {
       fromDisplay: 'Old title',
       toDisplay: 'New title',
       rowStatus: 'modified',
+      approved: false,
     });
   });
 
@@ -117,6 +131,61 @@ describe('buildByTypeGroupModel', () => {
 
     expect(groups[0].recordFilenames).toEqual(['a.json', 'b.json']);
     expect(groups[0].rows.map((groupRow) => groupRow.toDisplay)).toEqual(['2', '4']);
+  });
+
+  it('includes an approved-but-unpublished field row (from = master, marked approved)', () => {
+    const groups = buildByTypeGroupModel(
+      [
+        row('unpublished', {
+          unpublishedFields: ['name'],
+          masterFields: { name: 'Published' },
+          raw: { name: 'Approved' },
+          filename: 'u.json',
+        }),
+      ],
+      [col('name')],
+      NO_EFFECTIVE_PATHS,
+      null,
+    );
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].rows[0]).toEqual({
+      filename: 'u.json',
+      recordName: 'u',
+      fromDisplay: 'Published',
+      toDisplay: 'Approved',
+      rowStatus: 'unpublished',
+      approved: true,
+    });
+  });
+
+  it('mixes unreviewed and approved rows in one column group, preserving order and from-sides', () => {
+    const groups = buildByTypeGroupModel(
+      [
+        row('modified', {
+          changedFields: ['name'],
+          fromFields: { name: 'ApprovedOld' },
+          raw: { name: 'Working' },
+          filename: 'm.json',
+        }),
+        row('unpublished', {
+          unpublishedFields: ['name'],
+          masterFields: { name: 'Published' },
+          raw: { name: 'Approved' },
+          filename: 'u.json',
+        }),
+      ],
+      [col('name')],
+      NO_EFFECTIVE_PATHS,
+      null,
+    );
+
+    expect(groups[0].rows.map((groupRow) => [groupRow.filename, groupRow.approved])).toEqual([
+      ['m.json', false],
+      ['u.json', true],
+    ]);
+    expect(groups[0].rows.map((groupRow) => groupRow.fromDisplay)).toEqual(['ApprovedOld', 'Published']);
+    expect(groups[0].rows.map((groupRow) => groupRow.toDisplay)).toEqual(['Working', 'Approved']);
   });
 
   it('JSON-stringifies non-scalar field values for display', () => {
@@ -155,7 +224,11 @@ describe('buildByTypeGroupModel', () => {
       ['invalidJson', 'Needs attention', ['broken.json']],
     ]);
     for (const group of groups) {
-      expect(group.rows.every((groupRow) => groupRow.fromDisplay === '' && groupRow.toDisplay === '')).toBe(true);
+      expect(
+        group.rows.every(
+          (groupRow) => groupRow.fromDisplay === '' && groupRow.toDisplay === '' && groupRow.approved === false,
+        ),
+      ).toBe(true);
     }
   });
 

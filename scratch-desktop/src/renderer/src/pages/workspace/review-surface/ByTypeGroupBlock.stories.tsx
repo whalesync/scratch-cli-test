@@ -16,6 +16,7 @@ const FIELD_GROUP: ByTypeGroupModel = {
       fromDisplay: '$32.00',
       toDisplay: '$28.00',
       rowStatus: 'modified',
+      approved: false,
     },
     {
       filename: 'b.json',
@@ -23,9 +24,33 @@ const FIELD_GROUP: ByTypeGroupModel = {
       fromDisplay: '$48.00',
       toDisplay: '$52.00',
       rowStatus: 'modified',
+      approved: false,
     },
-    { filename: 'c.json', recordName: 'Cedar Bowl', fromDisplay: '$44.00', toDisplay: '$39.00', rowStatus: 'modified' },
+    {
+      filename: 'c.json',
+      recordName: 'Cedar Bowl',
+      fromDisplay: '$44.00',
+      toDisplay: '$39.00',
+      rowStatus: 'modified',
+      approved: false,
+    },
   ],
+};
+
+/** A field group where some rows are already approved (green ✓) and some still need review. */
+const MIXED_APPROVED_GROUP: ByTypeGroupModel = {
+  ...FIELD_GROUP,
+  rows: FIELD_GROUP.rows.map((row, index) => ({
+    ...row,
+    approved: index === 0,
+    rowStatus: index === 0 ? ('unpublished' as const) : ('modified' as const),
+  })),
+};
+
+/** A field group where every row is approved — the header shows the "All approved" badge. */
+const ALL_APPROVED_GROUP: ByTypeGroupModel = {
+  ...FIELD_GROUP,
+  rows: FIELD_GROUP.rows.map((row) => ({ ...row, approved: true, rowStatus: 'unpublished' as const })),
 };
 
 const CREATED_GROUP: ByTypeGroupModel = {
@@ -34,8 +59,22 @@ const CREATED_GROUP: ByTypeGroupModel = {
   dotColorVar: 'var(--create-needs-review-stroke)',
   recordFilenames: ['d.json', 'e.json'],
   rows: [
-    { filename: 'd.json', recordName: 'Driftwood Tray', fromDisplay: '', toDisplay: '', rowStatus: 'added' },
-    { filename: 'e.json', recordName: 'Ember Candle', fromDisplay: '', toDisplay: '', rowStatus: 'added' },
+    {
+      filename: 'd.json',
+      recordName: 'Driftwood Tray',
+      fromDisplay: '',
+      toDisplay: '',
+      rowStatus: 'added',
+      approved: false,
+    },
+    {
+      filename: 'e.json',
+      recordName: 'Ember Candle',
+      fromDisplay: '',
+      toDisplay: '',
+      rowStatus: 'added',
+      approved: false,
+    },
   ],
 };
 
@@ -55,6 +94,14 @@ export default meta;
 type Story = StoryObj<typeof ByTypeGroupBlock>;
 
 export const FieldGroup: Story = {};
+
+export const MixedApproved: Story = {
+  args: { group: MIXED_APPROVED_GROUP },
+};
+
+export const AllApproved: Story = {
+  args: { group: ALL_APPROVED_GROUP },
+};
 
 export const CreatedGroup: Story = {
   args: { group: CREATED_GROUP },

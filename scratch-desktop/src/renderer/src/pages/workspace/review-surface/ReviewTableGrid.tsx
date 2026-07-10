@@ -33,6 +33,7 @@ import {
   STATUS_COL_ID,
 } from './build-review-table-columns';
 import {
+  drawStatusCheck,
   drawStatusDot,
   drawValidationWarningIcon,
   drawWordDiffText,
@@ -40,6 +41,7 @@ import {
   getStatusCellStroke,
   getStatusCellTint,
   getStatusDotVar,
+  isFullyApprovedRowStatus,
   wordDiffCacheKey,
   type ValidationLevel,
 } from './review-table-cell-drawing';
@@ -60,9 +62,11 @@ import {
 // double-click (which edits the cell) can cancel it first — see onCellClicked / onCellActivated.
 const RECORD_CHANGES_DRAWER_CLICK_DELAY_MS = 250;
 
-// Status-column indicator layout: a change-type dot, then (optionally) a validation-warning icon.
+// Status-column indicator layout: a change-type dot (or a check for a fully-approved row), then
+// (optionally) a validation-warning icon.
 const STATUS_INDICATOR_LEFT_PAD = 8;
 const STATUS_DOT_RADIUS = 4;
+const STATUS_CHECK_SIZE = 12;
 const STATUS_INDICATOR_GAP = 6;
 const STATUS_WARNING_ICON_SIZE = 14;
 
@@ -272,10 +276,16 @@ export function ReviewTableGrid({
         const { ctx, rect } = args;
         const centerY = rect.y + rect.height / 2;
         let x = rect.x + STATUS_INDICATOR_LEFT_PAD;
-        const dotVar = getStatusDotVar(row.__rowStatus);
-        if (dotVar) {
-          drawStatusDot(ctx, x + STATUS_DOT_RADIUS, centerY, STATUS_DOT_RADIUS, getCssVar(dotVar));
-          x += STATUS_DOT_RADIUS * 2 + STATUS_INDICATOR_GAP;
+        if (isFullyApprovedRowStatus(row.__rowStatus)) {
+          // Fully approved: a gray check marks the whole row as approved, in place of the change-type dot.
+          drawStatusCheck(ctx, x, centerY - STATUS_CHECK_SIZE / 2, STATUS_CHECK_SIZE, getCssVar('--fg-muted'));
+          x += STATUS_CHECK_SIZE + STATUS_INDICATOR_GAP;
+        } else {
+          const dotVar = getStatusDotVar(row.__rowStatus);
+          if (dotVar) {
+            drawStatusDot(ctx, x + STATUS_DOT_RADIUS, centerY, STATUS_DOT_RADIUS, getCssVar(dotVar));
+            x += STATUS_DOT_RADIUS * 2 + STATUS_INDICATOR_GAP;
+          }
         }
         // A record fails validation when any of its cells carry a problem; an unparseable record
         // (invalidJson) is always an error.
@@ -318,10 +328,15 @@ export function ReviewTableGrid({
         const toValue = toDisplayString(getByPath(row.__raw, effectivePath));
         // XS scalars (numbers, dates) and non-text cells show whole old → whole new; real text
         // (S/M/L) uses a word-level inline diff.
-        const wholeValue = classification?.fieldSize === 'XS' || args.cell.kind !== GridCellKind.Text;
+        const fieldSize = classification?.fieldSize;
+        const wholeValue = fieldSize === 'XS' || args.cell.kind !== GridCellKind.Text;
+        // Long-form (M/L) text is windowed around the change so a deep edit is visible instead of the
+        // unchanged prefix (DEV-10687); short (S) text already fits, so it draws from the start.
+        const windowAroundChange = !wholeValue && (fieldSize === 'M' || fieldSize === 'L');
         drawWordDiffText(args.ctx, args.rect, args.theme, fromValue, toValue, {
           showRemoved: true,
           wholeValue,
+          windowAroundChange,
           cacheKey: wordDiffCacheKey(row.__filename, colId, fromValue, toValue),
         });
       } else {
