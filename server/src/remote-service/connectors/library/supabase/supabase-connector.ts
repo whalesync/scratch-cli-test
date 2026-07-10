@@ -17,18 +17,27 @@ import {
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
   X_SCRATCH_READONLY,
+  type CreateFieldResult,
+  type CreateTableResult,
+  type SchemaCreationCapabilities,
 } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
+import {
+  type NormalizedCreateFieldsPlan,
+  type NormalizedCreateTablePlan,
+  type ResolvedCreateFieldSpec,
+} from '../../schema-creation.types';
 import { Service } from '../../service-constants';
 import {
   dotPath,
   type BaseJsonTableSpec,
   type ConnectorErrorDetails,
   type ConnectorFile,
+  type CreateDestination,
   type EntityId,
   type PullRecordFilesOptions,
   type PullRecordFilesResult,
@@ -42,11 +51,13 @@ import {
   KnexPGClientError,
   mapPgType,
   pgIncrementalPullSupport,
+  POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   resolvePgModifiedAtField,
   SUPABASE_SYSTEM_SCHEMA_PATTERNS,
   SUPABASE_SYSTEM_SCHEMAS,
   TableName,
   validateWhereFilter,
+  type ForeignKeyResolutions,
   type InformationSchemaColumn,
 } from '../pg-common';
 import { buildPgDefaultView } from '../pg-common/pg-default-view';
@@ -56,6 +67,9 @@ import { extractProjectRef } from './supabase-setup-utils';
 import { SupabaseCredentials, SupabaseProjectConfig } from './supabase-types';
 
 const READ_BATCH_SIZE = 500;
+
+/** Schema used when a create-schema request's `remoteParentId` names a project but no schema. */
+const DEFAULT_SUPABASE_SCHEMA = 'public';
 
 // ---------------------------------------------------------------------------
 // Connector
@@ -74,6 +88,8 @@ export class SupabaseConnector extends Connector {
     incrementalPull: true,
     incrementalPullInstructions:
       'To enable incremental pulls, this table must contain a date-time column that tracks when a row was last changed (e.g. updated_at).',
+    // Supabase implements the create-schema seam (supportsSchemaCreation() === true).
+    supportsSchemaCreation: true,
     oauth: { label: 'OAuth' },
     userProvidedParamsLabel: 'Connection String',
     credentialFields: {
@@ -136,6 +152,27 @@ export class SupabaseConnector extends Connector {
       throw new KnexPGClientError('No connection string configured', 'CONNECTION_ERROR');
     }
     return { connectionString: this.connectionString, schema, tableName };
+  }
+
+  /**
+   * Resolve the connection string for a project by its ref. The
+   * create-schema flow (create table / add fields) knows the project + schema
+   * but not yet a table, so it can't use {@link resolveConnection}. In OAuth
+   * mode we look the project up by ref; in connection-string mode there is a
+   * single project and the ref is ignored.
+   */
+  private resolveConnectionStringForProject(projectRef: string): string {
+    if (this.isOAuth) {
+      const project = this.projects.find((p) => p.projectRef === projectRef);
+      if (!project) {
+        throw new KnexPGClientError(`Unknown Supabase project: ${projectRef}`, 'CONNECTION_ERROR');
+      }
+      return project.connectionString;
+    }
+    if (!this.connectionString) {
+      throw new KnexPGClientError('No connection string configured', 'CONNECTION_ERROR');
+    }
+    return this.connectionString;
   }
 
   /**
@@ -269,6 +306,58 @@ export class SupabaseConnector extends Connector {
     }
 
     return allTables;
+  }
+
+  /**
+   * A new Supabase table is created inside a schema of a specific project, so the
+   * create destinations are every (project, non-system schema) pair the account
+   * can see. The id is `"<projectRef>/<schema>"` — the create-table flow splits it
+   * back into the `[projectRef, schema]` remoteParentId — and the name is a human
+   * label ("<project> / <schema>"). Mirrors the system-schema exclusions used by
+   * {@link listTables} (the fixed Supabase system schemas plus the `pg_` / `supabase_`
+   * prefixes).
+   */
+  override async listCreateDestinations(): Promise<CreateDestination[]> {
+    if (this.isOAuth) {
+      const destinations: CreateDestination[] = [];
+      for (const project of this.projects) {
+        const schemas = await this.listUserSchemas(project.connectionString);
+        for (const schema of schemas) {
+          destinations.push({
+            id: `${project.projectRef}/${schema}`,
+            name: `${project.projectName || project.projectRef} / ${schema}`,
+          });
+        }
+      }
+      return destinations;
+    }
+
+    const projectRef = this.connectionStringProjectRef;
+    if (!projectRef) {
+      throw new Error('listCreateDestinations called without a connection-string project ref');
+    }
+    const schemas = await this.listUserSchemas(this.connectionString);
+    return schemas.map((schema) => ({ id: `${projectRef}/${schema}`, name: schema }));
+  }
+
+  /**
+   * The non-system schema names on a Supabase database, filtered exactly as
+   * {@link listTables} filters tables: drop the fixed Supabase system schemas and
+   * anything matching the `pg_` / `supabase_` prefixes (the JS analogue of
+   * {@link SUPABASE_SYSTEM_SCHEMA_PATTERNS}).
+   */
+  private async listUserSchemas(connectionString?: string): Promise<string[]> {
+    return this.withPgClient(async (client) => {
+      const schemas = await client.findAllSchemas();
+      return schemas
+        .map((schema) => schema.schema_name)
+        .filter(
+          (schemaName) =>
+            !SUPABASE_SYSTEM_SCHEMAS.includes(schemaName) &&
+            !schemaName.startsWith('pg_') &&
+            !schemaName.startsWith('supabase_'),
+        );
+    }, connectionString);
   }
 
   // -------------------------------------------------------------------------
@@ -554,6 +643,210 @@ export class SupabaseConnector extends Connector {
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
     const titlePath = tableSpec.titlePath && !tableSpec.titlePath.includes('.') ? tableSpec.titlePath : undefined;
     return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath ?? tableSpec.slugColumnRemoteId, titlePath);
+  }
+
+  // -------------------------------------------------------------------------
+  // Schema creation (create-schema API — Live Export destination, DEV-10737)
+  // -------------------------------------------------------------------------
+
+  override supportsSchemaCreation(): boolean {
+    return true;
+  }
+
+  override getSchemaCreationCapabilities(): SchemaCreationCapabilities {
+    // Supabase is Postgres — the same logical-kind coverage and identifier
+    // length limits apply, so the shared pg capabilities are exact.
+    return POSTGRES_SCHEMA_CREATION_CAPABILITIES;
+  }
+
+  /**
+   * Resolve the target project + schema from a create-schema `remoteParentId`.
+   *
+   * `listCreateDestinations` advertises each destination id as
+   * `"<projectRef>/<schema>"`. Callers turn that single string id into the
+   * `string[]` remoteParentId inconsistently: the create-schema dev tool splits
+   * on `/` (`["<ref>", "<schema>"]`), while the Live Export flow forwards the id
+   * whole (`["<ref>/<schema>"]`). Project refs and Postgres schema names never
+   * contain `/`, so we normalize by flattening every segment on `/` — `["ref/public"]`,
+   * `["ref", "public"]`, and `["ref"]` (schema defaulted) all resolve to the same
+   * `{ projectRef, schema }`.
+   */
+  private resolveCreateParent(remoteParentId: string[] | undefined): {
+    projectRef: string | undefined;
+    schema: string;
+  } {
+    const segments = (remoteParentId ?? [])
+      .flatMap((segment) => segment.split('/'))
+      .filter((segment) => segment !== '');
+    return { projectRef: segments[0], schema: segments[1] ?? DEFAULT_SUPABASE_SCHEMA };
+  }
+
+  /**
+   * Create one table (with an auto-generated `id` primary key) and its
+   * non-deferred fields inside `[projectRef, schema]`. DDL runs over the same
+   * Knex data role that does DML — its setup grants CREATE on every user schema
+   * (`GRANT ALL ON SCHEMA`), so no Management-API superuser call is needed and
+   * both connection-string and OAuth modes work identically. The schema is never
+   * created here: create destinations are always existing schemas, and the data
+   * role does not own the database, so we don't attempt `CREATE SCHEMA`.
+   * ForeignKey targets are already resolved to existing tables by the server;
+   * here we introspect each target's primary-key column so the FK references it
+   * with a matching type. Creates are NOT idempotent.
+   */
+  override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
+    const { projectRef, schema } = this.resolveCreateParent(plan.remoteParentId);
+    const tableName = plan.name;
+    if (!projectRef) {
+      return this.failedTableResult(
+        plan,
+        'Supabase requires a target project and schema (remoteParentId, e.g. ["<projectRef>", "<schema>"]) to create a table',
+      );
+    }
+    try {
+      const connectionString = this.resolveConnectionStringForProject(projectRef);
+      return await this.withPgClient(async (client) => {
+        const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields, projectRef);
+        const { skippedFields } = await client.createTable(schema, tableName, plan.fields, foreignKeyResolutions);
+        const fields = this.buildFieldResults(plan.fields, skippedFields);
+        return {
+          ref: plan.ref,
+          name: tableName,
+          status: skippedFields.size > 0 ? 'partial' : 'created',
+          remoteTableId: [projectRef, schema, tableName],
+          fields,
+        };
+      }, connectionString);
+    } catch (error) {
+      return this.failedTableResult(plan, this.extractConnectorErrorDetails(error).userFriendlyMessage);
+    }
+  }
+
+  /**
+   * Add fields to an existing remote table — one `ALTER TABLE … ADD COLUMN` per
+   * field so a single bad field fails in isolation rather than rolling back the
+   * rest. Also used by the server to add deferred cyclic/self foreignKey fields
+   * after every table in a multi-table create exists.
+   */
+  override async createFields(plan: NormalizedCreateFieldsPlan): Promise<CreateFieldResult[]> {
+    const [projectRef, schema, tableName] = this.splitRemoteTableId(plan.remoteTableId);
+    const connectionString = this.resolveConnectionStringForProject(projectRef);
+    return this.withPgClient(async (client) => {
+      const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields, projectRef);
+      const results: CreateFieldResult[] = [];
+      for (const field of plan.fields) {
+        try {
+          const { skippedFields } = await client.addColumns(schema, tableName, [field], foreignKeyResolutions);
+          const skipReason = skippedFields.get(field.name);
+          results.push(
+            skipReason !== undefined
+              ? { name: field.name, status: 'skipped', error: skipReason }
+              : { name: field.name, status: 'created', remoteFieldId: field.name },
+          );
+        } catch (error) {
+          results.push({
+            name: field.name,
+            status: 'failed',
+            error: this.extractConnectorErrorDetails(error).userFriendlyMessage,
+          });
+        }
+      }
+      return results;
+    }, connectionString);
+  }
+
+  /** A create-table result where nothing was created — every requested field is `failed`. */
+  private failedTableResult(plan: NormalizedCreateTablePlan, error: string): CreateTableResult {
+    return {
+      ref: plan.ref,
+      name: plan.name,
+      status: 'failed',
+      fields: plan.fields.map((field) => ({ name: field.name, status: 'failed' as const })),
+      error,
+    };
+  }
+
+  /**
+   * Build the per-field result list for a created table: each requested field is
+   * `created` (its column name is the stable remote field id) unless it was
+   * skipped (an unresolvable/allowMultiple foreign key, or the reserved `id`
+   * name), in which case the reason is surfaced.
+   */
+  private buildFieldResults(
+    fields: ResolvedCreateFieldSpec[],
+    skippedFields: Map<string, string>,
+  ): CreateFieldResult[] {
+    return fields.map((field) => {
+      const skipReason = skippedFields.get(field.name);
+      if (skipReason !== undefined) {
+        return { name: field.name, status: 'skipped', error: skipReason };
+      }
+      return { name: field.name, status: 'created', remoteFieldId: field.name };
+    });
+  }
+
+  /**
+   * For every single-valued foreignKey field, introspect its (already server-
+   * resolved) target table's primary-key column + type so the FK column matches.
+   * A target in a different Supabase project is unresolvable (a foreign key can
+   * only reference a table in the same database), as is a target with no usable
+   * primary key — both yield a reason the builder turns into a per-field skip.
+   */
+  private async resolveForeignKeyTargets(
+    client: KnexPGClient,
+    fields: ResolvedCreateFieldSpec[],
+    projectRef: string,
+  ): Promise<ForeignKeyResolutions> {
+    const resolutions: ForeignKeyResolutions = new Map();
+    for (const field of fields) {
+      const fieldType = field.fieldType;
+      if (fieldType.kind !== 'foreignKey' || fieldType.allowMultiple) {
+        continue;
+      }
+      if (!('existingRemoteTableId' in fieldType.target)) {
+        // The server resolves every {ref} target before dispatch; a lingering ref is a bug.
+        resolutions.set(field.name, {
+          kind: 'unresolvable',
+          reason: `foreign key "${field.name}" target was not resolved to an existing table`,
+        });
+        continue;
+      }
+      const [targetProjectRef, targetSchema, targetTable] = this.splitRemoteTableId(
+        fieldType.target.existingRemoteTableId,
+      );
+      if (targetProjectRef !== projectRef) {
+        resolutions.set(field.name, {
+          kind: 'unresolvable',
+          reason: `couldn't create foreign key "${field.name}": the linked table is in a different Supabase project ("${targetProjectRef}") than the table being created ("${projectRef}") — a foreign key can only reference a table in the same database`,
+        });
+        continue;
+      }
+      const primaryKey = await client.findTablePrimaryKeyColumn(targetSchema, targetTable);
+      if (primaryKey === null) {
+        resolutions.set(field.name, {
+          kind: 'unresolvable',
+          reason: `couldn't create foreign key "${field.name}": the linked table "${targetSchema}.${targetTable}" has no primary key to reference`,
+        });
+        continue;
+      }
+      resolutions.set(field.name, {
+        kind: 'resolved',
+        targetTableQualified: `${targetSchema}.${targetTable}`,
+        targetPkColumn: primaryKey.column,
+        targetPkType: primaryKey.dataType,
+      });
+    }
+    return resolutions;
+  }
+
+  /**
+   * Split a Supabase `[projectRef, schema, table]` remoteId (defaulting the
+   * schema to `public` for a bare `[projectRef, table]`).
+   */
+  private splitRemoteTableId(remoteTableId: string[]): [projectRef: string, schema: string, table: string] {
+    if (remoteTableId.length >= 3) {
+      return [remoteTableId[0], remoteTableId[1], remoteTableId[2]];
+    }
+    return [remoteTableId[0], DEFAULT_SUPABASE_SCHEMA, remoteTableId[1]];
   }
 
   // -------------------------------------------------------------------------

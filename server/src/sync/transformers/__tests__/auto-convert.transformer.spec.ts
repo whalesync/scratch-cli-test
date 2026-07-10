@@ -127,13 +127,27 @@ describe('autoConvertTransformer', () => {
       expect(result).toEqual({ success: true, value: '' });
     });
 
-    it('should error for object', async () => {
+    it('should JSON-stringify an object instead of failing (default stringify for string target)', async () => {
       const result = await autoConvertTransformer.transform(createContext({ foo: 1 }, opts));
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toContain('Cannot convert');
-        expect(result.useOriginal).toBe(true);
-      }
+      expect(result).toEqual({ success: true, value: '{"foo":1}' });
+    });
+
+    it('should JSON-stringify a nested object (e.g. a Shopify featuredImage/category value)', async () => {
+      const featuredImage = { url: 'https://cdn.example.com/x.jpg', altText: 'hero' };
+      const result = await autoConvertTransformer.transform(createContext(featuredImage, opts));
+      expect(result).toEqual({ success: true, value: JSON.stringify(featuredImage) });
+    });
+
+    it('should JSON-stringify object elements in an array rather than emitting [object Object]', async () => {
+      const result = await autoConvertTransformer.transform(createContext([{ a: 1 }, { b: 2 }], opts));
+      expect(result).toEqual({ success: true, value: '{"a":1}, {"b":2}' });
+    });
+
+    it('should not throw on a circular object (falls back to String)', async () => {
+      const circular: Record<string, unknown> = { a: 1 };
+      circular.self = circular;
+      const result = await autoConvertTransformer.transform(createContext(circular, opts));
+      expect(result.success).toBe(true);
     });
   });
 

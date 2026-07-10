@@ -341,4 +341,68 @@ describe('selectPlanFieldsFromTableView', () => {
       expect(schemaFields.map((f) => f.displayLabel)).toEqual(['Name', 'SEO Title']);
     });
   });
+
+  // ── Subfield selection: a column that renders a chosen subfield maps the source
+  //    to that subfield's leaf (Shopify count/money objects) so the export is the
+  //    scalar the view shows, not the whole object (which fails an object→scalar
+  //    sync transform — "Cannot convert object to number"). ──────────────────────
+  describe('subfield-selected columns', () => {
+    // A Shopify Blogs `articlesCount` — a `{count, precision}` count object marked
+    // read-only on its outer envelope, exactly like the generated schema.
+    const schema = Type.Object({
+      title: Type.String(),
+      articlesCount: Type.Optional(
+        Type.Union([
+          Type.Object({
+            count: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            precision: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ]),
+      ),
+    });
+    schema.properties.articlesCount[X_SCRATCH_READONLY] = true;
+
+    const countCol = {
+      kind: 'col' as const,
+      name: 'Articles Count',
+      path: 'articlesCount',
+      type: 'number' as const,
+      subfields: [
+        { relativePath: 'count', name: 'Count', type: 'number' as const },
+        { relativePath: 'precision', name: 'Precision', type: 'string' as const },
+      ],
+    };
+
+    it('maps the source to the selected subfield leaf path, typed by the subfield', () => {
+      const view: TableView = {
+        name: 'Default',
+        cols: [
+          { kind: 'col', name: 'Title', path: 'title', type: 'string' },
+          { ...countCol, selectedSubfield: 0 },
+        ],
+      };
+
+      const { schemaFields, viewTypeByPath } = selectPlanFieldsFromTableView({ schema, view });
+
+      const paths = schemaFields.map((f) => f.path);
+      expect(paths).toContain('articlesCount.count');
+      expect(paths).not.toContain('articlesCount');
+      const countField = schemaFields.find((f) => f.path === 'articlesCount.count');
+      expect(countField?.displayLabel).toBe('Articles Count');
+      // The view type drives the created column kind → a `number` column, and the
+      // source path plucks the scalar, so no object→number conversion is needed.
+      expect(viewTypeByPath['articlesCount.count']).toBe('number');
+    });
+
+    it('keeps the whole object when no subfield is selected (root)', () => {
+      const view: TableView = { name: 'Default', cols: [countCol] };
+
+      const { schemaFields } = selectPlanFieldsFromTableView({ schema, view });
+
+      const paths = schemaFields.map((f) => f.path);
+      expect(paths).toContain('articlesCount');
+      expect(paths).not.toContain('articlesCount.count');
+    });
+  });
 });

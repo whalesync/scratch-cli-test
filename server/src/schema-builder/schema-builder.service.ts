@@ -422,10 +422,13 @@ export class SchemaBuilderService {
    * Display names of tables that already exist on the destination connection,
    * scoped to the create parent (`remoteParentId`) so we only flag genuine
    * collisions — e.g. tables in the SAME Airtable base / Postgres schema /
-   * Webflow site, not every table the account can see. The parent id is
-   * `TablePreview.id.remoteId[0]` for the connectors that support table creation
-   * and equals the `remoteParentId[0]` chosen from `listCreateDestinations`; when
-   * no parent is given, every table is considered.
+   * Supabase (project, schema) / Webflow site, not every table the account can
+   * see. The parent is a prefix of `TablePreview.id.remoteId`: single-segment for
+   * connectors whose parent is one container (`[base]` / `[schema]`, matching
+   * `remoteId[0]`), multi-segment for connectors whose parent nests (Supabase's
+   * `[projectRef, schema]`, matching `remoteId[0..1]`). Every segment of the
+   * parent must equal the table's remoteId at that position; when no parent is
+   * given, every table is considered.
    *
    * Degrades gracefully: if listing fails we log and return `[]` so plan
    * generation still succeeds (in-plan duplicates are still resolved) — we simply
@@ -446,8 +449,10 @@ export class SchemaBuilderService {
       });
       return [];
     }
-    const parentId = remoteParentId?.[0];
-    const scopedTables = parentId === undefined ? tables : tables.filter((table) => table.id.remoteId[0] === parentId);
+    const scopedTables =
+      remoteParentId === undefined || remoteParentId.length === 0
+        ? tables
+        : tables.filter((table) => remoteParentId.every((segment, index) => table.id.remoteId[index] === segment));
     return scopedTables.map((table) => table.displayName);
   }
 

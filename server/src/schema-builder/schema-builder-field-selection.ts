@@ -73,6 +73,36 @@ export function selectPlanFieldsFromTableView(args: {
   const alreadySelectedBackingPaths = new Set<string>();
 
   for (const col of visibleColumns(args.view)) {
+    // A column that renders a chosen SUBFIELD (e.g. a Shopify `{count, precision}`
+    // count object the view shows as its `count`, or a `{amount, currencyCode}`
+    // money object shown as its `amount`) exports THAT subfield. Map the source to
+    // the subfield's leaf path with its type, so the created column is the scalar
+    // the view shows and the sync copies that scalar — instead of mapping the whole
+    // object and then failing an object→scalar sync transform ("Cannot convert
+    // object to number"). When no subfield is selected the column renders its root,
+    // so we fall through to the normal whole-column handling below.
+    const selectedSubfield = col.selectedSubfield !== undefined ? col.subfields?.[col.selectedSubfield] : undefined;
+    if (selectedSubfield) {
+      const subfieldPath = `${col.path}.${selectedSubfield.relativePath}`;
+      if (alreadySelectedBackingPaths.has(subfieldPath)) continue;
+      alreadySelectedBackingPaths.add(subfieldPath);
+
+      // The flattener usually exposes the subfield leaf (a Shopify count object is
+      // read-only only on its outer envelope, so `count`/`precision` are traversed);
+      // fall back to the subfield's declared type when it doesn't.
+      const backingSubfield = pathToSchemaField.get(subfieldPath);
+      const derivedSubfield: SchemaField = backingSubfield
+        ? { ...backingSubfield, path: subfieldPath }
+        : { path: subfieldPath, type: selectedSubfield.type ?? 'unknown' };
+      if (col.name) derivedSubfield.displayLabel = col.name;
+      if (col.readonly || selectedSubfield.readonly) derivedSubfield.readonly = true;
+
+      schemaFields.push(derivedSubfield);
+      const subfieldViewType = selectedSubfield.type ?? col.type;
+      if (subfieldViewType) viewTypeByPath[subfieldPath] = subfieldViewType;
+      continue;
+    }
+
     const backingField = findBackingSchemaField(col.path, pathToSchemaField, args.titlePath, args.idPath);
     const path = backingField?.path ?? col.path;
 

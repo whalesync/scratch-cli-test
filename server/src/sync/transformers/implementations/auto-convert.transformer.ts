@@ -113,11 +113,30 @@ function convertToString(value: unknown): TransformResult {
       return { success: true, value: '' };
     }
     if (value.length === 1) {
-      return { success: true, value: String(value[0]) };
+      return { success: true, value: stringifyElement(value[0]) };
     }
-    return { success: true, value: value.map(String).join(', ') };
+    return { success: true, value: value.map(stringifyElement).join(', ') };
   }
-  return { success: false, error: `Cannot convert ${typeof value} to string`, useOriginal: true };
+  // Objects (and any other non-scalar) get a JSON string rather than failing the
+  // record — a non-string value going into a string/text column should always
+  // fall back to a stringify. This is what makes nested source values (e.g.
+  // Shopify's `featuredImage` / `category` objects) land in a text destination
+  // column on a Live Export instead of aborting the whole record.
+  return { success: true, value: safeJsonStringify(value) };
+}
+
+/** Stringify one array element: scalars via `String`, objects as JSON (so an array of objects doesn't become "[object Object]"). */
+function stringifyElement(value: unknown): string {
+  return value !== null && typeof value === 'object' ? safeJsonStringify(value) : String(value);
+}
+
+/** `JSON.stringify`, but never throws (e.g. on a circular reference) — falls back to `String(value)`. */
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function convertToNumber(value: unknown): TransformResult {

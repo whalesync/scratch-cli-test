@@ -159,7 +159,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Capabilities covered:** schemas ❌ · pull ❌ · publish (CRUD) ❌ · error handling ❌.
 - **State model:** n/a — no live suite.
 - **Notes:** No live integration spec yet (has unit tests). DB-style connector — could reuse the Postgres harness pattern.
-- [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP is settled (implemented).
+- [x] **CS implemented** (DEV-10737, Live Export) — `createTable` / `createFields` / `listCreateDestinations` are implemented. DDL runs over the same Knex data role that does DML (its setup grants `ALL ON SCHEMA`, i.e. CREATE, on every user schema), so no Management-API superuser call is needed and both connection-string and OAuth modes work. Create destinations are `"<projectRef>/<schema>"` (existing non-system schemas only; the connector never creates a schema). Covered by unit tests in `__tests__/supabase-connector.spec.ts`. IP is settled (implemented).
 
 ## Open issues
 - (link Linear issues for ❌ cells)
