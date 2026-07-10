@@ -42,4 +42,22 @@ describe('pickMappingTransformers', () => {
   it('does NOT auto_convert into a non-primitive (object) destination — that needs a connector pack hint', () => {
     expect(pickMappingTransformers(field({ type: 'string' }), field({ type: 'object' }))).toEqual([]);
   });
+
+  it('coerces to the destination type even when the SOURCE field is unknown (a drilled/computed path)', () => {
+    // e.g. a Notion property's inner value `properties.X.multi_select` — not surfaced as
+    // its own flattened field, so no source hints — must still land in the text column.
+    expect(pickMappingTransformers(undefined, field({ type: 'string' }))).toEqual([
+      { type: 'auto_convert', options: { targetType: 'string' } },
+    ]);
+  });
+
+  it('coerces a non-scalar source into a text destination (serialize) instead of leaving it unbridged', () => {
+    expect(pickMappingTransformers(field({ type: 'array' }), field({ type: 'string' }))).toEqual([
+      { type: 'auto_convert', options: { targetType: 'string' } },
+    ]);
+  });
+
+  it('does NOT coerce into a structured destination even for an unknown source (needs a pack hint)', () => {
+    expect(pickMappingTransformers(undefined, field({ type: 'object' }))).toEqual([]);
+  });
 });
