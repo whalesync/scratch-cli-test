@@ -7,7 +7,25 @@ export type FilterKind = 'unreviewed' | 'unpublished' | 'pending' | 'has-problem
 export type GridFilter =
   | { scope: 'global'; kind: FilterKind }
   | { scope: 'column'; kind: FilterKind; columnId: string; columnTitle: string }
-  | { scope: 'text'; columnId: string; columnTitle: string; value: string };
+  | { scope: 'text'; columnId: string; columnTitle: string; value: string }
+  // Review surface v2 change-type filter chips (DEV-10656, Phase 9). `changeTypeGroupKey` matches
+  // `byTypeGroupKey(group)` (`field:<columnId>` | `created` | `deleted` | `invalidJson`). Applied
+  // CLIENT-SIDE over the already-loaded folder-wide pending set — never sent to `readDiffGridData`
+  // (see `serverGridFilters`), so it lives in the same `activeFilters` array as the global pills
+  // rather than a parallel filter system.
+  | { scope: 'change-type'; changeTypeGroupKey: string };
+
+/**
+ * The subset of `activeFilters` the diff-grid IPC (`readDiffGridData`) understands. The review-v2
+ * change-type chip scope is applied CLIENT-SIDE only (DEV-10656), so it is stripped here rather than
+ * sent to the main process; callers pass the whole `activeFilters` array and get back only the
+ * server-honored filters.
+ */
+export function serverGridFilters(filters: readonly GridFilter[]): Exclude<GridFilter, { scope: 'change-type' }>[] {
+  return filters.filter(
+    (filter): filter is Exclude<GridFilter, { scope: 'change-type' }> => filter.scope !== 'change-type',
+  );
+}
 
 // ── View mode (derived, not stored) ──
 

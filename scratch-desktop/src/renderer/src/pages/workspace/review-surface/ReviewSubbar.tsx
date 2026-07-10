@@ -1,10 +1,11 @@
 import { ButtonSecondaryGhost } from '@/components/base/buttons';
-import { Text12Medium } from '@/components/base/text';
+import { Text12Medium, TextMono10Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, Divider, Group, Popover } from '@mantine/core';
 import { Columns3 } from 'lucide-react';
 import type { GridFilter, ReviewSurfaceViewMode } from '../../../stores/workspace-ui-store';
 import { ColumnPickerMenu } from '../ColumnPickerMenu';
+import type { ChangeTypeChipModel } from './change-type-chips';
 
 const VIEW_OPTIONS: { value: ReviewSurfaceViewMode; label: string }[] = [
   { value: 'table', label: 'Table' },
@@ -51,6 +52,12 @@ interface ReviewSubbarProps {
   disabled: boolean;
   /** Column picker inputs, ported from `FolderDataGrid`. */
   columnPicker: ReviewColumnPickerModel;
+  /** Change-type filter chips (Table view only) — one per By-type group, in group order (DEV-10656). */
+  changeTypeChips: ChangeTypeChipModel[];
+  /** The active chip's group key, or `null` for the "All" chip. */
+  activeChangeTypeGroupKey: string | null;
+  /** Select a chip exclusively; `null` = All (clears the change-type filter). */
+  onSelectChangeTypeChip: (changeTypeGroupKey: string | null) => void;
 }
 
 /**
@@ -108,6 +115,59 @@ function FilterPill({
 }
 
 /**
+ * A change-type filter chip (DEV-10656): a 6px color dot + a mono label + optional live count, in
+ * the compact square style of the design's subbar `.fchip`. Distinct from `FilterPill` (rounded,
+ * yellow-highlight) so the two filter axes read apart. Active = inverted (dark fill / light text via
+ * the `--fg-primary` ⇄ `--bg-base` pair, which flips correctly in dark mode).
+ */
+function ChangeTypeChip({
+  label,
+  count,
+  active,
+  dotColor,
+  disabled = false,
+  onClick,
+}: {
+  label: string;
+  count?: number;
+  active: boolean;
+  dotColor?: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Box
+      component="button"
+      aria-pressed={active}
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        padding: '3px 9px',
+        borderRadius: 4,
+        border: active ? '1px solid var(--fg-primary)' : '1px solid var(--fg-divider)',
+        backgroundColor: active ? 'var(--fg-primary)' : 'var(--bg-base)',
+        cursor: disabled ? 'default' : 'pointer',
+        lineHeight: 1,
+        flexShrink: 0,
+        whiteSpace: 'nowrap',
+        opacity: disabled ? 0.55 : 1,
+      }}
+    >
+      {dotColor && (
+        <Box style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: dotColor, flexShrink: 0 }} />
+      )}
+      <TextMono10Regular c={active ? 'var(--bg-base)' : 'var(--fg-secondary)'} component="span">
+        {label}
+        {count !== undefined ? ` ${count.toLocaleString()}` : ''}
+      </TextMono10Regular>
+    </Box>
+  );
+}
+
+/**
  * The Table / By field view toggle, styled to match `FolderDataGrid`'s `ActionIcon.Group` view
  * selector. The `By field` option is disabled (muted, non-interactive) when nothing is pending.
  */
@@ -121,7 +181,16 @@ function ViewToggle({
   byFieldDisabled: boolean;
 }) {
   return (
-    <Box style={{ display: 'inline-flex', gap: 2, border: '1px solid var(--fg-divider)', borderRadius: 4, padding: 1 }}>
+    <Box
+      style={{
+        display: 'inline-flex',
+        gap: 2,
+        border: '1px solid var(--fg-divider)',
+        borderRadius: 4,
+        padding: 1,
+        flexShrink: 0,
+      }}
+    >
       {VIEW_OPTIONS.map(({ value, label }) => {
         const active = viewMode === value;
         const optionDisabled = value === 'by-type' && byFieldDisabled;
@@ -173,6 +242,9 @@ export function ReviewSubbar({
   validate,
   disabled,
   columnPicker,
+  changeTypeChips,
+  activeChangeTypeGroupKey,
+  onSelectChangeTypeChip,
 }: ReviewSubbarProps) {
   const globalKind = activeFilters.find((filter) => filter.scope === 'global')?.kind ?? null;
   const allActive = globalKind === null;
@@ -198,9 +270,34 @@ export function ReviewSubbar({
         borderBottom: '0.5px solid var(--fg-divider)',
       }}
     >
-      <ViewToggle viewMode={viewMode} onViewModeChange={onViewModeChange} byFieldDisabled={byFieldDisabled} />
+      {/* Left: the Table / By field toggle followed by the change-type chips (shown in BOTH views).
+          The chip strip scrolls horizontally when a folder has more changed fields than fit. */}
+      <Box style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+        <ViewToggle viewMode={viewMode} onViewModeChange={onViewModeChange} byFieldDisabled={byFieldDisabled} />
+        {changeTypeChips.length > 0 && (
+          <Box style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflowX: 'auto' }}>
+            <ChangeTypeChip
+              label="All"
+              active={activeChangeTypeGroupKey === null}
+              disabled={disabled}
+              onClick={() => onSelectChangeTypeChip(null)}
+            />
+            {changeTypeChips.map((chip) => (
+              <ChangeTypeChip
+                key={chip.changeTypeGroupKey}
+                label={chip.label}
+                count={chip.count}
+                dotColor={chip.dotColorVar}
+                active={activeChangeTypeGroupKey === chip.changeTypeGroupKey}
+                disabled={disabled}
+                onClick={() => onSelectChangeTypeChip(chip.changeTypeGroupKey)}
+              />
+            ))}
+          </Box>
+        )}
+      </Box>
 
-      <Group gap={6} align="center" wrap="nowrap">
+      <Group gap={6} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
         <FilterPill label="All" active={allActive} disabled={disabled} onClick={() => onSelectGlobalFilter(null)} />
         <FilterPill
           label="Pending"

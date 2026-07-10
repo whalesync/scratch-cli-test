@@ -43,6 +43,7 @@ export enum PostHogEvents {
   OPEN_RECORD_CHANGES_DRAWER = 'open_record_changes_drawer',
   APPROVE_RECORD_CHANGE = 'approve_record_change',
   REJECT_RECORD_CHANGE = 'reject_record_change',
+  SELECT_CHANGE_TYPE_CHIP = 'select_change_type_chip',
 }
 
 export type CloudSyncSurface = 'open' | 'create';
@@ -336,6 +337,14 @@ export async function trackRejectRecordChange(
   props: { rowStatus: string; changedFieldCount: number },
 ): Promise<void> {
   await captureEvent(PostHogEvents.REJECT_RECORD_CHANGE, { workspaceId, ...props });
+}
+
+/** DEV-10656: the user selected a change-type filter chip in the review subbar (`null` key = "All"). */
+export async function trackSelectChangeTypeChip(
+  workspaceId: string,
+  props: { folderPath: string | null; changeTypeGroupKey: string | null },
+): Promise<void> {
+  await captureEvent(PostHogEvents.SELECT_CHANGE_TYPE_CHIP, { workspaceId, ...props });
 }
 
 export async function identifyUser(user: User, email: string | undefined): Promise<void> {

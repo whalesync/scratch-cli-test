@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useWorkspaceUiStore, type GridFilter } from '../../../stores/workspace-ui-store';
+import { serverGridFilters, useWorkspaceUiStore, type GridFilter } from '../../../stores/workspace-ui-store';
 import type { DiffGridResult } from '../diff-grid-types';
 
 /**
@@ -11,8 +11,10 @@ import type { DiffGridResult } from '../diff-grid-types';
  *  1. **The paged table load** — `readDiffGridData` at `PAGE_SIZE`, keyed off the shared
  *     store's page / sort / filters (+ the folder-switch reset guard), with a generation
  *     ref that drops stale responses and a blocking-vs-in-place refresh distinction.
- *  2. **The folder-wide By-type load** — a separate `readDiffGridData` capped at
- *     `BY_TYPE_MAX_PENDING_RECORDS`, filtered to unreviewed, for the By-type view's groups.
+ *  2. **The folder-wide pending load** — a separate `readDiffGridData` capped at
+ *     `BY_TYPE_MAX_PENDING_RECORDS`, filtered to the pending union, feeding the By-type view's groups
+ *     and the Table-view change-type chips (their counts + client-side filter). Runs whenever the
+ *     folder has pending changes, in either view mode.
  *
  * They can't share one IPC result (the table pages at 100 with sort/filters; By-type is
  * folder-wide) so they share *invalidation and types*, not bytes: a single
@@ -42,8 +44,6 @@ export interface UseReviewSurfaceDataArgs {
   workspacePath: string | null;
   /** Bumped by the host when workspace-level data may have changed (a pull, a publish); triggers an in-place refresh. */
   workspaceLevelDataInvalidationCounter: number;
-  /** True while the By-type body is showing, so its folder-wide load runs (and refreshes). */
-  isByTypeMode: boolean;
   /** Mirrors `FolderDataGrid`: reports reindex progress (a message) and completion (`null`) to the host. */
   onIndexingProgress?: (message: string | null) => void;
 }
@@ -80,7 +80,6 @@ export function useReviewSurfaceData({
   selectedFolderPath,
   workspacePath,
   workspaceLevelDataInvalidationCounter,
-  isByTypeMode,
   onIndexingProgress,
 }: UseReviewSurfaceDataArgs): UseReviewSurfaceData {
   // Grid query inputs live in the shared store (so widths/sort/filters stay consistent across surfaces).
@@ -115,7 +114,21 @@ export function useReviewSurfaceData({
   const qPage = folderPending ? 1 : page;
   const qSortColumn = folderPending ? null : sort.column;
   const qSortDirection = folderPending ? null : sort.direction;
-  const qActiveFilters = folderPending || activeFilters.length === 0 ? EMPTY_FILTERS : activeFilters;
+  // Only GLOBAL-scope filters drive the paged server query. The change-type chip filter
+  // (`scope: 'change-type'`, DEV-10656) is applied CLIENT-SIDE over the folder-wide pending set by
+  // the host, so it must neither reach `readDiffGridData` (the main process only maps global scopes)
+  // nor churn the query key. Keyed on the serialized global subset so this stays a STABLE reference
+  // across change-type chip toggles (which replace `activeFilters` but leave its global subset
+  // identical) — the query-key / current-query memos below rely on `qActiveFilters` identity.
+  const serializedGlobalActiveFilters = JSON.stringify(activeFilters.filter((filter) => filter.scope === 'global'));
+  const qActiveFilters = useMemo<GridFilter[]>(() => {
+    if (folderPending) return EMPTY_FILTERS;
+    const globalActiveFilters = activeFilters.filter((filter) => filter.scope === 'global');
+    return globalActiveFilters.length === 0 ? EMPTY_FILTERS : globalActiveFilters;
+    // `activeFilters` is intentionally captured via its serialized global subset (the dep below):
+    // depending on it directly would refetch the paged table on every client-side chip toggle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serializedGlobalActiveFilters, folderPending]);
 
   const queryKey = useMemo(
     () =>
@@ -184,7 +197,7 @@ export function useReviewSurfaceData({
         limit: PAGE_SIZE,
         sortBy: sortColumn ?? undefined,
         sortOrder: sortDirection ?? undefined,
-        filters: nextActiveFilters,
+        filters: serverGridFilters(nextActiveFilters),
         validate: validateRef.current,
       });
       if (generation !== loadGenerationRef.current) return;
@@ -258,8 +271,13 @@ export function useReviewSurfaceData({
     }
   }, [selectedFolderPath, workspacePath]);
 
+  // Load the folder-wide pending set whenever the folder HAS pending changes — not only in By-type
+  // mode. The Table-view change-type chips (DEV-10656) need it for their live counts and the client-
+  // side filter, and the By-type toggle is disabled when nothing is pending, so this one gate serves
+  // both. `filterCounts.pending` is the true folder-wide union total (page-independent).
+  const folderHasPendingChanges = (diffData?.filterCounts.pending ?? 0) > 0;
   useEffect(() => {
-    if (!isByTypeMode || !selectedFolderPath || !workspacePath) {
+    if (!folderHasPendingChanges || !selectedFolderPath || !workspacePath) {
       setByTypeDiffData(null);
       byTypePrevScopeRef.current = null;
       return;
@@ -267,11 +285,11 @@ export function useReviewSurfaceData({
     const scope = `${workspacePath}::${selectedFolderPath}`;
     if (byTypePrevScopeRef.current !== scope) {
       byTypePrevScopeRef.current = scope;
-      setByTypeDiffData(null); // folder/mode changed → clear stale before reload (avoids a flash)
+      setByTypeDiffData(null); // folder changed → clear stale before reload (avoids a flash)
     }
     void loadByTypeDiffData();
   }, [
-    isByTypeMode,
+    folderHasPendingChanges,
     selectedFolderPath,
     workspacePath,
     workspaceLevelDataInvalidationCounter,

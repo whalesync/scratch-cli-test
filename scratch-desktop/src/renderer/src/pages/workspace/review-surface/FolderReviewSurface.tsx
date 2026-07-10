@@ -2,7 +2,7 @@ import { ButtonSecondaryGhost, ButtonSecondaryOutline } from '@/components/base/
 import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
 import { Box, Group, Loader, Modal } from '@mantine/core';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react';
-import { trackOpenRecordChangesDrawer } from '../../../lib/posthog';
+import { trackOpenRecordChangesDrawer, trackSelectChangeTypeChip } from '../../../lib/posthog';
 import { useWorkspaceUiStore, type FilterKind } from '../../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../../types/local-files';
 import { applyAcceptedFieldChangeToFolderDiffData } from '../diff-grid-types';
@@ -10,6 +10,7 @@ import { RecordDetailView } from '../RecordDetailView';
 import { RecordReviewDrawer } from '../RecordReviewDrawer';
 import { buildByTypeGroupModel, type ByTypeGroupModel, type ByTypeSourceColumn } from './build-by-type-group-model';
 import { ByTypeView } from './ByTypeView';
+import { buildChangeTypeChips, buildChangeTypeFilteredDiffData, findChangeTypeGroup } from './change-type-chips';
 import { ReviewContextBanner } from './ReviewContextBanner';
 import { ReviewSubbar } from './ReviewSubbar';
 import { ReviewTableGrid } from './ReviewTableGrid';
@@ -120,7 +121,6 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     selectedFolderPath,
     workspacePath,
     workspaceLevelDataInvalidationCounter,
-    isByTypeMode,
     onIndexingProgress,
   });
 
@@ -141,6 +141,31 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         ? buildByTypeGroupModel(byTypeDiffData.rows, byTypeColumns, columnEffectivePaths, titleColumnId)
         : [],
     [byTypeDiffData, byTypeColumns, columnEffectivePaths, titleColumnId],
+  );
+
+  // ── Change-type filter chips (DEV-10656) — a thin view over the same By-type groups, so a chip's
+  // count equals its group's record count and its `recordFilenames` drives both the table filter and
+  // the stepper scoping. ──
+  const changeTypeChips = useMemo(() => buildChangeTypeChips(byTypeGroups), [byTypeGroups]);
+  const activeChangeTypeGroupKey = useMemo<string | null>(() => {
+    const changeTypeFilter = activeFilters.find((filter) => filter.scope === 'change-type');
+    if (changeTypeFilter && changeTypeFilter.scope === 'change-type') return changeTypeFilter.changeTypeGroupKey;
+    return null;
+  }, [activeFilters]);
+  const activeChangeTypeGroup = useMemo(
+    () => findChangeTypeGroup(byTypeGroups, activeChangeTypeGroupKey),
+    [byTypeGroups, activeChangeTypeGroupKey],
+  );
+  // The Table grid's data source: while a chip is active, the folder-wide pending set narrowed
+  // CLIENT-SIDE to that group (cap 1000); otherwise the paged server load. ONLY the Table grid reads
+  // this — the By-field view narrows its group blocks instead, and the drawer stepper scopes on open —
+  // so the deep-edit overlay and the page-scoped stepper keep reading the paged `diffData` unchanged.
+  const visibleTableDiffData = useMemo(
+    () =>
+      activeChangeTypeGroup && byTypeDiffData
+        ? buildChangeTypeFilteredDiffData(byTypeDiffData, activeChangeTypeGroup)
+        : diffData,
+    [activeChangeTypeGroup, byTypeDiffData, diffData],
   );
 
   // Deep-edit overlay: the store's record selection (set by the maximize action or ValidationPanel's
@@ -263,6 +288,22 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     [setActiveFilters, setVisibleColumnIds],
   );
 
+  // Exclusive change-type chip selection (DEV-10656): swap the single `change-type` entry in the
+  // shared `activeFilters` (never a parallel filter system); `null` = the "All" chip (clear). The
+  // filter is applied client-side by `visibleTableDiffData`, so this never refetches the paged table.
+  const onSelectChangeTypeChip = useCallback(
+    (changeTypeGroupKey: string | null) => {
+      setActiveFilters((prev) => {
+        const withoutChangeType = prev.filter((filter) => filter.scope !== 'change-type');
+        return changeTypeGroupKey === null
+          ? withoutChangeType
+          : [...withoutChangeType, { scope: 'change-type', changeTypeGroupKey }];
+      });
+      void trackSelectChangeTypeChip(workspaceId, { folderPath: selectedFolderPath, changeTypeGroupKey });
+    },
+    [setActiveFilters, workspaceId, selectedFolderPath],
+  );
+
   // ── Record-changes drawer (the stepper overlay opened by a single click on a changed row) ──
   // Local, modal-like state (per stores/CLAUDE.md), mutually exclusive with the RecordDetailView
   // deep-edit overlay (which the store's `selectedRecordFilename` drives). `ReviewTableGrid` owns the
@@ -274,9 +315,11 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   const [recordChangesDrawerFilenameSet, setRecordChangesDrawerFilenameSet] = useState<string[] | null>(null);
 
   // Pending records on the current page (anything not `unchanged` — unreviewed OR approved-but-
-  // unpublished), in the grid's displayed order (`ReviewTableGrid` renders `diffData.rows` verbatim)
-  // so the stepper matches what the user sees. Approved records are included so the drawer can step
-  // through them too (they show their ✓ fields and a "Next →" footer).
+  // unpublished), in the grid's displayed order (`ReviewTableGrid` renders these verbatim) so the
+  // stepper matches what the user sees. Approved records are included so the drawer can step through
+  // them too (✓ fields + a "Next →" footer). A chip- or group-scoped stepper is set explicitly on open
+  // (`handleOpenRecordDrawer` / `handleOpenGroupRow`), so this page-scoped fallback covers only the
+  // unfiltered Table case.
   const pendingRecordFilenames = useMemo(
     () => (diffData?.rows ?? []).filter((row) => row.__rowStatus !== 'unchanged').map((row) => row.__filename),
     [diffData?.rows],
@@ -297,18 +340,28 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
 
   const handleOpenRecordDrawer = useCallback(
     (filename: string) => {
-      const row = diffData?.rows.find((r) => r.__filename === filename);
-      // Pending records (unreviewed or approved) step through the page's pending set; a truly
-      // unchanged record (or one not on the page) opens on its own (1/1) in All-fields mode.
-      const isPendingRow = !!row && row.__rowStatus !== 'unchanged';
-      setRecordChangesDrawerFilenameSet(isPendingRow ? null : [filename]);
+      // The clicked row may be off the current page while a chip is active (the table then renders the
+      // folder-wide group), so fall back to the By-type set for the tracking snapshot.
+      const row =
+        diffData?.rows.find((r) => r.__filename === filename) ??
+        byTypeDiffData?.rows.find((r) => r.__filename === filename);
+      if (activeChangeTypeGroup) {
+        // A chip is active — the table shows this group; scope the stepper to it (and prune reviewed
+        // records) exactly like opening from a By-type group row.
+        setRecordChangesDrawerFilenameSet(activeChangeTypeGroup.recordFilenames);
+      } else {
+        // Pending records (unreviewed or approved) step through the page's pending set; a truly
+        // unchanged record (or one not on the page) opens on its own (1/1) in All-fields mode.
+        const isPendingRow = !!row && row.__rowStatus !== 'unchanged';
+        setRecordChangesDrawerFilenameSet(isPendingRow ? null : [filename]);
+      }
       setRecordChangesDrawerFilename(filename);
       void trackOpenRecordChangesDrawer(workspaceId, {
         folderPath: selectedFolderPath,
         rowStatus: row?.__rowStatus ?? 'unknown',
       });
     },
-    [diffData?.rows, workspaceId, selectedFolderPath],
+    [diffData?.rows, byTypeDiffData, activeChangeTypeGroup, workspaceId, selectedFolderPath],
   );
 
   const handleOpenGroupRow = useCallback(
@@ -366,7 +419,11 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     (filename: string, fieldName: string, nextValue: unknown) => {
       applyOptimisticDiff((prev) => applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue));
 
-      const rowBeforeAccept = diffData?.rows.find((row) => row.__filename === filename);
+      // While a chip is active the record may be off the paged set (the table shows the folder-wide
+      // group), so fall back to the By-type set to decide whether this accept clears the last change.
+      const rowBeforeAccept =
+        diffData?.rows.find((row) => row.__filename === filename) ??
+        byTypeDiffData?.rows.find((row) => row.__filename === filename);
       // Per-field Approve is only offered for modified/unpublished records, so the added/deleted/invalidJson
       // guards are belt-and-suspenders — those keep unreviewed status regardless of their changed-field set.
       const acceptRemovesLastUnreviewedChange =
@@ -386,7 +443,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         setRecordChangesDrawerFilenameSet((set) => (set ? set.filter((f) => f !== filename) : set));
       }
     },
-    [applyOptimisticDiff, diffData?.rows, nextChangedRecordAfter],
+    [applyOptimisticDiff, diffData?.rows, byTypeDiffData, nextChangedRecordAfter],
   );
 
   // Opening the deep-edit overlay (store selection) closes the drawer, so the two never co-render.
@@ -401,6 +458,11 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   useEffect(() => {
     closeRecordChangesDrawer();
   }, [reviewSurfaceViewMode, closeRecordChangesDrawer]);
+  // Changing the active change-type chip re-scopes the table + stepper, so close any open drawer — its
+  // stepped set belonged to the previous filter.
+  useEffect(() => {
+    closeRecordChangesDrawer();
+  }, [activeChangeTypeGroupKey, closeRecordChangesDrawer]);
   // Close if the open record dropped out of the stepped set (approved/rejected, or its group emptied).
   useEffect(() => {
     if (recordChangesDrawerFilename && recordChangesDrawerIndex < 0) {
@@ -452,7 +514,8 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
       }
       return (
         <ByTypeView
-          groups={byTypeGroups}
+          // An active change-type chip narrows the By-field view to just that group; "All" shows every group.
+          groups={activeChangeTypeGroup ? [activeChangeTypeGroup] : byTypeGroups}
           isTruncated={byTypeIsTruncated}
           loadedRecordCount={byTypeLoadedRecordCount}
           totalPendingRecordCount={byTypeTotalPendingRecordCount}
@@ -462,14 +525,17 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         />
       );
     }
-    if (error && !diffData) {
+    if (error && !visibleTableDiffData) {
       return (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
           <Text13Regular c="var(--mantine-color-red-6)">{error}</Text13Regular>
         </Box>
       );
     }
-    if (isBlockingLoad || diffData === null) {
+    // A blocking loader only when there's nothing to paint. While a chip is active the table renders
+    // from the stable folder-wide By-type set, so a paged reload (e.g. a global-pill change that the
+    // chip overrides anyway) must not blank it out.
+    if (visibleTableDiffData === null || (isBlockingLoad && !activeChangeTypeGroup)) {
       return (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Loader size="sm" />
@@ -478,7 +544,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
     }
     return (
       <ReviewTableGrid
-        diffData={diffData}
+        diffData={visibleTableDiffData}
         tableView={tableView}
         schema={schema}
         visibleColumnIds={effectiveVisibleColumnIds}
@@ -516,6 +582,9 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
           columnGroups: columnGroupsForPicker,
           onChangeVisible: setVisibleColumnIds,
         }}
+        changeTypeChips={changeTypeChips}
+        activeChangeTypeGroupKey={activeChangeTypeGroupKey}
+        onSelectChangeTypeChip={onSelectChangeTypeChip}
       />
 
       <Box style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
@@ -557,7 +626,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         )}
       </Box>
 
-      {!isByTypeMode && totalPages > 1 && (
+      {!isByTypeMode && !activeChangeTypeGroup && totalPages > 1 && (
         <Box
           style={{
             display: 'flex',

@@ -100,6 +100,13 @@ export const TextMono12Regular = Text.withProps({
   style: { lineHeight: '19px', letterSpacing: '0.25px', paragraphSpacing: '8px' },
 });
 
+export const TextMono10Regular = Text.withProps({
+  ff: 'monospace',
+  fz: '10px',
+  fw: 400,
+  style: { lineHeight: '13px', letterSpacing: '0.25px', paragraphSpacing: '8px' },
+});
+
 export const TextMono9Regular = Text.withProps({
   ff: 'monospace',
   fz: '9px',

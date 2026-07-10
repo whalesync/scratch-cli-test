@@ -28,6 +28,24 @@ const meta: Meta<typeof ReviewSubbar> = {
       columnGroups: [],
       onChangeVisible: () => {},
     },
+    changeTypeChips: [
+      {
+        changeTypeGroupKey: 'field:status',
+        label: 'Status',
+        count: 8,
+        dotColorVar: 'var(--modified-needs-review-stroke)',
+      },
+      {
+        changeTypeGroupKey: 'field:owner',
+        label: 'Owner',
+        count: 3,
+        dotColorVar: 'var(--modified-needs-review-stroke)',
+      },
+      { changeTypeGroupKey: 'created', label: 'New', count: 4, dotColorVar: 'var(--create-needs-review-stroke)' },
+      { changeTypeGroupKey: 'deleted', label: 'Removed', count: 2, dotColorVar: 'var(--delete-needs-review-stroke)' },
+    ],
+    activeChangeTypeGroupKey: null,
+    onSelectChangeTypeChip: () => {},
   },
   parameters: { layout: 'fullscreen' },
 };
@@ -45,9 +63,14 @@ export const PendingFilterActive: Story = {
   args: { activeFilters: [{ scope: 'global', kind: 'pending' }] as GridFilter[] },
 };
 
-/** No pending or approved changes — the "By field" toggle option is disabled. */
+/** A change-type chip is active — the table would be narrowed to that group's records. */
+export const ChangeTypeChipActive: Story = {
+  args: { activeChangeTypeGroupKey: 'field:status' },
+};
+
+/** No pending or approved changes — the "By field" toggle option is disabled and no chips render. */
 export const NothingPending: Story = {
-  args: { filterCounts: { unreviewed: 0, unpublished: 0, pending: 0, errors: 0 } },
+  args: { filterCounts: { unreviewed: 0, unpublished: 0, pending: 0, errors: 0 }, changeTypeChips: [] },
 };
 
 /** Validation off for the workbook — the Problems pill is hidden entirely. */

@@ -65,7 +65,13 @@ import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { trackRefreshFolderDataGrid } from '../../lib/posthog';
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
-import { useViewMode, useWorkspaceUiStore, type FilterKind, type GridFilter } from '../../stores/workspace-ui-store';
+import {
+  serverGridFilters,
+  useViewMode,
+  useWorkspaceUiStore,
+  type FilterKind,
+  type GridFilter,
+} from '../../stores/workspace-ui-store';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import {
   applyAcceptedFieldChangeToFolderDiffData,
@@ -361,6 +367,11 @@ function filterKey(filter: GridFilter): string {
   if (filter.scope === 'text') {
     return `text:${filter.columnId}`;
   }
+  // `change-type` is a review-surface-v2 chip filter that never reaches this v1 grid; handled only so
+  // the shared `GridFilter` union stays exhaustively narrowed here (DEV-10656).
+  if (filter.scope === 'change-type') {
+    return `change-type:${filter.changeTypeGroupKey}`;
+  }
   return `column:${filter.columnId}:${filter.kind}`;
 }
 
@@ -370,6 +381,10 @@ function filterLabel(filter: GridFilter): string {
   }
   if (filter.scope === 'text') {
     return `${filter.columnTitle}: "${filter.value}"`;
+  }
+  // See `filterKey`: v2-only scope, present here only for exhaustive narrowing.
+  if (filter.scope === 'change-type') {
+    return 'Change type';
   }
 
   return `${filter.columnTitle}: ${filter.kind === 'unreviewed' ? 'Needs review' : 'Approved'}`;
@@ -760,7 +775,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         limit: PAGE_SIZE,
         sortBy: sortColumn ?? undefined,
         sortOrder: sortDirection ?? undefined,
-        filters: nextActiveFilters,
+        filters: serverGridFilters(nextActiveFilters),
         validate: validateRef.current,
       });
       if (generation !== loadGenerationRef.current) {
