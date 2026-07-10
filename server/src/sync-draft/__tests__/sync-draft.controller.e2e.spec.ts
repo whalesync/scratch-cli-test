@@ -33,6 +33,11 @@ const USER_ID = 'usr_e2e';
  * about the wire, not the orchestration (that's covered by the service spec).
  */
 describe('SyncDraftController (controller-level e2e)', () => {
+  // Each test boots a fresh Nest app; on a loaded CI runner that alone can starve
+  // past Jest's 5s default and flake. Give the suite generous headroom — it's a
+  // timeout-only flake, not a correctness issue.
+  jest.setTimeout(30_000);
+
   let app: INestApplication;
   let syncDraftService: {
     getOrCreate: jest.Mock;

@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from '../../config/scratch-config.service';
 import { WorkerPoolService } from '../piscina/worker-pool.service';
+import { WORKER_QUEUE_NAME, WORKER_QUEUE_STREAM_OPTIONS } from '../worker-queue.constants';
 
 @Injectable()
 export class QueueTestService implements OnModuleDestroy {
@@ -30,8 +31,9 @@ export class QueueTestService implements OnModuleDestroy {
 
   private getQueue(): Queue {
     if (!this.queue) {
-      this.queue = new Queue('worker-queue', {
+      this.queue = new Queue(WORKER_QUEUE_NAME, {
         connection: this.getRedis(),
+        streams: WORKER_QUEUE_STREAM_OPTIONS,
         defaultJobOptions: {
           removeOnComplete: 10,
           removeOnFail: 5,

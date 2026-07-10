@@ -10,6 +10,7 @@ import { MigrationLockService } from 'src/migration-lock/migration-lock.service'
 import { Actor } from 'src/users/types';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
+import { WORKER_QUEUE_NAME, WORKER_QUEUE_STREAM_OPTIONS } from 'src/worker/worker-queue.constants';
 import { ApplyPatchesJobDefinition } from '../worker/jobs/job-definitions/apply-patches.job';
 import { DeleteWorkbookJobDefinition } from '../worker/jobs/job-definitions/delete-workbook.job';
 import { DiscardPendingChangesJobDefinition } from '../worker/jobs/job-definitions/discard-pending-changes.job';
@@ -45,8 +46,9 @@ export class BullEnqueuerService implements OnModuleDestroy {
         maxRetriesPerRequest: null,
       });
 
-      this.queue = new Queue('worker-queue', {
+      this.queue = new Queue(WORKER_QUEUE_NAME, {
         connection: this.redis,
+        streams: WORKER_QUEUE_STREAM_OPTIONS,
         defaultJobOptions: {
           removeOnComplete: 100,
           removeOnFail: 100,
@@ -60,7 +62,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
         password: this.configService.getRedisPassword(),
         maxRetriesPerRequest: null,
       });
-      this.queueEvents = new QueueEvents('worker-queue', { connection: this.queueEventsRedis });
+      this.queueEvents = new QueueEvents(WORKER_QUEUE_NAME, { connection: this.queueEventsRedis });
     }
   }
 

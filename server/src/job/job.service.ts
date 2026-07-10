@@ -7,6 +7,7 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { Progress } from 'src/types/progress';
 import { RunContext } from 'src/worker/jobs/base-types';
 import type { JobData } from 'src/worker/jobs/union-types';
+import { WORKER_QUEUE_NAME, WORKER_QUEUE_STREAM_OPTIONS } from 'src/worker/worker-queue.constants';
 import { DbService } from '../db/db.service';
 import { hasWorkspacePermissions } from '../users/permissions';
 import { Actor } from '../users/types';
@@ -31,6 +32,19 @@ export class JobService {
       });
     }
     return this.redis;
+  }
+
+  /**
+   * Short-lived Queue handle for job lookups/cancels. Always instantiate through this helper:
+   * every `new Queue` rewrites `opts.maxLenEvents` in the queue's Redis meta hash, so a bare
+   * instantiation here would silently reset the events-stream cap back to BullMQ's default
+   * (see WORKER_QUEUE_STREAM_OPTIONS). Callers must `queue.close()` when done.
+   */
+  private createWorkerQueueHandle(): Queue {
+    return new Queue(WORKER_QUEUE_NAME, {
+      connection: this.getRedis(),
+      streams: WORKER_QUEUE_STREAM_OPTIONS,
+    });
   }
 
   async createJob(params: {
@@ -213,9 +227,7 @@ export class JobService {
 
     if (bullJobIds.length === 0) return dbJobs.map((j) => dbJobToJobEntity(j));
 
-    const queue = new Queue('worker-queue', {
-      connection: this.getRedis(),
-    });
+    const queue = this.createWorkerQueueHandle();
 
     const bullJobs = await Promise.all(bullJobIds.map((id) => queue.getJob(id)));
     const bullJobMap = new Map<string, (typeof bullJobs)[number]>();
@@ -270,30 +282,31 @@ export class JobService {
    */
   async getJobProgress(jobId: string): Promise<JobEntity> {
     // Get the job from the queue
-    const queue = new Queue('worker-queue', {
-      connection: this.getRedis(),
-    });
+    const queue = this.createWorkerQueueHandle();
+    try {
+      const job = await queue.getJob(jobId);
 
-    const job = await queue.getJob(jobId);
+      if (!job) {
+        throw new NotFoundException(`Job with id ${jobId} not found`);
+      }
 
-    if (!job) {
-      throw new NotFoundException(`Job with id ${jobId} not found`);
+      const state = await job.getState();
+      const progress = job.progress as Progress;
+
+      return {
+        bullJobId: job.id as string,
+        dbJobId: job.id as string,
+        type: job.name,
+        publicProgress:
+          progress?.publicProgress || (job.data as Record<string, unknown>).initialPublicProgress || undefined,
+        state: state,
+        processedOn: job.processedOn ? new Date(job.processedOn) : null,
+        finishedOn: job.finishedOn ? new Date(job.finishedOn) : null,
+        failedReason: job.failedReason,
+      };
+    } finally {
+      await queue.close();
     }
-
-    const state = await job.getState();
-    const progress = job.progress as Progress;
-
-    return {
-      bullJobId: job.id as string,
-      dbJobId: job.id as string,
-      type: job.name,
-      publicProgress:
-        progress?.publicProgress || (job.data as Record<string, unknown>).initialPublicProgress || undefined,
-      state: state,
-      processedOn: job.processedOn ? new Date(job.processedOn) : null,
-      finishedOn: job.finishedOn ? new Date(job.finishedOn) : null,
-      failedReason: job.failedReason,
-    };
   }
 
   async getJobsProgress(bullJobIds: string[]): Promise<JobEntity[]> {
@@ -307,9 +320,7 @@ export class JobService {
   }
 
   async getJobRaw(jobId: string): Promise<unknown> {
-    const queue = new Queue('worker-queue', {
-      connection: this.getRedis(),
-    });
+    const queue = this.createWorkerQueueHandle();
 
     const job = await queue.getJob(jobId);
     await queue.close();
@@ -369,9 +380,7 @@ export class JobService {
     });
 
     // Try to also send the fast-path pub/sub signal for immediate in-memory abort
-    const queue = new Queue('worker-queue', {
-      connection: this.getRedis(),
-    });
+    const queue = this.createWorkerQueueHandle();
     const job = await queue.getJob(jobId);
     await queue.close();
 
@@ -427,7 +436,7 @@ export class JobService {
    * not the DB, so it reflects whether the worker has actually stopped.
    */
   async getActiveBullJobDatas(): Promise<JobData[]> {
-    const queue = new Queue('worker-queue', { connection: this.getRedis() });
+    const queue = this.createWorkerQueueHandle();
     try {
       const activeJobs = await queue.getJobs(['active']);
       return activeJobs.map((job) => job.data as JobData);
@@ -455,7 +464,7 @@ export class JobService {
 
     if (!dbJob.bullJobId) return;
 
-    const queue = new Queue('worker-queue', { connection: this.getRedis() });
+    const queue = this.createWorkerQueueHandle();
     try {
       const job = await queue.getJob(dbJob.bullJobId);
       if (!job) return;

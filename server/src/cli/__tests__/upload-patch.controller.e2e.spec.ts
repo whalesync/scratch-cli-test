@@ -57,6 +57,11 @@ const SERVER_MAIN_SHA = 'a'.repeat(40);
 const LOCAL_MAIN_SHA = 'b'.repeat(40);
 
 describe('UploadPatchController (controller-level e2e)', () => {
+  // Each test boots a fresh Nest app; on a loaded CI runner that alone can starve
+  // past Jest's 5s default and flake. Give the suite generous headroom — it's a
+  // timeout-only flake, not a correctness issue.
+  jest.setTimeout(30_000);
+
   let app: INestApplication;
   let auditLogService: jest.Mocked<AuditLogService>;
   let objectStorageService: jest.Mocked<ObjectStorageService>;

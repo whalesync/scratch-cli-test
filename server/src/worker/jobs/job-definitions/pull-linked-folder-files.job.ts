@@ -91,6 +91,33 @@ type CheckpointFn = (
   >,
 ) => Promise<void>;
 
+/**
+ * Copy of a pull's `publicProgress` with every path list emptied — the run-wide aggregate and each
+ * per-folder entry. Intermediate checkpoints (per fetched page, per committed batch) send this slim
+ * form: the path lists exist only for the web job-detail file list, they can reach
+ * folderCount × 3 × MAX_PROGRESS_PATHS entries, and re-serializing them into the Redis job hash and
+ * the Postgres row on every page is what bloated checkpoint payloads in the 2026-07-10 Redis OOM
+ * incident. Counts, statuses, folder errors, and resume state (`jobProgress`) are untouched, so
+ * live UI counters and job resume behave exactly as before. Only the terminal checkpoint in
+ * `postProcess()` sends the full object, so finished jobs still render their file lists.
+ */
+function withEmptyPathListsForIntermediateCheckpoint(
+  fullPublicProgress: PullLinkedFolderFilesPublicProgress,
+): PullLinkedFolderFilesPublicProgress {
+  return {
+    ...fullPublicProgress,
+    createdPaths: [],
+    updatedPaths: [],
+    deletedPaths: [],
+    folders: fullPublicProgress.folders.map((folderProgressEntry) => ({
+      ...folderProgressEntry,
+      createdPaths: [],
+      updatedPaths: [],
+      deletedPaths: [],
+    })),
+  };
+}
+
 /** Context shared across all phases of pulling a single folder. */
 type FolderContext = {
   jobId: string;
@@ -336,12 +363,21 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     const pullStats = { created: 0, updated: 0, deleted: 0, failed: pullFailed };
 
+    // Both phases checkpoint through this wrapper, which strips the accumulated path lists from
+    // every intermediate write. The full `publicProgress` (with paths) is checkpointed exactly
+    // once, by `postProcess()` in the finally below — the job's terminal checkpoint.
+    const checkpointOmittingPathLists: CheckpointFn = async (progressToCheckpoint) =>
+      checkpoint({
+        ...progressToCheckpoint,
+        publicProgress: withEmptyPathListsForIntermediateCheckpoint(progressToCheckpoint.publicProgress),
+      });
+
     try {
       // =====================================================================
       // PHASE 1 — FETCH (parallel)
       // =====================================================================
       jobProgress.phase = 'fetch';
-      await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
+      await checkpointOmittingPathLists({ publicProgress, jobProgress, connectorProgress: {} });
 
       const fetchResults = await this.runPhase1Fetch({
         folderContexts,
@@ -350,7 +386,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         publicProgress,
         jobProgress,
         pullStats,
-        checkpoint,
+        checkpoint: checkpointOmittingPathLists,
         abortSignal,
       });
 
@@ -358,7 +394,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       // PHASE 2 — PROCESS (sequential)
       // =====================================================================
       jobProgress.phase = 'process';
-      await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
+      await checkpointOmittingPathLists({ publicProgress, jobProgress, connectorProgress: {} });
 
       await this.runPhase2Process({
         folderContexts,
@@ -367,7 +403,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         publicProgress,
         jobProgress,
         pullStats,
-        checkpoint,
+        checkpoint: checkpointOmittingPathLists,
         abortSignal,
       });
     } finally {
@@ -452,6 +488,10 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       apiDomain,
     } = params;
 
+    // Terminal checkpoint — the ONE write that carries the full path lists (created/updated/
+    // deleted, aggregate + per-folder). Every earlier checkpoint went through
+    // checkpointOmittingPathLists; this runs in run()'s finally, so finished AND failed pulls
+    // get their file lists attached for the job-detail view.
     await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
 
     // Rebase and GC once after all folders are processed (not per-folder)

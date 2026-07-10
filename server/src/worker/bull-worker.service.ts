@@ -17,6 +17,7 @@ import { JobCanceledError } from './job-errors';
 import { JobHandlerService } from './job-handler.service';
 import { JobResult, Progress, RunContext } from './jobs/base-types';
 import { JobData, JobProgress } from './jobs/union-types';
+import { WORKER_QUEUE_NAME, WORKER_QUEUE_STREAM_OPTIONS } from './worker-queue.constants';
 
 @Injectable()
 export class QueueService implements OnModuleInit, OnModuleDestroy {
@@ -60,12 +61,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     // Create a queue instance for job lookups (e.g. stalled events)
-    this.queue = new Queue('worker-queue', { connection: this.getRedis() });
+    this.queue = new Queue(WORKER_QUEUE_NAME, { connection: this.getRedis(), streams: WORKER_QUEUE_STREAM_OPTIONS });
 
     // Create the worker to process jobs
     // maxStalledCount is high because Cloud Run instances are ephemeral and
     // non-graceful shutdowns can cause false stall detections.
-    this.worker = new Worker('worker-queue', async (job: Job) => this.processJob(job), {
+    this.worker = new Worker(WORKER_QUEUE_NAME, async (job: Job) => this.processJob(job), {
       connection: this.getRedis(),
       concurrency: this.configService.getWorkerConcurrency(),
       lockDuration: this.configService.getWorkerLockTimeout(),
@@ -240,7 +241,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       if (progress) {
         const newProgress = { ...progress, timestamp: Date.now() };
         latestProgress = newProgress;
-        await job.updateProgress(newProgress);
+        await this.persistProgressToBullJobHashWithoutEmittingEvent(jobId, JSON.stringify(newProgress));
         // Write progress and check the DB cancellation flag in one round-trip
         const cancelRequested = await this.jobService.updateJobProgressAndCheckCancel(dbJob.id, newProgress);
         if (cancelRequested) {
@@ -310,6 +311,39 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       throw error;
     } finally {
       this.activeJobToAbortCtrl.delete(jobId);
+    }
+  }
+
+  /**
+   * Persist checkpoint progress to the BullMQ job hash (`bull:worker-queue:<jobId>` field
+   * `progress`) WITHOUT emitting a `progress` event. `job.updateProgress()` would additionally
+   * XADD the entire progress JSON to the shared events stream, which is trimmed by entry count,
+   * not size — large per-page pull progress payloads filled the whole 1 GB production Redis that
+   * way on 2026-07-10. Nothing consumes `progress` events (the only stream consumer is
+   * `job.waitUntilFinished`, which needs `completed`/`failed`), while the hash copy IS load-bearing:
+   * it is the resume state handed to handlers as `job.progress` and what the job-inspection
+   * endpoints read. Mirrors BullMQ's updateProgress-3.lua minus the XADD, including its
+   * exists-guard so a job removed mid-flight is not resurrected as a stray progress-only hash.
+   */
+  private async persistProgressToBullJobHashWithoutEmittingEvent(
+    bullJobId: string,
+    progressJson: string,
+  ): Promise<void> {
+    const queue = this.queue;
+    if (!queue) {
+      throw new Error('Queue is not initialized');
+    }
+    const scriptResult = await this.getRedis().eval(
+      'if redis.call("EXISTS", KEYS[1]) == 1 then redis.call("HSET", KEYS[1], "progress", ARGV[1]) return 0 else return -1 end',
+      1,
+      queue.toKey(bullJobId),
+      progressJson,
+    );
+    if (scriptResult === -1) {
+      // Parity with job.updateProgress(), which throws when the job hash is gone (BullMQ's
+      // "Missing key for job" error): a job removed mid-run must fail fast at its next
+      // checkpoint, not keep doing side-effect work against a deleted job.
+      throw new Error(`Cannot persist progress: BullMQ job ${bullJobId} no longer exists in Redis`);
     }
   }
 
