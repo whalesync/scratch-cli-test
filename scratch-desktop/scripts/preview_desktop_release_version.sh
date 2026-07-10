@@ -34,13 +34,19 @@ fi
 
 GITHUB_REPO="whalesync/scratch-desktop"
 
+# VERSION_SELECT_PATTERN is what we scan to pick the version to bump FROM. For
+# the test variant it is broader than TAG_PATTERN: it also matches the prod
+# bare-semver tags so the test version is floored at the prod line and can never
+# regress below the latest prod release. Mirrors bootstrap_release.sh (DEV-10749).
 if [ "$VARIANT" = "prod" ]; then
   TAG_SUFFIX=""
   TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
+  VERSION_SELECT_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
   FALLBACK_TAG="v0.1.0"
 else
   TAG_SUFFIX="-test"
   TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-test$'
+  VERSION_SELECT_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+(-test)?$'
   FALLBACK_TAG="v0.0.0-test"
 fi
 
@@ -55,22 +61,26 @@ curl_releases_page() {
     "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100&page=${page}"
 }
 
-# Same as bootstrap_release.sh, but scans GitHub's first 5 pages (bootstrap uses 1).
-# Latest tag_name matching TAG_PATTERN (regex), version-sorted descending; drafts included.
-LATEST_TAG=$(
+# Same as bootstrap_release.sh, but scans GitHub's first 5 pages (bootstrap uses 3).
+# Highest base semver matching VERSION_SELECT_PATTERN (regex), version-sorted
+# descending with any `-test` suffix stripped so the prod and test lines compare
+# on the same axis; drafts included.
+HIGHEST_EXISTING_BASE_SEMVER=$(
   {
     for page in 1 2 3 4 5; do
       curl_releases_page "$page"
       printf '\n'
     done
-  } | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$TAG_PATTERN" -r \
+  } | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$VERSION_SELECT_PATTERN" -r \
+  | sed 's/-test$//' \
   | sort -V -r \
   | head -n1)
-if [ -z "$LATEST_TAG" ]; then
-  LATEST_TAG="$FALLBACK_TAG"
+if [ -z "$HIGHEST_EXISTING_BASE_SEMVER" ]; then
+  HIGHEST_EXISTING_BASE_SEMVER=$(echo "$FALLBACK_TAG" | sed 's/-test$//')
 fi
+LATEST_TAG="$HIGHEST_EXISTING_BASE_SEMVER"
 
-VERSION=$(echo "$LATEST_TAG" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
+VERSION=$(echo "$HIGHEST_EXISTING_BASE_SEMVER" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
 IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
 
 case "$RELEASE_TYPE" in

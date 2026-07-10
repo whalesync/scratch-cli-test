@@ -32,15 +32,26 @@ GITHUB_REPO="whalesync/scratch-desktop"
 # Tags on the dedicated desktop repo are bare semver (prod) or semver-test (test).
 # TAG_PATTERN is a regex passed to jq's test() so we can require an exact shape;
 # `endswith` is too loose now that prod has no suffix at all.
+#
+# VERSION_SELECT_PATTERN is what we scan to pick the version to bump FROM. For
+# prod it's just the prod tags. For test it is deliberately BROADER than
+# TAG_PATTERN: it also matches the prod bare-semver tags, so the test version is
+# floored at the prod line and can never regress below the latest prod release
+# (a test build is "prod plus in-flight changes"). This also self-heals a
+# missing/reset test line — the DEV-10749 failure, where the test channel was
+# never seeded on the new repo, so the first bootstrap fell back to v0.0.0-test
+# and shipped a v0.0.1-test sitting far below prod's v1.0.62.
 if [ "$VARIANT" = "prod" ]; then
   TAG_SUFFIX=""
   TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
+  VERSION_SELECT_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
   IS_PRERELEASE=false
   FALLBACK_TAG="v0.1.0"
   RELEASE_BODY=""
 else
   TAG_SUFFIX="-test"
   TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-test$'
+  VERSION_SELECT_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+(-test)?$'
   IS_PRERELEASE=true
   FALLBACK_TAG="v0.0.0-test"
   # Stamp the monorepo commit into the body so the next hourly run can tell
@@ -64,28 +75,34 @@ curl_releases_page() {
     "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100&page=${page}"
 }
 
-# 1. Find the latest matching tag on GitHub, considering both published
-#    releases AND drafts. `GET /releases` returns every release visible to
-#    the token — drafts don't have git refs yet, but their reserved tag_name
-#    still has to be avoided, or concurrent pipelines will both pick the
-#    same version. Fetch the first 3 API pages (300 releases) so the max tag
-#    is less likely to be missed than with a single page (same pattern as
+# 1. Find the highest existing version to bump FROM on GitHub, considering both
+#    published releases AND drafts. `GET /releases` returns every release visible
+#    to the token — drafts don't have git refs yet, but their reserved tag_name
+#    still has to be avoided, or concurrent pipelines will both pick the same
+#    version. Fetch the first 3 API pages (300 releases) so the max is less
+#    likely to be missed than with a single page (same pattern as
 #    preview_desktop_release_version.sh).
-LATEST_TAG=$(
+#
+#    We strip a trailing `-test` before version-sorting so the prod line and the
+#    test line compare on the same bare-semver axis (VERSION_SELECT_PATTERN lets
+#    the test variant see both). The result is the highest base semver across the
+#    lines the variant cares about.
+HIGHEST_EXISTING_BASE_SEMVER=$(
   {
     for page in 1 2 3; do
       curl_releases_page "$page"
       printf '\n'
     done
-  } | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$TAG_PATTERN" -r \
+  } | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$VERSION_SELECT_PATTERN" -r \
+  | sed 's/-test$//' \
   | sort -V -r \
   | head -n1)
-if [ -z "$LATEST_TAG" ]; then
-  LATEST_TAG="$FALLBACK_TAG"
+if [ -z "$HIGHEST_EXISTING_BASE_SEMVER" ]; then
+  HIGHEST_EXISTING_BASE_SEMVER=$(echo "$FALLBACK_TAG" | sed 's/-test$//')
 fi
-echo "Latest tag (including drafts): $LATEST_TAG"
+echo "Highest existing base semver (drafts included): $HIGHEST_EXISTING_BASE_SEMVER"
 
-VERSION=$(echo "$LATEST_TAG" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
+VERSION=$(echo "$HIGHEST_EXISTING_BASE_SEMVER" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
 IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
 
 # 2. Bump version
@@ -119,7 +136,13 @@ if [[ "$VARIANT" == "test" && "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORC
     | sed -n 's/^Source-Commit:[[:space:]]*//p' | tr -d '\r' | head -n1)
   if [ -n "$LAST_RELEASE_SHA" ] && [ "$LAST_RELEASE_SHA" != "unknown" ] \
      && git cat-file -e "${LAST_RELEASE_SHA}^{commit}" 2>/dev/null; then
-    if git diff --quiet "$LAST_RELEASE_SHA" HEAD -- scratch-desktop/ scratch-git-2/ packages/shared-types/; then
+    # The pathspecs MUST be anchored to the repo root with `:/` — this script
+    # runs from scratch-desktop/ (the `cd` at the top), and a bare
+    # `scratch-desktop/` pathspec is resolved relative to the cwd, i.e.
+    # scratch-desktop/scratch-desktop/, which matches nothing. Without the anchor
+    # `git diff --quiet` always saw zero changes and every scheduled run skipped
+    # as a no-op (DEV-10749).
+    if git diff --quiet "$LAST_RELEASE_SHA" HEAD -- :/scratch-desktop/ :/scratch-git-2/ :/packages/shared-types/; then
       echo "No desktop-relevant changes since last test release ($LAST_RELEASE_SHA). Skipping."
       echo "RELEASE_SKIP=true" > release.env
       exit 0
