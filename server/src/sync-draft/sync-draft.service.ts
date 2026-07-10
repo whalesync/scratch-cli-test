@@ -14,6 +14,7 @@ import {
   type CreateTableSpec,
   type DataFolderId,
   type DraftColumnDestination,
+  type DraftColumnMapping,
   type DraftFieldAddition,
   type DraftTableDestination,
   type DraftTableMapping,
@@ -32,6 +33,10 @@ import {
   SyncState,
   type SyncTablePairId,
   type TableMappingV2,
+  type TableView,
+  type TableViewCol,
+  type TransformerConfig,
+  TransformerTypes,
   transformV1ToV2,
   type ValidateSchemaIssue,
   type WorkbookId,
@@ -63,6 +68,19 @@ interface DraftForeignKeyReference {
   tableMappingRef: string;
   fieldName: string;
   target: ForeignKeyTarget;
+}
+
+/** Find a view column (including inside banner groups) by its JSON path. */
+function findViewColumnByPath(view: TableView, path: string): TableViewCol | undefined {
+  for (const entry of view.cols) {
+    if (entry.kind === 'banner-group') {
+      const found = entry.cols.find((col) => col.path === path);
+      if (found) return found;
+    } else if (entry.path === path) {
+      return entry;
+    }
+  }
+  return undefined;
 }
 
 /** Every foreignKey field across a draft's placeholder create-specs and field additions. */
@@ -307,7 +325,11 @@ export class SyncDraftService {
 
     await this.materializePlaceholderTables(workbookId, draftId, tableMappings, results, actor);
     await this.materializeFieldAdditions(workbookId, draftId, tableMappings, results, actor);
-    // Now the destination fields are real: pick the sync transform for each
+    // Give every foreignKey column whose related table is ALSO synced here the pipeline
+    // that resolves source FK ids → destination linked-record ids. Runs BEFORE the generic
+    // picker so those columns end up with the FK pipeline (the picker then skips them).
+    await this.attachForeignKeyResolutionTransformers(draftId, tableMappings, actor);
+    // Now the destination fields are real: pick the sync transform for each remaining
     // newly-created column from its actual schema hints and write it to the draft.
     await this.attachTransformersToMaterializedColumns(workbookId, draftId, tableMappings, actor);
 
@@ -909,6 +931,134 @@ export class SyncDraftService {
     }
 
     if (changed) await this.persistTableMappings(draftId, tableMappings);
+  }
+
+  /**
+   * Attach the sync transformer pipeline that turns a foreignKey column's raw source
+   * value into destination linked-record ids — for every FK column whose related table
+   * is ALSO synced in this draft. The pipeline is an id-extraction (lifted from the
+   * source view column's display transformer, e.g. HubSpot's `$[*].id`) followed by
+   * `source_fk_to_dest_fk`, which the sync's FOREIGN_KEY_MAPPING phase resolves against
+   * the related table's synced records. Without it an FK column copies raw source ids
+   * straight into the destination link field and nothing links.
+   *
+   * Only `placeholderField` columns pointing at a created foreignKey field are
+   * considered, and only when the FK's related table has a SOURCE mapping in this draft
+   * (so there are synced records to resolve against). A column that already carries
+   * transformers (user-set, or from the `fromSyncId` edit flow) is left untouched.
+   */
+  private async attachForeignKeyResolutionTransformers(
+    draftId: SyncDraftId,
+    tableMappings: DraftTableMapping[],
+    actor: Actor,
+  ): Promise<void> {
+    const foreignKeyColumns: {
+      tableMapping: DraftTableMapping;
+      columnMapping: DraftColumnMapping;
+      linkedTableId: string;
+    }[] = [];
+    for (const tableMapping of tableMappings) {
+      for (const columnMapping of tableMapping.columnMappings) {
+        if (columnMapping.destination.kind !== 'placeholderField') continue;
+        if (columnMapping.transformers && columnMapping.transformers.length > 0) continue;
+        const linkedTableId = this.foreignKeyLinkedTableIdForColumn(columnMapping.destination.ref, tableMapping);
+        if (linkedTableId) foreignKeyColumns.push({ tableMapping, columnMapping, linkedTableId });
+      }
+    }
+    if (foreignKeyColumns.length === 0) return;
+
+    const sourceFolderIdByRemoteTableId = await this.buildSourceFolderByRemoteTableIdMap(tableMappings);
+    const viewByFolderId = new Map<string, TableView | null>();
+    let changed = false;
+    for (const { tableMapping, columnMapping, linkedTableId } of foreignKeyColumns) {
+      const referencedDataFolderId = sourceFolderIdByRemoteTableId.get(linkedTableId);
+      if (!referencedDataFolderId) continue; // the related table isn't synced here — can't resolve.
+
+      const extraction = await this.foreignKeyIdExtractionTransformer(
+        tableMapping.source.dataFolderId,
+        columnMapping.source.columnId,
+        viewByFolderId,
+        actor,
+      );
+      const transformers: TransformerConfig[] = [];
+      if (extraction) transformers.push(extraction);
+      transformers.push({
+        type: TransformerTypes.SourceFkToDestFk,
+        options: { referencedDataFolderId, outputType: 'array' },
+      });
+      columnMapping.transformers = transformers;
+      changed = true;
+    }
+    if (changed) await this.persistTableMappings(draftId, tableMappings);
+  }
+
+  /** Map each source table's remote id → the draft source folder that pulls it (an FK's `referencedDataFolderId`). */
+  private async buildSourceFolderByRemoteTableIdMap(
+    tableMappings: DraftTableMapping[],
+  ): Promise<Map<string, DataFolderId>> {
+    const sourceFolderIds = [...new Set(tableMappings.map((tableMapping) => tableMapping.source.dataFolderId))];
+    const folders = await this.db.client.dataFolder.findMany({
+      where: { id: { in: sourceFolderIds } },
+      select: { id: true, tableId: true },
+    });
+    const sourceFolderIdByRemoteTableId = new Map<string, DataFolderId>();
+    for (const folder of folders) {
+      for (const remoteTableIdSegment of folder.tableId) {
+        if (!sourceFolderIdByRemoteTableId.has(remoteTableIdSegment)) {
+          sourceFolderIdByRemoteTableId.set(remoteTableIdSegment, folder.id as DataFolderId);
+        }
+      }
+    }
+    return sourceFolderIdByRemoteTableId;
+  }
+
+  /**
+   * The source linked-table id a placeholderField column's foreignKey points at, or
+   * null when the column isn't a foreignKey (or its target isn't a pending source link
+   * id). Reads the created field spec the ref names — a field addition or a placeholder
+   * table's create spec — which materialize leaves carrying `{ unresolvedLinkedTableId }`.
+   */
+  private foreignKeyLinkedTableIdForColumn(ref: string, tableMapping: DraftTableMapping): string | null {
+    const additionSpec = tableMapping.fieldAdditions?.find((field) => field.ref === ref)?.createFieldSpec;
+    const placeholderSpec =
+      tableMapping.destination.kind === 'placeholderTable'
+        ? tableMapping.destination.createSpec.fields.find((spec) => spec.name === ref)
+        : undefined;
+    const fieldType = (additionSpec ?? placeholderSpec)?.fieldType;
+    if (fieldType?.kind === 'foreignKey' && 'unresolvedLinkedTableId' in fieldType.target) {
+      return fieldType.target.unresolvedLinkedTableId;
+    }
+    return null;
+  }
+
+  /**
+   * The id-extraction transformer for a foreignKey column, lifted from the source view
+   * column's display transformer (e.g. HubSpot associations flatten
+   * `associations.<type>.results` via `$[*].id`) and reused as a sync `jsonpath`
+   * transformer producing an id ARRAY for `source_fk_to_dest_fk`. Null when the source
+   * view has no jsonpath display transformer for the column (the value is assumed to
+   * already be ids). The view is cached per folder across the pass.
+   */
+  private async foreignKeyIdExtractionTransformer(
+    sourceDataFolderId: string,
+    sourceColumnId: string,
+    viewByFolderId: Map<string, TableView | null>,
+    actor: Actor,
+  ): Promise<TransformerConfig | null> {
+    if (!viewByFolderId.has(sourceDataFolderId)) {
+      viewByFolderId.set(
+        sourceDataFolderId,
+        await this.dataFolderService.getStoredView(sourceDataFolderId as DataFolderId, actor),
+      );
+    }
+    const view = viewByFolderId.get(sourceDataFolderId);
+    if (!view) return null;
+    const displayTransformer = findViewColumnByPath(view, sourceColumnId)?.displayTransformer;
+    if (displayTransformer?.type !== 'jsonpath') return null;
+    return {
+      type: TransformerTypes.JSONPath,
+      options: { expression: displayTransformer.options.expression, arrayHandling: 'array' },
+    };
   }
 
   /**

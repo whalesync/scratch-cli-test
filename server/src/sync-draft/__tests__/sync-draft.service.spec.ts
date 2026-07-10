@@ -95,6 +95,7 @@ describe('SyncDraftService', () => {
       createFolder: jest.fn(),
       fetchSchemaSpec: jest.fn(),
       getSchemaPaths: jest.fn().mockResolvedValue([]),
+      getStoredView: jest.fn().mockResolvedValue(null),
     } as unknown as jest.Mocked<DataFolderService>;
 
     routineService = {
@@ -863,6 +864,83 @@ describe('SyncDraftService', () => {
         kind: 'foreignKey',
         target: { existingRemoteTableId: ['base1', 'tblContacts'] },
       });
+    });
+
+    it('attaches the id-extraction + source_fk_to_dest_fk pipeline to an FK column whose related table is synced', async () => {
+      // Appointments' "Associated Companies" FK points at the companies object, which is
+      // ALSO synced (the Companies table mapping) — so materialize should wire the column
+      // to extract the association ids and resolve them to destination linked records.
+      const tableMappings = [
+        {
+          ref: 'tm_appt',
+          source: { dataFolderId: 'dfd_appt_src' },
+          destination: { kind: 'existing', dataFolderId: 'dfd_appt_dst' },
+          fieldAdditions: [
+            {
+              ref: 'fa_companies',
+              createFieldSpec: {
+                name: 'Associated Companies',
+                fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'companies' } },
+              },
+            },
+          ],
+          columnMappings: [
+            {
+              source: { columnId: 'associations.companies.results' },
+              destination: { kind: 'placeholderField', ref: 'fa_companies' },
+            },
+          ],
+        },
+        {
+          ref: 'tm_comp',
+          source: { dataFolderId: 'dfd_comp_src' },
+          destination: { kind: 'existing', dataFolderId: 'dfd_comp_dst' },
+          columnMappings: [
+            { source: { columnId: 'id' }, destination: { kind: 'existing', columnId: 'fields.hubspot_record_id' } },
+          ],
+        },
+      ];
+      const row = makeDraftRow({ tableMappings });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (dbService.client.syncDraft.update as jest.Mock).mockResolvedValue(row);
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_appt_src', tableId: ['0-421'] },
+        { id: 'dfd_appt_dst', tableId: ['base1', 'tblAppt'] },
+        { id: 'dfd_comp_src', tableId: ['companies'] },
+        { id: 'dfd_comp_dst', tableId: ['base1', 'tblComp'] },
+      ]);
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue({
+        connectorAccountId: 'coa_1',
+        tableId: ['base1', 'tblAppt'],
+      });
+      schemaBuilderService.createFields.mockResolvedValue({
+        status: 'ok',
+        remoteTableId: ['base1', 'tblAppt'],
+        fields: [{ name: 'Associated Companies', status: 'created', remoteFieldId: 'fld_assoc' }],
+      } as never);
+      // The source view flattens the association array to its ids via `$[*].id`.
+      (dataFolderService.getStoredView as jest.Mock).mockResolvedValue({
+        name: 'Default',
+        cols: [
+          {
+            kind: 'col',
+            path: 'associations.companies.results',
+            name: 'Associated Companies',
+            displayTransformer: { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'join_comma' } },
+          },
+        ],
+      });
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      const apptMapping = res.draft.tableMappings.find((tableMapping) => tableMapping.ref === 'tm_appt');
+      const fkColumn = apptMapping?.columnMappings.find(
+        (columnMapping) => columnMapping.source.columnId === 'associations.companies.results',
+      );
+      expect(fkColumn?.transformers).toEqual([
+        { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'array' } },
+        { type: 'source_fk_to_dest_fk', options: { referencedDataFolderId: 'dfd_comp_src', outputType: 'array' } },
+      ]);
     });
 
     it('reports a failed table creation without throwing', async () => {
