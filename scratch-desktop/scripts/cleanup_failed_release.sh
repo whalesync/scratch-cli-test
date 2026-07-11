@@ -36,6 +36,60 @@ fi
 
 GITHUB_REPO="whalesync/scratch-desktop"
 
+# Best-effort reaper for OTHER pipelines' abandoned drafts whose own cleanup job
+# never ran (pipeline cancelled, or a job sat pending and the cleanup stage was
+# never reached). Without this a failed hourly test pipeline leaves a 0-asset
+# draft that lingers indefinitely — and because bootstrap's no-op marker used to
+# count drafts, a single such orphan made the guard rebuild the same commit every
+# hour (DEV-10749). Same hard safety rules as the single-release path below:
+#   * DRAFTS only (never published releases),
+#   * the SAME channel as this release (…-test only — prod drafts are rare and
+#     human-monitored, so we never sweep them),
+#   * NO installer assets (never discard real artifacts — the v1.0.49 lesson),
+#   * older than STALE_DRAFT_MIN_AGE_SECONDS, so we can never race a build that is
+#     still running (well beyond any full pipeline's worst-case runtime).
+# Never fails the job.
+STALE_DRAFT_MIN_AGE_SECONDS=21600 # 6h
+sweep_stale_orphaned_test_drafts() {
+  local releases_json stale sid stag http
+  releases_json=$(curl -sS \
+    -H "Authorization: token $GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github.v3+json" \
+    "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100" 2>/dev/null) || return 0
+  stale=$(printf '%s' "$releases_json" | jq -r \
+    --arg self "$RELEASE_ID" --arg minage "$STALE_DRAFT_MIN_AGE_SECONDS" '
+      .[] | select(
+        .draft == true
+        and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-test$"))
+        and ((.id | tostring) != $self)
+        and ([.assets[].name | select(test("\\.(dmg|zip|exe|AppImage|deb)$"; "i"))] | length == 0)
+        and ((now - (.created_at | fromdateiso8601)) > ($minage | tonumber))
+      ) | "\(.id)\t\(.tag_name)"' 2>/dev/null) || return 0
+  if [ -z "$stale" ]; then
+    echo "Sweep: no stale orphaned test drafts to reap."
+    return 0
+  fi
+  while IFS=$'\t' read -r sid stag; do
+    [ -z "$sid" ] && continue
+    echo "Sweep: deleting stale orphaned draft $stag (id=$sid; >6h old, no installer assets)..."
+    http=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
+      -H "Authorization: token $GITHUB_TOKEN" \
+      -H "Accept: application/vnd.github.v3+json" \
+      "https://api.github.com/repos/${GITHUB_REPO}/releases/${sid}" 2>/dev/null) || http="000"
+    if [ "$http" = "204" ]; then
+      echo "  ✓ deleted $stag"
+    else
+      echo "  WARN: DELETE $stag returned HTTP $http (leaving for manual cleanup)."
+    fi
+  done <<< "$stale"
+  return 0
+}
+
+# Only the test channel accumulates orphans (hourly cadence); leave prod alone.
+case "$NEW_VERSION" in
+  *-test) sweep_stale_orphaned_test_drafts || true ;;
+esac
+
 echo "Checking release $NEW_VERSION (id=$RELEASE_ID)..."
 
 LOOKUP_HTTP=$(curl -sS -o /tmp/cleanup_body -w "%{http_code}" \

@@ -125,14 +125,29 @@ echo "Target version: $NEW_VERSION"
 #     Downstream jobs read RELEASE_SKIP from the dotenv and early-exit. Fails open
 #     (builds) if the marker is missing/unreachable. FORCE_RELEASE=1 bypasses.
 if [[ "$VARIANT" == "test" && "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORCE_RELEASE:-}" != "1" ]]; then
+  # Marker = the Source-Commit of the highest-semver PUBLISHED test release.
+  # Two deliberate choices, both learned from live misfires (DEV-10749):
+  #   * PUBLISHED only (draft == false): a leftover draft was never actually
+  #     shipped, so it must not define "the last release we cut". Counting drafts
+  #     let an orphaned draft's older Source-Commit make the guard think there
+  #     were changes and rebuild the SAME commit every hour, forever.
+  #   * ordered by SEMVER, not created_at: GitHub reports an unreliable created_at
+  #     for these releases — every published test release tags the same
+  #     placeholder commit, so they all surface the repo's 2026-05-08 migration
+  #     timestamp, while drafts get real (recent) times. sort_by(.created_at)
+  #     therefore always picked the lingering draft over the real latest release.
+  #     Sorting on the numeric [major,minor,patch] of the tag matches how the
+  #     version to bump is chosen above.
   LAST_RELEASE_SHA=$(
     {
       for page in 1 2 3; do
         curl_releases_page "$page"
         printf '\n'
       done
-    } | jq -s 'add | map(select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-test$")))
-               | sort_by(.created_at) | reverse | .[0].body // ""' -r \
+    } | jq -s 'add
+               | map(select(.draft == false and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-test$"))))
+               | sort_by(.tag_name | ltrimstr("v") | rtrimstr("-test") | split(".") | map(tonumber))
+               | last | .body // ""' -r \
     | sed -n 's/^Source-Commit:[[:space:]]*//p' | tr -d '\r' | head -n1)
   if [ -n "$LAST_RELEASE_SHA" ] && [ "$LAST_RELEASE_SHA" != "unknown" ] \
      && git cat-file -e "${LAST_RELEASE_SHA}^{commit}" 2>/dev/null; then

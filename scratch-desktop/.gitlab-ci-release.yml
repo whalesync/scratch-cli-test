@@ -566,6 +566,13 @@ Notify slack test desktop release published:
 # -----------------------------------------------------------------------------
 .cleanup_failed_release:
   stage: cleanup
+  # Pin node:22 + install jq (like the bootstrap/upload/finalize jobs). The
+  # default image lacks jq, so cleanup_failed_release.sh silently hit its
+  # "jq not installed; skipping" guard and never deleted anything — which is how
+  # failed drafts piled up (DEV-10749). curl ships in node:22.
+  image: node:22
+  before_script:
+    - apt-get update -qq && apt-get install -y jq
   script:
     - cd scratch-desktop
     - ./scripts/cleanup_failed_release.sh
