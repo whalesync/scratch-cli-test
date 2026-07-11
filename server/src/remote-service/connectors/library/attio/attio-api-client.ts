@@ -34,11 +34,56 @@ export class AttioError extends Error {
 }
 
 /**
- * Retry options for Attio API calls — Attio responds with 429 on rate-limit
- * and includes a `Retry-After` header (seconds).
+ * True when an error is Attio rate-limiting us: an HTTP 429. Kept as its own
+ * named predicate so the retry policy composes as plain English (429 OR a
+ * transient server error) without conflating the two conditions.
  */
-const ATTIO_RETRY_OPTS: WithRetryOpts = {
-  isRateLimited: (error) => isAxiosError(error) && error.response?.status === 429,
+export function isAttioRateLimitError(error: unknown): boolean {
+  return isAxiosError(error) && error.response?.status === 429;
+}
+
+/**
+ * HTTP 5xx codes we treat as transient, retryable Attio server/infrastructure
+ * failures: 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout.
+ *
+ * We deliberately EXCLUDE 500 Internal Server Error. 502/503/504 are gateway /
+ * availability signals — the request did not reach, or was not completed by, a
+ * healthy backend — so retrying is safe even for a non-idempotent create (POST):
+ * the write almost certainly did not persist. A 500 is ambiguous: the backend
+ * may have processed the write and then errored, so blindly retrying a create
+ * risks a DUPLICATE record, which violates the project's non-destructive /
+ * reversible principle. If a transient-500-on-create flake proves real, revisit
+ * with method-scoped handling (retry 500 only for idempotent verbs) rather than
+ * widening this set.
+ */
+const ATTIO_RETRYABLE_SERVER_ERROR_STATUSES = new Set([502, 503, 504]);
+
+/**
+ * True when an error is a transient Attio server-side failure worth retrying
+ * (see {@link ATTIO_RETRYABLE_SERVER_ERROR_STATUSES}). The retry predicate sees
+ * the RAW AxiosError — `createRecord`/`updateRecord`/etc. wrap into `AttioError`
+ * only OUTSIDE `withRetry` — so this checks `error.response.status` directly.
+ */
+export function isTransientAttioServerError(error: unknown): boolean {
+  return isAxiosError(error) && ATTIO_RETRYABLE_SERVER_ERROR_STATUSES.has(error.response?.status ?? 0);
+}
+
+/**
+ * Retry options for Attio API calls. Retries two DISTINCT, independently-scoped
+ * failures:
+ *  - HTTP 429 rate-limiting (honoring a `Retry-After` header when present, else
+ *    the limiter's exponential backoff).
+ *  - Transient Attio server errors — a narrow 502/503/504 set (see
+ *    {@link isTransientAttioServerError}).
+ *
+ * The two are kept as SEPARATE predicates on purpose: widening the transient-
+ * server case never loosens what counts as rate-limited, and genuine 4xx / 500
+ * errors still surface immediately. `getRetryAfterS` stays 429-driven — a
+ * transient 5xx carries no meaningful `Retry-After`, so it falls back to the
+ * limiter's exponential backoff.
+ */
+export const ATTIO_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => isAttioRateLimitError(error) || isTransientAttioServerError(error),
   getRetryAfterS: (error) => {
     if (!isAxiosError(error)) return undefined;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
