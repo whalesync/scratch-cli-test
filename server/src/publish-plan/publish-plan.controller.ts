@@ -126,11 +126,17 @@ export class PublishPlanController {
   list(
     @Param('workbookId') workbookId: WorkbookId,
     @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Query('page') page: string | undefined,
+    @Query('pageSize') pageSize: string | undefined,
     @Req() req: RequestWithUser,
   ) {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return this.publishAdminService.listPublishPlans(workbookId, connectorAccountId);
+    return this.publishAdminService.listPublishPlans(workbookId, {
+      connectorAccountId,
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+    });
   }
 
   @Get('by-job/:jobId')

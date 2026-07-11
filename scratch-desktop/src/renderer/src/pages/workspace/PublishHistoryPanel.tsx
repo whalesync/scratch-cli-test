@@ -32,11 +32,18 @@ export function PublishHistoryPanel({ workspaceId, workspacePath }: PublishHisto
   const detailPlanId = useWorkspaceUiStore((s) => s.publishHistoryDetailPlanId);
   const setDetailPlanId = useWorkspaceUiStore((s) => s.setPublishHistoryDetailPlanId);
   const [connectionFilter, setConnectionFilter] = useState<string | null>(null);
+  // Page state lives here (alongside the connection filter) so the Refresh
+  // button's usePublishPlans call below and PublishPlansList's call share the
+  // exact same SWR key. See the hook doc comment.
+  const [page, setPage] = useState(1);
   const { connectorAccounts } = useConnectorAccounts(workspaceId);
   // SWR cache is shared with PublishPlansList — `refresh()` here triggers
   // a re-fetch the list will read from. Only used to drive the header's
-  // Refresh button when on the list view.
-  const { isLoading: plansLoading, refresh: refreshPlans } = usePublishPlans(workspaceId);
+  // Refresh button when on the list view. Args MUST match the list's call.
+  const { isLoading: plansLoading, refresh: refreshPlans } = usePublishPlans(workspaceId, {
+    page,
+    connectorAccountId: connectionFilter ?? undefined,
+  });
   // SWR dedupes with the detail content's fetch, so the breadcrumb pulls
   // from cache once the detail page has loaded.
   const { publishPlan: breadcrumbPlan } = usePublishPlan(workspaceId, detailPlanId ?? undefined);
@@ -106,7 +113,10 @@ export function PublishHistoryPanel({ workspaceId, workspacePath }: PublishHisto
                 placeholder="All connections"
                 clearable
                 value={connectionFilter}
-                onChange={setConnectionFilter}
+                onChange={(v) => {
+                  setConnectionFilter(v);
+                  setPage(1);
+                }}
                 data={(connectorAccounts ?? []).map((ca) => ({ value: ca.id, label: ca.displayName }))}
                 w={220}
               />
@@ -134,7 +144,12 @@ export function PublishHistoryPanel({ workspaceId, workspacePath }: PublishHisto
             onBack={() => setDetailPlanId(null)}
           />
         ) : (
-          <PublishPlansList workspaceId={workspaceId} connectionFilter={connectionFilter} />
+          <PublishPlansList
+            workspaceId={workspaceId}
+            connectionFilter={connectionFilter}
+            page={page}
+            onPageChange={setPage}
+          />
         )}
       </Box>
     </Stack>

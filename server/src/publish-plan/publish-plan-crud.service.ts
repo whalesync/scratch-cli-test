@@ -9,23 +9,35 @@ export class PublishPlanCrudService {
     private readonly bullEnqueuerService: BullEnqueuerService,
   ) {}
 
-  async listPublishPlans(workbookId: string, connectorAccountId?: string) {
-    const pipelines = await this.db.client.publishPlan.findMany({
-      where: {
-        workbookId,
-        connectorAccountId: connectorAccountId || undefined,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 20, // increased for list view just to be safe
-      include: {
-        _count: {
-          select: { operations: true },
+  async listPublishPlans(
+    workbookId: string,
+    options?: { connectorAccountId?: string; page?: number; pageSize?: number },
+  ) {
+    const page = options?.page ?? 1;
+    const pageSize = Math.min(options?.pageSize ?? 20, 100);
+    const skip = (page - 1) * pageSize;
+    const where = {
+      workbookId,
+      connectorAccountId: options?.connectorAccountId || undefined,
+    };
+
+    const [pipelines, total] = await Promise.all([
+      this.db.client.publishPlan.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: pageSize,
+        include: {
+          _count: {
+            select: { operations: true },
+          },
+          author: {
+            select: { id: true, name: true, email: true },
+          },
         },
-        author: {
-          select: { id: true, name: true, email: true },
-        },
-      },
-    });
+      }),
+      this.db.client.publishPlan.count({ where }),
+    ]);
 
     // Bulk-fetch job records for any pipelines that have an activeJobId
     const activeJobIds = pipelines.map((p) => p.activeJobId).filter((id): id is string => id != null);
@@ -65,7 +77,7 @@ export class PublishPlanCrudService {
       );
     }
 
-    return pipelines.map((p) => {
+    const data = pipelines.map((p) => {
       const dbJob = p.activeJobId ? (dbJobMap.get(p.activeJobId) ?? null) : null;
       const bullJob = p.activeJobId
         ? ((bullJobMap.get(p.activeJobId) ?? null) as Record<string, unknown> | null)
@@ -78,6 +90,8 @@ export class PublishPlanCrudService {
         job: bullJob ? { ...bullJob, status: bullJob.state } : dbJob,
       };
     });
+
+    return { data, total, page, pageSize };
   }
 
   async listFileIndex(workbookId: string) {

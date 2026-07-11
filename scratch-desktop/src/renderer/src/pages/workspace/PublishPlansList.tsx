@@ -10,7 +10,7 @@ import {
   RepeatIcon,
   Trash2Icon,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { useConnectorAccounts } from '../../hooks/use-connector-accounts';
@@ -29,24 +29,36 @@ interface PublishPlansListProps {
   workspaceId: string;
   /** Connection filter owned by the panel header. Null means "All". */
   connectionFilter: string | null;
+  /** Current 1-based page, owned by the panel header (shared SWR key). */
+  page: number;
+  onPageChange: (page: number) => void;
 }
 
 /**
  * Read-only history table of publish plans for a workspace. Polls every 2s
  * so in-flight plans surface progress without manual refresh. Each row links
- * to the publish-plan detail page. The connection filter is owned by the
- * surrounding `PublishHistoryPanel` header.
+ * to the publish-plan detail page. The connection filter and page are owned by
+ * the surrounding `PublishHistoryPanel` header; both are resolved server-side.
  */
-export function PublishPlansList({ workspaceId, connectionFilter }: PublishPlansListProps) {
-  const { publishPlans, refresh } = usePublishPlans(workspaceId);
+export function PublishPlansList({ workspaceId, connectionFilter, page, onPageChange }: PublishPlansListProps) {
+  const { publishPlans, total, pageSize, refresh } = usePublishPlans(workspaceId, {
+    page,
+    connectorAccountId: connectionFilter ?? undefined,
+  });
   const { connectorAccounts } = useConnectorAccounts(workspaceId);
   const setDetailPlanId = useWorkspaceUiStore((s) => s.setPublishHistoryDetailPlanId);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const connectorMap = new Map<string, ConnectorAccount>((connectorAccounts ?? []).map((ca) => [ca.id, ca]));
-  const filtered = connectionFilter
-    ? publishPlans.filter((p) => p.connectorAccountId === connectionFilter)
-    : publishPlans;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  // If the current page falls past the end (e.g. after deleting the last row on
+  // the last page), step back so the user doesn't land on an empty page.
+  useEffect(() => {
+    if (page > totalPages) {
+      onPageChange(totalPages);
+    }
+  }, [page, totalPages, onPageChange]);
 
   const handleDelete = async (plan: PublishPlanEntity) => {
     const confirmed = window.confirm('Delete this publish plan? This cannot be undone.');
@@ -119,7 +131,7 @@ export function PublishPlansList({ workspaceId, connectionFilter }: PublishPlans
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {filtered.length === 0 ? (
+            {publishPlans.length === 0 ? (
               <Table.Tr>
                 <Table.Td colSpan={11}>
                   <Text12Regular c="var(--fg-muted)" ta="center" py="md">
@@ -128,7 +140,7 @@ export function PublishPlansList({ workspaceId, connectionFilter }: PublishPlans
                 </Table.Td>
               </Table.Tr>
             ) : (
-              filtered.map((p) => {
+              publishPlans.map((p) => {
                 const openDetail = () => setDetailPlanId(p.id);
                 const connectionName = p.connectorAccountId
                   ? (connectorMap.get(p.connectorAccountId)?.displayName ?? p.connectorAccountId.substring(0, 8) + '…')
@@ -217,6 +229,59 @@ export function PublishPlansList({ workspaceId, connectionFilter }: PublishPlans
           </Table.Tbody>
         </Table>
       </ScrollArea>
+      {total > 0 && (
+        <Box
+          style={{
+            padding: '6px 12px',
+            borderTop: '0.5px solid var(--fg-divider)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <Text12Regular c="var(--fg-muted)">
+            {total.toLocaleString()} {total === 1 ? 'plan' : 'plans'}
+          </Text12Regular>
+          {totalPages > 1 && (
+            <Group gap={4} align="center">
+              <Box
+                component="button"
+                disabled={page <= 1}
+                onClick={() => onPageChange(Math.max(1, page - 1))}
+                style={{
+                  padding: '1px 6px',
+                  border: '1px solid var(--fg-divider)',
+                  borderRadius: 4,
+                  backgroundColor: 'transparent',
+                  cursor: page <= 1 ? 'default' : 'pointer',
+                  opacity: page <= 1 ? 0.4 : 1,
+                }}
+              >
+                <Text12Regular>{'←'}</Text12Regular>
+              </Box>
+              <Text12Regular c="var(--fg-muted)">
+                {page.toLocaleString()} / {totalPages.toLocaleString()}
+              </Text12Regular>
+              <Box
+                component="button"
+                disabled={page >= totalPages}
+                onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+                style={{
+                  padding: '1px 6px',
+                  border: '1px solid var(--fg-divider)',
+                  borderRadius: 4,
+                  backgroundColor: 'transparent',
+                  cursor: page >= totalPages ? 'default' : 'pointer',
+                  opacity: page >= totalPages ? 0.4 : 1,
+                }}
+              >
+                <Text12Regular>{'→'}</Text12Regular>
+              </Box>
+            </Group>
+          )}
+        </Box>
+      )}
     </Stack>
   );
 }

@@ -1,5 +1,6 @@
 import type {
   PublishPlanEntity,
+  PublishPlanListResponse,
   PublishPlanOperationEntity,
   PublishPlanRecordsResponse,
 } from '../../dto/publish-plan/publish-plan.dto';
@@ -13,9 +14,16 @@ import type { Http } from '../http';
  */
 export function createPublishPlansApi(http: Http) {
   return {
-    listPublishPlans: async (workbookId: string, connectorAccountId?: string): Promise<PublishPlanEntity[]> => {
-      const res = await http.get<PublishPlanEntity[]>(`/workbook/${workbookId}/publish-v2`, {
-        params: { connectorAccountId },
+    listPublishPlans: async (
+      workbookId: string,
+      options?: { connectorAccountId?: string; page?: number; pageSize?: number },
+    ): Promise<PublishPlanListResponse> => {
+      const res = await http.get<PublishPlanListResponse>(`/workbook/${workbookId}/publish-v2`, {
+        params: {
+          connectorAccountId: options?.connectorAccountId,
+          page: options?.page,
+          pageSize: options?.pageSize,
+        },
         fallbackMessage: 'Failed to list publish plans',
       });
       return res.data;

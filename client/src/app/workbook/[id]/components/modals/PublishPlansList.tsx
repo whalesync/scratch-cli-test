@@ -24,6 +24,8 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import {
   ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CloudUploadIcon,
   ExternalLinkIcon,
   FilePenLineIcon,
@@ -54,6 +56,8 @@ interface PublishPlansListProps {
 
 const JOB_ACTIVE_STATUSES = new Set(['created', 'active', 'waiting']);
 
+const PUBLISH_PLANS_PAGE_SIZE = 20;
+
 function jobStatusBadgeColor(status: string): string {
   if (status === 'active') return 'blue';
   if (status === 'completed') return 'green';
@@ -76,6 +80,8 @@ export function PublishPlansList({
   showPlanAndRunButton = true,
 }: PublishPlansListProps) {
   const [publishPlans, setPublishPlans] = useState<PublishPlanEntity[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
@@ -94,8 +100,13 @@ export function PublishPlansList({
   const fetchPublishPlans = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await scratchApiClient.publish.listPublishPlans(workbookId);
-      setPublishPlans(data);
+      const res = await scratchApiClient.publish.listPublishPlans(workbookId, {
+        page,
+        pageSize: PUBLISH_PLANS_PAGE_SIZE,
+        connectorAccountId: connectionFilter ?? undefined,
+      });
+      setPublishPlans(res.data);
+      setTotal(res.total);
     } catch (error) {
       console.error(error);
       notifications.show({
@@ -106,7 +117,7 @@ export function PublishPlansList({
     } finally {
       setIsLoading(false);
     }
-  }, [workbookId]);
+  }, [workbookId, page, connectionFilter]);
 
   const { start, stop } = useInterval(fetchPublishPlans, 2000);
 
@@ -210,9 +221,16 @@ export function PublishPlansList({
   };
 
   const accounts = connectorAccounts ?? [];
-  const filteredPublishPlans = connectionFilter
-    ? publishPlans.filter((p) => p.connectorAccountId === connectionFilter)
-    : publishPlans;
+  // Connection filter + pagination are resolved server-side (see fetchPublishPlans).
+  const totalPages = Math.max(1, Math.ceil(total / PUBLISH_PLANS_PAGE_SIZE));
+
+  // If the current page falls past the end (e.g. after deleting the last row on
+  // the last page), step back so the user doesn't land on an empty page.
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   return (
     <>
@@ -225,7 +243,10 @@ export function PublishPlansList({
                 placeholder="All connections"
                 clearable
                 value={connectionFilter}
-                onChange={setConnectionFilter}
+                onChange={(v) => {
+                  setConnectionFilter(v);
+                  setPage(1);
+                }}
                 data={accounts.map((ca) => ({ value: ca.id, label: ca.displayName }))}
                 w={200}
               />
@@ -352,7 +373,7 @@ export function PublishPlansList({
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {filteredPublishPlans.length === 0 ? (
+              {publishPlans.length === 0 ? (
                 <Table.Tr>
                   <Table.Td colSpan={showAdminColumns ? 12 : 10}>
                     <Text size="sm" c="dimmed" ta="center" py="md">
@@ -365,7 +386,7 @@ export function PublishPlansList({
                   </Table.Td>
                 </Table.Tr>
               ) : (
-                filteredPublishPlans.map((p) => {
+                publishPlans.map((p) => {
                   const hasActiveJob = !!p.activeJobId && !!p.job && JOB_ACTIVE_STATUSES.has(p.job.status);
                   const detailHref = `/workbook/${workbookId}/publish-plan/${p.id}`;
                   return (
@@ -638,6 +659,39 @@ export function PublishPlansList({
             </Table.Tbody>
           </Table>
         </ScrollArea>
+
+        {total > 0 && (
+          <Group justify="space-between" align="center">
+            <Text size="xs" c="dimmed">
+              {total.toLocaleString()} {total === 1 ? 'plan' : 'plans'}
+            </Text>
+            {totalPages > 1 && (
+              <Group gap="xs" align="center">
+                <Button
+                  variant="default"
+                  size="xs"
+                  leftSection={<ChevronLeftIcon size={14} />}
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  Previous
+                </Button>
+                <Text size="xs" c="dimmed">
+                  {page.toLocaleString()} / {totalPages.toLocaleString()}
+                </Text>
+                <Button
+                  variant="default"
+                  size="xs"
+                  rightSection={<ChevronRightIcon size={14} />}
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next
+                </Button>
+              </Group>
+            )}
+          </Group>
+        )}
       </Stack>
     </>
   );

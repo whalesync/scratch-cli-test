@@ -142,3 +142,14 @@ export interface PublishPlanRecordsResponse {
 ///
 /// End "keep in sync" section
 ///
+
+/**
+ * Paginated response for the publish-plans list (Publish History). Transport
+ * wrapper around a page of `PublishPlanEntity` rows, newest first.
+ */
+export interface PublishPlanListResponse {
+  data: PublishPlanEntity[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
