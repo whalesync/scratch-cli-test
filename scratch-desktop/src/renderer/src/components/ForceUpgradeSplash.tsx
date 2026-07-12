@@ -1,11 +1,11 @@
-import { Box, Paper, Progress, Stack } from '@mantine/core';
+import { Box, Collapse, Paper, Progress, ScrollArea, Stack } from '@mantine/core';
 import { ArrowUpCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { UpdaterEvent } from '../../../shared/updater-events';
 import logoColor from '../assets/logo-color.svg';
 import { trackForceUpgradeRequired, trackInstallUpdate } from '../lib/posthog';
-import { ButtonPrimaryLight } from './base/buttons';
-import { Text13Regular, TextMono12Regular, TextTitle3 } from './base/text';
+import { ButtonPrimaryLight, ButtonSecondaryInline } from './base/buttons';
+import { Text13Regular, TextMono12Regular, TextMono9Regular, TextTitle3 } from './base/text';
 import { StyledLucideIcon } from './icons/StyledLucideIcon';
 
 /**
@@ -27,6 +27,7 @@ export function ForceUpgradeSplash({ currentVersion, minimumVersion }: ForceUpgr
   const [phase, setPhase] = useState<UpgradePhase>('idle');
   const [downloadPercent, setDownloadPercent] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
   const hasStartedInitialCheck = useRef(false);
 
   // Mirror main-process updater events into a local phase state machine.
@@ -41,6 +42,7 @@ export function ForceUpgradeSplash({ currentVersion, minimumVersion }: ForceUpgr
         case 'checking-for-update':
           setPhase('checking');
           setErrorMessage(null);
+          setShowErrorDetails(false);
           return;
         case 'update-available':
           setPhase('downloading');
@@ -90,6 +92,7 @@ export function ForceUpgradeSplash({ currentVersion, minimumVersion }: ForceUpgr
     }
     // idle / unavailable / error → (re)check for the update.
     setErrorMessage(null);
+    setShowErrorDetails(false);
     setPhase('checking');
     void window.scratchDesktop?.updater.checkNow();
   };
@@ -115,7 +118,9 @@ export function ForceUpgradeSplash({ currentVersion, minimumVersion }: ForceUpgr
 
   const statusMessage = ((): string | null => {
     if (phase === 'error') {
-      return errorMessage ?? 'Something went wrong while updating. Please try again.';
+      // Keep this human — the raw updater error (often a multi-line HTTP stack
+      // trace) goes behind the "Show details" expando below, not here.
+      return "We couldn't reach the update service. Please try again in a moment.";
     }
     if (phase === 'unavailable') {
       return "A newer version isn't available to download just yet. Please try again in a few minutes.";
@@ -159,6 +164,20 @@ export function ForceUpgradeSplash({ currentVersion, minimumVersion }: ForceUpgr
             <Text13Regular c={phase === 'error' ? 'red' : 'dimmed'} ta="center">
               {statusMessage}
             </Text13Regular>
+          )}
+          {phase === 'error' && errorMessage && (
+            <Stack gap="xs" w="100%" align="center">
+              <ButtonSecondaryInline onClick={() => setShowErrorDetails((shown) => !shown)}>
+                {showErrorDetails ? 'Hide details' : 'Show details'}
+              </ButtonSecondaryInline>
+              <Collapse in={showErrorDetails} w="100%">
+                <ScrollArea.Autosize mah={140} type="auto">
+                  <TextMono9Regular c="dimmed" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {errorMessage}
+                  </TextMono9Regular>
+                </ScrollArea.Autosize>
+              </Collapse>
+            </Stack>
           )}
           <ButtonPrimaryLight onClick={handlePrimaryAction} loading={isBusy} disabled={isBusy} fullWidth>
             {primaryLabel}
