@@ -1,4 +1,5 @@
 import { useDataFolders } from '@/hooks/use-data-folders';
+import { listLocalWorkspaces } from '@/lib/local-workspaces';
 import { scratchApiClient } from '@/lib/scratch-api-client';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import type { DataFolder } from '@spinner/shared-types';
@@ -26,6 +27,25 @@ export function RemoveTableModal({
     setLoading(true);
     try {
       await scratchApiClient.dataFolders.delete(folder.id);
+
+      // DEV-10744: the server delete only removes the folder from the git repos;
+      // the local workspace still holds the folder's record files and any
+      // accepted-but-unpublished patches. Reconcile the local clone so those are
+      // cleaned up — otherwise a later download re-anchors the pending edits of
+      // the now-unlinked table into brand-new "create" records. This mirrors the
+      // `scratchmd linked remove` CLI, which downloads right after the unlink.
+      // Best-effort: a failure here must not block the unlink itself, and the
+      // scheduled auto-download would reconcile eventually regardless.
+      try {
+        const localWorkspaces = await listLocalWorkspaces();
+        const localPath = localWorkspaces.find((entry) => entry.id === workbookId)?.path ?? null;
+        if (localPath) {
+          await window.scratchDesktop.pullWorkspaceChanges(localPath, { onDelete: 'remove' });
+        }
+      } catch (reconcileError) {
+        console.debug('Failed to reconcile local workspace after unlink:', reconcileError);
+      }
+
       await refresh();
       invalidateWorkspaceLevelData?.();
       onClose();

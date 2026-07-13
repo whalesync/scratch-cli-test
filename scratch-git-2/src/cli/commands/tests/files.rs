@@ -2451,6 +2451,55 @@ fn reconcile_preserves_ancestors_of_wanted_folder() {
     assert!(root.join("A/B/C").is_dir());
 }
 
+// ── DEV-10744: linked-folder membership for orphaned-patch dropping ─────────
+
+#[test]
+fn linked_folder_prefixes_trims_slashes_and_appends_separator() {
+    let folders = vec![
+        df("a", "Posts", Some("/posts")),
+        df("b", "Nested", Some("/Team Spaces/Space A/")),
+    ];
+    assert_eq!(
+        linked_folder_prefixes(&folders),
+        vec!["posts/".to_string(), "Team Spaces/Space A/".to_string()],
+    );
+}
+
+#[test]
+fn linked_folder_prefixes_empty_for_no_usable_paths() {
+    assert!(linked_folder_prefixes(&[]).is_empty());
+    // Folders with no path yield no prefix — caller treats empty as "keep all".
+    assert!(linked_folder_prefixes(&[df("a", "Nameless", None)]).is_empty());
+}
+
+#[test]
+fn linked_folder_prefixes_root_folder_matches_every_path() {
+    let prefixes = linked_folder_prefixes(&[df("root", "Root", Some("/"))]);
+    assert_eq!(prefixes, vec![String::new()]);
+    assert!(patch_path_is_in_a_linked_folder(
+        "anything/rec_1.json",
+        &prefixes
+    ));
+}
+
+#[test]
+fn patch_path_membership_matches_only_on_folder_boundary() {
+    let prefixes = vec!["posts/".to_string()];
+    assert!(patch_path_is_in_a_linked_folder(
+        "posts/rec_1.json",
+        &prefixes
+    ));
+    // `postscript/` must NOT match `posts/` — the trailing slash guards the boundary.
+    assert!(!patch_path_is_in_a_linked_folder(
+        "postscript/rec_1.json",
+        &prefixes
+    ));
+    assert!(!patch_path_is_in_a_linked_folder(
+        "articles/rec_1.json",
+        &prefixes
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // Slice D — `download_single_repo` rewrite (refuse-or-replay model).
 // Pre-Slice-F the working tree happens to live in `ctx.worktree_dir`, but D
@@ -2564,6 +2613,157 @@ fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
 
     // No conflict log written — disjoint fields.
     assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+/// DEV-10744: unlinking a table removes its folder from the server's `main`, so
+/// the folder's records vanish from the pulled tree. A pending (accepted)
+/// Update for such a record would otherwise be re-anchored into a *Create*
+/// (`re_anchor`'s `new = None` branch), resurrecting the edits of a deliberately
+/// unlinked table as brand-new records. When the server folder list no longer
+/// includes the folder, the patch must be dropped and the record's worktree file
+/// removed — never re-surfaced as a create.
+#[test]
+fn download_drops_accepted_patch_for_unlinked_folder_instead_of_resurrecting_it_as_create() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // Seed main with a record in each of two folders.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_keep.json",
+        "{\n  \"name\": \"Keeper\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "articles/rec_ghost.json",
+        "{\n  \"name\": \"Ghost\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+
+    // User accepted an industry edit in BOTH folders (approved-but-unpublished).
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![
+            crate::shared::re_anchor::AnchoredPatch {
+                path: "posts/rec_keep.json".to_string(),
+                kind: crate::shared::re_anchor::PatchKind::Update,
+                patch: serde_json::json!({"industry": "SaaS"}),
+                revert: false,
+            },
+            crate::shared::re_anchor::AnchoredPatch {
+                path: "articles/rec_ghost.json".to_string(),
+                kind: crate::shared::re_anchor::PatchKind::Update,
+                patch: serde_json::json!({"industry": "SaaS"}),
+                revert: false,
+            },
+        ],
+    };
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_keep.json"),
+        "{\n  \"name\": \"Keeper\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+    write_file(
+        &ctx.worktree_dir.join("articles/rec_ghost.json"),
+        "{\n  \"name\": \"Ghost\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+
+    // Unlink the `articles` table: the server removes its record (folder) from main.
+    delete_remote_record(&fixture, "articles/rec_ghost.json", "unlink articles table");
+
+    // Download with a server folder list that no longer includes `articles`.
+    let data_folders = vec![df("f_posts", "posts", Some("/posts"))];
+    let result =
+        download_single_repo(&ctx, &workspace_dir, "test-token", &data_folders, None).unwrap();
+    assert_eq!(result.status, "downloaded");
+
+    // The unlinked folder's pending edit is DROPPED — not re-anchored into a Create.
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(
+        reloaded.patches.len(),
+        1,
+        "only the still-linked folder's patch survives"
+    );
+    assert_eq!(reloaded.patches[0].path, "posts/rec_keep.json");
+    assert_eq!(
+        reloaded.patches[0].kind,
+        crate::shared::re_anchor::PatchKind::Update
+    );
+    assert!(
+        !reloaded
+            .patches
+            .iter()
+            .any(|p| p.kind == crate::shared::re_anchor::PatchKind::Create),
+        "the unlinked record must never resurface as a create"
+    );
+
+    // The unlinked record's worktree file is removed; the kept folder's stays.
+    assert!(
+        !ctx.worktree_dir.join("articles/rec_ghost.json").exists(),
+        "unlinked record file removed from the worktree"
+    );
+    assert!(ctx.worktree_dir.join("posts/rec_keep.json").exists());
+}
+
+/// A transient/empty server folder list must NEVER be read as "everything is
+/// unlinked" — pending edits are kept untouched when we can't trust the list.
+#[test]
+fn download_keeps_accepted_patches_when_server_folder_list_is_empty() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_keep.json",
+        "{\n  \"name\": \"Keeper\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
+            path: "posts/rec_keep.json".to_string(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"industry": "SaaS"}),
+            revert: false,
+        }],
+    };
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_keep.json"),
+        "{\n  \"name\": \"Keeper\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+
+    // Server advances main on a disjoint field; folder list is empty (fetch failed).
+    advance_remote_main(
+        &fixture,
+        "posts/rec_keep.json",
+        "{\n  \"name\": \"Keeper Inc\",\n  \"industry\": \"Tech\"\n}\n",
+        "server renames keeper",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
+    assert_eq!(result.status, "downloaded");
+
+    // Patch preserved despite the empty folder list.
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(reloaded.patches.len(), 1);
+    assert_eq!(reloaded.patches[0].path, "posts/rec_keep.json");
 }
 
 #[test]

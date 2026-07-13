@@ -6193,12 +6193,49 @@ fn download_single_repo(
     let file_path_to_contents_map_in_main_branch_after_publish =
         read_git_tree(&ctx.bare_repo, &new_main_hash)?;
 
+    // DEV-10744: drop accepted patches for folders the server no longer lists
+    // (e.g. a table the user just unlinked) BEFORE re-anchoring. When a table is
+    // unlinked the server removes its folder from `main`, so the folder's records
+    // vanish from `new_main`. Re-anchoring an accepted Update/Create for a
+    // vanished record rewrites it into a *Create* (see `re_anchor::re_anchor_entry`,
+    // the `new = None` branch) — resurfacing the pending edits of a deliberately
+    // unlinked table as brand-new records in review. Dropping the patch here
+    // cleans it up instead; the record's worktree file then falls out of the
+    // approved map below and is removed by `materialize_local_repo`, and its empty
+    // folder is pruned by `reconcile_data_folder_dirs`. Guarded on a usable server
+    // folder list (see `linked_folder_prefixes`) so a transient server-state fetch
+    // failure — which reaches us as an empty slice — can never wipe pending edits;
+    // mirrors the DEV-10500 guard on `reconcile_data_folder_dirs`. NOTE: the
+    // *unfiltered* `accepted_file` is intentionally still used for the pre-pull
+    // approved baseline below, so the DEV-10523 unreviewed-reapply pass sees each
+    // dropped record's worktree content as already-approved (no spurious stash).
+    let linked_folder_prefixes = linked_folder_prefixes(data_folders);
+    let (patches_to_reanchor, orphaned_unlinked_patch_count) = if linked_folder_prefixes.is_empty()
+    {
+        (accepted_file.patches.clone(), 0usize)
+    } else {
+        let kept: Vec<crate::shared::re_anchor::AnchoredPatch> = accepted_file
+            .patches
+            .iter()
+            .filter(|entry| patch_path_is_in_a_linked_folder(&entry.path, &linked_folder_prefixes))
+            .cloned()
+            .collect();
+        let dropped = accepted_file.patches.len() - kept.len();
+        (kept, dropped)
+    };
+    if orphaned_unlinked_patch_count > 0 {
+        eprintln!(
+            "Dropped {} pending edit(s) in {} for folder(s) no longer linked (table unlinked).",
+            orphaned_unlinked_patch_count, ctx.conn_dir_name,
+        );
+    }
+
     // Re-anchor preserves the user's RFC 7396 patch verbatim wherever
     // possible; only file-lifecycle changes (server deleted what user
     // updated, etc.) rewrite the entry shape. See decisions in
     // `re_anchor.rs`.
     let re_anchored = crate::shared::re_anchor::re_anchor_patches(
-        &accepted_file.patches,
+        &patches_to_reanchor,
         |path| {
             parse_json_value_at(
                 &file_path_to_contents_map_in_main_branch_before_publish,
@@ -7331,6 +7368,44 @@ fn materialize_local_repo(
 /// 1. Creates a directory for every folder path (parents included).
 /// 2. Prunes any local directory not in the server set, but only if empty —
 ///    non-empty dirs are owned by the record-file merge path.
+/// The connection-relative directory prefixes (each with a trailing `/`) of
+/// every folder the server currently lists for this connection. A record patch
+/// whose path starts with one of these prefixes still belongs to a linked table;
+/// a patch matching none of them belongs to a folder the server no longer lists
+/// (a table the user unlinked, DEV-10744).
+///
+/// Returns an EMPTY vec when the server folder list is empty or carries no usable
+/// path — the caller treats that as "don't drop anything", so a transient
+/// server-state fetch failure can't wipe pending edits. A folder whose path is
+/// the connection root (empty after trimming slashes) yields an empty-string
+/// prefix, which [`patch_path_is_in_a_linked_folder`] treats as "matches every
+/// path" (so a root-anchored connection never drops a patch).
+fn linked_folder_prefixes(data_folders: &[DataFolder]) -> Vec<String> {
+    data_folders
+        .iter()
+        .filter_map(|df| df.path.as_deref())
+        .map(|path| {
+            let trimmed = path.trim_start_matches('/').trim_end_matches('/');
+            if trimmed.is_empty() {
+                String::new()
+            } else {
+                format!("{trimmed}/")
+            }
+        })
+        .collect()
+}
+
+/// True when `patch_path` (connection-relative, e.g. `Companies/rec_1.json`)
+/// lives under one of the still-linked folder prefixes produced by
+/// [`linked_folder_prefixes`]. An empty prefix (the connection root) matches
+/// every path. Callers must treat an empty `linked_folder_prefixes` slice as
+/// "keep everything" rather than passing it here (which would match nothing).
+fn patch_path_is_in_a_linked_folder(patch_path: &str, linked_folder_prefixes: &[String]) -> bool {
+    linked_folder_prefixes
+        .iter()
+        .any(|prefix| prefix.is_empty() || patch_path.starts_with(prefix.as_str()))
+}
+
 pub fn reconcile_data_folder_dirs(
     worktree_dir: &Path,
     data_folders: &[DataFolder],
