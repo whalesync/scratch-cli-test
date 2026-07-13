@@ -177,4 +177,35 @@ describe('NotionConnector.updateRecords', () => {
     expect((result as { last_edited_time?: string }).last_edited_time).toBe('2026-06-01T18:00:00.000Z');
     expect((result as { page_content?: { id: string }[] }).page_content?.[0]?.id).toBe('block_fresh');
   });
+
+  // DEV-10742: `pages.retrieve` echoes Notion's top-level `request_id` transport
+  // wrapper, which pull (Search / data-source query) never carries. Left on the
+  // refetched record it makes the post-publish blob differ from the next pull, so
+  // every published record gets a one-time phantom "remote change". It must be
+  // stripped from the returned ConnectorFile.
+  it('strips the top-level request_id transport wrapper from the refetched page', async () => {
+    const files: ConnectorFile[] = [
+      {
+        id: 'page_1',
+        properties: {
+          Title: { id: 'pid_a', type: 'title', title: [{ plain_text: 'Old' }] },
+        },
+      },
+    ];
+    const changedFields: Record<string, unknown>[] = [{ properties: { Title: { title: [{ plain_text: 'New' }] } } }];
+
+    mockRetrievePage.mockResolvedValueOnce({
+      object: 'page',
+      id: 'page_1',
+      properties: {
+        Title: { id: 'pid_a', type: 'title', title: [{ plain_text: 'New' }] },
+      },
+      request_id: 'e1e6c0a0-1234-5678-9abc-def012345678',
+    });
+
+    const [result] = await connector.updateRecords(buildTableSpec(), files, changedFields);
+
+    expect(result).not.toHaveProperty('request_id');
+    expect((result as { id?: string }).id).toBe('page_1');
+  });
 });

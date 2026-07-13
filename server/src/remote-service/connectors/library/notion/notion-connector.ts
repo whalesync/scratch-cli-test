@@ -584,7 +584,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     for (const pageId of ids) {
       try {
         const page = (await this.client.retrievePage({ page_id: pageId })) as PageObjectResponse;
-        const connectorFile = page as unknown as ConnectorFile;
+        const connectorFile = this.pageResponseToConnectorFile(page);
 
         try {
           const childrenData = await this.pollRecordPageContentChildren(
@@ -648,7 +648,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         parent: { type: 'data_source_id', data_source_id: dataSourceId },
         properties: properties as CreatePageParameters['properties'],
       });
-      results.push(newPage as unknown as ConnectorFile);
+      results.push(this.pageResponseToConnectorFile(newPage as PageObjectResponse));
     }
 
     return results;
@@ -686,7 +686,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         parent: { type: 'page_id', page_id: parentPageId },
         properties: properties as CreatePageParameters['properties'],
       });
-      results.push(newPage as unknown as ConnectorFile);
+      results.push(this.pageResponseToConnectorFile(newPage as PageObjectResponse));
     }
 
     return results;
@@ -847,6 +847,24 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   }
 
   /**
+   * Convert a single-page response (`pages.retrieve` / `pages.create`) into a
+   * ConnectorFile, stripping Notion's per-response `request_id`.
+   *
+   * `request_id` is Notion's top-level transport-envelope field, echoed on every
+   * single-object response body but absent from the per-object records that pull
+   * returns via Search / data-source query. Left on the record it makes a
+   * created / refetched file differ from what the next pull produces, so every
+   * published record picks up a one-time phantom "remote change". Stripping this
+   * transport wrapper is the sanctioned exception to the Connector Prime
+   * Directive (it is the envelope around the record, not the record's own data).
+   */
+  private pageResponseToConnectorFile(page: PageObjectResponse): ConnectorFile {
+    const connectorFile = page as unknown as ConnectorFile;
+    delete connectorFile['request_id'];
+    return connectorFile;
+  }
+
+  /**
    * Refetch a single page as a ConnectorFile in the same shape `pullRecordFiles`
    * / `pullRecordFilesByIds` would produce: `pages.retrieve` for the page
    * properties + `pollRecordPageContentChildren` for `page_content`. Used by
@@ -858,7 +876,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    */
   private async refetchPageAsConnectorFile(pageId: string): Promise<ConnectorFile> {
     const page = (await this.client.retrievePage({ page_id: pageId })) as PageObjectResponse;
-    const connectorFile = page as unknown as ConnectorFile;
+    const connectorFile = this.pageResponseToConnectorFile(page);
     try {
       const childrenData = await this.pollRecordPageContentChildren(
         page.id,

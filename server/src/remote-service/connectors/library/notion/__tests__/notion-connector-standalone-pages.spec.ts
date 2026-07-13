@@ -252,6 +252,21 @@ describe('NotionConnector — standalone-pages backup table', () => {
       expect(results).toEqual([createdPage]);
     });
 
+    // DEV-10742: createPage echoes Notion's top-level request_id transport
+    // wrapper, which pull (Search) never carries. Left on the created record it
+    // makes the post-create blob differ from the next pull, so every created
+    // page gets a one-time phantom "remote change". It must be stripped.
+    it('createRecords strips the top-level request_id transport wrapper from the created page', async () => {
+      const createdPage = { ...searchResultPage('p_new', PAGE_PARENT, 'Brand New Page'), request_id: 'req_abc' };
+      mockCreatePage.mockResolvedValueOnce(createdPage);
+      const newRecordFile = searchResultPage('', PAGE_PARENT, 'Brand New Page');
+
+      const [result] = await connector.createRecords(buildStandalonePagesTableSpec(), [newRecordFile]);
+
+      expect(result).not.toHaveProperty('request_id');
+      expect((result as { id?: string }).id).toBe('p_new');
+    });
+
     it('createRecords fails fast for a file without a page_id parent (workspace-level creates are impossible)', async () => {
       const workspaceParentedFile = searchResultPage('', WORKSPACE_PARENT, 'Orphan');
 
