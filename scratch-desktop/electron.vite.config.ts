@@ -3,6 +3,11 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import { resolve } from 'path';
 import { sharedTypesSourceAliases } from './shared-types-source-aliases';
 
+// Short git commit the renderer bundle was built at, stamped in at build time and surfaced in the
+// Settings screen footer. GitLab CI injects CI_COMMIT_SHORT_SHA into the release pipeline's package
+// jobs; local/dev builds have no CI commit, so they show 'dev'.
+const shortGitCommitHashAtBuildTime = process.env.CI_COMMIT_SHORT_SHA || 'dev';
+
 export default defineConfig({
   main: {
     resolve: {
@@ -31,6 +36,9 @@ export default defineConfig({
         '@': resolve('src/renderer/src'),
         ...sharedTypesSourceAliases(process.cwd()),
       },
+    },
+    define: {
+      __GIT_COMMIT_HASH__: JSON.stringify(shortGitCommitHashAtBuildTime),
     },
     plugins: [react()],
     build: {

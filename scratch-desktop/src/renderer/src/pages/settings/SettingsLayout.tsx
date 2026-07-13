@@ -1,7 +1,8 @@
-import { Text12Medium, Text13Medium, Text13Regular } from '@/components/base/text';
+import { Text12Book, Text12Medium, Text13Medium, Text13Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, Stack, UnstyledButton } from '@mantine/core';
 import { ArrowLeftIcon, CreditCardIcon, LucideIcon, SettingsIcon, UserIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 const SIDEBAR_WIDTH = 220;
@@ -39,6 +40,25 @@ function SettingsNavButton({ item, active }: { item: SettingsNavItem; active: bo
       <StyledLucideIcon Icon={item.icon} size="sm" c={color} />
       <Text13Regular c={color}>{item.label}</Text13Regular>
     </UnstyledButton>
+  );
+}
+
+/**
+ * Dimmed version + build-commit footer pinned to the bottom-left of the Settings sidebar. The version comes
+ * from the main process (`app.getVersion()`, i.e. package.json's version stamped at release time) and the short
+ * commit hash is baked into the renderer bundle at build time (`__GIT_COMMIT_HASH__`, see electron.vite.config.ts).
+ */
+function SettingsSidebarBuildInfoFooter() {
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    void window.scratchDesktop.getAppVersion().then(setAppVersion);
+  }, []);
+
+  return (
+    <Box px="sm" py={8} style={{ borderTop: '0.5px solid var(--fg-divider)' }}>
+      {appVersion && <Text12Book c="var(--fg-muted)">v{appVersion}</Text12Book>}
+      <Text12Book c="var(--fg-muted)">{__GIT_COMMIT_HASH__}</Text12Book>
+    </Box>
   );
 }
 
@@ -123,6 +143,7 @@ export function SettingsLayout() {
             ))}
           </Stack>
         </Box>
+        <SettingsSidebarBuildInfoFooter />
       </Stack>
 
       <Box
