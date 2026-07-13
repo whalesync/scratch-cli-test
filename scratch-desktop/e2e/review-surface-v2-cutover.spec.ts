@@ -79,7 +79,7 @@ test('flag ON: the new review surface renders, counts partition, and the drawer 
   await expect(window.getByLabel('Next record')).toBeEnabled();
 });
 
-test('flag ON: change-type filter chips render their group count and select exclusively (DEV-10656)', async () => {
+test('flag ON: change-type filter chips render their group count, select exclusively, and toggle off (DEV-10656, DEV-10759)', async () => {
   // Headroom over the 60s default: whichever test launches first pays the post-build cold start.
   test.setTimeout(120_000);
   const { window, workspace } = await launchAtAcceptFixture(true);
@@ -91,8 +91,8 @@ test('flag ON: change-type filter chips render their group count and select excl
   await expect(window.getByRole('button', { name: 'Approve all 2' })).toBeVisible({ timeout: 20_000 });
 
   // One chip per By-type group. The two created records form a single "New" group, so its chip carries
-  // the group's live count → "New 2" (chip count == group record count by construction). "All" is the
-  // default selection, so the group chip starts unpressed.
+  // the group's live count → "New 2" (chip count == group record count by construction). There is no
+  // dedicated "All" chip (DEV-10759) — nothing is selected by default, so the group chip starts unpressed.
   const newChip = window.getByRole('button', { name: 'New 2' });
   await expect(newChip).toBeVisible({ timeout: 20_000 });
   await expect(newChip).toHaveAttribute('aria-pressed', 'false');
@@ -104,6 +104,12 @@ test('flag ON: change-type filter chips render their group count and select excl
   // narrowing.)
   await newChip.click();
   await expect(newChip).toHaveAttribute('aria-pressed', 'true');
+  await expect(window.getByRole('button', { name: 'Approve all 2' })).toBeVisible();
+
+  // Toggle off (DEV-10759): clicking the active chip clears the change-type filter and returns to the
+  // unfiltered state — the chip becomes unpressed again while its group is still present.
+  await newChip.click();
+  await expect(newChip).toHaveAttribute('aria-pressed', 'false');
   await expect(window.getByRole('button', { name: 'Approve all 2' })).toBeVisible();
 });
 

@@ -30,7 +30,8 @@ export interface ChangeTypeChipModel {
 
 /**
  * One chip per By-type group, in the groups' order (field columns in view order, then New, Removed,
- * Needs attention). The "All" chip is rendered separately by the subbar (it is not a group).
+ * Needs attention). There is no dedicated "All" chip — the unfiltered state is "no chip active"
+ * (`activeChangeTypeGroupKey === null`), reached by toggling the active chip off.
  */
 export function buildChangeTypeChips(groups: readonly ByTypeGroupModel[]): ChangeTypeChipModel[] {
   return groups.map((group) => ({

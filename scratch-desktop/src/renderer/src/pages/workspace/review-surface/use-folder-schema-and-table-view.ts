@@ -1,5 +1,5 @@
 import type { TableView } from '@spinner/shared-types';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { createFallbackTableView } from '../../../../../shared/schema-columns';
 
 /**
@@ -12,6 +12,12 @@ import { createFallbackTableView } from '../../../../../shared/schema-columns';
 export interface FolderSchemaAndTableView {
   schema: Record<string, unknown> | null;
   tableView: TableView | null;
+  /**
+   * Mutate the in-memory `TableView` — used by the JSON viewer's "add column" hover action to append
+   * a new column path (mirrors `FolderDataGrid`). This edits the working view only; it does not
+   * persist to disk, and the connection-file-changed hot-reload re-reads the on-disk view.
+   */
+  setTableView: Dispatch<SetStateAction<TableView | null>>;
   availableViewNames: string[];
   /** `'default'` | `'Generated'` | a named on-disk view. Drives which view the hot-reload re-reads. */
   viewSource: string;
@@ -108,5 +114,5 @@ export function useFolderSchemaAndTableView(
     return unsubscribe;
   }, [viewSource, folderPath, workspacePath]);
 
-  return { schema, tableView, availableViewNames, viewSource };
+  return { schema, tableView, setTableView, availableViewNames, viewSource };
 }

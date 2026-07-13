@@ -1,6 +1,6 @@
 import { Box, Group, Loader, Portal, ScrollArea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Braces, Check, ChevronDown, ChevronUp, Trash2, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getByPath } from '../../../../shared/schema-columns';
 import { ButtonPrimarySolid, ButtonSecondaryGhost, IconButtonGhost } from '../../components/base/buttons';
@@ -13,6 +13,7 @@ import {
   TextTitle2,
 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../components/ScratchJsonCodeMirror';
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { isLongFormContent } from './content-paragraph-diff';
 import { ContentDiffWithMap } from './ContentDiffWithMap';
@@ -49,6 +50,18 @@ interface RecordReviewDrawerProps {
   onSingleFieldAccepted?: (filename: string, fieldName: string, nextValue: unknown) => void;
   /** A per-field reject changed the record's structure — the host refetches both surfaces. */
   onFieldReviewedRefetchAll?: () => void;
+  /**
+   * JSON-viewer column-hover wiring (mirrors `RecordDetailView`). When all four are supplied, hovering
+   * a key in the read-only JSON view offers add/toggle-column; when any is missing the viewer is still
+   * shown, just without the hover tooltips.
+   */
+  onAddColumn?: (path: string) => void;
+  /** Toggle visibility of an existing column from the JSON viewer's hover tooltip. */
+  onToggleColumnVisible?: (path: string) => void;
+  /** All view column paths (visible + hidden) — feeds the JSON viewer's column-hover tooltips. */
+  allColumnPaths?: Set<string>;
+  /** Currently-visible column paths — feeds the JSON viewer's column-hover tooltips. */
+  visibleColumnPaths?: Set<string>;
 }
 
 interface StateBadge {
@@ -266,11 +279,18 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
   onRejected,
   onSingleFieldAccepted,
   onFieldReviewedRefetchAll,
+  onAddColumn,
+  onToggleColumnVisible,
+  allColumnPaths,
+  visibleColumnPaths,
 }: RecordReviewDrawerProps) {
   const [recordData, setRecordData] = useState<DiffRecordData | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [fieldMode, setFieldMode] = useState<DrawerFieldMode>('changes');
+  // The read-only JSON viewer toggle (Braces button), ported from RecordDetailView. Independent of
+  // the Changes/All-fields field mode; persists as the user steps through records.
+  const [viewRaw, setViewRaw] = useState(false);
   // Bumped after a per-field reject to reload this record's three-state diff from disk.
   const [reloadTick, setReloadTick] = useState(0);
   // In-session approve/reject markers, keyed by filename. The grid refetch removes
@@ -367,6 +387,21 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
 
   const rowStatus: DiffRowStatus = recordData?.row.__rowStatus ?? 'modified';
   const isDeletedRecord = rowStatus === 'deleted' || rowStatus === 'deletedUnpublished';
+
+  // JSON viewer (ported from RecordDetailView): the raw record as pretty-printed JSON, plus the
+  // column-hover callbacks. Not offered for invalidJson rows (their on-disk text isn't valid JSON —
+  // the drawer shows a parse-error message instead), so a stale `viewRaw` never renders `{}` there.
+  const canShowJsonView = rowStatus !== 'invalidJson';
+  const showJsonView = viewRaw && canShowJsonView;
+  const rawJsonText = useMemo(
+    () => (recordData?.displayData ? JSON.stringify(recordData.displayData, null, 2) : ''),
+    [recordData],
+  );
+  const columnHover = useMemo<ColumnHoverCallbacks | undefined>(() => {
+    if (!onAddColumn || !onToggleColumnVisible || !allColumnPaths || !visibleColumnPaths) return undefined;
+    return { onAddColumn, onToggleColumnVisible, allColumns: allColumnPaths, visibleColumns: visibleColumnPaths };
+  }, [onAddColumn, onToggleColumnVisible, allColumnPaths, visibleColumnPaths]);
+
   const recordName = recordData
     ? getRecordName(recordData.row, titleColumnId)
     : (currentFilename ?? '').replace(/\.json$/, '');
@@ -709,6 +744,21 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
               All changes
             </ButtonSecondaryGhost>
             <Group gap={6} align="center" wrap="nowrap">
+              {canShowJsonView && (
+                <IconButtonGhost
+                  size="compact-xs"
+                  aria-label="Toggle JSON view"
+                  aria-pressed={showJsonView}
+                  onClick={() => setViewRaw((raw) => !raw)}
+                  style={
+                    showJsonView
+                      ? { backgroundColor: 'var(--highlight-fill)', outline: '1px solid var(--highlight-border)' }
+                      : undefined
+                  }
+                >
+                  <StyledLucideIcon Icon={Braces} size="sm" c={showJsonView ? 'var(--highlight-text)' : undefined} />
+                </IconButtonGhost>
+              )}
               <IconButtonGhost
                 size="compact-xs"
                 aria-label="Previous record"
@@ -763,15 +813,21 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
           </Box>
 
           {/* Body */}
-          <ScrollArea style={{ flex: 1 }}>
-            {loading ? (
-              <Box style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0' }}>
-                <Loader size="sm" />
-              </Box>
-            ) : (
+          {loading ? (
+            <Box style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Loader size="sm" />
+            </Box>
+          ) : showJsonView ? (
+            // CodeMirror manages its own scroll, so the JSON viewer sits outside the field ScrollArea
+            // and fills the body (mirrors RecordDetailView's raw view).
+            <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+              <ScratchJsonCodeMirror value={rawJsonText} readOnly columnHover={columnHover} />
+            </Box>
+          ) : (
+            <ScrollArea style={{ flex: 1 }}>
               <Box style={{ padding: '4px 16px 16px' }}>{bodyContent}</Box>
-            )}
-          </ScrollArea>
+            </ScrollArea>
+          )}
 
           {/* Footer */}
           <Group

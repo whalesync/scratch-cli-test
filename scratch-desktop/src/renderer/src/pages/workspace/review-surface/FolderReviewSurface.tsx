@@ -1,6 +1,7 @@
 import { ButtonSecondaryGhost, ButtonSecondaryOutline } from '@/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
 import { Box, Group, Loader, Modal } from '@mantine/core';
+import type { TableViewCol } from '@spinner/shared-types';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react';
 import { trackOpenRecordChangesDrawer, trackSelectChangeTypeChip } from '../../../lib/posthog';
 import { useWorkspaceUiStore, type FilterKind } from '../../../stores/workspace-ui-store';
@@ -103,7 +104,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   // mode is just the view-mode selection.
   const isByTypeMode = reviewSurfaceViewMode === 'by-type';
 
-  const { schema, tableView } = useFolderSchemaAndTableView(selectedFolderPath, workspacePath);
+  const { schema, tableView, setTableView } = useFolderSchemaAndTableView(selectedFolderPath, workspacePath);
 
   const {
     diffData,
@@ -205,6 +206,31 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
   // What the ColumnPickerMenu and RecordDetailView treat as "visible" (the effective set, or all).
   const effectiveVisibleColumnList = effectiveVisibleColumnIds ?? columnMetadata.columnOrder;
   const visibleColumnPaths = useMemo(() => new Set(effectiveVisibleColumnList), [effectiveVisibleColumnList]);
+
+  // Column add/toggle from the JSON viewer's hover tooltips (RecordDetailView + the review drawer).
+  // Ported verbatim from `FolderDataGrid` so hovering a JSON key can promote it to a grid column or
+  // toggle an existing one — both drive the same `visibleColumnIds` store slice as the column picker.
+  const handleAddColumn = useCallback(
+    (path: string) => {
+      if (!tableView) return;
+      if (flatViewColumns.some((col) => col.path === path)) return;
+      const newColumn: TableViewCol = { kind: 'col', path };
+      setTableView({ ...tableView, cols: [...tableView.cols, newColumn] });
+      setVisibleColumnIds((prev) => (prev ? [...prev, path] : [...effectiveVisibleColumnList, path]));
+    },
+    [tableView, setTableView, flatViewColumns, effectiveVisibleColumnList, setVisibleColumnIds],
+  );
+  const handleToggleColumnVisible = useCallback(
+    (path: string) => {
+      const isVisible = effectiveVisibleColumnList.includes(path);
+      setVisibleColumnIds(
+        isVisible
+          ? effectiveVisibleColumnList.filter((columnId) => columnId !== path)
+          : [...effectiveVisibleColumnList, path],
+      );
+    },
+    [effectiveVisibleColumnList, setVisibleColumnIds],
+  );
 
   // Banner groups reshaped for ColumnPickerMenu (`Map<path, groupName>` → `{ name, columnIds }[]`).
   const columnGroupsForPicker = useMemo(() => {
@@ -606,6 +632,8 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
             columnGroups={columnMetadata.columnGroups}
             allColumnPaths={columnMetadata.allColumnPaths}
             visibleColumnPaths={visibleColumnPaths}
+            onAddColumn={handleAddColumn}
+            onToggleColumnVisible={handleToggleColumnVisible}
             onSelectIndex={(nextIndex) => {
               const nextFilename = diffData.rows[nextIndex]?.__filename;
               if (nextFilename) showRecord(nextFilename);
@@ -738,6 +766,10 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
             titleColumnId={titleColumnId}
             columnLabels={columnLabels}
             columnEffectivePaths={columnEffectivePaths}
+            allColumnPaths={columnMetadata.allColumnPaths}
+            visibleColumnPaths={visibleColumnPaths}
+            onAddColumn={handleAddColumn}
+            onToggleColumnVisible={handleToggleColumnVisible}
             changedFilenames={drawerFilenames}
             currentIndex={recordChangesDrawerIndex}
             onSelectIndex={(index) => setRecordChangesDrawerFilename(drawerFilenames[index] ?? null)}

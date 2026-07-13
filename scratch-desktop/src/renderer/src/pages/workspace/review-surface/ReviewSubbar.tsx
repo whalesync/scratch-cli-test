@@ -54,9 +54,9 @@ interface ReviewSubbarProps {
   columnPicker: ReviewColumnPickerModel;
   /** Change-type filter chips (Table view only) — one per By-type group, in group order (DEV-10656). */
   changeTypeChips: ChangeTypeChipModel[];
-  /** The active chip's group key, or `null` for the "All" chip. */
+  /** The active chip's group key, or `null` when no chip is selected (the unfiltered state). */
   activeChangeTypeGroupKey: string | null;
-  /** Select a chip exclusively; `null` = All (clears the change-type filter). */
+  /** Select a chip exclusively, or pass `null` to clear the change-type filter (a chip toggles off to `null`). */
   onSelectChangeTypeChip: (changeTypeGroupKey: string | null) => void;
 }
 
@@ -276,23 +276,22 @@ export function ReviewSubbar({
         <ViewToggle viewMode={viewMode} onViewModeChange={onViewModeChange} byFieldDisabled={byFieldDisabled} />
         {changeTypeChips.length > 0 && (
           <Box style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflowX: 'auto' }}>
-            <ChangeTypeChip
-              label="All"
-              active={activeChangeTypeGroupKey === null}
-              disabled={disabled}
-              onClick={() => onSelectChangeTypeChip(null)}
-            />
-            {changeTypeChips.map((chip) => (
-              <ChangeTypeChip
-                key={chip.changeTypeGroupKey}
-                label={chip.label}
-                count={chip.count}
-                dotColor={chip.dotColorVar}
-                active={activeChangeTypeGroupKey === chip.changeTypeGroupKey}
-                disabled={disabled}
-                onClick={() => onSelectChangeTypeChip(chip.changeTypeGroupKey)}
-              />
-            ))}
+            {changeTypeChips.map((chip) => {
+              const active = activeChangeTypeGroupKey === chip.changeTypeGroupKey;
+              return (
+                <ChangeTypeChip
+                  key={chip.changeTypeGroupKey}
+                  label={chip.label}
+                  count={chip.count}
+                  dotColor={chip.dotColorVar}
+                  active={active}
+                  disabled={disabled}
+                  // Toggle: clicking the already-active chip clears the change-type filter (back to unfiltered);
+                  // there is no dedicated "All" chip — the unfiltered state is simply "no chip active".
+                  onClick={() => onSelectChangeTypeChip(active ? null : chip.changeTypeGroupKey)}
+                />
+              );
+            })}
           </Box>
         )}
       </Box>
