@@ -13,6 +13,8 @@ export type AuthenticatedUser = UserCluster.User & {
   authSource: 'user' | 'cli' | 'mcp';
   clerkUser?: ClerkUser;
   apiToken?: ApiToken;
+  // If the user is being impersonated, this will be the admin who is performing the impersonation
+  impersonator?: UserCluster.User;
 };
 
 // (Chris) I know there is likely a better Typescript way to do this globally for the server but I didn't have time to figure it out yet
@@ -25,12 +27,27 @@ export interface SocketWithUser extends Socket {
 }
 
 /**
+ * The JWT actor ("act") claim — RFC 8693. Present only when the session is being acted on behalf of
+ * someone else, which for us means a Clerk dashboard impersonation: `sub` on the payload remains the
+ * impersonated user, while `sub` here is the Clerk user id of the impersonator.
+ *
+ * Clerk also uses this claim for agent actors, distinguished by `type === 'agent'`; dashboard
+ * impersonation leaves `type` unset.
+ */
+export interface ScratchJwtActorClaim {
+  sub: string; // clerk user id of the impersonator
+  type?: 'agent';
+  [key: string]: unknown;
+}
+
+/**
  * Extension to the Clerk JwtPayload type with our custom session fields
  */
 export interface ScratchJwtPayload {
   sub: string; // clerk user id
   fullName?: string;
   primaryEmail?: string;
+  act?: ScratchJwtActorClaim;
 }
 
 /**

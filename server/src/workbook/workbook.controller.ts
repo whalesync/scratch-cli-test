@@ -32,7 +32,7 @@ import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
-import { WorkspacePermissionRole, userToActor } from '../users/types';
+import { WorkspacePermissionRole, requestToActor, userToActor } from '../users/types';
 import { UsersService } from '../users/users.service';
 import { DataFolderService } from './data-folder.service';
 import { WorkbookListQueryDto } from './dto/list-workbooks-query.dto';
@@ -80,16 +80,17 @@ export class WorkbookController {
   async findAll(@Query() query: WorkbookListQueryDto, @Req() req: RequestWithUser): Promise<Workspace[]> {
     const { connectorAccountId, sortBy, sortOrder, managedBy } = query;
     let workbooks: WorkbookCluster.Workbook[] = [];
+    const actor = requestToActor(req);
     if (connectorAccountId) {
       workbooks = await this.service.findAllForConnectorAccount(
         connectorAccountId,
-        userToActor(req.user),
+        actor,
         sortBy,
         sortOrder,
         managedBy,
       );
     } else {
-      workbooks = await this.service.findAllForUser(userToActor(req.user), sortBy, sortOrder, managedBy);
+      workbooks = await this.service.findAllForUser(actor, sortBy, sortOrder, managedBy);
     }
 
     const workbookIds = workbooks.map((s) => s.id as WorkbookId);

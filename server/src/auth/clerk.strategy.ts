@@ -9,6 +9,7 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
 import { WSLogger } from 'src/logger';
 import { UsersService } from 'src/users/users.service';
+import { resolveImpersonatorFromActorClaim } from './impersonation';
 import { AuthenticatedUser, ScratchJwtPayload } from './types';
 
 @Injectable()
@@ -78,10 +79,18 @@ export class ClerkStrategy extends PassportStrategy(Strategy, 'clerk') {
       throw new UnauthorizedException('No Scratch user found');
     }
 
+    const impersonator = await resolveImpersonatorFromActorClaim(
+      scratchPayload,
+      user,
+      this.userService,
+      'ClerkStrategy',
+    );
+
     return {
       ...user,
       authType: 'jwt',
       authSource: 'user',
+      impersonator,
     };
   }
 }

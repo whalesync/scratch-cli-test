@@ -1,5 +1,6 @@
 import { UserRole } from '@prisma/client';
 import { ScratchPlanType, SubscriptionId, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
+import type { RequestWithUser } from 'src/auth/types';
 import { UserCluster } from 'src/db/cluster-types';
 import { WSLogger } from 'src/logger';
 import { getLastestExpiringSubscription, isSubscriptionExpired } from 'src/payment/helpers';
@@ -36,6 +37,7 @@ export interface Actor {
   authSource?: AuthSource;
   isAdmin?: boolean;
   workspacePermissions?: WorkspacePermission[];
+  impersonator?: Actor;
 }
 
 // The system actor is used for actions that are not performed by a user, such as system jobs or cron jobs
@@ -111,6 +113,31 @@ export function userToActor(user: UserCluster.User): Actor {
     authSource,
     isAdmin: user.role === UserRole.ADMIN,
     workspacePermissions,
+  };
+}
+
+/**
+ * Sister of {@link userToActor} for the HTTP layer: builds the Actor for the authenticated user of a
+ * request, and — when the request's session is a Clerk impersonation — attaches the admin performing
+ * it as the Actor's `impersonator`.
+ *
+ * Prefer this over `userToActor(req.user)` in controllers. Both produce the same Actor for the acting
+ * user, but only this one carries the impersonator through, so downstream audit logging can attribute
+ * the action to the human who actually took it rather than to the user they were impersonating.
+ */
+export function requestToActor(req: RequestWithUser): Actor {
+  const actor = userToActor(req.user);
+
+  const impersonator = req.user.impersonator;
+  if (!impersonator) {
+    return actor;
+  }
+
+  return {
+    ...actor,
+    // Run the impersonator through userToActor too, so the nested Actor carries their own
+    // organization, role and permissions rather than a bare user id.
+    impersonator: userToActor(impersonator),
   };
 }
 

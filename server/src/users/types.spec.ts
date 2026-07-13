@@ -1,7 +1,8 @@
 import { UserRole } from '@prisma/client';
+import type { AuthenticatedUser, RequestWithUser } from 'src/auth/types';
 import { UserCluster } from 'src/db/cluster-types';
 import { WSLogger } from 'src/logger';
-import { userToActor } from './types';
+import { requestToActor, userToActor } from './types';
 
 describe('User Type Utilities', () => {
   describe('userToActor', () => {
@@ -159,6 +160,116 @@ describe('User Type Utilities', () => {
       expect(actor).not.toHaveProperty('clerkId');
       expect(actor).not.toHaveProperty('createdAt');
       expect(actor).not.toHaveProperty('updatedAt');
+    });
+  });
+
+  describe('requestToActor', () => {
+    let loggerErrorSpy: jest.SpyInstance;
+    let testUser: UserCluster.User;
+    let testImpersonator: UserCluster.User;
+
+    beforeEach(() => {
+      loggerErrorSpy = jest.spyOn(WSLogger, 'error').mockImplementation();
+      testUser = {
+        id: 'user_123',
+        clerkId: 'clerk_456',
+        whalesyncUserId: null,
+        organizationId: 'org_789',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        email: 'test@example.com',
+        name: 'Test User',
+        role: UserRole.USER,
+        stripeCustomerId: 'stripe_123',
+        settings: {},
+        lastWorkbookId: null,
+        waitlistApproved: false,
+        apiTokens: [] as UserCluster.User['apiTokens'],
+        workspacePermissions: [] as UserCluster.WorkspacePermission[],
+        organization: {
+          id: 'org_789',
+          name: 'Test Organization',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          clerkId: 'clerk_org_789',
+          deleted: false,
+          subscriptions: [],
+        },
+      };
+
+      // The admin performing a Clerk impersonation: a different user, in a different org, and an ADMIN.
+      testImpersonator = {
+        ...testUser,
+        id: 'user_admin_999',
+        clerkId: 'clerk_admin_999',
+        organizationId: 'org_whalesync',
+        email: 'admin@whalesync.com',
+        name: 'Admin Adminson',
+        role: UserRole.ADMIN,
+        organization: {
+          id: 'org_whalesync',
+          name: 'Whalesync',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          clerkId: 'clerk_org_whalesync',
+          deleted: false,
+          subscriptions: [],
+        },
+      };
+    });
+
+    afterEach(() => {
+      if (loggerErrorSpy) {
+        loggerErrorSpy.mockRestore();
+      }
+    });
+
+    function buildRequest(user: AuthenticatedUser): RequestWithUser {
+      return { user } as RequestWithUser;
+    }
+
+    it('produces the same actor as userToActor when the session is not impersonated', () => {
+      const authenticatedUser = { ...testUser, authType: 'jwt', authSource: 'user' } as AuthenticatedUser;
+
+      const actor = requestToActor(buildRequest(authenticatedUser));
+
+      expect(actor).toEqual(userToActor(testUser));
+      expect(actor.impersonator).toBeUndefined();
+    });
+
+    it('attaches the impersonator as a nested actor when the session is impersonated', () => {
+      const authenticatedUser = {
+        ...testUser,
+        authType: 'jwt',
+        authSource: 'user',
+        impersonator: testImpersonator,
+      } as AuthenticatedUser;
+
+      const actor = requestToActor(buildRequest(authenticatedUser));
+
+      // The acting user is still the impersonated user — permissions must resolve against them.
+      expect(actor.userId).toBe('user_123');
+      expect(actor.organizationId).toBe('org_789');
+      expect(actor.isAdmin).toBe(false);
+
+      // The impersonator is a fully-built Actor carrying their OWN org and role, not the subject's.
+      expect(actor.impersonator).toEqual(userToActor(testImpersonator));
+      expect(actor.impersonator?.userId).toBe('user_admin_999');
+      expect(actor.impersonator?.organizationId).toBe('org_whalesync');
+      expect(actor.impersonator?.isAdmin).toBe(true);
+    });
+
+    it('does not nest an impersonator inside the impersonator', () => {
+      const authenticatedUser = {
+        ...testUser,
+        authType: 'jwt',
+        authSource: 'user',
+        impersonator: testImpersonator,
+      } as AuthenticatedUser;
+
+      const actor = requestToActor(buildRequest(authenticatedUser));
+
+      expect(actor.impersonator?.impersonator).toBeUndefined();
     });
   });
 });

@@ -6,7 +6,8 @@ import { WsException } from '@nestjs/websockets';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
 import { UsersService } from 'src/users/users.service';
-import { AuthenticatedUser, SocketWithUser } from './types';
+import { resolveImpersonatorFromActorClaim } from './impersonation';
+import { AuthenticatedUser, ScratchJwtPayload, SocketWithUser } from './types';
 
 @Injectable()
 export class WebSocketAuthGuard implements CanActivate {
@@ -72,9 +73,9 @@ export class WebSocketAuthGuard implements CanActivate {
 
   private async validateJWT(token: string): Promise<AuthenticatedUser | null> {
     try {
-      const tokenPayload = await verifyToken(token, {
+      const tokenPayload = (await verifyToken(token, {
         secretKey: this.configService.getClerkSecretKey(),
-      });
+      })) as ScratchJwtPayload;
 
       // verifying the JWT is enough to validate the session, no need to fetch the user from clerk with every request
       // The `sub` field in the token payload is a clerk user id
@@ -84,10 +85,13 @@ export class WebSocketAuthGuard implements CanActivate {
         return null;
       }
 
+      const impersonator = await resolveImpersonatorFromActorClaim(tokenPayload, user, this.userService, 'WsAuthGuard');
+
       return {
         ...user,
         authType: 'jwt',
         authSource: 'user',
+        impersonator,
       };
     } catch (error) {
       if (error instanceof TokenVerificationError) {

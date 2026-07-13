@@ -45,6 +45,7 @@ describe('ClerkStrategy', () => {
   beforeEach(async () => {
     const mockUsersService = {
       getOrCreateUserFromClerk: jest.fn(),
+      findByClerkId: jest.fn(),
     };
 
     const mockConfigService = {
@@ -372,6 +373,102 @@ describe('ClerkStrategy', () => {
         "O'Brien-Smith, Jr. 李明",
         'user+test@example.co.uk',
       );
+    });
+  });
+
+  describe('impersonation (the JWT actor claim)', () => {
+    const mockImpersonator = {
+      id: 'user_admin_789',
+      clerkId: 'clerk_admin_789',
+      name: 'Admin Adminson',
+      email: 'admin@whalesync.com',
+      organizationId: 'org_456',
+      apiTokens: [],
+      workspacePermissions: [],
+      organization: null,
+    } as unknown as UserCluster.User;
+
+    const impersonatedJwtPayload: ScratchJwtPayload = {
+      ...mockJwtPayload,
+      act: { sub: 'clerk_admin_789' },
+    };
+
+    const mockRequest = {
+      headers: { authorization: 'Bearer valid_jwt_token' },
+    } as Request;
+
+    it('resolves the impersonator when the actor claim maps to a Scratch user', async () => {
+      (verifyToken as jest.Mock).mockResolvedValue(impersonatedJwtPayload);
+      usersService.getOrCreateUserFromClerk.mockResolvedValue(mockUser);
+      usersService.findByClerkId.mockResolvedValue(mockImpersonator);
+
+      const result = await strategy.validate(mockRequest);
+
+      // The impersonated user remains the authenticated subject — authorization must still be
+      // evaluated against them, not the admin.
+      expect(result.id).toBe(mockUser.id);
+      expect(result.impersonator).toEqual(mockImpersonator);
+      expect(usersService.findByClerkId).toHaveBeenCalledWith('clerk_admin_789');
+    });
+
+    it('leaves impersonator undefined when there is no actor claim', async () => {
+      (verifyToken as jest.Mock).mockResolvedValue(mockJwtPayload);
+      usersService.getOrCreateUserFromClerk.mockResolvedValue(mockUser);
+
+      const result = await strategy.validate(mockRequest);
+
+      expect(result.impersonator).toBeUndefined();
+      expect(usersService.findByClerkId).not.toHaveBeenCalled();
+    });
+
+    it('warns and does not create a user when the impersonator has no Scratch account', async () => {
+      loggerErrorSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+
+      (verifyToken as jest.Mock).mockResolvedValue(impersonatedJwtPayload);
+      usersService.getOrCreateUserFromClerk.mockResolvedValue(mockUser);
+      usersService.findByClerkId.mockResolvedValue(null);
+
+      const result = await strategy.validate(mockRequest);
+
+      // The session still authenticates, but the miss must be loud — an unattributable impersonation
+      // is otherwise indistinguishable from an ordinary request.
+      expect(result.id).toBe(mockUser.id);
+      expect(result.impersonator).toBeUndefined();
+      expect(WSLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ impersonatorClerkId: 'clerk_admin_789' }));
+      // The impersonator is looked up, never created.
+      expect(usersService.getOrCreateUserFromClerk).toHaveBeenCalledTimes(1);
+      expect(usersService.getOrCreateUserFromClerk).not.toHaveBeenCalledWith(
+        'clerk_admin_789',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('does not fail an otherwise-valid session when the impersonator lookup throws', async () => {
+      loggerErrorSpy = jest.spyOn(WSLogger, 'error').mockImplementation(() => undefined);
+
+      (verifyToken as jest.Mock).mockResolvedValue(impersonatedJwtPayload);
+      usersService.getOrCreateUserFromClerk.mockResolvedValue(mockUser);
+      usersService.findByClerkId.mockRejectedValue(new Error('database is down'));
+
+      const result = await strategy.validate(mockRequest);
+
+      expect(result.id).toBe(mockUser.id);
+      expect(result.impersonator).toBeUndefined();
+      expect(WSLogger.error).toHaveBeenCalledWith(expect.objectContaining({ impersonatorClerkId: 'clerk_admin_789' }));
+    });
+
+    it('ignores an agent actor, which is not a human impersonating a user', async () => {
+      (verifyToken as jest.Mock).mockResolvedValue({
+        ...mockJwtPayload,
+        act: { sub: 'clerk_agent_001', type: 'agent' },
+      } as ScratchJwtPayload);
+      usersService.getOrCreateUserFromClerk.mockResolvedValue(mockUser);
+
+      const result = await strategy.validate(mockRequest);
+
+      expect(result.impersonator).toBeUndefined();
+      expect(usersService.findByClerkId).not.toHaveBeenCalled();
     });
   });
 });
