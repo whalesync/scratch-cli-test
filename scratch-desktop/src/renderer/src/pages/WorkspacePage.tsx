@@ -475,7 +475,16 @@ export function WorkspacePage() {
     }
     seedSchemaValidators(localPath);
     handleDataRefresh();
-  }, [handleDataRefresh, localPath, seedSchemaValidators]);
+    // The connection flow creates (and removes) DataFolders server-side, but the tree reads them
+    // from `workspace.dataFolders`, which only changes on a workspace refetch — `handleDataRefresh`
+    // deliberately doesn't do one (see its comment). Without this refetch the new connection's
+    // folders are absent from `dataFolders`, so `FolderTree`'s `dataFolderByLocalPath` can't map
+    // them and their context menu silently loses every item gated on the mapped folder — pull,
+    // Get Info, View in <service>, View page tree — until the workspace is reopened. `silent`
+    // avoids flashing the full-page loader for what is just a tree update. (DEV-10775, same shape
+    // as the scratch-folder refetch in DEV-10583.)
+    await fetchWorkspace({ silent: true });
+  }, [fetchWorkspace, handleDataRefresh, localPath, seedSchemaValidators]);
 
   const handleToggleWatching = useCallback(async () => {
     if (!localPath) return;
