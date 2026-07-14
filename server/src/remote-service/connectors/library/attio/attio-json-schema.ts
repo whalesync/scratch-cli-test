@@ -12,7 +12,6 @@ import {
 import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, dotPath, EntityId } from '../../types';
 import { AttioApiClient } from './attio-api-client';
-import { buildAttioDefaultView, LIST_VIEW_CONFIG, OBJECT_VIEW_CONFIG } from './attio-default-view';
 import { AttioAttribute, AttioAttributeType, STANDARD_OBJECT_DISPLAY, type AttioStandardObject } from './attio-types';
 import { ATTIO_VALUE_EXPRESSION } from './attio-value-expressions';
 
@@ -199,8 +198,6 @@ export async function buildAttioObjectTableSpec(
     { $id: `attio/${objectSlug}`, title: resolvedDisplay.plural },
   );
 
-  const viewConfig = OBJECT_VIEW_CONFIG[objectSlug] ?? { valuesKey: 'values' };
-
   return {
     id,
     slug: id.wsId,
@@ -213,7 +210,6 @@ export async function buildAttioObjectTableSpec(
     titlePath: dotPath('values.name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAttioDefaultView(schema, viewConfig),
   };
 }
 
@@ -272,7 +268,6 @@ export async function buildAttioListTableSpec(
     titlePath: dotPath('parent_record_id'),
     basePath: ['Lists'],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAttioDefaultView(schema, LIST_VIEW_CONFIG),
   };
 }
 

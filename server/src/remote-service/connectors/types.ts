@@ -1,5 +1,5 @@
 import { TSchema } from '@sinclair/typebox';
-import type { CreateDestination, DataFolderOptions, EntityId, TableView } from '@spinner/shared-types';
+import type { CreateDestination, DataFolderOptions, EntityId } from '@spinner/shared-types';
 import { PostgresColumnType, X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import { get, set, toPath, unset } from 'lodash';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -323,10 +323,6 @@ export type BaseJsonTableSpec = {
   // The date and time the schema was generated
   // ISO 8601 format
   generatedAt?: string;
-
-  // Default table view definition for the desktop app.
-  // Written separately to views/default.json; stripped before writing schema.json.
-  defaultView?: TableView;
 };
 
 /**

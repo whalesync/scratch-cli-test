@@ -9,7 +9,6 @@ import {
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
-import { buildFramerDefaultView } from './framer-default-view';
 import { FramerCollectionMeta, FramerFieldMeta, FramerFieldType, NON_DATA_FRAMER_FIELD_TYPES } from './framer-types';
 
 /**
@@ -179,7 +178,6 @@ export function buildFramerJsonTableSpec(id: EntityId, collection: FramerCollect
     slugPath: dotPath('slug'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildFramerDefaultView(collection),
   };
 }
 

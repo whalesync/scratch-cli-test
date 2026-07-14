@@ -1,20 +1,18 @@
 import { Kind, type TSchema } from '@sinclair/typebox';
 import {
+  buildKeyedArrayColumnPath,
+  getArrayKeyedByOptions,
   X_SCRATCH_READONLY,
   type TablePropertyType,
   type TableView,
   type TableViewBannerGroup,
   type TableViewCol,
 } from '@spinner/shared-types';
-import {
-  copperCustomFieldColumnPath,
-  isReadonlyCopperCustomField,
-  tablePropertyTypeForCopperCustomFieldDataType,
-} from './copper-custom-fields';
-import { CopperCustomFieldDefinition } from './copper-types';
+import type { BaseJsonTableSpec } from '../../types';
+import { CUSTOM_FIELDS_KEY } from './copper-custom-fields';
 
 /**
- * Default view for a Copper entity.
+ * Default view for a Copper entity — a PURE function of the table spec.
  *
  * Copper's `custom_fields` array is stored verbatim; each element is exposed as
  * an editable column via the `x-scratch-array-keyed-by` annotation (see
@@ -26,19 +24,19 @@ import { CopperCustomFieldDefinition } from './copper-types';
  * defined in Settings → Custom Fields), not an invented theme, so it satisfies
  * the banner-group contract.
  *
- * A system column's `readonly` is read off the built schema's `x-scratch-readonly`
- * flag; a custom-field column's `readonly` comes from its definition (computed /
- * `Connect` fields), so the grid blocks edits that publish would drop anyway.
+ * A system column's `readonly` is read off the schema's `x-scratch-readonly`
+ * flag; a custom-field column's `{key,name,type,readonly}` is read back off the
+ * `custom_fields` array's `x-scratch-array-keyed-by` annotation (which the
+ * schema stage populated from the very same custom-field definitions), so the
+ * view needs no raw API input.
  */
-export function buildCopperDefaultView(
-  schemaProperties: Record<string, TSchema>,
-  customFieldDefinitions: CopperCustomFieldDefinition[],
-): TableView {
+export function buildCopperDefaultView(spec: BaseJsonTableSpec): TableView {
+  const schemaProperties = (spec.schema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
   const cols: (TableViewCol | TableViewBannerGroup)[] = [];
 
   // System fields, flat and in schema order (custom fields are handled below).
   for (const key of Object.keys(schemaProperties)) {
-    if (key === 'custom_fields') continue;
+    if (key === CUSTOM_FIELDS_KEY) continue;
     const propertySchema = schemaProperties[key] as Record<string, unknown>;
     cols.push({
       kind: 'col',
@@ -49,16 +47,24 @@ export function buildCopperDefaultView(
     });
   }
 
-  // Custom fields, grouped under a banner. Each column addresses its verbatim
-  // array element by definition id; readonly comes from the definition.
-  const customFieldCols: TableViewCol[] = customFieldDefinitions.map((definition) => ({
-    kind: 'col',
-    path: copperCustomFieldColumnPath(definition.id),
-    name: definition.name,
-    type: tablePropertyTypeForCopperCustomFieldDataType(definition.data_type),
-    readonly: isReadonlyCopperCustomField(definition) || undefined,
-  }));
-  if (customFieldCols.length > 0) {
+  // Custom fields, grouped under a banner. The `x-scratch-array-keyed-by`
+  // annotation on `custom_fields` already carries one {key,name,type,readonly}
+  // column per definition, in definition order — the same data the schema stage
+  // derived from the API's custom-field definitions.
+  const customFieldsKeyedBy = getArrayKeyedByOptions(schemaProperties[CUSTOM_FIELDS_KEY]);
+  if (customFieldsKeyedBy && customFieldsKeyedBy.columns.length > 0) {
+    const customFieldCols: TableViewCol[] = customFieldsKeyedBy.columns.map((column) => ({
+      kind: 'col',
+      path: buildKeyedArrayColumnPath(
+        CUSTOM_FIELDS_KEY,
+        customFieldsKeyedBy.keyField,
+        column.key,
+        customFieldsKeyedBy.valuePath,
+      ),
+      name: column.name,
+      type: (column.type ?? 'string') as TablePropertyType,
+      readonly: column.readonly,
+    }));
     cols.push({ kind: 'banner-group', name: 'Custom Fields', cols: customFieldCols });
   }
 

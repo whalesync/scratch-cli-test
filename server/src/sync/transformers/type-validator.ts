@@ -261,6 +261,8 @@ function isEqualSchema(typeA: TSchema, typeB: TSchema): boolean {
   delete cleanA['x-scratch-readonly'];
   delete cleanA['x-scratch-remote-field-id'];
   delete cleanA['x-scratch-suggested-transformer'];
+  delete cleanA['x-scratch-custom-field'];
+  delete cleanA['x-scratch-airtable-lookup-result-type'];
 
   delete cleanB.description;
   delete cleanB.title;
@@ -268,6 +270,8 @@ function isEqualSchema(typeA: TSchema, typeB: TSchema): boolean {
   delete cleanB['x-scratch-readonly'];
   delete cleanB['x-scratch-remote-field-id'];
   delete cleanB['x-scratch-suggested-transformer'];
+  delete cleanB['x-scratch-custom-field'];
+  delete cleanB['x-scratch-airtable-lookup-result-type'];
 
   return isEqual(cleanA, cleanB);
 }

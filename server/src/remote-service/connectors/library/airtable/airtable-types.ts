@@ -1,4 +1,30 @@
 /**
+ * Schema annotation carrying a `multipleLookupValues` field's lookup RESULT type
+ * (e.g. `"aiText"`, `"number"`, `"date"`). Formula/rollup/lookup fields already
+ * encode their result type in `x-scratch-connector-data-type` (`"formula-number"`),
+ * but a lookup's connector-data-type is the bare `"multipleLookupValues"`, so its
+ * result type — the fact that decides whether the default view flattens the
+ * column with the computed-field display transformer — would otherwise be lost.
+ * This is a faithful description of the field the Airtable API reports (its
+ * lookup result type), not a view opinion, so it stays within the Connector
+ * Prime Directive. Consumed only by `buildAirtableDefaultView`.
+ */
+export const X_SCRATCH_AIRTABLE_LOOKUP_RESULT_TYPE = 'x-scratch-airtable-lookup-result-type';
+
+/**
+ * The table's fields in the exact order the Airtable API returned them, as an
+ * array of field NAMES. Stored on the record schema's `fields` object node.
+ *
+ * Field names are user-controlled and can be purely numeric (e.g. `"1"`, `"2024"`);
+ * JavaScript object-key iteration hoists integer-like keys to the front in ascending
+ * numeric order, so `Object.keys(schema.properties.fields.properties)` does NOT
+ * recover the true Airtable field order for such tables. This annotation preserves
+ * it so `buildAirtableDefaultView` can order columns faithfully. It is a faithful
+ * fact the API reports (the field order), not a display opinion.
+ */
+export const X_SCRATCH_AIRTABLE_FIELD_ORDER = 'x-scratch-airtable-field-order';
+
+/**
  * The raw data types that airtable uses.
  *
  * See https://airtable.com/developers/web/api/field-model

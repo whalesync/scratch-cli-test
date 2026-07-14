@@ -1,4 +1,4 @@
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -22,6 +22,7 @@ import {
   TablePreview,
 } from '../../types';
 import { AudiencefulApiClient, AudiencefulError } from './audienceful-api-client';
+import { buildAudiencefulDefaultView } from './audienceful-default-view';
 import { buildAudiencefulJsonTableSpec } from './audienceful-json-schema';
 import { AudiencefulField } from './audienceful-types';
 
@@ -86,6 +87,14 @@ export class AudiencefulConnector extends Connector {
         },
       },
     ];
+  }
+
+  /**
+   * Build the curated default TableView for the Audienceful People table.
+   * Pure function of the spec — derives the view entirely from `spec.schema`.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    return buildAudiencefulDefaultView(spec.schema);
   }
 
   /**

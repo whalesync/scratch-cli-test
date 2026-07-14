@@ -1,4 +1,4 @@
-import { connectorMetadata, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { connectorMetadata, TableView, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -23,6 +23,7 @@ import {
   TablePreview,
 } from '../../types';
 import { CopperApiClient, CopperError } from './copper-api-client';
+import { buildCopperDefaultView } from './copper-default-view';
 import { buildCopperJsonTableSpec, buildCopperReferenceTableSpec } from './copper-json-schema';
 import { COPPER_LOGO_DATA_URI } from './copper-logo';
 import {
@@ -118,6 +119,18 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     const entityType = this.resolveEntityType(id.wsId);
     const customFieldDefinitions = await this.client.listCustomFieldDefinitions();
     return buildCopperJsonTableSpec(id, entityType, customFieldDefinitions);
+  }
+
+  /**
+   * Rebuild the default grid view from the spec alone. Read-only reference
+   * tables (pipelines / pipeline stages) never carried a curated view — mirror
+   * `fetchJsonTableSpec`'s dispatch and leave them view-less.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    if (isCopperReferenceEntityType(spec.id.wsId)) {
+      return undefined;
+    }
+    return buildCopperDefaultView(spec);
   }
 
   /**

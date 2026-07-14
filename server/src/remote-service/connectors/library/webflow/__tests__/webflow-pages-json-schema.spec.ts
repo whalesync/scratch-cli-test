@@ -1,4 +1,5 @@
 import { X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { WebflowConnector } from '../webflow-connector';
 import { buildWebflowPagesJsonTableSpec } from '../webflow-json-schema';
 import { Site } from '../webflow-types';
 
@@ -33,9 +34,12 @@ describe('buildWebflowPagesJsonTableSpec', () => {
   });
 
   it('should include a default view', () => {
-    expect(spec.defaultView).toBeDefined();
+    // Schema-gen no longer stamps defaultView; the view is built on demand from the
+    // spec by the connector (which recovers the 'pages' entity type from the id prefix).
+    const defaultView = new WebflowConnector('test-token').buildDefaultView(spec);
+    expect(defaultView).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(spec.defaultView!.name).toBe('Default');
+    expect(defaultView!.name).toBe('Default');
   });
 
   describe('schema properties', () => {

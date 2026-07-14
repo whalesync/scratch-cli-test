@@ -1,5 +1,6 @@
 import { TableView, TableViewCol, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { EntityId } from '../../../types';
+import { buildQuickBooksDefaultView } from '../quickbooks-default-view';
 import { buildQuickBooksJsonTableSpec } from '../quickbooks-json-schema';
 
 function entityId(entityType: string): EntityId {
@@ -13,7 +14,7 @@ function col(cols: TableView['cols'] | undefined, path: string): TableViewCol | 
 describe('buildQuickBooksJsonTableSpec — read-only annotations', () => {
   it('marks computed and system fields read-only in the default view', () => {
     const spec = buildQuickBooksJsonTableSpec(entityId('Invoice'), 'Invoice');
-    const cols = spec.defaultView?.cols;
+    const cols = buildQuickBooksDefaultView(spec.schema, 'Invoice').cols;
 
     // Computed (server-derived from the lines) and system (concurrency counter).
     expect(col(cols, 'TotalAmt')?.readonly).toBe(true);
@@ -26,7 +27,7 @@ describe('buildQuickBooksJsonTableSpec — read-only annotations', () => {
 
   it('marks the account CurrentBalance computed fields read-only', () => {
     const spec = buildQuickBooksJsonTableSpec(entityId('Account'), 'Account');
-    const cols = spec.defaultView?.cols;
+    const cols = buildQuickBooksDefaultView(spec.schema, 'Account').cols;
     expect(col(cols, 'CurrentBalance')?.readonly).toBe(true);
     expect(col(cols, 'CurrentBalanceWithSubAccounts')?.readonly).toBe(true);
     expect(col(cols, 'Name')?.readonly).toBeFalsy();

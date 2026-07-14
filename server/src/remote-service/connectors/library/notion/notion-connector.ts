@@ -14,6 +14,7 @@ import {
   IncrementalPullSupport,
   type SchemaCreationCapabilities,
   TableDiscoveryMode,
+  type TableView,
 } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
@@ -64,6 +65,7 @@ import {
   type NotionPropertiesMap,
 } from './notion-create-schema';
 import { isFullDatabase, isFullDataSource, NotionDataSourceSearchResult } from './notion-data-source-types';
+import { buildNotionDefaultView, buildNotionStandalonePagesDefaultView } from './notion-default-view';
 import { buildNotionLastEditedFilter, combineNotionFilters } from './notion-incremental';
 import { buildNotionJsonTableSpec, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
 import { NotionSchemaParser } from './notion-schema-parser';
@@ -304,6 +306,20 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     return response.results
       .filter((result): result is PageObjectResponse => result.object === 'page' && 'properties' in result)
       .map((page) => ({ id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName }));
+  }
+
+  /**
+   * Build the default TableView for a Notion table purely from its spec. The
+   * standalone-pages backup table surfaces its `parent` pointer (the page-tree
+   * edge) instead of hiding it, so it gets its own view builder; every database
+   * table uses the shared database default view. Both derive entirely from
+   * `spec.schema`, so this stays a pure `spec → view` transform.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    if (isNotionStandalonePagesTable(spec.id)) {
+      return buildNotionStandalonePagesDefaultView(spec.schema);
+    }
+    return buildNotionDefaultView(spec.schema);
   }
 
   /**

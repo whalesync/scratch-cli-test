@@ -1,4 +1,4 @@
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -23,6 +23,7 @@ import {
   TablePreview,
 } from '../../types';
 import { AffinityApiClient, AffinityError } from './affinity-api-client';
+import { buildAffinityDefaultView } from './affinity-default-view';
 import {
   buildAffinityCompaniesTableSpec,
   buildAffinityEntityFilesTableSpec,
@@ -249,6 +250,18 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
     });
 
     return [...tenantTables, ...listTables];
+  }
+
+  /**
+   * Generate the default TableView from a table spec, deriving everything from
+   * the spec's verbatim schema + `titlePath`. Pure `spec → view`: the schema-gen
+   * path no longer stamps `defaultView` onto the spec; this override reproduces
+   * exactly what it used to set. `buildAffinityDefaultView` self-dispatches off
+   * the schema shape (list-entry `entity` wrapper vs. flat tenant table, notes,
+   * entity files), so a single call covers all seven Affinity table kinds.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    return buildAffinityDefaultView(spec.schema, spec.titlePath);
   }
 
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {

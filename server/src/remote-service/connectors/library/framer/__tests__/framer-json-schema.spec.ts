@@ -1,6 +1,7 @@
 import { Value } from '@sinclair/typebox/value';
 import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { EntityId } from '../../../types';
+import { buildFramerDefaultView } from '../framer-default-view';
 import { buildFramerJsonTableSpec, getFramerForeignKeyOptions, isFramerForeignKey } from '../framer-json-schema';
 import { FramerCollectionMeta } from '../framer-types';
 
@@ -130,7 +131,7 @@ describe('buildFramerJsonTableSpec', () => {
   });
 
   it('builds a default view with the meta columns and one column per field value', () => {
-    const view = spec.defaultView;
+    const view = buildFramerDefaultView(spec);
     expect(view?.name).toBe('Default');
     const paths = view?.cols.map((col) => ('path' in col ? col.path : undefined));
     expect(paths).toEqual([

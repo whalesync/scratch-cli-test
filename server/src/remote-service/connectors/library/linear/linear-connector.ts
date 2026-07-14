@@ -5,7 +5,7 @@
  * Supports CRUD for Issues and Projects; read-only for Teams, Users, Labels, and Cycles.
  */
 
-import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
@@ -34,6 +34,7 @@ import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, type EntityType } from './graphql';
 import { ISSUES_READ_ONLY_FIELDS, ISSUES_STRIP_ON_UPDATE_FIELDS } from './graphql/mutations/issues.mutations';
 import { PROJECTS_READ_ONLY_FIELDS } from './graphql/mutations/projects.mutations';
 import { LinearApiClient, LinearError } from './linear-api-client';
+import { buildLinearDefaultView } from './linear-default-view';
 import { buildLinearUpdatedAtFilter, LinearUpdatedAtFilter } from './linear-incremental';
 import { buildLinearJsonTableSpec } from './linear-json-schema';
 import { LinearCredentials } from './linear-types';
@@ -116,6 +117,15 @@ export class LinearConnector extends Connector {
         },
       };
     });
+  }
+
+  /**
+   * Build the default TableView for a Linear entity type purely from its spec.
+   * Every Linear entity gets a view, so this never returns `undefined`.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    const entityType = spec.id.wsId as EntityType;
+    return buildLinearDefaultView(spec.schema, entityType);
   }
 
   /**

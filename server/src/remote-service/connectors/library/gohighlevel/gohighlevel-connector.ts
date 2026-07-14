@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorSettingDefinition, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -37,10 +37,12 @@ import {
 } from './gohighlevel-entities';
 import {
   buildContactsJsonTableSpec,
+  buildCustomObjectDefaultView,
   buildCustomObjectJsonTableSpec,
   buildGenericEntityJsonTableSpec,
   buildOpportunitiesJsonTableSpec,
   buildPipelinesJsonTableSpec,
+  buildStandardEntityDefaultView,
 } from './gohighlevel-json-schema';
 import { GOHIGHLEVEL_LOGO_DATA_URI } from './gohighlevel-logo';
 import {
@@ -389,6 +391,26 @@ export class GoHighLevelConnector extends Connector {
         const { object, fields } = await this.client.getObjectSchema(objectKey);
         return buildCustomObjectJsonTableSpec(id, object ?? {}, fields ?? []);
       }
+    }
+  }
+
+  /**
+   * Rebuild the default view from the spec, mirroring `fetchJsonTableSpec`'s
+   * dispatch. Pipelines and the generic location-scoped list entities never
+   * carried a curated view — leave them view-less.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    switch (spec.id.wsId) {
+      case CONTACTS_TABLE_WS_ID:
+      case OPPORTUNITIES_TABLE_WS_ID:
+        return buildStandardEntityDefaultView(spec);
+      case PIPELINES_TABLE_WS_ID:
+        return undefined;
+      default:
+        if (GOHIGHLEVEL_LOCATION_LIST_ENTITY_BY_WS_ID.has(spec.id.wsId)) {
+          return undefined;
+        }
+        return buildCustomObjectDefaultView(spec);
     }
   }
 

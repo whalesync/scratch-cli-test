@@ -1,5 +1,5 @@
 import { TObject, TSchema } from '@sinclair/typebox';
-import { connectorMetadata, IncrementalPullSupport, isScratchPendingPublishId } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport, isScratchPendingPublishId, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
@@ -32,6 +32,7 @@ import {
   TablePreview,
 } from '../../types';
 import { WebflowApiClient } from './webflow-api-client';
+import { buildWebflowDefaultView } from './webflow-default-view';
 import { webflowEcommerceBasePath } from './webflow-folder-paths';
 import { buildWebflowLastUpdatedFilter, webflowIncrementalPullSupport } from './webflow-incremental';
 import {
@@ -604,6 +605,31 @@ export class WebflowConnector extends Connector {
         offset += orders.length;
       }
     }
+  }
+
+  /**
+   * Build the default table view for a Webflow table purely from its spec — the
+   * exact view schema-gen used to stamp onto `defaultView`. The entity type is
+   * recovered from the collection remote id's prefix, mirroring the dispatch in
+   * `fetchJsonTableSpec`: the synthetic Assets/Pages/Orders tables carry a
+   * `__…__`-prefixed collection id, and everything else (including a
+   * secondary-locale table, whose id is the bare collection id) is a CMS
+   * collection.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    const [, collectionId] = spec.id.remoteId;
+    if (collectionId === undefined) return undefined;
+    let entityType: 'assets' | 'pages' | 'orders' | 'collection_items';
+    if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
+      entityType = 'assets';
+    } else if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
+      entityType = 'pages';
+    } else if (collectionId.startsWith(WEBFLOW_ORDERS_TABLE_ID_PREFIX)) {
+      entityType = 'orders';
+    } else {
+      entityType = 'collection_items';
+    }
+    return buildWebflowDefaultView(spec.schema, entityType);
   }
 
   /**

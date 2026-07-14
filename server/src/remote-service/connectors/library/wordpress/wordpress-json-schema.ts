@@ -13,7 +13,6 @@ import { isArray } from 'lodash';
 import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { WORDPRESS_MODIFIED_COLUMN_ID, WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
-import { buildWordPressDefaultView } from './wordpress-default-view';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
 
 /**
@@ -412,8 +411,6 @@ export function buildWordPressJsonTableSpec(
     basePath: [],
     generatedAt: new Date().toISOString(),
   };
-
-  spec.defaultView = buildWordPressDefaultView(schema);
 
   return spec;
 }

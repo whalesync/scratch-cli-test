@@ -1,5 +1,5 @@
 import { TObject } from '@sinclair/typebox';
-import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
@@ -34,6 +34,7 @@ import {
   WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS,
   WORDPRESS_STATUS_COLUMN_ID,
 } from './wordpress-constants';
+import { buildWordPressDefaultView } from './wordpress-default-view';
 import { WordPressMaxPagesReachedError, WordPressOffsetIgnoredError } from './wordpress-errors';
 import { WordPressHttpClient } from './wordpress-http-client';
 import { formatWordPressModifiedAfter } from './wordpress-incremental';
@@ -152,6 +153,16 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     const taxonomyTables = parseTableInfoFromTaxonomies(taxonomiesResponse);
 
     return [...postTypeTables, ...taxonomyTables];
+  }
+
+  /**
+   * Generate the default TableView for a WordPress table purely from its spec.
+   * Delegates to the shared builder, which reads the TypeBox schema produced by
+   * `buildWordPressJsonTableSpec` and derives the priority-ordered column layout
+   * (including expanded ACF sub-field columns) from it.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    return buildWordPressDefaultView(spec.schema);
   }
 
   /**

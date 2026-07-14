@@ -42,7 +42,6 @@ import {
 } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, EntityId, TablePreview, dotPath } from '../../types';
-import { buildNotionStandalonePagesDefaultView } from './notion-default-view';
 import { notionPropertyToJsonSchema } from './notion-json-schema';
 
 /**
@@ -135,7 +134,6 @@ export function buildNotionStandalonePagesTableSpec(id: EntityId): BaseJsonTable
     // No remoteWebUrl: there is no Notion deep link addressing "all pages";
     // per the spec contract we omit it rather than emit a guessed URL.
     generatedAt: new Date().toISOString(),
-    defaultView: buildNotionStandalonePagesDefaultView(schema),
   };
 }
 

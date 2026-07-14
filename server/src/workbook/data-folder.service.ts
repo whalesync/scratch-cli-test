@@ -506,8 +506,9 @@ export class DataFolderService {
     try {
       const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
       await this.scratchGitService.writeSchemaToGit(repoId, folderPath, tableSpec);
-      if (tableSpec.defaultView) {
-        await this.scratchGitService.writeViewToGit(repoId, folderPath, 'default', tableSpec.defaultView);
+      const defaultView = connector.buildDefaultView(tableSpec);
+      if (defaultView) {
+        await this.scratchGitService.writeViewToGit(repoId, folderPath, 'default', defaultView);
       }
     } catch (error) {
       WSLogger.error({
@@ -1200,8 +1201,9 @@ export class DataFolderService {
         const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
         if (folder.path) {
           await this.scratchGitService.writeSchemaToGit(repoId, folder.path, tableSpec);
-          if (tableSpec.defaultView) {
-            await this.scratchGitService.writeViewToGit(repoId, folder.path, 'default', tableSpec.defaultView);
+          const defaultView = connector.buildDefaultView(tableSpec);
+          if (defaultView) {
+            await this.scratchGitService.writeViewToGit(repoId, folder.path, 'default', defaultView);
           }
         } else {
           WSLogger.error({

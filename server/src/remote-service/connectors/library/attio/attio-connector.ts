@@ -1,4 +1,4 @@
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { assertUnreachable } from 'src/utils/asserts';
@@ -21,6 +21,7 @@ import {
   TablePreview,
 } from '../../types';
 import { AttioApiClient, AttioError } from './attio-api-client';
+import { buildAttioDefaultView, LIST_VIEW_CONFIG, OBJECT_VIEW_CONFIG } from './attio-default-view';
 import {
   buildAttioListTableSpec,
   buildAttioMembersTableSpec,
@@ -161,6 +162,30 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
     };
 
     return [...objectTables, ...listTables, membersTable, tasksTable];
+  }
+
+  /**
+   * Rebuild the default view for a table purely from its spec. Only object and
+   * list tables carry a curated view today — Members and Tasks emit none. The
+   * table kind is recovered from `spec.id` via the same `parseAttioTableId`
+   * dispatcher the rest of the connector uses, and the per-object view config is
+   * chosen exactly as `buildAttioObjectTableSpec` did before this moved here.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    const parsed = parseAttioTableId(spec.id);
+    switch (parsed.kind) {
+      case 'object': {
+        const viewConfig = OBJECT_VIEW_CONFIG[parsed.objectSlug] ?? { valuesKey: 'values' };
+        return buildAttioDefaultView(spec.schema, viewConfig);
+      }
+      case 'list':
+        return buildAttioDefaultView(spec.schema, LIST_VIEW_CONFIG);
+      case 'members':
+      case 'tasks':
+        return undefined;
+      default:
+        return assertUnreachable(parsed);
+    }
   }
 
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {

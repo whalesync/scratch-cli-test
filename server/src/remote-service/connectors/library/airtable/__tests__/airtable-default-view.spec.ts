@@ -1,3 +1,4 @@
+import type { TSchema } from '@sinclair/typebox';
 import { Type } from '@sinclair/typebox';
 import {
   TableViewCol,
@@ -5,17 +6,22 @@ import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
+import { BaseJsonTableSpec, dotPath } from '../../../types';
 import { buildAirtableDefaultView } from '../airtable-default-view';
-import { AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from '../airtable-types';
+import { buildAirtableJsonTableSpec } from '../airtable-json-schema';
+import {
+  AirtableBase,
+  AirtableDataType,
+  AirtableTableV2,
+  X_SCRATCH_AIRTABLE_LOOKUP_RESULT_TYPE,
+} from '../airtable-types';
 
-function makeField(id: string, name: string, type: AirtableDataType): AirtableFieldsV2 {
-  return { id, name, type } as AirtableFieldsV2;
-}
-
-function makeSchema(connectorDataType: string, opts: { readonly?: boolean } = {}) {
+function makeSchema(connectorDataType: string, opts: { readonly?: boolean; lookupResultType?: string } = {}): TSchema {
   const s = Type.String();
   (s as Record<string, unknown>)[X_SCRATCH_CONNECTOR_DATA_TYPE] = connectorDataType;
   if (opts.readonly) (s as Record<string, unknown>)[X_SCRATCH_READONLY] = true;
+  if (opts.lookupResultType)
+    (s as Record<string, unknown>)[X_SCRATCH_AIRTABLE_LOOKUP_RESULT_TYPE] = opts.lookupResultType;
   return s;
 }
 
@@ -32,38 +38,37 @@ function makeAttachmentSchema() {
   return s;
 }
 
-describe('buildAirtableDefaultView', () => {
-  const fields: AirtableFieldsV2[] = [
-    makeField('fld1', 'Name', AirtableDataType.SINGLE_LINE_TEXT),
-    makeField('fld2', 'Status', AirtableDataType.SINGLE_SELECT),
-    makeField('fld3', 'Due Date', AirtableDataType.DATE_TIME),
-    makeField('fld4', 'Notes', AirtableDataType.RICH_TEXT),
-    makeField('fld5', 'Done', AirtableDataType.CHECKBOX),
-    makeField('fld6', 'Score', AirtableDataType.NUMBER),
-    makeField('fld7', 'Attachments', AirtableDataType.MULTIPLE_ATTACHMENTS),
-    makeField('fld8', 'Website', AirtableDataType.URL),
-    makeField('fld9', 'Created', AirtableDataType.CREATED_TIME),
-    makeField('fld10', 'Tags', AirtableDataType.MULTIPLE_SELECTS),
-    makeField('fld11', 'Computed', AirtableDataType.FORMULA),
-    makeField('fld12', 'Assignee', AirtableDataType.SINGLE_COLLABORATOR),
-    makeField('fld13', 'Created By', AirtableDataType.CREATED_BY),
-  ];
-
-  const table: AirtableTableV2 = {
-    id: 'tbl1',
+// The default view is now a pure function of the spec (MR2). Wrap the per-field
+// schemas into a real Airtable record spec — `{ id, fields: { ... }, createdTime }`
+// with the primary field named by `titlePath` — so `buildAirtableDefaultView(spec)`
+// sees exactly what schema-gen produces on a pull. The `fields` object's key order
+// is the Airtable-native field order.
+function specFor(fieldsSchema: Record<string, TSchema>, primaryFieldName?: string): BaseJsonTableSpec {
+  const schema = Type.Object({
+    id: Type.String({ description: 'Unique record identifier' }),
+    fields: Type.Object(fieldsSchema, { description: 'Record field values keyed by field name' }),
+    createdTime: Type.String({ format: 'date-time' }),
+  });
+  return {
+    id: { wsId: 'tbl1', remoteId: ['app1', 'tbl1'] },
+    slug: 'tbl1',
     name: 'Tasks',
-    primaryFieldId: 'fld1',
-    fields,
-  } as AirtableTableV2;
+    schema,
+    idPath: dotPath('id'),
+    titlePath: primaryFieldName ? dotPath(`fields.${primaryFieldName}`) : undefined,
+    basePath: ['Base'],
+  };
+}
 
-  const fieldsSchema: Record<string, ReturnType<typeof makeSchema>> = {
+describe('buildAirtableDefaultView', () => {
+  const fieldsSchema: Record<string, TSchema> = {
     Name: makeSchema(AirtableDataType.SINGLE_LINE_TEXT),
     Status: makeSchema(AirtableDataType.SINGLE_SELECT),
     'Due Date': makeSchema(AirtableDataType.DATE_TIME),
     Notes: makeSchema(AirtableDataType.RICH_TEXT),
     Done: makeSchema(AirtableDataType.CHECKBOX),
     Score: makeSchema(AirtableDataType.NUMBER),
-    Attachments: makeAttachmentSchema() as unknown as ReturnType<typeof makeSchema>,
+    Attachments: makeAttachmentSchema(),
     Website: makeSchema(AirtableDataType.URL),
     Created: makeSchema(AirtableDataType.CREATED_TIME, { readonly: true }),
     Tags: makeSchema(AirtableDataType.MULTIPLE_SELECTS),
@@ -71,8 +76,9 @@ describe('buildAirtableDefaultView', () => {
     Assignee: makeSchema(AirtableDataType.SINGLE_COLLABORATOR),
     'Created By': makeSchema(AirtableDataType.CREATED_BY, { readonly: true }),
   };
+  const fieldCount = Object.keys(fieldsSchema).length;
 
-  const view = buildAirtableDefaultView(table, fieldsSchema);
+  const view = buildAirtableDefaultView(specFor(fieldsSchema, 'Name'));
 
   it('should return a view named "Default"', () => {
     expect(view.name).toBe('Default');
@@ -84,9 +90,18 @@ describe('buildAirtableDefaultView', () => {
     expect(firstCol.name).toBe('Name');
   });
 
+  it('leads with whichever field titlePath names (honors a user name-field override)', () => {
+    // MR2 intentionally builds the view AFTER the write sites re-apply a user's
+    // nameFieldOverride onto spec.titlePath, so the overridden title field now leads
+    // the default view (master built the view pre-override, so it always led with the
+    // Airtable primary field). This locks in that deliberate behavior change.
+    const overriddenView = buildAirtableDefaultView(specFor(fieldsSchema, 'Score'));
+    expect((overriddenView.cols[0] as TableViewCol).path).toBe('fields.Score');
+  });
+
   it('should use fields.FieldName paths for all field columns', () => {
     const fieldCols = view.cols.filter((c) => c.kind === 'col' && c.path.startsWith('fields.'));
-    expect(fieldCols.length).toBe(fields.length);
+    expect(fieldCols.length).toBe(fieldCount);
   });
 
   it('should add createdTime as the last column', () => {
@@ -161,9 +176,13 @@ describe('buildAirtableDefaultView', () => {
       expect(col.type).toBeUndefined();
     });
 
-    it('should map formula-number to number type', () => {
+    it('renders a formula whose result is a number as a flattened computed-field string', () => {
+      // A `formula-number` field's value can arrive wrapped/errored/as an array, so
+      // the view flattens it with the computed-field transformer and routes it
+      // through the text cell (type 'string') rather than the raw number cell.
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'fields.Computed') as TableViewCol;
-      expect(col.type).toBe('number');
+      expect(col.type).toBe('string');
+      expect(col.displayTransformer).toBeDefined();
     });
   });
 
@@ -208,8 +227,7 @@ describe('buildAirtableDefaultView', () => {
   });
 
   it('should handle a table with no fields gracefully', () => {
-    const emptyTable = { id: 'tbl2', name: 'Empty', fields: [] } as unknown as AirtableTableV2;
-    const emptyView = buildAirtableDefaultView(emptyTable, {});
+    const emptyView = buildAirtableDefaultView(specFor({}));
     // Just the createdTime column
     expect(emptyView.cols.length).toBe(1);
     expect((emptyView.cols[0] as TableViewCol).path).toBe('createdTime');
@@ -222,35 +240,26 @@ describe('buildAirtableDefaultView', () => {
 });
 
 describe('buildAirtableDefaultView: computed-field display transformers', () => {
-  function makeFieldWithResult(id: string, name: string, type: AirtableDataType, resultType?: AirtableDataType) {
-    return { id, name, type, options: resultType ? { result: { type: resultType } } : undefined } as AirtableFieldsV2;
-  }
-
-  const fields: AirtableFieldsV2[] = [
-    makeFieldWithResult('f1', 'Name', AirtableDataType.SINGLE_LINE_TEXT),
-    makeFieldWithResult('f2', 'Summary', AirtableDataType.AI_TEXT),
-    makeFieldWithResult('f3', 'Text Formula', AirtableDataType.FORMULA, AirtableDataType.SINGLE_LINE_TEXT),
-    makeFieldWithResult('f4', 'AI Formula', AirtableDataType.FORMULA, AirtableDataType.AI_TEXT),
-    makeFieldWithResult('f5', 'Number Formula', AirtableDataType.FORMULA, AirtableDataType.NUMBER),
-    makeFieldWithResult('f6', 'Date Rollup', AirtableDataType.ROLLUP, AirtableDataType.DATE_TIME),
-    makeFieldWithResult('f7', 'AI Lookup', AirtableDataType.MULTIPLE_LOOKUP_VALUES, AirtableDataType.AI_TEXT),
-    makeFieldWithResult('f8', 'Number Lookup', AirtableDataType.MULTIPLE_LOOKUP_VALUES, AirtableDataType.NUMBER),
-  ];
-
-  const table = { id: 'tbl', name: 'T', primaryFieldId: 'f1', fields } as AirtableTableV2;
-
-  const fieldsSchema: Record<string, ReturnType<typeof makeSchema>> = {
+  const fieldsSchema: Record<string, TSchema> = {
     Name: makeSchema(AirtableDataType.SINGLE_LINE_TEXT),
     Summary: makeSchema(AirtableDataType.AI_TEXT, { readonly: true }),
     'Text Formula': makeSchema('formula-singleLineText', { readonly: true }),
     'AI Formula': makeSchema('formula-aiText', { readonly: true }),
     'Number Formula': makeSchema('formula-number', { readonly: true }),
     'Date Rollup': makeSchema('rollup-dateTime', { readonly: true }),
-    'AI Lookup': makeSchema(AirtableDataType.MULTIPLE_LOOKUP_VALUES, { readonly: true }),
-    'Number Lookup': makeSchema(AirtableDataType.MULTIPLE_LOOKUP_VALUES, { readonly: true }),
+    // multipleLookupValues carries its result type in the dedicated annotation, not
+    // in the connector-data-type suffix — mirror what schema-gen emits.
+    'AI Lookup': makeSchema(AirtableDataType.MULTIPLE_LOOKUP_VALUES, {
+      readonly: true,
+      lookupResultType: AirtableDataType.AI_TEXT,
+    }),
+    'Number Lookup': makeSchema(AirtableDataType.MULTIPLE_LOOKUP_VALUES, {
+      readonly: true,
+      lookupResultType: AirtableDataType.NUMBER,
+    }),
   };
 
-  const view = buildAirtableDefaultView(table, fieldsSchema);
+  const view = buildAirtableDefaultView(specFor(fieldsSchema, 'Name'));
   const colByPath = (path: string) => view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol;
 
   const EXPECTED_TRANSFORMER = {
@@ -278,5 +287,53 @@ describe('buildAirtableDefaultView: computed-field display transformers', () => 
     const col = colByPath(path);
     expect(col.displayTransformer).toBeUndefined();
     expect(col.type).toBe(expectedType);
+  });
+});
+
+describe('buildAirtableDefaultView: column order for numeric field names (regression)', () => {
+  // Airtable field names are user-controlled and can be purely numeric. JS object-key
+  // iteration hoists integer-like keys to an ascending-numeric front, so ordering off
+  // Object.keys would silently reorder them. Schema-gen records the real API field
+  // order in x-scratch-airtable-field-order; the view must honor it. Build the spec
+  // through the real schema-gen so the annotation is present.
+  const BASE = { id: 'app1', name: 'My Base' } as unknown as AirtableBase;
+  const NUMERIC_FIELDS = [
+    { id: 'f0', name: 'Name', type: AirtableDataType.SINGLE_LINE_TEXT },
+    { id: 'f3', name: '3', type: AirtableDataType.NUMBER },
+    { id: 'f1', name: '1', type: AirtableDataType.NUMBER },
+    { id: 'f2', name: '2', type: AirtableDataType.NUMBER },
+    { id: 'f10', name: '10', type: AirtableDataType.NUMBER },
+    { id: 'fN', name: 'Notes', type: AirtableDataType.RICH_TEXT },
+  ];
+
+  function orderFor(primaryFieldId: string): string[] {
+    const table = { id: 'tbl1', name: 'T', primaryFieldId, fields: NUMERIC_FIELDS } as unknown as AirtableTableV2;
+    const spec = buildAirtableJsonTableSpec({ wsId: 'tbl1', remoteId: ['app1', 'tbl1'] }, BASE, table);
+    return buildAirtableDefaultView(spec).cols.map((c) => (c as TableViewCol).path);
+  }
+
+  it('preserves native (non-ascending) Airtable order, not JS numeric-key order', () => {
+    // Native order is Name, 3, 1, 2, 10, Notes — NOT the 1,2,3,10 a numeric sort gives.
+    expect(orderFor('f0')).toEqual([
+      'fields.Name',
+      'fields.3',
+      'fields.1',
+      'fields.2',
+      'fields.10',
+      'fields.Notes',
+      'createdTime',
+    ]);
+  });
+
+  it('still leads with the primary field even when it is numeric', () => {
+    expect(orderFor('f2')).toEqual([
+      'fields.2',
+      'fields.Name',
+      'fields.3',
+      'fields.1',
+      'fields.10',
+      'fields.Notes',
+      'createdTime',
+    ]);
   });
 });

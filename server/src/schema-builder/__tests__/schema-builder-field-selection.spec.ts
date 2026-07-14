@@ -2,8 +2,10 @@ import { type DataSourceObjectResponse } from '@notionhq/client';
 import { Type } from '@sinclair/typebox';
 import { TableView, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { HubspotApiClient } from 'src/remote-service/connectors/library/hubspot/hubspot-api-client';
+import { buildHubspotDefaultView } from 'src/remote-service/connectors/library/hubspot/hubspot-default-view';
 import { buildHubspotJsonTableSpec } from 'src/remote-service/connectors/library/hubspot/hubspot-json-schema';
 import { HubspotProperty } from 'src/remote-service/connectors/library/hubspot/hubspot-types';
+import { buildNotionDefaultView } from 'src/remote-service/connectors/library/notion/notion-default-view';
 import { buildNotionJsonTableSpec } from 'src/remote-service/connectors/library/notion/notion-json-schema';
 import { extractSchemaFields, type SchemaField } from 'src/utils/schema-helpers';
 import { selectPlanFieldsFromTableView } from '../schema-builder-field-selection';
@@ -39,8 +41,8 @@ describe('selectPlanFieldsFromTableView', () => {
       Assignee: { id: 'p_people', type: 'people' },
       Linked: { id: 'p_rel', type: 'relation', relation: { database_id: 'db_linked' } },
     });
-    const view = spec.defaultView;
-    if (!view) throw new Error('expected the Notion spec to carry a default view');
+    // The view is now a pure function of the spec (MR2) — rebuild it from the schema.
+    const view = buildNotionDefaultView(spec.schema);
 
     const result = selectPlanFieldsFromTableView({ schema: spec.schema, view, titlePath: spec.titlePath });
 
@@ -119,8 +121,8 @@ describe('selectPlanFieldsFromTableView', () => {
         'deals',
         fakeClient([property('dealname')]),
       );
-      const view = spec.defaultView;
-      if (!view) throw new Error('expected the HubSpot spec to carry a default view');
+      // The view is now a pure function of the spec (MR2) — rebuild it from the schema.
+      const view = buildHubspotDefaultView(spec.schema);
 
       const { schemaFields } = selectPlanFieldsFromTableView({ schema: spec.schema, view });
       const associationLabels = schemaFields
@@ -153,8 +155,8 @@ describe('selectPlanFieldsFromTableView', () => {
         'deals',
         fakeClient([property('dealname')]),
       );
-      const view = spec.defaultView;
-      if (!view) throw new Error('expected the HubSpot spec to carry a default view');
+      // The view is now a pure function of the spec (MR2) — rebuild it from the schema.
+      const view = buildHubspotDefaultView(spec.schema);
 
       const { schemaFields } = selectPlanFieldsFromTableView({ schema: spec.schema, view });
       const associationFields = schemaFields.filter((f) => f.path.startsWith('associations.'));

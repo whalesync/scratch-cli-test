@@ -539,14 +539,14 @@ export class ScratchGitService {
     try {
       const normalizedFolder = folderPath.replace(/^\//, '');
       const newGitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
-      // Strip defaultView from the serialized schema — it belongs in views/default.json
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { defaultView, ...schemaWithoutView } = schema;
-      const file = { path: newGitPath, content: formatRecordJson(schemaWithoutView as Record<string, unknown>) };
+      // The default view is written separately (views/default.json) by the caller via
+      // `connector.buildDefaultView(spec)`; it is never part of the spec, so schema.json
+      // is just the spec as-is.
+      const file = { path: newGitPath, content: formatRecordJson(schema as Record<string, unknown>) };
       const message = `Update schema for ${folderPath}`;
 
       const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
-      const newCompare = stripGeneratedAt(schemaWithoutView as Record<string, unknown>);
+      const newCompare = stripGeneratedAt(schema as Record<string, unknown>);
 
       // TODO: Only write to MAIN_BRANCH, not DIRTY_BRANCH. Nothing reads schemas from dirty
       // (readSchemaFromGit and the index route both read from main). Writing to dirty is unnecessary

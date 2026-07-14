@@ -11,7 +11,6 @@ import {
   buildCopperCustomFieldsArrayKeyedByOptions,
   isReadonlyCopperCustomField,
 } from './copper-custom-fields';
-import { buildCopperDefaultView } from './copper-default-view';
 import {
   COPPER_ENTITY_CONFIG,
   COPPER_REFERENCE_ENTITY_CONFIG,
@@ -33,8 +32,8 @@ import {
  * exactly as-is. The array is annotated with `x-scratch-array-keyed-by` so the
  * generic engines expose each element as its own editable column addressed by
  * `custom_field_definition_id` (see {@link ./copper-custom-fields}) — no reshape
- * on disk — gathered under a "Custom Fields" banner in the
- * {@link buildCopperDefaultView default view}.
+ * on disk — gathered under a "Custom Fields" banner in the default view
+ * (see `CopperConnector.buildDefaultView`).
  */
 
 // --- Field helpers ---
@@ -325,8 +324,6 @@ export function buildCopperJsonTableSpec(
     idPath: dotPath('id'),
     titlePath: dotPath(config.titleField),
     basePath: [],
-    // System fields flat; custom fields grouped under a "Custom Fields" banner.
-    defaultView: buildCopperDefaultView(properties, customFieldDefinitions),
     generatedAt: new Date().toISOString(),
   };
 }

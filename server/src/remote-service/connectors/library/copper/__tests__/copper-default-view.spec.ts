@@ -1,13 +1,16 @@
 import { TableViewBannerGroup, TableViewCol } from '@spinner/shared-types';
 import { EntityId } from '../../../types';
+import { buildCopperDefaultView } from '../copper-default-view';
 import { buildCopperJsonTableSpec } from '../copper-json-schema';
 import { CopperCustomFieldDefinition, CopperEntityType } from '../copper-types';
 
+// The default view is now a pure function of the spec (MR2): schema-gen no longer
+// stores it, so build the spec (the custom-field defs still flow into the schema's
+// `x-scratch-array-keyed-by` annotation) and rebuild the view from that spec alone.
 function viewFor(entityType: CopperEntityType, defs: CopperCustomFieldDefinition[] = []) {
   const id: EntityId = { wsId: entityType, remoteId: [entityType] };
   const spec = buildCopperJsonTableSpec(id, entityType, defs);
-  if (!spec.defaultView) throw new Error('expected a default view');
-  return spec.defaultView;
+  return buildCopperDefaultView(spec);
 }
 
 function flatCol(view: { cols: (TableViewCol | TableViewBannerGroup)[] }, path: string): TableViewCol | undefined {

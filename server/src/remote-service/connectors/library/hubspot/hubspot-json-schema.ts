@@ -10,7 +10,6 @@ import {
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { HubspotApiClient } from './hubspot-api-client';
-import { buildHubspotDefaultView } from './hubspot-default-view';
 import { ASSOCIATIONS_BY_OBJECT_TYPE, HubspotProperty, OBJECT_CONFIG } from './hubspot-types';
 
 /**
@@ -172,11 +171,6 @@ export async function buildHubspotJsonTableSpec(
     slugPath: config?.titleFieldPath ? dotPath(config.titleFieldPath) : undefined,
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildHubspotDefaultView(schema, {
-      titleFieldPath: config?.titleFieldPath,
-      priorityFields: config?.priorityFields,
-      hideHubspotManagedProperties: config?.hideHubspotManagedPropertiesByDefault ?? false,
-    }),
   };
 
   return { spec, propertyNames };

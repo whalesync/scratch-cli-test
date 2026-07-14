@@ -266,10 +266,12 @@ export class SchemaHelperService {
           tableSpec.titlePath = dotPath(nameOverride.join('.'));
         }
 
-        // Write refreshed schema and default view to git
+        // Write refreshed schema and default view to git. The view is rebuilt from
+        // the (override-adjusted) spec via the connector — a pure spec→view stage.
         await this.scratchGitService.writeSchemaToGit(repoId, folder.path, tableSpec);
-        if (tableSpec.defaultView) {
-          await this.scratchGitService.writeViewToGit(repoId, folder.path, 'default', tableSpec.defaultView);
+        const defaultView = connector.buildDefaultView(tableSpec);
+        if (defaultView) {
+          await this.scratchGitService.writeViewToGit(repoId, folder.path, 'default', defaultView);
         }
 
         WSLogger.info({

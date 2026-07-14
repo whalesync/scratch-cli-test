@@ -57,6 +57,14 @@ export const X_SCRATCH_ASSET_TABLE = 'x-scratch-asset-table';
 // `DataFolderOptions.modifiedAtField`. The annotation value is `true`.
 export const X_SCRATCH_LAST_MODIFIED_FIELD = 'x-scratch-last-modified-field';
 
+// Marks a field the external service reports as user-CREATED (a "custom" field)
+// rather than a built-in "standard" one — a faithful fact from the service's own
+// field metadata (e.g. Zoho's `custom_field`, GoHighLevel's `!field.standard`),
+// NOT a display opinion. The value is `true`. Connectors' default-view builders
+// read it to gather custom fields under a "Custom Fields" banner group; the
+// grouping decision itself stays editorial code in the builder.
+export const X_SCRATCH_CUSTOM_FIELD = 'x-scratch-custom-field';
+
 // A plain-text hint targeted at AI agents (Claude, Gemini, etc.) that read
 // schema.json before editing records. Use sparingly — only when a non-obvious
 // structural or semantic detail would change how an agent interprets a field

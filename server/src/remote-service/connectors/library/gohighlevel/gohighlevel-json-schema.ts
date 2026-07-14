@@ -2,8 +2,12 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import {
   X_SCRATCH_AGENT_INSTRUCTIONS,
   X_SCRATCH_ARRAY_KEYED_BY,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_CUSTOM_FIELD,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
+  buildKeyedArrayColumnPath,
+  getArrayKeyedByOptions,
   type TablePropertyType,
   type TableView,
   type TableViewBannerGroup,
@@ -14,8 +18,6 @@ import {
   CUSTOM_FIELDS_KEY,
   CUSTOM_FIELD_KEY_FIELD,
   buildGoHighLevelCustomFieldsArrayKeyedByOptions,
-  goHighLevelCustomFieldColumnPath,
-  tablePropertyTypeForGoHighLevelDataType,
   type GoHighLevelCustomFieldValueKey,
 } from './gohighlevel-custom-fields';
 import { GenericFieldType, GoHighLevelGenericEntityField } from './gohighlevel-entities';
@@ -114,11 +116,8 @@ function buildCustomFieldsArrayProperty(
  * anyway. GHL exposes no read-only signal on a custom-field definition, so those
  * columns carry no `readonly`.
  */
-function buildStandardEntityDefaultView(
-  properties: Record<string, TSchema>,
-  definitions: GoHighLevelCustomFieldDefinition[],
-  valueKey: GoHighLevelCustomFieldValueKey,
-): TableView {
+export function buildStandardEntityDefaultView(spec: BaseJsonTableSpec): TableView {
+  const properties = (spec.schema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
   const cols: (TableViewCol | TableViewBannerGroup)[] = [];
   for (const key of Object.keys(properties)) {
     if (key === CUSTOM_FIELDS_KEY) continue;
@@ -138,13 +137,23 @@ function buildStandardEntityDefaultView(
     });
   }
 
-  const customFieldCols: TableViewCol[] = definitions.map((definition) => ({
-    kind: 'col',
-    path: goHighLevelCustomFieldColumnPath(definition.id, valueKey),
-    name: definition.name ?? definition.id,
-    type: tablePropertyTypeForGoHighLevelDataType(definition.dataType),
-  }));
-  if (customFieldCols.length > 0) {
+  // Custom-field columns come off the `customFields` array's `x-scratch-array-keyed-by`
+  // annotation — one {key,name,type} per discovered definition, in definition order,
+  // with the value path (`value` for contacts, `fieldValue` for opportunities) carried
+  // as `valuePath` — so the view needs no raw definitions.
+  const customFieldsKeyedBy = getArrayKeyedByOptions(properties[CUSTOM_FIELDS_KEY]);
+  if (customFieldsKeyedBy && customFieldsKeyedBy.columns.length > 0) {
+    const customFieldCols: TableViewCol[] = customFieldsKeyedBy.columns.map((column) => ({
+      kind: 'col',
+      path: buildKeyedArrayColumnPath(
+        CUSTOM_FIELDS_KEY,
+        customFieldsKeyedBy.keyField,
+        column.key,
+        customFieldsKeyedBy.valuePath,
+      ),
+      name: column.name,
+      type: (column.type ?? 'string') as TablePropertyType,
+    }));
     cols.push({ kind: 'banner-group', name: 'Custom Fields', cols: customFieldCols });
   }
 
@@ -218,7 +227,6 @@ export function buildContactsJsonTableSpec(
     idPath: dotPath('id'),
     titlePath: dotPath('contactName'),
     basePath: ['Standard Objects'],
-    defaultView: buildStandardEntityDefaultView(properties, contactCustomFieldDefinitions, 'value'),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -304,7 +312,6 @@ export function buildOpportunitiesJsonTableSpec(
     idPath: dotPath('id'),
     titlePath: dotPath('name'),
     basePath: ['Standard Objects'],
-    defaultView: buildStandardEntityDefaultView(properties, opportunityCustomFieldDefinitions, 'fieldValue'),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -392,7 +399,10 @@ function objectFieldShortKey(fieldKey: string, objectKey: string): string {
  */
 function schemaForObjectFieldDataType(field: { dataType?: string; name?: string; description?: string }): TSchema {
   const annotations: Record<string, unknown> = {};
-  if (field.name) annotations.title = field.name;
+  // Preserve an explicit (even empty-string) name as the column title so the view
+  // reproduces the old `field.name ?? key` exactly (`??` keeps '' where `if (name)`
+  // would drop it). `undefined` names still fall back to the field's short key.
+  if (typeof field.name === 'string') annotations.title = field.name;
   if (field.description) annotations.description = field.description;
   switch ((field.dataType ?? '').toUpperCase()) {
     case 'NUMERICAL':
@@ -422,7 +432,14 @@ function buildObjectPropertiesSchema(fields: GoHighLevelObjectField[], objectKey
   const fieldProperties: Record<string, TSchema> = {};
   for (const field of fields) {
     if (!field.fieldKey) continue;
-    fieldProperties[objectFieldShortKey(field.fieldKey, objectKey)] = schemaForObjectFieldDataType(field);
+    const fieldSchema = schemaForObjectFieldDataType(field) as TSchema & Record<string, unknown>;
+    // schemaForObjectFieldDataType collapses DATE/TEXT/… to the same permissive
+    // union, so record the raw dataType and the standard-vs-custom provenance —
+    // both faithful facts from the HighLevel field definition — so the default-view
+    // builder can type and group each column from the schema alone.
+    if (field.dataType) fieldSchema[X_SCRATCH_CONNECTOR_DATA_TYPE] = field.dataType;
+    if (field.standard !== true) fieldSchema[X_SCRATCH_CUSTOM_FIELD] = true;
+    fieldProperties[objectFieldShortKey(field.fieldKey, objectKey)] = fieldSchema;
   }
   return Type.Object(fieldProperties, {
     additionalProperties: true,
@@ -457,20 +474,27 @@ function tablePropertyTypeForObjectField(dataType: string | undefined): TablePro
  * owner/followers, location, timestamps) sit around them. Columns come from the
  * schema; this view only orders + groups them.
  */
-function buildCustomObjectDefaultView(objectKey: string, fields: GoHighLevelObjectField[]): TableView {
+export function buildCustomObjectDefaultView(spec: BaseJsonTableSpec): TableView {
+  const topProperties = (spec.schema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
+  const propertiesBag =
+    (topProperties.properties as (TSchema & { properties?: Record<string, TSchema> }) | undefined)?.properties ?? {};
+
   const standardCols: TableViewCol[] = [];
   const customFieldCols: TableViewCol[] = [];
-  for (const field of fields) {
-    if (!field.fieldKey) continue;
-    const key = objectFieldShortKey(field.fieldKey, objectKey);
+  for (const [shortKey, rawFieldSchema] of Object.entries(propertiesBag)) {
+    const fieldSchema = rawFieldSchema as Record<string, unknown>;
+    const title = typeof fieldSchema.title === 'string' ? fieldSchema.title : shortKey;
+    const rawConnectorDataType = fieldSchema[X_SCRATCH_CONNECTOR_DATA_TYPE];
+    const connectorDataType = typeof rawConnectorDataType === 'string' ? rawConnectorDataType : undefined;
     const col: TableViewCol = {
       kind: 'col',
-      path: `properties.${key}`,
-      name: field.name ?? key,
-      type: tablePropertyTypeForObjectField(field.dataType),
+      path: `properties.${shortKey}`,
+      name: title,
+      type: tablePropertyTypeForObjectField(connectorDataType),
     };
-    // `standard === true` → built-in object field (flat); otherwise a custom field.
-    (field.standard === true ? standardCols : customFieldCols).push(col);
+    // `x-scratch-custom-field` marks the user-defined fields (GHL `standard: false`);
+    // the built-in standard object fields render flat.
+    (fieldSchema[X_SCRATCH_CUSTOM_FIELD] === true ? customFieldCols : standardCols).push(col);
   }
 
   const cols: (TableViewCol | TableViewBannerGroup)[] = [{ kind: 'col', path: 'id', readonly: true }, ...standardCols];
@@ -537,8 +561,6 @@ export function buildCustomObjectJsonTableSpec(
     // standard objects-API objects (the built-in `business`/Companies) → /Standard
     // Objects/ with the other built-ins.
     basePath: objectKey.startsWith('custom_objects.') ? ['Custom Objects'] : ['Standard Objects'],
-    // View layer: standard fields stay flat; custom fields group under "Custom Fields".
-    defaultView: buildCustomObjectDefaultView(objectKey, fields),
     generatedAt: new Date().toISOString(),
   };
 }

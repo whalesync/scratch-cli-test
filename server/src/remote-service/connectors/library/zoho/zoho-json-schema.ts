@@ -1,6 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_CUSTOM_FIELD,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_MAX_LENGTH,
@@ -10,7 +11,6 @@ import {
 import { WSLogger } from 'src/logger';
 import { ReadonlyFieldEditError, readonlyFieldEditErrorMessage } from '../../error';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
-import { buildZohoDefaultView } from './zoho-default-view';
 import { ZohoFieldMetadata } from './zoho-types';
 
 const LOG_SOURCE = 'ZohoJsonSchema';
@@ -260,6 +260,11 @@ export function buildZohoJsonTableSpec(
     if (isReadonlyZohoField(field)) {
       annotations[X_SCRATCH_READONLY] = true;
     }
+    if (field.custom_field === true) {
+      // Faithful provenance from Zoho's field metadata; the default-view builder
+      // reads it to gather custom fields under a "Custom Fields" banner group.
+      annotations[X_SCRATCH_CUSTOM_FIELD] = true;
+    }
     if (typeof field.length === 'number' && field.length > 0 && isTextLikeType(field.data_type)) {
       annotations[X_SCRATCH_MAX_LENGTH] = field.length;
     }
@@ -279,8 +284,6 @@ export function buildZohoJsonTableSpec(
     schema,
     idPath: dotPath('id'),
     titlePath: titleField ? dotPath(titleField) : undefined,
-    // Standard fields flat; user-created custom fields grouped under a banner.
-    defaultView: buildZohoDefaultView(fields, properties),
     generatedAt: new Date().toISOString(),
   };
 }

@@ -5,7 +5,6 @@ import {
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
-import { buildMocoDefaultView } from './moco-default-view';
 import { MocoEntityType } from './moco-types';
 
 /**
@@ -555,6 +554,5 @@ export function buildMocoJsonTableSpec(id: EntityId, entityType: MocoEntityType)
     mainContentPath: dotPath(getMainContentColumnRemoteId(entityType).slice(1).join('.')),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildMocoDefaultView(schema, entityType),
   };
 }

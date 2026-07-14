@@ -6,7 +6,7 @@
  */
 
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, isShopifyConnectorExtras } from '@spinner/shared-types';
+import { connectorMetadata, isShopifyConnectorExtras, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -184,6 +184,18 @@ export class ShopifyConnector extends Connector {
   }
 
   /**
+   * Build the curated default TableView for a Shopify entity type purely from its
+   * spec, deriving the entity type from `spec.id.wsId` and reading `spec.schema`.
+   * Returns `undefined` for an unrecognized entity type (defensive; unreachable in
+   * practice because the spec came from {@link fetchJsonTableSpec}).
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    const entityType = spec.id.wsId as EntityType;
+    if (!ENTITY_REGISTRY[entityType]) return undefined;
+    return buildShopifyDefaultView(spec.schema, entityType);
+  }
+
+  /**
    * Fetch the JSON Table Spec for a Shopify entity type.
    */
   // eslint-disable-next-line @typescript-eslint/require-await
@@ -245,8 +257,6 @@ export class ShopifyConnector extends Connector {
       idPath: dotPath('id'),
       generatedAt: new Date().toISOString(),
     };
-
-    spec.defaultView = buildShopifyDefaultView(resolvedSchema, entityType);
 
     // Safely access columns - TypeScript union types make direct access difficult
     const columns = config.columns as

@@ -390,8 +390,10 @@ describe('NotionConnector — standalone-pages backup table', () => {
 
     it('surfaces the parent column (the page-tree edge) in the default view', () => {
       const spec = buildStandalonePagesTableSpec();
+      // Schema-gen no longer sets spec.defaultView; the connector derives it from the spec.
+      const defaultView = connector.buildDefaultView(spec);
 
-      const parentColumn = spec.defaultView?.cols.find((col) => col.kind === 'col' && col.path === 'parent');
+      const parentColumn = defaultView?.cols.find((col) => col.kind === 'col' && col.path === 'parent');
       expect(parentColumn).toBeDefined();
       expect(parentColumn && 'hidden' in parentColumn ? parentColumn.hidden : true).toBeUndefined();
       expect(parentColumn && 'subfields' in parentColumn ? parentColumn.subfields : undefined).toEqual([

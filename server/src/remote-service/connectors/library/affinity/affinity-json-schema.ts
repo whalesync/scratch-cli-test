@@ -7,7 +7,6 @@ import {
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { AffinityApiClient } from './affinity-api-client';
-import { buildAffinityDefaultView } from './affinity-default-view';
 import {
   X_SCRATCH_AFFINITY_FIELDS_BY_ID,
   buildAffinityFieldSchemasById,
@@ -282,7 +281,6 @@ export async function buildAffinityJsonTableSpec(
     // so both have to be set to keep the picker and the workbook tree consistent.
     basePath: ['Lists'],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAffinityDefaultView(schema, titlePath),
   };
 }
 
@@ -337,7 +335,6 @@ export async function buildAffinityPersonsTableSpec(
     titlePath: dotPath('firstName'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAffinityDefaultView(schema, 'firstName'),
   };
 }
 
@@ -378,7 +375,6 @@ export async function buildAffinityCompaniesTableSpec(
     titlePath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAffinityDefaultView(schema, 'name'),
   };
 }
 
@@ -414,7 +410,6 @@ export function buildAffinityOpportunitiesTableSpec(id: EntityId): BaseJsonTable
     titlePath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAffinityDefaultView(schema, 'name'),
   };
 }
 
@@ -494,7 +489,6 @@ export function buildAffinityNotesTableSpec(id: EntityId): BaseJsonTableSpec {
     titlePath: dotPath('type'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAffinityDefaultView(schema, 'type'),
   };
 }
 
@@ -532,7 +526,6 @@ export function buildAffinityUsersTableSpec(id: EntityId): BaseJsonTableSpec {
     titlePath: dotPath('firstName'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAffinityDefaultView(schema, 'firstName'),
   };
 }
 
@@ -583,6 +576,5 @@ export function buildAffinityEntityFilesTableSpec(id: EntityId): BaseJsonTableSp
     titlePath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAffinityDefaultView(schema, 'name'),
   };
 }

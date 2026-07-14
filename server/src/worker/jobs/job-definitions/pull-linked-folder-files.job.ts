@@ -654,8 +654,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // Write refreshed schema to git
     if (dataFolder.path) {
       await this.scratchGitService.writeSchemaToGit(repoId, dataFolder.path, tableSpec);
-      if (tableSpec.defaultView) {
-        await this.scratchGitService.writeViewToGit(repoId, dataFolder.path, 'default', tableSpec.defaultView);
+      const defaultView = connector.buildDefaultView(tableSpec);
+      if (defaultView) {
+        await this.scratchGitService.writeViewToGit(repoId, dataFolder.path, 'default', defaultView);
       }
     }
 

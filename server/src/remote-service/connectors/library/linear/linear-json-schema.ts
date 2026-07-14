@@ -17,7 +17,6 @@ import {
   TeamsSchema,
   UsersSchema,
 } from './graphql';
-import { buildLinearDefaultView } from './linear-default-view';
 
 /**
  * Map entity types to their generated TypeBox schemas.
@@ -100,8 +99,6 @@ export function buildLinearJsonTableSpec(id: EntityId): BaseJsonTableSpec {
   if (columns?.mainContent) {
     spec.mainContentPath = dotPath(columns.mainContent.join('.'));
   }
-
-  spec.defaultView = buildLinearDefaultView(schema, entityType);
 
   return spec;
 }

@@ -15,8 +15,14 @@ import {
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
-import { buildAirtableDefaultView } from './airtable-default-view';
-import { AirtableBase, AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
+import {
+  AirtableBase,
+  AirtableDataType,
+  AirtableFieldsV2,
+  AirtableTableV2,
+  X_SCRATCH_AIRTABLE_FIELD_ORDER,
+  X_SCRATCH_AIRTABLE_LOOKUP_RESULT_TYPE,
+} from './airtable-types';
 
 /**
  * Build a BaseJsonTableSpec from an Airtable table definition.
@@ -50,11 +56,16 @@ export function buildAirtableJsonTableSpec(
     }
   }
 
-  // Airtable raw record schema: { id, fields, createdTime }
+  // Airtable raw record schema: { id, fields, createdTime }. The `fields` node
+  // carries the true API field order (field names can be numeric, which JS object
+  // key iteration would reorder — see X_SCRATCH_AIRTABLE_FIELD_ORDER).
   const schema = Type.Object(
     {
       id: Type.String({ description: 'Unique record identifier' }),
-      fields: Type.Object(fieldProperties, { description: 'Record field values keyed by field name' }),
+      fields: Type.Object(fieldProperties, {
+        description: 'Record field values keyed by field name',
+        [X_SCRATCH_AIRTABLE_FIELD_ORDER]: table.fields.map((field) => field.name),
+      }),
       createdTime: Type.String({ description: 'ISO 8601 timestamp of record creation', format: 'date-time' }),
     },
     {
@@ -76,7 +87,6 @@ export function buildAirtableJsonTableSpec(
     // https://airtable.com/appXXXX/tblYYYY/
     remoteWebUrl: `https://airtable.com/${baseId}/${tableId}`,
     generatedAt: new Date().toISOString(),
-    defaultView: buildAirtableDefaultView(table, fieldProperties),
   };
 }
 
@@ -237,6 +247,14 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
   schema[X_SCRATCH_READONLY] = isAirtableColumnReadonly(field) ? true : undefined;
   schema[X_SCRATCH_REMOTE_FIELD_ID] = field.id;
   schema[X_SCRATCH_SUGGESTED_TRANSFORMER] = formulaSuggestedTransformer(connectorDataType) ?? undefined;
+  // A lookup's connector-data-type is the bare "multipleLookupValues" (no result
+  // suffix, unlike formula/rollup/lookup), so record its lookup result type
+  // separately — the default-view builder needs it to decide whether the column
+  // is flattened with the computed-field display transformer.
+  if ((field.type as AirtableDataType) === AirtableDataType.MULTIPLE_LOOKUP_VALUES) {
+    const lookupResultType = field.options?.result?.type;
+    schema[X_SCRATCH_AIRTABLE_LOOKUP_RESULT_TYPE] = lookupResultType ?? undefined;
+  }
   if ((field.type as AirtableDataType) === AirtableDataType.LAST_MODIFIED_TIME) {
     schema[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
   }

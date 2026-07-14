@@ -15,6 +15,7 @@ import {
   type CreateFieldResult,
   type CreateTableResult,
   type SchemaCreationCapabilities,
+  type TableView,
 } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -225,6 +226,14 @@ export class PostgresConnector extends Connector {
   // Schema
   // -------------------------------------------------------------------------
 
+  /**
+   * Derive the default TableView purely from the fetched spec's JSON schema,
+   * using the shared convention-based Postgres/Supabase heuristics.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    return buildPgDefaultView(spec.schema);
+  }
+
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const [schema, tableName] = id.remoteId;
 
@@ -298,7 +307,6 @@ export class PostgresConnector extends Connector {
         slugPath,
         basePath: [schema],
         generatedAt: new Date().toISOString(),
-        defaultView: buildPgDefaultView(tableSchema),
       };
     });
   }

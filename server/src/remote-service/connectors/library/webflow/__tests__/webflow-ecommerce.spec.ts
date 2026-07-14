@@ -1,5 +1,6 @@
 import { TObject } from '@sinclair/typebox';
 import { X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { WebflowConnector } from '../webflow-connector';
 import { webflowEcommerceBasePath } from '../webflow-folder-paths';
 import { buildWebflowJsonTableSpec, buildWebflowOrdersJsonTableSpec } from '../webflow-json-schema';
 import { WebflowSchemaParser } from '../webflow-schema-parser';
@@ -100,7 +101,9 @@ describe('buildWebflowOrdersJsonTableSpec (DEV-10729)', () => {
   });
 
   it('default view exposes exactly the four writable fields as editable, the rest read-only', () => {
-    const cols = spec.defaultView?.cols ?? [];
+    // Schema-gen no longer stamps defaultView; the view is built on demand from the
+    // spec by the connector (which recovers the 'orders' entity type from the id prefix).
+    const cols = new WebflowConnector('test-token').buildDefaultView(spec)?.cols ?? [];
     const byPath = new Map(cols.filter((c) => c.kind === 'col').map((c) => [(c as { path: string }).path, c]));
 
     // Writable: comment + the three shipping-tracking fields (no readonly flag).

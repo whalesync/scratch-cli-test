@@ -5,6 +5,7 @@ import {
   CreateTableResult,
   IncrementalPullSupport,
   SchemaCreationCapabilities,
+  TableView,
 } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
@@ -44,6 +45,7 @@ import {
   buildAirtableCreateField,
   isAirtablePrimaryEligibleKind,
 } from './airtable-create-schema';
+import { buildAirtableDefaultView } from './airtable-default-view';
 import { buildAirtableModifiedSinceFormula, combineAirtableFormulas } from './airtable-incremental';
 import { buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';
 import { AirtableSchemaParser } from './airtable-schema-parser';
@@ -196,6 +198,10 @@ export class AirtableConnector extends Connector {
     }
 
     return buildAirtableJsonTableSpec(id, base, table);
+  }
+
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    return buildAirtableDefaultView(spec);
   }
 
   /**

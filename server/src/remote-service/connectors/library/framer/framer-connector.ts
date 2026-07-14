@@ -1,4 +1,4 @@
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, TableView } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -14,14 +14,15 @@ import {
   TablePreview,
 } from '../../types';
 import { FramerApiClient, FramerWriteItem } from './framer-api-client';
+import { buildFramerDefaultView } from './framer-default-view';
 import { buildFramerJsonTableSpec } from './framer-json-schema';
 import {
   FramerCredentials,
   FramerFieldDataEntry,
   FramerFieldType,
   FramerItemFile,
-  FramerWriteTranslationMaps,
   framerWriteNeedsIdTranslation,
+  FramerWriteTranslationMaps,
   isFramerAssetFieldType,
 } from './framer-types';
 
@@ -168,6 +169,10 @@ export class FramerConnector extends Connector {
       throw new Error(`Framer collection ${collectionId} not found`);
     }
     return buildFramerJsonTableSpec(id, collection);
+  }
+
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    return buildFramerDefaultView(spec);
   }
 
   async pullRecordFiles(

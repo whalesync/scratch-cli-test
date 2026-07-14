@@ -18,7 +18,6 @@ import {
 import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { getDataSourceDisplayName } from './notion-data-source-types';
-import { buildNotionDefaultView } from './notion-default-view';
 
 /**
  * Read-only property types that cannot be updated via the Notion API.
@@ -191,7 +190,6 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
     // https://www.notion.so/208a94267a718094b634e83686fb1755
     remoteWebUrl: `https://www.notion.so/${databaseId.replace(/-/g, '')}`,
     generatedAt: new Date().toISOString(),
-    defaultView: buildNotionDefaultView(schema),
   };
 }
 

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { connectorMetadata } from '@spinner/shared-types';
+import { TableView, connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -20,6 +20,7 @@ import {
   TablePreview,
 } from '../../types';
 import { StripeApiClient, StripeError } from './stripe-api-client';
+import { buildStripeDefaultView } from './stripe-default-view';
 import { buildStripeJsonTableSpec } from './stripe-json-schema';
 import { StripeCredentials, StripeEntityType } from './stripe-types';
 
@@ -136,6 +137,15 @@ export class StripeConnector extends Connector {
         entityType,
       },
     }));
+  }
+
+  /**
+   * Build the default TableView for a Stripe entity type by deriving it from the spec's schema.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    const entityType = spec.id.wsId as StripeEntityType;
+    if (!ENTITY_TYPES.includes(entityType)) return undefined; // defensive
+    return buildStripeDefaultView(spec.schema, entityType);
   }
 
   /**

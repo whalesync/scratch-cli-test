@@ -7,6 +7,7 @@ import {
   IncrementalPullSupport,
   SchemaCreationCapabilities,
   TableDiscoveryMode,
+  TableView,
 } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
@@ -142,6 +143,40 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * @returns A BaseJsonTableSpec containing table metadata and JSON Schema.
    */
   abstract fetchJsonTableSpec(id: EntityId, pendingFolderOptions?: DataFolderOptions): Promise<BaseJsonTableSpec>;
+
+  /**
+   * Build this table's default grid view — column order/visibility, banner
+   * grouping, and which column is the title — as a PURE function of the
+   * already-computed {@link BaseJsonTableSpec}. Receives ONLY the spec: no raw
+   * API payloads, no per-folder options, nothing that isn't already on
+   * `spec.schema` (including its `x-scratch-*` annotations) or another spec
+   * field (`spec.id`, `spec.titlePath`, etc.). The signature makes a non-spec
+   * dependency structurally impossible, so a checked-in view can always be
+   * regenerated from the schema — this is the `api → schema → view` pipeline's
+   * final, drift-proof stage (the schema *describes*; the view *editorializes*).
+   *
+   * Editorial choices — which fields lead, which get grouped under a banner,
+   * which stay hidden — are CODE in the override, keyed off `spec.id`/`spec.slug`
+   * (the table/entity type), never passed-in config and never a schema
+   * annotation invented just for view-building. The schema stays a faithful,
+   * display-agnostic description of the API's data (Connector Prime Directive);
+   * the View is where display opinions live. When the view genuinely needs a
+   * value the schema doesn't already carry, add an `x-scratch-*` annotation in
+   * the schema stage (a faithful fact about the data) rather than passing config.
+   *
+   * Called by the write sites AFTER `fetchJsonTableSpec` and after any user
+   * id/name field overrides have been re-applied to `spec.idPath`/`spec.titlePath`,
+   * so the rebuilt view reflects the record's actual configured title field.
+   *
+   * The default returns `undefined` — connectors with no curated default view
+   * don't override this, and no `views/default.json` is written for them.
+   *
+   * @param spec The fetched (and override-adjusted) table spec.
+   * @returns The default TableView, or `undefined` if this table has none.
+   */
+  buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    return undefined;
+  }
 
   /**
    * Get a new file template for the given table spec.

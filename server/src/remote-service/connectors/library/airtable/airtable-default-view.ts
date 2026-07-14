@@ -7,7 +7,12 @@ import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
-import { AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
+import type { BaseJsonTableSpec } from '../../types';
+import {
+  AirtableDataType,
+  X_SCRATCH_AIRTABLE_FIELD_ORDER,
+  X_SCRATCH_AIRTABLE_LOOKUP_RESULT_TYPE,
+} from './airtable-types';
 
 // Airtable field types that map to specific TablePropertyType values.
 const TYPE_MAP: Partial<Record<string, TablePropertyType>> = {
@@ -55,21 +60,42 @@ const FORMULA_RESULT_TYPE_MAP: Partial<Record<string, TablePropertyType>> = {
   [AirtableDataType.RICH_TEXT]: 'richtext',
 };
 
+// The key under which per-field schemas live on the Airtable record schema:
+// `schema.properties.fields.properties.<fieldName>`. Also the path prefix on
+// every field column (`fields.<fieldName>`).
+const FIELDS_KEY = 'fields';
+
 /**
- * Build a default TableView for an Airtable table.
- * Uses the table's field metadata to order and type columns. The primary field
- * appears first, followed by remaining fields in Airtable's native order.
+ * Build a default TableView for an Airtable table — a PURE function of the spec.
+ * Reads the per-field schemas (and their `x-scratch-*` annotations) off
+ * `spec.schema` to order and type columns. The primary field — identified by
+ * `spec.titlePath` (`fields.<primaryName>`) — appears first, followed by the
+ * remaining fields in the schema's (Airtable-native) order.
  */
-export function buildAirtableDefaultView(table: AirtableTableV2, fieldsSchema: Record<string, TSchema>): TableView {
-  const cols: TableViewCol[] = [];
+export function buildAirtableDefaultView(spec: BaseJsonTableSpec): TableView {
+  const fieldsNode = readFieldsNode(spec);
+  const fieldsSchema = fieldsNode?.properties ?? {};
 
-  // Order fields: primary field first, then the rest in Airtable order
-  const ordered = orderFields(table.fields, table.primaryFieldId);
+  // Column order must be the TRUE Airtable field order. Object.keys can't be
+  // trusted here: field names are user-controlled and can be numeric, which JS
+  // hoists to the front. Schema-gen records the real order in the fields node's
+  // x-scratch-airtable-field-order annotation; fall back to Object.keys only for
+  // legacy schemas that predate it.
+  const recordedFieldOrder = fieldsNode?.[X_SCRATCH_AIRTABLE_FIELD_ORDER] as string[] | undefined;
+  const fieldNamesInNativeOrder = (recordedFieldOrder ?? Object.keys(fieldsSchema)).filter((name) =>
+    Object.prototype.hasOwnProperty.call(fieldsSchema, name),
+  );
 
-  for (const field of ordered) {
-    const fieldSchema = fieldsSchema[field.name];
-    cols.push(buildCol(field, fieldSchema));
-  }
+  // Editorial rule: the primary field leads. Its identity comes from titlePath;
+  // strip the leading `fields.` by prefix (dot-safe — a plain path split would
+  // over-split a primary field name containing a literal `.`).
+  const primaryFieldName = primaryFieldNameFromTitlePath(spec.titlePath);
+  const orderedFieldNames =
+    primaryFieldName && Object.prototype.hasOwnProperty.call(fieldsSchema, primaryFieldName)
+      ? [primaryFieldName, ...fieldNamesInNativeOrder.filter((name) => name !== primaryFieldName)]
+      : fieldNamesInNativeOrder;
+
+  const cols: TableViewCol[] = orderedFieldNames.map((fieldName) => buildCol(fieldName, fieldsSchema[fieldName]));
 
   // Add createdTime as a trailing column
   cols.push({
@@ -81,6 +107,19 @@ export function buildAirtableDefaultView(table: AirtableTableV2, fieldsSchema: R
   });
 
   return { name: 'Default', cols };
+}
+
+/** Read the `fields` object node from `spec.schema.properties.fields` (carries both the per-field schemas and the field-order annotation). */
+function readFieldsNode(spec: BaseJsonTableSpec): (TSchema & { properties?: Record<string, TSchema> }) | undefined {
+  const topLevelProperties = (spec.schema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
+  return topLevelProperties[FIELDS_KEY] as (TSchema & { properties?: Record<string, TSchema> }) | undefined;
+}
+
+/** Extract the primary field name from a `fields.<name>` title path (dot-safe). */
+function primaryFieldNameFromTitlePath(titlePath: string | undefined): string | undefined {
+  const prefix = `${FIELDS_KEY}.`;
+  if (!titlePath || !titlePath.startsWith(prefix)) return undefined;
+  return titlePath.slice(prefix.length);
 }
 
 // Collaborator types that share the {id, email, name} shape.
@@ -147,14 +186,6 @@ const COMPUTED_WRAPPER_HOST_TYPES = new Set<string>([
 
 // ── Helpers ──
 
-/** Order fields with the primary field first, then the rest in their original order. */
-function orderFields(fields: AirtableFieldsV2[], primaryFieldId?: string): AirtableFieldsV2[] {
-  if (!primaryFieldId) return fields;
-  const primary = fields.find((f) => f.id === primaryFieldId);
-  const rest = fields.filter((f) => f.id !== primaryFieldId);
-  return primary ? [primary, ...rest] : fields;
-}
-
 /** Map an Airtable connector data type to a TablePropertyType. */
 function mapType(connectorDataType: string | undefined): TablePropertyType | undefined {
   if (!connectorDataType) return undefined;
@@ -174,22 +205,41 @@ function mapType(connectorDataType: string | undefined): TablePropertyType | und
 }
 
 /**
- * Return the computed-field display transformer for an Airtable field, or
- * undefined when the column should keep its typed rendering. A field earns it
- * when its stored value is an aiText wrapper, a numeric result (which can arrive
- * as `{ specialValue: "Infinity" }`), or a plain-text computed scalar — and any
- * of these may also arrive errored or as a lookup array — the shapes that
- * otherwise render as raw JSON or a broken numeric cell.
+ * Return the computed-field display transformer for an Airtable field from its
+ * schema annotations, or undefined when the column should keep its typed
+ * rendering. A field earns it when its value is an aiText wrapper, a numeric
+ * result (which can arrive as `{ specialValue: "Infinity" }`), or a plain-text
+ * computed scalar — and any of these may also arrive errored or as a lookup
+ * array — the shapes that otherwise render as raw JSON or a broken numeric cell.
+ *
+ * The host type and (for formula/rollup/lookup) the result type are encoded in
+ * `x-scratch-connector-data-type` (`"aiText"`, `"formula-number"`, …); a
+ * `multipleLookupValues` field's result type lives in the dedicated
+ * `x-scratch-airtable-lookup-result-type` annotation instead. This mirrors the
+ * decision the raw `field.type` / `field.options.result.type` drove at pull time.
  */
 function computedFieldDisplayTransformer(
-  field: AirtableFieldsV2,
+  connectorDataType: string | undefined,
+  fieldSchema: TSchema | undefined,
 ): NonNullable<TableViewCol['displayTransformer']> | undefined {
-  const rawFieldType = field.type as AirtableDataType;
-  if (rawFieldType === AirtableDataType.AI_TEXT) return COMPUTED_FIELD_DISPLAY_TRANSFORMER;
+  if (!connectorDataType) return undefined;
+  if (connectorDataType === (AirtableDataType.AI_TEXT as string)) return COMPUTED_FIELD_DISPLAY_TRANSFORMER;
 
-  if (COMPUTED_WRAPPER_HOST_TYPES.has(rawFieldType)) {
-    const resultType = field.options?.result?.type as AirtableDataType | undefined;
-    if (resultType === AirtableDataType.AI_TEXT || (resultType && TRANSFORMABLE_RESULT_TYPES.has(resultType))) {
+  // Split "<host>" or "<host>-<resultType>" (formula/rollup/lookup carry a suffix).
+  const dashIndex = connectorDataType.indexOf('-');
+  const hostType = dashIndex > 0 ? connectorDataType.slice(0, dashIndex) : connectorDataType;
+  let resultType: string | undefined = dashIndex > 0 ? connectorDataType.slice(dashIndex + 1) : undefined;
+  // A lookup array's result type is not in the connector-data-type; read it from
+  // its dedicated annotation.
+  if (hostType === (AirtableDataType.MULTIPLE_LOOKUP_VALUES as string)) {
+    resultType = fieldSchema?.[X_SCRATCH_AIRTABLE_LOOKUP_RESULT_TYPE] as string | undefined;
+  }
+
+  if (COMPUTED_WRAPPER_HOST_TYPES.has(hostType)) {
+    if (
+      resultType === (AirtableDataType.AI_TEXT as string) ||
+      (resultType && TRANSFORMABLE_RESULT_TYPES.has(resultType))
+    ) {
       return COMPUTED_FIELD_DISPLAY_TRANSFORMER;
     }
   }
@@ -197,16 +247,16 @@ function computedFieldDisplayTransformer(
   return undefined;
 }
 
-/** Build a TableViewCol for an Airtable field. */
-function buildCol(field: AirtableFieldsV2, fieldSchema: TSchema | undefined): TableViewCol {
+/** Build a TableViewCol for an Airtable field from its name and schema. */
+function buildCol(fieldName: string, fieldSchema: TSchema | undefined): TableViewCol {
   const connectorDataType = fieldSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
   const isReadonly = fieldSchema?.[X_SCRATCH_READONLY] === true;
-  const displayTransformer = computedFieldDisplayTransformer(field);
+  const displayTransformer = computedFieldDisplayTransformer(connectorDataType, fieldSchema);
 
   const col: TableViewCol = {
     kind: 'col',
-    path: `fields.${field.name}`,
-    name: field.name,
+    path: `fields.${fieldName}`,
+    name: fieldName,
     // A column with a displayTransformer DISPLAYS the flattened scalar string, so
     // it must render through the grid's text cell — the only cell kind that
     // consults `displayTransformer`. A mapped 'number' / 'object' type would

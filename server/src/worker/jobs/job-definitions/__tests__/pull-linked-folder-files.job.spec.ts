@@ -70,6 +70,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
   const createMockConnector = (tableSpecOverrides?: Partial<BaseJsonTableSpec>) => ({
     fetchJsonTableSpec: jest.fn().mockResolvedValue({ ...defaultTableSpec, ...tableSpecOverrides }),
+    // The view is now produced by the connector on demand (MR2); default to none.
+    buildDefaultView: jest.fn().mockReturnValue(undefined),
     pullRecordFiles: jest.fn(),
     supportsIncrementalPull: jest.fn().mockReturnValue(false),
     getSuggestedRecordFileNames: jest.fn().mockImplementation((records: ConnectorFile[]) =>
@@ -427,9 +429,10 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     });
 
     describe('default view writing', () => {
-      it('should call writeViewToGit when tableSpec has a defaultView', async () => {
+      it('should call writeViewToGit when the connector builds a default view', async () => {
         const defaultView = { name: 'Default', cols: [] };
-        const mockConnector = createMockConnector({ defaultView });
+        const mockConnector = createMockConnector();
+        mockConnector.buildDefaultView.mockReturnValue(defaultView);
         const params = createMockParams();
         const dataFolder = createMockDataFolder();
         const connectorAccount = createMockConnectorAccount();

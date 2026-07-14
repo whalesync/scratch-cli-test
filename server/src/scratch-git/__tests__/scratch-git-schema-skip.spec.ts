@@ -56,13 +56,9 @@ describe('ScratchGitService.writeSchemaToGit — skip when unchanged', () => {
 
   it('skips both commits when schema differs only by generatedAt', async () => {
     const existing = { ...baseSpec(), generatedAt: '2020-01-01T00:00:00.000Z' };
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { defaultView, ...existingNoView } = existing as Record<string, unknown> & {
-      defaultView?: unknown;
-    };
     mockGetFile.mockImplementation((_repo: string, _branch: string, path: string) => {
       if (path === SCHEMA_GIT_PATH) {
-        return Promise.resolve({ content: JSON.stringify(existingNoView) });
+        return Promise.resolve({ content: JSON.stringify(existing) });
       }
       return Promise.resolve(null);
     });
@@ -130,25 +126,5 @@ describe('ScratchGitService.writeSchemaToGit — skip when unchanged', () => {
     await service.writeSchemaToGit(REPO_ID, FOLDER_PATH, baseSpec());
 
     expect(mockCommitFiles).toHaveBeenCalledTimes(2);
-  });
-
-  it('strips defaultView before comparison so its presence/absence does not trigger a write', async () => {
-    // Existing on disk was written without defaultView (writeSchemaToGit strips it).
-    const existing = baseSpec();
-    mockGetFile.mockImplementation((_repo: string, _branch: string, path: string) => {
-      if (path === SCHEMA_GIT_PATH) {
-        return Promise.resolve({ content: JSON.stringify(existing) });
-      }
-      return Promise.resolve(null);
-    });
-
-    // New in-memory spec has defaultView — should be ignored for comparison.
-    const newSpec = {
-      ...baseSpec(),
-      defaultView: { name: 'default', columns: [] },
-    } as unknown as BaseJsonTableSpec;
-    await service.writeSchemaToGit(REPO_ID, FOLDER_PATH, newSpec);
-
-    expect(mockCommitFiles).not.toHaveBeenCalled();
   });
 });

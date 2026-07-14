@@ -1,4 +1,9 @@
-import { connectorMetadata, ConnectorSettingDefinition, IncrementalPullSupport } from '@spinner/shared-types';
+import {
+  connectorMetadata,
+  ConnectorSettingDefinition,
+  IncrementalPullSupport,
+  TableView,
+} from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -24,6 +29,7 @@ import {
   TablePreview,
 } from '../../types';
 import { HubspotApiClient, HubspotError } from './hubspot-api-client';
+import { buildHubspotDefaultView } from './hubspot-default-view';
 import { buildHubspotJsonTableSpec, isReadonlyHubspotProperty } from './hubspot-json-schema';
 import {
   ASSOCIATIONS_BY_OBJECT_TYPE,
@@ -184,6 +190,23 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     }
 
     return tables;
+  }
+
+  /**
+   * Build the default TableView for a HubSpot object purely from its spec. The
+   * object type is the spec's remote id (`fetchJsonTableSpec` derives it as
+   * `id.remoteId[0]`), and the per-object display tuning (title/priority
+   * columns, whether to blanket-hide the `hs_`-managed namespace) comes from
+   * OBJECT_CONFIG. HubSpot always yields a view, so this never returns undefined.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    const objectType = spec.id.remoteId[0];
+    const config = OBJECT_CONFIG[objectType];
+    return buildHubspotDefaultView(spec.schema, {
+      titleFieldPath: config?.titleFieldPath,
+      priorityFields: config?.priorityFields,
+      hideHubspotManagedProperties: config?.hideHubspotManagedPropertiesByDefault ?? false,
+    });
   }
 
   /**

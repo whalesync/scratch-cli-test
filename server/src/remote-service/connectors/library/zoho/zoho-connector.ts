@@ -1,4 +1,4 @@
-import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -20,6 +20,7 @@ import {
   TablePreview,
 } from '../../types';
 import { ZOHO_PAGE_TOKEN_RECORD_CEILING, ZOHO_WRITE_BATCH_SIZE, ZohoApiClient, ZohoError } from './zoho-api-client';
+import { buildZohoDefaultView } from './zoho-default-view';
 import {
   buildZohoJsonTableSpec,
   buildZohoUpdatePayloadOrThrowOnReadonly,
@@ -176,6 +177,18 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
     const fields = await this.client.getFields(tableId);
     this.pullFieldNamesCache.set(tableId, pullFieldNamesFrom(fields));
     return buildZohoJsonTableSpec(id, tableId, tableId, fields);
+  }
+
+  /**
+   * Rebuild the default view from the spec. The synthetic read-only users
+   * reference table never carried a curated view — mirror `fetchJsonTableSpec`'s
+   * dispatch and leave it view-less.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    if (spec.id.remoteId[0] === ZOHO_USERS_TABLE_ID) {
+      return undefined;
+    }
+    return buildZohoDefaultView(spec);
   }
 
   incrementalPullSupport(

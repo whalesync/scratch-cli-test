@@ -1,4 +1,4 @@
-import { connectorMetadata, isQuickBooksConnectorExtras } from '@spinner/shared-types';
+import { TableView, connectorMetadata, isQuickBooksConnectorExtras } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -21,6 +21,7 @@ import {
   TablePreview,
 } from '../../types';
 import { QuickBooksApiClient, QuickBooksError } from './quickbooks-api-client';
+import { buildQuickBooksDefaultView } from './quickbooks-default-view';
 import { buildQuickBooksJsonTableSpec } from './quickbooks-json-schema';
 import {
   ENTITY_CONFIG,
@@ -124,6 +125,19 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
         entityType,
       },
     }));
+  }
+
+  /**
+   * Build the default TableView for a QuickBooks entity purely from its spec —
+   * discovers fields from the annotated schema and applies the entity's priority
+   * column ordering. Derives the entity type from `spec.id.remoteId[0]` (how
+   * {@link fetchJsonTableSpec} sets it); returns undefined for an unrecognized
+   * type (defensive — `fetchJsonTableSpec` already validated it).
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    const entityType = spec.id.remoteId[0] as QuickBooksEntityType;
+    if (!ENTITY_TYPES.includes(entityType)) return undefined;
+    return buildQuickBooksDefaultView(spec.schema, entityType);
   }
 
   /**

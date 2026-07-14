@@ -18,7 +18,6 @@ import {
 import _ from 'lodash';
 import { BaseJsonTableSpec, DotPath, dotPath, EntityId } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
-import { buildWebflowDefaultView } from './webflow-default-view';
 import {
   findWebflowSecondaryLocaleByCmsLocaleId,
   webflowCollectionBasePath,
@@ -344,7 +343,6 @@ export function buildWebflowJsonTableSpec(
     basePath: isSecondaryLocale ? [...primaryCollectionBasePath, collection.displayName] : primaryCollectionBasePath,
     structureVersion,
     generatedAt: new Date().toISOString(),
-    defaultView: buildWebflowDefaultView(schema, 'collection_items'),
   };
 }
 
@@ -416,7 +414,6 @@ export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Site, struct
     basePath: [webflowSiteFolderName(site)],
     structureVersion,
     generatedAt: new Date().toISOString(),
-    defaultView: buildWebflowDefaultView(schema, 'assets'),
   };
 }
 
@@ -518,7 +515,6 @@ export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site, structu
     basePath: [webflowSiteFolderName(site)],
     structureVersion,
     generatedAt: new Date().toISOString(),
-    defaultView: buildWebflowDefaultView(schema, 'pages'),
   };
 }
 
@@ -601,7 +597,6 @@ export function buildWebflowOrdersJsonTableSpec(id: EntityId, site: Site, struct
     basePath: webflowEcommerceBasePath(site),
     structureVersion,
     generatedAt: new Date().toISOString(),
-    defaultView: buildWebflowDefaultView(schema, 'orders'),
   };
 }
 

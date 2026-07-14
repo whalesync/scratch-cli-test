@@ -1,4 +1,4 @@
-import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport, TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -23,6 +23,7 @@ import {
   TablePreview,
 } from '../../types';
 import { MocoApiClient, MocoError } from './moco-api-client';
+import { buildMocoDefaultView } from './moco-default-view';
 import { buildMocoUpdatedAfter } from './moco-incremental';
 import { buildMocoJsonTableSpec } from './moco-json-schema';
 import { MocoCredentials, MocoEntityType } from './moco-types';
@@ -117,6 +118,17 @@ export class MocoConnector extends Connector {
         entityType,
       },
     }));
+  }
+
+  /**
+   * Build the curated default view for a Moco table, derived purely from the
+   * fetched spec. The entity type is carried on `spec.id.wsId` (see
+   * {@link fetchJsonTableSpec}), and the view is generated from `spec.schema`
+   * with the same priority/hidden-field rules used at pull time.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    const entityType = spec.id.wsId as MocoEntityType;
+    return buildMocoDefaultView(spec.schema, entityType);
   }
 
   /**

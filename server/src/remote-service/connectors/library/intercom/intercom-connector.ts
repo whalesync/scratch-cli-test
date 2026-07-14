@@ -1,4 +1,9 @@
-import { connectorMetadata, ConnectorSettingDefinition, IncrementalPullSupport } from '@spinner/shared-types';
+import {
+  connectorMetadata,
+  ConnectorSettingDefinition,
+  IncrementalPullSupport,
+  TableView,
+} from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -19,6 +24,7 @@ import {
   TablePreview,
 } from '../../types';
 import { IntercomApiClient, IntercomError } from './intercom-api-client';
+import { buildIntercomDefaultView } from './intercom-default-view';
 import { buildIntercomUpdatedSinceQuery, IntercomUpdatedSinceQuery } from './intercom-incremental';
 import {
   buildIntercomArticlesJsonTableSpec,
@@ -127,6 +133,16 @@ export class IntercomConnector extends Connector {
         metadata: { description: 'Conversations in your Intercom workspace (read-only)' },
       },
     ];
+  }
+
+  /**
+   * Reproduce, purely from the spec, the default TableView that schema
+   * generation used to bake into each table spec. `spec.id.wsId` is the entity
+   * type ('articles' | 'collections' | 'conversations') — the exact string
+   * literal the old schema-gen `defaultView` setter passed to the builder.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    return buildIntercomDefaultView(spec.schema, spec.id.wsId);
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await

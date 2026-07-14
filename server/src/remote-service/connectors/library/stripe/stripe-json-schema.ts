@@ -1,7 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
-import { buildStripeDefaultView } from './stripe-default-view';
 import { StripeEntityType } from './stripe-types';
 
 /**
@@ -605,6 +604,5 @@ export function buildStripeJsonTableSpec(id: EntityId, entityType: StripeEntityT
     // https://dashboard.stripe.com/customers (live mode).
     remoteWebUrl: `https://dashboard.stripe.com/${STRIPE_DASHBOARD_PATHS[entityType]}`,
     generatedAt: new Date().toISOString(),
-    defaultView: buildStripeDefaultView(schema, entityType),
   };
 }

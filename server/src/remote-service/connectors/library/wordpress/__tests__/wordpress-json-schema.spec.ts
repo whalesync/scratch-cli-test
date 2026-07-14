@@ -1,6 +1,7 @@
 import { FormatRegistry, TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import postsSchemaResponse from '../__fixtures__/posts-schema-response.json';
+import { buildWordPressDefaultView } from '../wordpress-default-view';
 import { buildWordPressJsonTableSpec } from '../wordpress-json-schema';
 import { WordPressEndpointOptionsResponse } from '../wordpress-types';
 
@@ -151,7 +152,9 @@ describe('buildWordPressJsonTableSpec — schema shape', () => {
   });
 
   it('still expands ACF sub-field columns in the default view (union unwrap)', () => {
-    const cols = POSTS_SPEC.defaultView?.cols ?? [];
+    // Schema-gen no longer sets `spec.defaultView`; the view is now generated on
+    // demand from the spec's schema (via WordPressConnector.buildDefaultView).
+    const cols = buildWordPressDefaultView(POSTS_SPEC.schema).cols;
     const paths = cols.flatMap((col) => ('path' in col && typeof col.path === 'string' ? [col.path] : []));
     expect(paths).toContain('acf.image_field');
     expect(paths).toContain('acf.taxonomy_field');

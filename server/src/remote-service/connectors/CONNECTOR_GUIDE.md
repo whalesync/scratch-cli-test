@@ -148,7 +148,8 @@ type BaseJsonTableSpec = {
   basePath?: string[]; // Root path grouping (e.g. site name, base name)
   remoteWebUrl?: string; // Deep link to the table in the SERVICE's web UI (e.g. https://airtable.com/{baseId}/{tableId}); omit if not constructible
   generatedAt?: string; // ISO 8601 timestamp of schema generation
-  defaultView?: TableView; // Pre-built column layout (see Section 8)
+  // NOTE: the default column layout is NOT part of the spec. It is produced separately
+  // by `Connector.buildDefaultView(spec)` — a pure spec → view stage (see Section 8).
 };
 
 // A record — just a plain JSON object
@@ -1154,7 +1155,12 @@ server/src/remote-service/connectors/library/<service-name>/
 
 ## 8. Default Views
 
-Every connector should provide a `defaultView` on its `BaseJsonTableSpec`. The default view controls which columns appear in the grid, their order, display names, type hints, and visibility when the user first opens a table. Without one, the client falls back to an auto-generated view that shows every field alphabetically with no type hints — not a good first impression.
+Every connector should override `buildDefaultView(spec)` on its `Connector` class. The default view controls which columns appear in the grid, their order, display names, type hints, and visibility when the user first opens a table. Without one, the client falls back to an auto-generated view that shows every field alphabetically with no type hints — not a good first impression. Return `undefined` for a table that has no curated view (the base method's default), and no `views/default.json` is written for it.
+
+> **Default-view generation is a pure `spec → view` stage.** `buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined` receives **only the spec** (its JSON schema — including `x-scratch-*` annotations — plus the wrapper metadata: `id`, `slug`, `titlePath`, `idPath`, `slugPath`, …). It **must not read raw API input**; the compiler enforces this, since the raw payload simply isn't in scope. Schema-gen (`fetchJsonTableSpec`) therefore **does not** build or attach the view — it only produces the spec. This realizes the project's `api → schema → view` pipeline: the schema _describes_ the data; the view _editorializes_ it. Because the view is a function of the spec alone, a checked-in `views/default.json` can always be regenerated from the schema and can never silently drift from the generator.
+>
+> - **Editorial choices are CODE in the builder, keyed off the entity type** (`spec.id` / `spec.slug`) — never passed-in config, and never a schema annotation invented just for view-building. Which fields lead, which get grouped under a banner, which stay hidden, and which entity variant a table is are all decided in code from the spec's identity.
+> - **If the view genuinely needs a value the schema doesn't already carry, add an `x-scratch-*` annotation in the schema stage** — a _faithful fact about the field the service reports_ (e.g. Zoho's `x-scratch-custom-field` for standard-vs-custom provenance, Airtable's lookup result type), never a display opinion pushed into the schema (that would violate the Connector Prime Directive). The builder then reads that annotation back. Do this only when the fact is real data, not editorial.
 
 ### Types
 
@@ -1162,7 +1168,7 @@ See the types in `/packages/shared-types/src/connector/table-view.ts`. Comments 
 
 ### Overview
 
-A default view is a `TableView` object set on `tableSpec.defaultView` in your `fetchJsonTableSpec()` implementation. It is written to `views/default.json` in the workbook's git repo on every pull. Put the builder in a dedicated file (`<service-name>-default-view.ts`) and add tests in `__tests__/<service-name>-default-view.spec.ts`.
+Override `buildDefaultView(spec)` on your connector class to return a `TableView` built purely from the spec. The write sites (create-folder, pull, refresh-schema) call it — after re-applying any user id/name field overrides onto `spec.idPath`/`spec.titlePath` — and write the result to `views/default.json` in the workbook's git repo on every pull. Put the builder logic in a dedicated file (`<service-name>-default-view.ts`) that takes the spec (or its schema) and add tests in `__tests__/<service-name>-default-view.spec.ts`.
 
 ### Design Principles
 

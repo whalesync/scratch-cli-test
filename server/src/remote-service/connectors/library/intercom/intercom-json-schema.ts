@@ -1,7 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_LAST_MODIFIED_FIELD, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
-import { buildIntercomDefaultView } from './intercom-default-view';
 
 // ---------------------------------------------------------------------------
 // Articles (static schema)
@@ -87,7 +86,6 @@ export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableS
     slugPath: dotPath('title'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildIntercomDefaultView(schema, 'articles'),
   };
 }
 
@@ -146,7 +144,6 @@ export function buildIntercomCollectionsJsonTableSpec(id: EntityId): BaseJsonTab
     slugPath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildIntercomDefaultView(schema, 'collections'),
   };
 }
 
@@ -320,6 +317,5 @@ export function buildIntercomConversationsJsonTableSpec(id: EntityId): BaseJsonT
     slugPath: dotPath('source.subject'),
     basePath: [],
     generatedAt: new Date().toISOString(),
-    defaultView: buildIntercomDefaultView(schema, 'conversations'),
   };
 }
