@@ -133,6 +133,12 @@ export function generateCreatePlanFromSources(args: {
    * eligible.
    */
   destinationPrimaryFieldKinds?: CreateFieldKind[];
+  /**
+   * Field names the destination connector reserves (e.g. Postgres's auto-injected `id` primary key). A
+   * source field whose name collides is renamed like a duplicate, so it isn't silently dropped at create
+   * and then unresolvable at apply (`SchemaCreationCapabilities.reservedFieldNames`).
+   */
+  destinationReservedFieldNames?: string[];
 }): GeneratedPlan {
   // linkedTableId → in-plan table ref (for resolving sibling foreign keys).
   const linkedIdToRef = new Map<string, string>();
@@ -169,12 +175,17 @@ export function generateCreatePlanFromSources(args: {
           linkedIdToRef,
           mappingByLinkedId,
           notes,
+          args.destinationReservedFieldNames,
         ),
       );
     } else {
       const fields = collectCreateFieldSpecsForSource(
         source,
-        { allowSiblingRefForeignKeys: true, markPrimaryField: true },
+        {
+          allowSiblingRefForeignKeys: true,
+          markPrimaryField: true,
+          reservedFieldNames: args.destinationReservedFieldNames,
+        },
         linkedIdToRef,
         mappingByLinkedId,
         notes,
@@ -249,13 +260,14 @@ function buildAddFieldsPlanForSource(
   linkedIdToRef: Map<string, string>,
   mappingByLinkedId: Map<string, string[]>,
   notes: FieldMappingNote[],
+  reservedFieldNames: string[] | undefined,
 ): CreateSchemaFieldsPlan {
   const existingDestinationFieldsByName = new Map(
     existingDestination.existingFields.map((field) => [normalizeNameForUniqueness(field.name), field] as const),
   );
   const fields = collectCreateFieldSpecsForSource(
     source,
-    { allowSiblingRefForeignKeys: false, markPrimaryField: false, existingDestinationFieldsByName },
+    { allowSiblingRefForeignKeys: false, markPrimaryField: false, existingDestinationFieldsByName, reservedFieldNames },
     linkedIdToRef,
     mappingByLinkedId,
     notes,
@@ -280,6 +292,9 @@ interface CreateFieldSpecOptions {
    * match, or otherwise skipped — never recreated.
    */
   existingDestinationFieldsByName?: Map<string, ExistingDestinationField>;
+  /** Field names the destination connector reserves (e.g. Postgres `id`) — seeded into the taken-names
+   *  set so a colliding source field is renamed rather than dropped at create. Compared case-insensitively. */
+  reservedFieldNames?: string[];
 }
 
 /** Map every field of a source to a create-field spec, pushing a note per field. */
@@ -295,7 +310,12 @@ function collectCreateFieldSpecsForSource(
   // fields (add-fields case) plus every field we emit here. An emitted field whose
   // name collides gets a numeric suffix + a 'renamed' note. A COPY of the
   // existing-destination names, so the frozen original still drives the adopt/skip.
-  const takenFieldNames = new Set(options.existingDestinationFieldsByName?.keys() ?? []);
+  const takenFieldNames = new Set<string>([
+    ...(options.existingDestinationFieldsByName?.keys() ?? []),
+    // Reserved destination names (e.g. Postgres's auto `id`) are already taken, so a source field that
+    // folds to one is renamed by `allocateUniqueName` instead of being silently dropped at create.
+    ...(options.reservedFieldNames?.map(normalizeNameForUniqueness) ?? []),
+  ]);
   for (const schemaField of source.schemaFields) {
     const spec = mapSchemaFieldToCreateFieldSpec(
       source,
@@ -397,7 +417,16 @@ function mapSchemaFieldToCreateFieldSpec(
   // This field will be emitted — give it a name unique within the table.
   const fieldName = allocateUniqueName(requestedFieldName, takenFieldNames);
   const renamedFromName = fieldName !== requestedFieldName ? requestedFieldName : undefined;
-  const renameClause = renamedFromName ? `renamed from "${renamedFromName}" to keep field names unique` : undefined;
+  const renamedForReservedName =
+    renamedFromName !== undefined &&
+    (options.reservedFieldNames ?? []).some(
+      (reserved) => normalizeNameForUniqueness(reserved) === normalizeNameForUniqueness(renamedFromName),
+    );
+  const renameClause = renamedFromName
+    ? renamedForReservedName
+      ? `renamed from "${renamedFromName}" — "${renamedFromName}" is reserved by the destination`
+      : `renamed from "${renamedFromName}" to keep field names unique`
+    : undefined;
 
   if (foreignKeyType) {
     if (foreignKeyNeedsTargetLinkedTableId !== null) {

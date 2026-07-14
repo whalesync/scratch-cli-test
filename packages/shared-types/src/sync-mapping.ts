@@ -581,3 +581,29 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.WrapObject; options: WrapObjectOptions }
   | { type: typeof TransformerTypes.MapArray; options: MapArrayOptions }
   | { type: typeof TransformerTypes.SkipIfDestArrayMatches; options?: SkipIfDestArrayMatchesOptions };
+
+/**
+ * Transformer arms that are SERVER-ONLY: their options carry a branded `DataFolderId` and
+ * their runtime needs cross-record `LookupTools` (foreign-key / asset / lookup resolution).
+ * They must never be serialized onto a View column that gets sent to a frontend, and they are
+ * resolved in dedicated sync phases (`FOREIGN_KEY_MAPPING`), not the per-value codec.
+ */
+export type ServerOnlyTransformerType =
+  | typeof TransformerTypes.SourceFkToDestFk
+  | typeof TransformerTypes.LookupField
+  | typeof TransformerTypes.SourceAssetToDestAsset
+  | typeof TransformerTypes.MatchAssetByHash;
+
+/**
+ * The subset of {@link TransformerConfig} that is safe to serialize onto a View column (and
+ * hence to send to the web / desktop / CLI frontends): every arm EXCEPT the server-only
+ * FK/asset/lookup arms ({@link ServerOnlyTransformerType}). This is the vocabulary a View
+ * column's `toCore` / `fromCore` codec may use — a widened superset of the display-only
+ * `DisplayTransformerConfig`, admitting the pure pack transformers (`wrap_object`,
+ * `html_to_airmark`, `slugify`, …) that `fromCore` needs while keeping DataFolderId-bearing
+ * arms out of client-facing payloads.
+ *
+ * NOTE: `map_array`'s nested `elementTransformer` is still typed as the full
+ * `TransformerConfig`; the client-safe guarantee is enforced at the top level only.
+ */
+export type ClientSafeTransformer = Exclude<TransformerConfig, { type: ServerOnlyTransformerType }>;

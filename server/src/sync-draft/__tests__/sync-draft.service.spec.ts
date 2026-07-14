@@ -702,8 +702,11 @@ describe('SyncDraftService', () => {
       (schemaBuilderService.fetchSchemaFieldsForRemoteTable as jest.Mock).mockResolvedValue([
         { path: 'properties.Name', type: 'object', suggestedInTransformer: packHint },
       ]);
-      // The source 'title' column is a plain string (no hint).
-      (dataFolderService.getSchemaPaths as jest.Mock).mockResolvedValue([{ path: 'title', type: 'string' }]);
+      // The source 'title' column is a plain string (no hint). The value picker now reads the source's
+      // RAW schema (via fetchSchemaSpec + the View-keyed resolver), not the flattened getSchemaPaths.
+      (dataFolderService.fetchSchemaSpec as jest.Mock).mockResolvedValue({
+        schema: { type: 'object', properties: { title: { type: 'string' } } },
+      });
 
       const res = await service.materialize(DRAFT_ID, ACTOR);
 
@@ -929,6 +932,11 @@ describe('SyncDraftService', () => {
             displayTransformer: { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'join_comma' } },
           },
         ],
+      });
+      // The FK id-extraction resolves the source column View-first; the resolver needs the source's raw
+      // schema loaded (the id-extraction expression itself comes from the view displayTransformer above).
+      (dataFolderService.fetchSchemaSpec as jest.Mock).mockResolvedValue({
+        schema: { type: 'object', properties: {} },
       });
 
       const res = await service.materialize(DRAFT_ID, ACTOR);

@@ -46,6 +46,14 @@ export interface SchemaCreationCapabilities {
   primaryField: PrimaryFieldRequirement | null;
   maxTableNameLength?: number;
   maxFieldNameLength?: number;
+  /**
+   * Field names the connector RESERVES and will reject at create time — e.g. the Postgres connector
+   * injects an auto-generated `id` primary key, so a source field named `id`/`ID` can't be created.
+   * The plan generator treats these as already-taken names, so a colliding source field is renamed
+   * (like a duplicate) instead of being silently dropped and then failing to resolve at apply.
+   * Compared case-insensitively. Absent ⇒ no reserved names.
+   */
+  reservedFieldNames?: string[];
 }
 
 /**

@@ -48,6 +48,9 @@ export const POSTGRES_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities =
   primaryField: null,
   maxTableNameLength: POSTGRES_MAX_IDENTIFIER_LENGTH,
   maxFieldNameLength: POSTGRES_MAX_IDENTIFIER_LENGTH,
+  // The auto-injected primary key (`addAutoPrimaryKey`) owns this name; a source field that folds to it
+  // is renamed by the plan generator so it isn't silently dropped at create (see `validateCreateField`).
+  reservedFieldNames: [AUTO_PK_COLUMN],
 };
 
 /**

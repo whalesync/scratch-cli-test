@@ -88,6 +88,32 @@ describe('generateCreatePlanFromSources', () => {
     ],
   };
 
+  it('renames a field that collides with a destination reserved name (Postgres auto "id")', () => {
+    const colors: PlanGeneratorSource = {
+      ref: 'colors',
+      dataFolderId: 'colors',
+      tableName: 'Colors',
+      remoteTableIds: ['tblColors'],
+      primaryFieldPath: 'name',
+      // "ID" folds to the reserved "id"; without the rename it is dropped at create (the Postgres
+      // connector rejects it) and then unresolvable at apply. Case-insensitive.
+      schemaFields: [field({ path: 'name', type: 'string' }), field({ path: 'ID', type: 'string' })],
+    };
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [colors],
+      destinationConnectorAccountId: 'destConn',
+      destinationReservedFieldNames: ['id'],
+    });
+
+    const table = tables.find((t) => t.ref === 'colors');
+    expect(table?.fields.map((f) => f.name)).toContain('ID 2');
+    expect(table?.fields.map((f) => f.name)).not.toContain('ID');
+    const idNote = notes.find((n) => n.sourceFieldPath === 'ID');
+    expect(idNote?.fieldName).toBe('ID 2');
+    expect(idNote?.renamedFromName).toBe('ID');
+    expect(idNote?.message).toContain('reserved by the destination');
+  });
+
   it('resolves a foreignKey to a sibling source as an in-plan ref', () => {
     const { tables, notes } = generateCreatePlanFromSources({
       sources: [authors, posts],

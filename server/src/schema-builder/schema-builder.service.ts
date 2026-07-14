@@ -371,6 +371,7 @@ export class SchemaBuilderService {
       destinationConnectorService: connector.service,
       linkedTableMappings: dto.linkedTableMappings,
       existingDestinationTableNames,
+      destinationReservedFieldNames: destinationCapabilities?.reservedFieldNames,
       destinationRequiresPrimaryField: destinationCapabilities?.primaryField != null,
       ...(destinationCapabilities?.primaryField
         ? { destinationPrimaryFieldKinds: destinationCapabilities.primaryField.kinds }

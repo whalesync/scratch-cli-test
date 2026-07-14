@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma, SyncDraft as PrismaSyncDraft } from '@prisma/client';
+import type { TSchema } from '@sinclair/typebox';
 import {
   type CreateFieldSpec,
   type CreateSchemaFieldsDto,
@@ -19,9 +20,9 @@ import {
   type DraftTableDestination,
   type DraftTableMapping,
   type ForeignKeyTarget,
+  getSuggestedTransform,
   type MaterializePlaceholderResult,
   type MaterializeResponse,
-  pickMappingTransformers,
   type SaveSyncBody,
   ScheduleAction,
   type Sync,
@@ -34,7 +35,6 @@ import {
   type SyncTablePairId,
   type TableMappingV2,
   type TableView,
-  type TableViewCol,
   type TransformerConfig,
   TransformerTypes,
   transformV1ToV2,
@@ -47,6 +47,10 @@ import { WSLogger } from 'src/logger';
 import { buildSyncRoutineFile } from 'src/routine/routine-generator';
 import { RoutineService } from 'src/routine/routine.service';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
+import {
+  columnTransformInputFromSchemaField,
+  resolveColumnTransformInput,
+} from 'src/sync/resolve-column-transform-input';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
@@ -70,17 +74,37 @@ interface DraftForeignKeyReference {
   target: ForeignKeyTarget;
 }
 
-/** Find a view column (including inside banner groups) by its JSON path. */
-function findViewColumnByPath(view: TableView, path: string): TableViewCol | undefined {
-  for (const entry of view.cols) {
-    if (entry.kind === 'banner-group') {
-      const found = entry.cols.find((col) => col.path === path);
-      if (found) return found;
-    } else if (entry.path === path) {
-      return entry;
-    }
-  }
-  return undefined;
+/**
+ * A source folder resolved for transform picking: its raw JSON schema (to read a drilled path's type past
+ * the connector envelope), its flattened fields (for the ancestor-walk hint fallback), and its stored View
+ * (the transform authority). Shared by the value picker and the FK id-extraction below; `null` marks a
+ * folder with no schema. Built by {@link SyncDraftService.resolveSourceContext}.
+ */
+type SourceContext = { schema: TSchema; fieldsByPath: Map<string, SchemaField>; view: TableView | null };
+
+/**
+ * The id-extraction transformer for a foreignKey column: the column's `toCore` extract, resolved
+ * View-first (a view `displayTransformer` like HubSpot's `$[*].id`, OR a schema hint like Notion's relation
+ * `$.relation[*].id` reached by ancestor-walk), reused as a jsonpath that yields the id ARRAY the
+ * `source_fk_to_dest_fk` phase resolves against the linked table's synced records. Null when the column's
+ * extract isn't a jsonpath (the raw value is assumed to already be ids). Forcing `arrayHandling: 'array'`
+ * keeps the FK id list intact regardless of how the same column renders for display.
+ */
+function foreignKeyIdExtractionTransformer(
+  sourceContext: SourceContext,
+  sourceColumnId: string,
+): TransformerConfig | null {
+  const { toCore } = resolveColumnTransformInput({
+    columnId: sourceColumnId,
+    schema: sourceContext.schema,
+    fieldsByPath: sourceContext.fieldsByPath,
+    view: sourceContext.view,
+  });
+  if (toCore?.type !== 'jsonpath') return null;
+  return {
+    type: TransformerTypes.JSONPath,
+    options: { expression: toCore.options.expression, arrayHandling: 'array' },
+  };
 }
 
 /** Every foreignKey field across a draft's placeholder create-specs and field additions. */
@@ -862,6 +886,30 @@ export class SyncDraftService {
   // ── materialize: transform selection ─────────────────────────────────────────
 
   /**
+   * Load a source folder's {@link SourceContext} — raw schema, flattened fields, stored View — memoized in
+   * `cache`. Returns `null` when the folder has no schema. Shared by the value picker and the FK id-extraction.
+   */
+  private async resolveSourceContext(
+    dataFolderId: string,
+    cache: Map<string, SourceContext | null>,
+    actor: Actor,
+  ): Promise<SourceContext | null> {
+    const cached = cache.get(dataFolderId);
+    if (cached !== undefined) return cached;
+    const spec = await this.dataFolderService.fetchSchemaSpec(dataFolderId as DataFolderId, actor);
+    const schema = spec?.schema;
+    if (!schema) {
+      cache.set(dataFolderId, null);
+      return null;
+    }
+    const fieldsByPath = new Map(extractSchemaFields(schema).map((field) => [field.path, field]));
+    const view = await this.dataFolderService.getStoredView(dataFolderId as DataFolderId, actor);
+    const context: SourceContext = { schema, fieldsByPath, view };
+    cache.set(dataFolderId, context);
+    return context;
+  }
+
+  /**
    * After materialize has created the real tables/fields, pick the sync transform
    * for each newly-created (`placeholderField`) destination column from its now-real
    * schema hints and write it onto the draft column mapping; apply later threads it
@@ -880,14 +928,7 @@ export class SyncDraftService {
     tableMappings: DraftTableMapping[],
     actor: Actor,
   ): Promise<void> {
-    const sourceFieldsByFolderId = new Map<string, SchemaField[]>();
-    const sourceFieldsFor = async (dataFolderId: string): Promise<SchemaField[]> => {
-      const cached = sourceFieldsByFolderId.get(dataFolderId);
-      if (cached) return cached;
-      const fields = await this.dataFolderService.getSchemaPaths(dataFolderId as DataFolderId, actor);
-      sourceFieldsByFolderId.set(dataFolderId, fields);
-      return fields;
-    };
+    const sourceContextByFolderId = new Map<string, SourceContext | null>();
 
     let changed = false;
     for (const tableMapping of tableMappings) {
@@ -901,7 +942,12 @@ export class SyncDraftService {
       try {
         const destinationFields = await this.materializedDestinationFields(workbookId, tableMapping, actor);
         if (!destinationFields) continue; // table didn't materialize
-        const sourceFields = await sourceFieldsFor(tableMapping.source.dataFolderId);
+        const sourceContext = await this.resolveSourceContext(
+          tableMapping.source.dataFolderId,
+          sourceContextByFolderId,
+          actor,
+        );
+        if (!sourceContext) continue; // no source schema; can't resolve
 
         for (const columnMapping of tableMapping.columnMappings) {
           if (columnMapping.destination.kind !== 'placeholderField') continue;
@@ -912,10 +958,22 @@ export class SyncDraftService {
           const destinationField = destinationFields.find(
             (field) => field.path.split('.').pop() === fieldName || field.displayLabel === fieldName,
           );
-          const sourceField = sourceFields.find((field) => field.path === columnMapping.source.columnId);
-          const transformers = pickMappingTransformers(sourceField, destinationField);
-          if (transformers.length > 0) {
-            columnMapping.transformers = transformers;
+
+          // Resolve the SOURCE column View-first at the exact path the mapping references — this dissolves
+          // the Notion inner-path mole (a drilled `properties.X.multi_select` / subfield leaf now finds its
+          // codec/hint via the view + ancestor-walk). The DESTINATION is built from its just-created field's
+          // own type + pack hint.
+          const sourceInput = resolveColumnTransformInput({
+            columnId: columnMapping.source.columnId,
+            schema: sourceContext.schema,
+            fieldsByPath: sourceContext.fieldsByPath,
+            view: sourceContext.view,
+          });
+          const destinationInput = columnTransformInputFromSchemaField(destinationField);
+
+          const suggestion = getSuggestedTransform(sourceInput, destinationInput);
+          if (suggestion.result === 'valid' && suggestion.options[0].transformerChain.length > 0) {
+            columnMapping.transformers = suggestion.options[0].transformerChain;
             changed = true;
           }
         }
@@ -968,18 +1026,20 @@ export class SyncDraftService {
     if (foreignKeyColumns.length === 0) return;
 
     const sourceFolderIdByRemoteTableId = await this.buildSourceFolderByRemoteTableIdMap(tableMappings);
-    const viewByFolderId = new Map<string, TableView | null>();
+    const sourceContextByFolderId = new Map<string, SourceContext | null>();
     let changed = false;
     for (const { tableMapping, columnMapping, linkedTableId } of foreignKeyColumns) {
       const referencedDataFolderId = sourceFolderIdByRemoteTableId.get(linkedTableId);
       if (!referencedDataFolderId) continue; // the related table isn't synced here — can't resolve.
 
-      const extraction = await this.foreignKeyIdExtractionTransformer(
+      const sourceContext = await this.resolveSourceContext(
         tableMapping.source.dataFolderId,
-        columnMapping.source.columnId,
-        viewByFolderId,
+        sourceContextByFolderId,
         actor,
       );
+      const extraction = sourceContext
+        ? foreignKeyIdExtractionTransformer(sourceContext, columnMapping.source.columnId)
+        : null;
       const transformers: TransformerConfig[] = [];
       if (extraction) transformers.push(extraction);
       transformers.push({
@@ -1029,36 +1089,6 @@ export class SyncDraftService {
       return fieldType.target.unresolvedLinkedTableId;
     }
     return null;
-  }
-
-  /**
-   * The id-extraction transformer for a foreignKey column, lifted from the source view
-   * column's display transformer (e.g. HubSpot associations flatten
-   * `associations.<type>.results` via `$[*].id`) and reused as a sync `jsonpath`
-   * transformer producing an id ARRAY for `source_fk_to_dest_fk`. Null when the source
-   * view has no jsonpath display transformer for the column (the value is assumed to
-   * already be ids). The view is cached per folder across the pass.
-   */
-  private async foreignKeyIdExtractionTransformer(
-    sourceDataFolderId: string,
-    sourceColumnId: string,
-    viewByFolderId: Map<string, TableView | null>,
-    actor: Actor,
-  ): Promise<TransformerConfig | null> {
-    if (!viewByFolderId.has(sourceDataFolderId)) {
-      viewByFolderId.set(
-        sourceDataFolderId,
-        await this.dataFolderService.getStoredView(sourceDataFolderId as DataFolderId, actor),
-      );
-    }
-    const view = viewByFolderId.get(sourceDataFolderId);
-    if (!view) return null;
-    const displayTransformer = findViewColumnByPath(view, sourceColumnId)?.displayTransformer;
-    if (displayTransformer?.type !== 'jsonpath') return null;
-    return {
-      type: TransformerTypes.JSONPath,
-      options: { expression: displayTransformer.options.expression, arrayHandling: 'array' },
-    };
   }
 
   /**

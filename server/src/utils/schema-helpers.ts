@@ -95,6 +95,43 @@ function resolveSchemaType(schema: TSchema): string {
   return 'unknown';
 }
 
+/** The child schema at `key` under an object node, unwrapping nullable anyOf/oneOf unions to find `.properties`. */
+function propertySchemaAt(schema: TSchema | undefined, key: string): TSchema | undefined {
+  if (!schema) return undefined;
+  const properties = schema.properties as Record<string, TSchema> | undefined;
+  if (properties?.[key]) return properties[key];
+  const variants = (schema.anyOf || schema.oneOf) as TSchema[] | undefined;
+  if (variants) {
+    for (const variant of variants) {
+      if (variant.type === 'null') continue;
+      const found = propertySchemaAt(variant, key);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the JSON type at a dot-path inside a JSON schema, drilling through object
+ * `properties` (and unwrapping nullable anyOf/oneOf unions) at each segment — INCLUDING
+ * past a connector-annotated envelope, unlike {@link extractSchemaFields}'s leaf guard.
+ * Returns the JSON type (`'string'|'number'|'array'|'object'|…`) at the path, or `'unknown'`
+ * when any segment is missing.
+ *
+ * This is what makes a mapping's cardinality readable at the exact DRILLED path it
+ * references: a Notion `multi_select` column at `properties.X.multi_select` resolves to
+ * `'array'` (multi-valued) even though its envelope `properties.X` is an `'object'`.
+ */
+export function resolveSchemaTypeAtPath(schema: TSchema, dotPath: string): string {
+  if (!dotPath) return resolveSchemaType(schema);
+  let node: TSchema | undefined = schema;
+  for (const segment of dotPath.split('.')) {
+    node = propertySchemaAt(node, segment);
+    if (!node) return 'unknown';
+  }
+  return resolveSchemaType(node);
+}
+
 /**
  * Extracts all possible dot-notation paths from a JSON Schema with their types.
  */

@@ -562,5 +562,14 @@ function notionOutboundUnpackTransformer(notionType: string): TransformerConfig 
       options: { expression: '$.rich_text[*].plain_text', arrayHandling: 'concat' },
     };
   }
+  if (notionType === 'relation') {
+    // A relation's plain value is its linked-record id ARRAY. This is what the sync's FK phase extracts
+    // before `source_fk_to_dest_fk` maps each source id → the destination linked record; it also gives a
+    // relation a meaningful core value when it's synced as a plain value rather than resolved as a link.
+    return {
+      type: TransformerTypes.JSONPath,
+      options: { expression: '$.relation[*].id', arrayHandling: 'array' },
+    };
+  }
   return undefined;
 }

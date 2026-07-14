@@ -3,6 +3,9 @@
 // jsonpath-rfc9535 dependency) stays behind the `@spinner/shared-types/transform`
 // subpath; only the config *type* is referenced here.
 import type { DisplayTransformerConfig } from '../transform/apply-display';
+// Type-only import: erased at compile time, so it adds NO runtime edge from the barrel to
+// sync-mapping's runtime (its zod schemas / helpers). Only the config *type* is referenced.
+import type { ClientSafeTransformer } from '../sync-mapping';
 
 /**
  * A UI configuration that describes how to map a JSON record to a set of columns that are visible in a grid.
@@ -66,6 +69,13 @@ export type TableViewCol = {
   // value. The connector (server) sets this; the renderer stays connector-agnostic.
   displayTransformer?: DisplayTransformerConfig;
 
+  // Bidirectional codec (toCore/fromCore) for collapsing this column to/from the neutral CORE
+  // value shared by the grid and a sync — the editorial layer's account of how the field's inner
+  // values become the single value shown/edited/copied. See ColumnCodec. Set by the connector
+  // (server); the sync's transform picker resolves it View-first, deriving from
+  // `displayTransformer` and the schema hints when a half is absent.
+  codec?: ColumnCodec;
+
   // When this column's values link to another table, the foreign-key target. Set by
   // the connector (server); mirrors the schema's `x-scratch-foreign-key`. Required for
   // SYNTHESIZED link columns whose FK annotation sits BELOW the column's own path and
@@ -103,6 +113,37 @@ export type TableViewSubfield = {
 
   // Write-once: editable only while the record is new. See TableViewCol.writeOnce.
   writeOnce?: boolean;
+
+  // Bidirectional codec for this subfield leaf, used when the subfield becomes a sync mapping's
+  // column (a selected subfield's effective path `col.path + '.' + relativePath` IS the mapping
+  // columnId). Mirrors TableViewCol.codec, so a selected subfield owns its codec directly.
+  codec?: ColumnCodec;
+};
+
+/**
+ * Bidirectional codec for collapsing a column (or subfield) to/from the connector-neutral CORE
+ * value (`CoreValue` in `transform-picker.ts`) used by BOTH the grid and a sync. It lives on the
+ * View — the editorial layer — so the same declaration powers the grid cell and the sync copy:
+ *
+ *   toCore   : native value → CoreValue   (extract; the grid's display source, a sync's SOURCE half)
+ *   fromCore : CoreValue → native value   (pack;    the grid's edit-save,     a sync's DESTINATION half)
+ *
+ * Both halves are optional. When a half is absent the resolver falls back, in order: derive from
+ * `displayTransformer` (toCore only; array-handling set by the column's cardinality) → the schema's
+ * suggested / suggestedIn hint on the nearest ancestor field → a smart typed default. Transformers
+ * are restricted to `ClientSafeTransformer` (no server-only FK/asset/lookup arms) because the View
+ * is serialized to the frontends.
+ */
+export type ColumnCodec = {
+  // native → CoreValue (extract). If omitted: derive from displayTransformer → schema hint → smart default.
+  toCore?: ClientSafeTransformer;
+  // CoreValue → native (pack). If omitted: schema suggestedInTransformer on the nearest ancestor → smart default.
+  fromCore?: ClientSafeTransformer;
+
+  // Future expansion — surfaced to the user as pickable options / config knobs, mirroring the sync
+  // suggestion service's TransformOption. Reserved so it slots in with zero restructure:
+  // options?: OptionKnob[];
+  // variants?: [CodecVariant, ...CodecVariant[]];
 };
 
 export type TablePropertyType =
