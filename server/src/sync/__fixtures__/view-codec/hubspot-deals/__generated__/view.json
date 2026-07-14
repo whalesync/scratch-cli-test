@@ -1,0 +1,892 @@
+{
+  "name": "Default",
+  "cols": [
+    {
+      "kind": "col",
+      "path": "properties.dealname",
+      "name": "Deal Name"
+    },
+    {
+      "kind": "col",
+      "path": "id",
+      "name": "Id",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.dealstage",
+      "name": "Deal Stage"
+    },
+    {
+      "kind": "col",
+      "path": "properties.amount",
+      "name": "Amount",
+      "type": "number"
+    },
+    {
+      "kind": "col",
+      "path": "properties.amount_in_home_currency",
+      "name": "Amount in company currency",
+      "type": "number",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.closed_lost_reason",
+      "name": "Closed Lost Reason"
+    },
+    {
+      "kind": "col",
+      "path": "properties.closed_won_reason",
+      "name": "Closed Won Reason"
+    },
+    {
+      "kind": "col",
+      "path": "properties.closedate",
+      "name": "Close Date",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "properties.connectors",
+      "name": "Connectors"
+    },
+    {
+      "kind": "col",
+      "path": "properties.createdate",
+      "name": "Create Date",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.days_to_close",
+      "name": "Days to close",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.deal_currency_code",
+      "name": "Currency"
+    },
+    {
+      "kind": "col",
+      "path": "properties.dealtype",
+      "name": "Deal Type"
+    },
+    {
+      "kind": "col",
+      "path": "properties.description",
+      "name": "Deal Description"
+    },
+    {
+      "kind": "col",
+      "path": "properties.engagements_last_meeting_booked",
+      "name": "Date of last meeting booked in meetings tool",
+      "type": "date",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.engagements_last_meeting_booked_campaign",
+      "name": "Campaign of last booking in meetings tool",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.engagements_last_meeting_booked_medium",
+      "name": "Medium of last booking in meetings tool",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.engagements_last_meeting_booked_source",
+      "name": "Source of last booking in meetings tool",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.grain_budget",
+      "name": "Customer Budget"
+    },
+    {
+      "kind": "col",
+      "path": "properties.grain_competition",
+      "name": "Competition"
+    },
+    {
+      "kind": "col",
+      "path": "properties.grain_customer_needs",
+      "name": "Customer Needs"
+    },
+    {
+      "kind": "col",
+      "path": "properties.grain_stakeholders",
+      "name": "Stakeholders"
+    },
+    {
+      "kind": "col",
+      "path": "properties.grain_timeline",
+      "name": "Next Meeting"
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_actual_duration",
+      "name": "Actual duration",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_acv",
+      "name": "Annual contract value",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_all_assigned_business_unit_ids",
+      "name": "Brands",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_all_collaborator_owner_ids",
+      "name": "Deal Collaborator",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_all_deal_split_owner_ids",
+      "name": "Deal Split Users",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_analytics_latest_source",
+      "name": "Latest Traffic Source",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_analytics_latest_source_data_1",
+      "name": "Latest Traffic Source Data 1",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_analytics_latest_source_data_2",
+      "name": "Latest Traffic Source Data 2",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_analytics_latest_source_timestamp",
+      "name": "Latest Traffic Source Timestamp",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_analytics_source",
+      "name": "Original Traffic Source",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_analytics_source_data_1",
+      "name": "Original Traffic Source Drill-Down 1",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_analytics_source_data_2",
+      "name": "Original Traffic Source Drill-Down 2",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_arr",
+      "name": "Annual recurring revenue",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_associated_deal_registration_deal_type",
+      "name": "Associated Shared Deal Type",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_associated_deal_registration_product_interests",
+      "name": "Associated Shared Deal Product Interests",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_average_deal_owner_duration_in_current_stage",
+      "name": "Average Deal Owner Duration In Current Stage",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_closed_won_count",
+      "name": "Closed won count",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_created_by_user_id",
+      "name": "Created by user ID",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_deal_registration_mrr",
+      "name": "HubSpot Shared Deal MRR",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_deal_registration_mrr_currency_code",
+      "name": "HubSpot Shared Deal MRR Currency Code",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_deal_score",
+      "name": "Deal Score",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_deal_stage_probability",
+      "name": "Deal probability",
+      "type": "number",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_exchange_rate",
+      "name": "Exchange rate",
+      "type": "number",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_forecast_amount",
+      "name": "Forecast amount",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_forecast_probability",
+      "name": "Forecast probability",
+      "type": "number",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_form_id",
+      "name": "Form ID",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_has_last_conversation_follow_ups",
+      "name": "Has Last Conversation Follow Ups",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_has_last_meeting_followups",
+      "name": "Has Last Meeting Follow Ups",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_is_active_shared_deal",
+      "name": "Is Active Shared Deal",
+      "type": "checkbox",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_is_closed",
+      "name": "Is Deal Closed?",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_is_closed_count",
+      "name": "Is Closed (numeric)",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_is_closed_lost",
+      "name": "Is closed lost",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_is_closed_won",
+      "name": "Is Closed Won",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_is_deal_split",
+      "name": "Deal Split Added",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_is_open_count",
+      "name": "Is Open (numeric)",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_is_stalled",
+      "name": "Is Stalled",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_is_stalled_after_timestamp",
+      "name": "Is Stalled After Timestamp",
+      "type": "date",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_last_conversation_with_followups_object_coordinates",
+      "name": "Last conversation with follow-ups",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_last_gs_shared_message",
+      "name": "Last GS Shared Message",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_last_partner_shared_message_date",
+      "name": "Last Partner Shared Message Date",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_lastmodifieddate",
+      "name": "Last Modified Date",
+      "type": "date",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_latest_approval_status",
+      "name": "Latest Approval Status",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_manual_forecast_category",
+      "name": "Forecast category",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_merged_object_ids",
+      "name": "Merged Deal IDs",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_mrr",
+      "name": "Monthly recurring revenue",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_next_meeting_id",
+      "name": "Next Meeting",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_next_meeting_name",
+      "name": "Next Meeting Name",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_next_meeting_start_time",
+      "name": "Next Meeting Start Time",
+      "type": "date",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_next_step",
+      "name": "Next step",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_notes_next_activity",
+      "name": "Next Activity",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_num_associated_active_deal_registrations",
+      "name": "Number of Active Deal Registrations",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_num_associated_deal_registrations",
+      "name": "Number of Deal Registrations",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_num_of_associated_line_items",
+      "name": "Number of Associated Line Items",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_object_id",
+      "name": "Record ID",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_object_source_detail_1",
+      "name": "Record source detail 1",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_object_source_detail_2",
+      "name": "Record source detail 2",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_object_source_detail_3",
+      "name": "Record source detail 3",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_object_source_label",
+      "name": "Record source",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_partner_tech_win",
+      "name": "Partner Tech Win",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_priority",
+      "name": "Priority",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_projected_amount",
+      "name": "Weighted amount",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_projected_amount_in_home_currency",
+      "name": "Weighted amount in company currency",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_shared_team_ids",
+      "name": "Shared teams",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_shared_user_ids",
+      "name": "Shared users",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_synced_deal_owner_name_and_email",
+      "name": "HubSpot Sales Lead",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_tag_ids",
+      "name": "Deal Tags",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_tcv",
+      "name": "Total contract value",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_updated_by_user_id",
+      "name": "Updated by user ID",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_user_ids_of_all_notification_recipients",
+      "name": "All deal notification recipients",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_v2_date_entered_current_stage",
+      "name": "Date entered current stage",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_v2_time_in_current_stage",
+      "name": "Time in current stage",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hs_weighted_pipeline_in_company_currency",
+      "name": "Weighted open pipeline in company currency",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hubspot_owner_assigneddate",
+      "name": "Owner assigned date",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.hubspot_owner_id",
+      "name": "Deal owner"
+    },
+    {
+      "kind": "col",
+      "path": "properties.hubspot_team_id",
+      "name": "HubSpot Team",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.kpis__cloned_",
+      "name": "KPIs"
+    },
+    {
+      "kind": "col",
+      "path": "properties.lemlistlemlistchannel",
+      "name": "lemlist channel"
+    },
+    {
+      "kind": "col",
+      "path": "properties.next_renewal_date",
+      "name": "Next Renewal Date",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "properties.notes_last_contacted",
+      "name": "Last Contacted",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.notes_last_updated",
+      "name": "Last Activity Date",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.notes_next_activity_date",
+      "name": "Next Activity Date",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.num_associated_contacts",
+      "name": "Number of Associated Contacts",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.num_contacted_notes",
+      "name": "Number of times contacted",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.num_notes",
+      "name": "Number of Sales Activities",
+      "type": "number",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.pilot_end_date",
+      "name": "Pilot end date",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "properties.pilot_start_date",
+      "name": "Pilot Start Date",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "properties.pipeline",
+      "name": "Pipeline"
+    },
+    {
+      "kind": "col",
+      "path": "properties.source",
+      "name": "Source"
+    },
+    {
+      "kind": "col",
+      "path": "properties.source_type",
+      "name": "Source Type"
+    },
+    {
+      "kind": "col",
+      "path": "properties.use_cases__cloned_",
+      "name": "Use Cases"
+    },
+    {
+      "kind": "col",
+      "path": "properties.warmlycreatedaccount",
+      "name": "Warmly: Created Account"
+    },
+    {
+      "kind": "col",
+      "path": "createdAt",
+      "name": "Created At",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "updatedAt",
+      "name": "Updated At",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "archived",
+      "name": "Archived",
+      "readonly": true
+    },
+    {
+      "kind": "banner-group",
+      "name": "Associations",
+      "cols": [
+        {
+          "kind": "col",
+          "path": "associations.notes.results",
+          "name": "Associated Notes",
+          "readonly": true,
+          "foreignKey": {
+            "linkedTableId": "notes"
+          },
+          "displayTransformer": {
+            "type": "jsonpath",
+            "options": {
+              "expression": "$[*].id",
+              "arrayHandling": "join_comma"
+            }
+          }
+        },
+        {
+          "kind": "col",
+          "path": "associations.tasks.results",
+          "name": "Associated Tasks",
+          "readonly": true,
+          "foreignKey": {
+            "linkedTableId": "tasks"
+          },
+          "displayTransformer": {
+            "type": "jsonpath",
+            "options": {
+              "expression": "$[*].id",
+              "arrayHandling": "join_comma"
+            }
+          }
+        },
+        {
+          "kind": "col",
+          "path": "associations.tickets.results",
+          "name": "Associated Tickets",
+          "readonly": true,
+          "foreignKey": {
+            "linkedTableId": "tickets"
+          },
+          "displayTransformer": {
+            "type": "jsonpath",
+            "options": {
+              "expression": "$[*].id",
+              "arrayHandling": "join_comma"
+            }
+          }
+        },
+        {
+          "kind": "col",
+          "path": "associations.contacts.results",
+          "name": "Associated Contacts",
+          "readonly": true,
+          "foreignKey": {
+            "linkedTableId": "contacts"
+          },
+          "displayTransformer": {
+            "type": "jsonpath",
+            "options": {
+              "expression": "$[*].id",
+              "arrayHandling": "join_comma"
+            }
+          }
+        },
+        {
+          "kind": "col",
+          "path": "associations.companies.results",
+          "name": "Associated Companies",
+          "readonly": true,
+          "foreignKey": {
+            "linkedTableId": "companies"
+          },
+          "displayTransformer": {
+            "type": "jsonpath",
+            "options": {
+              "expression": "$[*].id",
+              "arrayHandling": "join_comma"
+            }
+          }
+        },
+        {
+          "kind": "col",
+          "path": "associations.deals.results",
+          "name": "Associated Deals",
+          "readonly": true,
+          "foreignKey": {
+            "linkedTableId": "deals"
+          },
+          "displayTransformer": {
+            "type": "jsonpath",
+            "options": {
+              "expression": "$[*].id",
+              "arrayHandling": "join_comma"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,213 @@
+{
+  "name": "Default",
+  "cols": [
+    {
+      "kind": "col",
+      "path": "properties.Name.title",
+      "name": "Name",
+      "type": "richtext",
+      "displayTransformer": {
+        "type": "jsonpath",
+        "options": {
+          "expression": "$[*].plain_text",
+          "arrayHandling": "concat"
+        }
+      }
+    },
+    {
+      "kind": "col",
+      "path": "properties.Time.select",
+      "name": "Time",
+      "type": "object",
+      "subfields": [
+        {
+          "relativePath": "name",
+          "name": "Name",
+          "type": "string"
+        }
+      ],
+      "selectedSubfield": 0
+    },
+    {
+      "kind": "col",
+      "path": "properties.Request Type.rollup",
+      "name": "Request Type",
+      "type": "object",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.Status.status",
+      "name": "Status",
+      "type": "object",
+      "subfields": [
+        {
+          "relativePath": "name",
+          "name": "Name",
+          "type": "string"
+        }
+      ],
+      "selectedSubfield": 0
+    },
+    {
+      "kind": "col",
+      "path": "properties.Total Requests.rollup",
+      "name": "Total Requests",
+      "type": "object",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "properties.Category.select",
+      "name": "Category",
+      "type": "object",
+      "subfields": [
+        {
+          "relativePath": "name",
+          "name": "Name",
+          "type": "string"
+        }
+      ],
+      "selectedSubfield": 0
+    },
+    {
+      "kind": "col",
+      "path": "properties.Difficulty.select",
+      "name": "Difficulty",
+      "type": "object",
+      "subfields": [
+        {
+          "relativePath": "name",
+          "name": "Name",
+          "type": "string"
+        }
+      ],
+      "selectedSubfield": 0
+    },
+    {
+      "kind": "col",
+      "path": "properties.Links.relation",
+      "name": "Links",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "properties.Tags.multi_select",
+      "name": "Tags",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "id",
+      "name": "Id"
+    },
+    {
+      "kind": "col",
+      "path": "url",
+      "name": "Url",
+      "type": "url",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "created_time",
+      "name": "Created Time",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "last_edited_time",
+      "name": "Last Edited Time",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "created_by",
+      "name": "Created By",
+      "readonly": true,
+      "subfields": [
+        {
+          "relativePath": "id",
+          "name": "Id",
+          "type": "string"
+        }
+      ],
+      "selectedSubfield": 0
+    },
+    {
+      "kind": "col",
+      "path": "last_edited_by",
+      "name": "Last Edited By",
+      "readonly": true,
+      "subfields": [
+        {
+          "relativePath": "id",
+          "name": "Id",
+          "type": "string"
+        }
+      ],
+      "selectedSubfield": 0
+    },
+    {
+      "kind": "col",
+      "path": "in_trash",
+      "name": "In Trash"
+    },
+    {
+      "kind": "col",
+      "path": "cover",
+      "name": "Cover"
+    },
+    {
+      "kind": "col",
+      "path": "icon",
+      "name": "Icon"
+    },
+    {
+      "kind": "col",
+      "path": "page_content",
+      "name": "Page Content",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "object",
+      "name": "Object",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "parent",
+      "name": "Parent",
+      "hidden": true,
+      "subfields": [
+        {
+          "relativePath": "database_id",
+          "name": "Database Id",
+          "type": "string"
+        }
+      ],
+      "selectedSubfield": 0
+    },
+    {
+      "kind": "col",
+      "path": "archived",
+      "name": "Archived",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "is_archived",
+      "name": "Is Archived",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "public_url",
+      "name": "Public Url",
+      "hidden": true
+    }
+  ]
+}

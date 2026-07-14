@@ -1,0 +1,69 @@
+{
+  "fields.Name": {
+    "core": "How to Import a CSV to WordPress (3 Ways)"
+  },
+  "fields.From Connectors - Related Connectors": {},
+  "fields.Featured": {},
+  "fields.Published Date": {
+    "core": "2025-10-20"
+  },
+  "fields.Author": {
+    "core": [
+      "reci0lWDPFMN95dSm"
+    ]
+  },
+  "fields.Main Category": {
+    "core": [
+      "recZL1umbXvulE06E"
+    ]
+  },
+  "fields.All Categories": {},
+  "fields.Image": {
+    "core": [
+      {
+        "id": "attbj6KFqt4NZTZTd",
+        "width": 1600,
+        "height": 900,
+        "url": "https://v5.airtableusercontent.com/v3/u/55/55/1783461600000/p3pdLuNvi74DroPiZm2Oag/yRxJYt-d843isea0RYUbFqTNvnPAqAag1yxJeMZsMRLlFF61xkLjXmn5pA3x9uXQyACFMluvvbeB3y72n5lsNXcrsOGXP8GVn…«277 chars»",
+        "filename": "68f63e1473da906fd4aa5fb8_import-csv-to-WP.png",
+        "size": 69104,
+        "type": "image/png",
+        "thumbnails": {
+          "small": {
+            "url": "https://v5.airtableusercontent.com/v3/u/55/55/1783461600000/_y83NvkinZnbu2P2EkXqqg/OfBmHdVfqkf1VHfuLJzg0G0sJV1RXNB7zrXeSX7uAE4Q88l-8PpRfHLxoliwc9xzzZi4KkyGUPRD44hOKOJo6ZKWBikP-gaHC…«277 chars»",
+            "width": 64,
+            "height": 36
+          },
+          "large": {
+            "url": "https://v5.airtableusercontent.com/v3/u/55/55/1783461600000/RH28r8b-Wfqt_Oq1gD0eow/n1IZvlxT3nGUUXVr2vs5VPqigZ5CL8YBbVr-Bc8LQJz-aUeMtjNOA4qyYjxf-oilvHGxnyX1yxKWM8m-S0sA9rFTsrqjWNH7n…«277 chars»",
+            "width": 910,
+            "height": 512
+          },
+          "full": {
+            "url": "https://v5.airtableusercontent.com/v3/u/55/55/1783461600000/Oi3J6MAtmrjDlJzXxn3DMA/QaN4ebzwPnHaymEeBLBvAirZBHN5DYwn30TgYDuzlCzwaVjmwxVqXuAuGlJiFEGVhhakrH37PtJTTuk61IgYUSepCoAN9ADmW…«277 chars»",
+            "width": 1600,
+            "height": 900
+          }
+        }
+      }
+    ]
+  },
+  "fields.Meta Description": {
+    "core": "Learn how to import a CSV to WordPress: compare 3 methods, including how to automate recurring CSV imports into posts with Whalesync."
+  },
+  "fields.Short Description": {
+    "core": "Learn how to import a CSV to WordPRess"
+  },
+  "fields.Inline Ad": {},
+  "fields.Keywords (for Schema)": {},
+  "fields.Content Type": {},
+  "fields.Connectors copy": {},
+  "fields.Comparisons": {},
+  "fields.Use Cases": {},
+  "fields.Webflow Status": {
+    "core": "Active"
+  },
+  "createdTime": {
+    "core": "2025-10-20T13:50:32.000Z"
+  }
+}

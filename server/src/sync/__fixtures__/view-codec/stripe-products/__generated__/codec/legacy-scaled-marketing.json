@@ -1,0 +1,29 @@
+{
+  "name": {
+    "core": "[Legacy] Scaled Marketing"
+  },
+  "id": {
+    "core": "prod_Mo9TyTpytRhdj7"
+  },
+  "description": {
+    "core": null
+  },
+  "active": {
+    "core": true
+  },
+  "type": {
+    "core": "service"
+  },
+  "default_price": {
+    "core": "price_1MMPETB3kcxQq5fugeESgmhO"
+  },
+  "url": {
+    "core": null
+  },
+  "created": {
+    "core": 1668549592
+  },
+  "updated": {
+    "core": 1696847324
+  }
+}

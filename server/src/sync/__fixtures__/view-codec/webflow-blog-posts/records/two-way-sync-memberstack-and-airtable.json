@@ -1,0 +1,31 @@
+{
+  "id": "678e9495f29479b10c854752",
+  "cmsLocaleId": "669dbbbad2e7490566ff50e4",
+  "lastPublished": "2026-07-10T19:11:23.056Z",
+  "lastUpdated": "2026-07-10T19:11:23.056Z",
+  "createdOn": "2025-01-20T18:23:17.733Z",
+  "isArchived": false,
+  "isDraft": false,
+  "fieldData": {
+    "featured": false,
+    "published-date": "2025-01-21T00:00:00.000Z",
+    "author": "66b54006eefd06c3a239fd3a",
+    "main-category": "6727b18ddec8afc9c72205c4",
+    "all-categories": null,
+    "related-connectors": null,
+    "image": {
+      "fileId": "678e94c5cf89f2d31466db22",
+      "url": "https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/678e94c5cf89f2d31466db22_Memberstack_Airtable_Sync.png",
+      "alt": null
+    },
+    "meta-description": "Step-by-step guide to two-way sync Memberstack and Airtable so member data stays up to date in both tools, no code required.",
+    "short-description": "Step-by-step guide for how to two-way sync Memberstack and Airtable.",
+    "body": "<p>In this guide, we&apos;ll show you how to sync your Memberstack app with Airtable. This will allow you to manage your Memberstack members directly from Airtable, making it easier to organize and track member information.</p><figure><video style=\"width:100%;height:auto;\" controls>The video format for https://youtu.be/VU3zyGgj_R8?si=aDcRZ63iDlw3Vj7x is unsupported.</video></figure><h2>Step-by-step guide</h2><h3>1. Add a new sync on Whalesync</h3><figure><img alt=\"1. Add a new sync on Whalesync\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b4db38af140ee48e03_New_Sync.png\"></figure><p><br></p><h3>2. Connect your Data Sources</h3><figure><img alt=\"2. Connect your Data Sources\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b4db38af140ee48e0c_Connect_your_Data_Source.png\"></figure><p><br></p><h3>3. Authorize Memberstack</h3><figure><img alt=\"3. Authorize Memberstack\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e20_Authorize_Memberstack.png\"></figure><p><br></p><h3>4. Get your Memberstack Secret key</h3><figure><img alt=\"4. Get your Memberstack Secret key\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e63_Get_Memberstack_API_key.png\"></figure><p><br></p><h3>5. Paste Memberstack secret key to Whalesync</h3><figure><img alt=\"5. Paste Memberstack secret key to Whalesync\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b4db38af140ee48e06_Paste_memberstack_record_ID.png\"></figure><p><br></p><h3>6. Choose Airtable as your second data source</h3><figure><img alt=\"6. Choose Airtable as your second data source\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e29_Select_2nd_app_(Airtable).png\"></figure><p><br></p><h3>7. Authorize Airtable</h3><figure><img alt=\"7. Authorize Airtable\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e2c_Authorize_Airtable.png\"></figure><p><br></p><h3>8. (Optional) Rename your Sync</h3><figure><img alt=\"8. (Optional) Rename your Sync\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e26_Rename_memberstack.png\"></figure><p><br></p><h3>9. Add your table mappings</h3><figure><img alt=\"9. Add your table mappings\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b4db38af140ee48dfd_Add_your_table_mappings.png\"></figure><p><br></p><h3>10. Create table mapping</h3><figure><img alt=\"10. Create table mapping\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e3e_Create_table_mappings.png\"></figure><p><br></p><h3>11. Map your fields</h3><figure><img alt=\"11. Map your fields\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e5d_Map_fields.png\"></figure><p><br></p><h3>12. Prepare initial syncing</h3><figure><img alt=\"12. Prepare initial syncing\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e44_Prepare_initial_syncing.png\"></figure><p><br></p><h3>13. Finish initial sync</h3><figure><img alt=\"13. Finish initial sync\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e2f_Finish_sync_preview.png\"></figure><p><br></p><h3>14. Activate Sync</h3><figure><img alt=\"14. Activate Sync\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b2db38af140ee48df0_Activate_Sync.png\"></figure><p><br></p><h3>You&rsquo;re done! You are now syncing your Memberstack members to Airtable &#x1F389;</h3><figure><img alt=\"You’re done! You are now syncing your Memberstack members to Airtable 🎉\" style=\"width:100%;height:auto;\" src=\"https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/68e002b5db38af140ee48e66_CleanShot_2025-01-21_at_01.56.332x.png\"></figure><p><br></p><h2>Template packs:</h2><p>Check out our Airtable x Memberstack template pack here so you can get started right away!</p><p style=\"border: 1px solid #f1f1f1; padding:20px; width:100%;\"><a href=\"https://www.whalesync.com/template-packs/memberstack\" target=\"_blank\">https://www.whalesync.com/template-packs/memberstack</a><br>https://www.whalesync.com/template-packs/memberstack</p>",
+    "inline-ad": null,
+    "body-bottom": null,
+    "keywords-for-schema": null,
+    "content-type": null,
+    "name": "How to Two-Way Sync Memberstack and Airtable",
+    "slug": "two-way-sync-memberstack-and-airtable"
+  }
+}

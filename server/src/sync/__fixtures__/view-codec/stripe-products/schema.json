@@ -1,0 +1,125 @@
+{
+  "id": {
+    "wsId": "products",
+    "remoteId": [
+      "products"
+    ]
+  },
+  "slug": "products",
+  "name": "Products",
+  "schema": {
+    "$id": "stripe/products",
+    "title": "Products",
+    "type": "object",
+    "required": [
+      "id",
+      "object",
+      "name",
+      "active",
+      "created",
+      "updated",
+      "livemode"
+    ],
+    "properties": {
+      "id": {
+        "description": "Unique identifier",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "object": {
+        "description": "Object type",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "name": {
+        "description": "Product name",
+        "type": "string"
+      },
+      "description": {
+        "description": "Product description",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "active": {
+        "description": "Whether the product is available for purchase",
+        "type": "boolean"
+      },
+      "default_price": {
+        "description": "Default price ID",
+        "x-scratch-readonly": true,
+        "x-scratch-foreign-key": {
+          "linkedTableId": "prices"
+        },
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "images": {
+        "description": "Product image URLs",
+        "x-scratch-readonly": true,
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "metadata": {
+        "description": "Key-value metadata",
+        "x-scratch-readonly": true,
+        "type": "object",
+        "patternProperties": {
+          "^(.*)$": {
+            "type": "string"
+          }
+        }
+      },
+      "url": {
+        "description": "Product URL",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "type": {
+        "description": "Product type",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "created": {
+        "description": "Created timestamp (Unix)",
+        "x-scratch-readonly": true,
+        "type": "number"
+      },
+      "updated": {
+        "description": "Updated timestamp (Unix)",
+        "x-scratch-readonly": true,
+        "type": "number"
+      },
+      "livemode": {
+        "description": "Live mode flag",
+        "x-scratch-readonly": true,
+        "type": "boolean"
+      }
+    }
+  },
+  "idPath": "id",
+  "titlePath": "name",
+  "slugPath": "name",
+  "basePath": [],
+  "remoteWebUrl": "https://dashboard.stripe.com/products",
+  "generatedAt": "2026-06-26T00:00:02.438Z"
+}

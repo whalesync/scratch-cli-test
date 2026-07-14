@@ -1,0 +1,159 @@
+{
+  "id": "17503286608",
+  "properties": {
+    "amount": "0",
+    "amount_in_home_currency": "0",
+    "closed_lost_reason": null,
+    "closed_won_reason": null,
+    "closedate": "2025-10-09T18:08:03.458Z",
+    "connectors": null,
+    "createdate": "2024-02-13T18:40:07.463Z",
+    "days_to_close": "603",
+    "deal_currency_code": "USD",
+    "dealname": "Design Partner: Airship",
+    "dealstage": "147594781",
+    "dealtype": "newbusiness",
+    "description": null,
+    "engagements_last_meeting_booked": null,
+    "engagements_last_meeting_booked_campaign": null,
+    "engagements_last_meeting_booked_medium": null,
+    "engagements_last_meeting_booked_source": null,
+    "grain_budget": null,
+    "grain_competition": null,
+    "grain_customer_needs": null,
+    "grain_stakeholders": null,
+    "grain_timeline": null,
+    "hs_actual_duration": "52183675995",
+    "hs_acv": null,
+    "hs_all_assigned_business_unit_ids": null,
+    "hs_all_collaborator_owner_ids": null,
+    "hs_all_deal_split_owner_ids": null,
+    "hs_analytics_latest_source": "OFFLINE",
+    "hs_analytics_latest_source_data_1": "CRM_UI",
+    "hs_analytics_latest_source_data_2": "userId:50816674",
+    "hs_analytics_latest_source_timestamp": "2024-02-13T18:41:08.424Z",
+    "hs_analytics_source": "OFFLINE",
+    "hs_analytics_source_data_1": "CRM_UI",
+    "hs_analytics_source_data_2": "userId:50816674",
+    "hs_arr": null,
+    "hs_associated_deal_registration_deal_type": null,
+    "hs_associated_deal_registration_product_interests": null,
+    "hs_average_deal_owner_duration_in_current_stage": null,
+    "hs_closed_won_count": "0",
+    "hs_created_by_user_id": "50816674",
+    "hs_deal_registration_mrr": null,
+    "hs_deal_registration_mrr_currency_code": null,
+    "hs_deal_score": "",
+    "hs_deal_stage_probability": "0",
+    "hs_exchange_rate": null,
+    "hs_forecast_amount": "0",
+    "hs_forecast_probability": null,
+    "hs_form_id": null,
+    "hs_has_last_conversation_follow_ups": null,
+    "hs_has_last_meeting_followups": null,
+    "hs_is_active_shared_deal": "false",
+    "hs_is_closed": "true",
+    "hs_is_closed_count": "1",
+    "hs_is_closed_lost": "true",
+    "hs_is_closed_won": "false",
+    "hs_is_deal_split": "false",
+    "hs_is_open_count": "0",
+    "hs_is_stalled": null,
+    "hs_is_stalled_after_timestamp": null,
+    "hs_last_conversation_with_followups_object_coordinates": null,
+    "hs_last_gs_shared_message": null,
+    "hs_last_partner_shared_message_date": null,
+    "hs_lastmodifieddate": "2025-10-11T15:24:14.418Z",
+    "hs_latest_approval_status": null,
+    "hs_manual_forecast_category": null,
+    "hs_merged_object_ids": null,
+    "hs_mrr": null,
+    "hs_next_meeting_id": null,
+    "hs_next_meeting_name": null,
+    "hs_next_meeting_start_time": null,
+    "hs_next_step": null,
+    "hs_notes_next_activity": null,
+    "hs_num_associated_active_deal_registrations": "0",
+    "hs_num_associated_deal_registrations": "0",
+    "hs_num_of_associated_line_items": "0",
+    "hs_object_id": "17503286608",
+    "hs_object_source_detail_1": null,
+    "hs_object_source_detail_2": null,
+    "hs_object_source_detail_3": null,
+    "hs_object_source_label": "CRM_UI",
+    "hs_partner_tech_win": null,
+    "hs_priority": null,
+    "hs_projected_amount": "0",
+    "hs_projected_amount_in_home_currency": "0",
+    "hs_shared_team_ids": null,
+    "hs_shared_user_ids": null,
+    "hs_synced_deal_owner_name_and_email": null,
+    "hs_tag_ids": "",
+    "hs_tcv": null,
+    "hs_updated_by_user_id": "50213802",
+    "hs_v2_date_entered_current_stage": "2025-10-09T18:08:03.458Z",
+    "hs_v2_time_in_current_stage": "2025-10-09T18:08:03.458Z",
+    "hs_weighted_pipeline_in_company_currency": "0",
+    "hubspot_owner_assigneddate": "2025-07-13T15:19:26.194Z",
+    "hubspot_owner_id": "410824079",
+    "hubspot_team_id": null,
+    "kpis__cloned_": null,
+    "lemlistlemlistchannel": null,
+    "next_renewal_date": null,
+    "notes_last_contacted": null,
+    "notes_last_updated": "2024-02-21T16:00:00Z",
+    "notes_next_activity_date": "",
+    "num_associated_contacts": "1",
+    "num_contacted_notes": "0",
+    "num_notes": "2",
+    "pilot_end_date": null,
+    "pilot_start_date": null,
+    "pipeline": "77562284",
+    "source": null,
+    "source_type": null,
+    "use_cases__cloned_": null,
+    "warmlycreatedaccount": "false"
+  },
+  "createdAt": "2024-02-13T18:40:07.463Z",
+  "updatedAt": "2025-10-11T15:24:14.418Z",
+  "archived": false,
+  "url": "https://app.hubspot.com/contacts/39783432/record/0-3/17503286608",
+  "associations": {
+    "companies": {
+      "results": [
+        {
+          "id": "19071526290",
+          "type": "deal_to_company"
+        },
+        {
+          "id": "19071526290",
+          "type": "deal_to_company_unlabeled"
+        }
+      ]
+    },
+    "notes": {
+      "results": [
+        {
+          "id": "47517386095",
+          "type": "deal_to_note"
+        }
+      ]
+    },
+    "contacts": {
+      "results": [
+        {
+          "id": "219451",
+          "type": "deal_to_contact"
+        }
+      ]
+    },
+    "tasks": {
+      "results": [
+        {
+          "id": "47580208957",
+          "type": "deal_to_task"
+        }
+      ]
+    }
+  }
+}

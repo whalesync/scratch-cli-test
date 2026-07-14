@@ -1,0 +1,443 @@
+[
+  {
+    "column": "Deal Name",
+    "columnId": "properties.dealname",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Id",
+    "columnId": "id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Deal Stage",
+    "columnId": "properties.dealstage",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Amount",
+    "columnId": "properties.amount",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Amount in company currency",
+    "columnId": "properties.amount_in_home_currency",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Closed Lost Reason",
+    "columnId": "properties.closed_lost_reason",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Closed Won Reason",
+    "columnId": "properties.closed_won_reason",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Close Date",
+    "columnId": "properties.closedate",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Connectors",
+    "columnId": "properties.connectors",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Create Date",
+    "columnId": "properties.createdate",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Currency",
+    "columnId": "properties.deal_currency_code",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Deal Type",
+    "columnId": "properties.dealtype",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Deal Description",
+    "columnId": "properties.description",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Customer Budget",
+    "columnId": "properties.grain_budget",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Competition",
+    "columnId": "properties.grain_competition",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Customer Needs",
+    "columnId": "properties.grain_customer_needs",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Stakeholders",
+    "columnId": "properties.grain_stakeholders",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Next Meeting",
+    "columnId": "properties.grain_timeline",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Record ID",
+    "columnId": "properties.hs_object_id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Owner assigned date",
+    "columnId": "properties.hubspot_owner_assigneddate",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Deal owner",
+    "columnId": "properties.hubspot_owner_id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "HubSpot Team",
+    "columnId": "properties.hubspot_team_id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "KPIs",
+    "columnId": "properties.kpis__cloned_",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "lemlist channel",
+    "columnId": "properties.lemlistlemlistchannel",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Next Renewal Date",
+    "columnId": "properties.next_renewal_date",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Last Contacted",
+    "columnId": "properties.notes_last_contacted",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Last Activity Date",
+    "columnId": "properties.notes_last_updated",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Next Activity Date",
+    "columnId": "properties.notes_next_activity_date",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Number of Associated Contacts",
+    "columnId": "properties.num_associated_contacts",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Pilot end date",
+    "columnId": "properties.pilot_end_date",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Pilot Start Date",
+    "columnId": "properties.pilot_start_date",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Pipeline",
+    "columnId": "properties.pipeline",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Source",
+    "columnId": "properties.source",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Source Type",
+    "columnId": "properties.source_type",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Use Cases",
+    "columnId": "properties.use_cases__cloned_",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Warmly: Created Account",
+    "columnId": "properties.warmlycreatedaccount",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Created At",
+    "columnId": "createdAt",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Updated At",
+    "columnId": "updatedAt",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Archived",
+    "columnId": "archived",
+    "cardinality": "single",
+    "logicalType": "boolean",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Associated Notes",
+    "columnId": "associations.notes.results",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].id",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Associated Tasks",
+    "columnId": "associations.tasks.results",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].id",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Associated Tickets",
+    "columnId": "associations.tickets.results",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].id",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Associated Contacts",
+    "columnId": "associations.contacts.results",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].id",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Associated Companies",
+    "columnId": "associations.companies.results",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].id",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Associated Deals",
+    "columnId": "associations.deals.results",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].id",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  }
+]

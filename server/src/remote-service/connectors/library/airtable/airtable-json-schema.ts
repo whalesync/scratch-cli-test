@@ -28,6 +28,13 @@ import {
  * Build a BaseJsonTableSpec from an Airtable table definition.
  * Generates a JSON Schema describing the raw Airtable record format:
  * { id: string, fields: { ... }, createdTime: string }
+ *
+ * FIXTURE NOTE: real `schema.json` output of this generator is checked in as a codec-test input
+ * under `server/src/sync/__fixtures__/view-codec/airtable-*`. Those fixtures are captured inputs,
+ * NOT snapshots — there is no automated regeneration. If you change the schema shape this emits,
+ * update those fixture `schema.json` files to match (re-capture or hand-edit) and re-run
+ * `jest -u server/src/sync/view-codec-snapshots.spec.ts`, or the view-codec guardrail keeps
+ * exercising the old shape.
  */
 export function buildAirtableJsonTableSpec(
   id: EntityId,
@@ -93,6 +100,8 @@ export function buildAirtableJsonTableSpec(
 /**
  * Convert an Airtable field to a TypeBox JSON Schema.
  */
+// FIXTURE NOTE: edits here change the generated schema.json checked in under
+// `__fixtures__/view-codec/airtable-*` — see `buildAirtableJsonTableSpec` for how to refresh them.
 export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
   const description = field.description || field.name;
   let schema: TSchema;

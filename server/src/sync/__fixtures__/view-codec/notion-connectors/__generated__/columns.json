@@ -1,0 +1,243 @@
+[
+  {
+    "column": "Name",
+    "columnId": "properties.Name.title",
+    "cardinality": "single",
+    "logicalType": "richtext",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].plain_text",
+        "arrayHandling": "concat"
+      }
+    },
+    "fromCore": {
+      "type": "wrap_object",
+      "options": {
+        "template": {
+          "type": "title",
+          "title": [
+            {
+              "type": "text",
+              "text": {
+                "content": "$value"
+              },
+              "plain_text": "$value"
+            }
+          ]
+        },
+        "emptyTemplate": {
+          "type": "title",
+          "title": []
+        }
+      }
+    }
+  },
+  {
+    "column": "Time",
+    "columnId": "properties.Time.select.name",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": {
+      "type": "wrap_object",
+      "options": {
+        "template": {
+          "type": "select",
+          "select": {
+            "name": "$value"
+          }
+        },
+        "emptyTemplate": {
+          "type": "select",
+          "select": null
+        }
+      }
+    }
+  },
+  {
+    "column": "Request Type",
+    "columnId": "properties.Request Type.rollup",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "object",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Status",
+    "columnId": "properties.Status.status.name",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Total Requests",
+    "columnId": "properties.Total Requests.rollup",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "object",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Category",
+    "columnId": "properties.Category.select.name",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": {
+      "type": "wrap_object",
+      "options": {
+        "template": {
+          "type": "select",
+          "select": {
+            "name": "$value"
+          }
+        },
+        "emptyTemplate": {
+          "type": "select",
+          "select": null
+        }
+      }
+    }
+  },
+  {
+    "column": "Difficulty",
+    "columnId": "properties.Difficulty.select.name",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": {
+      "type": "wrap_object",
+      "options": {
+        "template": {
+          "type": "select",
+          "select": {
+            "name": "$value"
+          }
+        },
+        "emptyTemplate": {
+          "type": "select",
+          "select": null
+        }
+      }
+    }
+  },
+  {
+    "column": "Links",
+    "columnId": "properties.Links.relation",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Tags",
+    "columnId": "properties.Tags.multi_select",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Id",
+    "columnId": "id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Url",
+    "columnId": "url",
+    "cardinality": "single",
+    "logicalType": "url",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Created Time",
+    "columnId": "created_time",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Last Edited Time",
+    "columnId": "last_edited_time",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Created By",
+    "columnId": "created_by.id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Last Edited By",
+    "columnId": "last_edited_by.id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "In Trash",
+    "columnId": "in_trash",
+    "cardinality": "single",
+    "logicalType": "boolean",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Cover",
+    "columnId": "cover",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "object",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Icon",
+    "columnId": "icon",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "object",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Page Content",
+    "columnId": "page_content",
+    "cardinality": "single",
+    "logicalType": "array",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "notion_to_html"
+    },
+    "fromCore": null
+  }
+]

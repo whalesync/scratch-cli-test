@@ -1,0 +1,45 @@
+{
+  "id": "recMwCyX3OCPIW4vd",
+  "createdTime": "2025-10-20T13:50:32.000Z",
+  "fields": {
+    "Webflow Status": "Active",
+    "Published Date": "2025-10-20",
+    "Name": "How to Import a CSV to WordPress (3 Ways)",
+    "Author": [
+      "reci0lWDPFMN95dSm"
+    ],
+    "Image": [
+      {
+        "id": "attbj6KFqt4NZTZTd",
+        "width": 1600,
+        "height": 900,
+        "url": "https://v5.airtableusercontent.com/v3/u/55/55/1783461600000/p3pdLuNvi74DroPiZm2Oag/yRxJYt-d843isea0RYUbFqTNvnPAqAag1yxJeMZsMRLlFF61xkLjXmn5pA3x9uXQyACFMluvvbeB3y72n5lsNXcrsOGXP8GVnZKC8xtV3KUXcXANOMG-mxUWQMWfWN7zV_fnm1W8kTSr7CkPBlS7vw/2EorayiFGyte1aKUx4yyd7njSsfTleF7Lxyf-tdywas",
+        "filename": "68f63e1473da906fd4aa5fb8_import-csv-to-WP.png",
+        "size": 69104,
+        "type": "image/png",
+        "thumbnails": {
+          "small": {
+            "url": "https://v5.airtableusercontent.com/v3/u/55/55/1783461600000/_y83NvkinZnbu2P2EkXqqg/OfBmHdVfqkf1VHfuLJzg0G0sJV1RXNB7zrXeSX7uAE4Q88l-8PpRfHLxoliwc9xzzZi4KkyGUPRD44hOKOJo6ZKWBikP-gaHC6sduObnJFYVxRbgKl2YNN4U6ZeLsGVhRlflipdY1Nx5yyoh88Mguw/Gf52LKb9agi19glVPUWkxV97vFIfSVBClydkiWbsLKo",
+            "width": 64,
+            "height": 36
+          },
+          "large": {
+            "url": "https://v5.airtableusercontent.com/v3/u/55/55/1783461600000/RH28r8b-Wfqt_Oq1gD0eow/n1IZvlxT3nGUUXVr2vs5VPqigZ5CL8YBbVr-Bc8LQJz-aUeMtjNOA4qyYjxf-oilvHGxnyX1yxKWM8m-S0sA9rFTsrqjWNH7nglAmQ9KdCwbEoH3kBtxYMXXzVFk9L-TrmH33He4Xr6DRHB3aTsbIg/XE3R8p6W6O5TmB-2mtsHPI9chIxOlbhHGU3sUmEpfSM",
+            "width": 910,
+            "height": 512
+          },
+          "full": {
+            "url": "https://v5.airtableusercontent.com/v3/u/55/55/1783461600000/Oi3J6MAtmrjDlJzXxn3DMA/QaN4ebzwPnHaymEeBLBvAirZBHN5DYwn30TgYDuzlCzwaVjmwxVqXuAuGlJiFEGVhhakrH37PtJTTuk61IgYUSepCoAN9ADmWYuQayWXknB7kFzdPDCD-xLoGeYJEDQhCPr3jVvZgDbimnOnpNv9aA/ABn1Y8nr8tgSBGeVfh5NIU0Px6ytwAKm2YOdI9dv7n4",
+            "width": 1600,
+            "height": 900
+          }
+        }
+      }
+    ],
+    "Main Category": [
+      "recZL1umbXvulE06E"
+    ],
+    "Meta Description": "Learn how to import a CSV to WordPress: compare 3 methods, including how to automate recurring CSV imports into posts with Whalesync.",
+    "Short Description": "Learn how to import a CSV to WordPRess"
+  }
+}

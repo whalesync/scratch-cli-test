@@ -179,6 +179,8 @@ function buildCustomerSchema(): TSchema {
   );
 }
 
+// FIXTURE NOTE: edits here change the generated schema.json checked in under
+// `__fixtures__/view-codec/stripe-products` — see `buildStripeJsonTableSpec` for how to refresh it.
 function buildProductSchema(): TSchema {
   return Type.Object(
     {
@@ -587,6 +589,13 @@ function buildSchema(entityType: StripeEntityType): TSchema {
 
 /**
  * Build the JSON Table Spec for a Stripe entity type.
+ *
+ * FIXTURE NOTE: real `schema.json` output of this generator is checked in as a codec-test input
+ * under `server/src/sync/__fixtures__/view-codec/stripe-*`. Those fixtures are captured inputs,
+ * NOT snapshots — there is no automated regeneration. Stripe schemas are hand-maintained here
+ * (see the per-entity `build*Schema` helpers), so if you change one, update the matching fixture
+ * `schema.json` to match and re-run `jest -u server/src/sync/view-codec-snapshots.spec.ts`, or the
+ * view-codec guardrail keeps exercising the old shape.
  */
 export function buildStripeJsonTableSpec(id: EntityId, entityType: StripeEntityType): BaseJsonTableSpec {
   const schema = buildSchema(entityType);

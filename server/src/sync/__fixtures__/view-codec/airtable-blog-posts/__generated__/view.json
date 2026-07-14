@@ -1,0 +1,107 @@
+{
+  "name": "Default",
+  "cols": [
+    {
+      "kind": "col",
+      "path": "fields.Name",
+      "name": "Name"
+    },
+    {
+      "kind": "col",
+      "path": "fields.From Connectors - Related Connectors",
+      "name": "From Connectors - Related Connectors",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Featured",
+      "name": "Featured",
+      "type": "checkbox"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Published Date",
+      "name": "Published Date",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Author",
+      "name": "Author",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Main Category",
+      "name": "Main Category",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "fields.All Categories",
+      "name": "All Categories",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Image",
+      "name": "Image",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Meta Description",
+      "name": "Meta Description"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Short Description",
+      "name": "Short Description"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Inline Ad",
+      "name": "Inline Ad",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Keywords (for Schema)",
+      "name": "Keywords (for Schema)"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Content Type",
+      "name": "Content Type"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Connectors copy",
+      "name": "Connectors copy"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Comparisons",
+      "name": "Comparisons",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Use Cases",
+      "name": "Use Cases",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "fields.Webflow Status",
+      "name": "Webflow Status"
+    },
+    {
+      "kind": "col",
+      "path": "createdTime",
+      "name": "Created Time",
+      "type": "date",
+      "readonly": true
+    }
+  ]
+}

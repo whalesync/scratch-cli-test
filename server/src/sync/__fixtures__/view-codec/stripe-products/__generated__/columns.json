@@ -1,0 +1,83 @@
+[
+  {
+    "column": "Name",
+    "columnId": "name",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Id",
+    "columnId": "id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Description",
+    "columnId": "description",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Active",
+    "columnId": "active",
+    "cardinality": "single",
+    "logicalType": "boolean",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Type",
+    "columnId": "type",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Default Price",
+    "columnId": "default_price",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Url",
+    "columnId": "url",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Created",
+    "columnId": "created",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Updated",
+    "columnId": "updated",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  }
+]

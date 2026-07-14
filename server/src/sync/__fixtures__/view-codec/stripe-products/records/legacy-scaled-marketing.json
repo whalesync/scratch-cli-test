@@ -1,0 +1,41 @@
+{
+  "id": "prod_Mo9TyTpytRhdj7",
+  "object": "product",
+  "active": true,
+  "attributes": [],
+  "created": 1668549592,
+  "default_price": "price_1MMPETB3kcxQq5fugeESgmhO",
+  "description": null,
+  "features": [
+    {
+      "name": "Up to 10,000 landing pages"
+    },
+    {
+      "name": "Dedicated onboarding"
+    }
+  ],
+  "images": [],
+  "livemode": true,
+  "marketing_features": [
+    {
+      "name": "Up to 10,000 landing pages"
+    },
+    {
+      "name": "Dedicated onboarding"
+    }
+  ],
+  "metadata": {},
+  "name": "[Legacy] Scaled Marketing",
+  "package_dimensions": null,
+  "shippable": null,
+  "statement_descriptor": null,
+  "tax_code": "txcd_10103001",
+  "tax_details": {
+    "performance_location": null,
+    "tax_code": "txcd_10103001"
+  },
+  "type": "service",
+  "unit_label": null,
+  "updated": 1696847324,
+  "url": null
+}

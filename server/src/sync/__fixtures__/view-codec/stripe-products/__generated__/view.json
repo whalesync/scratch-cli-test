@@ -1,0 +1,83 @@
+{
+  "name": "Default",
+  "cols": [
+    {
+      "kind": "col",
+      "path": "name",
+      "name": "Name"
+    },
+    {
+      "kind": "col",
+      "path": "id",
+      "name": "Id",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "description",
+      "name": "Description"
+    },
+    {
+      "kind": "col",
+      "path": "active",
+      "name": "Active"
+    },
+    {
+      "kind": "col",
+      "path": "type",
+      "name": "Type",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "default_price",
+      "name": "Default Price",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "url",
+      "name": "Url"
+    },
+    {
+      "kind": "col",
+      "path": "created",
+      "name": "Created",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "images",
+      "name": "Images",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "livemode",
+      "name": "Livemode",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "metadata",
+      "name": "Metadata",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "object",
+      "name": "Object",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "updated",
+      "name": "Updated",
+      "readonly": true
+    }
+  ]
+}

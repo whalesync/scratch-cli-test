@@ -1,0 +1,73 @@
+{
+  "fieldData.name": {
+    "core": "How to Connect and Sync Supabase to Webflow CMS in 5 Minutes with Whalesync"
+  },
+  "id": {
+    "core": "6850302f9c165056a4bd732f"
+  },
+  "fieldData.slug": {
+    "core": "how-to-connect-and-sync-supabase-to-webflow-cms-in-5-minutes-with-whalesync"
+  },
+  "lastPublished": {
+    "core": "2026-07-10T19:09:17.803Z"
+  },
+  "lastUpdated": {
+    "core": "2026-07-10T19:09:17.803Z"
+  },
+  "createdOn": {
+    "core": "2025-06-16T14:54:39.515Z"
+  },
+  "fieldData.featured": {
+    "core": false
+  },
+  "fieldData.published-date": {
+    "core": "2025-06-17T00:00:00.000Z"
+  },
+  "fieldData.author": {
+    "core": "679be7f4889ef3f25730f69a"
+  },
+  "fieldData.main-category": {
+    "core": "6727b18ddec8afc9c72205c4"
+  },
+  "fieldData.all-categories": {
+    "core": null
+  },
+  "fieldData.related-connectors": {
+    "core": null
+  },
+  "fieldData.image": {
+    "core": {
+      "fileId": "6850824d2e2acd89fa62a81d",
+      "url": "https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/6850824d2e2acd89fa62a81d_Webflow-Website-Refresh-(2)-(1).png",
+      "alt": null
+    }
+  },
+  "fieldData.meta-description": {
+    "core": "Connect Supabase to Webflow CMS in five minutes. Sync app data to your Webflow site in real time and launch dynamic websites with zero manual updates or custom code."
+  },
+  "fieldData.short-description": {
+    "core": "How to connect and sync Supabase to Webflow in 5 minutes."
+  },
+  "fieldData.body": {
+    "core": "<p><a href=\"https://www.whalesync.com/blog/no-coder-guide-to-supabase\">Supabase</a>&nbsp;is a scalable, real-time Postgres backend, perfect&nbsp;&nbsp;for powering apps and website…«6694 chars»"
+  },
+  "fieldData.inline-ad": {
+    "core": null
+  },
+  "fieldData.body-bottom": {
+    "core": null
+  },
+  "fieldData.keywords-for-schema": {
+    "core": null
+  },
+  "fieldData.content-type": {
+    "core": null,
+    "roundTrip": null
+  },
+  "isArchived": {
+    "core": false
+  },
+  "isDraft": {
+    "core": false
+  }
+}

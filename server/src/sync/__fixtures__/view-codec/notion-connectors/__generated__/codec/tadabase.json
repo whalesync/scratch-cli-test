@@ -1,0 +1,116 @@
+{
+  "properties.Name.title": {
+    "core": "Tadabase",
+    "roundTrip": {
+      "type": "title",
+      "title": [
+        {
+          "type": "text",
+          "text": {
+            "content": "Tadabase"
+          },
+          "plain_text": "Tadabase"
+        }
+      ]
+    }
+  },
+  "properties.Time.select.name": {},
+  "properties.Request Type.rollup": {
+    "core": {
+      "type": "array",
+      "array": [
+        {
+          "type": "multi_select",
+          "multi_select": [
+            {
+              "id": "c26cdf59-b733-4d5c-b117-12724188894d",
+              "name": "Customer Request",
+              "color": "yellow"
+            }
+          ]
+        }
+      ],
+      "function": "show_original"
+    }
+  },
+  "properties.Status.status.name": {
+    "core": "Not started"
+  },
+  "properties.Total Requests.rollup": {
+    "core": {
+      "type": "number",
+      "number": 1,
+      "function": "count"
+    }
+  },
+  "properties.Category.select.name": {
+    "core": "No-Code",
+    "roundTrip": {
+      "type": "select",
+      "select": {
+        "name": "No-Code"
+      }
+    }
+  },
+  "properties.Difficulty.select.name": {
+    "core": "Unknown",
+    "roundTrip": {
+      "type": "select",
+      "select": {
+        "name": "Unknown"
+      }
+    }
+  },
+  "properties.Links.relation": {
+    "core": [
+      {
+        "id": "774e29e9-dbfb-47a4-bc01-02d4f49ada7c"
+      }
+    ]
+  },
+  "properties.Tags.multi_select": {
+    "core": [
+      {
+        "id": "f4bdb919-e6ab-43b2-adf0-6273100e3bbc",
+        "name": "Database",
+        "color": "default"
+      }
+    ]
+  },
+  "id": {
+    "core": "27c45076-36e4-429d-8692-24f9836f8201"
+  },
+  "url": {
+    "core": "https://www.notion.so/Tadabase-27c4507636e4429d869224f9836f8201"
+  },
+  "created_time": {
+    "core": "2022-07-08T19:57:00.000Z"
+  },
+  "last_edited_time": {
+    "core": "2022-08-15T21:06:00.000Z"
+  },
+  "created_by.id": {
+    "core": "36550377-6536-412c-92a1-da5fa4c240b1"
+  },
+  "last_edited_by.id": {
+    "core": "fea2138d-6703-4fbd-b60f-60d18bb0f6d4"
+  },
+  "in_trash": {
+    "core": false
+  },
+  "cover": {
+    "core": null
+  },
+  "icon": {
+    "core": {
+      "type": "file",
+      "file": {
+        "url": "https://prod-files-secure.s3.us-west-2.amazonaws.com/3fd80bcf-d90a-4b49-ab78-dceb7404c8bd/4188582c-c23f-4477-b0e4-dd6d2cf0ac15/tada.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Conte…«1693 chars»",
+        "expiry_time": "2026-05-28T16:18:10.900Z"
+      }
+    }
+  },
+  "page_content": {
+    "core": ""
+  }
+}

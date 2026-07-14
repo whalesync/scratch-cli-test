@@ -1,0 +1,204 @@
+[
+  {
+    "column": "Name",
+    "columnId": "fieldData.name",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Id",
+    "columnId": "id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Slug",
+    "columnId": "fieldData.slug",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Last Published",
+    "columnId": "lastPublished",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Last Updated",
+    "columnId": "lastUpdated",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Created On",
+    "columnId": "createdOn",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Featured",
+    "columnId": "fieldData.featured",
+    "cardinality": "single",
+    "logicalType": "boolean",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Published-date",
+    "columnId": "fieldData.published-date",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Author",
+    "columnId": "fieldData.author",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Main-category",
+    "columnId": "fieldData.main-category",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "All-categories",
+    "columnId": "fieldData.all-categories",
+    "cardinality": "multi",
+    "logicalType": "array",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Related-connectors",
+    "columnId": "fieldData.related-connectors",
+    "cardinality": "multi",
+    "logicalType": "array",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Image",
+    "columnId": "fieldData.image",
+    "cardinality": "single",
+    "logicalType": "object",
+    "primitiveType": "object",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Meta-description",
+    "columnId": "fieldData.meta-description",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Short-description",
+    "columnId": "fieldData.short-description",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Body",
+    "columnId": "fieldData.body",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Inline-ad",
+    "columnId": "fieldData.inline-ad",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Body-bottom",
+    "columnId": "fieldData.body-bottom",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Keywords-for-schema",
+    "columnId": "fieldData.keywords-for-schema",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Content-type",
+    "columnId": "fieldData.content-type",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": {
+      "type": "webflow_option_id_to_value"
+    },
+    "fromCore": {
+      "type": "webflow_option"
+    }
+  },
+  {
+    "column": "Is Archived",
+    "columnId": "isArchived",
+    "cardinality": "single",
+    "logicalType": "boolean",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Is Draft",
+    "columnId": "isDraft",
+    "cardinality": "single",
+    "logicalType": "boolean",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  }
+]

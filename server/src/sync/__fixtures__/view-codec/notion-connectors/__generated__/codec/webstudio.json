@@ -1,0 +1,102 @@
+{
+  "properties.Name.title": {
+    "core": "Webstudio",
+    "roundTrip": {
+      "type": "title",
+      "title": [
+        {
+          "type": "text",
+          "text": {
+            "content": "Webstudio"
+          },
+          "plain_text": "Webstudio"
+        }
+      ]
+    }
+  },
+  "properties.Time.select.name": {},
+  "properties.Request Type.rollup": {
+    "core": {
+      "type": "array",
+      "array": [
+        {
+          "type": "multi_select",
+          "multi_select": []
+        }
+      ],
+      "function": "show_original"
+    }
+  },
+  "properties.Status.status.name": {
+    "core": "Not started"
+  },
+  "properties.Total Requests.rollup": {
+    "core": {
+      "type": "number",
+      "number": 1,
+      "function": "count"
+    }
+  },
+  "properties.Category.select.name": {
+    "core": "Operations",
+    "roundTrip": {
+      "type": "select",
+      "select": {
+        "name": "Operations"
+      }
+    }
+  },
+  "properties.Difficulty.select.name": {},
+  "properties.Links.relation": {
+    "core": [
+      {
+        "id": "15851c96-d209-80f8-8dfa-d450548df7b9"
+      }
+    ]
+  },
+  "properties.Tags.multi_select": {
+    "core": [
+      {
+        "id": "b3958d5c-ead7-4b65-98ca-6fea23acaa8b",
+        "name": "Website Builder",
+        "color": "brown"
+      }
+    ]
+  },
+  "id": {
+    "core": "15851c96-d209-80af-a770-e88531fe483f"
+  },
+  "url": {
+    "core": "https://www.notion.so/Webstudio-15851c96d20980afa770e88531fe483f"
+  },
+  "created_time": {
+    "core": "2024-12-10T21:39:00.000Z"
+  },
+  "last_edited_time": {
+    "core": "2024-12-10T21:40:00.000Z"
+  },
+  "created_by.id": {
+    "core": "08cae695-5a93-442e-880f-216bf36d95cb"
+  },
+  "last_edited_by.id": {
+    "core": "08cae695-5a93-442e-880f-216bf36d95cb"
+  },
+  "in_trash": {
+    "core": false
+  },
+  "cover": {
+    "core": null
+  },
+  "icon": {
+    "core": {
+      "type": "file",
+      "file": {
+        "url": "https://prod-files-secure.s3.us-west-2.amazonaws.com/3fd80bcf-d90a-4b49-ab78-dceb7404c8bd/a208965d-842e-4511-910c-b6bc70ddd54c/Webstudio_Logo.svg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X…«1687 chars»",
+        "expiry_time": "2026-05-28T16:16:09.501Z"
+      }
+    }
+  },
+  "page_content": {
+    "core": ""
+  }
+}

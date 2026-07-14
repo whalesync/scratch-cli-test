@@ -1,0 +1,73 @@
+{
+  "fieldData.name": {
+    "core": "How to Two-Way Sync Memberstack and Airtable"
+  },
+  "id": {
+    "core": "678e9495f29479b10c854752"
+  },
+  "fieldData.slug": {
+    "core": "two-way-sync-memberstack-and-airtable"
+  },
+  "lastPublished": {
+    "core": "2026-07-10T19:11:23.056Z"
+  },
+  "lastUpdated": {
+    "core": "2026-07-10T19:11:23.056Z"
+  },
+  "createdOn": {
+    "core": "2025-01-20T18:23:17.733Z"
+  },
+  "fieldData.featured": {
+    "core": false
+  },
+  "fieldData.published-date": {
+    "core": "2025-01-21T00:00:00.000Z"
+  },
+  "fieldData.author": {
+    "core": "66b54006eefd06c3a239fd3a"
+  },
+  "fieldData.main-category": {
+    "core": "6727b18ddec8afc9c72205c4"
+  },
+  "fieldData.all-categories": {
+    "core": null
+  },
+  "fieldData.related-connectors": {
+    "core": null
+  },
+  "fieldData.image": {
+    "core": {
+      "fileId": "678e94c5cf89f2d31466db22",
+      "url": "https://cdn.prod.website-files.com/669dbbbad2e7490566ff50e6/678e94c5cf89f2d31466db22_Memberstack_Airtable_Sync.png",
+      "alt": null
+    }
+  },
+  "fieldData.meta-description": {
+    "core": "Step-by-step guide to two-way sync Memberstack and Airtable so member data stays up to date in both tools, no code required."
+  },
+  "fieldData.short-description": {
+    "core": "Step-by-step guide for how to two-way sync Memberstack and Airtable."
+  },
+  "fieldData.body": {
+    "core": "<p>In this guide, we&apos;ll show you how to sync your Memberstack app with Airtable. This will allow you to manage your Memberstack members directly from Airtable, making it easie…«4695 chars»"
+  },
+  "fieldData.inline-ad": {
+    "core": null
+  },
+  "fieldData.body-bottom": {
+    "core": null
+  },
+  "fieldData.keywords-for-schema": {
+    "core": null
+  },
+  "fieldData.content-type": {
+    "core": null,
+    "roundTrip": null
+  },
+  "isArchived": {
+    "core": false
+  },
+  "isDraft": {
+    "core": false
+  }
+}

@@ -1,0 +1,886 @@
+{
+  "id": {
+    "wsId": "d4c982fb-dafe-486d-8312-b603b02d32f6",
+    "remoteId": [
+      "d4c982fb-dafe-486d-8312-b603b02d32f6",
+      "0bae38ad-21fe-413c-a920-3a3814e51649"
+    ]
+  },
+  "slug": "d4c982fb-dafe-486d-8312-b603b02d32f6",
+  "name": "connectors",
+  "schema": {
+    "$id": "notion/d4c982fb-dafe-486d-8312-b603b02d32f6",
+    "title": "Connectors",
+    "type": "object",
+    "required": [
+      "object",
+      "id",
+      "created_time",
+      "last_edited_time",
+      "created_by",
+      "last_edited_by",
+      "parent",
+      "properties",
+      "url"
+    ],
+    "properties": {
+      "object": {
+        "description": "Object type",
+        "const": "page",
+        "type": "string"
+      },
+      "id": {
+        "description": "Unique page identifier",
+        "type": "string"
+      },
+      "created_time": {
+        "description": "Page creation time",
+        "format": "date-time",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "last_edited_time": {
+        "description": "Last edit time",
+        "format": "date-time",
+        "x-scratch-readonly": true,
+        "x-scratch-last-modified-field": true,
+        "type": "string"
+      },
+      "created_by": {
+        "description": "User who created the page",
+        "x-scratch-readonly": true,
+        "type": "object",
+        "required": [
+          "object",
+          "id"
+        ],
+        "properties": {
+          "object": {
+            "const": "user",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "last_edited_by": {
+        "description": "User who last edited the page",
+        "x-scratch-readonly": true,
+        "type": "object",
+        "required": [
+          "object",
+          "id"
+        ],
+        "properties": {
+          "object": {
+            "const": "user",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "cover": {
+        "x-scratch-asset-field": {
+          "idPath": null,
+          "urlExpires": true
+        },
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "external"
+            ],
+            "properties": {
+              "type": {
+                "const": "external",
+                "type": "string"
+              },
+              "external": {
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "format": "uri",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "file"
+            ],
+            "properties": {
+              "type": {
+                "const": "file",
+                "type": "string"
+              },
+              "file": {
+                "type": "object",
+                "required": [
+                  "url",
+                  "expiry_time"
+                ],
+                "properties": {
+                  "url": {
+                    "format": "uri",
+                    "type": "string"
+                  },
+                  "expiry_time": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "icon": {
+        "x-scratch-asset-field": {
+          "idPath": null,
+          "urlExpires": true
+        },
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "emoji"
+            ],
+            "properties": {
+              "type": {
+                "const": "emoji",
+                "type": "string"
+              },
+              "emoji": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "external"
+            ],
+            "properties": {
+              "type": {
+                "const": "external",
+                "type": "string"
+              },
+              "external": {
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "format": "uri",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "file"
+            ],
+            "properties": {
+              "type": {
+                "const": "file",
+                "type": "string"
+              },
+              "file": {
+                "type": "object",
+                "required": [
+                  "url",
+                  "expiry_time"
+                ],
+                "properties": {
+                  "url": {
+                    "format": "uri",
+                    "type": "string"
+                  },
+                  "expiry_time": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "icon"
+            ],
+            "properties": {
+              "type": {
+                "const": "icon",
+                "type": "string"
+              },
+              "icon": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "custom_emoji"
+            ],
+            "properties": {
+              "type": {
+                "const": "custom_emoji",
+                "type": "string"
+              },
+              "custom_emoji": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "url"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "format": "uri",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "parent": {
+        "description": "Parent reference (database or data source)",
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "database_id"
+            ],
+            "properties": {
+              "type": {
+                "const": "database_id",
+                "type": "string"
+              },
+              "database_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "data_source_id"
+            ],
+            "properties": {
+              "type": {
+                "const": "data_source_id",
+                "type": "string"
+              },
+              "data_source_id": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "archived": {
+        "description": "Is page archived (legacy; absent under 2026-03-11+)",
+        "type": "boolean"
+      },
+      "in_trash": {
+        "description": "Is page in trash",
+        "type": "boolean"
+      },
+      "is_archived": {
+        "description": "Is page archived (2026-03-11+)",
+        "type": "boolean"
+      },
+      "page_content": {
+        "description": "Page body content (Notion blocks)",
+        "x-scratch-suggested-transformer": {
+          "type": "notion_to_html"
+        },
+        "x-scratch-readonly": true,
+        "type": "array",
+        "items": {}
+      },
+      "properties": {
+        "description": "Page properties",
+        "type": "object",
+        "properties": {
+          "Time": {
+            "description": "Time",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "select"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "const": "select",
+                "type": "string"
+              },
+              "select": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "name",
+                      "color"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "x-scratch-connector-data-type": "select",
+            "x-scratch-remote-field-id": "%3Aa%5Ds",
+            "x-scratch-suggested-in-transformer": {
+              "type": "wrap_object",
+              "options": {
+                "template": {
+                  "type": "select",
+                  "select": {
+                    "name": "$value"
+                  }
+                },
+                "emptyTemplate": {
+                  "type": "select",
+                  "select": null
+                }
+              }
+            }
+          },
+          "Request Type": {
+            "description": "Request Type",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "rollup"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "const": "rollup",
+                "type": "string"
+              },
+              "rollup": {
+                "type": "object",
+                "required": [
+                  "type",
+                  "function"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "function": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "date": {},
+                  "array": {
+                    "type": "array",
+                    "items": {}
+                  }
+                }
+              }
+            },
+            "x-scratch-connector-data-type": "rollup",
+            "x-scratch-readonly": true,
+            "x-scratch-remote-field-id": "%3A~cf"
+          },
+          "Status": {
+            "description": "Status",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "const": "status",
+                "type": "string"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "name",
+                      "color"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "x-scratch-connector-data-type": "status",
+            "x-scratch-remote-field-id": "Stg%5E"
+          },
+          "Total Requests": {
+            "description": "Total Requests",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "rollup"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "const": "rollup",
+                "type": "string"
+              },
+              "rollup": {
+                "type": "object",
+                "required": [
+                  "type",
+                  "function"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "function": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "date": {},
+                  "array": {
+                    "type": "array",
+                    "items": {}
+                  }
+                }
+              }
+            },
+            "x-scratch-connector-data-type": "rollup",
+            "x-scratch-readonly": true,
+            "x-scratch-remote-field-id": "XCMq"
+          },
+          "Category": {
+            "description": "Category",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "select"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "const": "select",
+                "type": "string"
+              },
+              "select": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "name",
+                      "color"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "x-scratch-connector-data-type": "select",
+            "x-scratch-remote-field-id": "_AWA",
+            "x-scratch-suggested-in-transformer": {
+              "type": "wrap_object",
+              "options": {
+                "template": {
+                  "type": "select",
+                  "select": {
+                    "name": "$value"
+                  }
+                },
+                "emptyTemplate": {
+                  "type": "select",
+                  "select": null
+                }
+              }
+            }
+          },
+          "Difficulty": {
+            "description": "Difficulty",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "select"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "const": "select",
+                "type": "string"
+              },
+              "select": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "name",
+                      "color"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "x-scratch-connector-data-type": "select",
+            "x-scratch-remote-field-id": "%60Z%3ED",
+            "x-scratch-suggested-in-transformer": {
+              "type": "wrap_object",
+              "options": {
+                "template": {
+                  "type": "select",
+                  "select": {
+                    "name": "$value"
+                  }
+                },
+                "emptyTemplate": {
+                  "type": "select",
+                  "select": null
+                }
+              }
+            }
+          },
+          "Links": {
+            "description": "Links",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "relation"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "const": "relation",
+                "type": "string"
+              },
+              "relation": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "has_more": {
+                "type": "boolean"
+              }
+            },
+            "x-scratch-connector-data-type": "relation",
+            "x-scratch-remote-field-id": "b%3EjG",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "a0b982eb-0e2d-4041-b86c-7e612994e07c",
+              "map": "id"
+            }
+          },
+          "Tags": {
+            "description": "Tags",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "multi_select"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "const": "multi_select",
+                "type": "string"
+              },
+              "multi_select": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "color"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "color": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "x-scratch-connector-data-type": "multi_select",
+            "x-scratch-remote-field-id": "tBbc"
+          },
+          "Name": {
+            "description": "Name",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "title"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "const": "title",
+                "type": "string"
+              },
+              "title": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "plain_text"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "object",
+                      "required": [
+                        "content"
+                      ],
+                      "properties": {
+                        "content": {
+                          "type": "string"
+                        },
+                        "link": {}
+                      }
+                    },
+                    "plain_text": {
+                      "type": "string"
+                    },
+                    "href": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "x-scratch-connector-data-type": "title",
+            "x-scratch-remote-field-id": "title",
+            "x-scratch-virtual-fields": [
+              {
+                "displayLabel": "Name",
+                "type": "string",
+                "suggestedTransformer": {
+                  "type": "jsonpath",
+                  "options": {
+                    "expression": "$.title[*].plain_text",
+                    "arrayHandling": "concat"
+                  }
+                }
+              }
+            ],
+            "x-scratch-suggested-in-transformer": {
+              "type": "wrap_object",
+              "options": {
+                "template": {
+                  "type": "title",
+                  "title": [
+                    {
+                      "type": "text",
+                      "text": {
+                        "content": "$value"
+                      },
+                      "plain_text": "$value"
+                    }
+                  ]
+                },
+                "emptyTemplate": {
+                  "type": "title",
+                  "title": []
+                }
+              }
+            }
+          }
+        }
+      },
+      "url": {
+        "description": "Page URL",
+        "format": "uri",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "public_url": {
+        "anyOf": [
+          {
+            "format": "uri",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    }
+  },
+  "idPath": "id",
+  "titlePath": "properties.Name",
+  "basePath": [],
+  "remoteWebUrl": "https://www.notion.so/d4c982fbdafe486d8312b603b02d32f6",
+  "generatedAt": "2026-06-26T23:14:55.419Z"
+}

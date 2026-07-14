@@ -1,0 +1,142 @@
+{
+  "object": "page",
+  "id": "15851c96-d209-80af-a770-e88531fe483f",
+  "created_time": "2024-12-10T21:39:00.000Z",
+  "last_edited_time": "2024-12-10T21:40:00.000Z",
+  "created_by": {
+    "object": "user",
+    "id": "08cae695-5a93-442e-880f-216bf36d95cb"
+  },
+  "last_edited_by": {
+    "object": "user",
+    "id": "08cae695-5a93-442e-880f-216bf36d95cb"
+  },
+  "cover": null,
+  "icon": {
+    "type": "file",
+    "file": {
+      "url": "https://prod-files-secure.s3.us-west-2.amazonaws.com/3fd80bcf-d90a-4b49-ab78-dceb7404c8bd/a208965d-842e-4511-910c-b6bc70ddd54c/Webstudio_Logo.svg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=ASIAZI2LB4663S7CMOP6%2F20260528%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20260528T151609Z&X-Amz-Expires=3600&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEOf%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLXdlc3QtMiJHMEUCIQCNTCwp45FlARdj6j0KJBBAyQpNY86RFh57mEPpfzfSgwIgSPPnt%2FfZgTmYutyFCbmBeGnnUjkOmaLQJJnfbAAp%2F%2B4qiAQIsP%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARAAGgw2Mzc0MjMxODM4MDUiDP7rzW64Kwf5bI47rCrcAxHIWsJ6%2FviqQnAOchyU%2BhFAYXSXCMNbC8I1RIVSbmIXoMtM0pKhT6tcWzbl7kU3GZk4RIt7XOz7wurRqB6TX%2FCvIBMjenxYxdobS0UTXIM5K8FmShawitWM2B8mscMTfJdVo3fAXYLMnRH3qutiT%2F6v9Eb4QVQNniCKUIs5xrADbcfMLQjn8ujFQflT2kXtOG4v6uYDw%2FGVZojODdL4UNweNGokvKuXhlergW8WA%2F0d85jGdNVnpNBm3RhMudqw1pHwwXifZ1kRuNc1kLIcLwiwFu4oDKw0bSqUPYTuxeLX2BZBDdc2KmlgRPL%2BYJ4RTBvOyzIp2OsM%2FJPjp3v2%2Fu%2Bn0OH1QLxhaCp9BMOgqPriD4dJ%2F%2FTeiqPU0nCmEuRbAhkvnJSl8GdZTXAixPrMfi16vdTr%2FawlRApTjl1I9cmBqm3TjS12rxqEvNgP0SAOfaYNWuJ%2Bc4iMKS6WIY8uNubPe1YI8H6eT6DokvY%2BQ8GyYawWDwc5vXO6%2BDbM69w%2BegvFV3vKuOxmeHxnvcDWmpS3w4kpjJ%2F2ezanwBF6eg%2FuqYGLpV9XeGh5UAKoRt54AqXtRJGf%2Bsi9UBfOcozLSV1R9NVVJ4w5wiZ6UlVn6SImPwQh5%2FQr93SEfEDZMI634dAGOqUBt4e5BSzasCs2qOjx9XBwA5hdDXdI4CNhpp4B%2Fc8HORV7gO74YluGZ%2BK3FR3OQjfrUiluXM%2F6d19L7pBV%2BtM0jsnID4d5mP4gT4XjVPX2Apw60AB0Ik0qk2tv%2FRrShaqq491jufZB2z7seJzxWQEBf%2BjCwJoUhy7n0JpysREFhDoZt8cyHIHAwAlixQS3W0bb3s8v6TngrFP8zDqybi87TPe57dj7&X-Amz-Signature=aae9adef09897a2875e4eb8bf519065d490e254f81b1e3236294235859945a06&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+      "expiry_time": "2026-05-28T16:16:09.501Z"
+    }
+  },
+  "parent": {
+    "type": "database_id",
+    "database_id": "d4c982fb-dafe-486d-8312-b603b02d32f6"
+  },
+  "in_trash": false,
+  "is_archived": false,
+  "is_locked": false,
+  "properties": {
+    "Time": {
+      "id": "%3Aa%5Ds",
+      "type": "select",
+      "select": null
+    },
+    "Request Type": {
+      "id": "%3A~cf",
+      "type": "rollup",
+      "rollup": {
+        "type": "array",
+        "array": [
+          {
+            "type": "multi_select",
+            "multi_select": []
+          }
+        ],
+        "function": "show_original"
+      }
+    },
+    "Related to Specific Use Cases (Column)": {
+      "id": "BKwc",
+      "type": "relation",
+      "relation": [],
+      "has_more": false
+    },
+    "PRD": {
+      "id": "HI%60m",
+      "type": "relation",
+      "relation": [],
+      "has_more": false
+    },
+    "Status": {
+      "id": "Stg%5E",
+      "type": "status",
+      "status": {
+        "id": "e9e2ac66-ab1b-4dcf-ae01-4543470e6ef4",
+        "name": "Not started",
+        "color": "default"
+      }
+    },
+    "Total Requests": {
+      "id": "XCMq",
+      "type": "rollup",
+      "rollup": {
+        "type": "number",
+        "number": 1,
+        "function": "count"
+      }
+    },
+    "Category": {
+      "id": "_AWA",
+      "type": "select",
+      "select": {
+        "id": "e1bbbc00-4f27-48d9-8038-e94fddca1fff",
+        "name": "Operations",
+        "color": "purple"
+      }
+    },
+    "Difficulty": {
+      "id": "%60Z%3ED",
+      "type": "select",
+      "select": null
+    },
+    "Links": {
+      "id": "b%3EjG",
+      "type": "relation",
+      "relation": [
+        {
+          "id": "15851c96-d209-80f8-8dfa-d450548df7b9"
+        }
+      ],
+      "has_more": false
+    },
+    "Tags": {
+      "id": "tBbc",
+      "type": "multi_select",
+      "multi_select": [
+        {
+          "id": "b3958d5c-ead7-4b65-98ca-6fea23acaa8b",
+          "name": "Website Builder",
+          "color": "brown"
+        }
+      ]
+    },
+    "Name": {
+      "id": "title",
+      "type": "title",
+      "title": [
+        {
+          "type": "text",
+          "text": {
+            "content": "Webstudio",
+            "link": null
+          },
+          "annotations": {
+            "bold": false,
+            "italic": false,
+            "strikethrough": false,
+            "underline": false,
+            "code": false,
+            "color": "default"
+          },
+          "plain_text": "Webstudio",
+          "href": null
+        }
+      ]
+    }
+  },
+  "url": "https://www.notion.so/Webstudio-15851c96d20980afa770e88531fe483f",
+  "public_url": null,
+  "archived": false,
+  "page_content": []
+}

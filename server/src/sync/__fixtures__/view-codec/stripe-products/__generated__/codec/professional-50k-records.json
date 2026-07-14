@@ -1,0 +1,29 @@
+{
+  "name": {
+    "core": "Professional - 50k Records"
+  },
+  "id": {
+    "core": "prod_Qc8zNw8SyMirrA"
+  },
+  "description": {
+    "core": null
+  },
+  "active": {
+    "core": true
+  },
+  "type": {
+    "core": "service"
+  },
+  "default_price": {
+    "core": "price_1PkuhPB3kcxQq5fueQmp5KiM"
+  },
+  "url": {
+    "core": null
+  },
+  "created": {
+    "core": 1722978823
+  },
+  "updated": {
+    "core": 1722978823
+  }
+}

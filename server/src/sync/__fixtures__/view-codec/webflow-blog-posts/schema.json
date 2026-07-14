@@ -1,0 +1,429 @@
+{
+  "id": {
+    "wsId": "6683792e42237a5f054af942",
+    "remoteId": [
+      "6683792e42237a5f054af942",
+      "66b528bdcabdcee3d0fd7894"
+    ]
+  },
+  "slug": "blog",
+  "name": "Blog Posts",
+  "schema": {
+    "$id": "66b528bdcabdcee3d0fd7894",
+    "title": "Blog Posts",
+    "type": "object",
+    "required": [
+      "id",
+      "fieldData"
+    ],
+    "properties": {
+      "id": {
+        "description": "Unique item identifier (read-only)",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "cmsLocaleId": {
+        "description": "CMS locale identifier (read-only)",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "lastPublished": {
+        "description": "When the item was last published (read-only)",
+        "x-scratch-remote-field-id": "published-on",
+        "x-scratch-readonly": true,
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "lastUpdated": {
+        "format": "date-time",
+        "description": "When the item was last updated (read-only)",
+        "x-scratch-remote-field-id": "updated-on",
+        "x-scratch-last-modified-field": true,
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "createdOn": {
+        "format": "date-time",
+        "description": "When the item was created (read-only)",
+        "x-scratch-remote-field-id": "created-on",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "isArchived": {
+        "description": "Whether the item is archived (default: false)",
+        "type": "boolean"
+      },
+      "isDraft": {
+        "description": "Whether the item is a draft (default: false)",
+        "type": "boolean"
+      },
+      "fieldData": {
+        "description": "Collection-specific field values",
+        "type": "object",
+        "required": [
+          "name",
+          "slug"
+        ],
+        "properties": {
+          "featured": {
+            "anyOf": [
+              {
+                "description": "Featured",
+                "type": "boolean",
+                "x-scratch-connector-data-type": "Switch",
+                "x-scratch-remote-field-id": "43d30f167a25d2b367898acba5ff8edc"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Featured",
+            "x-scratch-connector-data-type": "Switch",
+            "x-scratch-remote-field-id": "43d30f167a25d2b367898acba5ff8edc"
+          },
+          "published-date": {
+            "anyOf": [
+              {
+                "description": "Published Date",
+                "format": "date-time",
+                "type": "string",
+                "x-scratch-connector-data-type": "DateTime",
+                "x-scratch-remote-field-id": "3ca628f746ef1ec0919f24735187382e"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Published Date",
+            "x-scratch-connector-data-type": "DateTime",
+            "x-scratch-remote-field-id": "3ca628f746ef1ec0919f24735187382e"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "description": "Author",
+                "x-scratch-foreign-key": {
+                  "linkedTableId": "66b529069b293e9a0ec3f0ef"
+                },
+                "type": "string",
+                "x-scratch-connector-data-type": "Reference",
+                "x-scratch-remote-field-id": "0b2498c973e79160a3582af5c603d038"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Author",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "66b529069b293e9a0ec3f0ef"
+            },
+            "x-scratch-connector-data-type": "Reference",
+            "x-scratch-remote-field-id": "0b2498c973e79160a3582af5c603d038"
+          },
+          "main-category": {
+            "anyOf": [
+              {
+                "description": "Main Category",
+                "x-scratch-foreign-key": {
+                  "linkedTableId": "66b526464ba04331d3db4b56"
+                },
+                "type": "string",
+                "x-scratch-connector-data-type": "Reference",
+                "x-scratch-remote-field-id": "d2c9e78e9c43a5f2e621c9c06fff2958"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Main Category",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "66b526464ba04331d3db4b56"
+            },
+            "x-scratch-connector-data-type": "Reference",
+            "x-scratch-remote-field-id": "d2c9e78e9c43a5f2e621c9c06fff2958"
+          },
+          "all-categories": {
+            "anyOf": [
+              {
+                "description": "All Categories",
+                "x-scratch-foreign-key": {
+                  "linkedTableId": "66b526464ba04331d3db4b56"
+                },
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "x-scratch-connector-data-type": "MultiReference",
+                "x-scratch-remote-field-id": "88eea0dbe940dad0980468a91ebd2702"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "All Categories",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "66b526464ba04331d3db4b56"
+            },
+            "x-scratch-connector-data-type": "MultiReference",
+            "x-scratch-remote-field-id": "88eea0dbe940dad0980468a91ebd2702"
+          },
+          "related-connectors": {
+            "anyOf": [
+              {
+                "description": "Related Connectors",
+                "x-scratch-foreign-key": {
+                  "linkedTableId": "669dbbbaf18cae9e2730cd74"
+                },
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "x-scratch-connector-data-type": "MultiReference",
+                "x-scratch-remote-field-id": "5085b9f89b156774f80eb7c35bc61e28"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Related Connectors",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "669dbbbaf18cae9e2730cd74"
+            },
+            "x-scratch-connector-data-type": "MultiReference",
+            "x-scratch-remote-field-id": "5085b9f89b156774f80eb7c35bc61e28"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "description": "Image",
+                "x-scratch-asset-field": {
+                  "idPath": "fileId",
+                  "urlExpires": false
+                },
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "fileId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "url": {
+                    "format": "uri",
+                    "type": "string"
+                  },
+                  "alt": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "x-scratch-connector-data-type": "Image",
+                "x-scratch-remote-field-id": "41dc92b7f5b889e8d5972d05a369c7b0"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Image",
+            "x-scratch-asset-field": {
+              "idPath": "fileId",
+              "urlExpires": false
+            },
+            "x-scratch-connector-data-type": "Image",
+            "x-scratch-remote-field-id": "41dc92b7f5b889e8d5972d05a369c7b0"
+          },
+          "meta-description": {
+            "anyOf": [
+              {
+                "description": "Meta Description",
+                "type": "string",
+                "x-scratch-connector-data-type": "PlainText",
+                "x-scratch-remote-field-id": "ec4b4904a79e0b04162d3863172c09c8"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Meta Description",
+            "x-scratch-connector-data-type": "PlainText",
+            "x-scratch-remote-field-id": "ec4b4904a79e0b04162d3863172c09c8"
+          },
+          "short-description": {
+            "anyOf": [
+              {
+                "description": "Short Description",
+                "type": "string",
+                "x-scratch-connector-data-type": "PlainText",
+                "x-scratch-remote-field-id": "b721a2cf54ec15247ca544c208a2af39"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Short Description",
+            "x-scratch-connector-data-type": "PlainText",
+            "x-scratch-remote-field-id": "b721a2cf54ec15247ca544c208a2af39"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "description": "Body Top",
+                "contentMediaType": "text/html",
+                "type": "string",
+                "x-scratch-connector-data-type": "RichText",
+                "x-scratch-remote-field-id": "6d1a7f622b1a015e068ba32d1a068288"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Body Top",
+            "x-scratch-connector-data-type": "RichText",
+            "x-scratch-remote-field-id": "6d1a7f622b1a015e068ba32d1a068288"
+          },
+          "inline-ad": {
+            "anyOf": [
+              {
+                "description": "Inline Ad",
+                "x-scratch-foreign-key": {
+                  "linkedTableId": "66b58ecd8d9bddb435972515"
+                },
+                "type": "string",
+                "x-scratch-connector-data-type": "Reference",
+                "x-scratch-remote-field-id": "1f75e6b2aff897c24ce7dc0c9f58ceca"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Inline Ad",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "66b58ecd8d9bddb435972515"
+            },
+            "x-scratch-connector-data-type": "Reference",
+            "x-scratch-remote-field-id": "1f75e6b2aff897c24ce7dc0c9f58ceca"
+          },
+          "body-bottom": {
+            "anyOf": [
+              {
+                "description": "Body Bottom",
+                "contentMediaType": "text/html",
+                "type": "string",
+                "x-scratch-connector-data-type": "RichText",
+                "x-scratch-remote-field-id": "c9fe11a63ffe12ef29219ffeee9ff965"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Body Bottom",
+            "x-scratch-connector-data-type": "RichText",
+            "x-scratch-remote-field-id": "c9fe11a63ffe12ef29219ffeee9ff965"
+          },
+          "keywords-for-schema": {
+            "anyOf": [
+              {
+                "description": "Keywords (for Schema)",
+                "type": "string",
+                "x-scratch-connector-data-type": "PlainText",
+                "x-scratch-remote-field-id": "ae789ee4a6ab6ebeda881cc74c5d8072"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Keywords (for Schema)",
+            "x-scratch-connector-data-type": "PlainText",
+            "x-scratch-remote-field-id": "ae789ee4a6ab6ebeda881cc74c5d8072"
+          },
+          "content-type": {
+            "anyOf": [
+              {
+                "description": "Content Type",
+                "x-scratch-suggested-transformer": {
+                  "type": "webflow_option_id_to_value"
+                },
+                "x-scratch-suggested-in-transformer": {
+                  "type": "webflow_option"
+                },
+                "anyOf": [
+                  {
+                    "title": "News",
+                    "const": "4e109556b57032779ba7c1f8e81a5552",
+                    "type": "string"
+                  },
+                  {
+                    "title": "Video",
+                    "const": "155b954766d0b4473051031cd1d6a06e",
+                    "type": "string"
+                  },
+                  {
+                    "title": "Case Study",
+                    "const": "f1e79edfb9651b0c354b26910b5a90ae",
+                    "type": "string"
+                  }
+                ],
+                "x-scratch-connector-data-type": "Option",
+                "x-scratch-remote-field-id": "2d89db3c68e8474e43327c49ebbfc5e1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Content Type",
+            "x-scratch-suggested-transformer": {
+              "type": "webflow_option_id_to_value"
+            },
+            "x-scratch-suggested-in-transformer": {
+              "type": "webflow_option"
+            },
+            "x-scratch-connector-data-type": "Option",
+            "x-scratch-remote-field-id": "2d89db3c68e8474e43327c49ebbfc5e1"
+          },
+          "name": {
+            "description": "Name",
+            "type": "string",
+            "x-scratch-connector-data-type": "PlainText",
+            "x-scratch-remote-field-id": "d4fb9fa96fed0a1ba74edb51b5394cc0"
+          },
+          "slug": {
+            "description": "Slug",
+            "type": "string",
+            "x-scratch-connector-data-type": "PlainText",
+            "x-scratch-remote-field-id": "00bdfb7e8d55f77f2486e273573bd6db"
+          }
+        }
+      }
+    }
+  },
+  "titlePath": "fieldData.name",
+  "mainContentPath": "fieldData.body",
+  "idPath": "id",
+  "slugPath": "fieldData.slug",
+  "basePath": [
+    "Whalesync Live Site",
+    "Collections"
+  ],
+  "structureVersion": 2,
+  "generatedAt": "2026-06-30T20:11:09.203Z"
+}

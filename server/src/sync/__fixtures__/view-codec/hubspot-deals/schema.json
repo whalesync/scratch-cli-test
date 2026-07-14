@@ -1,0 +1,1879 @@
+{
+  "id": {
+    "wsId": "deals",
+    "remoteId": [
+      "deals"
+    ]
+  },
+  "slug": "deals",
+  "name": "Deals",
+  "schema": {
+    "$id": "hubspot/deals",
+    "title": "Deals",
+    "type": "object",
+    "required": [
+      "id",
+      "properties",
+      "createdAt",
+      "updatedAt",
+      "archived"
+    ],
+    "properties": {
+      "id": {
+        "x-scratch-readonly": true,
+        "description": "Record ID",
+        "type": "string"
+      },
+      "properties": {
+        "description": "HubSpot properties",
+        "type": "object",
+        "required": [
+          "amount",
+          "amount_in_home_currency",
+          "closed_lost_reason",
+          "closed_won_reason",
+          "closedate",
+          "connectors",
+          "createdate",
+          "days_to_close",
+          "deal_currency_code",
+          "dealname",
+          "dealstage",
+          "dealtype",
+          "description",
+          "engagements_last_meeting_booked",
+          "engagements_last_meeting_booked_campaign",
+          "engagements_last_meeting_booked_medium",
+          "engagements_last_meeting_booked_source",
+          "grain_budget",
+          "grain_competition",
+          "grain_customer_needs",
+          "grain_stakeholders",
+          "grain_timeline",
+          "hs_actual_duration",
+          "hs_acv",
+          "hs_all_assigned_business_unit_ids",
+          "hs_all_collaborator_owner_ids",
+          "hs_all_deal_split_owner_ids",
+          "hs_analytics_latest_source",
+          "hs_analytics_latest_source_data_1",
+          "hs_analytics_latest_source_data_2",
+          "hs_analytics_latest_source_timestamp",
+          "hs_analytics_source",
+          "hs_analytics_source_data_1",
+          "hs_analytics_source_data_2",
+          "hs_arr",
+          "hs_associated_deal_registration_deal_type",
+          "hs_associated_deal_registration_product_interests",
+          "hs_average_deal_owner_duration_in_current_stage",
+          "hs_closed_won_count",
+          "hs_created_by_user_id",
+          "hs_deal_registration_mrr",
+          "hs_deal_registration_mrr_currency_code",
+          "hs_deal_score",
+          "hs_deal_stage_probability",
+          "hs_exchange_rate",
+          "hs_forecast_amount",
+          "hs_forecast_probability",
+          "hs_form_id",
+          "hs_has_last_conversation_follow_ups",
+          "hs_has_last_meeting_followups",
+          "hs_is_active_shared_deal",
+          "hs_is_closed",
+          "hs_is_closed_count",
+          "hs_is_closed_lost",
+          "hs_is_closed_won",
+          "hs_is_deal_split",
+          "hs_is_open_count",
+          "hs_is_stalled",
+          "hs_is_stalled_after_timestamp",
+          "hs_last_conversation_with_followups_object_coordinates",
+          "hs_last_gs_shared_message",
+          "hs_last_partner_shared_message_date",
+          "hs_lastmodifieddate",
+          "hs_latest_approval_status",
+          "hs_manual_forecast_category",
+          "hs_merged_object_ids",
+          "hs_mrr",
+          "hs_next_meeting_id",
+          "hs_next_meeting_name",
+          "hs_next_meeting_start_time",
+          "hs_next_step",
+          "hs_notes_next_activity",
+          "hs_num_associated_active_deal_registrations",
+          "hs_num_associated_deal_registrations",
+          "hs_num_of_associated_line_items",
+          "hs_object_id",
+          "hs_object_source_detail_1",
+          "hs_object_source_detail_2",
+          "hs_object_source_detail_3",
+          "hs_object_source_label",
+          "hs_partner_tech_win",
+          "hs_priority",
+          "hs_projected_amount",
+          "hs_projected_amount_in_home_currency",
+          "hs_shared_team_ids",
+          "hs_shared_user_ids",
+          "hs_synced_deal_owner_name_and_email",
+          "hs_tag_ids",
+          "hs_tcv",
+          "hs_updated_by_user_id",
+          "hs_user_ids_of_all_notification_recipients",
+          "hs_v2_date_entered_current_stage",
+          "hs_v2_time_in_current_stage",
+          "hs_weighted_pipeline_in_company_currency",
+          "hubspot_owner_assigneddate",
+          "hubspot_owner_id",
+          "hubspot_team_id",
+          "kpis__cloned_",
+          "lemlistlemlistchannel",
+          "next_renewal_date",
+          "notes_last_contacted",
+          "notes_last_updated",
+          "notes_next_activity_date",
+          "num_associated_contacts",
+          "num_contacted_notes",
+          "num_notes",
+          "pilot_end_date",
+          "pilot_start_date",
+          "pipeline",
+          "source",
+          "source_type",
+          "use_cases__cloned_",
+          "warmlycreatedaccount"
+        ],
+        "properties": {
+          "amount": {
+            "description": "Amount",
+            "x-scratch-remote-field-id": "amount",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "amount_in_home_currency": {
+            "description": "Amount in company currency",
+            "x-scratch-remote-field-id": "amount_in_home_currency",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_lost_reason": {
+            "description": "Closed Lost Reason",
+            "x-scratch-remote-field-id": "closed_lost_reason",
+            "x-scratch-connector-data-type": "hubspot/string_textarea",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_won_reason": {
+            "description": "Closed Won Reason",
+            "x-scratch-remote-field-id": "closed_won_reason",
+            "x-scratch-connector-data-type": "hubspot/string_textarea",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedate": {
+            "description": "Close Date",
+            "x-scratch-remote-field-id": "closedate",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "connectors": {
+            "description": "Connectors",
+            "x-scratch-remote-field-id": "connectors",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdate": {
+            "description": "Create Date",
+            "x-scratch-remote-field-id": "createdate",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "days_to_close": {
+            "description": "Days to close",
+            "x-scratch-remote-field-id": "days_to_close",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deal_currency_code": {
+            "description": "Currency",
+            "x-scratch-remote-field-id": "deal_currency_code",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dealname": {
+            "description": "Deal Name",
+            "x-scratch-remote-field-id": "dealname",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dealstage": {
+            "description": "Deal Stage",
+            "x-scratch-remote-field-id": "dealstage",
+            "x-scratch-connector-data-type": "hubspot/enumeration_radio",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dealtype": {
+            "description": "Deal Type",
+            "x-scratch-remote-field-id": "dealtype",
+            "x-scratch-connector-data-type": "hubspot/enumeration_radio",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "description": "Deal Description",
+            "x-scratch-remote-field-id": "description",
+            "x-scratch-connector-data-type": "hubspot/string_textarea",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "engagements_last_meeting_booked": {
+            "description": "Date of last meeting booked in meetings tool",
+            "x-scratch-remote-field-id": "engagements_last_meeting_booked",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "engagements_last_meeting_booked_campaign": {
+            "description": "Campaign of last booking in meetings tool",
+            "x-scratch-remote-field-id": "engagements_last_meeting_booked_campaign",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "engagements_last_meeting_booked_medium": {
+            "description": "Medium of last booking in meetings tool",
+            "x-scratch-remote-field-id": "engagements_last_meeting_booked_medium",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "engagements_last_meeting_booked_source": {
+            "description": "Source of last booking in meetings tool",
+            "x-scratch-remote-field-id": "engagements_last_meeting_booked_source",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grain_budget": {
+            "description": "Customer Budget",
+            "x-scratch-remote-field-id": "grain_budget",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grain_competition": {
+            "description": "Competition",
+            "x-scratch-remote-field-id": "grain_competition",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grain_customer_needs": {
+            "description": "Customer Needs",
+            "x-scratch-remote-field-id": "grain_customer_needs",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grain_stakeholders": {
+            "description": "Stakeholders",
+            "x-scratch-remote-field-id": "grain_stakeholders",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grain_timeline": {
+            "description": "Next Meeting",
+            "x-scratch-remote-field-id": "grain_timeline",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_actual_duration": {
+            "description": "Actual duration",
+            "x-scratch-remote-field-id": "hs_actual_duration",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_acv": {
+            "description": "Annual contract value",
+            "x-scratch-remote-field-id": "hs_acv",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_all_assigned_business_unit_ids": {
+            "description": "Brands",
+            "x-scratch-remote-field-id": "hs_all_assigned_business_unit_ids",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_all_collaborator_owner_ids": {
+            "description": "Deal Collaborator",
+            "x-scratch-remote-field-id": "hs_all_collaborator_owner_ids",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_all_deal_split_owner_ids": {
+            "description": "Deal Split Users",
+            "x-scratch-remote-field-id": "hs_all_deal_split_owner_ids",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_analytics_latest_source": {
+            "description": "Latest Traffic Source",
+            "x-scratch-remote-field-id": "hs_analytics_latest_source",
+            "x-scratch-connector-data-type": "hubspot/enumeration_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_analytics_latest_source_data_1": {
+            "description": "Latest Traffic Source Data 1",
+            "x-scratch-remote-field-id": "hs_analytics_latest_source_data_1",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_analytics_latest_source_data_2": {
+            "description": "Latest Traffic Source Data 2",
+            "x-scratch-remote-field-id": "hs_analytics_latest_source_data_2",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_analytics_latest_source_timestamp": {
+            "description": "Latest Traffic Source Timestamp",
+            "x-scratch-remote-field-id": "hs_analytics_latest_source_timestamp",
+            "x-scratch-connector-data-type": "hubspot/datetime_number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_analytics_source": {
+            "description": "Original Traffic Source",
+            "x-scratch-remote-field-id": "hs_analytics_source",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_analytics_source_data_1": {
+            "description": "Original Traffic Source Drill-Down 1",
+            "x-scratch-remote-field-id": "hs_analytics_source_data_1",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_analytics_source_data_2": {
+            "description": "Original Traffic Source Drill-Down 2",
+            "x-scratch-remote-field-id": "hs_analytics_source_data_2",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_arr": {
+            "description": "Annual recurring revenue",
+            "x-scratch-remote-field-id": "hs_arr",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_associated_deal_registration_deal_type": {
+            "description": "Associated Shared Deal Type",
+            "x-scratch-remote-field-id": "hs_associated_deal_registration_deal_type",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_associated_deal_registration_product_interests": {
+            "description": "Associated Shared Deal Product Interests",
+            "x-scratch-remote-field-id": "hs_associated_deal_registration_product_interests",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_average_deal_owner_duration_in_current_stage": {
+            "description": "Average Deal Owner Duration In Current Stage",
+            "x-scratch-remote-field-id": "hs_average_deal_owner_duration_in_current_stage",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_closed_won_count": {
+            "description": "Closed won count",
+            "x-scratch-remote-field-id": "hs_closed_won_count",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_created_by_user_id": {
+            "description": "Created by user ID",
+            "x-scratch-remote-field-id": "hs_created_by_user_id",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_deal_registration_mrr": {
+            "description": "HubSpot Shared Deal MRR",
+            "x-scratch-remote-field-id": "hs_deal_registration_mrr",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_deal_registration_mrr_currency_code": {
+            "description": "HubSpot Shared Deal MRR Currency Code",
+            "x-scratch-remote-field-id": "hs_deal_registration_mrr_currency_code",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_deal_score": {
+            "description": "Deal Score",
+            "x-scratch-remote-field-id": "hs_deal_score",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_deal_stage_probability": {
+            "description": "Deal probability",
+            "x-scratch-remote-field-id": "hs_deal_stage_probability",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_exchange_rate": {
+            "description": "Exchange rate",
+            "x-scratch-remote-field-id": "hs_exchange_rate",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_forecast_amount": {
+            "description": "Forecast amount",
+            "x-scratch-remote-field-id": "hs_forecast_amount",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_forecast_probability": {
+            "description": "Forecast probability",
+            "x-scratch-remote-field-id": "hs_forecast_probability",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_form_id": {
+            "description": "Form ID",
+            "x-scratch-remote-field-id": "hs_form_id",
+            "x-scratch-connector-data-type": "hubspot/string_calculation_rollup",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_has_last_conversation_follow_ups": {
+            "description": "Has Last Conversation Follow Ups",
+            "x-scratch-remote-field-id": "hs_has_last_conversation_follow_ups",
+            "x-scratch-connector-data-type": "hubspot/bool_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_has_last_meeting_followups": {
+            "description": "Has Last Meeting Follow Ups",
+            "x-scratch-remote-field-id": "hs_has_last_meeting_followups",
+            "x-scratch-connector-data-type": "hubspot/bool_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_is_active_shared_deal": {
+            "description": "Is Active Shared Deal",
+            "x-scratch-remote-field-id": "hs_is_active_shared_deal",
+            "x-scratch-connector-data-type": "hubspot/bool_booleancheckbox",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_is_closed": {
+            "description": "Is Deal Closed?",
+            "x-scratch-remote-field-id": "hs_is_closed",
+            "x-scratch-connector-data-type": "hubspot/bool_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_is_closed_count": {
+            "description": "Is Closed (numeric)",
+            "x-scratch-remote-field-id": "hs_is_closed_count",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_is_closed_lost": {
+            "description": "Is closed lost",
+            "x-scratch-remote-field-id": "hs_is_closed_lost",
+            "x-scratch-connector-data-type": "hubspot/bool_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_is_closed_won": {
+            "description": "Is Closed Won",
+            "x-scratch-remote-field-id": "hs_is_closed_won",
+            "x-scratch-connector-data-type": "hubspot/bool_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_is_deal_split": {
+            "description": "Deal Split Added",
+            "x-scratch-remote-field-id": "hs_is_deal_split",
+            "x-scratch-connector-data-type": "hubspot/bool_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_is_open_count": {
+            "description": "Is Open (numeric)",
+            "x-scratch-remote-field-id": "hs_is_open_count",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_is_stalled": {
+            "description": "Is Stalled",
+            "x-scratch-remote-field-id": "hs_is_stalled",
+            "x-scratch-connector-data-type": "hubspot/bool_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_is_stalled_after_timestamp": {
+            "description": "Is Stalled After Timestamp",
+            "x-scratch-remote-field-id": "hs_is_stalled_after_timestamp",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_last_conversation_with_followups_object_coordinates": {
+            "description": "Last conversation with follow-ups",
+            "x-scratch-remote-field-id": "hs_last_conversation_with_followups_object_coordinates",
+            "x-scratch-connector-data-type": "hubspot/object_coordinates_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_last_gs_shared_message": {
+            "description": "Last GS Shared Message",
+            "x-scratch-remote-field-id": "hs_last_gs_shared_message",
+            "x-scratch-connector-data-type": "hubspot/datetime_calculation_rollup",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_last_partner_shared_message_date": {
+            "description": "Last Partner Shared Message Date",
+            "x-scratch-remote-field-id": "hs_last_partner_shared_message_date",
+            "x-scratch-connector-data-type": "hubspot/date_calculation_rollup",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_lastmodifieddate": {
+            "description": "Last Modified Date",
+            "x-scratch-remote-field-id": "hs_lastmodifieddate",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "x-scratch-readonly": true,
+            "x-scratch-last-modified-field": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_latest_approval_status": {
+            "description": "Latest Approval Status",
+            "x-scratch-remote-field-id": "hs_latest_approval_status",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_manual_forecast_category": {
+            "description": "Forecast category",
+            "x-scratch-remote-field-id": "hs_manual_forecast_category",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_merged_object_ids": {
+            "description": "Merged Deal IDs",
+            "x-scratch-remote-field-id": "hs_merged_object_ids",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_mrr": {
+            "description": "Monthly recurring revenue",
+            "x-scratch-remote-field-id": "hs_mrr",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_next_meeting_id": {
+            "description": "Next Meeting",
+            "x-scratch-remote-field-id": "hs_next_meeting_id",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_next_meeting_name": {
+            "description": "Next Meeting Name",
+            "x-scratch-remote-field-id": "hs_next_meeting_name",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_next_meeting_start_time": {
+            "description": "Next Meeting Start Time",
+            "x-scratch-remote-field-id": "hs_next_meeting_start_time",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_next_step": {
+            "description": "Next step",
+            "x-scratch-remote-field-id": "hs_next_step",
+            "x-scratch-connector-data-type": "hubspot/string_textarea",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_notes_next_activity": {
+            "description": "Next Activity",
+            "x-scratch-remote-field-id": "hs_notes_next_activity",
+            "x-scratch-connector-data-type": "hubspot/object_coordinates_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_num_associated_active_deal_registrations": {
+            "description": "Number of Active Deal Registrations",
+            "x-scratch-remote-field-id": "hs_num_associated_active_deal_registrations",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_num_associated_deal_registrations": {
+            "description": "Number of Deal Registrations",
+            "x-scratch-remote-field-id": "hs_num_associated_deal_registrations",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_num_of_associated_line_items": {
+            "description": "Number of Associated Line Items",
+            "x-scratch-remote-field-id": "hs_num_of_associated_line_items",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_object_id": {
+            "description": "Record ID",
+            "x-scratch-remote-field-id": "hs_object_id",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_object_source_detail_1": {
+            "description": "Record source detail 1",
+            "x-scratch-remote-field-id": "hs_object_source_detail_1",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_object_source_detail_2": {
+            "description": "Record source detail 2",
+            "x-scratch-remote-field-id": "hs_object_source_detail_2",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_object_source_detail_3": {
+            "description": "Record source detail 3",
+            "x-scratch-remote-field-id": "hs_object_source_detail_3",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_object_source_label": {
+            "description": "Record source",
+            "x-scratch-remote-field-id": "hs_object_source_label",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_partner_tech_win": {
+            "description": "Partner Tech Win",
+            "x-scratch-remote-field-id": "hs_partner_tech_win",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_priority": {
+            "description": "Priority",
+            "x-scratch-remote-field-id": "hs_priority",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_projected_amount": {
+            "description": "Weighted amount",
+            "x-scratch-remote-field-id": "hs_projected_amount",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_projected_amount_in_home_currency": {
+            "description": "Weighted amount in company currency",
+            "x-scratch-remote-field-id": "hs_projected_amount_in_home_currency",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_shared_team_ids": {
+            "description": "Shared teams",
+            "x-scratch-remote-field-id": "hs_shared_team_ids",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_shared_user_ids": {
+            "description": "Shared users",
+            "x-scratch-remote-field-id": "hs_shared_user_ids",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_synced_deal_owner_name_and_email": {
+            "description": "HubSpot Sales Lead",
+            "x-scratch-remote-field-id": "hs_synced_deal_owner_name_and_email",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_tag_ids": {
+            "description": "Deal Tags",
+            "x-scratch-remote-field-id": "hs_tag_ids",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_tcv": {
+            "description": "Total contract value",
+            "x-scratch-remote-field-id": "hs_tcv",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_updated_by_user_id": {
+            "description": "Updated by user ID",
+            "x-scratch-remote-field-id": "hs_updated_by_user_id",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_user_ids_of_all_notification_recipients": {
+            "description": "All deal notification recipients",
+            "x-scratch-remote-field-id": "hs_user_ids_of_all_notification_recipients",
+            "x-scratch-connector-data-type": "hubspot/enumeration_checkbox",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_v2_date_entered_current_stage": {
+            "description": "Date entered current stage",
+            "x-scratch-remote-field-id": "hs_v2_date_entered_current_stage",
+            "x-scratch-connector-data-type": "hubspot/datetime_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_v2_time_in_current_stage": {
+            "description": "Time in current stage",
+            "x-scratch-remote-field-id": "hs_v2_time_in_current_stage",
+            "x-scratch-connector-data-type": "hubspot/datetime_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hs_weighted_pipeline_in_company_currency": {
+            "description": "Weighted open pipeline in company currency",
+            "x-scratch-remote-field-id": "hs_weighted_pipeline_in_company_currency",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_equation",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hubspot_owner_assigneddate": {
+            "description": "Owner assigned date",
+            "x-scratch-remote-field-id": "hubspot_owner_assigneddate",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hubspot_owner_id": {
+            "description": "Deal owner",
+            "x-scratch-remote-field-id": "hubspot_owner_id",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hubspot_team_id": {
+            "description": "HubSpot Team",
+            "x-scratch-remote-field-id": "hubspot_team_id",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kpis__cloned_": {
+            "description": "KPIs",
+            "x-scratch-remote-field-id": "kpis__cloned_",
+            "x-scratch-connector-data-type": "hubspot/string_textarea",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lemlistlemlistchannel": {
+            "description": "lemlist channel",
+            "x-scratch-remote-field-id": "lemlistlemlistchannel",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_renewal_date": {
+            "description": "Next Renewal Date",
+            "x-scratch-remote-field-id": "next_renewal_date",
+            "x-scratch-connector-data-type": "hubspot/date",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes_last_contacted": {
+            "description": "Last Contacted",
+            "x-scratch-remote-field-id": "notes_last_contacted",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes_last_updated": {
+            "description": "Last Activity Date",
+            "x-scratch-remote-field-id": "notes_last_updated",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes_next_activity_date": {
+            "description": "Next Activity Date",
+            "x-scratch-remote-field-id": "notes_next_activity_date",
+            "x-scratch-connector-data-type": "hubspot/datetime_date",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "num_associated_contacts": {
+            "description": "Number of Associated Contacts",
+            "x-scratch-remote-field-id": "num_associated_contacts",
+            "x-scratch-connector-data-type": "hubspot/number_calculation_rollup",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "num_contacted_notes": {
+            "description": "Number of times contacted",
+            "x-scratch-remote-field-id": "num_contacted_notes",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "num_notes": {
+            "description": "Number of Sales Activities",
+            "x-scratch-remote-field-id": "num_notes",
+            "x-scratch-connector-data-type": "hubspot/number",
+            "x-scratch-readonly": true,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pilot_end_date": {
+            "description": "Pilot end date",
+            "x-scratch-remote-field-id": "pilot_end_date",
+            "x-scratch-connector-data-type": "hubspot/date",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pilot_start_date": {
+            "description": "Pilot Start Date",
+            "x-scratch-remote-field-id": "pilot_start_date",
+            "x-scratch-connector-data-type": "hubspot/date",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pipeline": {
+            "description": "Pipeline",
+            "x-scratch-remote-field-id": "pipeline",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "description": "Source",
+            "x-scratch-remote-field-id": "source",
+            "x-scratch-connector-data-type": "hubspot/string_text",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_type": {
+            "description": "Source Type",
+            "x-scratch-remote-field-id": "source_type",
+            "x-scratch-connector-data-type": "hubspot/enumeration_select",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "use_cases__cloned_": {
+            "description": "Use Cases",
+            "x-scratch-remote-field-id": "use_cases__cloned_",
+            "x-scratch-connector-data-type": "hubspot/string_textarea",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "warmlycreatedaccount": {
+            "description": "Warmly: Created Account",
+            "x-scratch-remote-field-id": "warmlycreatedaccount",
+            "x-scratch-connector-data-type": "hubspot/enumeration_booleancheckbox",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "createdAt": {
+        "x-scratch-readonly": true,
+        "description": "Created timestamp",
+        "type": "string"
+      },
+      "updatedAt": {
+        "x-scratch-readonly": true,
+        "description": "Updated timestamp",
+        "type": "string"
+      },
+      "archived": {
+        "x-scratch-readonly": true,
+        "description": "Whether the record is archived",
+        "type": "boolean"
+      },
+      "associations": {
+        "x-scratch-readonly": true,
+        "description": "Associations with other HubSpot objects",
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "object",
+            "required": [
+              "results"
+            ],
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "tasks": {
+            "type": "object",
+            "required": [
+              "results"
+            ],
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "tickets": {
+            "type": "object",
+            "required": [
+              "results"
+            ],
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "contacts": {
+            "type": "object",
+            "required": [
+              "results"
+            ],
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "companies": {
+            "type": "object",
+            "required": [
+              "results"
+            ],
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "deals": {
+            "type": "object",
+            "required": [
+              "results"
+            ],
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "idColumnRemoteId": "id",
+  "titleColumnRemoteId": [
+    "properties",
+    "dealname"
+  ],
+  "slugFieldPath": "properties.dealname",
+  "basePath": [],
+  "generatedAt": "2026-06-23T12:42:47.532Z"
+}

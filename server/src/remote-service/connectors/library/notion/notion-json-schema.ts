@@ -41,6 +41,13 @@ export const NOTION_READ_ONLY_PROPERTY_TYPES = new Set([
  * database to the data source in 2025-09-03) plus its display name. Property
  * shapes themselves are unchanged, so {@link notionPropertyToJsonSchema}
  * still reads them via the SDK v3 `DatabaseObjectResponse['properties']` type.
+ *
+ * FIXTURE NOTE: real `schema.json` output of this generator is checked in as a codec-test input
+ * under `server/src/sync/__fixtures__/view-codec/notion-*`. Those fixtures are captured inputs,
+ * NOT snapshots — there is no automated regeneration. If you change the schema shape this emits,
+ * update those fixture `schema.json` files to match (re-capture or hand-edit) and re-run
+ * `jest -u server/src/sync/view-codec-snapshots.spec.ts`, or the view-codec guardrail keeps
+ * exercising the old shape.
  */
 export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObjectResponse): BaseJsonTableSpec {
   const [databaseId] = id.remoteId;
@@ -264,6 +271,8 @@ function wrapInNotionPropertyEnvelope(
  * `build-column-definitions.ts` and the `extractSchemaFields` leaf guard in
  * `server/src/utils/schema-helpers.ts`).
  */
+// FIXTURE NOTE: edits here change the generated schema.json checked in under
+// `__fixtures__/view-codec/notion-*` — see `buildNotionJsonTableSpec` for how to refresh them.
 export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['properties'][string]): TSchema {
   const description = property.name;
 

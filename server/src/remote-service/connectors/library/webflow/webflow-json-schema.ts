@@ -31,6 +31,8 @@ import { Collection, Field, FieldType, isWebflowEcommerceCollectionSlug, Site } 
  * Convert a Webflow field to a TypeBox JSON Schema.
  * Annotates the schema with x-scratch metadata (readonly, foreign key, connector data type).
  */
+// FIXTURE NOTE: edits here change the generated schema.json checked in under
+// `__fixtures__/view-codec/webflow-*` — see `buildWebflowJsonTableSpec` for how to refresh them.
 export function webflowFieldToJsonSchema(field: Field): TSchema {
   const description = field.displayName;
   let schema: TSchema;
@@ -215,6 +217,13 @@ function makeWebflowFieldSchemaOptionalNullable(annotatedFieldSchema: TSchema): 
  * and the title is suffixed with the locale name. The schema `$id` stays the bare
  * `collectionId` so reference fields (whose item ids are shared across locales)
  * keep resolving against the same collection.
+ *
+ * FIXTURE NOTE: real `schema.json` output of this generator is checked in as a codec-test input
+ * under `server/src/sync/__fixtures__/view-codec/webflow-*`. Those fixtures are captured inputs,
+ * NOT snapshots — there is no automated regeneration. If you change the schema shape this emits,
+ * update those fixture `schema.json` files to match (re-capture or hand-edit) and re-run
+ * `jest -u server/src/sync/view-codec-snapshots.spec.ts`, or the view-codec guardrail keeps
+ * exercising the old shape.
  */
 export function buildWebflowJsonTableSpec(
   id: EntityId,

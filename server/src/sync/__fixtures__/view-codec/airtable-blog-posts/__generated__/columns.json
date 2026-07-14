@@ -1,0 +1,164 @@
+[
+  {
+    "column": "Name",
+    "columnId": "fields.Name",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "From Connectors - Related Connectors",
+    "columnId": "fields.From Connectors - Related Connectors",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Featured",
+    "columnId": "fields.Featured",
+    "cardinality": "single",
+    "logicalType": "checkbox",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Published Date",
+    "columnId": "fields.Published Date",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Author",
+    "columnId": "fields.Author",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Main Category",
+    "columnId": "fields.Main Category",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "All Categories",
+    "columnId": "fields.All Categories",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Image",
+    "columnId": "fields.Image",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Meta Description",
+    "columnId": "fields.Meta Description",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Short Description",
+    "columnId": "fields.Short Description",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Inline Ad",
+    "columnId": "fields.Inline Ad",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Keywords (for Schema)",
+    "columnId": "fields.Keywords (for Schema)",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Content Type",
+    "columnId": "fields.Content Type",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Connectors copy",
+    "columnId": "fields.Connectors copy",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Comparisons",
+    "columnId": "fields.Comparisons",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Use Cases",
+    "columnId": "fields.Use Cases",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Webflow Status",
+    "columnId": "fields.Webflow Status",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Created Time",
+    "columnId": "createdTime",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  }
+]

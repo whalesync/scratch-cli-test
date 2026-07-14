@@ -1,0 +1,233 @@
+{
+  "id": {
+    "wsId": "app2TxFV0VMo05d1n",
+    "remoteId": [
+      "app2TxFV0VMo05d1n",
+      "tbl7lx4LHkOLdSEfX"
+    ]
+  },
+  "slug": "app2TxFV0VMo05d1n",
+  "name": "Blog Posts",
+  "schema": {
+    "$id": "app2TxFV0VMo05d1n/tbl7lx4LHkOLdSEfX",
+    "title": "Blog Posts",
+    "type": "object",
+    "required": [
+      "id",
+      "fields",
+      "createdTime"
+    ],
+    "properties": {
+      "id": {
+        "description": "Unique record identifier",
+        "type": "string"
+      },
+      "fields": {
+        "description": "Record field values keyed by field name",
+        "type": "object",
+        "properties": {
+          "Name": {
+            "description": "Name",
+            "type": "string",
+            "x-scratch-connector-data-type": "singleLineText",
+            "x-scratch-remote-field-id": "fldQ5l6Rjaaef1WRo"
+          },
+          "From Connectors - Related Connectors": {
+            "description": "From Connectors - Related Connectors",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "tblGg04QuhnLGL50l"
+            },
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleRecordLinks",
+            "x-scratch-remote-field-id": "fldqbe4CNVFiLZ507"
+          },
+          "Featured": {
+            "description": "Featured",
+            "type": "boolean",
+            "x-scratch-connector-data-type": "checkbox",
+            "x-scratch-remote-field-id": "fldgjuUon9TC0YECB"
+          },
+          "Published Date": {
+            "description": "Published Date",
+            "format": "date",
+            "type": "string",
+            "x-scratch-connector-data-type": "date",
+            "x-scratch-remote-field-id": "fld90rdlajmPTQ7jf"
+          },
+          "Author": {
+            "description": "Author",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "tblE29QZoXb6kHsZK"
+            },
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleRecordLinks",
+            "x-scratch-remote-field-id": "fldQHLsJyCTayerYV"
+          },
+          "Main Category": {
+            "description": "Main Category",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "tblDW4wU5iaL8pa17"
+            },
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleRecordLinks",
+            "x-scratch-remote-field-id": "fldpXuXmVDnYfyF7B"
+          },
+          "All Categories": {
+            "description": "All Categories",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "tblDW4wU5iaL8pa17"
+            },
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleRecordLinks",
+            "x-scratch-remote-field-id": "fldPFDwdnTyigY7tQ"
+          },
+          "Image": {
+            "description": "Image",
+            "x-scratch-asset-field": {
+              "idPath": "id",
+              "urlExpires": true
+            },
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "url"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "url": {
+                  "format": "uri",
+                  "type": "string"
+                },
+                "filename": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "number"
+                },
+                "type": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-scratch-connector-data-type": "multipleAttachments",
+            "x-scratch-remote-field-id": "fldemT7MBUu2HZbAX"
+          },
+          "Meta Description": {
+            "description": "Meta Description",
+            "type": "string",
+            "x-scratch-connector-data-type": "singleLineText",
+            "x-scratch-remote-field-id": "flduJcLAdWyB5Udyy"
+          },
+          "Short Description": {
+            "description": "Short Description",
+            "type": "string",
+            "x-scratch-connector-data-type": "singleLineText",
+            "x-scratch-remote-field-id": "fldx7lgaaWY2hhWGQ"
+          },
+          "Inline Ad": {
+            "description": "Inline Ad",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "tblX1nShMlKN1dnBO"
+            },
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleRecordLinks",
+            "x-scratch-remote-field-id": "fldCL0c4dNWBfj0RF"
+          },
+          "Keywords (for Schema)": {
+            "description": "Keywords (for Schema)",
+            "type": "string",
+            "x-scratch-connector-data-type": "singleLineText",
+            "x-scratch-remote-field-id": "fldGmocVrxCqgBfK7"
+          },
+          "Content Type": {
+            "description": "Content Type",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-scratch-connector-data-type": "singleSelect",
+            "x-scratch-remote-field-id": "fldIrQXbdZi3RDqJV"
+          },
+          "Connectors copy": {
+            "description": "Connectors copy",
+            "type": "string",
+            "x-scratch-connector-data-type": "singleLineText",
+            "x-scratch-remote-field-id": "fldqS5GHdOBIjHXpK"
+          },
+          "Comparisons": {
+            "description": "Comparisons",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "tblPRAKvrxO8wGD5x"
+            },
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleRecordLinks",
+            "x-scratch-remote-field-id": "fldDbCupQcJfB5OyZ"
+          },
+          "Use Cases": {
+            "description": "Use Cases",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "tbl51rA8mKi0sP0Pz"
+            },
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleRecordLinks",
+            "x-scratch-remote-field-id": "fldBiG0eoOu7vJE5z"
+          },
+          "Webflow Status": {
+            "description": "Webflow Status",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-scratch-connector-data-type": "singleSelect",
+            "x-scratch-remote-field-id": "fld1NLt4AyIokcnTj"
+          }
+        }
+      },
+      "createdTime": {
+        "description": "ISO 8601 timestamp of record creation",
+        "format": "date-time",
+        "type": "string"
+      }
+    }
+  },
+  "idPath": "id",
+  "titlePath": "fields.Name",
+  "basePath": [
+    "[NEW SITE] Whalesync CMS 11.0"
+  ],
+  "remoteWebUrl": "https://airtable.com/app2TxFV0VMo05d1n/tbl7lx4LHkOLdSEfX",
+  "generatedAt": "2026-07-07T17:54:53.820Z"
+}

@@ -1,0 +1,133 @@
+{
+  "properties.dealname": {
+    "core": "CS: MakeBuild"
+  },
+  "id": {
+    "core": "23187148428"
+  },
+  "properties.dealstage": {
+    "core": "76876293"
+  },
+  "properties.amount": {
+    "core": "7188"
+  },
+  "properties.amount_in_home_currency": {
+    "core": "7188"
+  },
+  "properties.closed_lost_reason": {
+    "core": "Missing feature (Zendesk) / too expensive"
+  },
+  "properties.closed_won_reason": {
+    "core": null
+  },
+  "properties.closedate": {
+    "core": "2024-10-22T21:10:42.633Z"
+  },
+  "properties.connectors": {
+    "core": "Webflow;Zendesk"
+  },
+  "properties.createdate": {
+    "core": "2024-10-11T21:19:56.464Z"
+  },
+  "properties.deal_currency_code": {
+    "core": "USD"
+  },
+  "properties.dealtype": {
+    "core": "newbusiness"
+  },
+  "properties.description": {
+    "core": null
+  },
+  "properties.grain_budget": {
+    "core": null
+  },
+  "properties.grain_competition": {
+    "core": null
+  },
+  "properties.grain_customer_needs": {
+    "core": null
+  },
+  "properties.grain_stakeholders": {
+    "core": null
+  },
+  "properties.grain_timeline": {
+    "core": null
+  },
+  "properties.hs_object_id": {
+    "core": "23187148428"
+  },
+  "properties.hubspot_owner_assigneddate": {
+    "core": "2024-10-11T21:19:56.464Z"
+  },
+  "properties.hubspot_owner_id": {
+    "core": "411828057"
+  },
+  "properties.hubspot_team_id": {
+    "core": null
+  },
+  "properties.kpis__cloned_": {
+    "core": null
+  },
+  "properties.lemlistlemlistchannel": {
+    "core": null
+  },
+  "properties.next_renewal_date": {
+    "core": null
+  },
+  "properties.notes_last_contacted": {
+    "core": "2024-10-11T16:30:00Z"
+  },
+  "properties.notes_last_updated": {
+    "core": "2024-10-22T21:12:04.765Z"
+  },
+  "properties.notes_next_activity_date": {
+    "core": ""
+  },
+  "properties.num_associated_contacts": {
+    "core": "1"
+  },
+  "properties.pilot_end_date": {
+    "core": null
+  },
+  "properties.pilot_start_date": {
+    "core": null
+  },
+  "properties.pipeline": {
+    "core": "35396890"
+  },
+  "properties.source": {
+    "core": null
+  },
+  "properties.source_type": {
+    "core": "Inbound"
+  },
+  "properties.use_cases__cloned_": {
+    "core": null
+  },
+  "properties.warmlycreatedaccount": {
+    "core": "false"
+  },
+  "createdAt": {
+    "core": "2024-10-11T21:19:56.464Z"
+  },
+  "updatedAt": {
+    "core": "2025-04-09T08:53:25.590Z"
+  },
+  "archived": {
+    "core": false
+  },
+  "associations.notes.results": {
+    "core": "62171168844, 63037286201"
+  },
+  "associations.tasks.results": {
+    "core": "62171169354"
+  },
+  "associations.tickets.results": {},
+  "associations.contacts.results": {
+    "core": "14823"
+  },
+  "associations.companies.results": {
+    "core": "15832401504, 15832401504"
+  },
+  "associations.deals.results": {}
+}

@@ -1,0 +1,152 @@
+{
+  "object": "page",
+  "id": "27c45076-36e4-429d-8692-24f9836f8201",
+  "created_time": "2022-07-08T19:57:00.000Z",
+  "last_edited_time": "2022-08-15T21:06:00.000Z",
+  "created_by": {
+    "object": "user",
+    "id": "36550377-6536-412c-92a1-da5fa4c240b1"
+  },
+  "last_edited_by": {
+    "object": "user",
+    "id": "fea2138d-6703-4fbd-b60f-60d18bb0f6d4"
+  },
+  "cover": null,
+  "icon": {
+    "type": "file",
+    "file": {
+      "url": "https://prod-files-secure.s3.us-west-2.amazonaws.com/3fd80bcf-d90a-4b49-ab78-dceb7404c8bd/4188582c-c23f-4477-b0e4-dd6d2cf0ac15/tada.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=ASIAZI2LB466YWY37MJF%2F20260528%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20260528T151810Z&X-Amz-Expires=3600&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEOb%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLXdlc3QtMiJHMEUCIQDtHWKI4%2BhsNb9Wa5h9V888%2FevZD1UKSEveNdWJ8UsL%2BgIgFOgTkdQPU7Ucaxon810DekXMqEbrTvh1H6XQAvGMq2AqiAQIr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARAAGgw2Mzc0MjMxODM4MDUiDPat1R4RKQ8ckzihWyrcA6VAPVE6QYfn%2Bgr9s16vz2%2FzM9KYSPy6Q2PDklk1cB9D4jLBuryrwVqf98dRovuDmeS6fteQJ8MWSXZPWAu6c%2Fg5%2FQlcCgeej5khhpiMtu1nNMZNdixvjHr0GJkwOT81rRtPa0s60Sgblw7SfJGqelXufdKYujXYAhRIC%2FdpUuUNg0W18%2Bx00qFu0%2FW1PPMnW3KDOi0i3Ll0Cdm49%2FIpzpg4FPfe5yLaEjlC7Egkf5Gd%2BNhDQ2g6NOK0BT6egqRyOZhAnE9o2r4qXfFIMwCigWzQUWAFh0b2TvuemLkk2nVi2lXN6iHWGBsYMpLj9fr3q4DnKt2luJJe8a9h0smdb%2F1%2Fw6jRW6TCcPQW7Bg7fWNORKm194SFitF%2FASePGwPRs8EDX2cFFYdSSyGx%2B4E%2BhFDRtJi7yrc6Wx2f42y7r6rO%2FJTDPip2gBeO6INx6cksibdsfspMqCGYFHnAZiAKWXgQvMoTw84U1aoh%2FM4kkpgH3waODHmMZ4IcPj79vZsRw2n%2FhORmpqnMp23uNY%2FOCjYHkAhF2FrEN%2BZy3ZKG%2F4k39m0%2FwMAVKOGJHkP0X5GVJ2JiSWog2MdSqvTQnfSckBzGLNoCDDGhV3i2JrZhJwseZ1PHqeMWR%2FMQjRx3MM6T4dAGOqUB4p8Hiv8m7N%2FilrjAwO3kGq%2BniHX6nLE0Tl9%2Fh5Hrij%2FlTu2INNXZWOJCZVJ%2BHPEmab%2FKc7eEXSr3vcp4of%2FyH3%2FS0fYCWP7Xunbm1%2BPxv0O5Jzsp31lW%2FliSrIeXO0%2BnYt03hILN2mSqeMrhSd6K00pcy7mttjnXlgMVsUj4jhU%2FYhmO4kdBVdgzeujnqE08eNASMhyxgdPJIoQboKVAXCapGyFa&X-Amz-Signature=425796093b81bf09c7b493ada5ab3f84d82fd665200a553b48bd3f098a99b872&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+      "expiry_time": "2026-05-28T16:18:10.900Z"
+    }
+  },
+  "parent": {
+    "type": "database_id",
+    "database_id": "d4c982fb-dafe-486d-8312-b603b02d32f6"
+  },
+  "in_trash": false,
+  "is_archived": false,
+  "is_locked": false,
+  "properties": {
+    "Time": {
+      "id": "%3Aa%5Ds",
+      "type": "select",
+      "select": null
+    },
+    "Request Type": {
+      "id": "%3A~cf",
+      "type": "rollup",
+      "rollup": {
+        "type": "array",
+        "array": [
+          {
+            "type": "multi_select",
+            "multi_select": [
+              {
+                "id": "c26cdf59-b733-4d5c-b117-12724188894d",
+                "name": "Customer Request",
+                "color": "yellow"
+              }
+            ]
+          }
+        ],
+        "function": "show_original"
+      }
+    },
+    "Related to Specific Use Cases (Column)": {
+      "id": "BKwc",
+      "type": "relation",
+      "relation": [],
+      "has_more": false
+    },
+    "PRD": {
+      "id": "HI%60m",
+      "type": "relation",
+      "relation": [],
+      "has_more": false
+    },
+    "Status": {
+      "id": "Stg%5E",
+      "type": "status",
+      "status": {
+        "id": "e9e2ac66-ab1b-4dcf-ae01-4543470e6ef4",
+        "name": "Not started",
+        "color": "default"
+      }
+    },
+    "Total Requests": {
+      "id": "XCMq",
+      "type": "rollup",
+      "rollup": {
+        "type": "number",
+        "number": 1,
+        "function": "count"
+      }
+    },
+    "Category": {
+      "id": "_AWA",
+      "type": "select",
+      "select": {
+        "id": "e79a1192-badf-4f42-86c1-fe0c0d70b295",
+        "name": "No-Code",
+        "color": "blue"
+      }
+    },
+    "Difficulty": {
+      "id": "%60Z%3ED",
+      "type": "select",
+      "select": {
+        "id": "<`vO",
+        "name": "Unknown",
+        "color": "default"
+      }
+    },
+    "Links": {
+      "id": "b%3EjG",
+      "type": "relation",
+      "relation": [
+        {
+          "id": "774e29e9-dbfb-47a4-bc01-02d4f49ada7c"
+        }
+      ],
+      "has_more": false
+    },
+    "Tags": {
+      "id": "tBbc",
+      "type": "multi_select",
+      "multi_select": [
+        {
+          "id": "f4bdb919-e6ab-43b2-adf0-6273100e3bbc",
+          "name": "Database",
+          "color": "default"
+        }
+      ]
+    },
+    "Name": {
+      "id": "title",
+      "type": "title",
+      "title": [
+        {
+          "type": "text",
+          "text": {
+            "content": "Tadabase",
+            "link": null
+          },
+          "annotations": {
+            "bold": false,
+            "italic": false,
+            "strikethrough": false,
+            "underline": false,
+            "code": false,
+            "color": "default"
+          },
+          "plain_text": "Tadabase",
+          "href": null
+        }
+      ]
+    }
+  },
+  "url": "https://www.notion.so/Tadabase-27c4507636e4429d869224f9836f8201",
+  "public_url": null,
+  "archived": false,
+  "page_content": []
+}

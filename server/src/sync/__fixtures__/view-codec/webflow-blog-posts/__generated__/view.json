@@ -1,0 +1,130 @@
+{
+  "name": "Default",
+  "cols": [
+    {
+      "kind": "col",
+      "path": "fieldData.name",
+      "name": "Name"
+    },
+    {
+      "kind": "col",
+      "path": "id",
+      "name": "Id",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.slug",
+      "name": "Slug"
+    },
+    {
+      "kind": "col",
+      "path": "lastPublished",
+      "name": "Last Published",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "lastUpdated",
+      "name": "Last Updated",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "createdOn",
+      "name": "Created On",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.featured",
+      "name": "Featured"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.published-date",
+      "name": "Published-date",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.author",
+      "name": "Author"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.main-category",
+      "name": "Main-category"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.all-categories",
+      "name": "All-categories"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.related-connectors",
+      "name": "Related-connectors"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.image",
+      "name": "Image"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.meta-description",
+      "name": "Meta-description"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.short-description",
+      "name": "Short-description"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.body",
+      "name": "Body"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.inline-ad",
+      "name": "Inline-ad"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.body-bottom",
+      "name": "Body-bottom"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.keywords-for-schema",
+      "name": "Keywords-for-schema"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.content-type",
+      "name": "Content-type"
+    },
+    {
+      "kind": "col",
+      "path": "cmsLocaleId",
+      "name": "Cms Locale Id",
+      "hidden": true,
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "isArchived",
+      "name": "Is Archived"
+    },
+    {
+      "kind": "col",
+      "path": "isDraft",
+      "name": "Is Draft"
+    }
+  ]
+}

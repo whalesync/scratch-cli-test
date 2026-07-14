@@ -17,6 +17,8 @@ import { ASSOCIATIONS_BY_OBJECT_TYPE, HubspotProperty, OBJECT_CONFIG } from './h
  * We store the raw API response as-is, so all property fields are String | Null.
  * The CONNECTOR_DATA_TYPE annotation carries the semantic type for UI/transformers.
  */
+// FIXTURE NOTE: edits here change the generated schema.json checked in under
+// `__fixtures__/view-codec/hubspot-*` — see `buildHubspotJsonTableSpec` for how to refresh them.
 export function hubspotPropertyToJsonSchema(property: HubspotProperty, isLastModifiedField = false): TSchema {
   const connectorDataType = resolveConnectorDataType(property);
   const isReadonly = property.modificationMetadata?.readOnlyValue === true;
@@ -115,6 +117,13 @@ function buildAssociationsSchema(objectType: string): TSchema | null {
  * { id, properties: { ... }, associations: { ... }, createdAt, updatedAt, archived }
  *
  * Returns both the spec and the list of property names (needed for API calls).
+ *
+ * FIXTURE NOTE: real `schema.json` output of this generator is checked in as a codec-test input
+ * under `server/src/sync/__fixtures__/view-codec/hubspot-*`. Those fixtures are captured inputs,
+ * NOT snapshots — there is no automated regeneration. If you change the schema shape this emits,
+ * update those fixture `schema.json` files to match (re-capture or hand-edit) and re-run
+ * `jest -u server/src/sync/view-codec-snapshots.spec.ts`, or the view-codec guardrail keeps
+ * exercising the old shape.
  */
 export async function buildHubspotJsonTableSpec(
   id: EntityId,
