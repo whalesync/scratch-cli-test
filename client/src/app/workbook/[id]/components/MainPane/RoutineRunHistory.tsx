@@ -17,7 +17,8 @@ import type {
   WorkbookId,
 } from '@spinner/shared-types';
 import { ChevronDownIcon, ChevronRightIcon, XCircleIcon } from 'lucide-react';
-import { useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 
 interface RoutineRunHistoryProps {
   workbookId: WorkbookId;
@@ -58,6 +59,10 @@ function formatDuration(startedAt: string | null, finishedAt: string | null): st
 /** Run history for one routine, below the editor. Polls while a run is active (via the hooks). */
 export function RoutineRunHistory({ workbookId, routineFilePath }: RoutineRunHistoryProps) {
   const { runs, isLoading } = useRoutineRuns(workbookId, routineFilePath);
+  // A `?runId=` query param deep-links a specific run: the matching row starts expanded and scrolls
+  // into view. The param is copied verbatim into the address bar as rows are expanded/collapsed
+  // (see `RoutineRunRow`), so the currently-focused run is always shareable.
+  const deepLinkedRunId = useSearchParams().get('runId');
 
   return (
     <Stack gap={0}>
@@ -76,7 +81,7 @@ export function RoutineRunHistory({ workbookId, routineFilePath }: RoutineRunHis
       ) : (
         <Stack gap={0}>
           {runs.map((run) => (
-            <RoutineRunRow key={run.id} workbookId={workbookId} run={run} />
+            <RoutineRunRow key={run.id} workbookId={workbookId} run={run} isDeepLinked={run.id === deepLinkedRunId} />
           ))}
         </Stack>
       )}
@@ -84,9 +89,46 @@ export function RoutineRunHistory({ workbookId, routineFilePath }: RoutineRunHis
   );
 }
 
-function RoutineRunRow({ workbookId, run: listRun }: { workbookId: WorkbookId; run: RoutineRun }) {
-  const [expanded, setExpanded] = useState(false);
+function RoutineRunRow({
+  workbookId,
+  run: listRun,
+  isDeepLinked,
+}: {
+  workbookId: WorkbookId;
+  run: RoutineRun;
+  isDeepLinked: boolean;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const rowRef = useRef<HTMLDivElement>(null);
+  // A run reached via `?runId=` starts expanded; otherwise rows start collapsed.
+  const [expanded, setExpanded] = useState(isDeepLinked);
   const [isCancelling, setIsCancelling] = useState(false);
+
+  // Scroll the deep-linked run into view once, on mount, so it isn't buried below a long history.
+  useEffect(() => {
+    if (isDeepLinked) {
+      rowRef.current?.scrollIntoView({ block: 'nearest' });
+    }
+    // Run only on mount: subsequent expand/collapse shouldn't hijack scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Expanding a run writes its id to `?runId=` so the URL is a copyable deep link; collapsing the
+  // run that currently owns the param clears it. Preserves any other query params (e.g. filters).
+  const toggleExpanded = () => {
+    const nextExpanded = !expanded;
+    setExpanded(nextExpanded);
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextExpanded) {
+      params.set('runId', listRun.id);
+    } else if (params.get('runId') === listRun.id) {
+      params.delete('runId');
+    }
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  };
 
   // When expanded, the detail fetch (which carries the steps) is the SINGLE source of truth for both
   // the status badge AND the per-step rows. The list (`useRoutineRuns`) and the detail are polled
@@ -120,15 +162,8 @@ function RoutineRunRow({ workbookId, run: listRun }: { workbookId: WorkbookId; r
   };
 
   return (
-    <Box style={{ borderBottom: '0.5px solid var(--fg-divider)' }}>
-      <Group
-        gap={8}
-        wrap="nowrap"
-        px="sm"
-        py={6}
-        style={{ cursor: 'pointer' }}
-        onClick={() => setExpanded((value) => !value)}
-      >
+    <Box ref={rowRef} style={{ borderBottom: '0.5px solid var(--fg-divider)' }}>
+      <Group gap={8} wrap="nowrap" px="sm" py={6} style={{ cursor: 'pointer' }} onClick={toggleExpanded}>
         <StyledLucideIcon Icon={expanded ? ChevronDownIcon : ChevronRightIcon} size="sm" c="var(--fg-muted)" />
         <Badge
           size="xs"
