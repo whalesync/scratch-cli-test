@@ -1,7 +1,7 @@
 import { Type } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
 import { z } from 'zod';
-import { getSchemaAtPath } from '../../schema-validator';
+import { getSchemaAtPath, unwrapNullableUnionSchema } from '../../schema-validator';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
 
@@ -48,7 +48,10 @@ export const webflowOptionTransformer: FieldTransformer = {
     }
 
     const rawSchema = getSchemaAtPath(destinationTableSpec.schema, destinationFieldPath);
-    const parsed = webflowOptionSchemaShape.safeParse(rawSchema);
+    // An optional Webflow Option field arrives wrapped in a nullable union
+    // (`Type.Union([optionUnion, Type.Null()])`); unwrap that before matching the option shape.
+    const optionSchema = rawSchema ? unwrapNullableUnionSchema(rawSchema) : rawSchema;
+    const parsed = webflowOptionSchemaShape.safeParse(optionSchema);
     if (!parsed.success) {
       return { success: false, error: 'Destination field is not a Webflow Option schema', useOriginal: true };
     }

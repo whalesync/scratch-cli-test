@@ -155,6 +155,29 @@ export function getSchemaAtPath(schema: TSchema, path: string): TSchema | undefi
 }
 
 /**
+ * If `schema` is a nullable union — a `Type.Union([X, Type.Null()])` that a connector
+ * produces when it wraps an optional field so it also accepts a present `null` — return
+ * the underlying non-null branch `X`. Otherwise return `schema` unchanged.
+ *
+ * Leaf field schemas fetched via {@link getSchemaAtPath} keep this nullable wrapper in
+ * place (the wrapper is only stripped while traversing *into* an object's properties, not
+ * for the leaf itself), so callers that need to inspect the underlying field shape — e.g.
+ * the Webflow Option transformers reading the field's `anyOf` option literals — must unwrap
+ * it first. A schema that is not a nullable union (a bare option union, a plain object,
+ * etc.) is returned as-is so its own `anyOf` is left intact.
+ */
+export function unwrapNullableUnionSchema(schema: TSchema): TSchema {
+  const anyOf = (schema as { anyOf?: TSchema[] }).anyOf;
+  if (Array.isArray(anyOf) && anyOf.some((branch) => branch.type === 'null')) {
+    const nonNullBranch = anyOf.find((branch) => branch.type !== 'null');
+    if (nonNullBranch) {
+      return nonNullBranch;
+    }
+  }
+  return schema;
+}
+
+/**
  * Unwraps schema from TypeBox Optional/Union wrappers to get the underlying type.
  * Returns the base type string (e.g. 'string', 'number', 'boolean', 'object').
  */

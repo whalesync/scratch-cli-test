@@ -15,6 +15,20 @@ function buildDestinationSchema(options: { title: string; id: string }[]): BaseJ
   } as unknown as BaseJsonTableSpec;
 }
 
+/**
+ * Build a mock BaseJsonTableSpec whose `region` field is a *nullable* Webflow Option field —
+ * the option union wrapped in `Type.Union([optionUnion, Type.Null()])`, exactly as an optional
+ * Webflow Option column is emitted by `makeWebflowFieldSchemaOptionalNullable`.
+ */
+function buildNullableDestinationSchema(options: { title: string; id: string }[]): BaseJsonTableSpec {
+  const optionUnion = Type.Union(options.map((o) => Type.Literal(o.id, { title: o.title })));
+  const nullableRegionSchema = Type.Union([optionUnion, Type.Null()]);
+
+  return {
+    schema: Type.Object({ region: nullableRegionSchema }),
+  } as unknown as BaseJsonTableSpec;
+}
+
 const DEFAULT_OPTIONS = [
   { title: 'USA', id: '5af437870a42563741f1d6281dfb22ca' },
   { title: 'Canada', id: 'c3ba02b173ad48ebae258078e3636fca' },
@@ -103,6 +117,13 @@ describe('webflowOptionTransformer', () => {
       error: 'Destination field is not a Webflow Option schema',
       useOriginal: true,
     });
+  });
+
+  it('should map a matching title when the destination Option field is nullable-wrapped', async () => {
+    const ctx = createContext('USA');
+    ctx.destinationTableSpec = buildNullableDestinationSchema(DEFAULT_OPTIONS);
+    const result = await webflowOptionTransformer.transform(ctx);
+    expect(result).toEqual({ success: true, value: '5af437870a42563741f1d6281dfb22ca' });
   });
 
   it('should fail when destination schema is missing', async () => {
