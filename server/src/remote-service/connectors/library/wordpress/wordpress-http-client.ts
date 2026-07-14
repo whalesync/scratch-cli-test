@@ -30,6 +30,22 @@ export function parseWordPressCountHeader(value: unknown): number | undefined {
 }
 
 /**
+ * True when an error is WordPress's "requested page is past the last page"
+ * rejection — an HTTP 400 whose body `code` is `rest_post_invalid_page_number`
+ * (or a post-type/term variant matching `*_invalid_page_number`). Stock
+ * WordPress raises this instead of returning an empty page on the
+ * exact-multiple-of-`per_page` boundary, so `pollRecords` treats it as a clean
+ * end-of-collection signal rather than a pull failure.
+ */
+export function isWordPressInvalidPageNumberError(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || error.response?.status !== 400) {
+    return false;
+  }
+  const code = (error.response.data as { code?: unknown } | undefined)?.code;
+  return typeof code === 'string' && /_invalid_page_number$/.test(code);
+}
+
+/**
  * Client for making HTTP requests to WordPress REST API.
  */
 export class WordPressHttpClient {
@@ -159,7 +175,14 @@ export class WordPressHttpClient {
   }
 
   /**
-   * Poll records from a WordPress table.
+   * Poll a page of records from a WordPress table.
+   *
+   * Paginates by `page` (1-based), not `offset`: `page` is WordPress's documented
+   * default and survives plugin misconfigurations that silently drop the
+   * REST-supplied `offset` arg (see DEV-10786 — an offset-ignoring `categories`
+   * endpoint advances correctly by `page`). A deterministic `orderby=id&order=asc`
+   * is added so page pagination can't skip or duplicate records when a site's
+   * default order is unstable; `id` is a valid `orderby` for both posts and terms.
    *
    * When `modifiedAfter` is supplied (incremental pull), adds it verbatim as
    * the `modified_after` query param so WordPress server-side filters the
@@ -168,25 +191,32 @@ export class WordPressHttpClient {
    * `post_modified`, stored in site-local time), so the client passes the
    * string through untouched. Only post-type and media collections support
    * `modified_after`; taxonomy collections never reach this path (the connector
-   * demotes them to a full scan). Offset pagination and the `status=any` /
-   * `context=edit` params are unchanged.
+   * demotes them to a full scan). The `status=any` / `context=edit` params are
+   * unchanged.
+   *
+   * Requesting a page past the end of the collection returns stock WordPress's
+   * `400 rest_post_invalid_page_number` (rather than a short/empty page) on the
+   * exact-multiple-of-`per_page` boundary; this is a clean end-of-collection
+   * signal, so we swallow it and return an empty page for the pagination loop to
+   * terminate on. Any other error propagates.
    *
    * Returns the page of records alongside the collection-wide `X-WP-Total` /
    * `X-WP-TotalPages` counts (parsed, or `undefined` when the site omits them)
-   * so the connector can stop paginating once it has seen every record — a
-   * short-page check alone loops forever against a site that ignores `offset`.
+   * so the connector can stop paginating once it has seen the last page — a
+   * short-page check alone loops forever against a site that ignores pagination.
    */
   async pollRecords(
     tableId: string,
-    offset: number,
+    page: number,
     pageSize: number,
     modifiedAfter?: string,
   ): Promise<WordPressPollRecordsResult> {
     const searchParams: { name: string; value: string }[] = [];
     searchParams.push({ name: 'per_page', value: String(pageSize) });
-    if (offset > 0) {
-      searchParams.push({ name: 'offset', value: String(offset) });
-    }
+    searchParams.push({ name: 'page', value: String(page) });
+    // Deterministic scan order so page pagination can't skip/duplicate records.
+    searchParams.push({ name: 'orderby', value: 'id' });
+    searchParams.push({ name: 'order', value: 'asc' });
     if (tableId !== 'media') {
       searchParams.push({ name: 'status', value: 'any' }); // This is to ensure that we get all posts, including draft and trashed ones
     }
@@ -195,7 +225,17 @@ export class WordPressHttpClient {
     }
     searchParams.push({ name: 'context', value: 'edit' }); // Return raw content and all fields
     const url = this.generateUrl(this.endpoint, tableId, null, searchParams);
-    const response = await this.client.get<WordPressRecord[]>(url);
+    let response: AxiosResponse<WordPressRecord[]>;
+    try {
+      response = await this.client.get<WordPressRecord[]>(url);
+    } catch (error) {
+      if (isWordPressInvalidPageNumberError(error)) {
+        // Past the last page: a clean end-of-collection signal, not a failure.
+        // Return an empty page so the connector's short-page check completes.
+        return { records: [], total: undefined, totalPages: undefined };
+      }
+      throw error;
+    }
     // Axios lowercases header keys. Headers may be absent (proxy/plugin stripped
     // them, or a mocked response) — optional-chain so we never throw here.
     return {

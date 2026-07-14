@@ -35,7 +35,7 @@ import {
   WORDPRESS_STATUS_COLUMN_ID,
 } from './wordpress-constants';
 import { buildWordPressDefaultView } from './wordpress-default-view';
-import { WordPressMaxPagesReachedError, WordPressOffsetIgnoredError } from './wordpress-errors';
+import { WordPressMaxPagesReachedError, WordPressPageIgnoredError } from './wordpress-errors';
 import { WordPressHttpClient } from './wordpress-http-client';
 import { formatWordPressModifiedAfter } from './wordpress-incremental';
 import { buildWordPressJsonTableSpec } from './wordpress-json-schema';
@@ -224,11 +224,16 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     const [tableId] = tableSpec.id.remoteId;
-    let offset = progress?.nextOffset ?? 0;
-    let pageCount = 0;
+    // Paginate by `page` (1-based). Resume from a persisted `nextPage`; migrate a
+    // legacy in-flight `nextOffset` cursor (checkpointed before the page switch)
+    // to the equivalent page so a mid-flight pull isn't restarted from scratch.
+    let page =
+      progress?.nextPage ??
+      (progress?.nextOffset !== undefined ? Math.floor(progress.nextOffset / WORDPRESS_POLLING_PAGE_SIZE) + 1 : 1);
+    let fetchCountThisRun = 0;
     // Id-set signature of the previous page. A correctly paginating endpoint
-    // never returns the same ids at a higher offset, so a repeat means the site
-    // is ignoring `offset` (see WordPressOffsetIgnoredError).
+    // never returns the same ids at a higher page, so a repeat means the site
+    // is ignoring `page` (see WordPressPageIgnoredError).
     let previousPageRecordIdSignature: string | undefined;
 
     // Capture the watermark BEFORE the first API call so changes made mid-pull
@@ -253,16 +258,17 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     }
 
     // Pagination terminates in one of two ways:
-    //  - Clean completion: a short page (fewer than a full page, incl. empty) or
-    //    `offset >= total` (X-WP-Total) means we've seen every record.
+    //  - Clean completion: a short page (fewer than a full page, incl. empty, or
+    //    the `400 rest_post_invalid_page_number` the client maps to an empty
+    //    page) or the last page (X-WP-TotalPages) means we've seen every record.
     //  - Surfaced failure (throw): the site returns the same page at a higher
-    //    offset (ignores `offset`) or we hit the page-count backstop. Failing
+    //    page number (ignores `page`) or we hit the page-count backstop. Failing
     //    fast beats silently reporting success with incomplete data — a broken
     //    site would otherwise loop forever hammering the API.
     while (true) {
-      const { records, total } = await this.client.pollRecords(
+      const { records, total, totalPages } = await this.client.pollRecords(
         tableId,
-        offset,
+        page,
         WORDPRESS_POLLING_PAGE_SIZE,
         modifiedAfter,
       );
@@ -271,40 +277,45 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
         throw new Error(`Unexpected response format from WordPress: expected array, got ${typeof records}`);
       }
 
-      pageCount += 1;
+      fetchCountThisRun += 1;
       const returnedCount = records.length;
       const currentPageRecordIdSignature = this.buildRecordIdSignature(records);
 
-      // Offset-ignoring guard (throw before advancing / committing this page):
-      // an identical non-empty page at a higher offset can't be honest pagination.
+      // Page-ignoring guard (throw before advancing / committing this page):
+      // an identical non-empty page at a higher page number can't be honest
+      // pagination.
       if (returnedCount > 0 && currentPageRecordIdSignature === previousPageRecordIdSignature) {
         WSLogger.error({
           source: 'WordPressConnector',
-          message: 'WordPress returned a duplicate page at a higher offset; site is ignoring the offset parameter',
+          message: 'WordPress returned a duplicate page at a higher page number; site is ignoring the page parameter',
           tableId,
-          offset,
+          page,
           returnedCount,
           total,
         });
-        throw new WordPressOffsetIgnoredError(tableId, offset);
+        throw new WordPressPageIgnoredError(tableId, page);
       }
       if (returnedCount > 0) {
         previousPageRecordIdSignature = currentPageRecordIdSignature;
       }
 
-      offset += returnedCount;
       const isShortPage = returnedCount < WORDPRESS_POLLING_PAGE_SIZE;
-      const reachedTotal = typeof total === 'number' && offset >= total;
-      const done = isShortPage || reachedTotal;
+      // Prefer X-WP-TotalPages; fall back to deriving it from X-WP-Total. Using
+      // total *pages* (not a running record offset) keeps completion correct on a
+      // pull that resumes mid-collection at page > 1.
+      const knownTotalPages =
+        totalPages ?? (typeof total === 'number' ? Math.ceil(total / WORDPRESS_POLLING_PAGE_SIZE) : undefined);
+      const reachedLastPage = knownTotalPages !== undefined && page >= knownTotalPages;
+      const done = isShortPage || reachedLastPage;
 
-      // Backstop (throw): headerless site that also ignores offset — the checks
-      // above can't catch it, so cap the page count to guarantee termination.
-      if (!done && pageCount >= WORDPRESS_MAX_PULL_PAGES) {
+      // Backstop (throw): headerless site that also ignores `page` — the checks
+      // above can't catch it, so cap the fetch count to guarantee termination.
+      if (!done && fetchCountThisRun >= WORDPRESS_MAX_PULL_PAGES) {
         WSLogger.error({
           source: 'WordPressConnector',
           message: `WordPress pull hit the ${WORDPRESS_MAX_PULL_PAGES}-page backstop without completing`,
           tableId,
-          offset,
+          page,
           total,
         });
         throw new WordPressMaxPagesReachedError(tableId, WORDPRESS_MAX_PULL_PAGES);
@@ -312,21 +323,22 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
 
       await callback({
         files: records as unknown as ConnectorFile[],
-        connectorProgress: { nextOffset: done ? undefined : offset },
+        connectorProgress: { nextPage: done ? undefined : page + 1 },
       });
 
       if (done) {
         break;
       }
+      page += 1;
     }
     return newWatermark ? { newWatermark } : {};
   }
 
   /**
    * Build an order-independent signature of a page's record ids. Used by the
-   * pagination loop to detect an offset-ignoring site (same page returned at a
-   * higher offset). Sorting normalizes order so a reordered-but-identical page
-   * still matches; a missing id contributes the empty string.
+   * pagination loop to detect a page-ignoring site (same page returned at a
+   * higher page number). Sorting normalizes order so a reordered-but-identical
+   * page still matches; a missing id contributes the empty string.
    */
   private buildRecordIdSignature(records: WordPressRecord[]): string {
     return records

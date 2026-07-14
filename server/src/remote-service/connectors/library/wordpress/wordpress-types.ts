@@ -8,7 +8,7 @@ export type WordPressRecord = { [Key in string]?: unknown } & { id?: number };
  * `X-WP-Total` / `X-WP-TotalPages` response headers. Both counts are optional
  * because a site (or a proxy/plugin) can omit the headers; the connector's
  * pagination loop treats an absent `total` as "unknown" and falls back to its
- * short-page / offset-ignoring guards.
+ * short-page / page-ignoring guards.
  */
 export interface WordPressPollRecordsResult {
   records: WordPressRecord[];
@@ -19,7 +19,14 @@ export interface WordPressPollRecordsResult {
 }
 
 export type WordPressDownloadProgress = {
-  nextOffset: number | undefined;
+  /** Next 1-based page to fetch; undefined once the scan is complete. */
+  nextPage?: number;
+  /**
+   * Legacy offset cursor from pulls checkpointed before the page-pagination
+   * switch (DEV-10786). Read only — migrated to `nextPage` on resume, never
+   * written going forward.
+   */
+  nextOffset?: number;
 };
 
 /**

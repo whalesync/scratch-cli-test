@@ -84,26 +84,26 @@ describe('WordPressConnector.pullRecordFiles (incremental)', () => {
   });
 
   it('runs a full pull and returns {} when pullMode is not incremental (no modified_after, no tz lookup)', async () => {
-    const result = await connector.pullRecordFiles(postSpec(), callback, { nextOffset: undefined }, {
+    const result = await connector.pullRecordFiles(postSpec(), callback, {}, {
       pullMode: 'full',
     } as PullRecordFilesOptions);
 
     expect(result).toEqual({});
-    // pollRecords(tableId, offset, pageSize, modifiedAfter) — modifiedAfter is undefined.
-    expect(lastPollCall()).toEqual(['posts', 0, WORDPRESS_POLLING_PAGE_SIZE, undefined]);
+    // pollRecords(tableId, page, pageSize, modifiedAfter) — first page, modifiedAfter undefined.
+    expect(lastPollCall()).toEqual(['posts', 1, WORDPRESS_POLLING_PAGE_SIZE, undefined]);
     expect(mockGetSiteTimezone).not.toHaveBeenCalled();
   });
 
   it('passes the site-local-rendered modified_after string and returns a newWatermark when incremental', async () => {
     const since = new Date('2026-05-01T12:00:00.000Z');
     const before = Date.now();
-    const result = await connector.pullRecordFiles(postSpec(), callback, { nextOffset: undefined }, {
+    const result = await connector.pullRecordFiles(postSpec(), callback, {}, {
       pullMode: 'incremental',
       since,
     } as PullRecordFilesOptions);
     const after = Date.now();
 
-    expect(lastPollCall()).toEqual(['posts', 0, WORDPRESS_POLLING_PAGE_SIZE, formatWordPressModifiedAfter(since, {})]);
+    expect(lastPollCall()).toEqual(['posts', 1, WORDPRESS_POLLING_PAGE_SIZE, formatWordPressModifiedAfter(since, {})]);
     expect(result.newWatermark).toBeInstanceOf(Date);
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
@@ -115,51 +115,46 @@ describe('WordPressConnector.pullRecordFiles (incremental)', () => {
     mockGetSiteTimezone.mockResolvedValue({ timezoneString: 'America/New_York' });
     const since = new Date('2026-05-01T12:00:00.000Z');
 
-    await connector.pullRecordFiles(postSpec(), callback, { nextOffset: undefined }, {
+    await connector.pullRecordFiles(postSpec(), callback, {}, {
       pullMode: 'incremental',
       since,
     } as PullRecordFilesOptions);
 
     expect(lastPollCall()).toEqual([
       'posts',
-      0,
+      1,
       WORDPRESS_POLLING_PAGE_SIZE,
       formatWordPressModifiedAfter(since, { timezoneString: 'America/New_York' }),
     ]);
   });
 
   it('treats incremental without a `since` as a full pull (no modified_after, no watermark)', async () => {
-    const result = await connector.pullRecordFiles(postSpec(), callback, { nextOffset: undefined }, {
+    const result = await connector.pullRecordFiles(postSpec(), callback, {}, {
       pullMode: 'incremental',
     } as PullRecordFilesOptions);
 
     expect(result).toEqual({});
-    expect(lastPollCall()).toEqual(['posts', 0, WORDPRESS_POLLING_PAGE_SIZE, undefined]);
+    expect(lastPollCall()).toEqual(['posts', 1, WORDPRESS_POLLING_PAGE_SIZE, undefined]);
   });
 
   it('demotes an incremental run to full when the collection has no resolvable modified field', async () => {
     const since = new Date('2026-05-01T12:00:00.000Z');
-    const result = await connector.pullRecordFiles(taxonomySpec(), callback, { nextOffset: undefined }, {
+    const result = await connector.pullRecordFiles(taxonomySpec(), callback, {}, {
       pullMode: 'incremental',
       since,
     } as PullRecordFilesOptions);
 
     expect(result).toEqual({});
-    expect(lastPollCall()).toEqual(['categories', 0, WORDPRESS_POLLING_PAGE_SIZE, undefined]);
+    expect(lastPollCall()).toEqual(['categories', 1, WORDPRESS_POLLING_PAGE_SIZE, undefined]);
   });
 
-  it('resumes pagination from the saved offset', async () => {
+  it('resumes pagination from the saved page', async () => {
     const since = new Date('2026-05-01T12:00:00.000Z');
-    await connector.pullRecordFiles(postSpec(), callback, { nextOffset: 300 }, {
+    await connector.pullRecordFiles(postSpec(), callback, { nextPage: 4 }, {
       pullMode: 'incremental',
       since,
     } as PullRecordFilesOptions);
 
-    expect(lastPollCall()).toEqual([
-      'posts',
-      300,
-      WORDPRESS_POLLING_PAGE_SIZE,
-      formatWordPressModifiedAfter(since, {}),
-    ]);
+    expect(lastPollCall()).toEqual(['posts', 4, WORDPRESS_POLLING_PAGE_SIZE, formatWordPressModifiedAfter(since, {})]);
   });
 });
