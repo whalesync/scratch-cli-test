@@ -685,9 +685,10 @@ describe('generateCreatePlanFromSources — fallback primary field', () => {
     expect(primaryFieldNames(tables[0])).toEqual(['full_name']);
   });
 
-  it('falls back to the first eligible field in column order when no name matches', () => {
+  it('falls back to the first eligible field in column order when no name matches and there is no source id', () => {
     const { tables } = generateCreatePlanFromSources({
       sources: [
+        // No idFieldPath ⇒ no injected source-record-id, so the id fallback can't apply.
         sourceWithoutTitleColumn([field({ path: 'bio', type: 'string' }), field({ path: 'website', type: 'string' })]),
       ],
       destinationConnectorAccountId: 'destConn',
@@ -695,6 +696,48 @@ describe('generateCreatePlanFromSources — fallback primary field', () => {
     });
 
     expect(primaryFieldNames(tables[0])).toEqual(['bio']);
+  });
+
+  it('falls back to the source-record-id ("ID") field over an arbitrary data column when no name matches', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [
+        {
+          ...sourceWithoutTitleColumn([
+            field({ path: 'id', type: 'string' }),
+            field({ path: 'status', type: 'string' }),
+            field({ path: 'comment', type: 'string' }),
+          ]),
+          // Injects a `<service>_record_id` field marked isSourceRecordId.
+          idFieldPath: 'id',
+          connectorService: 'WEBFLOW',
+        },
+      ],
+      destinationConnectorAccountId: 'destConn',
+      destinationRequiresPrimaryField: true,
+    });
+
+    // Prefer the stable id over the incidental first column ("status").
+    expect(primaryFieldNames(tables[0])).toEqual(['webflow_record_id']);
+  });
+
+  it('prefers a real title column over the source-record-id when one exists', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [
+        {
+          ...sourceWithoutTitleColumn([
+            field({ path: 'id', type: 'string' }),
+            field({ path: 'headline', type: 'string' }),
+          ]),
+          idFieldPath: 'id',
+          connectorService: 'WEBFLOW',
+        },
+      ],
+      destinationConnectorAccountId: 'destConn',
+      destinationRequiresPrimaryField: true,
+    });
+
+    // `headline` is a title-name candidate, so it wins over the id fallback.
+    expect(primaryFieldNames(tables[0])).toEqual(['headline']);
   });
 
   it('only considers fields of an allowed kind, overriding name priority', () => {
@@ -743,7 +786,7 @@ describe('generateCreatePlanFromSources — fallback primary field', () => {
     expect(primaryFieldNames(tables[0])).toEqual(['handle']);
   });
 
-  it('leaves a degenerate table (only an id and a link) without a primary', () => {
+  it('uses the injected source-record-id as primary for a table of only an id and a link', () => {
     const source: PlanGeneratorSource = {
       ref: 'joins',
       dataFolderId: 'joins',
@@ -759,12 +802,31 @@ describe('generateCreatePlanFromSources — fallback primary field', () => {
     const { tables } = generateCreatePlanFromSources({
       sources: [source],
       destinationConnectorAccountId: 'destConn',
-      // A foreignKey is allowed as a kind here, but it's still never primary-eligible.
+      // The link is never primary-eligible; the injected source-record-id is the fallback.
       destinationRequiresPrimaryField: true,
       linkedTableMappings: [{ sourceLinkedTableId: 'tblPeople', destinationRemoteTableId: ['tblPeopleDest'] }],
     });
 
-    // Only the link + injected source-record-id remain; neither is primary-eligible.
+    expect(primaryFieldNames(tables[0])).toEqual(['postgres_record_id']);
+  });
+
+  it('leaves a truly degenerate table (only a link, no source id) without a primary', () => {
+    const source: PlanGeneratorSource = {
+      ref: 'joins',
+      dataFolderId: 'joins',
+      tableName: 'Joins',
+      remoteTableIds: ['tblJoins'],
+      // No idFieldPath ⇒ no injected source-record-id to fall back to.
+      schemaFields: [field({ path: 'author', type: 'string', foreignKey: { linkedTableId: 'tblPeople' } })],
+    };
+    const { tables } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      destinationRequiresPrimaryField: true,
+      linkedTableMappings: [{ sourceLinkedTableId: 'tblPeople', destinationRemoteTableId: ['tblPeopleDest'] }],
+    });
+
+    // Nothing is primary-eligible; the create-time validator surfaces this.
     expect(primaryFieldNames(tables[0])).toEqual([]);
   });
 });

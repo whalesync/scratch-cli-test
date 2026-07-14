@@ -604,23 +604,38 @@ function buildSourceRecordIdField(
  * Field names — normalized (lowercased, separators stripped) — that read like a
  * record's human title, in descending priority. Used to pick a fallback primary
  * field when the destination requires one but the source named no title column.
- * The first entries are the strongest, conventional title columns; the rest are
- * common stand-ins (people, posts, tickets, accounts). A field matching an
- * earlier entry wins; with no match the generator falls back to the first
- * eligible field in column order.
+ * The first entries are the strongest, conventional title columns; the later
+ * entries are human handles and stable identifiers that still read as a title. A
+ * field matching an earlier entry wins; with no match the generator falls back to
+ * the source-record-id field, then the first eligible field in column order (see
+ * {@link designateFallbackPrimaryFieldIfMissing}).
+ *
+ * Matching is exact on the normalized name — a compound name like "Customer Name"
+ * (→ "customername") deliberately does NOT match "name", so a table with no true
+ * title column (e.g. an order with only "Customer Name"/"Status") falls through to
+ * the stable source-record-id rather than latching onto an incidental column.
  */
 const PRIMARY_FIELD_NAME_CANDIDATES_IN_PRIORITY_ORDER = [
+  // Canonical record titles (strongest).
   'name',
   'title',
-  'displayname',
   'fullname',
+  'displayname',
+  'displaytitle',
   'label',
-  'subject',
   'heading',
   'headline',
+  'subject',
   'summary',
-  'slug',
+  // Human handles / identifiers.
   'username',
+  'handle',
+  'nickname',
+  'screenname',
+  // Stable, unique-ish identifiers that still read as a title.
+  'slug',
+  'code',
+  'reference',
   'key',
   'identifier',
   'email',
@@ -638,49 +653,97 @@ function primaryNamePriorityOf(field: CreateFieldSpec): number {
 }
 
 /**
- * A field can serve as a table's primary/title field only if it's a real data
- * column (not the injected source-record-id), not a foreign key (a link can't be
- * a title), and — when the destination constrains primary kinds — of an allowed
- * kind.
+ * Whether a field's logical KIND can back a primary field: not a foreign key (a
+ * link can't be a title) and — when the destination constrains primary kinds — of
+ * an allowed kind. Says nothing about the field's role; see the two callers.
  */
-function isFieldEligibleAsPrimary(
+function isKindPrimaryEligible(
   field: CreateFieldSpec,
   destinationPrimaryFieldKinds: CreateFieldKind[] | undefined,
 ): boolean {
-  if (field.isSourceRecordId) return false;
   if (field.fieldType.kind === 'foreignKey') return false;
   if (destinationPrimaryFieldKinds && !destinationPrimaryFieldKinds.includes(field.fieldType.kind)) return false;
   return true;
 }
 
 /**
+ * Whether a real DATA column may serve as the primary/title field: kind-eligible
+ * AND not the injected source-record-id. The source-record-id is excluded here
+ * because it is handled as an explicit fallback (see
+ * {@link designateFallbackPrimaryFieldIfMissing}), never treated as a title column.
+ */
+function isDataFieldEligibleAsPrimary(
+  field: CreateFieldSpec,
+  destinationPrimaryFieldKinds: CreateFieldKind[] | undefined,
+): boolean {
+  if (field.isSourceRecordId) return false;
+  return isKindPrimaryEligible(field, destinationPrimaryFieldKinds);
+}
+
+/**
+ * Among `fields`, the data column whose name best matches a known title name
+ * (`name`, `title`, …), or `undefined` when none matches. A non-title name never
+ * wins — an arbitrary column is not a title — so the caller can distinguish "found
+ * a real title column" from "no title column at all".
+ */
+function pickBestTitleNamedField(fields: CreateFieldSpec[]): CreateFieldSpec | undefined {
+  let bestField: CreateFieldSpec | undefined;
+  let bestPriority = Number.MAX_SAFE_INTEGER;
+  for (const field of fields) {
+    const priority = primaryNamePriorityOf(field);
+    if (priority < bestPriority) {
+      bestField = field;
+      bestPriority = priority;
+    }
+  }
+  return bestField;
+}
+
+/**
  * Promote a primary field in place when the destination requires one and none was
- * designated from the source's title column. Chooses the highest-priority
- * primary-sounding name among the eligible fields, falling back to the first
- * eligible field in column order. Leaves the table without a primary only when no
- * field is eligible at all (a degenerate table of just an id and/or links) — which
- * the create-time validator then reports rather than this guessing wrongly.
+ * designated from the source's title column. Preference order:
+ *
+ *   1. the data column whose name reads most like a title (`name`, `title`, …);
+ *   2. the injected source-record-id ("ID") field — guaranteed present per row,
+ *      unique, and stable, so a far better primary than an arbitrary data column
+ *      when the source has no title (e.g. a Webflow order whose only text columns
+ *      are "Status"/"Customer Name");
+ *   3. as a last resort, the first primary-eligible data column in source order.
+ *
+ * Leaves the table without a primary only when nothing at all is eligible (a
+ * degenerate table of just links, with no source-record-id) — which the create-time
+ * validator then reports rather than this guessing wrongly.
  */
 function designateFallbackPrimaryFieldIfMissing(
   fields: CreateFieldSpec[],
   destinationPrimaryFieldKinds: CreateFieldKind[] | undefined,
 ): void {
   if (fields.some((field) => field.isPrimary)) return;
-  const eligibleFields = fields.filter((field) => isFieldEligibleAsPrimary(field, destinationPrimaryFieldKinds));
-  if (eligibleFields.length === 0) return;
 
-  // Start from the first eligible field (the column-order fallback) and keep the
-  // earliest field with a strictly better title-name priority.
-  let chosenField = eligibleFields[0];
-  let chosenPriority = primaryNamePriorityOf(chosenField);
-  for (const field of eligibleFields) {
-    const priority = primaryNamePriorityOf(field);
-    if (priority < chosenPriority) {
-      chosenField = field;
-      chosenPriority = priority;
-    }
+  // 1. A real data column that actually reads like a title wins outright.
+  const dataFieldsEligibleAsPrimary = fields.filter((field) =>
+    isDataFieldEligibleAsPrimary(field, destinationPrimaryFieldKinds),
+  );
+  const bestTitleNamedField = pickBestTitleNamedField(dataFieldsEligibleAsPrimary);
+  if (bestTitleNamedField) {
+    bestTitleNamedField.isPrimary = true;
+    return;
   }
-  chosenField.isPrimary = true;
+
+  // 2. No title-like column: fall back to the stable source-record-id, not an
+  //    arbitrary data column.
+  const sourceRecordIdField = fields.find(
+    (field) => field.isSourceRecordId && isKindPrimaryEligible(field, destinationPrimaryFieldKinds),
+  );
+  if (sourceRecordIdField) {
+    sourceRecordIdField.isPrimary = true;
+    return;
+  }
+
+  // 3. Last resort: the first primary-eligible data column in source order.
+  if (dataFieldsEligibleAsPrimary.length > 0) {
+    dataFieldsEligibleAsPrimary[0].isPrimary = true;
+  }
 }
 
 function buildFieldSpec(
