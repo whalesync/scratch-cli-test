@@ -1085,6 +1085,13 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               "map": "id",
             },
             "x-scratch-remote-field-id": "%7DeDv",
+            "x-scratch-suggested-transformer": {
+              "options": {
+                "arrayHandling": "array",
+                "expression": "$.relation[*].id",
+              },
+              "type": "jsonpath",
+            },
           },
           "Name": {
             "description": "Name",
