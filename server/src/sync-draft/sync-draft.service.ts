@@ -691,14 +691,19 @@ export class SyncDraftService {
 
       let resolvedTarget: ForeignKeyTarget | null = null;
       if (tableMapping.destination.kind === 'placeholderTable') {
-        if (options.resolvePlaceholdersToRemoteId) {
-          const resolvedRemoteTableId = tableMapping.destination.resolved?.remoteTableId;
-          if (resolvedRemoteTableId && resolvedRemoteTableId.length > 0) {
-            resolvedTarget = { existingRemoteTableId: resolvedRemoteTableId };
-          }
-        } else {
+        const resolvedRemoteTableId = tableMapping.destination.resolved?.remoteTableId;
+        if (resolvedRemoteTableId && resolvedRemoteTableId.length > 0) {
+          // The sibling placeholder is ALREADY materialized (a prior run, or earlier this run).
+          // Bind to its real remote id even in the new-tables phase: a `{ ref }` only resolves
+          // for a sibling created in the SAME createTables batch, but an already-resolved sibling
+          // is skipped from the batch — so the ref would dangle and the connector would silently
+          // drop the foreignKey field (leaving the column uncreated and unresolvable at apply).
+          resolvedTarget = { existingRemoteTableId: resolvedRemoteTableId };
+        } else if (!options.resolvePlaceholdersToRemoteId) {
+          // New-tables phase: an unresolved sibling IS created in this batch, where its ref resolves.
           resolvedTarget = { ref: tableMapping.destination.createSpec.ref };
         }
+        // Add-fields phase with an unresolved sibling: leave pending (handled by the `continue` below).
       } else {
         const existingRemoteTableId = remoteTableIdByFolderId.get(tableMapping.destination.dataFolderId);
         if (existingRemoteTableId && existingRemoteTableId.length > 0) {

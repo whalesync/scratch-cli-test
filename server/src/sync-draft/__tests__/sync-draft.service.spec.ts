@@ -642,6 +642,83 @@ describe('SyncDraftService', () => {
       expect(dealsFk?.fieldType).toEqual({ kind: 'foreignKey', target: { unresolvedLinkedTableId: 'deals' } });
     });
 
+    it('binds a foreignKey to an ALREADY-RESOLVED sibling by its remote id, not a dangling ref', async () => {
+      // Regression: on a re-run, the sibling target (Contacts) was materialized in a PRIOR run,
+      // so it is skipped from this create batch. A `{ ref }` would dangle (the connector then
+      // silently drops the FK field); it must bind to the sibling's real remote id instead.
+      const tableMappings = [
+        {
+          ref: 'tm_appt',
+          source: { dataFolderId: 'dfd_appointments' },
+          destination: {
+            kind: 'placeholderTable',
+            ref: 'ph_appointments',
+            connectorAccountId: 'coa_1',
+            remoteParentId: ['base1'],
+            createSpec: {
+              ref: 'spec_appointments',
+              name: 'Appointments',
+              fields: [
+                { name: 'Name', fieldType: { kind: 'text' } },
+                {
+                  name: 'Associated Contacts',
+                  fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'contacts' } },
+                },
+              ],
+            },
+          },
+          columnMappings: [],
+        },
+        {
+          ref: 'tm_contacts',
+          source: { dataFolderId: 'dfd_contacts' },
+          destination: {
+            kind: 'placeholderTable',
+            ref: 'ph_contacts',
+            connectorAccountId: 'coa_1',
+            remoteParentId: ['base1'],
+            // Already materialized in a prior run → carries a resolved remote table id.
+            resolved: { actualName: 'Contacts', dataFolderId: 'dfd_contacts_dst', remoteTableId: ['base1', 'tblC'] },
+            createSpec: {
+              ref: 'spec_contacts',
+              name: 'Contacts',
+              fields: [{ name: 'Name', fieldType: { kind: 'text' } }],
+            },
+          },
+          columnMappings: [],
+        },
+      ];
+      const row = makeDraftRow({ tableMappings });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_appointments', tableId: ['0-421'] },
+        { id: 'dfd_contacts', tableId: ['contacts'] },
+      ]);
+      schemaBuilderService.createTables.mockResolvedValue({
+        status: 'ok',
+        tables: [
+          {
+            ref: 'spec_appointments',
+            name: 'Appointments',
+            status: 'created',
+            remoteTableId: ['base1', 'tblA'],
+            fields: [],
+          },
+        ],
+      } as never);
+
+      await service.materialize(DRAFT_ID, ACTOR);
+
+      const dto = schemaBuilderService.createTables.mock.calls[0][1];
+      const appointmentsSpec = dto.tables.find((table) => table.ref === 'spec_appointments');
+      const contactsFk = appointmentsSpec?.fields.find((field) => field.name === 'Associated Contacts');
+      // Bound to the resolved sibling's real remote id — NOT a { ref } that would dangle in this batch.
+      expect(contactsFk?.fieldType).toEqual({
+        kind: 'foreignKey',
+        target: { existingRemoteTableId: ['base1', 'tblC'] },
+      });
+    });
+
     it('surfaces the create-schema issue message (not the generic one) on a failed table', async () => {
       const row = makeDraftRow({ tableMappings: [placeholderTableDraft()] });
       (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);

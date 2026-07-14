@@ -2,6 +2,8 @@ import { TSchema } from '@sinclair/typebox';
 import type { ForeignKeyOptionSchema, VirtualFieldDef } from '@spinner/shared-types';
 import {
   TransformerConfig,
+  X_SCRATCH_AIRTABLE_FIELD_ORDER,
+  X_SCRATCH_ASSET_TABLE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_PREFIX,
   X_SCRATCH_READONLY,
@@ -12,19 +14,35 @@ import {
 } from '@spinner/shared-types';
 
 /**
- * True if the schema node carries any `x-scratch-*` metadata key.
- *
- * Used as a leaf guard: a connector-annotated object (e.g. a Notion property
- * envelope `{ id, type, <typeKey>: value }` tagged with
- * `x-scratch-connector-data-type`) is a single field, not a container to
- * recurse into. Mirrors the desktop `build-column-definitions.ts` guard so the
- * server and desktop agree on leaf granularity. Plain wrapper objects that carry
- * no x-scratch metadata (Airtable `fields`, HubSpot `properties`) are not
- * matched and still expand into per-field leaves.
+ * `x-scratch-*` keys that annotate a CONTAINER node — an object whose properties
+ * are real sub-fields/columns — rather than a value envelope. An object carrying
+ * ONLY these must still be recursed into, so they are excluded from the leaf guard
+ * below:
+ *  - `x-scratch-airtable-field-order` sits on Airtable's `fields` wrapper (the
+ *    record's column container); treating it as a leaf hides every `fields.*`
+ *    column, which broke resolving created columns for new Airtable tables.
+ *  - `x-scratch-asset-table` sits on an asset-table root (Webflow Assets, WordPress
+ *    media); its records still have real columns to expand.
  */
-function hasXScratchExtension(schema: TSchema): boolean {
+const CONTAINER_LEVEL_X_SCRATCH_KEYS: ReadonlySet<string> = new Set([
+  X_SCRATCH_AIRTABLE_FIELD_ORDER,
+  X_SCRATCH_ASSET_TABLE,
+]);
+
+/**
+ * True if the schema node is an opaque connector VALUE ENVELOPE — a single field,
+ * not a container to recurse into (e.g. a Notion property envelope
+ * `{ id, type, <typeKey>: value }` tagged with `x-scratch-connector-data-type`).
+ *
+ * Used as a leaf guard. Mirrors the desktop `build-column-definitions.ts` guard so
+ * the server and desktop agree on leaf granularity. A node carrying only
+ * container-level annotations (see {@link CONTAINER_LEVEL_X_SCRATCH_KEYS}) — or no
+ * x-scratch metadata at all (HubSpot `properties`) — is NOT an envelope and still
+ * expands into its per-field leaves.
+ */
+function isOpaqueConnectorEnvelope(schema: TSchema): boolean {
   for (const key of Object.keys(schema)) {
-    if (key.startsWith(X_SCRATCH_PREFIX)) return true;
+    if (key.startsWith(X_SCRATCH_PREFIX) && !CONTAINER_LEVEL_X_SCRATCH_KEYS.has(key)) return true;
   }
   return false;
 }
@@ -183,7 +201,7 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
   // `x-scratch-*` metadata would otherwise explode into `properties.X.id`,
   // `.type`, `.value` sub-fields and flip the field type to `object`, polluting
   // sync LLM mapping context, import matching, and the MCP folder-schema tool.
-  if (schema.type === 'object' && schema.properties && !hasXScratchExtension(schema)) {
+  if (schema.type === 'object' && schema.properties && !isOpaqueConnectorEnvelope(schema)) {
     for (const [key, propSchema] of Object.entries(schema.properties as Record<string, TSchema>)) {
       const currentPath = parentPath ? `${parentPath}.${key}` : key;
       const subFields = extractSchemaFields(propSchema, currentPath);

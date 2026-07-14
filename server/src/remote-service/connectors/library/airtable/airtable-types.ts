@@ -11,18 +11,10 @@
  */
 export const X_SCRATCH_AIRTABLE_LOOKUP_RESULT_TYPE = 'x-scratch-airtable-lookup-result-type';
 
-/**
- * The table's fields in the exact order the Airtable API returned them, as an
- * array of field NAMES. Stored on the record schema's `fields` object node.
- *
- * Field names are user-controlled and can be purely numeric (e.g. `"1"`, `"2024"`);
- * JavaScript object-key iteration hoists integer-like keys to the front in ascending
- * numeric order, so `Object.keys(schema.properties.fields.properties)` does NOT
- * recover the true Airtable field order for such tables. This annotation preserves
- * it so `buildAirtableDefaultView` can order columns faithfully. It is a faithful
- * fact the API reports (the field order), not a display opinion.
- */
-export const X_SCRATCH_AIRTABLE_FIELD_ORDER = 'x-scratch-airtable-field-order';
+// The Airtable field-order annotation now lives in @spinner/shared-types (alongside
+// every other x-scratch-* key) so generic schema helpers can reference it without a
+// connector-library import. Re-exported here for existing local importers.
+export { X_SCRATCH_AIRTABLE_FIELD_ORDER } from '@spinner/shared-types';
 
 /**
  * The raw data types that airtable uses.

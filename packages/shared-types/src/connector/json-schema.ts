@@ -51,6 +51,16 @@ export const X_SCRATCH_ASSET_FIELD = 'x-scratch-asset-field';
 // Marks a table whose records ARE assets (e.g. WordPress media, Webflow Assets).
 export const X_SCRATCH_ASSET_TABLE = 'x-scratch-asset-table';
 
+// The table's fields in the exact order the Airtable API returned them, as an array
+// of field NAMES. Stored on the record schema's `fields` object node (a CONTAINER of
+// the record's columns, not a value envelope). Field names are user-controlled and can
+// be purely numeric (e.g. "1", "2024"); JavaScript object-key iteration hoists
+// integer-like keys to the front, so `Object.keys(schema.properties.fields.properties)`
+// does NOT recover the true field order for such tables — this annotation preserves it
+// so `buildAirtableDefaultView` can order columns faithfully. A faithful fact the API
+// reports (the field order), not a display opinion.
+export const X_SCRATCH_AIRTABLE_FIELD_ORDER = 'x-scratch-airtable-field-order';
+
 // Marks a field whose value is the row's server-side last-modified timestamp.
 // Connectors that auto-detect this on schema build (e.g. Airtable's lastModifiedTime
 // field type) annotate the field so incremental pulls can use it without an explicit

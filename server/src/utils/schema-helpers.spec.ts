@@ -1,6 +1,8 @@
 import { TSchema, Type } from '@sinclair/typebox';
 import {
   TransformerTypes,
+  X_SCRATCH_AIRTABLE_FIELD_ORDER,
+  X_SCRATCH_ASSET_TABLE,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
@@ -500,6 +502,28 @@ describe('schema-helpers', () => {
         const paths = extractSchemaFields(schema).map((f) => f.path);
         expect(paths).toContain('fields.Name');
         expect(paths).toContain('fields.Count');
+      });
+
+      it('still expands the REAL Airtable `fields` wrapper carrying x-scratch-airtable-field-order', () => {
+        // Regression: the live Airtable schema annotates the `fields` container with the
+        // field-order key. That is container metadata, not a value envelope — the guard must
+        // still recurse, or created columns can't be resolved for new Airtable tables.
+        const fieldsWrapper = Type.Object({ Name: Type.String(), Slug: Type.String() });
+        annotate(fieldsWrapper, X_SCRATCH_AIRTABLE_FIELD_ORDER, ['Name', 'Slug']);
+        const schema = Type.Object({ id: Type.String(), fields: fieldsWrapper });
+
+        const paths = extractSchemaFields(schema).map((f) => f.path);
+        expect(paths).toContain('fields.Name');
+        expect(paths).toContain('fields.Slug');
+      });
+
+      it('still expands an asset-table root carrying x-scratch-asset-table', () => {
+        const schema = Type.Object({ hostedUrl: Type.String(), originalFileName: Type.String() });
+        annotate(schema, X_SCRATCH_ASSET_TABLE, { urlPath: 'hostedUrl', filenamePath: 'originalFileName' });
+
+        const paths = extractSchemaFields(schema).map((f) => f.path);
+        expect(paths).toContain('hostedUrl');
+        expect(paths).toContain('originalFileName');
       });
     });
   });
