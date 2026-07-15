@@ -1,6 +1,7 @@
 import {
   buildKeyedArrayColumnPath,
   getArrayKeyedByOptions,
+  X_SCRATCH_AIRTABLE_FIELD_ORDER,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_PREFIX,
@@ -18,9 +19,25 @@ function getString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-function hasXScratchExtension(prop: Record<string, unknown>): boolean {
+// x-scratch annotations that describe how to lay out / order a container's CHILDREN, rather than
+// marking the object itself as an opaque connector leaf. An object carrying ONLY these must still
+// be recursed into — e.g. Airtable's `fields` object carries x-scratch-airtable-field-order but
+// its children are the real editable columns. Contrast with leaf markers (x-scratch-readonly,
+// x-scratch-foreign-key on Moco `company` / HubSpot `associations`) which DO force a leaf.
+const CONTAINER_LAYOUT_ONLY_X_SCRATCH_ANNOTATION_KEYS: ReadonlySet<string> = new Set([X_SCRATCH_AIRTABLE_FIELD_ORDER]);
+
+/**
+ * True when a schema node carries an `x-scratch-*` annotation that marks the object itself as an
+ * opaque connector value (readonly, foreign-key, connector-data-type, …). Such objects render as a
+ * single JSON leaf column and are NOT recursed into. Container-layout-only annotations (child
+ * ordering, e.g. Airtable's `x-scratch-airtable-field-order`) are ignored here so the object still
+ * expands into per-field columns.
+ */
+function hasLeafMarkingXScratchExtension(prop: Record<string, unknown>): boolean {
   for (const key of Object.keys(prop)) {
-    if (key.startsWith(X_SCRATCH_PREFIX)) return true;
+    if (key.startsWith(X_SCRATCH_PREFIX) && !CONTAINER_LAYOUT_ONLY_X_SCRATCH_ANNOTATION_KEYS.has(key)) {
+      return true;
+    }
   }
   return false;
 }
@@ -209,9 +226,9 @@ function walkProperties(schema: Record<string, unknown>, prefix: string): Column
     // Check for a container object — either direct properties on the prop, or
     // properties inside an anyOf/oneOf member (nullable-object pattern).
     const directContainer =
-      effective.dataType === 'object' && isPlainObject(rawProp.properties) && !hasXScratchExtension(rawProp);
+      effective.dataType === 'object' && isPlainObject(rawProp.properties) && !hasLeafMarkingXScratchExtension(rawProp);
     const unionMember =
-      !directContainer && effective.dataType === 'object' && !hasXScratchExtension(rawProp)
+      !directContainer && effective.dataType === 'object' && !hasLeafMarkingXScratchExtension(rawProp)
         ? resolveObjectMember(rawProp)
         : undefined;
 

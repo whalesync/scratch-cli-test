@@ -17,6 +17,17 @@
       },
       "fields": {
         "description": "Record field values keyed by field name",
+        "x-scratch-airtable-field-order": [
+          "Stone",
+          "Hardness",
+          "Value",
+          "Details",
+          "Primary Minerals",
+          "Read Only Autonumber",
+          "Birth Stone",
+          "Name (from Birth Stone)",
+          "Lookup Column"
+        ],
         "type": "object",
         "properties": {
           "Stone": {
@@ -105,11 +116,7 @@
     }
   },
   "idColumnRemoteId": "id",
-  "titleColumnRemoteId": [
-    "appFbJ6xLano0bGhI",
-    "tblyAGtJqrSTfLjqb",
-    "fld5XniJxjXtubkA8"
-  ],
+  "titleColumnRemoteId": ["appFbJ6xLano0bGhI", "tblyAGtJqrSTfLjqb", "fld5XniJxjXtubkA8"],
   "basePath": ["Base Alpha"],
   "generatedAt": "2026-04-14T22:42:18.993Z"
 }

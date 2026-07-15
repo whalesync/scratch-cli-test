@@ -86,6 +86,19 @@ describe('buildColumnDefinitions — airtable semiprecious stones', () => {
     });
     expect(byId(columns, 'fields.Stone').attributes.foreignKey).toBeUndefined();
   });
+
+  // Regression: the real Airtable schema annotates the `fields` container with
+  // `x-scratch-airtable-field-order` (a child-ordering hint). That is a container-layout annotation,
+  // NOT a leaf marker, so it must not stop recursion — otherwise the whole `fields` object collapses
+  // into one "FIELDS" JSON leaf (the RecordReviewDrawer bug). Contrast with leaf-marking annotations
+  // like x-scratch-readonly / x-scratch-foreign-key, which DO force a leaf (see Moco `company` /
+  // HubSpot `associations` in connector-fixtures.test.ts).
+  it('recurses into a `fields` object even when it carries x-scratch-airtable-field-order', () => {
+    const ids = columns.map((c) => c.id);
+    expect(ids).not.toContain('fields');
+    expect(ids).toContain('fields.Stone');
+    expect(ids).toContain('fields.Lookup Column');
+  });
 });
 
 describe('buildColumnDefinitions — edge cases', () => {
