@@ -7,7 +7,7 @@
  * API docs: https://shopify.dev/docs/api/admin-graphql
  */
 
-import { AxiosInstance } from 'axios';
+import { AxiosInstance, isAxiosError } from 'axios';
 import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
 import {
@@ -123,10 +123,74 @@ export function extractSeoMetafieldsFromVerbatimFields(input: Record<string, unk
   return input;
 }
 
-const SHOPIFY_RETRY_OPTS: WithRetryOpts = {
-  isRateLimited: (error) =>
-    error instanceof ShopifyError &&
-    (error.code === 'THROTTLED' || error.statusCode === 429 || error.message.toLowerCase().includes('throttle')),
+/**
+ * True when Shopify is rate-limiting us. This surfaces in two distinct forms:
+ *  - GraphQL-level throttling — the common case. Shopify returns HTTP 200 with an
+ *    `errors[]` entry whose `extensions.code` is `THROTTLED`, which
+ *    {@link ShopifyApiClient.executeQuery} surfaces as a `ShopifyError` with code
+ *    `'THROTTLED'` (some responses only carry the word "throttle" in the message).
+ *  - HTTP 429 at the transport/gateway layer — axios rejects with a raw AxiosError
+ *    before we ever parse the GraphQL body, so it never becomes a `ShopifyError`.
+ *
+ * Kept as its own named predicate so the retry policy composes as plain English
+ * (rate-limited OR a transient server error) without conflating the two.
+ */
+export function isShopifyRateLimitError(error: unknown): boolean {
+  if (isAxiosError(error)) {
+    return error.response?.status === 429;
+  }
+  return (
+    error instanceof ShopifyError && (error.code === 'THROTTLED' || error.message.toLowerCase().includes('throttle'))
+  );
+}
+
+/**
+ * HTTP 5xx codes we treat as transient, retryable Shopify server/infrastructure
+ * failures: 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout.
+ *
+ * We deliberately EXCLUDE 500 Internal Server Error. 502/503/504 are gateway /
+ * availability signals — the request did not reach, or was not completed by, a
+ * healthy backend — so retrying is safe even for a non-idempotent mutation (POST):
+ * the write almost certainly did not persist. A 500 is ambiguous: the backend may
+ * have processed the write and then errored, so blindly retrying a create risks a
+ * DUPLICATE record, which violates the project's non-destructive / reversible
+ * principle. (Shopify's GraphQL API returns HTTP 200 even for GraphQL-level errors,
+ * so a genuine 5xx here is a transport/gateway failure, not a query error.)
+ */
+const SHOPIFY_RETRYABLE_SERVER_ERROR_STATUSES = new Set([502, 503, 504]);
+
+/**
+ * True when an error is a transient Shopify server-side failure worth retrying
+ * (see {@link SHOPIFY_RETRYABLE_SERVER_ERROR_STATUSES}). The retry predicate sees
+ * the RAW AxiosError — a non-2xx HTTP response rejects before `executeQuery` can
+ * wrap it into a `ShopifyError` — so this checks `error.response.status` directly.
+ */
+export function isTransientShopifyServerError(error: unknown): boolean {
+  return isAxiosError(error) && SHOPIFY_RETRYABLE_SERVER_ERROR_STATUSES.has(error.response?.status ?? 0);
+}
+
+/**
+ * Retry options for Shopify API calls. Retries two DISTINCT, independently-scoped
+ * failures:
+ *  - Rate-limiting — GraphQL-level `THROTTLED` or a transport-layer HTTP 429 (see
+ *    {@link isShopifyRateLimitError}).
+ *  - Transient Shopify server errors — a narrow 502/503/504 set (see
+ *    {@link isTransientShopifyServerError}).
+ *
+ * The two are kept as SEPARATE predicates on purpose: widening the transient-server
+ * case never loosens what counts as rate-limited, and genuine 4xx / GraphQL user
+ * errors still surface immediately. `getRetryAfterS` honors a `Retry-After` header
+ * when Shopify sends one (429s), else the limiter falls back to exponential backoff.
+ */
+export const SHOPIFY_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => isShopifyRateLimitError(error) || isTransientShopifyServerError(error),
+  getRetryAfterS: (error) => {
+    if (!isAxiosError(error)) return undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const header = error.response?.headers?.['retry-after'];
+    const seconds = header ? parseInt(String(header), 10) : NaN;
+    return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
+  },
   maxRetryDelayMs: 30_000,
 };
 
