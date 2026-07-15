@@ -1,4 +1,4 @@
-import { diffKeyedArrayElements, getArrayKeyedByOptions } from '@spinner/shared-types';
+import { diffKeyedArrayElements, getArrayKeyedByOptions, getAssetFieldOptions } from '@spinner/shared-types';
 
 /**
  * Deep-diffs two JSON objects and returns a sparse object containing only changed paths.
@@ -14,6 +14,12 @@ import { diffKeyedArrayElements, getArrayKeyedByOptions } from '@spinner/shared-
  *   service that "applies only the sent elements" expects, and what preserves
  *   per-field read-only-edit detection now that the array is stored verbatim
  *   instead of reshaped to a keyed object.
+ * - Nested plain objects normally recurse (only changed sub-keys are kept),
+ *   EXCEPT a property the schema annotates with `x-scratch-asset-field` (an
+ *   atomic media reference — e.g. Webflow's `image: { fileId, url, alt }`). The
+ *   external service requires an asset value to be written **whole**, so editing
+ *   only a subfield (e.g. the alt text) must emit the FULL object, not a sparse
+ *   `{ alt }`. These fields fall through to the atomic leaf comparison below.
  * - Removed keys (present in main but absent in dirty) are NOT tracked — this is intentional.
  *   Users should set fields to `null` or `""` to clear them, not delete JSON keys.
  *   Key removal typically indicates schema changes or reference cleaning, not user intent.
@@ -41,6 +47,18 @@ export function computeChangedFields(
       const changedElements = diffKeyedArrayElements(mainVal, dirtyVal, keyedByOptions.keyField);
       if (changedElements.length > 0) {
         result[key] = changedElements;
+      }
+      continue;
+    }
+
+    // Asset object field (annotated `x-scratch-asset-field`) — atomic on write:
+    // the service requires the whole value (e.g. `{ fileId, url, alt }`), so a
+    // changed subfield (e.g. alt-only) must be sent as the full object, never a
+    // sparse partial. Skip the object recursion below and emit the whole
+    // `dirtyVal` when it differs (identical to the leaf comparison).
+    if (getAssetFieldOptions(propSchema)) {
+      if (JSON.stringify(dirtyVal) !== JSON.stringify(mainVal)) {
+        result[key] = dirtyVal;
       }
       continue;
     }

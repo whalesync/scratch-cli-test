@@ -100,6 +100,54 @@ export interface AssetFieldOptions {
   urlExpires: boolean;
 }
 
+/** Whether a value is a plain (non-array, non-null) object. */
+function isPlainRecordSchema(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isAssetFieldOptions(value: unknown): value is AssetFieldOptions {
+  return (
+    isPlainRecordSchema(value) &&
+    'idPath' in value &&
+    (typeof value.idPath === 'string' || value.idPath === null) &&
+    typeof value.urlExpires === 'boolean'
+  );
+}
+
+/**
+ * Read the {@link X_SCRATCH_ASSET_FIELD} options off a property schema, or
+ * `undefined` if the property is not an asset field.
+ *
+ * An asset field's value is an atomic media reference — a single object like
+ * Webflow's `{ fileId, url, alt }`, or an array of such objects (MultiImage) —
+ * that the external service requires to be written **whole**: a bare `{ alt }`
+ * with no `url`/`fileId` is rejected as malformed. This accessor is how the
+ * publish diff (`computeChangedFields`) and the asset-extraction walk recognise
+ * that shape. It mirrors {@link getArrayKeyedByOptions}: it looks on the property
+ * directly, on its array `items` (the array-of-assets pattern), and inside its
+ * `anyOf`/`oneOf` members (the nullable pattern keeps the annotation on the
+ * object member — `Type.Union([Type.Object(...), Type.Null()])`).
+ */
+export function getAssetFieldOptions(propSchema: unknown): AssetFieldOptions | undefined {
+  if (!isPlainRecordSchema(propSchema)) return undefined;
+
+  const direct = propSchema[X_SCRATCH_ASSET_FIELD];
+  if (isAssetFieldOptions(direct)) return direct;
+
+  const fromItems = getAssetFieldOptions(propSchema['items']);
+  if (fromItems) return fromItems;
+
+  for (const unionKey of ['anyOf', 'oneOf'] as const) {
+    const union = propSchema[unionKey];
+    if (!Array.isArray(union)) continue;
+    for (const member of union) {
+      const found = getAssetFieldOptions(member);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Options for a table-level asset annotation.
  * Dot-notation paths (e.g. 'media_details.width') are resolved against the record content.

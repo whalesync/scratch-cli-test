@@ -1,4 +1,4 @@
-import { X_SCRATCH_ARRAY_KEYED_BY } from '@spinner/shared-types';
+import { X_SCRATCH_ARRAY_KEYED_BY, X_SCRATCH_ASSET_FIELD } from '@spinner/shared-types';
 import { computeChangedFields, pickByShape } from '../diff-utils';
 
 describe('computeChangedFields', () => {
@@ -308,5 +308,151 @@ describe('computeChangedFields — keyed arrays (x-scratch-array-keyed-by)', () 
     };
     // Without the schema, the whole array is treated as one changed value.
     expect(computeChangedFields(main, dirty)).toEqual({ custom_fields: dirty.custom_fields });
+  });
+});
+
+describe('computeChangedFields — atomic asset fields (x-scratch-asset-field) (DEV-10755)', () => {
+  // Webflow-style schema: `image` is an atomic media reference `{ fileId, url, alt }`
+  // the service requires whole on write. The annotation is hoisted to the field
+  // top level AND kept on the nullable `anyOf` object member (the real persisted shape).
+  const assetOpts = { idPath: 'fileId', urlExpires: false };
+  const imageFieldSchema = {
+    anyOf: [
+      {
+        type: 'object',
+        properties: { fileId: {}, url: { format: 'uri' }, alt: {} },
+        [X_SCRATCH_ASSET_FIELD]: assetOpts,
+      },
+      { type: 'null' },
+    ],
+    [X_SCRATCH_ASSET_FIELD]: assetOpts,
+  };
+  const schema = {
+    properties: {
+      fieldData: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          image: imageFieldSchema,
+        },
+      },
+    },
+  };
+
+  const mainImage = { fileId: 'f1', url: 'https://cdn/x.png', alt: 'old alt' };
+
+  it('emits the WHOLE asset object when only a subfield (alt) changed', () => {
+    const main = { id: 'abc', fieldData: { name: 'Same', image: mainImage } };
+    const dirty = { id: 'abc', fieldData: { name: 'Same', image: { ...mainImage, alt: 'new alt' } } };
+    // The fix: the changed subfield re-expands to the full object, so the connector
+    // sends `{ fileId, url, alt }` — not the malformed sparse `{ alt }` that Webflow rejects.
+    expect(computeChangedFields(main, dirty, schema)).toEqual({
+      fieldData: { image: { fileId: 'f1', url: 'https://cdn/x.png', alt: 'new alt' } },
+    });
+  });
+
+  it('omits an unchanged asset object', () => {
+    const main = { id: 'abc', fieldData: { name: 'A', image: mainImage } };
+    const dirty = { id: 'abc', fieldData: { name: 'B', image: { ...mainImage } } };
+    expect(computeChangedFields(main, dirty, schema)).toEqual({ fieldData: { name: 'B' } });
+  });
+
+  it('WITHOUT the schema, falls back to the sparse (pre-fix) subfield diff', () => {
+    const main = { id: 'abc', fieldData: { name: 'Same', image: mainImage } };
+    const dirty = { id: 'abc', fieldData: { name: 'Same', image: { ...mainImage, alt: 'new alt' } } };
+    // Documents that the atomic behavior is schema-driven — the bug shape reproduces without it.
+    expect(computeChangedFields(main, dirty)).toEqual({ fieldData: { image: { alt: 'new alt' } } });
+  });
+
+  it('detects the annotation when it lives ONLY on an anyOf member (nullable pattern)', () => {
+    const anyOfOnlySchema = {
+      properties: {
+        fieldData: {
+          type: 'object',
+          properties: {
+            image: {
+              anyOf: [
+                { type: 'object', properties: { fileId: {}, url: {}, alt: {} }, [X_SCRATCH_ASSET_FIELD]: assetOpts },
+                { type: 'null' },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const main = { fieldData: { image: mainImage } };
+    const dirty = { fieldData: { image: { ...mainImage, alt: 'new alt' } } };
+    expect(computeChangedFields(main, dirty, anyOfOnlySchema)).toEqual({
+      fieldData: { image: { fileId: 'f1', url: 'https://cdn/x.png', alt: 'new alt' } },
+    });
+  });
+
+  it('emits the whole object when the asset field is set from null', () => {
+    const main = { fieldData: { image: null } };
+    const dirty = { fieldData: { image: mainImage } };
+    expect(computeChangedFields(main, dirty, schema)).toEqual({ fieldData: { image: mainImage } });
+  });
+
+  it('emits null when the asset field is cleared to null', () => {
+    const main = { fieldData: { image: mainImage } };
+    const dirty = { fieldData: { image: null } };
+    expect(computeChangedFields(main, dirty, schema)).toEqual({ fieldData: { image: null } });
+  });
+
+  it('emits the whole array (atomically) for an array-of-assets (MultiImage via items)', () => {
+    const gallerySchema = {
+      properties: {
+        fieldData: {
+          type: 'object',
+          properties: {
+            gallery: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { fileId: {}, url: {}, alt: {} },
+                [X_SCRATCH_ASSET_FIELD]: assetOpts,
+              },
+            },
+          },
+        },
+      },
+    };
+    const main = {
+      fieldData: {
+        gallery: [
+          { fileId: 'a', url: 'ua', alt: '1' },
+          { fileId: 'b', url: 'ub', alt: '2' },
+        ],
+      },
+    };
+    const dirty = {
+      fieldData: {
+        gallery: [
+          { fileId: 'a', url: 'ua', alt: 'changed' },
+          { fileId: 'b', url: 'ub', alt: '2' },
+        ],
+      },
+    };
+    expect(computeChangedFields(main, dirty, gallerySchema)).toEqual({
+      fieldData: { gallery: dirty.fieldData.gallery },
+    });
+  });
+});
+
+describe('pickByShape — whole asset object survives the mask (DEV-10755)', () => {
+  it('reproduces the full asset object when the shape carries every subkey', () => {
+    // Post-fix, computeChangedFields yields a whole-object shape; pickByShape must
+    // reproduce it in full from the resolved record (not re-narrow to one subfield).
+    const source = {
+      id: 'abc',
+      fieldData: {
+        name: 'Full Name',
+        image: { fileId: 'f1', url: 'https://cdn/x.png', alt: 'new alt' },
+      },
+    };
+    const shape = { fieldData: { image: { fileId: 'f1', url: 'https://cdn/x.png', alt: 'new alt' } } };
+    expect(pickByShape(source, shape)).toEqual({
+      fieldData: { image: { fileId: 'f1', url: 'https://cdn/x.png', alt: 'new alt' } },
+    });
   });
 });

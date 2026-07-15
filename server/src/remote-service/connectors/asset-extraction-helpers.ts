@@ -1,7 +1,7 @@
 import {
   AssetFieldOptions,
   AssetTableOptions,
-  X_SCRATCH_ASSET_FIELD,
+  getAssetFieldOptions,
   X_SCRATCH_ASSET_TABLE,
 } from '@spinner/shared-types';
 import { createHash } from 'crypto';
@@ -142,7 +142,7 @@ export function extractFromAnnotatedSchema(
     if (!fieldSchema || typeof fieldSchema !== 'object') continue;
     const schema = fieldSchema as Record<string, unknown>;
 
-    const assetOpts = findAssetFieldOptions(schema);
+    const assetOpts = getAssetFieldOptions(schema);
     if (!assetOpts) continue;
 
     const value = options.resolveFieldValue(input.recordContent, fieldName, input.schema);
@@ -252,24 +252,6 @@ function getSchemaProperties(schema: Record<string, unknown>): {
   }
 
   return { fieldEntries: result, topLevelFields };
-}
-
-function findAssetFieldOptions(schema: Record<string, unknown>): AssetFieldOptions | null {
-  if (schema[X_SCRATCH_ASSET_FIELD]) return schema[X_SCRATCH_ASSET_FIELD] as AssetFieldOptions;
-
-  const items = schema['items'] as Record<string, unknown> | undefined;
-  if (items?.[X_SCRATCH_ASSET_FIELD]) return items[X_SCRATCH_ASSET_FIELD] as AssetFieldOptions;
-
-  for (const key of ['anyOf', 'oneOf']) {
-    const variants = schema[key] as Record<string, unknown>[] | undefined;
-    if (variants) {
-      for (const v of variants) {
-        if (v[X_SCRATCH_ASSET_FIELD]) return v[X_SCRATCH_ASSET_FIELD] as AssetFieldOptions;
-      }
-    }
-  }
-
-  return null;
 }
 
 /**

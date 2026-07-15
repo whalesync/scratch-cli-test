@@ -1,4 +1,5 @@
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_ASSET_FIELD } from '@spinner/shared-types';
 import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
 import { WebflowConnector } from '../webflow-connector';
 
@@ -155,6 +156,29 @@ describe('WebflowConnector.updateRecords', () => {
     expect(mockUpdateItemsLive).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
       items: [{ id: 'item1', fieldData: { name: 'New Name' } }],
+    });
+  });
+
+  it('should send the full asset object for an alt-only image edit (DEV-10755)', async () => {
+    // An image field is atomic: Webflow rejects a partial `{ alt }` with no url/fileId.
+    // The publish diff now re-expands a changed subfield to the whole object, so the
+    // connector receives — and must forward — the full `{ fileId, url, alt }` value.
+    const imageTableSpec = buildTableSpec({
+      name: Type.String({ description: 'Name' }),
+      image: Type.Object(
+        { fileId: Type.String(), url: Type.String(), alt: Type.String() },
+        { description: 'Image', [X_SCRATCH_ASSET_FIELD]: { idPath: 'fileId', urlExpires: false } },
+      ),
+    });
+    const fullImage = { fileId: 'file123', url: 'https://cdn/x.png', alt: 'new alt' };
+    const files: ConnectorFile[] = [{ id: 'item1', fieldData: { name: 'Same', image: fullImage } } as ConnectorFile];
+    const changedFields: (Record<string, unknown> | undefined)[] = [{ fieldData: { image: fullImage } }];
+
+    await connector.updateRecords(imageTableSpec, files, changedFields);
+
+    expect(mockUpdateItemsLive).toHaveBeenCalledWith('col1', {
+      skipInvalidFiles: false,
+      items: [{ id: 'item1', fieldData: { image: fullImage } }],
     });
   });
 
