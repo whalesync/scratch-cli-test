@@ -79,7 +79,7 @@ describe('WebflowApiClient', () => {
       expect(mockGet).toHaveBeenCalledWith('/collections/c1/items', { params: { offset: 100, limit: 100 } });
     });
 
-    it('listCollectionItems with lastUpdatedSince → adds the lastUpdated[gte] filter + ascending lastUpdated sort', async () => {
+    it('listCollectionItems with lastUpdatedSince → adds the lastUpdated[gte] filter + descending lastUpdated sort (DEV-10791)', async () => {
       mockGet.mockResolvedValue({ data: { items: [], pagination: { total: 0, offset: 0, limit: 100 } } });
       await client.listCollectionItems('c1', { offset: 0, limit: 100, lastUpdatedSince: '2026-05-14T11:59:00.000Z' });
       expect(mockGet).toHaveBeenCalledWith('/collections/c1/items', {
@@ -88,7 +88,7 @@ describe('WebflowApiClient', () => {
           limit: 100,
           'lastUpdated[gte]': '2026-05-14T11:59:00.000Z',
           sortBy: 'lastUpdated',
-          sortOrder: 'asc',
+          sortOrder: 'desc',
         },
       });
     });

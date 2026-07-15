@@ -181,10 +181,20 @@ export class WebflowApiClient {
    * `lastUpdatedSince` (incremental pull) is an ISO-8601 UTC timestamp; when
    * present it becomes Webflow's v2 `lastUpdated[gte]` range filter (items
    * updated on-or-after the watermark), and the page is additionally sorted by
-   * `lastUpdated` ascending so that, under offset pagination, an item updated
-   * mid-pull migrates to the tail — at worst re-pulled on the next page, never
-   * skipped. Full pulls pass it `undefined` and the request is byte-identical to
-   * the pre-incremental call (offset + limit only).
+   * `lastUpdated` **descending** (DEV-10791). Offset pagination over a list keyed
+   * on a field that mutates mid-pull only stays correct if every mid-pull edit
+   * shifts items *toward* already-read offsets: sorting descending sends a
+   * re-saved item (its `lastUpdated` jumps to "now") to the head, so the only
+   * items that can cross the page boundary into read territory — and thus be
+   * skipped — are ones that were themselves just modified, which the next
+   * incremental run re-pulls (their `lastUpdated` is ≥ the next watermark).
+   * Neighbors shifted the other way are at worst re-read, which is harmless
+   * because pull commits are idempotent. An ascending sort has the opposite,
+   * unsafe effect: a re-saved item migrates to the tail, compacting the list so
+   * an *unmodified* neighbor straddling the boundary slides into read territory
+   * and is skipped permanently (its `lastUpdated` never re-enters a future
+   * `lastUpdated[gte]` window). Full pulls pass it `undefined` and the request is
+   * byte-identical to the pre-incremental call (offset + limit only).
    *
    * `cmsLocaleId` (DEV-10529) targets a single secondary locale; the returned
    * items carry that locale's localized field values (and that `cmsLocaleId`),
@@ -203,7 +213,7 @@ export class WebflowApiClient {
     if (lastUpdatedSince !== undefined) {
       query['lastUpdated[gte]'] = lastUpdatedSince;
       query.sortBy = 'lastUpdated';
-      query.sortOrder = 'asc';
+      query.sortOrder = 'desc';
     }
     const response = await this.withRetry(() =>
       this.http.get<CollectionItemList>(`/collections/${encodeURIComponent(collectionId)}/items`, { params: query }),
