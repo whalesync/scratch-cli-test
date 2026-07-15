@@ -49,22 +49,28 @@ function isGoHighLevelRateLimitError(error: unknown): boolean {
 }
 
 /**
- * Retry policy for the rate limiter. Retries two DISTINCT, independently-scoped
+ * Retry policy for the rate limiter. Retries three DISTINCT, independently-scoped
  * failures:
  *  - HTTP 429 rate-limiting (honoring a `Retry-After` header when present, else
  *    the limiter's exponential backoff). HighLevel's burst limit is 100 req/10s
  *    per app per location.
  *  - HighLevel's own TRANSIENT search-index errors — a narrowly-scoped 400 from
  *    `POST /contacts/search` (see {@link isTransientGoHighLevelSearchError}).
+ *  - HighLevel's own TRANSIENT server-side gateway timeouts — a narrowly-scoped
+ *    400 whose body reads `"Request Timeout after <N>ms"`
+ *    (see {@link isTransientGoHighLevelTimeoutError}).
  *
- * The two are kept as SEPARATE predicates on purpose: widening the transient-
- * search case never loosens what counts as rate-limited, and genuine 4xx
- * validation errors still surface immediately. `getRetryAfterS` stays 429-only —
- * the wrapped transient 400 is a {@link GoHighLevelError}, not an AxiosError, so
- * it returns undefined and the retry falls back to exponential backoff.
+ * The three are kept as SEPARATE predicates on purpose: widening any one
+ * transient case never loosens the others, and genuine 4xx validation errors
+ * still surface immediately. `getRetryAfterS` stays 429-only — the wrapped
+ * transient 400s are {@link GoHighLevelError}s, not AxiosErrors, so it returns
+ * undefined and the retry falls back to exponential backoff.
  */
 export const GOHIGHLEVEL_RETRY_OPTS: WithRetryOpts = {
-  isRateLimited: (error) => isGoHighLevelRateLimitError(error) || isTransientGoHighLevelSearchError(error),
+  isRateLimited: (error) =>
+    isGoHighLevelRateLimitError(error) ||
+    isTransientGoHighLevelSearchError(error) ||
+    isTransientGoHighLevelTimeoutError(error),
   getRetryAfterS: (error) => {
     if (!axios.isAxiosError(error)) return undefined;
     const header: unknown = error.response?.headers?.['retry-after'];
@@ -147,6 +153,44 @@ export function isTransientGoHighLevelSearchError(error: unknown): boolean {
   if (axios.isAxiosError(error)) {
     const response = error.response;
     return response?.status === 400 && isTransientSearchMessage(readBodyMessage(response.data, error.message));
+  }
+  return false;
+}
+
+/**
+ * True when an error is HighLevel's own TRANSIENT server-side gateway timeout: a
+ * 400 whose body message reads `"Request Timeout after <N>ms"` (a HighLevel
+ * gateway that gave up waiting on its own backend and returned the timeout to us
+ * wrapped as a `400 Bad Request` carrying a `traceId`). It is not our request
+ * that is malformed — the identical request a moment later succeeds — so it is
+ * safe to retry, unlike a request-validation 400 (a bad field) or the
+ * "Contact not found for id" absence signal (see {@link isGoHighLevelNotFoundError}),
+ * which are deterministic and must surface. Scoped narrowly to that exact body
+ * signature so genuine bad requests still throw.
+ *
+ * Observed repeatedly on `GET /contacts/` from {@link GoHighLevelApiClient.validateCredentials}
+ * during the live post-deploy `testConnection` check, but the predicate is
+ * endpoint-agnostic on purpose — the same server-side timeout can strike any
+ * HighLevel endpoint, and retrying hardens real pulls too. Kept SEPARATE from
+ * {@link isTransientGoHighLevelSearchError} and the 429 predicate so widening one
+ * transient case never loosens the others.
+ *
+ * (Non-429 HTTP errors reach here wrapped as a {@link GoHighLevelError} by the
+ * response interceptor; the raw AxiosError branch is a defensive fallback.)
+ */
+export function isTransientGoHighLevelTimeoutError(error: unknown): boolean {
+  const readBodyMessage = (data: unknown, fallbackMessage: string): string =>
+    typeof data === 'object' && data !== null && 'message' in data && typeof data.message === 'string'
+      ? data.message
+      : fallbackMessage;
+  const isTransientTimeoutMessage = (message: string): boolean => /request timeout after \d+ms/i.test(message);
+
+  if (error instanceof GoHighLevelError) {
+    return error.statusCode === 400 && isTransientTimeoutMessage(readBodyMessage(error.responseData, error.message));
+  }
+  if (axios.isAxiosError(error)) {
+    const response = error.response;
+    return response?.status === 400 && isTransientTimeoutMessage(readBodyMessage(response.data, error.message));
   }
   return false;
 }

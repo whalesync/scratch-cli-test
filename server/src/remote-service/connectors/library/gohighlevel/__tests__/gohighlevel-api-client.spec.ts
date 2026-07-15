@@ -5,6 +5,7 @@ import {
   GoHighLevelError,
   isGoHighLevelNotFoundError,
   isTransientGoHighLevelSearchError,
+  isTransientGoHighLevelTimeoutError,
 } from '../gohighlevel-api-client';
 
 describe('isGoHighLevelNotFoundError', () => {
@@ -107,6 +108,69 @@ describe('isTransientGoHighLevelSearchError', () => {
   });
 });
 
+describe('isTransientGoHighLevelTimeoutError', () => {
+  it("treats HighLevel's transient server-side gateway timeout 400 as retryable", () => {
+    const error = new GoHighLevelError('HighLevel GET /contacts/ failed (400)', 400, {
+      message: 'Request Timeout after 30000ms',
+      error: 'Bad Request',
+      statusCode: 400,
+      traceId: 'ccca65c3-14e7-4130-9e27-0d867c62953e',
+    });
+    expect(isTransientGoHighLevelTimeoutError(error)).toBe(true);
+  });
+
+  it('matches the timeout message regardless of the millisecond value', () => {
+    expect(
+      isTransientGoHighLevelTimeoutError(
+        new GoHighLevelError('timeout', 400, { message: 'Request Timeout after 15000ms' }),
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT treat a genuine 400 validation error as transient (real bad requests still surface)', () => {
+    const error = new GoHighLevelError('HighLevel POST /contacts failed (400)', 400, {
+      message: 'phone is invalid',
+      error: 'Bad Request',
+    });
+    expect(isTransientGoHighLevelTimeoutError(error)).toBe(false);
+  });
+
+  it('does NOT treat the transient search 400 as a timeout (predicates stay disjoint)', () => {
+    const error = new GoHighLevelError('HighLevel POST /contacts/search failed (400)', 400, {
+      message: 'Error occurred while searching for contact',
+    });
+    expect(isTransientGoHighLevelTimeoutError(error)).toBe(false);
+  });
+
+  it('is strictly a 400 signature — same message on another status is not transient', () => {
+    const timeoutMessage = { message: 'Request Timeout after 30000ms' };
+    expect(isTransientGoHighLevelTimeoutError(new GoHighLevelError('gateway timeout', 504, timeoutMessage))).toBe(
+      false,
+    );
+    expect(isTransientGoHighLevelTimeoutError(new GoHighLevelError('rate limited', 429, timeoutMessage))).toBe(false);
+    expect(isTransientGoHighLevelTimeoutError(new GoHighLevelError('server error', 500, timeoutMessage))).toBe(false);
+  });
+
+  it('handles a raw AxiosError 400 defensively (interceptor bypassed)', () => {
+    const axiosError = Object.assign(new AxiosError('Request failed with status code 400'), {
+      response: {
+        status: 400,
+        data: { message: 'Request Timeout after 30000ms', error: 'Bad Request', traceId: 'x' },
+        statusText: 'Bad Request',
+        headers: {},
+        config: {},
+      },
+    });
+    expect(isTransientGoHighLevelTimeoutError(axiosError)).toBe(true);
+  });
+
+  it('returns false for non-error inputs (even when they contain the message text)', () => {
+    expect(isTransientGoHighLevelTimeoutError(null)).toBe(false);
+    expect(isTransientGoHighLevelTimeoutError('Request Timeout after 30000ms')).toBe(false);
+    expect(isTransientGoHighLevelTimeoutError(new Error('Request Timeout after 30000ms'))).toBe(false);
+  });
+});
+
 describe('GOHIGHLEVEL_RETRY_OPTS retry policy', () => {
   // Small delay so the retry backoff doesn't slow the unit test.
   const FAST_RETRY = { ...GOHIGHLEVEL_RETRY_OPTS, initialRetryDelayMs: 1, maxRetries: 3 };
@@ -117,6 +181,19 @@ describe('GOHIGHLEVEL_RETRY_OPTS retry policy', () => {
       message: 'Error occurred while searching for contact',
       name: 'HttpException',
       traceId: '4f8b91c1-90a0-4a0a-884d-bfd93dd65c54',
+    });
+    const fn = jest.fn().mockRejectedValueOnce(transient).mockResolvedValueOnce('ok');
+
+    await expect(withRetry(fn, FAST_RETRY)).resolves.toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries HighLevel's transient server-side timeout 400 and recovers when it clears", async () => {
+    const transient = new GoHighLevelError('HighLevel GET /contacts/ failed (400)', 400, {
+      message: 'Request Timeout after 30000ms',
+      error: 'Bad Request',
+      statusCode: 400,
+      traceId: 'ccca65c3-14e7-4130-9e27-0d867c62953e',
     });
     const fn = jest.fn().mockRejectedValueOnce(transient).mockResolvedValueOnce('ok');
 
