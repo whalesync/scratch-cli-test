@@ -243,7 +243,7 @@ export const SHOPIFY_FIELD_FILTERS: FieldFilterConfig = {
 
 export const SHOPIFY_INTERFACE_IMPLEMENTATIONS: Record<string, string[]> = {
   Media: ["MediaImage", "Video", "ExternalVideo", "Model3d"],
-  File: ["GenericFile", "MediaImage", "Video", "ExternalVideo"],
+  File: ["GenericFile", "MediaImage", "Video", "ExternalVideo", "Model3d"],
   Node: [],
   MetafieldReference: [],
   PurchasingEntity: ["Customer", "Company", "PurchasingCompany"],
