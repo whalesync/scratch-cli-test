@@ -1,4 +1,6 @@
+import { TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
+import { extractSchemaFields } from 'src/utils/schema-helpers';
 import { findLastModifiedFieldName } from '../../../types';
 import { HubspotApiClient } from '../hubspot-api-client';
 import { buildHubspotJsonTableSpec, resolveHubspotLastModifiedPropertyName } from '../hubspot-json-schema';
@@ -77,6 +79,57 @@ describe('buildHubspotJsonTableSpec last-modified annotation', () => {
 
     expect(lastModifiedAnnotation(spec, 'name')).toBeUndefined();
     expect(findLastModifiedFieldName(spec)).toBeUndefined();
+  });
+});
+
+describe('buildHubspotJsonTableSpec datetime format annotation', () => {
+  const id = { wsId: 'deals', remoteId: ['deals'] };
+
+  /**
+   * The `format` the generic flattener reads for a field — the exact path the
+   * schema-builder consumes to decide a date vs datetime destination column.
+   */
+  function fieldFormat(spec: { schema: unknown }, fieldPath: string): string | undefined {
+    return extractSchemaFields(spec.schema as TSchema).find((field) => field.path === fieldPath)?.format;
+  }
+
+  it('annotates datetime properties with format date-time and leaves date/other properties alone', async () => {
+    const datetimeProp: HubspotProperty = { ...property('closedate'), type: 'datetime', fieldType: 'date' };
+    const dateProp: HubspotProperty = { ...property('pilot_start_date'), type: 'date', fieldType: 'date' };
+
+    const { spec } = await buildHubspotJsonTableSpec(
+      id,
+      'deals',
+      fakeClient([datetimeProp, dateProp, property('dealname')]),
+    );
+
+    expect(fieldFormat(spec, 'properties.closedate')).toBe('date-time');
+    expect(fieldFormat(spec, 'properties.pilot_start_date')).toBeUndefined();
+    expect(fieldFormat(spec, 'properties.dealname')).toBeUndefined();
+    // The record-level createdAt/updatedAt timestamps are full datetimes too.
+    expect(fieldFormat(spec, 'createdAt')).toBe('date-time');
+    expect(fieldFormat(spec, 'updatedAt')).toBe('date-time');
+  });
+
+  it('admits the empty-string sentinel HubSpot returns for an unset datetime property', async () => {
+    const datetimeProp: HubspotProperty = {
+      ...property('notes_next_activity_date'),
+      type: 'datetime',
+      fieldType: 'date',
+    };
+
+    const { spec } = await buildHubspotJsonTableSpec(id, 'deals', fakeClient([datetimeProp]));
+
+    // HubSpot returns `""` (not `null`) for an unset datetime property, and an empty
+    // string fails the `date-time` format check — the union must carry an explicit
+    // empty-string variant so verbatim records pass enforce_schema. Round-trip
+    // through JSON to check the serialized shape (what lands in schema.json on disk),
+    // stripping TypeBox's symbol keys.
+    const serializedSchema = JSON.parse(JSON.stringify(spec.schema)) as {
+      properties: { properties: { properties: Record<string, { anyOf: Record<string, unknown>[] }> } };
+    };
+    const datetimeUnionVariants = serializedSchema.properties.properties.properties['notes_next_activity_date'].anyOf;
+    expect(datetimeUnionVariants).toContainEqual({ const: '', type: 'string' });
   });
 });
 

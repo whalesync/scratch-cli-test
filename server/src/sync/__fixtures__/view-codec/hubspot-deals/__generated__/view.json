@@ -772,12 +772,14 @@
       "kind": "col",
       "path": "createdAt",
       "name": "Created At",
+      "type": "date",
       "readonly": true
     },
     {
       "kind": "col",
       "path": "updatedAt",
       "name": "Updated At",
+      "type": "date",
       "readonly": true
     },
     {

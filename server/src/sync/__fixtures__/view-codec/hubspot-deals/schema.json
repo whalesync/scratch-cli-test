@@ -202,6 +202,11 @@
             "x-scratch-connector-data-type": "hubspot/datetime_date",
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -228,6 +233,11 @@
             "x-scratch-connector-data-type": "hubspot/datetime_date",
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -321,6 +331,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -552,6 +567,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -939,6 +959,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -967,6 +992,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -996,6 +1026,11 @@
             "x-scratch-last-modified-field": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -1093,6 +1128,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -1396,6 +1436,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -1410,6 +1455,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -1438,6 +1488,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -1518,6 +1573,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -1532,6 +1592,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -1546,6 +1611,11 @@
             "x-scratch-readonly": true,
             "anyOf": [
               {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "const": "",
                 "type": "string"
               },
               {
@@ -1691,12 +1761,14 @@
       "createdAt": {
         "x-scratch-readonly": true,
         "description": "Created timestamp",
-        "type": "string"
+        "type": "string",
+        "format": "date-time"
       },
       "updatedAt": {
         "x-scratch-readonly": true,
         "description": "Updated timestamp",
-        "type": "string"
+        "type": "string",
+        "format": "date-time"
       },
       "archived": {
         "x-scratch-readonly": true,

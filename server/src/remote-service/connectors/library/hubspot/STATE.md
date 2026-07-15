@@ -100,7 +100,7 @@ Entities that can't be a standalone Scratch table, for either reason: **(i) scop
 | text | ⬜ | ⬜ | ⬜ | |
 | number | ⬜ | ⬜ | ⬜ | |
 | boolean | ⬜ | ⬜ | ⬜ | |
-| date / datetime | ⬜ | ⬜ | ⬜ | tz handling? |
+| date / datetime | ⬜ | ⬜ | ⬜ | `datetime` props + record `createdAt`/`updatedAt` are annotated `format: 'date-time'` (full ISO); `date` props stay date-only (DEV-10788). Unset datetimes come back as `""` (not `null`) — the schema admits the empty-string sentinel verbatim so enforce_schema doesn't flag it. |
 | single-select | ⬜ | ⬜ | ⬜ | id vs label? |
 | multi-select | ⬜ | ⬜ | ⬜ | |
 | relation / FK | ⬜ | ⬜ | ⬜ | linkedTableId? |

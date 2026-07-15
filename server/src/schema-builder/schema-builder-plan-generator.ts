@@ -501,7 +501,7 @@ export function inferLogicalFieldType(field: SchemaField, viewType?: TableProper
       case 'number':
         return { status: 'mapped', fieldType: { kind: 'number' } };
       case 'date':
-        return { status: 'mapped', fieldType: { kind: 'date' } };
+        return { status: 'mapped', fieldType: dateCreateFieldType(field) };
       case 'url':
         return { status: 'mapped', fieldType: { kind: 'url' } };
       case 'richtext':
@@ -543,6 +543,22 @@ export function inferLogicalFieldType(field: SchemaField, viewType?: TableProper
         message: `unrecognized source type "${field.type}"; created as plain text`,
       };
   }
+}
+
+/**
+ * Build a `date` create field, preserving time-of-day when the source is a datetime.
+ *
+ * The three source connectors that flatten datetimes to the coarse `'date'` display
+ * hint (Webflow `published-on`, Shopify `createdAt`, HubSpot `closedate`) still emit
+ * the JSON-Schema `format: 'date-time'` annotation on the value — the generic signal
+ * that it carries a wall-clock time. We promote those to `includesTime: true` so the
+ * destination gets a real datetime column (Airtable `dateTime` / Postgres
+ * `timestamptz`) instead of dropping the time-of-day for the life of the export
+ * (DEV-10788). A `format: 'date'` (or no format) value is a plain calendar date and
+ * stays date-only.
+ */
+function dateCreateFieldType(field: SchemaField): CreateFieldType {
+  return field.format === 'date-time' ? { kind: 'date', includesTime: true } : { kind: 'date' };
 }
 
 /** Resolve a source foreignKey's linked table to a create-side target, or null if unresolvable. */

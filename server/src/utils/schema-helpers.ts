@@ -88,6 +88,13 @@ export function extractSchemaPaths(schema: TSchema, parentPath = ''): string[] {
 export interface SchemaField {
   path: string;
   type: string;
+  /**
+   * The JSON-Schema `format` annotation on this field's (non-null) value, when the
+   * connector emits one — e.g. `'date-time'` for a wall-clock timestamp vs `'date'`
+   * for a plain calendar date. Lets a downstream consumer tell a datetime apart from
+   * a date-only value even though both share the coarse `'date'` display hint.
+   */
+  format?: string;
   displayLabel?: string;
   description?: string;
   remoteFieldId?: string;
@@ -111,6 +118,27 @@ function resolveSchemaType(schema: TSchema): string {
     if (real.length >= 1) return resolveSchemaType(real[0]);
   }
   return 'unknown';
+}
+
+/**
+ * Resolves the string `format` annotation from a JSON Schema, unwrapping anyOf/oneOf
+ * unions to find the format on the real (non-null) variant. Checks the node itself
+ * first — plain non-union strings carry `format` directly (HubSpot `createdAt`,
+ * Airtable `createdTime`) — then each non-null variant (Webflow/Shopify/HubSpot put
+ * it on the inner `String` of a nullable union). Returns undefined when no variant
+ * declares a format.
+ */
+function resolveSchemaFormat(schema: TSchema): string | undefined {
+  if (typeof schema.format === 'string') return schema.format;
+  const variants = (schema.anyOf || schema.oneOf) as TSchema[] | undefined;
+  if (variants) {
+    for (const variant of variants) {
+      if (variant.type === 'null') continue;
+      const found = resolveSchemaFormat(variant);
+      if (found) return found;
+    }
+  }
+  return undefined;
 }
 
 /** The child schema at `key` under an object node, unwrapping nullable anyOf/oneOf unions to find `.properties`. */
@@ -159,6 +187,8 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
   // Base Path (if meaningful)
   if (parentPath) {
     const field: SchemaField = { path: parentPath, type: resolveSchemaType(schema) };
+    const format = resolveSchemaFormat(schema);
+    if (format) field.format = format;
     if (schema.description) field.description = schema.description;
     const remoteFieldId = schema[X_SCRATCH_REMOTE_FIELD_ID] as string | undefined;
     if (remoteFieldId) field.remoteFieldId = remoteFieldId;

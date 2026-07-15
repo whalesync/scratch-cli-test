@@ -53,6 +53,20 @@ describe('inferLogicalFieldType', () => {
     });
   });
 
+  it('preserves time-of-day for a datetime source field (format: date-time)', () => {
+    // DEV-10788: a datetime source (Webflow published-on, Shopify createdAt, HubSpot
+    // closedate) carries the coarse 'date' view hint but a `format: 'date-time'`
+    // annotation — promote it to a real datetime so the destination keeps the time.
+    expect(inferLogicalFieldType(field({ path: 'dt', type: 'string', format: 'date-time' }), 'date').fieldType).toEqual(
+      { kind: 'date', includesTime: true },
+    );
+    // A plain calendar date (format: 'date', or no format) stays date-only.
+    expect(inferLogicalFieldType(field({ path: 'd0', type: 'string', format: 'date' }), 'date').fieldType).toEqual({
+      kind: 'date',
+    });
+    expect(inferLogicalFieldType(field({ path: 'd1', type: 'string' }), 'date').fieldType).toEqual({ kind: 'date' });
+  });
+
   it('prefers a TablePropertyType view hint when present', () => {
     expect(inferLogicalFieldType(field({ path: 'd', type: 'string' }), 'date').fieldType).toEqual({ kind: 'date' });
     expect(inferLogicalFieldType(field({ path: 'u', type: 'string' }), 'url').fieldType).toEqual({ kind: 'url' });

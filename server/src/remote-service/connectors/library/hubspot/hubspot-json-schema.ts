@@ -39,6 +39,19 @@ export function hubspotPropertyToJsonSchema(property: HubspotProperty, isLastMod
     annotations[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
   }
 
+  // HubSpot `datetime` properties return a full ISO-8601 timestamp (e.g.
+  // `2024-10-22T21:10:42.633Z`), so annotate the string value's `format` to describe
+  // it faithfully. This is the generic signal downstream consumers use to keep the
+  // time-of-day (e.g. the schema-builder creates a real datetime column instead of
+  // dropping the time — DEV-10788). `date` properties stay a plain calendar date.
+  // HubSpot also returns `""` (not `null`) for an UNSET datetime property, and an
+  // empty string fails enforce_schema's `date-time` format check — admit the empty
+  // string verbatim alongside (mirroring Pipedrive's empty-date sentinels) so unset
+  // datetimes on verbatim records don't flood validation with false positives.
+  if (property.type === 'datetime') {
+    return Type.Union([Type.String({ format: 'date-time' }), Type.Literal(''), Type.Null()], annotations);
+  }
+
   return Type.Union([Type.String(), Type.Null()], annotations);
 }
 
@@ -147,8 +160,10 @@ export async function buildHubspotJsonTableSpec(
   const topLevelProperties: Record<string, TSchema> = {
     id: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Record ID' }),
     properties: Type.Object(propertiesSchema, { description: 'HubSpot properties' }),
-    createdAt: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Created timestamp' }),
-    updatedAt: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Updated timestamp' }),
+    // createdAt/updatedAt are full ISO-8601 datetimes — annotate `format` so they are
+    // recognized as datetimes (real datetime destination column) and not date-only.
+    createdAt: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Created timestamp', format: 'date-time' }),
+    updatedAt: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Updated timestamp', format: 'date-time' }),
     archived: Type.Boolean({ [X_SCRATCH_READONLY]: true, description: 'Whether the record is archived' }),
   };
 

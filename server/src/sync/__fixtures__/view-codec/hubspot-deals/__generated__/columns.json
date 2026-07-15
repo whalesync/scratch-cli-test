@@ -327,7 +327,7 @@
     "column": "Created At",
     "columnId": "createdAt",
     "cardinality": "single",
-    "logicalType": "string",
+    "logicalType": "date",
     "primitiveType": "string",
     "toCore": null,
     "fromCore": null
@@ -336,7 +336,7 @@
     "column": "Updated At",
     "columnId": "updatedAt",
     "cardinality": "single",
-    "logicalType": "string",
+    "logicalType": "date",
     "primitiveType": "string",
     "toCore": null,
     "fromCore": null

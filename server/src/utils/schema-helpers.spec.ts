@@ -150,6 +150,23 @@ describe('schema-helpers', () => {
         expect(nameField?.description).toBe('The user name');
       });
 
+      it('should extract the string format annotation, unwrapping a nullable union', () => {
+        const schema = Type.Object({
+          // Webflow/Shopify/HubSpot put `format` on the inner String of a nullable union.
+          publishedAt: Type.Union([Type.String({ format: 'date-time' }), Type.Null()]),
+          // No connector annotates the union wrapper itself today, but tolerate it anyway.
+          closeDate: Type.Union([Type.String(), Type.Null()], { format: 'date-time' }),
+          birthday: Type.String({ format: 'date' }),
+          plain: Type.String(),
+        });
+
+        const fields = extractSchemaFields(schema);
+        expect(fields.find((f) => f.path === 'publishedAt')?.format).toBe('date-time');
+        expect(fields.find((f) => f.path === 'closeDate')?.format).toBe('date-time');
+        expect(fields.find((f) => f.path === 'birthday')?.format).toBe('date');
+        expect(fields.find((f) => f.path === 'plain')?.format).toBeUndefined();
+      });
+
       it('should extract remoteFieldId', () => {
         const schema = Type.Object({
           title: Type.String({ [X_SCRATCH_REMOTE_FIELD_ID]: 'fld123abc' }),
