@@ -263,9 +263,17 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
  * Resolution order:
  *  1. Exact remote-field-id match when the created field's remote id is known (a
  *     field addition carries `resolved.remoteFieldId`) — unambiguous.
- *  2. Otherwise match by last path segment / display label, preferring a real
+ *  2. Otherwise match by full field name / display label, preferring a real
  *     writable column (one carrying a remote field id, and not readonly) over an
- *     envelope meta field that shares the leaf name.
+ *     envelope meta field that shares the name.
+ *
+ * The name match compares against the field's WHOLE trailing name — the full path
+ * (a flat schema, e.g. Supabase) or the segment after the wrapper prefix (an Airtable
+ * `fields.<name>` column) — NOT `path.split('.').pop()`. A destination field name that
+ * itself contains a `.` (`"No. of Employees"`, `"Est. Close Date"`) has more than one
+ * dot-segment; taking only the last segment mangles the leaf and the created placeholder
+ * field — which carries no `remoteFieldId` to fall back on — never resolves, hard-failing
+ * apply with SYNC_DRAFT_FIELD_RESOLUTION_FAILED.
  */
 export function findCreatedDestinationField(
   destinationFields: SchemaField[],
@@ -275,17 +283,20 @@ export function findCreatedDestinationField(
     const exactRemoteFieldIdMatch = destinationFields.find((field) => field.remoteFieldId === target.remoteFieldId);
     if (exactRemoteFieldIdMatch) return exactRemoteFieldIdMatch;
   }
-  const fieldsMatchingByLeafNameOrLabel = destinationFields.filter(
-    (field) => field.path.split('.').pop() === target.fieldName || field.displayLabel === target.fieldName,
+  const fieldsMatchingByNameOrLabel = destinationFields.filter(
+    (field) =>
+      field.path === target.fieldName ||
+      field.path.endsWith(`.${target.fieldName}`) ||
+      field.displayLabel === target.fieldName,
   );
-  if (fieldsMatchingByLeafNameOrLabel.length <= 1) return fieldsMatchingByLeafNameOrLabel[0];
-  // Ambiguous leaf name (record-envelope meta vs a real column): prefer the real
+  if (fieldsMatchingByNameOrLabel.length <= 1) return fieldsMatchingByNameOrLabel[0];
+  // Ambiguous name (record-envelope meta vs a real column): prefer the real
   // writable column. A genuine connector column carries a remote field id and is
   // not readonly; the top-level `id`/`fields`/`createdTime` meta carry neither.
   return (
-    fieldsMatchingByLeafNameOrLabel.find((field) => field.remoteFieldId !== undefined && !field.readonly) ??
-    fieldsMatchingByLeafNameOrLabel.find((field) => field.remoteFieldId !== undefined) ??
-    fieldsMatchingByLeafNameOrLabel.find((field) => !field.readonly) ??
-    fieldsMatchingByLeafNameOrLabel[0]
+    fieldsMatchingByNameOrLabel.find((field) => field.remoteFieldId !== undefined && !field.readonly) ??
+    fieldsMatchingByNameOrLabel.find((field) => field.remoteFieldId !== undefined) ??
+    fieldsMatchingByNameOrLabel.find((field) => !field.readonly) ??
+    fieldsMatchingByNameOrLabel[0]
   );
 }

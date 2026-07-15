@@ -614,5 +614,21 @@ describe('schema-helpers', () => {
 
       expect(findCreatedDestinationField(fields, { fieldName: 'Missing' })).toBeUndefined();
     });
+
+    it('resolves an Airtable `fields.<name>` column whose name contains a dot (DEV-10815)', () => {
+      const fields = extractSchemaFields(airtableRecordFields([{ name: 'No. of Employees', fieldId: 'fldCount' }]));
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'No. of Employees' });
+
+      expect(match?.path).toBe('fields.No. of Employees');
+    });
+
+    it('resolves a flat (Supabase-style) top-level column whose name contains a dot (DEV-10815)', () => {
+      const fields = extractSchemaFields(Type.Object({ 'Est. Close Date': Type.String() }));
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'Est. Close Date' });
+
+      expect(match?.path).toBe('Est. Close Date');
+    });
   });
 });
