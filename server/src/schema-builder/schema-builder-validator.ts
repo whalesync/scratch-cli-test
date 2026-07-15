@@ -68,6 +68,14 @@ export function validateTablesAgainstCapabilities(
       });
     }
 
+    if (capabilities.maxFieldsPerTable !== undefined && table.fields.length > capabilities.maxFieldsPerTable) {
+      issues.push({
+        path: `${tablePath}.fields`,
+        code: 'TOO_MANY_FIELDS',
+        message: `this table has ${table.fields.length} fields, which exceeds the connector's maximum of ${capabilities.maxFieldsPerTable} fields per table`,
+      });
+    }
+
     issues.push(...validateFieldsAgainstCapabilities(table.fields, capabilities, `${tablePath}.fields`));
 
     if (capabilities.primaryField) {

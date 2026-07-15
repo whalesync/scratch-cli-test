@@ -47,6 +47,15 @@ export interface SchemaCreationCapabilities {
   maxTableNameLength?: number;
   maxFieldNameLength?: number;
   /**
+   * The maximum number of fields a single table may contain, when the connector enforces one — e.g.
+   * Airtable rejects a table with more than 500 fields. Counts the plan's FINAL field list (including
+   * injected fields like the primary field and the source-record-id column), which is exactly what the
+   * connector's createTable receives. A plan whose source is too wide (a HubSpot object with 400–600+
+   * properties exported to Airtable) is rejected with a `TOO_MANY_FIELDS` issue rather than failing
+   * opaquely at the remote createTable call. Absent ⇒ no field-count limit.
+   */
+  maxFieldsPerTable?: number;
+  /**
    * Field names the connector RESERVES and will reject at create time — e.g. the Postgres connector
    * injects an auto-generated `id` primary key, so a source field named `id`/`ID` can't be created.
    * The plan generator treats these as already-taken names, so a colliding source field is renamed

@@ -283,6 +283,45 @@ describe('validateTablesAgainstCapabilities', () => {
     const codes = validateTablesAgainstCapabilities(data, capabilities).map((i) => i.code);
     expect(codes).toContain('FIELD_NAME_TOO_LONG');
   });
+
+  it('flags a table with more fields than the connector allows', () => {
+    const capabilitiesWithFieldCap: SchemaCreationCapabilities = { ...capabilities, maxFieldsPerTable: 2 };
+    const data = parse({
+      connectorAccountId: 'c',
+      tables: [
+        {
+          ref: 't1',
+          name: 'T',
+          fields: [
+            { name: 'A', fieldType: { kind: 'text' }, isPrimary: true },
+            { name: 'B', fieldType: { kind: 'text' } },
+            { name: 'C', fieldType: { kind: 'text' } },
+          ],
+        },
+      ],
+    });
+    const codes = validateTablesAgainstCapabilities(data, capabilitiesWithFieldCap).map((i) => i.code);
+    expect(codes).toContain('TOO_MANY_FIELDS');
+  });
+
+  it('does not flag a table exactly at the connector field limit', () => {
+    const capabilitiesWithFieldCap: SchemaCreationCapabilities = { ...capabilities, maxFieldsPerTable: 2 };
+    const data = parse({
+      connectorAccountId: 'c',
+      tables: [
+        {
+          ref: 't1',
+          name: 'T',
+          fields: [
+            { name: 'A', fieldType: { kind: 'text' }, isPrimary: true },
+            { name: 'B', fieldType: { kind: 'text' } },
+          ],
+        },
+      ],
+    });
+    const codes = validateTablesAgainstCapabilities(data, capabilitiesWithFieldCap).map((i) => i.code);
+    expect(codes).not.toContain('TOO_MANY_FIELDS');
+  });
 });
 
 describe('validateNamesAgainstExisting', () => {

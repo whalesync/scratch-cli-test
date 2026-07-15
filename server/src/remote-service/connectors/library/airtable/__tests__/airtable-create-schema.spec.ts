@@ -53,6 +53,10 @@ describe('AIRTABLE_SCHEMA_CREATION_CAPABILITIES', () => {
     expect(AIRTABLE_SCHEMA_CREATION_CAPABILITIES.maxTableNameLength).toBe(255);
     expect(AIRTABLE_SCHEMA_CREATION_CAPABILITIES.maxFieldNameLength).toBe(255);
   });
+
+  it('caps a table at 500 fields (Airtable per-table limit)', () => {
+    expect(AIRTABLE_SCHEMA_CREATION_CAPABILITIES.maxFieldsPerTable).toBe(500);
+  });
 });
 
 describe('buildAirtableCreateField', () => {

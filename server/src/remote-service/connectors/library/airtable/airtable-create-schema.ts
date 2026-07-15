@@ -32,6 +32,9 @@ import {
 /** Airtable's table- and field-name length limit. */
 export const AIRTABLE_MAX_NAME_LENGTH = 255;
 
+/** Airtable's per-table field limit (all plans, incl. Free). A wider source is rejected before createTable. */
+export const AIRTABLE_MAX_FIELDS_PER_TABLE = 500;
+
 /** Airtable number/currency `precision` is constrained to 0–8. */
 export const AIRTABLE_MAX_NUMBER_PRECISION = 8;
 
@@ -104,6 +107,7 @@ export const AIRTABLE_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities =
   },
   maxTableNameLength: AIRTABLE_MAX_NAME_LENGTH,
   maxFieldNameLength: AIRTABLE_MAX_NAME_LENGTH,
+  maxFieldsPerTable: AIRTABLE_MAX_FIELDS_PER_TABLE,
 };
 
 /**
