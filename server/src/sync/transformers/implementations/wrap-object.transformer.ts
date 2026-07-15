@@ -46,7 +46,9 @@ export const wrapObjectTransformer: FieldTransformer = {
     // rich_text `{ rich_text: [] }` — so syncing an empty value clears the destination instead
     // of wrapping "" into the envelope (which a service like Notion rejects). Without an
     // emptyTemplate we fall back to `null`, which the write path drops (field left unchanged).
-    // `undefined` never reaches here — transformRecordAsync skips an undefined source field.
+    // `undefined` never reaches here — transformRecordAsync maps a cleared (absent) source
+    // field to `null` before running the pipeline, and skips it entirely when the
+    // destination has no value to clear.
     if (sourceValue === null || sourceValue === undefined || sourceValue === '') {
       return { success: true, value: emptyTemplate ? applyTemplate(emptyTemplate, null) : null };
     }

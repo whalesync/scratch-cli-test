@@ -60,10 +60,41 @@ export async function transformRecordAsync(
   const phaseFilteredMappings = columnMappings.filter((mapping) => getColumnMappingPhase(mapping) === phase);
 
   for (const mapping of phaseFilteredMappings) {
-    const sourceValue = get(sourceRecord.fields, mapping.sourceColumnId);
+    let sourceValue = get(sourceRecord.fields, mapping.sourceColumnId);
 
     if (sourceValue === undefined) {
-      continue;
+      // The source field is absent/cleared. Some connectors represent a cleared
+      // value by omitting the key entirely (e.g. Notion drills the destination
+      // path down to `properties.Status.select.name`, which resolves to
+      // `undefined` once the parent `select` is nulled), so an undefined source
+      // value on a *mapped* column means the destination should be cleared too —
+      // the sync owns every mapped column, so "no source value" is a clear, not
+      // "leave as-is".
+      //
+      // This only matters on the update path (`baseFields` present) and only
+      // when the destination currently holds a value: on a create there is
+      // nothing to clear, and emitting a cleared value would add a key the
+      // destination's own pull omits for an empty field.
+      const destinationHoldsValueToClear =
+        baseFields !== undefined && get(baseFields, mapping.destinationColumnId) !== undefined;
+      if (!destinationHoldsValueToClear) {
+        continue;
+      }
+      // Propagate the clear by treating the absent source as an explicit `null`
+      // and falling through to the normal write path — the same route a
+      // connector that returns explicit `null` on clear (e.g. Webflow) already
+      // takes, so both spellings of "cleared" produce identical destination
+      // bytes. A transformer-less mapping writes `null`, which publish
+      // translates into a real clear on the service (removing the JSON key
+      // instead would be ignored by the publish diff — see CONNECTOR_GUIDE,
+      // "Removed keys are not tracked"). A mapping WITH transformers runs its
+      // pipeline on `null` so the clear takes the connector's declared cleared
+      // shape rather than a raw `null` the destination service may reject
+      // (e.g. wrap_object's `emptyTemplate` producing Notion's
+      // `{ type: 'select', select: null }` envelope), and skip-style
+      // transformers keep their skip semantics. Every registered transformer
+      // short-circuits a `null` source, so the pipeline is null-safe here.
+      sourceValue = null;
     }
 
     let transformedValue: unknown = sourceValue;

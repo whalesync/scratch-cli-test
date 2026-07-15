@@ -21,6 +21,7 @@ import { FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.
 // Register transformers used in the tests
 import 'src/sync/transformers/implementations/auto-convert.transformer';
 import 'src/sync/transformers/implementations/source-fk-to-dest-fk.transformer';
+import 'src/sync/transformers/implementations/wrap-object.transformer';
 
 const SOURCE_FOLDER = 'dfd_src1' as DataFolderId;
 const DEST_FOLDER = 'dfd_dest1' as DataFolderId;
@@ -590,6 +591,194 @@ describe('applyColumnMappings', () => {
       expect(Object.keys(v2Result.fields)).toEqual(Object.keys(v1Result.fields));
       expect(v2Result.fields).toEqual(v1Result.fields);
     });
+  });
+});
+
+// ===========================================================================
+// transformRecordAsync — clearing a source field propagates to the destination
+//
+// Regression coverage for DEV-10797: a source field cleared to `undefined`
+// (connectors that drop the key on clear, e.g. Notion's drilled
+// `properties.X.select.name`) must clear the destination on the update path,
+// rather than leaving the stale destination value in place.
+// ===========================================================================
+describe('transformRecordAsync — clearing a source field', () => {
+  const mappings: ColumnMappingV1[] = [
+    { sourceColumnId: 'title', destinationColumnId: 'name' },
+    { sourceColumnId: 'status', destinationColumnId: 'status' },
+  ];
+
+  it('clears the destination (writes null) when the source field is undefined on the update path', async () => {
+    // `status` is absent from the source record (cleared → key dropped).
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { title: 'Hello' } };
+    const baseFields = { name: 'Old Name', status: 'Published' };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      mappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual({ name: 'Hello', status: null });
+  });
+
+  it('clears a drilled destination whose source subpath resolves to undefined (parent nulled)', async () => {
+    // Notion-style: Status was cleared, so `properties.Status.select` is null and
+    // the drilled `properties.Status.select.name` resolves to undefined.
+    const drilledMappings: ColumnMappingV1[] = [
+      { sourceColumnId: 'properties.Status.select.name', destinationColumnId: 'status' },
+    ];
+    const sourceRecord = {
+      id: 'r1',
+      filePath: 'p',
+      fields: { properties: { Status: { select: null } } },
+    };
+    const baseFields = { status: 'In Progress' };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      drilledMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual({ status: null });
+  });
+
+  it('does not add a null key on the create path (no baseFields, nothing to clear)', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { title: 'Hello' } };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      mappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      undefined,
+      SYNC_CONTEXT,
+    );
+
+    // `status` is simply omitted — a create has no stale value to clear.
+    expect(fields).toEqual({ name: 'Hello' });
+  });
+
+  it('does not write when the destination has no existing value to clear', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { title: 'Hello' } };
+    const baseFields = { name: 'Old Name' };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      mappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+    );
+
+    // `status` was never present on the destination; no spurious null is added.
+    expect(fields).toEqual({ name: 'Hello' });
+    expect('status' in fields).toBe(false);
+  });
+
+  it('routes the clear through the transformer pipeline so a wrap_object clear takes the emptyTemplate shape', async () => {
+    // Notion-style destination: the connector's suggested wrap_object transformer
+    // declares `emptyTemplate` — the cleared envelope Notion accepts. A cleared
+    // (absent) source must produce that shape, not a raw `null` at the
+    // destination column.
+    const wrappedMappings: ColumnMappingV1[] = [
+      {
+        sourceColumnId: 'status',
+        destinationColumnId: 'properties.Status',
+        transformer: {
+          type: 'wrap_object',
+          options: {
+            template: { type: 'select', select: { name: '$value' } },
+            emptyTemplate: { type: 'select', select: null },
+          },
+        },
+      },
+    ];
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: {} };
+    const baseFields = { properties: { Status: { type: 'select', select: { name: 'In Progress' } } } };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      wrappedMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual({ properties: { Status: { type: 'select', select: null } } });
+  });
+
+  it('is a no-op when the destination already holds the cleared envelope (no churn)', async () => {
+    // An empty-on-both-sides field must not change bytes: the destination's
+    // `{ type: 'select', select: null }` envelope is defined (so the clear path
+    // fires), but the pipeline re-produces the identical emptyTemplate shape.
+    const wrappedMappings: ColumnMappingV1[] = [
+      {
+        sourceColumnId: 'status',
+        destinationColumnId: 'properties.Status',
+        transformer: {
+          type: 'wrap_object',
+          options: {
+            template: { type: 'select', select: { name: '$value' } },
+            emptyTemplate: { type: 'select', select: null },
+          },
+        },
+      },
+    ];
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: {} };
+    const baseFields = { properties: { Status: { type: 'select', select: null } } };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      wrappedMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual(baseFields);
+  });
+
+  it('still writes an explicit null source value (unchanged behavior)', async () => {
+    // A source that returns explicit null (e.g. Webflow) already passed the guard
+    // before this fix; confirm that path is untouched.
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { title: 'Hello', status: null } };
+    const baseFields = { name: 'Old Name', status: 'Published' };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      mappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual({ name: 'Hello', status: null });
   });
 });
 
