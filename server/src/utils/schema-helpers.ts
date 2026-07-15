@@ -215,3 +215,47 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
 
   return Array.from(fields.values());
 }
+
+/**
+ * Resolve a just-created Live Export destination field — a field addition or a
+ * placeholder table's created column — to its {@link SchemaField} in the freshly
+ * re-fetched destination schema.
+ *
+ * A created field is ALWAYS a real, writable connector column, so it must never
+ * bind to the record ENVELOPE's read-only meta fields that happen to share a leaf
+ * name. Since the Airtable record schema is expanded (commit 2556b0b9b),
+ * {@link extractSchemaFields} emits the top-level meta paths (`id`, `fields`,
+ * `createdTime`) alongside the real `fields.*` columns. A user field literally
+ * named `id`/`fields` collides with a meta leaf, and matching by the last path
+ * segment alone returned the top-level meta path FIRST — silently binding the sync
+ * to Airtable's non-writable record id (the value never lands / apply hard-fails).
+ *
+ * Resolution order:
+ *  1. Exact remote-field-id match when the created field's remote id is known (a
+ *     field addition carries `resolved.remoteFieldId`) — unambiguous.
+ *  2. Otherwise match by last path segment / display label, preferring a real
+ *     writable column (one carrying a remote field id, and not readonly) over an
+ *     envelope meta field that shares the leaf name.
+ */
+export function findCreatedDestinationField(
+  destinationFields: SchemaField[],
+  target: { fieldName: string; remoteFieldId?: string },
+): SchemaField | undefined {
+  if (target.remoteFieldId) {
+    const exactRemoteFieldIdMatch = destinationFields.find((field) => field.remoteFieldId === target.remoteFieldId);
+    if (exactRemoteFieldIdMatch) return exactRemoteFieldIdMatch;
+  }
+  const fieldsMatchingByLeafNameOrLabel = destinationFields.filter(
+    (field) => field.path.split('.').pop() === target.fieldName || field.displayLabel === target.fieldName,
+  );
+  if (fieldsMatchingByLeafNameOrLabel.length <= 1) return fieldsMatchingByLeafNameOrLabel[0];
+  // Ambiguous leaf name (record-envelope meta vs a real column): prefer the real
+  // writable column. A genuine connector column carries a remote field id and is
+  // not readonly; the top-level `id`/`fields`/`createdTime` meta carry neither.
+  return (
+    fieldsMatchingByLeafNameOrLabel.find((field) => field.remoteFieldId !== undefined && !field.readonly) ??
+    fieldsMatchingByLeafNameOrLabel.find((field) => field.remoteFieldId !== undefined) ??
+    fieldsMatchingByLeafNameOrLabel.find((field) => !field.readonly) ??
+    fieldsMatchingByLeafNameOrLabel[0]
+  );
+}

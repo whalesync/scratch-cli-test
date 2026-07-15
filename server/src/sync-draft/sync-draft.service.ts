@@ -53,7 +53,7 @@ import {
 } from 'src/sync/resolve-column-transform-input';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
-import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
+import { extractSchemaFields, findCreatedDestinationField, SchemaField } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
@@ -958,11 +958,9 @@ export class SyncDraftService {
           if (columnMapping.destination.kind !== 'placeholderField') continue;
           if (columnMapping.transformers && columnMapping.transformers.length > 0) continue;
 
-          const fieldName = this.resolvePlaceholderFieldName(columnMapping.destination.ref, tableMapping);
-          if (!fieldName) continue;
-          const destinationField = destinationFields.find(
-            (field) => field.path.split('.').pop() === fieldName || field.displayLabel === fieldName,
-          );
+          const createdFieldTarget = this.resolveCreatedFieldTarget(columnMapping.destination.ref, tableMapping);
+          if (!createdFieldTarget) continue;
+          const destinationField = findCreatedDestinationField(destinationFields, createdFieldTarget);
 
           // Resolve the SOURCE column View-first at the exact path the mapping references — this dissolves
           // the Notion inner-path mole (a drilled `properties.X.multi_select` / subfield leaf now finds its
@@ -1123,17 +1121,26 @@ export class SyncDraftService {
   }
 
   /**
-   * The created field's name a placeholder-field `ref` points at — a field addition
-   * (its actual created name) or a placeholder table's create spec. Mirrors
-   * {@link resolvePlaceholderFieldTarget} but needs only the name. Null when the ref
-   * is dangling.
+   * The created field a placeholder-field `ref` points at — a field addition (its
+   * actual created name, plus the remote field id materialize wrote back) or a
+   * placeholder table's create spec (name only; a newly-created table's per-field
+   * remote ids are not stored on the draft). Mirrors {@link resolvePlaceholderFieldTarget}
+   * but without the destination folder. Null when the ref is dangling.
    */
-  private resolvePlaceholderFieldName(ref: string, tableMapping: DraftTableMapping): string | null {
+  private resolveCreatedFieldTarget(
+    ref: string,
+    tableMapping: DraftTableMapping,
+  ): { fieldName: string; remoteFieldId?: string } | null {
     const addition = tableMapping.fieldAdditions?.find((field) => field.ref === ref);
-    if (addition) return addition.resolved?.actualName ?? addition.createFieldSpec.name;
+    if (addition) {
+      return {
+        fieldName: addition.resolved?.actualName ?? addition.createFieldSpec.name,
+        remoteFieldId: addition.resolved?.remoteFieldId,
+      };
+    }
     if (tableMapping.destination.kind === 'placeholderTable') {
       const field = tableMapping.destination.createSpec.fields.find((spec) => spec.name === ref);
-      if (field) return field.name;
+      if (field) return { fieldName: field.name };
     }
     return null;
   }
@@ -1165,9 +1172,7 @@ export class SyncDraftService {
 
     const target = this.resolvePlaceholderFieldTarget(destination.ref, tableMapping, destinationDataFolderId);
     const fields = await this.getSchemaFields(target.dataFolderId, schemaFieldsByFolderId, actor);
-    const match = fields.find(
-      (field) => field.path.split('.').pop() === target.fieldName || field.displayLabel === target.fieldName,
-    );
+    const match = findCreatedDestinationField(fields, target);
     if (!match) {
       throw new UnprocessableEntityException({
         error: 'SYNC_DRAFT_FIELD_RESOLUTION_FAILED',
@@ -1177,17 +1182,19 @@ export class SyncDraftService {
     return match.path;
   }
 
-  /** A placeholder field ref resolves to a created field's name + the folder it now lives in. */
+  /** A placeholder field ref resolves to a created field's name (+ remote id, for a
+   * field addition) + the folder it now lives in. */
   private resolvePlaceholderFieldTarget(
     ref: string,
     tableMapping: DraftTableMapping,
     destinationDataFolderId: string,
-  ): { dataFolderId: string; fieldName: string } {
+  ): { dataFolderId: string; fieldName: string; remoteFieldId?: string } {
     const addition: DraftFieldAddition | undefined = tableMapping.fieldAdditions?.find((field) => field.ref === ref);
     if (addition) {
       return {
         dataFolderId: destinationDataFolderId,
         fieldName: addition.resolved?.actualName ?? addition.createFieldSpec.name,
+        remoteFieldId: addition.resolved?.remoteFieldId,
       };
     }
     if (tableMapping.destination.kind === 'placeholderTable') {

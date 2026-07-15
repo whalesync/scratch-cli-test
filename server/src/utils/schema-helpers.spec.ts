@@ -10,7 +10,7 @@ import {
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
 } from '@spinner/shared-types';
-import { extractSchemaFields, extractSchemaPaths } from './schema-helpers';
+import { extractSchemaFields, extractSchemaPaths, findCreatedDestinationField, SchemaField } from './schema-helpers';
 
 /** Set an x-scratch annotation on a TypeBox schema node (mirrors the connector generators). */
 function annotate(schema: TSchema, key: string, value: unknown): TSchema {
@@ -525,6 +525,77 @@ describe('schema-helpers', () => {
         expect(paths).toContain('hostedUrl');
         expect(paths).toContain('originalFileName');
       });
+    });
+  });
+
+  describe('findCreatedDestinationField', () => {
+    /**
+     * Build the flattened fields of a live Airtable record schema — top-level
+     * `id`/`fields`/`createdTime` meta (no remote field id) alongside the real
+     * writable columns at `fields.<name>` (each carrying a remote field id).
+     */
+    function airtableRecordFields(userColumns: { name: string; fieldId: string; readonly?: boolean }[]): TSchema {
+      const fieldProperties: Record<string, TSchema> = {};
+      for (const column of userColumns) {
+        const columnSchema = Type.String();
+        annotate(columnSchema, X_SCRATCH_REMOTE_FIELD_ID, column.fieldId);
+        if (column.readonly) annotate(columnSchema, X_SCRATCH_READONLY, true);
+        fieldProperties[column.name] = columnSchema;
+      }
+      const fieldsWrapper = Type.Object(fieldProperties);
+      annotate(
+        fieldsWrapper,
+        X_SCRATCH_AIRTABLE_FIELD_ORDER,
+        userColumns.map((c) => c.name),
+      );
+      return Type.Object({ id: Type.String(), fields: fieldsWrapper, createdTime: Type.String() });
+    }
+
+    it('binds a created field named `id` to the writable `fields.id` column, not top-level record meta', () => {
+      const fields = extractSchemaFields(airtableRecordFields([{ name: 'id', fieldId: 'fldUserId' }]));
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'id' });
+
+      expect(match?.path).toBe('fields.id');
+    });
+
+    it('binds a created field named `fields` to `fields.fields`, not the top-level `fields` wrapper', () => {
+      const fields = extractSchemaFields(airtableRecordFields([{ name: 'fields', fieldId: 'fldUserFields' }]));
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'fields' });
+
+      expect(match?.path).toBe('fields.fields');
+    });
+
+    it('prefers an exact remote-field-id match over a leaf-name match (field addition)', () => {
+      const fields = extractSchemaFields(airtableRecordFields([{ name: 'id', fieldId: 'fldUserId' }]));
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'id', remoteFieldId: 'fldUserId' });
+
+      expect(match?.path).toBe('fields.id');
+      expect(match?.remoteFieldId).toBe('fldUserId');
+    });
+
+    it('resolves a non-colliding created column by its leaf name', () => {
+      const fields = extractSchemaFields(airtableRecordFields([{ name: 'Name', fieldId: 'fldName' }]));
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'Name' });
+
+      expect(match?.path).toBe('fields.Name');
+    });
+
+    it('matches by display label when no path leaf matches', () => {
+      const fields: SchemaField[] = [{ path: 'fields.fld123', type: 'string', displayLabel: 'Category' }];
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'Category' });
+
+      expect(match?.path).toBe('fields.fld123');
+    });
+
+    it('returns undefined when nothing matches', () => {
+      const fields = extractSchemaFields(airtableRecordFields([{ name: 'Name', fieldId: 'fldName' }]));
+
+      expect(findCreatedDestinationField(fields, { fieldName: 'Missing' })).toBeUndefined();
     });
   });
 });
