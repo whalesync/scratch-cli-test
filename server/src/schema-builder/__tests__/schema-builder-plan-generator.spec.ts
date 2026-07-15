@@ -667,6 +667,107 @@ describe('generateCreatePlanFromSources — duplicate table names (DEV-10441)', 
   });
 });
 
+describe('generateCreatePlanFromSources — name-length limits (DEV-10816)', () => {
+  const LONG_FIELD_NAME = 'a_very_long_field_name_that_exceeds_the_destination_identifier_limit';
+  const LONG_TABLE_NAME = 'A Very Long Table Name That Exceeds The Destination Identifier Limit';
+
+  it('elides a field name over the destination limit, keeping the plan under it', () => {
+    const source: PlanGeneratorSource = {
+      ref: 'contacts',
+      dataFolderId: 'contacts',
+      tableName: 'Contacts',
+      remoteTableIds: ['tblContacts'],
+      idFieldPath: 'id',
+      schemaFields: [field({ path: 'a', type: 'string', displayLabel: LONG_FIELD_NAME })],
+    };
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxFieldNameLength: 63,
+    });
+
+    const emittedField = tables[0].fields[0];
+    expect(emittedField.name.length).toBeLessThanOrEqual(63);
+    expect(emittedField.name).toContain('…');
+    // The distinguishing tail survives the middle elision.
+    expect(emittedField.name.endsWith('limit')).toBe(true);
+
+    const note = notes.find((n) => n.sourceFieldPath === 'a');
+    expect(note?.renamedFromName).toBe(LONG_FIELD_NAME);
+    expect(note?.message).toContain('63-character field-name limit');
+  });
+
+  it('elides a table name over the destination limit and notes the truncation', () => {
+    const source: PlanGeneratorSource = {
+      ref: 't',
+      dataFolderId: 't',
+      tableName: LONG_TABLE_NAME,
+      remoteTableIds: ['tbl'],
+      schemaFields: [field({ path: 'name', type: 'string' })],
+    };
+    const { tables, tableNotes } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxTableNameLength: 63,
+    });
+
+    expect(tables[0].name.length).toBeLessThanOrEqual(63);
+    expect(tables[0].name).toContain('…');
+    expect(tableNotes[0]).toMatchObject({
+      ref: 't',
+      renamedFromName: LONG_TABLE_NAME,
+      reason: 'truncated_to_length_limit',
+    });
+    expect(tableNotes[0].message).toContain('63-character table-name limit');
+  });
+
+  it('keeps deduped field names under the limit (suffix reserved)', () => {
+    const source: PlanGeneratorSource = {
+      ref: 'contacts',
+      dataFolderId: 'contacts',
+      tableName: 'Contacts',
+      remoteTableIds: ['tblContacts'],
+      idFieldPath: 'id',
+      schemaFields: [
+        field({ path: 'a', type: 'string', displayLabel: LONG_FIELD_NAME }),
+        field({ path: 'b', type: 'string', displayLabel: LONG_FIELD_NAME }),
+      ],
+    };
+    const { tables } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxFieldNameLength: 63,
+    });
+
+    const [first, second] = tables[0].fields;
+    expect(first.name.length).toBeLessThanOrEqual(63);
+    expect(second.name.length).toBeLessThanOrEqual(63);
+    expect(second.name).not.toBe(first.name);
+    expect(second.name.endsWith(' 2')).toBe(true);
+  });
+
+  it('leaves names that already fit unchanged (no elision, no note)', () => {
+    const source: PlanGeneratorSource = {
+      ref: 't',
+      dataFolderId: 't',
+      tableName: 'Tasks',
+      remoteTableIds: ['tbl'],
+      schemaFields: [field({ path: 'a', type: 'string', displayLabel: 'Title' })],
+    };
+    const { tables, notes, tableNotes } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxTableNameLength: 63,
+      destinationMaxFieldNameLength: 63,
+    });
+
+    expect(tables[0].name).toBe('Tasks');
+    expect(tables[0].fields[0].name).toBe('Title');
+    expect(tableNotes).toEqual([]);
+    expect(notes.find((n) => n.sourceFieldPath === 'a')?.renamedFromName).toBeUndefined();
+  });
+});
+
 describe('generateCreatePlanFromSources — fallback primary field', () => {
   // A source that designated NO title column (no primaryFieldPath), as happens
   // when a Postgres table's headline column isn't named name/title/etc.

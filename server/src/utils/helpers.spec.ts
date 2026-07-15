@@ -1,4 +1,4 @@
-import { stringToEnum } from './helpers';
+import { elideToMaxLength, stringToEnum } from './helpers';
 
 enum TestEnum {
   FOO = 'foo',
@@ -105,6 +105,72 @@ describe('Utility Helpers', () => {
       expect(result1).toBe('foo');
       expect(result2).toBe('bar');
       expect(result3).toBe('baz-case');
+    });
+  });
+
+  describe('elideToMaxLength', () => {
+    it('returns the text unchanged when it already fits', () => {
+      expect(elideToMaxLength('short name', 20)).toBe('short name');
+      expect(elideToMaxLength('exactly ten', 11)).toBe('exactly ten');
+    });
+
+    it('elides from the middle, keeping both ends', () => {
+      const result = elideToMaxLength('My Very Long Document Name', 20);
+      expect(result).toHaveLength(20);
+      expect(result).toContain('…');
+      expect(result.startsWith('My Very')).toBe(true);
+      // The distinguishing end of the name survives.
+      expect(result.endsWith('Name')).toBe(true);
+    });
+
+    it('preserves trailing digits (the distinguishing suffix)', () => {
+      const result = elideToMaxLength('Report Q3 2024 final version 17', 18);
+      expect(result).toHaveLength(18);
+      expect(result.endsWith('17')).toBe(true);
+    });
+
+    it('keeps the whole file extension intact', () => {
+      const result = elideToMaxLength('My Very Long Document Name.pdf', 20);
+      expect(result).toHaveLength(20);
+      expect(result.endsWith('.pdf')).toBe(true);
+      // The ellipsis must not land inside the extension.
+      expect(result.indexOf('…')).toBeLessThan(result.indexOf('.pdf'));
+    });
+
+    it('does not treat a dotted identifier or trailing period as an extension', () => {
+      // `created_by.identifier` is a dotted path, not `name.ext`; the long suffix is not an extension.
+      const dotted = elideToMaxLength('created_by.some_very_long_identifier_segment', 20);
+      expect(dotted).toHaveLength(20);
+      // Both ends are still kept; nothing special about the dot.
+      expect(dotted.startsWith('created')).toBe(true);
+    });
+
+    it('two names sharing a long prefix stay distinct after elision', () => {
+      const northAmerica = elideToMaxLength('Customer Orders 2024 North America', 22);
+      const europe = elideToMaxLength('Customer Orders 2024 Europe', 22);
+      expect(northAmerica).not.toBe(europe);
+    });
+
+    it('never exceeds maxLength', () => {
+      for (const maxLength of [1, 2, 3, 5, 10, 20, 63, 255]) {
+        const result = elideToMaxLength('a'.repeat(300) + '.json', maxLength);
+        expect(result.length).toBeLessThanOrEqual(maxLength);
+      }
+    });
+
+    it('hard-cuts from the front when there is no room for the ellipsis', () => {
+      expect(elideToMaxLength('abcdef', 1)).toBe('a');
+      expect(elideToMaxLength('abcdef', 0)).toBe('');
+    });
+
+    it('honours a custom ellipsis string', () => {
+      const result = elideToMaxLength('My Very Long Document Name', 20, { ellipsis: '...' });
+      expect(result).toHaveLength(20);
+      expect(result).toContain('...');
+    });
+
+    it('treats a negative maxLength as zero', () => {
+      expect(elideToMaxLength('anything', -5)).toBe('');
     });
   });
 });

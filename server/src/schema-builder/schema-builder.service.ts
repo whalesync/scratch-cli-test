@@ -372,6 +372,12 @@ export class SchemaBuilderService {
       linkedTableMappings: dto.linkedTableMappings,
       existingDestinationTableNames,
       destinationReservedFieldNames: destinationCapabilities?.reservedFieldNames,
+      ...(destinationCapabilities?.maxTableNameLength !== undefined
+        ? { destinationMaxTableNameLength: destinationCapabilities.maxTableNameLength }
+        : {}),
+      ...(destinationCapabilities?.maxFieldNameLength !== undefined
+        ? { destinationMaxFieldNameLength: destinationCapabilities.maxFieldNameLength }
+        : {}),
       destinationRequiresPrimaryField: destinationCapabilities?.primaryField != null,
       ...(destinationCapabilities?.primaryField
         ? { destinationPrimaryFieldKinds: destinationCapabilities.primaryField.kinds }

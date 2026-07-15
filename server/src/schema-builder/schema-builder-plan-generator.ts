@@ -11,7 +11,7 @@ import type {
   TablePropertyType,
 } from '@spinner/shared-types';
 import type { SchemaField } from 'src/utils/schema-helpers';
-import { allocateUniqueName, normalizeNameForUniqueness } from './schema-builder-unique-names';
+import { allocateUniqueName, elideNameToMaxLength, normalizeNameForUniqueness } from './schema-builder-unique-names';
 
 /**
  * Plan generation for create-schema (DEV-10378): turn one or more existing
@@ -139,6 +139,22 @@ export function generateCreatePlanFromSources(args: {
    * and then unresolvable at apply (`SchemaCreationCapabilities.reservedFieldNames`).
    */
   destinationReservedFieldNames?: string[];
+  /**
+   * The destination connector's maximum table-name length, if it caps one
+   * (`SchemaCreationCapabilities.maxTableNameLength`). A generated table name longer
+   * than this is middle-elided to fit (DEV-10816), reserving room for any numeric
+   * dedup suffix, so the plan never trips the connector's `TABLE_NAME_TOO_LONG` check.
+   * Absent ⇒ no limit; names pass through at full length.
+   */
+  destinationMaxTableNameLength?: number;
+  /**
+   * The destination connector's maximum field-name length, if it caps one
+   * (`SchemaCreationCapabilities.maxFieldNameLength`). Generated field names longer
+   * than this are middle-elided to fit (DEV-10816), reserving room for any numeric
+   * dedup suffix, so the plan never trips the connector's `FIELD_NAME_TOO_LONG` check.
+   * Absent ⇒ no limit.
+   */
+  destinationMaxFieldNameLength?: number;
 }): GeneratedPlan {
   // linkedTableId → in-plan table ref (for resolving sibling foreign keys).
   const linkedIdToRef = new Map<string, string>();
@@ -176,6 +192,7 @@ export function generateCreatePlanFromSources(args: {
           mappingByLinkedId,
           notes,
           args.destinationReservedFieldNames,
+          args.destinationMaxFieldNameLength,
         ),
       );
     } else {
@@ -185,6 +202,7 @@ export function generateCreatePlanFromSources(args: {
           allowSiblingRefForeignKeys: true,
           markPrimaryField: true,
           reservedFieldNames: args.destinationReservedFieldNames,
+          maxFieldNameLength: args.destinationMaxFieldNameLength,
         },
         linkedIdToRef,
         mappingByLinkedId,
@@ -194,7 +212,12 @@ export function generateCreatePlanFromSources(args: {
       // into, so a synced row always knows where it came from. Skipped when a
       // same-named field already exists (the source already has one) or when the
       // source has no known remote-id path to map from (see buildSourceRecordIdField).
-      const sourceRecordIdField = buildSourceRecordIdField(source, fields, args.destinationConnectorService);
+      const sourceRecordIdField = buildSourceRecordIdField(
+        source,
+        fields,
+        args.destinationConnectorService,
+        args.destinationMaxFieldNameLength,
+      );
       if (sourceRecordIdField && source.idFieldPath !== undefined) {
         fields.push(sourceRecordIdField);
         // Record where this injected field is fed from: the source's remote-id
@@ -215,22 +238,35 @@ export function generateCreatePlanFromSources(args: {
       if (args.destinationRequiresPrimaryField) {
         designateFallbackPrimaryFieldIfMissing(fields, args.destinationPrimaryFieldKinds);
       }
+      // A table name over the destination's limit is middle-elided to fit; the
+      // elided name is what collision detection and dedup then work against.
+      const elidedTableName = elideNameToMaxLength(source.tableName, args.destinationMaxTableNameLength);
+      const wasTableNameShortenedToFit = elidedTableName !== source.tableName;
       // Classify the collision BEFORE allocating: `takenTableNames` merges existing
       // and in-plan names, so the distinction must be read off the frozen set first.
-      const conflictsWithExistingTable = existingDestinationTableNames.has(
-        normalizeNameForUniqueness(source.tableName),
-      );
-      const tableName = allocateUniqueName(source.tableName, takenTableNames);
-      if (tableName !== source.tableName) {
+      // Compared on the elided name, since that's the name that actually collides.
+      const conflictsWithExistingTable = existingDestinationTableNames.has(normalizeNameForUniqueness(elidedTableName));
+      const tableName = allocateUniqueName(source.tableName, takenTableNames, args.destinationMaxTableNameLength);
+      const wasTableNameDeduplicated = tableName !== elidedTableName;
+      if (wasTableNameShortenedToFit || wasTableNameDeduplicated) {
         tableNotes.push({
           sourceDataFolderId: source.dataFolderId,
           ref: source.ref,
           tableName,
           renamedFromName: source.tableName,
-          reason: conflictsWithExistingTable ? 'conflicts_with_existing_table' : 'duplicate_in_plan',
-          message: conflictsWithExistingTable
-            ? `a table named "${source.tableName}" already exists on the destination; renamed to "${tableName}"`
-            : `another table named "${source.tableName}" is being created in this plan; renamed to "${tableName}"`,
+          reason: wasTableNameDeduplicated
+            ? conflictsWithExistingTable
+              ? 'conflicts_with_existing_table'
+              : 'duplicate_in_plan'
+            : 'truncated_to_length_limit',
+          message: tableRenameMessage({
+            requestedName: source.tableName,
+            finalName: tableName,
+            wasShortenedToFit: wasTableNameShortenedToFit,
+            wasDeduplicated: wasTableNameDeduplicated,
+            conflictsWithExistingTable,
+            maxTableNameLength: args.destinationMaxTableNameLength,
+          }),
         });
       }
       // `ref` is unchanged by the rename, so cross-table foreign keys (resolved by
@@ -261,13 +297,20 @@ function buildAddFieldsPlanForSource(
   mappingByLinkedId: Map<string, string[]>,
   notes: FieldMappingNote[],
   reservedFieldNames: string[] | undefined,
+  maxFieldNameLength: number | undefined,
 ): CreateSchemaFieldsPlan {
   const existingDestinationFieldsByName = new Map(
     existingDestination.existingFields.map((field) => [normalizeNameForUniqueness(field.name), field] as const),
   );
   const fields = collectCreateFieldSpecsForSource(
     source,
-    { allowSiblingRefForeignKeys: false, markPrimaryField: false, existingDestinationFieldsByName, reservedFieldNames },
+    {
+      allowSiblingRefForeignKeys: false,
+      markPrimaryField: false,
+      existingDestinationFieldsByName,
+      reservedFieldNames,
+      maxFieldNameLength,
+    },
     linkedIdToRef,
     mappingByLinkedId,
     notes,
@@ -295,6 +338,9 @@ interface CreateFieldSpecOptions {
   /** Field names the destination connector reserves (e.g. Postgres `id`) — seeded into the taken-names
    *  set so a colliding source field is renamed rather than dropped at create. Compared case-insensitively. */
   reservedFieldNames?: string[];
+  /** The destination's maximum field-name length, if capped. A longer requested name is middle-elided to
+   *  fit (reserving room for any dedup suffix), so the plan never trips `FIELD_NAME_TOO_LONG` (DEV-10816). */
+  maxFieldNameLength?: number;
 }
 
 /** Map every field of a source to a create-field spec, pushing a note per field. */
@@ -414,19 +460,28 @@ function mapSchemaFieldToCreateFieldSpec(
     }
   }
 
-  // This field will be emitted — give it a name unique within the table.
-  const fieldName = allocateUniqueName(requestedFieldName, takenFieldNames);
-  const renamedFromName = fieldName !== requestedFieldName ? requestedFieldName : undefined;
+  // This field will be emitted — give it a name unique within the table, elided to
+  // the destination's field-name limit when it has one.
+  const elidedRequestedFieldName = elideNameToMaxLength(requestedFieldName, options.maxFieldNameLength);
+  const fieldName = allocateUniqueName(requestedFieldName, takenFieldNames, options.maxFieldNameLength);
+  const wasFieldNameShortenedToFit = elidedRequestedFieldName !== requestedFieldName;
+  const wasFieldNameDeduplicated = fieldName !== elidedRequestedFieldName;
+  const renamedFromName = wasFieldNameShortenedToFit || wasFieldNameDeduplicated ? requestedFieldName : undefined;
   const renamedForReservedName =
-    renamedFromName !== undefined &&
+    wasFieldNameDeduplicated &&
     (options.reservedFieldNames ?? []).some(
-      (reserved) => normalizeNameForUniqueness(reserved) === normalizeNameForUniqueness(renamedFromName),
+      (reserved) => normalizeNameForUniqueness(reserved) === normalizeNameForUniqueness(requestedFieldName),
     );
-  const renameClause = renamedFromName
+  const dedupClause = wasFieldNameDeduplicated
     ? renamedForReservedName
-      ? `renamed from "${renamedFromName}" — "${renamedFromName}" is reserved by the destination`
-      : `renamed from "${renamedFromName}" to keep field names unique`
+      ? `renamed from "${requestedFieldName}" — "${requestedFieldName}" is reserved by the destination`
+      : `renamed from "${requestedFieldName}" to keep field names unique`
     : undefined;
+  const shortenClause =
+    wasFieldNameShortenedToFit && options.maxFieldNameLength !== undefined
+      ? `shortened to fit the destination's ${options.maxFieldNameLength}-character field-name limit`
+      : undefined;
+  const renameClause = composeNoteMessage(shortenClause, dedupClause);
 
   if (foreignKeyType) {
     if (foreignKeyNeedsTargetLinkedTableId !== null) {
@@ -467,6 +522,34 @@ function mapSchemaFieldToCreateFieldSpec(
     ...(renamedFromName ? { renamedFromName } : {}),
   });
   return buildFieldSpec(fieldName, inferred.fieldType, isPrimary, schemaField.description);
+}
+
+/**
+ * Compose the human-readable message for a `TableMappingNote` covering any mix of a
+ * dedup rename (collision with an existing or in-plan table) and a length-limit
+ * elision. The dedup-only wording is unchanged from before the elision feature, so a
+ * plain collision reads exactly as it always did.
+ */
+function tableRenameMessage(args: {
+  requestedName: string;
+  finalName: string;
+  wasShortenedToFit: boolean;
+  wasDeduplicated: boolean;
+  conflictsWithExistingTable: boolean;
+  maxTableNameLength: number | undefined;
+}): string {
+  const clauses: string[] = [];
+  if (args.wasDeduplicated) {
+    clauses.push(
+      args.conflictsWithExistingTable
+        ? `a table named "${args.requestedName}" already exists on the destination`
+        : `another table named "${args.requestedName}" is being created in this plan`,
+    );
+  }
+  if (args.wasShortenedToFit && args.maxTableNameLength !== undefined) {
+    clauses.push(`the name exceeded the destination's ${args.maxTableNameLength}-character table-name limit`);
+  }
+  return `${clauses.join('; ')}; renamed to "${args.finalName}"`;
 }
 
 /** Join the non-empty note clauses (e.g. a rename clause and a type-mapping clause) with "; ". */
@@ -598,14 +681,16 @@ function buildSourceRecordIdField(
   source: PlanGeneratorSource,
   existingFields: CreateFieldSpec[],
   destinationConnectorService?: Service,
+  maxFieldNameLength?: number,
 ): CreateFieldSpec | null {
   if (source.idFieldPath === undefined) return null;
   const servicePrefix = source.connectorService ? source.connectorService.toLowerCase() : 'source';
   const sourceAndDestinationAreSameService =
     source.connectorService !== undefined && source.connectorService === destinationConnectorService;
-  const fieldName = sourceAndDestinationAreSameService
-    ? `${servicePrefix}_source_record_id`
-    : `${servicePrefix}_record_id`;
+  const fieldName = elideNameToMaxLength(
+    sourceAndDestinationAreSameService ? `${servicePrefix}_source_record_id` : `${servicePrefix}_record_id`,
+    maxFieldNameLength,
+  );
   const existingFieldNames = new Set(existingFields.map((field) => normalizeNameForUniqueness(field.name)));
   if (existingFieldNames.has(normalizeNameForUniqueness(fieldName))) return null;
   return {

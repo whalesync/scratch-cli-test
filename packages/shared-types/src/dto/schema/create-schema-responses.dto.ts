@@ -191,34 +191,39 @@ export interface FieldMappingNote {
    */
   existingDestinationColumnId?: string;
   /**
-   * Set when the field was renamed to keep field names unique within the table
-   * (a numeric suffix was appended): the original, pre-suffix name. `fieldName`
-   * holds the final name actually used in the plan.
+   * Set when the field's name changed from the source's — because a numeric suffix
+   * was appended to keep names unique within the table, and/or because it was
+   * middle-elided to fit the destination's `maxFieldNameLength`: the original,
+   * pre-change name. `fieldName` holds the final name actually used in the plan, and
+   * `message` explains why it changed.
    */
   renamedFromName?: string;
 }
 
 /**
- * Outcome of resolving a generated table's name. Emitted ONLY when a new table
- * had to be renamed (a numeric suffix appended) to avoid a collision — either
- * with another new table in the same plan, or with a table that already exists
- * on the destination (scoped to the create parent). `tableName` is the final
- * name used in the plan; nothing is renamed silently.
+ * Outcome of resolving a generated table's name. Emitted ONLY when a new table's
+ * name had to change — because a numeric suffix was appended to avoid a collision
+ * (with another new table in the same plan, or a table already on the destination),
+ * and/or because it was middle-elided to fit the destination's identifier limit.
+ * `tableName` is the final name used in the plan; nothing is renamed silently.
  */
 export interface TableMappingNote {
   /** Which source folder this table was generated from. */
   sourceDataFolderId: string;
   /** The table's correlation ref in the plan (unchanged by the rename). */
   ref: string;
-  /** The final table name actually used in the plan (post-suffix). */
+  /** The final table name actually used in the plan (post-suffix, post-elision). */
   tableName: string;
-  /** The original, pre-suffix name. */
+  /** The original, pre-rename name. */
   renamedFromName: string;
   /**
    * `duplicate_in_plan` — collided with another table being created in this plan;
-   * `conflicts_with_existing_table` — collided with a table already on the destination.
+   * `conflicts_with_existing_table` — collided with a table already on the destination;
+   * `truncated_to_length_limit` — the name was only shortened to fit the destination's
+   * `maxTableNameLength` (no collision). When a name both collides and overflows, the
+   * collision reason is reported and the elision is noted in `message`.
    */
-  reason: 'duplicate_in_plan' | 'conflicts_with_existing_table';
+  reason: 'duplicate_in_plan' | 'conflicts_with_existing_table' | 'truncated_to_length_limit';
   message: string;
 }
 
