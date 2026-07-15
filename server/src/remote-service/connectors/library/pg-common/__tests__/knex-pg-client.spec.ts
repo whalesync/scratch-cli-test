@@ -106,3 +106,133 @@ describe('KnexPGClient.selectAll modified-since predicate', () => {
     expect(mockRef).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Regression tests for KnexPGClient.updateMany's per-row change-set handling
+ * (DEV-10787). Each record's `data` is a SPARSE change set, so a batch where
+ * different rows changed different columns MUST NOT be collapsed into one fixed
+ * SET clause — that would NULL sibling rows' untouched columns and drop their
+ * real changes. We assert the SQL grouping behavior against the mocked
+ * `knex.raw`, reading back the SET clause and json_populate_recordset payload.
+ */
+describe('KnexPGClient.updateMany sparse change-set grouping', () => {
+  let client: KnexPGClient;
+
+  interface RawCall {
+    setColumns: string[];
+    payload: Record<string, unknown>[];
+  }
+
+  /** Parse each mocked knex.raw call into the SET columns and JSON payload it carried. */
+  function rawCallsAsSetAndPayload(): RawCall[] {
+    return mockRaw.mock.calls.map(([query, bindings]) => {
+      const setClause = /SET ([\s\S]*?)\s+FROM json_populate_recordset/.exec(query as string);
+      const setColumns = (setClause?.[1] ?? '')
+        .split(',')
+        .map((assignment) => assignment.trim())
+        .filter((assignment) => assignment.length > 0)
+        // "col" = v."col"  →  col
+        .map((assignment) => assignment.split('=')[0].trim().replace(/"/g, ''));
+      const jsonParam = (bindings as unknown[])[0] as string;
+      return { setColumns, payload: JSON.parse(jsonParam) as Record<string, unknown>[] };
+    });
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    client = new KnexPGClient('postgres://u:p@localhost:5432/db');
+    // Default: every UPDATE returns the rows it targeted, keyed by their PK.
+    mockRaw.mockImplementation((_query: string, bindings: unknown[]) => {
+      const payload = JSON.parse((bindings as string[])[0]) as Record<string, unknown>[];
+      return Promise.resolve({ rows: payload });
+    });
+  });
+
+  it('returns [] for an empty batch without querying', async () => {
+    const result = await client.updateMany('public', 'records', 'id', []);
+    expect(result).toEqual([]);
+    expect(mockRaw).not.toHaveBeenCalled();
+  });
+
+  it('issues a single UPDATE for a homogeneous batch (all rows change the same columns)', async () => {
+    await client.updateMany('public', 'records', 'id', [
+      { id: 1, data: { name: 'a' } },
+      { id: 2, data: { name: 'b' } },
+    ]);
+
+    const raws = rawCallsAsSetAndPayload();
+    expect(raws).toHaveLength(1);
+    expect(raws[0].setColumns).toEqual(['name']);
+    expect(raws[0].payload).toEqual([
+      { name: 'a', id: 1 },
+      { name: 'b', id: 2 },
+    ]);
+  });
+
+  it('splits a mixed batch into one UPDATE per changed-column set so siblings are not corrupted', async () => {
+    await client.updateMany('public', 'records', 'id', [
+      { id: 1, data: { name: 'a' } },
+      { id: 2, data: { price: 5 } },
+    ]);
+
+    const raws = rawCallsAsSetAndPayload();
+    expect(raws).toHaveLength(2);
+
+    const nameGroup = raws.find((r) => r.setColumns.includes('name'));
+    const priceGroup = raws.find((r) => r.setColumns.includes('price'));
+    // Row 1 only updates `name`; its query never touches `price` (which would
+    // otherwise NULL row 1's price via json_populate_recordset).
+    expect(nameGroup?.setColumns).toEqual(['name']);
+    expect(nameGroup?.payload).toEqual([{ name: 'a', id: 1 }]);
+    // Row 2 only updates `price`; its real change is not dropped.
+    expect(priceGroup?.setColumns).toEqual(['price']);
+    expect(priceGroup?.payload).toEqual([{ price: 5, id: 2 }]);
+  });
+
+  it('groups rows that change the same columns regardless of key order', async () => {
+    await client.updateMany('public', 'records', 'id', [
+      { id: 1, data: { name: 'a', price: 1 } },
+      { id: 2, data: { price: 2, name: 'b' } },
+    ]);
+
+    const raws = rawCallsAsSetAndPayload();
+    expect(raws).toHaveLength(1);
+    expect([...raws[0].setColumns].sort()).toEqual(['name', 'price']);
+    expect(raws[0].payload).toHaveLength(2);
+  });
+
+  it('preserves an explicit null-clear as a SET column (does not treat it as "no change")', async () => {
+    await client.updateMany('public', 'records', 'id', [{ id: 1, data: { name: null } }]);
+
+    const raws = rawCallsAsSetAndPayload();
+    expect(raws).toHaveLength(1);
+    expect(raws[0].setColumns).toEqual(['name']);
+    expect(raws[0].payload).toEqual([{ name: null, id: 1 }]);
+  });
+
+  it('marks records with no changed columns as not_found without issuing a query for them', async () => {
+    const result = await client.updateMany('public', 'records', 'id', [
+      { id: 1, data: {} },
+      { id: 2, data: { id: 2 } },
+    ]);
+
+    expect(mockRaw).not.toHaveBeenCalled();
+    expect(result).toEqual(['not_found', 'not_found']);
+  });
+
+  it('returns updated rows aligned to the input order, with not_found for rows that vanished', async () => {
+    // Row 2's UPDATE affects zero rows (deleted mid-publish): return no rows for it.
+    mockRaw.mockImplementation((_query: string, bindings: unknown[]) => {
+      const payload = JSON.parse((bindings as string[])[0]) as Record<string, unknown>[];
+      return Promise.resolve({ rows: payload.filter((row) => row.id !== 2) });
+    });
+
+    const result = await client.updateMany('public', 'records', 'id', [
+      { id: 1, data: { name: 'a' } },
+      { id: 2, data: { name: 'b' } },
+      { id: 3, data: { name: 'c' } },
+    ]);
+
+    expect(result).toEqual([{ name: 'a', id: 1 }, 'not_found', { name: 'c', id: 3 }]);
+  });
+});

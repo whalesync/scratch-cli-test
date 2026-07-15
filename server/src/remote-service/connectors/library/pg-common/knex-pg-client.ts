@@ -534,6 +534,28 @@ export class KnexPGClient {
     return sanitizeRow(rows[0]);
   }
 
+  /**
+   * Bulk-update rows by primary key. Each record's `data` is a SPARSE per-row
+   * change set — only the columns that actually changed for that row (the
+   * connectors pass `changedFields[i]`), so different rows in one batch can
+   * touch different columns.
+   *
+   * A single fixed SET clause for the whole batch is therefore WRONG: the SET
+   * list would come from one row's changed columns, and because
+   * `json_populate_recordset` defaults any key absent from a row's JSON object
+   * to NULL (from the all-NULL base row), every sibling row that didn't change
+   * those columns would have its existing values overwritten with NULL — while
+   * its own real changes (columns not in the fixed SET list) would be silently
+   * dropped.
+   *
+   * To stay correct for mixed batches we group records by their exact
+   * changed-column set and run one bulk UPDATE per group. Every row within a
+   * group shares the same SET clause, so the clause always matches the JSON
+   * each row carries. The common homogeneous case (every row changed the same
+   * columns) collapses to a single group → a single query. Explicitly setting a
+   * column to `null` is preserved, because the column is still present in
+   * `data`'s keys and thus in the group's SET clause.
+   */
   async updateMany(
     schema: string,
     tableName: string,
@@ -542,38 +564,53 @@ export class KnexPGClient {
   ): Promise<(Record<string, unknown> | 'not_found')[]> {
     if (records.length === 0) return [];
 
-    const updateColumns = Object.keys(records[0].data).filter((c) => c !== primaryId);
-    if (updateColumns.length === 0) return records.map(() => 'not_found');
-
     const quoteId = (name: string) => `"${name.replace(/"/g, '""')}"`;
     const quotedTable = `${quoteId(schema)}.${quoteId(tableName)}`;
     const quotedPk = quoteId(primaryId);
-    const setClauses = updateColumns.map((c) => `${quoteId(c)} = v.${quoteId(c)}`);
 
-    const payload = records.map((r) => ({ ...r.data, [primaryId]: r.id }));
-    const jsonParam = JSON.stringify(payload);
-
-    const query = `
-      UPDATE ${quotedTable} AS t 
-      SET ${setClauses.join(', ')} 
-      FROM json_populate_recordset(null::${quotedTable}, ?::json) AS v 
-      WHERE t.${quotedPk} = v.${quotedPk}
-      RETURNING t.*
-    `;
-
-    try {
-      const result = await this.knex.raw<{ rows: Record<string, unknown>[] }>(query, [jsonParam]);
-
-      const updatedRowMap = new Map<string, Record<string, unknown>>();
-      for (const row of result.rows) {
-        updatedRowMap.set(String(row[primaryId]), sanitizeRow(row));
+    // Group records that change the exact same set of columns. The map key is
+    // the sorted changed-column list so that `{name, price}` and `{price, name}`
+    // land in the same group regardless of key order; the stored `columns`
+    // array keeps one representative order for building the SET clause.
+    const recordsGroupedByChangedColumnSet = new Map<
+      string,
+      { changedColumns: string[]; records: { id: string | number; data: Record<string, unknown> }[] }
+    >();
+    for (const record of records) {
+      const changedColumns = Object.keys(record.data).filter((column) => column !== primaryId);
+      // A record with no changed columns (only the PK) has nothing to update;
+      // it maps to 'not_found' below since no query touches it.
+      if (changedColumns.length === 0) continue;
+      const groupKey = JSON.stringify([...changedColumns].sort());
+      const existingGroup = recordsGroupedByChangedColumnSet.get(groupKey);
+      if (existingGroup) {
+        existingGroup.records.push(record);
+      } else {
+        recordsGroupedByChangedColumnSet.set(groupKey, { changedColumns, records: [record] });
       }
-
-      return records.map((r) => updatedRowMap.get(String(r.id)) || 'not_found');
-    } catch (error) {
-      console.error(error);
-      throw error;
     }
+
+    const updatedRowByPrimaryId = new Map<string, Record<string, unknown>>();
+    for (const { changedColumns, records: recordsInGroup } of recordsGroupedByChangedColumnSet.values()) {
+      const setClauses = changedColumns.map((column) => `${quoteId(column)} = v.${quoteId(column)}`);
+      const payload = recordsInGroup.map((r) => ({ ...r.data, [primaryId]: r.id }));
+      const jsonParam = JSON.stringify(payload);
+
+      const query = `
+        UPDATE ${quotedTable} AS t
+        SET ${setClauses.join(', ')}
+        FROM json_populate_recordset(null::${quotedTable}, ?::json) AS v
+        WHERE t.${quotedPk} = v.${quotedPk}
+        RETURNING t.*
+      `;
+
+      const result = await this.knex.raw<{ rows: Record<string, unknown>[] }>(query, [jsonParam]);
+      for (const row of result.rows) {
+        updatedRowByPrimaryId.set(String(row[primaryId]), sanitizeRow(row));
+      }
+    }
+
+    return records.map((r) => updatedRowByPrimaryId.get(String(r.id)) || 'not_found');
   }
 
   // -------------------------------------------------------------------------
