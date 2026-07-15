@@ -56,3 +56,7 @@ export function get_required_integration_env_variable(variable_name: string): st
 export function get_webflow_api_key(): string {
   return get_required_integration_env_variable('WEBFLOW_API_KEY');
 }
+
+export function get_attio_api_key(): string {
+  return get_required_integration_env_variable('ATTIO_API_KEY');
+}

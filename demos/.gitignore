@@ -1,3 +1,4 @@
-# Local workbook checkout materialized by `scratchmd workspaces init` (bootstrap.ts).
-# This is a working copy of the demo workbook; never commit it.
+# Local workbook checkout(s) materialized by `scratchmd workspaces init` (bootstrap.ts).
+# These are working copies of the demo workbooks; never commit them.
 .scratch-checkout/
+.scratch-checkout-*/
