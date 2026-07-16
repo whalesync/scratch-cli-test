@@ -215,6 +215,24 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     expect(properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
   });
 
+  it('sets titlePath to the first text-typed candidate column', async () => {
+    const spec = await fetchSchema([
+      buildColumn({ column_name: 'id', data_type: 'integer', udt_name: 'int4' }),
+      buildColumn({ column_name: 'name', data_type: 'character varying', udt_name: 'varchar' }),
+    ]);
+
+    expect(spec.titlePath).toEqual('name');
+  });
+
+  it('leaves titlePath undefined when no candidate title column exists', async () => {
+    const spec = await fetchSchema([
+      buildColumn({ column_name: 'id', data_type: 'integer', udt_name: 'int4' }),
+      buildColumn({ column_name: 'body', data_type: 'text', udt_name: 'text' }),
+    ]);
+
+    expect(spec.titlePath).toBeUndefined();
+  });
+
   it('falls back to "id" when no primary key candidates are returned', async () => {
     mockFindPrimaryColumnCandidates.mockResolvedValue([]);
     const spec = await fetchSchema([buildColumn({ column_name: 'id', data_type: 'integer', udt_name: 'int4' })]);

@@ -4,6 +4,8 @@
  */
 import { Type, type TSchema } from '@sinclair/typebox';
 import { PostgresColumnType } from '@spinner/shared-types';
+import { dotPath, type DotPath } from '../../types';
+import type { InformationSchemaColumn } from './knex-pg-types';
 
 export const PG_NUMERIC_TYPES = new Set([
   'integer',
@@ -26,6 +28,26 @@ export const PG_NUMERIC_TYPES = new Set([
 export const PG_BOOLEAN_TYPES = new Set(['boolean', 'bool']);
 
 export const PG_TEXT_TYPES = new Set(['text', 'varchar', 'char', 'character varying', 'character', 'uuid', 'citext']);
+
+/**
+ * Column names that make a good record title, by convention. The first text-typed
+ * column (in table-column order) whose name matches one of these is used as the title.
+ */
+export const TITLE_COLUMN_CANDIDATES = ['name', 'title', 'display_name', 'label'];
+
+/**
+ * Pick the dot-path of the column to use as a record's title, following the
+ * shared SQL convention: the first text-typed column whose name is one of
+ * `TITLE_COLUMN_CANDIDATES`. Returns `undefined` when the table has no such column.
+ */
+export function pickTitleColumnPath(columns: InformationSchemaColumn[]): DotPath | undefined {
+  for (const col of columns) {
+    if (TITLE_COLUMN_CANDIDATES.includes(col.column_name) && PG_TEXT_TYPES.has(col.udt_name)) {
+      return dotPath(col.column_name);
+    }
+  }
+  return undefined;
+}
 
 export const PG_TIMESTAMP_TYPES = new Set([
   'timestamp',

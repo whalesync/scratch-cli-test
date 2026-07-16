@@ -47,8 +47,8 @@ import {
   KnexPGClient,
   KnexPGClientError,
   mapPgType,
-  PG_TEXT_TYPES,
   pgIncrementalPullSupport,
+  pickTitleColumnPath,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
   POSTGRES_SYSTEM_SCHEMAS,
@@ -76,8 +76,6 @@ function getPostgresPublishBatchSize(): number {
 /** JSON Schema extension keys (from CONNECTOR_GUIDE.md). */
 const READONLY_FLAG = 'x-scratch-readonly';
 const CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
-
-const TITLE_COLUMN_CANDIDATES = ['name', 'title', 'display_name', 'label'];
 
 /** Schema used when a create-schema request does not specify a `remoteParentId`. */
 const DEFAULT_POSTGRES_SCHEMA = 'public';
@@ -258,7 +256,6 @@ export class PostgresConnector extends Connector {
       }
 
       const schemaProperties: Record<string, TSchema> = {};
-      let titlePath: DotPath | undefined;
       let slugPath: DotPath | undefined;
 
       for (const col of columns) {
@@ -283,10 +280,6 @@ export class PostgresConnector extends Connector {
 
         schemaProperties[col.column_name] = isNullable || hasDefault ? Type.Optional(annotated) : annotated;
 
-        if (!titlePath && TITLE_COLUMN_CANDIDATES.includes(col.column_name) && PG_TEXT_TYPES.has(col.udt_name)) {
-          titlePath = dotPath(col.column_name);
-        }
-
         if (col.column_name === 'slug') {
           slugPath = dotPath('slug');
         }
@@ -303,7 +296,7 @@ export class PostgresConnector extends Connector {
         name: tableName,
         schema: tableSchema,
         idPath: dotPath(primaryKey),
-        titlePath,
+        titlePath: pickTitleColumnPath(columns),
         slugPath,
         basePath: [schema],
         generatedAt: new Date().toISOString(),

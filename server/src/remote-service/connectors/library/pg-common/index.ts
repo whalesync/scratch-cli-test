@@ -35,7 +35,9 @@ export {
   PG_NUMERIC_TYPES,
   PG_TEXT_TYPES,
   PG_TIMESTAMP_TYPES,
+  TITLE_COLUMN_CANDIDATES,
   mapPgType,
   mapScalarPgType,
+  pickTitleColumnPath,
 } from './pg-type-mapping';
 export { validateWhereFilter } from './sql-filter-validator';

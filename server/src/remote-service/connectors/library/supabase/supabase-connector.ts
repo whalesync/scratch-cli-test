@@ -52,6 +52,7 @@ import {
   KnexPGClientError,
   mapPgType,
   pgIncrementalPullSupport,
+  pickTitleColumnPath,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   resolvePgModifiedAtField,
   SUPABASE_SYSTEM_SCHEMA_PATTERNS,
@@ -437,6 +438,7 @@ export class SupabaseConnector extends Connector {
         name: tableName,
         schema: tableSchema,
         idPath: dotPath(primaryKey),
+        titlePath: pickTitleColumnPath(columns),
         basePath: [schema],
         generatedAt: new Date().toISOString(),
       };
