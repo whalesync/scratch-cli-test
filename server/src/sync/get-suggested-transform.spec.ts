@@ -153,4 +153,59 @@ describe('getSuggestedTransform', () => {
       [],
     );
   });
+
+  describe('non-scalar source → destination pack (DEV-10828)', () => {
+    it('JSON-stringifies an object source into a CoreValue string before the fromCore pack', () => {
+      // Shopify `featuredImage` (single object, no toCore) → a Notion rich_text column (wrap_object pack).
+      // Without the coercion the raw object lands in the pack's string-only `content` slot and Notion rejects it.
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'object' }),
+            col({ primitiveType: 'string', fromCore: richTextPack }),
+          ),
+        ),
+      ).toEqual([autoConvert('string'), richTextPack]);
+    });
+
+    it('also stringifies a single-cardinality JSON-array source before the pack', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ cardinality: 'single', primitiveType: 'array' }),
+            col({ primitiveType: 'string', fromCore: richTextPack }),
+          ),
+        ),
+      ).toEqual([autoConvert('string'), richTextPack]);
+    });
+
+    it('does NOT stringify a scalar source into the pack (numbers/booleans reach a native pack as-is)', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'number' }),
+            col({ primitiveType: 'number', fromCore: richTextPack }),
+          ),
+        ),
+      ).toEqual([richTextPack]);
+    });
+
+    it('does NOT add the pre-pack coercion on the pack-less path (the coercion floor still handles it)', () => {
+      // No destination fromCore → the existing floor coerces object→string exactly as before (single auto_convert).
+      expect(
+        chainOf(getSuggestedTransform(col({ primitiveType: 'object' }), col({ primitiveType: 'string' }))),
+      ).toEqual([autoConvert('string')]);
+    });
+
+    it('leaves an object source with a toCore codec to that codec (no extra stringify)', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'object', toCore: richTextUnpack }),
+            col({ fromCore: richTextPack }),
+          ),
+        ),
+      ).toEqual([richTextUnpack, richTextPack]);
+    });
+  });
 });

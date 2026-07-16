@@ -105,6 +105,14 @@ const AUTO_CONVERTIBLE_TARGET_TYPES: ReadonlySet<string> = new Set<AutoConvertOp
 ]);
 
 /**
+ * JSON-schema primitive types whose value is NON-SCALAR — a nested object or a JSON array. A source
+ * column of one of these does not hold a valid {@link CoreValue} (which is always a `string`, base-10
+ * numbers/dates/booleans as strings; see the CoreValue doc above), so its raw value can't be handed
+ * straight to a destination `fromCore` pack that assumes a CoreValue string.
+ */
+const NON_SCALAR_SOURCE_PRIMITIVE_TYPES: ReadonlySet<string> = new Set(['object', 'array']);
+
+/**
  * Pick the transformer pipeline to copy a value from `sourceField` to
  * `destinationField`, from the connector-declared schema hints on each:
  *
@@ -276,7 +284,28 @@ export function getSuggestedTransform(
   const transformerChain: TransformerConfig[] = [];
 
   // 1. Source half: native → CoreValue (dest-agnostic).
-  if (source.toCore) transformerChain.push(source.toCore);
+  if (source.toCore) {
+    transformerChain.push(source.toCore);
+  } else if (
+    destination.fromCore &&
+    source.cardinality === 'single' &&
+    source.primitiveType !== undefined &&
+    NON_SCALAR_SOURCE_PRIMITIVE_TYPES.has(source.primitiveType)
+  ) {
+    // A scalar-cardinality source whose raw value is a nested object / JSON array is NOT a valid
+    // CoreValue (which must be a string), and with no `toCore` codec nothing normalizes it. A
+    // destination `fromCore` pack assumes it receives a CoreValue and substitutes the value straight
+    // into its native envelope — e.g. Notion's `rich_text` pack drops it into a string-only `content`
+    // slot via `wrap_object` — so the raw object reaches the connector's write API and is rejected
+    // (DEV-10828: Shopify's `featuredImage` / `category` objects mapped to a Notion rich_text column).
+    // JSON-stringify it into a CoreValue string first. This mirrors the coercion floor's own
+    // object→string degrade on the pack-LESS path (see `coercionFloorForDestination` and
+    // auto-convert's `convertToString`), extending it to the pack path the floor skips. Gated on
+    // `destination.fromCore` so the pack-less path keeps flooring exactly as before (no double
+    // coercion), and on non-scalar sources only so scalar numbers/booleans still reach a native
+    // number/checkbox pack un-stringified.
+    transformerChain.push({ type: TransformerTypes.AutoConvert, options: { targetType: 'string' } });
+  }
 
   // 2. Middle: reshape the source cardinality arm to the destination's (the only stage that knows both).
   const reshape = selectCardinalityReshape(source.cardinality, destination.cardinality, destination.logicalType);
