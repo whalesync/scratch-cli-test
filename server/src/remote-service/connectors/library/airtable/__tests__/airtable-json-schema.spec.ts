@@ -228,3 +228,42 @@ describe('airtableFieldToJsonSchema object-valued conformance (DEV-10652)', () =
     it('accepts a number', () => expect(Value.Check(schema, 123)).toBe(true));
   });
 });
+
+// DEV-10753: Airtable link fields are symmetric. Surface the reciprocal-field id and the
+// single-vs-multi cardinality so the create-plan generator can suggest only one side.
+describe('multipleRecordLinks — reciprocal foreign-key annotation', () => {
+  const linkField = (options: AirtableFieldsV2['options']): AirtableFieldsV2 => ({
+    id: 'fldLink',
+    name: 'Tasks',
+    type: AirtableDataType.MULTIPLE_RECORD_LINKS,
+    options,
+  });
+
+  it('carries linkedTableId, inverseFieldId, and isSingleValued for a single-record link', () => {
+    const schema = airtableFieldToJsonSchema(
+      linkField({
+        isReversed: false,
+        linkedTableId: 'tblTasks',
+        inverseLinkFieldId: 'fldBack',
+        prefersSingleRecordLink: true,
+      }),
+    );
+    expect(schema[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'tblTasks',
+      inverseFieldId: 'fldBack',
+      isSingleValued: true,
+    });
+  });
+
+  it('omits isSingleValued for a multi-record (many-to-many) link', () => {
+    const schema = airtableFieldToJsonSchema(
+      linkField({ isReversed: false, linkedTableId: 'tblTasks', inverseLinkFieldId: 'fldBack' }),
+    );
+    expect(schema[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'tblTasks', inverseFieldId: 'fldBack' });
+  });
+
+  it('omits inverseFieldId when Airtable reports no reciprocal field', () => {
+    const schema = airtableFieldToJsonSchema(linkField({ isReversed: false, linkedTableId: 'tblTasks' }));
+    expect(schema[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'tblTasks' });
+  });
+});

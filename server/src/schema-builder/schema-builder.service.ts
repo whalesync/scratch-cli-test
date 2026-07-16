@@ -382,6 +382,9 @@ export class SchemaBuilderService {
       ...(destinationCapabilities?.primaryField
         ? { destinationPrimaryFieldKinds: destinationCapabilities.primaryField.kinds }
         : {}),
+      // Absent ⇒ true: only a destination that explicitly can't hold a two-way link (Postgres/Supabase)
+      // drops both sides of a reciprocal N→N pair from a symmetric source (DEV-10753).
+      destinationSupportsManyToManyForeignKeys: destinationCapabilities?.supportsManyToManyForeignKeys ?? true,
     });
 
     // Sync transforms are NOT computed here: in a create plan every mapped

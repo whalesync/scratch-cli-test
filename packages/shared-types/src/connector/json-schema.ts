@@ -177,6 +177,24 @@ export interface AssetTableOptions {
  */
 export interface ForeignKeyOptionSchema {
   linkedTableId: string;
+  /**
+   * Remote field id of the RECIPROCAL foreign key on the linked table, for services whose
+   * link fields are symmetric (Airtable auto-creates a mirror link on the other table;
+   * Notion's `dual_property` relations carry a `synced_property_id`). The two sides of one
+   * relationship mutually reference each other's remote field id, which lets the create-plan
+   * generator recognize a reciprocal pair and suggest only ONE side instead of both
+   * (DEV-10753). Absent for one-way / non-symmetric links (Webflow, HubSpot, Notion
+   * `single_property`, Postgres), which are never deduplicated.
+   */
+  inverseFieldId?: string;
+  /**
+   * Whether THIS side of the link references a single linked record rather than a list of
+   * them (Airtable `prefersSingleRecordLink`). Used to pick the more-normalized side of a
+   * reciprocal 1→N pair: the single-valued side is the foreign key on the many-side row, so
+   * it is the one kept. Absent/false ⇒ multi-valued (Airtable's default, and every Notion
+   * relation).
+   */
+  isSingleValued?: boolean;
 }
 
 /**

@@ -945,3 +945,155 @@ describe('generateCreatePlanFromSources — fallback primary field', () => {
     expect(primaryFieldNames(tables[0])).toEqual([]);
   });
 });
+
+describe('generateCreatePlanFromSources — reciprocal foreign keys (DEV-10753)', () => {
+  // A symmetric relationship between two tables: Projects.tasks ↔ Tasks.project. Each side's
+  // foreignKey.inverseFieldId points at the other side's remoteFieldId, so the two are recognized as
+  // one relationship. `isSingleValued` distinguishes the many-side FK (Tasks.project → one project)
+  // from the list side (Projects.tasks → many tasks).
+  const projectsSide = (opts: { tasksIsSingleValued?: boolean } = {}): PlanGeneratorSource => ({
+    ref: 'projects',
+    dataFolderId: 'projects',
+    tableName: 'Projects',
+    remoteTableIds: ['tblProjects'],
+    schemaFields: [
+      field({ path: 'name', type: 'string' }),
+      field({
+        path: 'tasks',
+        type: 'array',
+        remoteFieldId: 'fldProjectsTasks',
+        foreignKey: {
+          linkedTableId: 'tblTasks',
+          inverseFieldId: 'fldTasksProject',
+          ...(opts.tasksIsSingleValued ? { isSingleValued: true } : {}),
+        },
+      }),
+    ],
+  });
+  const tasksSide = (opts: { projectIsSingleValued?: boolean } = {}): PlanGeneratorSource => ({
+    ref: 'tasks',
+    dataFolderId: 'tasks',
+    tableName: 'Tasks',
+    remoteTableIds: ['tblTasks'],
+    schemaFields: [
+      field({ path: 'name', type: 'string' }),
+      field({
+        path: 'project',
+        type: 'array',
+        remoteFieldId: 'fldTasksProject',
+        foreignKey: {
+          linkedTableId: 'tblProjects',
+          inverseFieldId: 'fldProjectsTasks',
+          ...(opts.projectIsSingleValued ? { isSingleValued: true } : {}),
+        },
+      }),
+    ],
+  });
+
+  const fieldNames = (tables: ReturnType<typeof generateCreatePlanFromSources>['tables'], ref: string): string[] =>
+    tables.find((table) => table.ref === ref)?.fields.map((f) => f.name) ?? [];
+
+  it('1→N: keeps the single-valued side and drops the multi-valued list side', () => {
+    // A task belongs to one project (Tasks.project single-valued); a project has many tasks
+    // (Projects.tasks multi-valued). Keep the normalized FK on the many-side (Tasks.project).
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [projectsSide(), tasksSide({ projectIsSingleValued: true })],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    expect(fieldNames(tables, 'tasks')).toContain('project');
+    expect(fieldNames(tables, 'projects')).not.toContain('tasks');
+
+    const droppedNote = notes.find((note) => note.sourceFieldPath === 'tasks');
+    expect(droppedNote).toMatchObject({ status: 'skipped_reciprocal', mappedKind: 'foreignKey' });
+    expect(droppedNote?.message).toContain('Tasks');
+    expect(droppedNote?.message).toContain('project');
+    // The kept side is a normal mapped FK, not suppressed.
+    expect(notes.find((note) => note.sourceFieldPath === 'project')).toMatchObject({
+      status: 'mapped',
+      mappedKind: 'foreignKey',
+    });
+  });
+
+  it('1→N: side order does not matter — always keeps the single-valued side', () => {
+    const { tables } = generateCreatePlanFromSources({
+      // Same pair, sources listed in the opposite order.
+      sources: [tasksSide({ projectIsSingleValued: true }), projectsSide()],
+      destinationConnectorAccountId: 'destConn',
+    });
+    expect(fieldNames(tables, 'tasks')).toContain('project');
+    expect(fieldNames(tables, 'projects')).not.toContain('tasks');
+  });
+
+  it('N→N to a many-to-many-capable destination: keeps exactly one side (deterministically)', () => {
+    const run = () =>
+      generateCreatePlanFromSources({
+        sources: [projectsSide(), tasksSide()],
+        destinationConnectorAccountId: 'destConn',
+        destinationSupportsManyToManyForeignKeys: true,
+      });
+    const { tables, notes } = run();
+
+    // Exactly one of the two link fields survives.
+    const projectsHasLink = fieldNames(tables, 'projects').includes('tasks');
+    const tasksHasLink = fieldNames(tables, 'tasks').includes('project');
+    expect(projectsHasLink !== tasksHasLink).toBe(true);
+    // Deterministic tiebreak: 'projects tasks' < 'tasks project', so the projects side is kept.
+    expect(projectsHasLink).toBe(true);
+
+    expect(notes.filter((note) => note.status === 'skipped_reciprocal')).toHaveLength(1);
+    // Reproducible across runs.
+    const rerunTables = run().tables;
+    expect(fieldNames(rerunTables, 'projects')).toEqual(fieldNames(tables, 'projects'));
+    expect(fieldNames(rerunTables, 'tasks')).toEqual(fieldNames(tables, 'tasks'));
+  });
+
+  it('N→N to a destination that cannot represent it (e.g. Postgres): drops BOTH sides', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [projectsSide(), tasksSide()],
+      destinationConnectorAccountId: 'destConn',
+      destinationSupportsManyToManyForeignKeys: false,
+    });
+
+    expect(fieldNames(tables, 'projects')).not.toContain('tasks');
+    expect(fieldNames(tables, 'tasks')).not.toContain('project');
+    const reciprocalNotes = notes.filter((note) => note.status === 'skipped_reciprocal');
+    expect(reciprocalNotes).toHaveLength(2);
+    for (const note of reciprocalNotes) expect(note.message).toContain('many-to-many');
+  });
+
+  it('does not deduplicate when only one side of the relationship is in the plan', () => {
+    // Projects.tasks references tblTasks, but no Tasks source is present ⇒ nothing to collapse.
+    const { tables } = generateCreatePlanFromSources({
+      sources: [projectsSide()],
+      destinationConnectorAccountId: 'destConn',
+      linkedTableMappings: [{ sourceLinkedTableId: 'tblTasks', destinationRemoteTableId: ['tblTasksDest'] }],
+    });
+    expect(fieldNames(tables, 'projects')).toContain('tasks');
+  });
+
+  it('does not deduplicate one-way links that carry no inverse field id (asymmetric services)', () => {
+    // Two mutually-linking tables whose FKs have NO inverseFieldId (e.g. Webflow, HubSpot). Both kept.
+    const left: PlanGeneratorSource = {
+      ref: 'left',
+      dataFolderId: 'left',
+      tableName: 'Left',
+      remoteTableIds: ['tblLeft'],
+      schemaFields: [field({ path: 'toRight', type: 'array', foreignKey: { linkedTableId: 'tblRight' } })],
+    };
+    const right: PlanGeneratorSource = {
+      ref: 'right',
+      dataFolderId: 'right',
+      tableName: 'Right',
+      remoteTableIds: ['tblRight'],
+      schemaFields: [field({ path: 'toLeft', type: 'array', foreignKey: { linkedTableId: 'tblLeft' } })],
+    };
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [left, right],
+      destinationConnectorAccountId: 'destConn',
+    });
+    expect(fieldNames(tables, 'left')).toContain('toRight');
+    expect(fieldNames(tables, 'right')).toContain('toLeft');
+    expect(notes.some((note) => note.status === 'skipped_reciprocal')).toBe(false);
+  });
+});

@@ -194,6 +194,30 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
       const noFk = prop('relation', { relation: {} });
       expect(noFk[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
     });
+
+    // DEV-10753: a dual_property (symmetric) relation carries the reciprocal property's id so the
+    // create-plan generator can suggest only one side; a single_property (one-way) relation has none.
+    it('surfaces inverseFieldId for a dual_property (symmetric) relation', () => {
+      const dual = prop('relation', {
+        relation: {
+          database_id: 'db_linked',
+          type: 'dual_property',
+          dual_property: { synced_property_id: 'prop_back', synced_property_name: 'Back' },
+        },
+      });
+      expect(dual[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'db_linked',
+        map: 'id',
+        inverseFieldId: 'prop_back',
+      });
+    });
+
+    it('omits inverseFieldId for a single_property (one-way) relation', () => {
+      const single = prop('relation', {
+        relation: { database_id: 'db_linked', type: 'single_property', single_property: {} },
+      });
+      expect(single[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'db_linked', map: 'id' });
+    });
   });
 
   describe('rollup — both nesting levels modeled', () => {

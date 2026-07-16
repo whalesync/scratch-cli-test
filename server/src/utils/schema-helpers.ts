@@ -103,7 +103,7 @@ export interface SchemaField {
   /** Pack transform applied when this field is a sync destination (plain → native). */
   suggestedInTransformer?: TransformerConfig;
   readonly?: boolean;
-  foreignKey?: { linkedTableId: string };
+  foreignKey?: { linkedTableId: string; inverseFieldId?: string; isSingleValued?: boolean };
 }
 
 /**
@@ -198,7 +198,13 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     if (suggestedIn) field.suggestedInTransformer = suggestedIn;
     if (schema[X_SCRATCH_READONLY] === true) field.readonly = true;
     const fk = schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] as ForeignKeyOptionSchema | undefined;
-    if (fk?.linkedTableId) field.foreignKey = { linkedTableId: fk.linkedTableId };
+    if (fk?.linkedTableId) {
+      field.foreignKey = {
+        linkedTableId: fk.linkedTableId,
+        ...(fk.inverseFieldId !== undefined ? { inverseFieldId: fk.inverseFieldId } : {}),
+        ...(fk.isSingleValued !== undefined ? { isSingleValued: fk.isSingleValued } : {}),
+      };
+    }
 
     // Virtual fields: overwrite the entry with a human-readable label and pre-configured transformer
     const virtualDefs = schema[X_SCRATCH_VIRTUAL_FIELDS] as VirtualFieldDef[] | undefined;

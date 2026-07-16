@@ -155,6 +155,14 @@ export function generateCreatePlanFromSources(args: {
    * Absent ⇒ no limit.
    */
   destinationMaxFieldNameLength?: number;
+  /**
+   * Whether the destination can represent a many-to-many link — a link field on each side holding a
+   * list of linked records (`SchemaCreationCapabilities.supportsManyToManyForeignKeys`). Used only to
+   * decide a reciprocal N→N pair from a symmetric source (Airtable/Notion): when false (e.g.
+   * Postgres/Supabase, whose FK is a single scalar column) neither side is suggested; otherwise one is.
+   * Absent ⇒ treated as true (no special N→N handling). See DEV-10753.
+   */
+  destinationSupportsManyToManyForeignKeys?: boolean;
 }): GeneratedPlan {
   // linkedTableId → in-plan table ref (for resolving sibling foreign keys).
   const linkedIdToRef = new Map<string, string>();
@@ -167,6 +175,14 @@ export function generateCreatePlanFromSources(args: {
   for (const mapping of args.linkedTableMappings ?? []) {
     mappingByLinkedId.set(mapping.sourceLinkedTableId, mapping.destinationRemoteTableId);
   }
+
+  // Symmetric-service (Airtable/Notion) relationships surface a link field on BOTH tables. When both
+  // tables are in this plan, suggest only one side of each reciprocal pair (DEV-10753). This map holds,
+  // per SUPPRESSED source field, the note message explaining its omission; fields not in it are emitted.
+  const reciprocalSuppressionMessageByFieldKey = computeReciprocalForeignKeySuppressions(
+    args.sources,
+    args.destinationSupportsManyToManyForeignKeys ?? true,
+  );
 
   const notes: FieldMappingNote[] = [];
   const tableNotes: TableMappingNote[] = [];
@@ -190,6 +206,7 @@ export function generateCreatePlanFromSources(args: {
           args.destinationConnectorAccountId,
           linkedIdToRef,
           mappingByLinkedId,
+          reciprocalSuppressionMessageByFieldKey,
           notes,
           args.destinationReservedFieldNames,
           args.destinationMaxFieldNameLength,
@@ -206,6 +223,7 @@ export function generateCreatePlanFromSources(args: {
         },
         linkedIdToRef,
         mappingByLinkedId,
+        reciprocalSuppressionMessageByFieldKey,
         notes,
       );
       // Give the destination table a column to sync the source record's remote id
@@ -278,6 +296,144 @@ export function generateCreatePlanFromSources(args: {
   return { tables, fieldPlans, notes, tableNotes };
 }
 
+/** Key identifying a source field within the plan (data folder + dot path), for suppression lookup. */
+function reciprocalSuppressionKey(dataFolderId: string, fieldPath: string): string {
+  return `${dataFolderId} ${fieldPath}`;
+}
+
+/** One in-plan foreign-key field, with the pre-computed keys the reciprocal-pair logic needs. */
+interface ReciprocalForeignKeyFieldEntry {
+  source: PlanGeneratorSource;
+  field: SchemaField;
+  /** Stable, deterministic sort key for the "keep the smaller side" tiebreak (N→N and 1→1). */
+  sortKey: string;
+  /** Key under which this field's suppression (if chosen) is recorded and later looked up. */
+  suppressionKey: string;
+}
+
+/**
+ * Identify reciprocal foreign-key pairs among the plan's sources and choose which side to SUPPRESS
+ * (DEV-10753). Symmetric-link services (Airtable, and Notion `dual_property` relations) expose one
+ * relationship from BOTH tables — a link field on each side that mutually reference each other's remote
+ * field id. When both tables are in the plan, suggesting both sides recreates the two-way link twice, so
+ * only one side is kept:
+ *
+ *  - 1→N (exactly one side single-valued): keep the single-valued side — the foreign key on the many-side
+ *    row, the more-normalized choice — and drop the multi-valued list side.
+ *  - N→N (neither side single-valued): if the destination can't hold a two-way link
+ *    (`destinationSupportsManyToManyForeignKeys` false, e.g. Postgres/Supabase) drop BOTH; otherwise keep
+ *    one side deterministically (the smaller sort key) and drop the other.
+ *  - 1→1 (both single-valued, rare): keep one side deterministically; a single scalar FK is representable
+ *    everywhere, so it is never dropped entirely.
+ *
+ * Returns a map from each suppressed field's key (see {@link reciprocalSuppressionKey}) to the note
+ * message explaining its omission. A field absent from the map is emitted normally. Only fields carrying
+ * both a `remoteFieldId` and a `foreignKey.inverseFieldId` participate; one-way links (no inverse — every
+ * other connector) are never touched.
+ */
+function computeReciprocalForeignKeySuppressions(
+  sources: PlanGeneratorSource[],
+  destinationSupportsManyToManyForeignKeys: boolean,
+): Map<string, string> {
+  const foreignKeyFieldEntries: ReciprocalForeignKeyFieldEntry[] = [];
+  for (const source of sources) {
+    for (const field of source.schemaFields) {
+      if (field.foreignKey && field.remoteFieldId) {
+        foreignKeyFieldEntries.push({
+          source,
+          field,
+          sortKey: `${source.ref} ${field.path}`,
+          suppressionKey: reciprocalSuppressionKey(source.dataFolderId, field.path),
+        });
+      }
+    }
+  }
+
+  // Index by each field's own remote id so a candidate reciprocal partner is found in O(1).
+  const entriesByRemoteFieldId = new Map<string, ReciprocalForeignKeyFieldEntry[]>();
+  for (const entry of foreignKeyFieldEntries) {
+    const remoteFieldId = entry.field.remoteFieldId;
+    if (remoteFieldId === undefined) continue;
+    const entriesForThisRemoteFieldId = entriesByRemoteFieldId.get(remoteFieldId);
+    if (entriesForThisRemoteFieldId) entriesForThisRemoteFieldId.push(entry);
+    else entriesByRemoteFieldId.set(remoteFieldId, [entry]);
+  }
+
+  const suppressionMessageByFieldKey = new Map<string, string>();
+  const alreadyPairedSuppressionKeys = new Set<string>();
+
+  for (const sideA of foreignKeyFieldEntries) {
+    if (alreadyPairedSuppressionKeys.has(sideA.suppressionKey)) continue;
+    const inverseFieldId = sideA.field.foreignKey?.inverseFieldId;
+    if (!inverseFieldId) continue;
+
+    const sideB = (entriesByRemoteFieldId.get(inverseFieldId) ?? []).find((candidate) =>
+      areReciprocalForeignKeyFields(sideA, candidate),
+    );
+    if (!sideB) continue;
+
+    alreadyPairedSuppressionKeys.add(sideA.suppressionKey);
+    alreadyPairedSuppressionKeys.add(sideB.suppressionKey);
+
+    const sideAIsSingleValued = sideA.field.foreignKey?.isSingleValued === true;
+    const sideBIsSingleValued = sideB.field.foreignKey?.isSingleValued === true;
+
+    // 1→N: keep the single-valued side (the FK on the many-side row), drop the multi-valued list side.
+    if (sideAIsSingleValued !== sideBIsSingleValued) {
+      const keptSide = sideAIsSingleValued ? sideA : sideB;
+      const droppedSide = sideAIsSingleValued ? sideB : sideA;
+      suppressionMessageByFieldKey.set(droppedSide.suppressionKey, reciprocalOtherSideKeptMessage(keptSide));
+      continue;
+    }
+
+    // N→N whose destination can't hold a two-way link: drop BOTH sides.
+    if (!sideAIsSingleValued && !destinationSupportsManyToManyForeignKeys) {
+      const message = manyToManyUnsupportedByDestinationMessage();
+      suppressionMessageByFieldKey.set(sideA.suppressionKey, message);
+      suppressionMessageByFieldKey.set(sideB.suppressionKey, message);
+      continue;
+    }
+
+    // N→N (destination supports it) or 1→1: keep one side deterministically, drop the other.
+    const [keptSide, droppedSide] = sideA.sortKey <= sideB.sortKey ? [sideA, sideB] : [sideB, sideA];
+    suppressionMessageByFieldKey.set(droppedSide.suppressionKey, reciprocalOtherSideKeptMessage(keptSide));
+  }
+
+  return suppressionMessageByFieldKey;
+}
+
+/**
+ * Whether two foreign-key fields are the two sides of ONE symmetric relationship: they mutually reference
+ * each other's remote field id, AND each links to the table the other lives on. The table cross-check
+ * guards against a remote-field-id collision between two unrelated links.
+ */
+function areReciprocalForeignKeyFields(
+  sideA: ReciprocalForeignKeyFieldEntry,
+  sideB: ReciprocalForeignKeyFieldEntry,
+): boolean {
+  if (sideA.suppressionKey === sideB.suppressionKey) return false;
+  const sideAForeignKey = sideA.field.foreignKey;
+  const sideBForeignKey = sideB.field.foreignKey;
+  if (!sideAForeignKey || !sideBForeignKey) return false;
+  return (
+    sideAForeignKey.inverseFieldId === sideB.field.remoteFieldId &&
+    sideBForeignKey.inverseFieldId === sideA.field.remoteFieldId &&
+    sideB.source.remoteTableIds.includes(sideAForeignKey.linkedTableId) &&
+    sideA.source.remoteTableIds.includes(sideBForeignKey.linkedTableId)
+  );
+}
+
+/** Note message for a reciprocal side omitted because the OTHER side is being suggested instead. */
+function reciprocalOtherSideKeptMessage(keptSide: ReciprocalForeignKeyFieldEntry): string {
+  const keptFieldName = keptSide.field.displayLabel ?? lastPathSegment(keptSide.field.path);
+  return `reciprocal link — the other side of this relationship is suggested on table "${keptSide.source.tableName}" as "${keptFieldName}", so this side is omitted to avoid creating the two-way link twice`;
+}
+
+/** Note message for BOTH sides of an N→N relationship the destination can't represent. */
+function manyToManyUnsupportedByDestinationMessage(): string {
+  return "many-to-many link — the destination can't represent a two-way relationship, so neither side is suggested";
+}
+
 /**
  * Build an add-fields plan for a source whose destination table exists: the
  * source's create-field specs minus any field the destination already has (by
@@ -295,6 +451,7 @@ function buildAddFieldsPlanForSource(
   connectorAccountId: string,
   linkedIdToRef: Map<string, string>,
   mappingByLinkedId: Map<string, string[]>,
+  reciprocalSuppressionMessageByFieldKey: Map<string, string>,
   notes: FieldMappingNote[],
   reservedFieldNames: string[] | undefined,
   maxFieldNameLength: number | undefined,
@@ -313,6 +470,7 @@ function buildAddFieldsPlanForSource(
     },
     linkedIdToRef,
     mappingByLinkedId,
+    reciprocalSuppressionMessageByFieldKey,
     notes,
   );
   return {
@@ -349,6 +507,7 @@ function collectCreateFieldSpecsForSource(
   options: CreateFieldSpecOptions,
   linkedIdToRef: Map<string, string>,
   mappingByLinkedId: Map<string, string[]>,
+  reciprocalSuppressionMessageByFieldKey: Map<string, string>,
   notes: FieldMappingNote[],
 ): CreateFieldSpec[] {
   const fields: CreateFieldSpec[] = [];
@@ -370,6 +529,7 @@ function collectCreateFieldSpecsForSource(
       takenFieldNames,
       linkedIdToRef,
       mappingByLinkedId,
+      reciprocalSuppressionMessageByFieldKey,
       notes,
     );
     if (spec) fields.push(spec);
@@ -395,12 +555,31 @@ function mapSchemaFieldToCreateFieldSpec(
   takenFieldNames: Set<string>,
   linkedIdToRef: Map<string, string>,
   mappingByLinkedId: Map<string, string[]>,
+  reciprocalSuppressionMessageByFieldKey: Map<string, string>,
   notes: FieldMappingNote[],
 ): CreateFieldSpec | null {
   // The destination auto-creates its own id column — never recreate it.
   if (source.idFieldPath !== undefined && schemaField.path === source.idFieldPath) return null;
 
   const requestedFieldName = schemaField.displayLabel ?? lastPathSegment(schemaField.path);
+
+  // This side of a symmetric relationship was chosen for suppression (DEV-10753): the other side is
+  // suggested instead, or — for a many-to-many the destination can't hold — neither side is. Record a
+  // `skipped_reciprocal` note and omit the field, so it never lands as a duplicate two-way link.
+  const reciprocalSuppressionMessage = reciprocalSuppressionMessageByFieldKey.get(
+    reciprocalSuppressionKey(source.dataFolderId, schemaField.path),
+  );
+  if (reciprocalSuppressionMessage !== undefined) {
+    notes.push({
+      sourceDataFolderId: source.dataFolderId,
+      sourceFieldPath: schemaField.path,
+      fieldName: requestedFieldName,
+      status: 'skipped_reciprocal',
+      mappedKind: 'foreignKey',
+      message: reciprocalSuppressionMessage,
+    });
+    return null;
+  }
 
   // Add-fields diff: a field the destination already has is never recreated.
   // Checked against the FROZEN existing-destination map (not the growing taken set)

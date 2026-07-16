@@ -51,6 +51,10 @@ export const POSTGRES_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities =
   // The auto-injected primary key (`addAutoPrimaryKey`) owns this name; a source field that folds to it
   // is renamed by the plan generator so it isn't silently dropped at create (see `validateCreateField`).
   reservedFieldNames: [AUTO_PK_COLUMN],
+  // A foreign key becomes a single scalar column referencing the target's primary key, so Postgres can
+  // represent the one-side of a 1→N relationship but not a two-way N→N link. The plan generator drops
+  // both sides of a reciprocal N→N pair from a symmetric source rather than suggesting an unusable one.
+  supportsManyToManyForeignKeys: false,
 };
 
 /**

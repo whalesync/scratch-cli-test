@@ -63,6 +63,15 @@ export interface SchemaCreationCapabilities {
    * Compared case-insensitively. Absent ⇒ no reserved names.
    */
   reservedFieldNames?: string[];
+  /**
+   * Whether the destination can represent a many-to-many link — a link field on each side holding a LIST
+   * of linked records (Airtable, Notion). A relational destination (Postgres/Supabase) maps a foreign key
+   * to a single scalar column, so it can express only the one-side of a 1→N relationship, not a two-way
+   * N→N link. The create-plan generator uses this to decide a reciprocal N→N pair from a symmetric source
+   * (Airtable/Notion): when `false`, neither side is suggested (the destination can't hold it); when `true`
+   * (or absent), one side is. Absent ⇒ treated as `true` (no special N→N handling). (DEV-10753)
+   */
+  supportsManyToManyForeignKeys?: boolean;
 }
 
 /**
@@ -171,9 +180,12 @@ export interface FieldMappingNote {
    * a field of that name: `adopted` means the existing field is a compatible kind,
    * so it's reused (mapped to, not recreated) — see `existingDestinationColumnId`;
    * `exists` means it can't be safely reused (a different kind, or a foreign key)
-   * and was skipped.
+   * and was skipped. `skipped_reciprocal` is a symmetric-service (Airtable/Notion)
+   * link field omitted because the OTHER side of the same relationship is being
+   * suggested instead — or, for a many-to-many whose destination can't represent
+   * one, because neither side is (DEV-10753).
    */
-  status: 'mapped' | 'downgraded' | 'unsupported' | 'exists' | 'adopted' | 'needs_target';
+  status: 'mapped' | 'downgraded' | 'unsupported' | 'exists' | 'adopted' | 'needs_target' | 'skipped_reciprocal';
   mappedKind?: CreateFieldKind;
   message?: string;
   /**

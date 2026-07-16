@@ -108,6 +108,8 @@ export const AIRTABLE_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities =
   maxTableNameLength: AIRTABLE_MAX_NAME_LENGTH,
   maxFieldNameLength: AIRTABLE_MAX_NAME_LENGTH,
   maxFieldsPerTable: AIRTABLE_MAX_FIELDS_PER_TABLE,
+  // Airtable record-link fields hold a list of linked records, so it can represent a two-way N→N link.
+  supportsManyToManyForeignKeys: true,
 };
 
 /**

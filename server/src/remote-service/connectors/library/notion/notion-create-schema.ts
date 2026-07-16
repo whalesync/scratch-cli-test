@@ -43,6 +43,8 @@ export const NOTION_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
     description: 'Notion requires a title property. It names each record and appears at the top of every page.',
     kinds: ['text', 'longText'],
   },
+  // Notion relation properties hold a list of linked records, so it can represent a two-way N→N link.
+  supportsManyToManyForeignKeys: true,
 };
 
 /**

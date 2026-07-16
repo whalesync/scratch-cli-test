@@ -283,7 +283,7 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
   let extraEnvelopeKeys: Record<string, TSchema> | undefined;
   let virtualFields: VirtualFieldDef[] | undefined;
   let assetFieldOptions: AssetFieldOptions | undefined;
-  let foreignKeyOptions: { linkedTableId: string; map: string } | undefined;
+  let foreignKeyOptions: { linkedTableId: string; map: string; inverseFieldId?: string } | undefined;
 
   switch (property.type) {
     case 'title':
@@ -432,8 +432,19 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
       // Real relation data carries a sibling `has_more` flag (Notion truncates
       // the relation array to 25 on response).
       extraEnvelopeKeys = { has_more: Type.Optional(Type.Boolean()) };
+      // A Notion `dual_property` relation is symmetric: the linked database carries a mirror
+      // relation whose id is `dual_property.synced_property_id`. Surfacing it lets the
+      // create-plan generator recognize the reciprocal pair and suggest only one side
+      // (DEV-10753). A `single_property` relation is one-way and has no reciprocal to
+      // deduplicate. Notion relations are always multi-valued, so `isSingleValued` is never set.
       foreignKeyOptions = property.relation.database_id
-        ? { linkedTableId: property.relation.database_id, map: 'id' }
+        ? {
+            linkedTableId: property.relation.database_id,
+            map: 'id',
+            ...(property.relation.type === 'dual_property' && property.relation.dual_property?.synced_property_id
+              ? { inverseFieldId: property.relation.dual_property.synced_property_id }
+              : {}),
+          }
         : undefined;
       break;
 

@@ -188,9 +188,15 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
     case AirtableDataType.MULTIPLE_RECORD_LINKS:
       schema = Type.Array(Type.String(), {
         description,
+        // Airtable link fields are symmetric: creating a link on one table auto-creates a
+        // mirror link on the other. We surface `inverseLinkFieldId` (the mirror field's id)
+        // and `prefersSingleRecordLink` (this side's cardinality) so the create-plan generator
+        // can recognize a reciprocal pair and suggest only one side of it (DEV-10753).
         [X_SCRATCH_FOREIGN_KEY_OPTIONS]: field.options?.linkedTableId
           ? {
-              linkedTableId: field.options?.linkedTableId,
+              linkedTableId: field.options.linkedTableId,
+              ...(field.options.inverseLinkFieldId ? { inverseFieldId: field.options.inverseLinkFieldId } : {}),
+              ...(field.options.prefersSingleRecordLink ? { isSingleValued: true } : {}),
             }
           : undefined,
       });
