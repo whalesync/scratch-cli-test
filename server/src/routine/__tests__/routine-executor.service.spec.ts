@@ -729,6 +729,115 @@ describe('RoutineExecutorService.execute', () => {
     expect(bullEnqueuer.enqueueSelfPlanningPublishJob).not.toHaveBeenCalled();
   });
 
+  it('fails the run and skips sync/publish when a pull job completes but a folder failed', async () => {
+    // The pull job ends DbJob=completed (it catches per-folder errors and only throws when EVERY
+    // folder fails to load); a folder failure lives only in publicProgress.folders[].status. The
+    // executor must read that and fail the step so a stale/partial source never feeds a destructive
+    // sync (whose unmatched-destination delete policy could wipe the destination) or a live publish.
+    const run = baseRun();
+    const steps = [
+      makeStep(0, RoutineAction.PULL),
+      makeStep(1, RoutineAction.SYNC),
+      makeStep(2, RoutineAction.PUBLISH, { folder: '/blog/posts' }),
+    ];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueuePullLinkedFolderFilesJob: jest.fn().mockResolvedValue({ id: 'pull-job' }),
+      enqueueSyncDataFoldersJob: jest.fn().mockResolvedValue({ id: 'sync-job' }),
+      enqueueSelfPlanningPublishJob: jest.fn().mockResolvedValue({ id: 'publish-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn(async (bullJobId: string) =>
+        bullJobId === 'pull-job'
+          ? dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: {
+                publicProgress: {
+                  folders: [
+                    { id: 'dfd_ok', name: 'Countries', status: 'completed' },
+                    {
+                      id: 'dfd_bad',
+                      name: 'Video Games',
+                      status: 'failed',
+                      error: { folderName: 'Video Games', message: 'Airtable 500: rate limited' },
+                    },
+                  ],
+                },
+              },
+            })
+          : dbJobResult({ status: 'completed', error: null, progress: null }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(steps[0].status).toBe('failed');
+    expect(steps[0].error).toMatch(/Video Games/);
+    expect(steps[0].error).toMatch(/rate limited/);
+    expect(steps[1].status).toBe('skipped');
+    expect(steps[2].status).toBe('skipped');
+    expect(run.status).toBe('failed');
+    expect(run.resultSummary).toMatch(/Video Games/);
+    expect(run.resultSummary).not.toMatch(/^Step /);
+    expect(run.error).toMatch(/^Step 0 \(pull\) failed:/);
+    expect(bullEnqueuer.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
+    expect(bullEnqueuer.enqueueSelfPlanningPublishJob).not.toHaveBeenCalled();
+  });
+
+  it('completes a pull step and proceeds when every folder succeeded', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PULL), makeStep(1, RoutineAction.SYNC)];
+    const db = makeFakeDb(run, steps);
+
+    const enqueueSync = jest.fn().mockResolvedValue({ id: 'sync-job' });
+    const bullEnqueuer = {
+      enqueuePullLinkedFolderFilesJob: jest.fn().mockResolvedValue({ id: 'pull-job' }),
+      enqueueSyncDataFoldersJob: enqueueSync,
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn(async (bullJobId: string) =>
+        bullJobId === 'pull-job'
+          ? dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: {
+                publicProgress: {
+                  folders: [{ id: 'dfd_ok', name: 'Countries', status: 'completed' }],
+                },
+              },
+            })
+          : dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: {
+                publicProgress: {
+                  totalFilesSynced: 1,
+                  tables: [{ id: 'dfd_1', name: 'Video Games', status: 'completed', errors: [] }],
+                },
+              },
+            }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(steps[0].status).toBe('completed');
+    expect(steps[0].error).toBeNull();
+    expect(steps[1].status).toBe('completed');
+    expect(run.status).toBe('completed');
+    expect(enqueueSync).toHaveBeenCalled();
+  });
+
   it('records a sync resultSummary with the synced-record count across tables', async () => {
     const run = baseRun();
     const steps = [makeStep(0, RoutineAction.SYNC)];

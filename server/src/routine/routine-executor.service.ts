@@ -554,7 +554,21 @@ export class RoutineExecutorService {
     }
 
     if (action === RoutineAction.PULL) {
+      // A pull job ends `DbJob=completed` even when some folders failed — the pull handler catches
+      // per-folder fetch/process errors, records them in `publicProgress.folders[].status` +
+      // `folderErrors`, and returns normally (it only throws when EVERY folder fails to load). This
+      // mirrors sync's per-table failures exactly, so we treat it the same way: a failed folder is a
+      // hard failure that stops the run. A downstream sync reads the source folder straight off disk;
+      // if this pull left it stale (a failed folder keeps its old records) — or, on a full pull that
+      // partially failed, in an inconsistent state — a sync's unmatched-destination `delete` policy
+      // can wrongly archive/delete destination records and a publish would ship that live. Failing
+      // the step here upholds the precondition the delete policy relies on: never sync/publish on a
+      // pull that did not fully succeed.
       const publicProgress = this.readPullProgress(dbJob.progress);
+      const failedFolders = (publicProgress?.folders ?? []).filter((folder) => folder.status === 'failed');
+      if (failedFolders.length > 0) {
+        return { kind: 'failed', error: this.summarizePullFailure(failedFolders) };
+      }
       const result = this.deriveStepResult(action, publicProgress);
       return { kind: 'completed', pipelineId: null, warning: null, summary: result.summary, result };
     }
@@ -646,6 +660,17 @@ export class RoutineExecutorService {
       .map((table) => `${table.name}: ${table.errors[0]?.error ?? 'unknown error'}`);
     const overflow = failedTables.length > MAX_NAMED_TABLES ? ` (+${failedTables.length - MAX_NAMED_TABLES} more)` : '';
     return `Sync failed for ${failedTables.length} table(s) — ${namedFailures.join('; ')}${overflow}`;
+  }
+
+  /** A concise, bounded summary naming the failed folder(s) and their error for the run page. */
+  private summarizePullFailure(failedFolders: PullLinkedFolderFilesPublicProgress['folders']): string {
+    const MAX_NAMED_FOLDERS = 3;
+    const namedFailures = failedFolders
+      .slice(0, MAX_NAMED_FOLDERS)
+      .map((folder) => `${folder.name}: ${folder.error?.message ?? 'unknown error'}`);
+    const overflow =
+      failedFolders.length > MAX_NAMED_FOLDERS ? ` (+${failedFolders.length - MAX_NAMED_FOLDERS} more)` : '';
+    return `Pull failed for ${failedFolders.length} folder(s) — ${namedFailures.join('; ')}${overflow}`;
   }
 
   /** The step's timeout in ms: the snapshotted value (or the per-action default), capped at the per-action max. */
