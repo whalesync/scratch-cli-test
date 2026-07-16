@@ -768,7 +768,7 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
                 <StyledLucideIcon Icon={ChevronUp} size="sm" />
               </IconButtonGhost>
               <Text12Regular c="var(--fg-muted)" style={{ whiteSpace: 'nowrap' }}>
-                {currentIndex + 1} / {changedRecordCount}
+                {(currentIndex + 1).toLocaleString()} / {changedRecordCount.toLocaleString()}
               </Text12Regular>
               <IconButtonGhost
                 size="compact-xs"
@@ -801,7 +801,7 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
                 </TextMono9Regular>
               </Box>
               <Text12Regular c="var(--fg-muted)">
-                record {currentIndex + 1} of {changedRecordCount}
+                record {(currentIndex + 1).toLocaleString()} of {changedRecordCount.toLocaleString()}
               </Text12Regular>
               {headerReviewMarker === 'approved' && (
                 <Text12Regular c="var(--create-needs-review-stroke)">· ✓ approved</Text12Regular>

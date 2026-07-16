@@ -11,7 +11,7 @@ import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useSyncStore } from '@/stores/sync-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
-import { timeAgo } from '@/utils/helpers';
+import { formatNumber, timeAgo } from '@/utils/helpers';
 import { getJobDescription, getJobType, getTypeLabel, JobType, publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import {
   ActionIcon,
@@ -697,7 +697,7 @@ function formatCount(count: number): string {
   if (count >= 10000) {
     return (count / 1000).toFixed(1) + 'K';
   }
-  return count.toString();
+  return formatNumber(count);
 }
 
 function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: Job; isDevToolsEnabled: boolean }) {
@@ -743,7 +743,7 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: Job; isDev
       {liveProgress && liveProgress.totalCount !== undefined && liveProgress.totalCount > 0 && (
         <Group gap="md" mb="sm">
           <Text12Regular c="var(--fg-secondary)">
-            {liveProgress.processedCount ?? 0} / {liveProgress.totalCount} records
+            {formatNumber(liveProgress.processedCount ?? 0)} / {formatNumber(liveProgress.totalCount)} records
           </Text12Regular>
           {liveProgress.currentPhase && (
             <Text12Regular c="var(--fg-secondary)">Phase: {liveProgress.currentPhase}</Text12Regular>

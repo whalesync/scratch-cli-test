@@ -2,6 +2,7 @@
 
 import MainContent from '@/app/components/layouts/MainContent';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
+import { formatNumber } from '@/utils/helpers';
 import { Alert, Button, Card, Checkbox, Group, NumberInput, Select, Stack, Text, Textarea, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type { MigrationDescriptor, MigrationResult } from '@spinner/shared-types';
@@ -96,8 +97,8 @@ export default function MigrationsDevPage() {
       notifications.show({
         title: result.dryRun ? 'Dry run complete' : 'Migration completed',
         message: result.dryRun
-          ? `Would migrate ${result.migratedIds.length} items; ${result.remainingCount} would remain. No changes were written.`
-          : `Migrated ${result.migratedIds.length} items. ${result.remainingCount} remaining.`,
+          ? `Would migrate ${formatNumber(result.migratedIds.length)} items; ${formatNumber(result.remainingCount)} would remain. No changes were written.`
+          : `Migrated ${formatNumber(result.migratedIds.length)} items. ${formatNumber(result.remainingCount)} remaining.`,
         color: 'green',
       });
 
@@ -235,7 +236,7 @@ export default function MigrationsDevPage() {
                       {lastResult.dryRun ? 'Would migrate' : 'Migrated'}
                     </Text>
                     <Text size="sm" fw={500}>
-                      {lastResult.migratedIds.length} items
+                      {formatNumber(lastResult.migratedIds.length)} items
                     </Text>
                   </div>
                   <div>
@@ -243,7 +244,7 @@ export default function MigrationsDevPage() {
                       {lastResult.dryRun ? 'Would remain' : 'Remaining'}
                     </Text>
                     <Text size="sm" fw={500}>
-                      {lastResult.remainingCount} items
+                      {formatNumber(lastResult.remainingCount)} items
                     </Text>
                   </div>
                 </Group>
@@ -258,7 +259,7 @@ export default function MigrationsDevPage() {
                         <Group key={row.label} gap="xs" justify="space-between" maw={420}>
                           <Text size="sm">{row.label}</Text>
                           <Text size="sm" fw={500} ff="monospace">
-                            {row.count}
+                            {formatNumber(row.count)}
                           </Text>
                         </Group>
                       ))}

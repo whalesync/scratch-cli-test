@@ -908,7 +908,7 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
           {/* Dirty badge when collapsed */}
           {!isExpanded && dirtyCount > 0 && (
             <Badge size="xs" variant="filled" color="orange">
-              {dirtyCount}
+              {dirtyCount.toLocaleString()}
             </Badge>
           )}
 

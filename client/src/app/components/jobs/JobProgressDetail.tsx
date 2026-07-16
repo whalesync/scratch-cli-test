@@ -1,6 +1,7 @@
 'use client';
 
 import { Text12Medium, Text13Regular, TextTitle3 } from '@/app/components/base/text';
+import { formatNumber } from '@/utils/helpers';
 import { RouteUrls } from '@/utils/route-urls';
 import { Box, Group, Stack, Table } from '@mantine/core';
 import {
@@ -98,7 +99,7 @@ export function JobStatLine({ stats }: { stats: JobResult['stats'] }) {
     <Group gap="md">
       {stats.map((stat) => (
         <Group key={stat.label} gap={4}>
-          <Text12Medium c="var(--fg-primary)">{stat.value}</Text12Medium>
+          <Text12Medium c="var(--fg-primary)">{formatNumber(stat.value)}</Text12Medium>
           <Text13Regular c="var(--fg-secondary)">{stat.label}</Text13Regular>
         </Group>
       ))}
@@ -135,25 +136,25 @@ function FolderBreakdownTable({ folders }: { folders: JobResult['folders'] }) {
           <Table.Tr key={folder.id ?? index}>
             <Table.Td>{folder.name || `Folder ${index + 1}`}</Table.Td>
             <Table.Td>{folder.connector ?? '-'}</Table.Td>
-            <Table.Td>{folder.created}</Table.Td>
-            <Table.Td>{folder.updated}</Table.Td>
-            <Table.Td>{folder.deleted}</Table.Td>
+            <Table.Td>{formatNumber(folder.created)}</Table.Td>
+            <Table.Td>{formatNumber(folder.updated)}</Table.Td>
+            <Table.Td>{formatNumber(folder.deleted)}</Table.Td>
             {hasSkipped && (
               <Table.Td>
-                <Text13Regular c="dimmed">{folder.skipped}</Text13Regular>
+                <Text13Regular c="dimmed">{formatNumber(folder.skipped)}</Text13Regular>
               </Table.Td>
             )}
             {hasErrors && (
               <Table.Td>
                 <Text13Regular c={folder.errorCount ? 'var(--mantine-color-red-6)' : undefined}>
-                  {folder.errorCount}
+                  {formatNumber(folder.errorCount)}
                 </Text13Regular>
               </Table.Td>
             )}
             {hasWarnings && (
               <Table.Td>
                 <Text13Regular c={folder.warningCount ? 'var(--mantine-color-orange-6)' : undefined}>
-                  {folder.warningCount}
+                  {formatNumber(folder.warningCount)}
                 </Text13Regular>
               </Table.Td>
             )}
@@ -192,7 +193,7 @@ function AffectedFilesTable({ files }: { files: JobResultFile[] }) {
   return (
     <Box mt="xs">
       <Text12Medium c="var(--fg-secondary)" mb={4}>
-        Affected Files ({files.length})
+        Affected Files ({formatNumber(files.length)})
       </Text12Medium>
       <Table striped highlightOnHover withColumnBorders>
         <Table.Thead>
@@ -251,12 +252,16 @@ function RehostProgressTable({ progress }: { progress: Record<string, unknown> }
         <Table.Tbody>
           <Table.Tr>
             <Table.Td>{dataFolderName ?? '-'}</Table.Td>
-            <Table.Td>{totalAssets}</Table.Td>
+            <Table.Td>{formatNumber(totalAssets)}</Table.Td>
             <Table.Td>
-              <Text13Regular c={succeeded ? 'var(--mantine-color-green-6)' : undefined}>{succeeded ?? 0}</Text13Regular>
+              <Text13Regular c={succeeded ? 'var(--mantine-color-green-6)' : undefined}>
+                {formatNumber(succeeded ?? 0)}
+              </Text13Regular>
             </Table.Td>
             <Table.Td>
-              <Text13Regular c={failed ? 'var(--mantine-color-red-6)' : undefined}>{failed ?? 0}</Text13Regular>
+              <Text13Regular c={failed ? 'var(--mantine-color-red-6)' : undefined}>
+                {formatNumber(failed ?? 0)}
+              </Text13Regular>
             </Table.Td>
             <Table.Td>{status ?? '-'}</Table.Td>
           </Table.Tr>
@@ -265,7 +270,7 @@ function RehostProgressTable({ progress }: { progress: Record<string, unknown> }
       {failures.length > 0 && (
         <Box mt="xs">
           <TextTitle3 c="var(--mantine-color-red-6)" mb={4}>
-            Failures ({failures.length})
+            Failures ({formatNumber(failures.length)})
           </TextTitle3>
           <Table striped highlightOnHover withColumnBorders>
             <Table.Thead>

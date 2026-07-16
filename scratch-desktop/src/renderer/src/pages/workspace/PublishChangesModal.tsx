@@ -167,9 +167,9 @@ function ProgressStepList({ steps }: { steps: ProgressStep[] }) {
 
 function formatDiffSummary(created: number, updated: number, deleted: number): string {
   const parts: string[] = [];
-  if (created > 0) parts.push(`${created} added`);
-  if (updated > 0) parts.push(`${updated} modified`);
-  if (deleted > 0) parts.push(`${deleted} deleted`);
+  if (created > 0) parts.push(`${created.toLocaleString()} added`);
+  if (updated > 0) parts.push(`${updated.toLocaleString()} modified`);
+  if (deleted > 0) parts.push(`${deleted.toLocaleString()} deleted`);
   return parts.length > 0 ? parts.join(' · ') : 'No changes';
 }
 
@@ -1797,8 +1797,8 @@ export function PublishChangesModal({
                     {singleRecord
                       ? 'This record has validation errors that may prevent it from publishing.'
                       : singleConnection
-                        ? `${validationCounts.errors} record${validationCounts.errors === 1 ? '' : 's'} in this connector ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`
-                        : `${validationCounts.errors} record${validationCounts.errors === 1 ? '' : 's'} ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`}
+                        ? `${validationCounts.errors.toLocaleString()} record${validationCounts.errors === 1 ? '' : 's'} in this connector ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`
+                        : `${validationCounts.errors.toLocaleString()} record${validationCounts.errors === 1 ? '' : 's'} ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`}
                   </Text>
                 )}
                 {unreviewedEntries.length > 0 && (

@@ -1,5 +1,6 @@
 import { Job, JobType as JobTypeConstant, PublishPlanStatus } from '@spinner/shared-types';
 import pluralize from 'pluralize';
+import { formatNumber } from './helpers';
 
 export type JobType = 'sync' | 'publish' | 'pull' | 'rehost' | 'unknown';
 
@@ -70,9 +71,9 @@ export const getJobDescription = (job: Job): string => {
         const failedCount = tables.filter((t) => t.status === 'failed').length;
         const count = tables.length;
         if (failedCount > 0) {
-          return `Sync failed for ${failedCount} of ${count} table${count !== 1 ? 's' : ''}`;
+          return `Sync failed for ${formatNumber(failedCount)} of ${formatNumber(count)} table${count !== 1 ? 's' : ''}`;
         }
-        return `Synced ${count} table${count !== 1 ? 's' : ''}`;
+        return `Synced ${formatNumber(count)} table${count !== 1 ? 's' : ''}`;
       }
       if (progress?.syncName) {
         return `Sync ${progress.syncName}`;
@@ -88,16 +89,16 @@ export const getJobDescription = (job: Job): string => {
         const tableName = progress.tableName as string | undefined;
         const connectionSuffix = connectionName ? ` in ${connectionName}` : '';
         if (tableName) {
-          return `Publish ${processed} / ${total} ${pluralize('change', total)} for ${tableName}${connectionSuffix}`;
+          return `Publish ${formatNumber(processed)} / ${formatNumber(total)} ${pluralize('change', total)} for ${tableName}${connectionSuffix}`;
         }
         if (tableCount > 1) {
-          return `Publish ${processed} / ${total} ${pluralize('change', total)} across ${tableCount} tables${connectionSuffix}`;
+          return `Publish ${formatNumber(processed)} / ${formatNumber(total)} ${pluralize('change', total)} across ${formatNumber(tableCount)} tables${connectionSuffix}`;
         }
-        return `Publish ${processed} / ${total} ${pluralize('change', total)}${connectionSuffix}`;
+        return `Publish ${formatNumber(processed)} / ${formatNumber(total)} ${pluralize('change', total)}${connectionSuffix}`;
       }
       if (progress?.totalFiles !== undefined) {
         const count = Number(progress.totalFiles) || 0;
-        return `Publish ${count} ${pluralize('change', count)}`;
+        return `Publish ${formatNumber(count)} ${pluralize('change', count)}`;
       }
       return 'Publish changes';
     }
@@ -109,10 +110,10 @@ export const getJobDescription = (job: Job): string => {
         const connectionName = progress?.connectionName as string | undefined;
         const connectionSuffix = connectionName ? ` in ${connectionName}` : '';
         if (folderCount && folderCount > 1) {
-          return `Pull ${count} record${count !== 1 ? 's' : ''} from ${folderCount} folders${connectionSuffix}`;
+          return `Pull ${formatNumber(count)} record${count !== 1 ? 's' : ''} from ${formatNumber(folderCount)} folders${connectionSuffix}`;
         }
         const folderSuffix = progress?.folderName ? ` for ${progress.folderName}` : '';
-        return `Pull ${count} record${count !== 1 ? 's' : ''}${folderSuffix}${connectionSuffix}`;
+        return `Pull ${formatNumber(count)} record${count !== 1 ? 's' : ''}${folderSuffix}${connectionSuffix}`;
       }
       return 'Pull data';
     }
@@ -121,9 +122,9 @@ export const getJobDescription = (job: Job): string => {
       const failedAssets = progress?.failed as number | undefined;
       const folderName = progress?.dataFolderName as string | undefined;
       const folderSuffix = folderName ? ` for ${folderName}` : '';
-      const failedSuffix = failedAssets ? ` (${failedAssets} failed)` : '';
+      const failedSuffix = failedAssets ? ` (${formatNumber(failedAssets)} failed)` : '';
       if (totalAssets !== undefined) {
-        return `Pull ${totalAssets} asset${totalAssets !== 1 ? 's' : ''}${folderSuffix}${failedSuffix}`;
+        return `Pull ${formatNumber(totalAssets)} asset${totalAssets !== 1 ? 's' : ''}${folderSuffix}${failedSuffix}`;
       }
       return `Pull assets${folderSuffix}${failedSuffix}`;
     }

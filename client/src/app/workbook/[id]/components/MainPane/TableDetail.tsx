@@ -78,13 +78,13 @@ export function TableDetail({ folder, workbookId }: TableDetailProps) {
         <Stack gap="sm">
           <Group justify="space-between">
             <Text13Regular c="var(--fg-secondary)">Records</Text13Regular>
-            <TextMono12Regular>{isLoading ? '...' : files.length}</TextMono12Regular>
+            <TextMono12Regular>{isLoading ? '...' : files.length.toLocaleString()}</TextMono12Regular>
           </Group>
 
           <Group justify="space-between">
             <Text13Regular c="var(--fg-secondary)">Changed</Text13Regular>
             <TextMono12Regular c={dirtyCount > 0 ? 'var(--mantine-color-orange-6)' : undefined}>
-              {isLoading ? '...' : dirtyCount}
+              {isLoading ? '...' : dirtyCount.toLocaleString()}
             </TextMono12Regular>
           </Group>
         </Stack>

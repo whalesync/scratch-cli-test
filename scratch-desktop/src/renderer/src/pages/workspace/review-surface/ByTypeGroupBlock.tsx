@@ -53,7 +53,7 @@ export function ByTypeGroupBlock({
         <Box style={{ width: 8, height: 8, flex: 'none', background: group.dotColorVar }} />
         <TextTitle4 c={titleColor}>{group.title}</TextTitle4>
         <TextMono12Regular c="var(--fg-muted)">
-          {rowCount} record{rowCount === 1 ? '' : 's'}
+          {rowCount.toLocaleString()} record{rowCount === 1 ? '' : 's'}
         </TextMono12Regular>
         {/* Summary pill slot — deferred (DEV-10618 chunk H): a per-field-type
             summary such as "avg −10% · mostly lowered" for numeric columns. */}
@@ -81,7 +81,7 @@ export function ByTypeGroupBlock({
             loading={isApproving}
             disabled={isBulkApproveDisabled || isApproving}
           >
-            Approve all {unreviewedCount}
+            Approve all {unreviewedCount.toLocaleString()}
           </ButtonSecondaryOutline>
         )}
       </Group>
@@ -99,7 +99,7 @@ export function ByTypeGroupBlock({
         {hasOverflow && (
           <UnstyledButton onClick={() => setShowAllRows((shown) => !shown)} style={{ paddingTop: 8 }}>
             <Text12Regular c="var(--modified-needs-review-stroke)">
-              {showAllRows ? 'Show fewer' : `Show all ${rowCount}`}
+              {showAllRows ? 'Show fewer' : `Show all ${rowCount.toLocaleString()}`}
             </Text12Regular>
           </UnstyledButton>
         )}

@@ -7,6 +7,7 @@ import { usePublishPlanOperation } from '@/hooks/use-publish-plan-operation';
 import { usePublishPlanRecords } from '@/hooks/use-publish-plan-records';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { isExperimentEnabled } from '@/types/server-entities/users';
+import { formatNumber } from '@/utils/helpers';
 import { publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import {
   Badge,
@@ -188,7 +189,7 @@ export default function PublishPlanPage() {
                           </Table.Td>
                           <Table.Td style={{ padding: '2px 0', textAlign: 'right' }}>
                             <Text size="xs" fw={500}>
-                              {count}
+                              {formatNumber(count)}
                             </Text>
                           </Table.Td>
                         </Table.Tr>
@@ -205,14 +206,14 @@ export default function PublishPlanPage() {
                         style={{ padding: '4px 0', textAlign: 'right', borderTop: '1px solid var(--fg-divider)' }}
                       >
                         <Text size="xs" fw={500}>
-                          {publishPlan._count?.operations ?? 0}
+                          {formatNumber(publishPlan._count?.operations ?? 0)}
                         </Text>
                       </Table.Td>
                     </Table.Tr>
                   </Table.Tbody>
                 </Table>
               ) : (
-                <Text size="sm">{publishPlan._count?.operations ?? 0}</Text>
+                <Text size="sm">{formatNumber(publishPlan._count?.operations ?? 0)}</Text>
               )}
             </Field>
 
@@ -229,7 +230,7 @@ export default function PublishPlanPage() {
                         </Table.Td>
                         <Table.Td style={{ padding: '2px 0', textAlign: 'right' }}>
                           <Text size="xs" fw={500}>
-                            {count}
+                            {formatNumber(count)}
                           </Text>
                         </Table.Td>
                       </Table.Tr>
@@ -244,7 +245,7 @@ export default function PublishPlanPage() {
                         style={{ padding: '4px 0', textAlign: 'right', borderTop: '1px solid var(--fg-divider)' }}
                       >
                         <Text size="xs" fw={500}>
-                          {publishPlan._count?.operations ?? 0}
+                          {formatNumber(publishPlan._count?.operations ?? 0)}
                         </Text>
                       </Table.Td>
                     </Table.Tr>
@@ -334,7 +335,7 @@ export default function PublishPlanPage() {
           <Stack gap="sm">
             <Group justify="space-between" align="center">
               <Text size="sm" fw={500}>
-                Records {records ? `(${records.total})` : ''}
+                Records {records ? `(${formatNumber(records.total)})` : ''}
               </Text>
               <Group gap="xs">
                 <Select
@@ -345,7 +346,7 @@ export default function PublishPlanPage() {
                   onChange={handleDataFolderChange}
                   data={(records?.filters.folders ?? []).map((f) => ({
                     value: f.id,
-                    label: `${f.path} (${f.count})`,
+                    label: `${f.path} (${formatNumber(f.count)})`,
                   }))}
                   w={220}
                 />
@@ -357,7 +358,7 @@ export default function PublishPlanPage() {
                   onChange={handlePhaseChange}
                   data={(records?.filters.phases ?? []).map(({ phase: p, count }) => ({
                     value: p,
-                    label: `${PHASE_ICONS[p]?.label ?? p} (${count})`,
+                    label: `${PHASE_ICONS[p]?.label ?? p} (${formatNumber(count)})`,
                   }))}
                   w={200}
                 />

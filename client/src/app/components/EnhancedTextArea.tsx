@@ -110,7 +110,7 @@ export const EnhancedTextArea = forwardRef<TextAreaRef, EnhancedTextAreaProps>(
         </Text>
         {currentSelection && currentSelection?.text.length > 0 ? (
           <Text fz="xs" c="dimmed">
-            {currentSelection.text.length} chars selected
+            {currentSelection.text.length.toLocaleString()} chars selected
           </Text>
         ) : null}
         {currentCursorPosition && (

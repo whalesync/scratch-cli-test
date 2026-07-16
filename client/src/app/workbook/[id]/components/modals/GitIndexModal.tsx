@@ -1,5 +1,6 @@
 'use client';
 
+import { formatNumber } from '@/utils/helpers';
 import { Badge, Button, Group, Modal, ScrollArea, Stack, Table, Tabs } from '@mantine/core';
 import type { GitIndexDump } from '@spinner/shared-types';
 
@@ -17,10 +18,10 @@ export function GitIndexModal({ opened, onClose, data }: GitIndexModalProps) {
       <Stack>
         <Group>
           <Badge color="blue" variant="light">
-            {data.files.length} file{data.files.length !== 1 ? 's' : ''}
+            {formatNumber(data.files.length)} file{data.files.length !== 1 ? 's' : ''}
           </Badge>
           <Badge color="violet" variant="light">
-            {data.references.length} reference{data.references.length !== 1 ? 's' : ''}
+            {formatNumber(data.references.length)} reference{data.references.length !== 1 ? 's' : ''}
           </Badge>
         </Group>
 

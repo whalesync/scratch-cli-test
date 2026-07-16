@@ -518,7 +518,7 @@ export function WorkspacePage() {
           result.status === 'blocked_conflict' ? result.conflictCount : (result.stashedConflictPaths?.length ?? 0);
         notifications.show({
           title: 'Updated, with conflicts to resolve',
-          message: `${conflictCount} local edit(s) conflict with newer server changes and were saved to unreviewed-changes.json. Point your AI agent at the file to re-apply them.`,
+          message: `${conflictCount.toLocaleString()} local edit(s) conflict with newer server changes and were saved to unreviewed-changes.json. Point your AI agent at the file to re-apply them.`,
           color: 'yellow',
           autoClose: false,
         });
@@ -757,7 +757,7 @@ export function WorkspacePage() {
       if (event.conflictCount > 0) {
         notifications.show({
           title: 'Updated, with conflicts to resolve',
-          message: `${event.conflictCount} local edit(s) conflict with newer server changes and were saved to unreviewed-changes.json.`,
+          message: `${event.conflictCount.toLocaleString()} local edit(s) conflict with newer server changes and were saved to unreviewed-changes.json.`,
           color: 'yellow',
           autoClose: false,
         });

@@ -1,6 +1,7 @@
 'use client';
 
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
+import { formatNumber } from '@/utils/helpers';
 import { Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { WorkbookId } from '@spinner/shared-types';
 import { DatabaseIcon } from 'lucide-react';
@@ -36,7 +37,7 @@ export function FileIndexModal({ opened, onClose, workbookId }: FileIndexModalPr
           <DatabaseIcon size={18} />
           <Title order={4}>File Index</Title>
           <Text size="sm" c="dimmed">
-            ({rows?.length ?? 0} entries)
+            ({formatNumber(rows?.length ?? 0)} entries)
           </Text>
         </Group>
       }

@@ -1,6 +1,7 @@
 'use client';
 
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
+import { formatNumber } from '@/utils/helpers';
 import { Anchor, Badge, Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { ImageIcon } from 'lucide-react';
@@ -77,16 +78,16 @@ export function AssetIndexModal({ opened, onClose, workbookId, dataFolderId }: A
           <ImageIcon size={18} />
           <Title order={4}>Asset Index</Title>
           <Text size="sm" c="dimmed">
-            ({rows?.length} entries)
+            ({formatNumber(rows?.length ?? 0)} entries)
           </Text>
           {rehostedCount > 0 && (
             <Badge color="teal" size="sm">
-              {rehostedCount} rehosted
+              {formatNumber(rehostedCount)} rehosted
             </Badge>
           )}
           {expiredCount > 0 && (
             <Badge color="red" size="sm">
-              {expiredCount} expired
+              {formatNumber(expiredCount)} expired
             </Badge>
           )}
         </Group>

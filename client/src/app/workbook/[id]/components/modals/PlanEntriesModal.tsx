@@ -1,6 +1,7 @@
 'use client';
 
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
+import { formatNumber } from '@/utils/helpers';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import {
@@ -192,7 +193,7 @@ export function PlanEntriesModal({
               onChange={(e) => setHasErrorFilter(e.currentTarget.checked)}
             />
             <Text size="xs" c="dimmed" ml="auto">
-              {total} operations
+              {formatNumber(total)} operations
             </Text>
           </Group>
 

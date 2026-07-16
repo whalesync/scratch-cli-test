@@ -12,6 +12,7 @@ import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { findDataFolderForFile } from '@/utils/data-folder-helpers';
+import { formatNumber } from '@/utils/helpers';
 import { RouteUrls } from '@/utils/route-urls';
 import { json } from '@codemirror/lang-json';
 import { unifiedMergeView } from '@codemirror/merge';
@@ -335,7 +336,7 @@ function SourceGroupSection({ group, workbookId, onDiscard }: SourceGroupSection
         <ConnectorIcon connector={group.service} size={16} p={0} />
         <Text12Medium c="var(--fg-primary)">{group.displayName}</Text12Medium>
         <Text12Regular c="var(--fg-muted)">
-          {group.files.length} {group.files.length === 1 ? 'file' : 'files'}
+          {formatNumber(group.files.length)} {group.files.length === 1 ? 'file' : 'files'}
         </Text12Regular>
       </Group>
 
@@ -357,7 +358,7 @@ function SourceGroupSection({ group, workbookId, onDiscard }: SourceGroupSection
             style={{ cursor: 'pointer' }}
             onClick={() => setVisibleCount((prev) => prev + FILES_PER_PAGE)}
           >
-            Load more... ({group.files.length - visibleCount} remaining)
+            Load more... ({formatNumber(group.files.length - visibleCount)} remaining)
           </Text12Regular>
         </Box>
       )}
@@ -435,16 +436,18 @@ export default function ReviewPage() {
       >
         <Group gap="md">
           <Text13Medium c="var(--fg-primary)">
-            {dirtyFiles.length} {dirtyFiles.length === 1 ? 'file' : 'files'} changed
+            {formatNumber(dirtyFiles.length)} {dirtyFiles.length === 1 ? 'file' : 'files'} changed
           </Text13Medium>
           {totalCounts.added > 0 && (
-            <Text12Regular c="var(--mantine-color-green-7)">{totalCounts.added} added</Text12Regular>
+            <Text12Regular c="var(--mantine-color-green-7)">{formatNumber(totalCounts.added)} added</Text12Regular>
           )}
           {totalCounts.modified > 0 && (
-            <Text12Regular c="var(--mantine-color-orange-6)">{totalCounts.modified} modified</Text12Regular>
+            <Text12Regular c="var(--mantine-color-orange-6)">
+              {formatNumber(totalCounts.modified)} modified
+            </Text12Regular>
           )}
           {totalCounts.deleted > 0 && (
-            <Text12Regular c="var(--mantine-color-red-6)">{totalCounts.deleted} deleted</Text12Regular>
+            <Text12Regular c="var(--mantine-color-red-6)">{formatNumber(totalCounts.deleted)} deleted</Text12Regular>
           )}
         </Group>
       </Box>

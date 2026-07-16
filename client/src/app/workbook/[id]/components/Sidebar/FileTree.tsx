@@ -186,7 +186,7 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
                 </Text12Regular>
                 {mode === 'review' && dirtyFiles.length > 0 && (
                   <Badge size="sm" variant="filled" color="orange" radius="xl">
-                    {dirtyFiles.length}
+                    {dirtyFiles.length.toLocaleString()}
                   </Badge>
                 )}
               </Group>

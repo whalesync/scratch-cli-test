@@ -2668,7 +2668,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           </Group>
           {validate && totalProblemsStaleCount > 0 && (
             <Text12Regular c="var(--fg-muted)">
-              {totalProblemsStaleCount} record{totalProblemsStaleCount === 1 ? '' : 's'} need validation
+              {totalProblemsStaleCount.toLocaleString()} record{totalProblemsStaleCount === 1 ? '' : 's'} need
+              validation
             </Text12Regular>
           )}
           {activeColumnFilters.map((filter) => (
@@ -2687,7 +2688,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               <Group gap="xs">
                 <UnstyledButton onClick={() => handleGlobalFilterToggle('unreviewed')} style={{ whiteSpace: 'nowrap' }}>
                   <Text12Regular c="var(--fg-link)" style={{ textDecoration: 'underline' }}>
-                    {unreviewedRecordCount} record{unreviewedRecordCount === 1 ? '' : 's'} need
+                    {unreviewedRecordCount.toLocaleString()} record{unreviewedRecordCount === 1 ? '' : 's'} need
                     {unreviewedRecordCount === 1 ? 's' : ''} review
                   </Text12Regular>
                 </UnstyledButton>

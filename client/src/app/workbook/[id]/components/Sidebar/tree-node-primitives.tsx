@@ -150,7 +150,7 @@ export function DirtyBadge({ count }: DirtyBadgeProps) {
   if (count <= 0) return null;
   return (
     <Badge size="xs" variant="filled" color="orange">
-      {count}
+      {count.toLocaleString()}
     </Badge>
   );
 }

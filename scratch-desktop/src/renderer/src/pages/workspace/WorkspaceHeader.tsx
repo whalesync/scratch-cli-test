@@ -279,7 +279,7 @@ export function WorkspaceHeader({
                 until accepted, so they get their own count distinct from the publish CTA. */}
             {unreviewedCount > 0 && (
               <Tooltip
-                label={`${unreviewedCount} change${unreviewedCount === 1 ? '' : 's'} still need review before they can be published`}
+                label={`${unreviewedCount.toLocaleString()} change${unreviewedCount === 1 ? '' : 's'} still need review before they can be published`}
               >
                 <Badge
                   size="sm"
@@ -473,7 +473,7 @@ function PullProgressPill({ pull, onClick }: { pull: PullTracker; onClick: () =>
     tooltip = 'Show pull error';
   } else {
     leftSection = <Loader size={12} />;
-    label = totalCount > 0 ? `Pulling… ${completedCount}/${totalCount}` : 'Pulling…';
+    label = totalCount > 0 ? `Pulling… ${completedCount.toLocaleString()}/${totalCount.toLocaleString()}` : 'Pulling…';
   }
 
   return (

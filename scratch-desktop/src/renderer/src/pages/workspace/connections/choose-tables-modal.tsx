@@ -1076,7 +1076,7 @@ export function ChooseTablesModal({
         </List>
         {dirtyFileCount > 0 && (
           <Text size="sm" c="orange" mt="sm" fw={500}>
-            There {dirtyFileCount === 1 ? 'is' : 'are'} {dirtyFileCount} file
+            There {dirtyFileCount === 1 ? 'is' : 'are'} {dirtyFileCount.toLocaleString()} file
             {dirtyFileCount === 1 ? '' : 's'} with unpublished changes that will be discarded.
           </Text>
         )}

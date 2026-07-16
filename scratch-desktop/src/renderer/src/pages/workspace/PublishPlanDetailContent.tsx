@@ -106,7 +106,7 @@ export function PublishPlanDetailContent({
       if ('error' in res) throw new Error(res.error);
       notifications.show({
         title: 'Rolled back',
-        message: `${res.total} record(s) — ${res.filesWritten} written, ${res.filesDeleted} deleted. Publish to apply.`,
+        message: `${res.total.toLocaleString()} record(s) — ${res.filesWritten.toLocaleString()} written, ${res.filesDeleted.toLocaleString()} deleted. Publish to apply.`,
         color: 'green',
       });
       setBulkScope(null);
@@ -322,7 +322,7 @@ export function PublishPlanDetailContent({
                 }}
                 data={(records?.filters.folders ?? []).map((f) => ({
                   value: f.id,
-                  label: `${f.path} (${f.count})`,
+                  label: `${f.path} (${f.count.toLocaleString()})`,
                 }))}
                 w={220}
               />
@@ -337,7 +337,7 @@ export function PublishPlanDetailContent({
                 }}
                 data={(records?.filters.phases ?? []).map(({ phase: p, count }) => ({
                   value: p,
-                  label: `${PHASE_ICONS[p]?.label ?? p} (${count})`,
+                  label: `${PHASE_ICONS[p]?.label ?? p} (${count.toLocaleString()})`,
                 }))}
                 w={200}
               />

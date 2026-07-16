@@ -2,6 +2,7 @@ import { FC } from 'react';
 import { TableIndicator } from './components/base-avatar-with-indicator';
 
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
+import { formatNumber } from '@/utils/helpers';
 import { ActionIcon, Text } from '@mantine/core';
 import { Service } from '@spinner/shared-types';
 import { ArrowRightIcon } from 'lucide-react';
@@ -71,8 +72,8 @@ export const SyncStatus: FC<Props> = (props) => {
       thirdRowCenter={
         <Text c="var(--fg-muted)" fw={500}>
           {direction === 'left'
-            ? `${doneCount} records downloaded`
-            : `${doneCount} out of ${totalCount} records pushed`}
+            ? `${formatNumber(doneCount)} records downloaded`
+            : `${formatNumber(doneCount)} out of ${formatNumber(totalCount ?? 0)} records pushed`}
         </Text>
       }
     />

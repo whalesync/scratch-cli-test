@@ -3,6 +3,7 @@
 import { SpinningIcon } from '@/app/components/Icons/SpinningIcon';
 import { Text12Regular } from '@/app/components/base/text';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
+import { formatNumber } from '@/utils/helpers';
 import { Box, Group, HoverCard, Stack } from '@mantine/core';
 import {
   DataFolder,
@@ -38,7 +39,7 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
     cardContent = (
       <Stack gap={8}>
         <Text12Regular>Pulling files from {folder.connectorDisplayName}</Text12Regular>
-        <Text12Regular c="var(--fg-secondary)">{progress.totalFiles} files</Text12Regular>
+        <Text12Regular c="var(--fg-secondary)">{formatNumber(progress.totalFiles)} files</Text12Regular>
       </Stack>
     );
   } else if (job.type === JobType.SyncDataFolders) {
@@ -47,13 +48,13 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
     cardContent = (
       <Stack gap={8}>
         <Text12Regular>Syncing</Text12Regular>
-        <Text12Regular c="var(--fg-secondary)">{progress.totalFilesSynced} files</Text12Regular>
+        <Text12Regular c="var(--fg-secondary)">{formatNumber(progress.totalFilesSynced)} files</Text12Regular>
         {tableProgress && (
           <>
             <Text12Regular c="var(--fg-secondary)">{tableProgress.status}</Text12Regular>
-            <Text12Regular c="var(--fg-secondary)">{tableProgress.creates} creates</Text12Regular>
-            <Text12Regular c="var(--fg-secondary)">{tableProgress.updates} updates</Text12Regular>
-            <Text12Regular c="var(--fg-secondary)">{tableProgress.deletes} deletes</Text12Regular>
+            <Text12Regular c="var(--fg-secondary)">{formatNumber(tableProgress.creates)} creates</Text12Regular>
+            <Text12Regular c="var(--fg-secondary)">{formatNumber(tableProgress.updates)} updates</Text12Regular>
+            <Text12Regular c="var(--fg-secondary)">{formatNumber(tableProgress.deletes)} deletes</Text12Regular>
           </>
         )}
       </Stack>
@@ -65,7 +66,7 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
       <Stack gap={8}>
         <Text12Regular>Pulling files from {folder.connectorDisplayName}</Text12Regular>
         <Text12Regular c="var(--fg-secondary)">
-          {updated} / {progress.totalRequested ?? 0} files
+          {formatNumber(updated)} / {formatNumber(progress.totalRequested ?? 0)} files
         </Text12Regular>
       </Stack>
     );

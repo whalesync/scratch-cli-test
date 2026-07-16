@@ -143,7 +143,7 @@ function FolderRecordGrid({
         >
           <Text12Regular c="var(--fg-muted)">
             {folderName ? `${folderName} - ` : ''}
-            {files.length}
+            {files.length.toLocaleString()}
             {hasMore ? '+' : ''} {files.length === 1 && !hasMore ? 'file' : 'files'}
           </Text12Regular>
           {hasMore && (

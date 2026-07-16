@@ -1072,7 +1072,8 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
               </ScrollArea.Autosize>
               {searchData?.hasMore && (
                 <Text12Regular c="dimmed">
-                  Showing first {searchResultTables.length} results. Refine your search for more specific results.
+                  Showing first {searchResultTables.length.toLocaleString()} results. Refine your search for more
+                  specific results.
                 </Text12Regular>
               )}
             </>
@@ -1343,8 +1344,8 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         </List>
         {dirtyFileCount > 0 && (
           <Text size="sm" c="orange" mt="sm" fw={500}>
-            There {dirtyFileCount === 1 ? 'is' : 'are'} {dirtyFileCount} file{dirtyFileCount === 1 ? '' : 's'} with
-            unpublished changes that will be discarded.
+            There {dirtyFileCount === 1 ? 'is' : 'are'} {dirtyFileCount.toLocaleString()} file
+            {dirtyFileCount === 1 ? '' : 's'} with unpublished changes that will be discarded.
           </Text>
         )}
       </Alert>

@@ -15,7 +15,7 @@ function transformJsonToTreeData(json: object, path: string = ''): TreeNodeData[
       label: key,
     };
     if (Array.isArray(value)) {
-      node.label = `${key} (${value.length})`;
+      node.label = `${key} (${value.length.toLocaleString()})`;
       node.children = value.map((item, index) => {
         const itemPath = `${newPath}[${index}]`;
         const childNode: TreeNodeData = {

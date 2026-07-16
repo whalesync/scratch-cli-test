@@ -105,9 +105,9 @@ export function categorizeJobType(type: string): JobResultKind {
   return 'unknown';
 }
 
-/** Formats a count with its singular/plural noun, e.g. `1 folder`, `3 folders`. */
+/** Formats a count (with thousand separators) and its singular/plural noun, e.g. `1 folder`, `1,234 records`. */
 function pluralize(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+  return `${count.toLocaleString()} ${noun}${count === 1 ? '' : 's'}`;
 }
 
 /** Flattens a folder's path arrays into per-file `{ path, operation }` rows. */
@@ -355,7 +355,7 @@ function derivePublishResult(progress: PublishPublicProgress | undefined, mode: 
       : `${pluralize(failedCount, 'update')} rejected`;
     const summaryParts = ['Publishing failed', rejectedClause];
     if (executedChangeCount > 0) {
-      summaryParts.push(`${executedChangeCount} successful`);
+      summaryParts.push(`${executedChangeCount.toLocaleString()} successful`);
     }
     summary = summaryParts.join(' • ');
   } else {

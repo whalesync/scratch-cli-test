@@ -66,17 +66,19 @@ const DEFAULT_SIDEBAR_WIDTH = 280;
 
 /** Human-readable summary for the "rerun validation" completion toast. */
 function rerunSummaryMessage(summary: RerunValidationSummary): string {
-  const folders = `${summary.folders_revalidated} folder${summary.folders_revalidated === 1 ? '' : 's'}`;
+  const folders = `${summary.folders_revalidated.toLocaleString()} folder${summary.folders_revalidated === 1 ? '' : 's'}`;
   const problems =
     summary.errors === 0 && summary.warnings === 0
       ? 'no problems'
       : [
-          summary.errors > 0 ? `${summary.errors} error${summary.errors === 1 ? '' : 's'}` : null,
-          summary.warnings > 0 ? `${summary.warnings} warning${summary.warnings === 1 ? '' : 's'}` : null,
+          summary.errors > 0 ? `${summary.errors.toLocaleString()} error${summary.errors === 1 ? '' : 's'}` : null,
+          summary.warnings > 0
+            ? `${summary.warnings.toLocaleString()} warning${summary.warnings === 1 ? '' : 's'}`
+            : null,
         ]
           .filter(Boolean)
           .join(', ');
-  const skipped = summary.skipped_folders > 0 ? ` (${summary.skipped_folders} skipped)` : '';
+  const skipped = summary.skipped_folders > 0 ? ` (${summary.skipped_folders.toLocaleString()} skipped)` : '';
   return `Revalidated ${folders}: ${problems}${skipped}`;
 }
 
