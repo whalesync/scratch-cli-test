@@ -53,6 +53,12 @@ describe('airtable JSON Pointer escaping (RFC 6901)', () => {
     expect(isForeignKey(fieldWithSlash, buildSpec())).toBe(true);
   });
 
+  // Regression for DEV-10805: isForeignKey used to compare the boolean result
+  // of ValuePointer.Has against `undefined`, so it always returned true.
+  it('isForeignKey returns false for a non-foreign-key field', () => {
+    expect(isForeignKey(fieldWithTilde, buildSpec())).toBe(false);
+  });
+
   it('getForeignKeyOptions handles field names containing `/`', () => {
     expect(getForeignKeyOptions(fieldWithSlash, buildSpec())).toEqual(fkOptions);
   });

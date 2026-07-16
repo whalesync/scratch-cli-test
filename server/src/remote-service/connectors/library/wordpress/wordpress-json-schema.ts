@@ -454,9 +454,9 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec, isA
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec, isAcf = false): boolean {
   const basePath = isAcf ? ACF_FIELD_PATH : FIELD_PATH;
-  return (
-    ValuePointer.Has(tableSpec.schema, `${basePath}/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !==
-    undefined
+  return ValuePointer.Has(
+    tableSpec.schema,
+    `${basePath}/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`,
   );
 }
 

@@ -49,6 +49,12 @@ describe('youtube JSON Pointer escaping (RFC 6901)', () => {
     expect(isForeignKey('snippet.odd/name', buildSpec())).toBe(true);
   });
 
+  // Regression for DEV-10805: isForeignKey used to compare the boolean result
+  // of ValuePointer.Has against `undefined`, so it always returned true.
+  it('isForeignKey returns false for a non-foreign-key field', () => {
+    expect(isForeignKey('snippet.tilde~name', buildSpec())).toBe(false);
+  });
+
   it('getForeignKeyOptions handles nested dot-notation paths whose last segment contains `/`', () => {
     expect(getForeignKeyOptions('snippet.odd/name', buildSpec())).toEqual(fkOptions);
   });
