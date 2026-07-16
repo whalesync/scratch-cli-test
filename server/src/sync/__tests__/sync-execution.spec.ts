@@ -1,4 +1,5 @@
 import type {
+  AutoConvertOptions,
   ColumnMappingV1,
   ColumnMappingV2,
   DataFolderId,
@@ -20,6 +21,7 @@ import { FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.
 
 // Register transformers used in the tests
 import 'src/sync/transformers/implementations/auto-convert.transformer';
+import 'src/sync/transformers/implementations/jsonpath.transformer';
 import 'src/sync/transformers/implementations/source-fk-to-dest-fk.transformer';
 import 'src/sync/transformers/implementations/wrap-object.transformer';
 
@@ -779,6 +781,114 @@ describe('transformRecordAsync — clearing a source field', () => {
     );
 
     expect(fields).toEqual({ name: 'Hello', status: null });
+  });
+});
+
+// ===========================================================================
+// transformRecordAsync — clearing a coerced (auto_convert) field
+//
+// Regression coverage for DEV-10817: the DEV-10797 clear path rewrites an absent
+// source to `null` and runs the mapping's transformer pipeline. The `auto_convert`
+// coercion floor (`pickMappingTransformers`/`coercionFloorForDestination`) rides
+// nearly every cross-type mapping and, by default, coerced that `null` into a type
+// zero-value (`0`/`false`/`''`/`[]`) — writing a literal zero into the cleared cell
+// instead of emptying it. On the clear path `auto_convert` must preserve the clear.
+// ===========================================================================
+describe('transformRecordAsync — clearing a coerced (auto_convert) field', () => {
+  function autoConvertMapping(targetType: AutoConvertOptions['targetType']): ColumnMappingV1[] {
+    return [
+      {
+        sourceColumnId: 'value',
+        destinationColumnId: 'value',
+        transformer: { type: 'auto_convert', options: { targetType } },
+      },
+    ];
+  }
+
+  // `value` is absent from the source (cleared → key dropped), the shape the
+  // DEV-10797 clear path handles.
+  const clearedSourceRecord = { id: 'r1', filePath: 'p', fields: {} };
+
+  async function clearWithAutoConvert(
+    targetType: AutoConvertOptions['targetType'],
+    baseFields: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const { fields } = await transformRecordAsync(
+      clearedSourceRecord,
+      autoConvertMapping(targetType),
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+    );
+    return fields;
+  }
+
+  it('clears a number destination (writes null) instead of coercing to 0', async () => {
+    expect(await clearWithAutoConvert('number', { value: 4200 })).toEqual({ value: null });
+  });
+
+  it('clears an integer destination instead of coercing to 0', async () => {
+    expect(await clearWithAutoConvert('integer', { value: 7 })).toEqual({ value: null });
+  });
+
+  it('clears a boolean destination instead of coercing to false', async () => {
+    expect(await clearWithAutoConvert('boolean', { value: true })).toEqual({ value: null });
+  });
+
+  it('clears a string destination instead of coercing to ""', async () => {
+    expect(await clearWithAutoConvert('string', { value: 'hello' })).toEqual({ value: null });
+  });
+
+  it('clears an array destination instead of coercing to []', async () => {
+    expect(await clearWithAutoConvert('array', { value: ['a'] })).toEqual({ value: null });
+  });
+
+  it('preserves the clear through auto_convert when it is a later stage of a pipeline', async () => {
+    // A realistic coercion-floor pipeline: an extract step (jsonpath) followed by
+    // the `auto_convert` floor. The extract short-circuits the null, and the floor
+    // must not resurrect it into a zero-value.
+    const mappings: ColumnMappingV1[] = [
+      {
+        sourceColumnId: 'value',
+        destinationColumnId: 'value',
+        transformers: [
+          { type: 'jsonpath', options: { expression: '$' } },
+          { type: 'auto_convert', options: { targetType: 'number' } },
+        ],
+      },
+    ];
+    const { fields } = await transformRecordAsync(
+      clearedSourceRecord,
+      mappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      { value: 4200 },
+      SYNC_CONTEXT,
+    );
+    expect(fields).toEqual({ value: null });
+  });
+
+  it('still coerces an explicit null source to the zero-value (normal path unchanged)', async () => {
+    // Only an *absent* source is the clear path. A source that carries an explicit
+    // `null` keeps the deliberate zero-value coercion (added in 1bde29064 to stop
+    // empty sources flipping a destination to null) — the fix must not regress it.
+    const explicitNullSource = { id: 'r1', filePath: 'p', fields: { value: null } };
+    const { fields } = await transformRecordAsync(
+      explicitNullSource,
+      autoConvertMapping('number'),
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      { value: 4200 },
+      SYNC_CONTEXT,
+    );
+    expect(fields).toEqual({ value: 0 });
   });
 });
 

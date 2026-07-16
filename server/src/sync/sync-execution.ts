@@ -32,6 +32,34 @@ export interface TransformRecordResult {
 }
 
 /**
+ * Force `preserveNull` on every `auto_convert` config in a pipeline so a `null`
+ * source passes through as `null` instead of being coerced to a type zero-value
+ * (`0` / `false` / `''` / `[]`).
+ *
+ * Used ONLY on the clear path (an absent/cleared source rewritten to `null` — see
+ * `transformRecordAsync`). `auto_convert` is the single registered transformer
+ * that manufactures a non-null value from a null source; every other transformer
+ * already short-circuits a null source to `null` (or `skip`). Its never-fail
+ * coercion floor (`pickMappingTransformers` / `coercionFloorForDestination` in
+ * `transform-picker.ts`) attaches a `preserveNull`-less `auto_convert` to nearly
+ * every cross-type mapping, so without this a cleared numeric/boolean/text/array
+ * cell would be written as a literal zero-value rather than emptied — the silent
+ * corruption tracked in DEV-10817, which undercut the DEV-10797 clear fix.
+ *
+ * Deliberately scoped to the genuine-clear path: on the normal path a source that
+ * carries an explicit `null` keeps the zero-value coercion, which is the
+ * intentional `auto_convert` default (added to stop empty sources flipping a
+ * destination to `null`). See the `preserveNull` option on `AutoConvertOptions`.
+ */
+function forceAutoConvertToPreserveNullForClear(configs: TransformerConfig[]): TransformerConfig[] {
+  return configs.map((config) =>
+    config.type === TransformerTypes.AutoConvert
+      ? { type: config.type, options: { ...config.options, preserveNull: true } }
+      : config,
+  );
+}
+
+/**
  * Apply v1 column mappings to a single source record. Pure — no Nest deps.
  *
  * Used as the v1 column-source pipeline by `applyColumnMappings` and (still)
@@ -61,6 +89,7 @@ export async function transformRecordAsync(
 
   for (const mapping of phaseFilteredMappings) {
     let sourceValue = get(sourceRecord.fields, mapping.sourceColumnId);
+    let clearingAbsentSourceField = false;
 
     if (sourceValue === undefined) {
       // The source field is absent/cleared. Some connectors represent a cleared
@@ -92,15 +121,25 @@ export async function transformRecordAsync(
       // shape rather than a raw `null` the destination service may reject
       // (e.g. wrap_object's `emptyTemplate` producing Notion's
       // `{ type: 'select', select: null }` envelope), and skip-style
-      // transformers keep their skip semantics. Every registered transformer
-      // short-circuits a `null` source, so the pipeline is null-safe here.
+      // transformers keep their skip semantics.
+      //
+      // All but one registered transformer short-circuit a `null` source to
+      // `null` (or `skip`). The exception is `auto_convert`: its coercion floor
+      // rides nearly every cross-type mapping and, by default, manufactures a
+      // type zero-value (`0`/`false`/`''`/`[]`) from a `null` source — which
+      // would write a literal zero into a cleared cell instead of emptying it
+      // (DEV-10817). Flag this iteration so we run the pipeline with `auto_convert`
+      // forced to preserve the clear; see `forceAutoConvertToPreserveNullForClear`.
       sourceValue = null;
+      clearingAbsentSourceField = true;
     }
 
     let transformedValue: unknown = sourceValue;
     let skip = false;
 
-    const configs = getTransformerConfigs(mapping);
+    const configs = clearingAbsentSourceField
+      ? forceAutoConvertToPreserveNullForClear(getTransformerConfigs(mapping))
+      : getTransformerConfigs(mapping);
     if (configs.length > 0) {
       if (!syncContext) {
         throw new Error('transformRecordAsync requires syncContext when column mappings include transformers');
