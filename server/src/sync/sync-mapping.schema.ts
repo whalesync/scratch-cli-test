@@ -192,7 +192,9 @@ const tableMappingV1Schema = z
 export const syncMappingV1Schema = z
   .object({
     version: z.literal(1),
-    tableMappings: z.array(tableMappingV1Schema).min(1),
+    // An empty sync (no table mappings) is valid — e.g. the user dropped the
+    // last table in the Live Export dialog. Do not require >=1 (DEV-10634).
+    tableMappings: z.array(tableMappingV1Schema),
   })
   .strict();
 
@@ -342,7 +344,9 @@ const tableMappingV2Schema = z
 export const syncMappingV2Schema = z
   .object({
     version: z.literal(2),
-    tableMappings: z.array(tableMappingV2Schema).min(1),
+    // An empty sync (no table mappings) is valid — e.g. the user dropped the
+    // last table in the Live Export dialog. Do not require >=1 (DEV-10634).
+    tableMappings: z.array(tableMappingV2Schema),
   })
   .strict();
 

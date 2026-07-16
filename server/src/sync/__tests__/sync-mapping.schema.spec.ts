@@ -233,4 +233,10 @@ describe('syncMappingV2Schema — save-time validation', () => {
     });
     expect(result.success).toBe(true);
   });
+
+  // DEV-10634: dropping the last table leaves an empty sync, which is valid.
+  it('accepts an empty tableMappings array (v1 and v2)', () => {
+    expect(syncMappingV1Schema.safeParse({ version: 1, tableMappings: [] }).success).toBe(true);
+    expect(syncMappingV2Schema.safeParse({ version: 2, tableMappings: [] }).success).toBe(true);
+  });
 });
