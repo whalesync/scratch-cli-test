@@ -212,21 +212,56 @@ fn write_tree_entries(
 /// Returns `(status, path)` pairs for files that differ between `from_treeish` and `to_treeish`.
 /// Status is one of: `"added"`, `"deleted"`, `"modified"`, `"renamed"`.
 /// Paths starting with `.scratch/` are excluded.
+///
+/// Rename detection is ON: a file relocated to a new path is reported once as
+/// `("renamed", new_path)` — the old path is dropped. Callers that need to act
+/// on the vacated old path (e.g. to prune a stale file on disk) must use
+/// [`diff_name_status_without_rename_detection`] instead.
 pub(crate) fn diff_name_status(
     bare_repo: &Path,
     from_treeish: &str,
     to_treeish: &str,
 ) -> anyhow::Result<Vec<(String, String)>> {
+    diff_name_status_impl(bare_repo, from_treeish, to_treeish, true)
+}
+
+/// Like [`diff_name_status`] but with rename detection disabled (`--no-renames`),
+/// so a file relocated on the server (record moved to a new path — a DEV-9698
+/// folder restructure, or a slug-based filename change) is reported as a
+/// separate `("deleted", old_path)` AND `("added", new_path)` rather than a
+/// single `("renamed", new_path)`.
+///
+/// The download scope (DEV-10846) needs BOTH sides: without the old path, the
+/// scoped worktree read never loads the stale file and the scoped
+/// `materialize_local_repo` delete pass never prunes it, orphaning a duplicate
+/// at the old path that the full-tree read used to remove. Since a rename with
+/// byte-identical content leaves `main` unchanged on the next pull, the orphan
+/// would never converge.
+pub(crate) fn diff_name_status_without_rename_detection(
+    bare_repo: &Path,
+    from_treeish: &str,
+    to_treeish: &str,
+) -> anyhow::Result<Vec<(String, String)>> {
+    diff_name_status_impl(bare_repo, from_treeish, to_treeish, false)
+}
+
+fn diff_name_status_impl(
+    bare_repo: &Path,
+    from_treeish: &str,
+    to_treeish: &str,
+    detect_renames: bool,
+) -> anyhow::Result<Vec<(String, String)>> {
     let git_dir = bare_repo.to_str().unwrap_or_default();
+    let mut args: Vec<&str> = vec!["--git-dir", git_dir, "diff", "--name-status"];
+    // `--no-renames` decomposes a rename into a delete of the old path + an add
+    // of the new path, so both sides reach the caller.
+    if !detect_renames {
+        args.push("--no-renames");
+    }
+    args.push(from_treeish);
+    args.push(to_treeish);
     let output = git_command()
-        .args([
-            "--git-dir",
-            git_dir,
-            "diff",
-            "--name-status",
-            from_treeish,
-            to_treeish,
-        ])
+        .args(&args)
         .output()
         .context("failed to spawn git diff --name-status")?;
     if !output.status.success() {

@@ -2931,6 +2931,154 @@ fn download_preserves_unreviewed_edit_on_disjoint_field() {
     assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
 }
 
+/// DEV-10846 scope boundary: an advancing pull only reads and materializes the
+/// records the server actually touched (plus accepted-patch paths). Records the
+/// server left alone are absent from the *scoped* target map, so this locks in
+/// that they are neither deleted nor reverted — the property that makes it safe
+/// to skip them. Here the server touches only record A while B (clean, no edit)
+/// and C (a pending unreviewed edit) are untouched: A must update, B must remain
+/// on disk unchanged, and C's edit must survive.
+#[test]
+fn download_leaves_records_outside_the_server_diff_untouched() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // main has three records; none carry an accepted patch.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_a.json",
+        "{\n  \"name\": \"A\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_b.json",
+        "{\n  \"name\": \"B\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_c.json",
+        "{\n  \"name\": \"C\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+
+    // Worktree: A and B mirror approved (= main); C carries an UNREVIEWED edit.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_a.json"),
+        "{\n  \"name\": \"A\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    let rec_b_bytes = "{\n  \"name\": \"B\",\n  \"industry\": \"Tech\"\n}\n";
+    write_file(&ctx.worktree_dir.join("posts/rec_b.json"), rec_b_bytes);
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_c.json"),
+        "{\n  \"name\": \"C\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+
+    // Server changes ONLY A. B and C fall outside the server diff (and carry no
+    // accepted patch), so both are outside the download scope.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_a.json",
+        "{\n  \"name\": \"A Inc\",\n  \"industry\": \"Tech\"\n}\n",
+        "server renames A",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+    assert!(result.hard_conflict_paths.is_empty());
+    assert!(result.stash_files.is_empty());
+
+    // A: the server change surfaced.
+    let a: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec_a.json")).unwrap())
+            .unwrap();
+    assert_eq!(a["name"], "A Inc");
+
+    // B: untouched by the server, no local edit — must still exist byte-for-byte
+    // (never deleted just because it wasn't in the scoped target map).
+    assert_eq!(
+        std::fs::read(ctx.worktree_dir.join("posts/rec_b.json")).unwrap(),
+        rec_b_bytes.as_bytes(),
+    );
+
+    // C: its unreviewed edit is preserved (never reverted to the main value).
+    let c: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec_c.json")).unwrap())
+            .unwrap();
+    assert_eq!(c["industry"], "SaaS");
+
+    // Only A's change is reported as changed on disk.
+    assert_eq!(result.changed_paths, vec!["posts/rec_a.json".to_string()]);
+
+    assert!(!unreviewed_stash_path(&ctx).exists());
+    assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+/// DEV-10846 rename convergence: when the server relocates a record to a new
+/// path with identical content (a folder restructure / slug-based filename
+/// change), `git diff` with rename detection would report only the NEW path,
+/// leaving the stale file at the OLD path out of the download scope — so the
+/// scoped materialize would never prune it and an orphaned duplicate would
+/// persist forever (`main` is unchanged on the next pull, so it never
+/// reconverges). The scope diff disables rename detection so both the old and
+/// new paths are reconciled: the old file is deleted, the new one written.
+#[test]
+fn download_prunes_old_path_when_server_relocates_a_record() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // main has a record at its original path; the worktree mirrors it.
+    let record_content = "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n";
+    seed_main_with_record(&fixture, &ctx, "posts/rec_acme.json", record_content);
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
+        record_content,
+    );
+
+    // Server relocates the record to a new path with byte-identical content, so
+    // `git diff` sees a rename (R100) that rename detection would collapse to
+    // just the new path. `git add -A` in `commit_all` stages the delete + add.
+    run_git(&fixture.source_dir, &["checkout", "main"]);
+    std::fs::remove_file(fixture.source_dir.join("posts/rec_acme.json")).unwrap();
+    write_file(
+        &fixture.source_dir.join("records/rec_acme.json"),
+        record_content,
+    );
+    commit_all(&fixture.source_dir, "server relocates record");
+    run_git(&fixture.source_dir, &["push", "origin", "main:main"]);
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+
+    // The stale file at the old path is pruned (not left as an orphaned
+    // duplicate), and the record now lives at its new path.
+    assert!(
+        !ctx.worktree_dir.join("posts/rec_acme.json").exists(),
+        "stale file at the old path must be deleted after a server relocation",
+    );
+    assert_eq!(
+        std::fs::read(ctx.worktree_dir.join("records/rec_acme.json")).unwrap(),
+        record_content.as_bytes(),
+    );
+}
+
 #[test]
 fn download_drops_unreviewed_edit_when_server_independently_matched_it() {
     if !git_available() {

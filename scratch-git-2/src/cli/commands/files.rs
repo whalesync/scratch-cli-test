@@ -5401,6 +5401,53 @@ fn read_worktree_files_for_record_paths(
     Ok(out)
 }
 
+/// The set of connection-relative record paths an advancing plain pull actually
+/// has to read and reconcile (DEV-10846). It is the union of:
+///
+/// - every data path the server changed between the prior local `main`
+///   (`old_main_hash`) and the freshly fetched `main` (`new_main_hash`),
+///   obtained from [`crate::git_ops::diff_name_status`] — a hash-based
+///   `git diff --name-status` that never reads a blob and already strips
+///   `.scratch/` entries; and
+/// - every path carrying an accepted patch, because each one must re-anchor
+///   against BOTH the before and after trees, so both scoped tree reads have to
+///   include its base blob (even when the server left that record untouched,
+///   in which case the re-anchor is a cheap no-op).
+///
+/// Every record OUTSIDE this set has, by construction, an identical approved
+/// value before and after the advance (its `main` blob didn't move and no
+/// accepted patch touches it), so its working-tree file is already the correct
+/// final content. Skipping it — never reading its blob, never rewriting it — is
+/// what turns the download from `O(all records in the connection)` into
+/// `O(records that actually changed + records the user has pending edits on)`.
+/// Unreviewed working-tree edits on such untouched records are likewise left
+/// exactly as they sit on disk, which is correct: with the approved state
+/// unchanged there is nothing to re-anchor them onto.
+fn compute_download_scope_paths(
+    ctx: &ConnectionContext,
+    old_main_hash: &str,
+    new_main_hash: &str,
+    accepted_file: &crate::shared::accepted_patches::AcceptedPatchesFile,
+) -> anyhow::Result<HashSet<String>> {
+    let mut scoped_paths: HashSet<String> = HashSet::new();
+    // Rename detection OFF: a server-side relocation must surface BOTH the old
+    // path (so the stale file is read into the scoped worktree map and pruned by
+    // `materialize_local_repo`) and the new path (so the moved content is
+    // written). With detection on, only the new path would appear and the old
+    // file would be orphaned — see `diff_name_status_without_rename_detection`.
+    for (_status, path) in crate::git_ops::diff_name_status_without_rename_detection(
+        &ctx.bare_repo,
+        old_main_hash,
+        new_main_hash,
+    )? {
+        scoped_paths.insert(path);
+    }
+    for entry in &accepted_file.patches {
+        scoped_paths.insert(entry.path.clone());
+    }
+    Ok(scoped_paths)
+}
+
 /// Candidate repo-relative paths for an `accept-all` / `reject-all` /
 /// `discard-all` invocation. The set is the union of:
 ///
@@ -6235,12 +6282,62 @@ fn download_single_repo(
     // the accepted patches + read both trees + the materialized worktree.
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let file_path_to_contents_map_in_main_branch_before_publish =
-        read_main_branch_contents(&ctx.bare_repo)?;
-    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
 
-    let file_path_to_contents_map_in_main_branch_after_publish =
-        read_git_tree(&ctx.bare_repo, &new_main_hash)?;
+    // DEV-10846: on a plain pull with a known prior `main`, scope all three
+    // reads to the records that could actually change on disk — the paths the
+    // server touched between the two commits plus every accepted-patch path (see
+    // `compute_download_scope_paths`). This replaces three full-tree walks that
+    // read every blob's content (`read_main_branch_contents` /
+    // `read_git_tree` via `cat-file --batch`, and a full worktree scan) — the
+    // amplification that made a 59-record pull re-read a 128k-record connection.
+    // The whole-tree reads are still used for:
+    //   - the post-publish reconcile (`post_publish_failed_ops.is_some()`),
+    //     which partitions the FULL approved set into still-accepted vs
+    //     connector-rejected and can't be safely narrowed here; and
+    //   - the first-ever materialization (`old_main_hash.is_none()`), which has
+    //     no prior commit to diff against — everything is genuinely new.
+    let scoped_download_paths: Option<HashSet<String>> =
+        match (post_publish_failed_ops, old_main_hash.as_deref()) {
+            (None, Some(old_hash)) => Some(compute_download_scope_paths(
+                ctx,
+                old_hash,
+                &new_main_hash,
+                &accepted_file,
+            )?),
+            _ => None,
+        };
+
+    let (
+        file_path_to_contents_map_in_main_branch_before_publish,
+        file_path_to_contents_map_in_worktree,
+        file_path_to_contents_map_in_main_branch_after_publish,
+    ) = match &scoped_download_paths {
+        Some(scoped_paths) => {
+            let scoped_paths_borrowed: HashSet<&str> =
+                scoped_paths.iter().map(String::as_str).collect();
+            let before = read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
+                scoped_paths_borrowed.contains(p)
+            })?;
+            // Only the in-scope record files are read from disk; `.scratch/`
+            // schema is deliberately excluded (it carries no accepted patch and
+            // `diff_name_status` strips it), and is reconciled separately by the
+            // caller's `update_main_worktree_after_pull` + schema sync.
+            let worktree = read_worktree_files_for_record_paths(
+                &ctx.worktree_dir,
+                &scoped_paths.iter().cloned().collect::<Vec<_>>(),
+            )?;
+            let after =
+                crate::git_ops::read_tree_files_filtered(&ctx.bare_repo, &new_main_hash, |p| {
+                    scoped_paths_borrowed.contains(p)
+                })?;
+            (before, worktree, after)
+        }
+        None => (
+            read_main_branch_contents(&ctx.bare_repo)?,
+            read_worktree_files_and_scratch_state(ctx)?,
+            read_git_tree(&ctx.bare_repo, &new_main_hash)?,
+        ),
+    };
 
     // DEV-10744: drop accepted patches for folders the server no longer lists
     // (e.g. a table the user just unlinked) BEFORE re-anchoring. When a table is

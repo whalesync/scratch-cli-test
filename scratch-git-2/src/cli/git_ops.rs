@@ -21,7 +21,8 @@ pub(crate) use local::commit_file_map_to_ref;
 #[cfg(test)]
 pub(crate) use local::rev_parse_to_string;
 pub(crate) use local::{
-    diff_name_status, ensure_full_worktree, setup_sparse_worktree, update_ref,
-    worktree_checkout_path, worktree_reset_mixed, worktree_status_porcelain,
+    diff_name_status, diff_name_status_without_rename_detection, ensure_full_worktree,
+    setup_sparse_worktree, update_ref, worktree_checkout_path, worktree_reset_mixed,
+    worktree_status_porcelain,
 };
 pub(crate) use remote::{clone_bare, fetch_origin};
