@@ -13,6 +13,22 @@ export class ConnectorsMetadataController {
   getMetadata(): Record<string, ConnectorMetadata> {
     const metadata = getAllConnectorMetadata();
 
+    // Some connectors point their setup guide at an internal Scratch web-client page
+    // (e.g. Shopify's `/shopify-custom-app`) rather than an external URL. Those are
+    // stored as root-relative paths so they stay environment-agnostic; resolve them
+    // to an absolute URL against the web client base so the link works wherever the
+    // metadata is rendered (e.g. the desktop app, which is not served from that origin).
+    const webClientBaseUrl = this.config.getScratchApplicationUrl();
+    for (const service of Object.keys(metadata)) {
+      const setupGuide = metadata[service].setupGuide;
+      if (setupGuide && setupGuide.url.startsWith('/')) {
+        metadata[service] = {
+          ...metadata[service],
+          setupGuide: { ...setupGuide, url: `${webClientBaseUrl}${setupGuide.url}` },
+        };
+      }
+    }
+
     // Enable Webflow OAuth on non-production environments for testing
     if (!this.config.isProductionEnvironment() && metadata[Service.WEBFLOW]) {
       const webflow = metadata[Service.WEBFLOW];
