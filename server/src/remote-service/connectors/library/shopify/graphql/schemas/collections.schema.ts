@@ -127,6 +127,6 @@ export const COLLECTIONS_CONFIG = {
   columns: {
     slug: 'handle',
     title: ['title'],
-    mainContent: ['collections', 'descriptionHtml'],
+    mainContent: ['descriptionHtml'],
   },
 } as const;

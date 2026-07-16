@@ -54,6 +54,6 @@ export const PAGES_CONFIG = {
   columns: {
     slug: 'handle',
     title: ['title'],
-    mainContent: ['pages', 'body'],
+    mainContent: ['body'],
   },
 } as const;

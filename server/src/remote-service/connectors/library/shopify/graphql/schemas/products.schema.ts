@@ -303,6 +303,6 @@ export const PRODUCTS_CONFIG = {
   columns: {
     slug: 'handle',
     title: ['title'],
-    mainContent: ['products', 'descriptionHtml'],
+    mainContent: ['descriptionHtml'],
   },
 } as const;

@@ -267,7 +267,7 @@ export const SHOPIFY_ENTITIES: EntityConfig[] = [
     columns: {
       slug: "handle",
       title: ["title"],
-      mainContent: ["products", "descriptionHtml"],
+      mainContent: ["descriptionHtml"],
     },
     mutations: {
       create: "productCreate",
@@ -330,7 +330,7 @@ export const SHOPIFY_ENTITIES: EntityConfig[] = [
     columns: {
       slug: "handle",
       title: ["title"],
-      mainContent: ["collections", "descriptionHtml"],
+      mainContent: ["descriptionHtml"],
     },
     mutations: {
       create: "collectionCreate",
@@ -348,7 +348,7 @@ export const SHOPIFY_ENTITIES: EntityConfig[] = [
     columns: {
       slug: "handle",
       title: ["title"],
-      mainContent: ["pages", "body"],
+      mainContent: ["body"],
     },
     mutations: {
       create: "pageCreate",
@@ -383,7 +383,7 @@ export const SHOPIFY_ENTITIES: EntityConfig[] = [
     columns: {
       slug: "handle",
       title: ["title"],
-      mainContent: ["articles", "body"],
+      mainContent: ["body"],
     },
     mutations: {
       create: "articleCreate",

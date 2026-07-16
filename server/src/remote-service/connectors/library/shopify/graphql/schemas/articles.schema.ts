@@ -112,6 +112,6 @@ export const ARTICLES_CONFIG = {
   columns: {
     slug: 'handle',
     title: ['title'],
-    mainContent: ['articles', 'body'],
+    mainContent: ['body'],
   },
 } as const;
