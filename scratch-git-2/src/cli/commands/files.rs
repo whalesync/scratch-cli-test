@@ -883,6 +883,11 @@ async fn run_download(
 
     let mut results = Vec::new();
     let mut all_changed_workspace_paths: Vec<String> = Vec::new();
+    // DEV-10641: per-connection download failures are collected here instead of
+    // `?`-propagating, so one bad connection can no longer abort the whole
+    // workspace pull. Reported (and the process exits non-zero) after every clean
+    // sibling has pulled — see the check just before the hard-conflict decision.
+    let mut failed_connections: Vec<(String, String)> = Vec::new();
     for ctx in &contexts {
         if contexts.len() > 1 && !json {
             println!("Downloading {}...", ctx.conn_dir_name);
@@ -891,7 +896,26 @@ async fn run_download(
             .get(&ctx.connection_id)
             .map(|s| s.data_folders.as_slice())
             .unwrap_or(&[]);
-        let mut download_result = download_single_repo(ctx, &workspace_dir, &token, folders, None)?;
+        let mut download_result =
+            match download_single_repo(ctx, &workspace_dir, &token, folders, None) {
+                Ok(result) => result,
+                Err(err) => {
+                    // Isolate this connection's failure so siblings still pull. Push
+                    // an aligned placeholder result to keep `results` 1:1 with
+                    // `contexts` (the post-loop zip below depends on it), then skip
+                    // the rest of this iteration.
+                    eprintln!(
+                        "  Warning: failed to download {}: {err:#}",
+                        ctx.conn_dir_name
+                    );
+                    failed_connections.push((ctx.conn_dir_name.clone(), format!("{err:#}")));
+                    results.push(DownloadResult {
+                        status: "error".to_string(),
+                        ..Default::default()
+                    });
+                    continue;
+                }
+            };
         // `update_main_worktree_after_pull` is best-effort — failures here shouldn't
         // bubble up because the dirty-side download already succeeded. Fall
         // back to "no master change" on error.
@@ -946,6 +970,11 @@ async fn run_download(
         // with `contexts` (one push per iteration above). Best-effort — a failure here must never
         // fail an otherwise-successful download.
         for (ctx, download_result) in contexts.iter().zip(results.iter()) {
+            // DEV-10641: a connection whose download failed (placeholder result)
+            // changed nothing on disk — there is no schema to reconcile.
+            if download_result.status == "error" {
+                continue;
+            }
             let folders: &[DataFolder] = server_state
                 .get(&ctx.connection_id)
                 .map(|s| s.data_folders.as_slice())
@@ -1004,6 +1033,26 @@ async fn run_download(
     } else {
         aggregate_download(&results)
     };
+
+    // DEV-10641: surface any per-connection download failure we isolated above so
+    // siblings could still pull. Every clean connection has already pulled and
+    // reindexed by this point; we exit non-zero here (the pull did NOT fully
+    // succeed — "surface failures, never silently succeed") after naming the
+    // failed connection(s). This is a strict improvement over the old behavior,
+    // where the first bad connection aborted the pull before any sibling ran.
+    if !failed_connections.is_empty() {
+        let failed_names = failed_connections
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(
+            "{} of {} connection(s) failed to download ({}); the others were pulled successfully. Re-run the download to retry.",
+            failed_connections.len(),
+            contexts.len(),
+            failed_names,
+        );
+    }
 
     // DEV-10523: a hard conflict means an unreviewed edit couldn't be re-applied
     // after the pull (the server deleted the edited record, or the patch failed
@@ -6436,8 +6485,10 @@ struct UnreviewedReapplyOutcome {
 /// hard-conflict set is collected for the stash file and left at the
 /// approved-new value on disk:
 ///   1. the server deleted the very record the user was editing (we don't
-///      silently re-create a record the server intentionally removed), or
-///   2. the patch genuinely fails to reconstruct against the new state.
+///      silently re-create a record the server intentionally removed),
+///   2. the patch genuinely fails to reconstruct against the new state, or
+///   3. the local working-tree record is unparseable JSON (DEV-10641) — the raw
+///      bytes are preserved in the stash and the clean server value is restored.
 fn reapply_unreviewed_edits_after_pull(
     ctx: &ConnectionContext,
     workspace_dir: &Path,
@@ -6498,7 +6549,28 @@ fn reapply_unreviewed_edits_after_pull(
 
         let approved_old_value =
             parse_json_value_at(approved_old, path, "approved state (pre-pull)")?;
-        let worktree_value = parse_json_value_at(worktree, path, "working tree")?;
+        let worktree_value = match parse_json_value_at(worktree, path, "working tree") {
+            Ok(value) => value,
+            Err(_) => {
+                // Hard conflict #3 (DEV-10641): the local working-tree record is
+                // unparseable — malformed JSON, a UTF-8 BOM, truncated, or
+                // hand-edited by an external tool/editor. We can't recover the
+                // user's intended edit from corrupt bytes, so treat it exactly
+                // like hard conflict #2: preserve the raw bytes in the stash,
+                // record the path, and leave `final_worktree_map` at its seeded
+                // approved-new (clean server) value so materialize overwrites the
+                // corrupt file on disk — instead of `?`-propagating and aborting
+                // the entire workspace pull. `worktree.get(path)` is always
+                // `Some` here (the parse only errors on present-but-invalid
+                // bytes; an absent path returns `Ok(None)`).
+                let raw_worktree_bytes_as_stash_value = worktree
+                    .get(path)
+                    .map(|bytes| JsonValue::String(String::from_utf8_lossy(bytes).into_owned()));
+                hard_conflict_paths.push(path.to_string());
+                hard_conflicts.push(stash_entry_for(path, &raw_worktree_bytes_as_stash_value));
+                continue;
+            }
+        };
         // The unreviewed edit at this path: `approved_old → worktree`. `None`
         // means the byte diff was whitespace / key order only (no semantic
         // change, matching `list_unreviewed`) — nothing to re-apply.

@@ -3145,6 +3145,161 @@ fn download_hard_conflict_when_server_deleted_an_edited_record() {
     assert!(ctx.worktree_dir.join("posts/rec_keep.json").exists());
 }
 
+/// DEV-10641 shared scenario: seed two valid records on `main`, corrupt the local
+/// working-tree copy of one with `corrupt_bytes` (unparseable JSON — malformed /
+/// BOM / truncated), advance that record on the server, and pull. Asserts the
+/// pull does NOT abort, the corrupt record is reported as a hard conflict and
+/// stashed with its raw bytes preserved verbatim, the clean server value is
+/// materialized over the corrupt file on disk, and a disjoint sibling still pulls.
+fn assert_unparseable_local_record_is_stashed_and_recovered(corrupt_bytes: &[u8]) {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(&fixture, &ctx, "posts/rec_keep.json", "{\n  \"v\": 1\n}\n");
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_edit.json",
+        "{\n  \"industry\": \"Tech\"\n}\n",
+    );
+    // The worktree mirrors approved for the sibling, but the local copy of
+    // rec_edit is corrupt on disk (e.g. mangled by an external tool/editor).
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_keep.json"),
+        "{\n  \"v\": 1\n}\n",
+    );
+    std::fs::create_dir_all(ctx.worktree_dir.join("posts")).unwrap();
+    std::fs::write(ctx.worktree_dir.join("posts/rec_edit.json"), corrupt_bytes).unwrap();
+
+    // Server independently advances rec_edit so `main` moves and the pull runs.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_edit.json",
+        "{\n  \"industry\": \"Cloud\"\n}\n",
+        "server bumps rec_edit",
+    );
+
+    // The pull COMPLETES rather than aborting the whole workspace (DEV-10641).
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
+
+    // The corrupt record is reported (workspace-relative) and stashed.
+    assert_eq!(result.hard_conflict_paths, vec!["Conn/posts/rec_edit.json"]);
+    assert_eq!(result.stash_files.len(), 1);
+    assert!(result.stash_files[0].ends_with("unreviewed-changes.json"));
+
+    // The clean server value is materialized over the corrupt file on disk — this
+    // is what finally breaks the desktop "Try again" loop.
+    let recovered: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ctx.worktree_dir.join("posts/rec_edit.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(recovered["industry"], "Cloud");
+
+    // The raw corrupt bytes are preserved verbatim in the stash (as a string), so
+    // no user data is silently destroyed.
+    let stash = crate::shared::unreviewed_changes::load(&accepted_patches_dir(&ctx)).unwrap();
+    assert_eq!(stash.patches.len(), 1);
+    assert_eq!(stash.patches[0].path, "posts/rec_edit.json");
+    assert_eq!(
+        stash.patches[0].kind,
+        crate::shared::re_anchor::PatchKind::Create
+    );
+    assert_eq!(
+        stash.patches[0].patch,
+        serde_json::Value::String(String::from_utf8_lossy(corrupt_bytes).into_owned())
+    );
+
+    // The disjoint sibling still pulled cleanly.
+    assert!(ctx.worktree_dir.join("posts/rec_keep.json").exists());
+}
+
+#[test]
+fn download_stashes_and_recovers_malformed_local_record() {
+    assert_unparseable_local_record_is_stashed_and_recovered(b"{ this is not valid json");
+}
+
+#[test]
+fn download_stashes_and_recovers_bom_prefixed_local_record() {
+    // A UTF-8 BOM (0xEF 0xBB 0xBF) ahead of an otherwise-valid object: serde_json
+    // does not skip it, so the record fails to parse.
+    let mut bytes = vec![0xEF, 0xBB, 0xBF];
+    bytes.extend_from_slice(br#"{"industry":"SaaS"}"#);
+    assert_unparseable_local_record_is_stashed_and_recovered(&bytes);
+}
+
+#[test]
+fn download_stashes_and_recovers_truncated_local_record() {
+    assert_unparseable_local_record_is_stashed_and_recovered(br#"{"industry":"Sa"#);
+}
+
+#[test]
+fn download_treats_non_object_local_record_as_an_ordinary_edit_not_corruption() {
+    // A local record that is VALID JSON but not an object (e.g. `[]`) parses fine,
+    // so it is NOT a hard conflict — it flows through as an ordinary unreviewed
+    // edit (user-wins), NOT the DEV-10641 corrupt-record path. This locks that
+    // boundary: only UNPARSEABLE bytes are stashed-and-recovered.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(&fixture, &ctx, "posts/rec_keep.json", "{\n  \"v\": 1\n}\n");
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_edit.json",
+        "{\n  \"industry\": \"Tech\"\n}\n",
+    );
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_keep.json"),
+        "{\n  \"v\": 1\n}\n",
+    );
+    // Local rec_edit is a (valid-JSON) non-object.
+    std::fs::create_dir_all(ctx.worktree_dir.join("posts")).unwrap();
+    std::fs::write(ctx.worktree_dir.join("posts/rec_edit.json"), b"[]").unwrap();
+
+    // Advance a DIFFERENT record so `main` moves and the pull runs, leaving
+    // rec_edit's server side stable (so the non-object edit stays disjoint).
+    advance_remote_main(
+        &fixture,
+        "posts/rec_keep.json",
+        "{\n  \"v\": 2\n}\n",
+        "server bumps rec_keep",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
+
+    // Not corruption: no hard conflict, no stash.
+    assert_eq!(result.status, "downloaded");
+    assert!(result.hard_conflict_paths.is_empty());
+    assert!(!unreviewed_stash_path(&ctx).exists());
+
+    // The non-object value is preserved on disk (user-wins ordinary edit)...
+    let edited: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ctx.worktree_dir.join("posts/rec_edit.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(edited, serde_json::json!([]));
+    // ...and the sibling's server update still pulled.
+    let bumped: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ctx.worktree_dir.join("posts/rec_keep.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(bumped["v"], 2);
+}
+
 #[test]
 fn download_clean_when_no_unreviewed_edits_writes_no_stash() {
     if !git_available() {
