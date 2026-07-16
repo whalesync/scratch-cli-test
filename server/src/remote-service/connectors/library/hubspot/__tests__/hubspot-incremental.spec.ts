@@ -1,7 +1,9 @@
 import {
   buildHubspotModifiedSinceSearch,
   HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS,
+  HUBSPOT_SEARCH_MAX_RESULT_WINDOW,
   HUBSPOT_SEARCH_PAGE_SIZE,
+  parseHubspotModifiedAtToEpochMs,
 } from '../hubspot-incremental';
 
 describe('HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS', () => {
@@ -10,18 +12,26 @@ describe('HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS', () => {
   });
 });
 
+describe('HUBSPOT_SEARCH_MAX_RESULT_WINDOW', () => {
+  it('is 10,000 — HubSpot Search 400s once the offset reaches this ceiling', () => {
+    expect(HUBSPOT_SEARCH_MAX_RESULT_WINDOW).toBe(10_000);
+  });
+});
+
 describe('buildHubspotModifiedSinceSearch', () => {
   const propertyNames = ['name', 'email', 'hs_lastmodifieddate'];
 
-  it('builds a GTE filter on the modified-date property using the clock-skewed epoch-ms watermark', () => {
-    const since = new Date('2026-05-14T12:00:00.000Z');
-    const body = buildHubspotModifiedSinceSearch('hs_lastmodifieddate', since, propertyNames);
+  it('builds a GTE filter rendering the exact epoch-ms window lower bound (no skew applied here)', () => {
+    // The caller subtracts the clock skew before calling the builder; the builder
+    // renders whatever lower bound it is handed verbatim.
+    const windowLowerBound = new Date('2026-05-14T11:59:00.000Z');
+    const body = buildHubspotModifiedSinceSearch('hs_lastmodifieddate', windowLowerBound, propertyNames);
 
-    const expectedValue = String(since.getTime() - HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS);
     expect(body.filterGroups).toEqual([
-      { filters: [{ propertyName: 'hs_lastmodifieddate', operator: 'GTE', value: expectedValue }] },
+      {
+        filters: [{ propertyName: 'hs_lastmodifieddate', operator: 'GTE', value: String(windowLowerBound.getTime()) }],
+      },
     ]);
-    // 2026-05-14T11:59:00.000Z in epoch-ms
     expect(body.filterGroups[0].filters[0].value).toBe(String(Date.parse('2026-05-14T11:59:00.000Z')));
   });
 
@@ -58,5 +68,22 @@ describe('buildHubspotModifiedSinceSearch', () => {
     );
     expect(body.filterGroups[0].filters[0].propertyName).toBe('my_custom_modified');
     expect(body.sorts[0].propertyName).toBe('my_custom_modified');
+  });
+});
+
+describe('parseHubspotModifiedAtToEpochMs', () => {
+  it('parses an ISO-8601 datetime (the shape HubSpot returns for date properties)', () => {
+    expect(parseHubspotModifiedAtToEpochMs('2026-05-14T12:00:00.000Z')).toBe(Date.parse('2026-05-14T12:00:00.000Z'));
+  });
+
+  it('tolerates a raw epoch-ms string', () => {
+    expect(parseHubspotModifiedAtToEpochMs('1747224000000')).toBe(1747224000000);
+  });
+
+  it('returns undefined for absent or unparseable values', () => {
+    expect(parseHubspotModifiedAtToEpochMs(null)).toBeUndefined();
+    expect(parseHubspotModifiedAtToEpochMs(undefined)).toBeUndefined();
+    expect(parseHubspotModifiedAtToEpochMs('')).toBeUndefined();
+    expect(parseHubspotModifiedAtToEpochMs('not-a-date')).toBeUndefined();
   });
 });

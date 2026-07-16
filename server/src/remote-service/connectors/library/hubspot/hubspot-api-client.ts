@@ -2,7 +2,12 @@ import { AxiosInstance, isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
-import { buildHubspotModifiedSinceSearch } from './hubspot-incremental';
+import {
+  buildHubspotModifiedSinceSearch,
+  HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS,
+  HUBSPOT_SEARCH_MAX_RESULT_WINDOW,
+  parseHubspotModifiedAtToEpochMs,
+} from './hubspot-incremental';
 import {
   HubspotBatchReadResponse,
   HubspotCustomObjectSchemasResponse,
@@ -201,14 +206,24 @@ export class HubspotApiClient {
    *
    * Unlike {@link listRecords}, the Search API returns `properties` but **not**
    * `associations` — incremental pulls therefore don't refresh association data
-   * (reconciled by the periodic full pull). A single Search result set is also
-   * capped at 10,000 records by HubSpot; the watermark advances by what returned
-   * and the next run continues from there.
+   * (reconciled by the periodic full pull).
+   *
+   * HubSpot's Search API also refuses to page past its first 10,000 results per
+   * query: a request whose offset (`after`) reaches
+   * {@link HUBSPOT_SEARCH_MAX_RESULT_WINDOW} returns HTTP 400 (a validation
+   * error, not a rate limit, so {@link withRetry} does not retry it). To walk a
+   * delta larger than 10,000 records, this generator **splits the window** —
+   * because results are sorted ascending by `modifiedAtField`, when the next page
+   * would cross the ceiling it re-anchors a fresh Search at the newest record's
+   * modified-date and resets the offset. That chains 10,000-record windows within
+   * a single run, so the watermark advances normally. The one shape it can't
+   * drain is a block of >10,000 records sharing the exact same modified timestamp;
+   * that is logged and left for the periodic full pull to reconcile.
    *
    * @param objectType - The CRM object type to search.
    * @param propertyNames - All property names to request (HubSpot only returns default properties otherwise).
    * @param modifiedAtField - The modified-date property to filter and sort on (e.g. `hs_lastmodifieddate`).
-   * @param since - Watermark; the builder subtracts the clock-skew margin and renders epoch-ms.
+   * @param since - Watermark; the clock-skew overlap is subtracted here, once, before the first query.
    * @param startAfter - Optional cursor to resume from.
    */
   async *searchRecordsModifiedSince(
@@ -218,22 +233,69 @@ export class HubspotApiClient {
     since: Date,
     startAfter?: string,
   ): AsyncGenerator<{ records: HubspotRecord[]; nextCursor: string | undefined }> {
+    // Apply the watermark clock-skew overlap exactly once, to the caller's
+    // `since`. The re-anchored windows below chain on HubSpot's own server-side
+    // modified timestamps, which carry no client/server skew — re-subtracting the
+    // margin there would drift each window backwards and could loop forever.
+    let windowLowerBound = new Date(since.getTime() - HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS);
     let after: string | undefined = startAfter;
 
-    do {
-      const body = buildHubspotModifiedSinceSearch(modifiedAtField, since, propertyNames, after);
+    for (;;) {
+      const body = buildHubspotModifiedSinceSearch(modifiedAtField, windowLowerBound, propertyNames, after);
 
       const response = await this.withRetry(async () =>
         this.http.post<HubspotSearchResponse>(`/crm/v3/objects/${objectType}/search`, body),
       );
 
-      const results = response.data.results.filter((r) => !r.archived);
-      after = response.data.paging?.next?.after;
+      const recordsInPage = response.data.results;
+      const nonArchivedRecords = recordsInPage.filter((r) => !r.archived);
+      const nextAfter = response.data.paging?.next?.after;
 
-      if (results.length > 0) {
-        yield { records: results, nextCursor: after };
+      // Would following `after` into the next page cross HubSpot's hard
+      // 10,000-offset ceiling? If so we must re-anchor rather than page into a 400.
+      const mustReanchorToClearWindowCeiling =
+        nextAfter !== undefined && Number(nextAfter) >= HUBSPOT_SEARCH_MAX_RESULT_WINDOW;
+
+      if (nonArchivedRecords.length > 0) {
+        // On a re-anchor page, hand back no resume cursor: the offset we would
+        // checkpoint is scoped to this about-to-be-abandoned window and would 400
+        // on resume, so a crash here should restart the search cleanly from `since`.
+        yield {
+          records: nonArchivedRecords,
+          nextCursor: mustReanchorToClearWindowCeiling ? undefined : nextAfter,
+        };
       }
-    } while (after);
+
+      if (nextAfter === undefined) {
+        return; // Window exhausted and nothing crossed the ceiling — the whole delta is drained.
+      }
+
+      if (!mustReanchorToClearWindowCeiling) {
+        after = nextAfter;
+        continue;
+      }
+
+      // Re-anchor: the newest (last, under the ascending sort) record in this full
+      // window becomes the inclusive lower bound of the next one. GTE re-fetches
+      // the boundary records — idempotent commits absorb the duplicates.
+      const newestRecordInWindow = recordsInPage[recordsInPage.length - 1];
+      const newestModifiedAtMs = parseHubspotModifiedAtToEpochMs(newestRecordInWindow?.properties?.[modifiedAtField]);
+      if (newestModifiedAtMs === undefined || newestModifiedAtMs <= windowLowerBound.getTime()) {
+        // Either the sort field is missing from the returned records, or a full
+        // 10,000-record window shares one timestamp so re-anchoring can't advance.
+        // Both are undrainable via Search; stop and leave the tail for the periodic
+        // full pull to reconcile rather than looping forever.
+        WSLogger.warn({
+          source: LOG_SOURCE,
+          message:
+            `HubSpot Search cannot advance past the 10,000-result window for ${objectType} ` +
+            `at ${modifiedAtField} >= ${windowLowerBound.toISOString()}; deferring the tail to the next full pull`,
+        });
+        return;
+      }
+      windowLowerBound = new Date(newestModifiedAtMs);
+      after = undefined;
+    }
   }
 
   // --- Single record fetch ---

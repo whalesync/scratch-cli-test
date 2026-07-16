@@ -1,4 +1,9 @@
-import { HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS, HUBSPOT_SEARCH_PAGE_SIZE } from '../hubspot-incremental';
+import { WSLogger } from 'src/logger';
+import {
+  HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS,
+  HUBSPOT_SEARCH_MAX_RESULT_WINDOW,
+  HUBSPOT_SEARCH_PAGE_SIZE,
+} from '../hubspot-incremental';
 import { HubspotRecord } from '../hubspot-types';
 
 const mockPost = jest.fn();
@@ -20,6 +25,26 @@ function record(id: string, archived = false): HubspotRecord {
     updatedAt: '2026-01-02T00:00:00Z',
     archived,
   };
+}
+
+/** A record carrying an explicit modified-date property, used to exercise the
+ * 10,000-result window re-anchoring (which reads that field off the last record). */
+function recordModifiedAt(id: string, modifiedAt: string, modifiedField = 'hs_lastmodifieddate'): HubspotRecord {
+  return {
+    id,
+    properties: { name: `r${id}`, [modifiedField]: modifiedAt },
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: modifiedAt,
+    archived: false,
+  };
+}
+
+/** The GTE (modified-since) filter value carried by the nth POST body. */
+function filterValue(callIndex: number): string {
+  const body = postBody(callIndex) as {
+    filterGroups: { filters: { value: string }[] }[];
+  };
+  return body.filterGroups[0].filters[0].value;
 }
 
 /** The request body (2nd arg) of the nth POST call, typed for assertions. */
@@ -109,5 +134,64 @@ describe('HubspotApiClient.searchRecordsModifiedSince', () => {
     const pages = await drain(client.searchRecordsModifiedSince('contacts', ['name'], 'hs_lastmodifieddate', since));
 
     expect(pages).toEqual([]);
+  });
+
+  describe('10,000-result window splitting', () => {
+    it('re-anchors a fresh window by the last record modified-date instead of paging into the 400', async () => {
+      // First page reports a next `after` at the 10,000 ceiling; the generator
+      // must NOT request it (that would 400) and instead re-anchor at the newest
+      // record's modified-date, resetting the offset.
+      mockPost
+        .mockResolvedValueOnce({
+          data: {
+            total: 99999,
+            results: [recordModifiedAt('A', '2026-05-14T13:00:00.000Z')],
+            paging: { next: { after: String(HUBSPOT_SEARCH_MAX_RESULT_WINDOW) } },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: { total: 99999, results: [recordModifiedAt('B', '2026-05-14T14:00:00.000Z')] },
+        });
+
+      const pages = await drain(
+        client.searchRecordsModifiedSince('contacts', ['name', 'hs_lastmodifieddate'], 'hs_lastmodifieddate', since),
+      );
+
+      expect(mockPost).toHaveBeenCalledTimes(2);
+      // First window: skewed watermark, no offset.
+      expect(filterValue(0)).toBe(expectedValue);
+      expect(postBody(0)).not.toHaveProperty('after');
+      // Second window: re-anchored at the last record's modified-date, offset reset.
+      expect(filterValue(1)).toBe(String(Date.parse('2026-05-14T13:00:00.000Z')));
+      expect(postBody(1)).not.toHaveProperty('after');
+      // The ceiling page hands back NO resume cursor (an offset scoped to the
+      // abandoned window would 400 on resume); the tail page carries none either.
+      expect(pages.map((p) => p.records[0].id)).toEqual(['A', 'B']);
+      expect(pages.map((p) => p.nextCursor)).toEqual([undefined, undefined]);
+    });
+
+    it('stops (rather than looping) when a full 10k window shares one timestamp', async () => {
+      const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+      // The whole window sits at the skewed lower bound itself, so re-anchoring
+      // there can't advance. Only one call is mocked: a second call would prove an
+      // infinite loop (and throw on undefined data).
+      const skewedLowerBoundIso = new Date(since.getTime() - HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS).toISOString();
+      mockPost.mockResolvedValueOnce({
+        data: {
+          total: 99999,
+          results: [recordModifiedAt('A', skewedLowerBoundIso)],
+          paging: { next: { after: String(HUBSPOT_SEARCH_MAX_RESULT_WINDOW) } },
+        },
+      });
+
+      const pages = await drain(
+        client.searchRecordsModifiedSince('contacts', ['name', 'hs_lastmodifieddate'], 'hs_lastmodifieddate', since),
+      );
+
+      expect(mockPost).toHaveBeenCalledTimes(1);
+      expect(pages.map((p) => p.records[0].id)).toEqual(['A']);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      warnSpy.mockRestore();
+    });
   });
 });
