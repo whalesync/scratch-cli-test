@@ -893,6 +893,85 @@ describe('transformRecordAsync — clearing a coerced (auto_convert) field', () 
 });
 
 // ===========================================================================
+// transformRecordAsync — the never-fail coercion floor (useOriginal)
+//
+// Regression coverage for DEV-10794: when a transformer cannot coerce a cell and
+// returns `{ success: false, useOriginal: true }` (e.g. an adopt-existing typed
+// destination column forcing `auto_convert(number)` on an un-parseable "N/A"),
+// `transformRecordAsync` must write the ORIGINAL source value and surface a
+// warning — keeping the rest of the record — instead of throwing and dropping
+// the entire row.
+// ===========================================================================
+describe('transformRecordAsync — coercion floor (useOriginal)', () => {
+  const numberFloorMappings: ColumnMappingV1[] = [
+    { sourceColumnId: 'name', destinationColumnId: 'name' },
+    {
+      sourceColumnId: 'count',
+      destinationColumnId: 'count',
+      transformer: { type: 'auto_convert', options: { targetType: 'number' } },
+    },
+  ];
+
+  it('writes the original value and keeps the record when a cell cannot be coerced', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { name: 'Widget', count: 'N/A' } };
+
+    const { fields, warnings } = await transformRecordAsync(
+      sourceRecord,
+      numberFloorMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      undefined,
+      SYNC_CONTEXT,
+    );
+
+    // The whole record survives: the sibling field is written and the
+    // un-coercible cell falls back to its original value.
+    expect(fields).toEqual({ name: 'Widget', count: 'N/A' });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('count');
+    expect(warnings[0]).toContain('auto_convert');
+  });
+
+  it('preserves the original value on the update path without dropping other fields', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { name: 'Widget', count: 'TBD' } };
+    const baseFields = { name: 'Old', count: 5 };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      numberFloorMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual({ name: 'Widget', count: 'TBD' });
+  });
+
+  it('still coerces a parseable value (floor only fires on failure)', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { name: 'Widget', count: '42' } };
+
+    const { fields, warnings } = await transformRecordAsync(
+      sourceRecord,
+      numberFloorMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      undefined,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual({ name: 'Widget', count: 42 });
+    expect(warnings).toEqual([]);
+  });
+});
+
+// ===========================================================================
 // classifyDestinationRecord
 // ===========================================================================
 describe('classifyDestinationRecord', () => {

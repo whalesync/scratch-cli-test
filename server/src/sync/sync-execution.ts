@@ -170,10 +170,20 @@ export async function transformRecordAsync(
           warnings.push(...result.warnings);
         }
         transformedValue = result.value;
+      } else if (result.useOriginal) {
+        // Never-fail coercion floor: the transformer could not coerce this cell
+        // (e.g. `auto_convert(number)` on an un-parseable "N/A"), so write the
+        // original source value and keep the rest of the record rather than
+        // dropping the whole row. Surface a warning so the failed coercion is
+        // not silently swallowed — publish then rejects the original value at
+        // the service boundary if the destination column can't hold it.
+        warnings.push(
+          `Could not transform field "${mapping.sourceColumnId}"` +
+            `${result.failedTransformerType ? ` (${result.failedTransformerType})` : ''}: ${result.error}. ` +
+            `Wrote the original value instead.`,
+        );
+        transformedValue = sourceValue;
       } else {
-        if (result.useOriginal) {
-          transformedValue = sourceValue;
-        }
         WSLogger.error({
           source: 'transformRecordAsync',
           message: 'Failed to transform field',
