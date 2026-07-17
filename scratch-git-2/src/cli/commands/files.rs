@@ -5408,21 +5408,30 @@ fn read_worktree_files_for_record_paths(
 ///   (`old_main_hash`) and the freshly fetched `main` (`new_main_hash`),
 ///   obtained from [`crate::git_ops::diff_name_status`] — a hash-based
 ///   `git diff --name-status` that never reads a blob and already strips
-///   `.scratch/` entries; and
+///   `.scratch/` entries;
 /// - every path carrying an accepted patch, because each one must re-anchor
 ///   against BOTH the before and after trees, so both scoped tree reads have to
 ///   include its base blob (even when the server left that record untouched,
-///   in which case the re-anchor is a cheap no-op).
+///   in which case the re-anchor is a cheap no-op); and
+/// - every path with an UNREVIEWED working-tree edit — the `gix::status`
+///   byte-dirty set against the pre-advance `main` index (see
+///   [`list_byte_dirty_data_record_paths_via_gix_status`]). These have to be
+///   read because `reapply_unreviewed_edits_after_pull` re-anchors them onto
+///   the new approved state, and — critically — because DEV-10641's
+///   corrupt-record self-heal can only fire on a record whose bytes it reads.
+///   A locally CORRUPT (unparseable) record the server never touched and that
+///   carries no accepted patch is in neither set above, so without this third
+///   source its bytes are never parsed, no hard conflict is raised, and the
+///   corruption lingers unhealed (DEV-10846 × DEV-10641). `gix::status` is
+///   index/stat-based (no blob reads), so this keeps the DEV-10846 win.
 ///
 /// Every record OUTSIDE this set has, by construction, an identical approved
-/// value before and after the advance (its `main` blob didn't move and no
-/// accepted patch touches it), so its working-tree file is already the correct
-/// final content. Skipping it — never reading its blob, never rewriting it — is
-/// what turns the download from `O(all records in the connection)` into
-/// `O(records that actually changed + records the user has pending edits on)`.
-/// Unreviewed working-tree edits on such untouched records are likewise left
-/// exactly as they sit on disk, which is correct: with the approved state
-/// unchanged there is nothing to re-anchor them onto.
+/// value before and after the advance AND no working-tree edit (its `main`
+/// blob didn't move, no accepted patch touches it, and it isn't byte-dirty), so
+/// its working-tree file is already the correct final content. Skipping it —
+/// never reading its blob, never rewriting it — is what turns the download from
+/// `O(all records in the connection)` into `O(records that actually changed +
+/// records the user has pending edits on)`.
 fn compute_download_scope_paths(
     ctx: &ConnectionContext,
     old_main_hash: &str,
@@ -5445,7 +5454,54 @@ fn compute_download_scope_paths(
     for entry in &accepted_file.patches {
         scoped_paths.insert(entry.path.clone());
     }
+    // Third source (DEV-10641 × DEV-10846): records the user has UNREVIEWED
+    // working-tree edits on that the server left untouched and that carry no
+    // accepted patch — most importantly a locally CORRUPT (unparseable) record.
+    // Without these, `reapply_unreviewed_edits_after_pull` never sees such a
+    // file (it is read into neither scoped map), so its self-heal silently
+    // no-ops and the corruption lingers unhealed on disk.
+    for path in list_byte_dirty_data_record_paths_via_gix_status(&ctx.worktree_dir)? {
+        scoped_paths.insert(path);
+    }
     Ok(scoped_paths)
+}
+
+/// Connection-relative data record paths whose working-tree bytes differ from
+/// the git index, via `gix::status` (byte/stat-level — it never reads a blob).
+/// The index reflects `refs/heads/main` (`worktree_reset_mixed` runs on init
+/// and at the end of every pull), so a flagged path is one the user has a
+/// pending/unreviewed edit on — INCLUDING a file that no longer parses as JSON.
+/// `UntrackedFiles::Files` emits each record in a brand-new folder individually
+/// rather than collapsing it to one directory entry (DEV-10321).
+///
+/// Returns an empty set when `worktree_dir` is not a checked-out git worktree
+/// yet (no `.git`), so callers degrade to their other scope sources instead of
+/// erroring on a not-yet-materialized worktree (e.g. a hermetic test that
+/// writes record files into a plain directory).
+fn list_byte_dirty_data_record_paths_via_gix_status(
+    worktree_dir: &Path,
+) -> anyhow::Result<HashSet<String>> {
+    if !worktree_dir.join(".git").exists() {
+        return Ok(HashSet::new());
+    }
+    let repo = gix::open(worktree_dir)
+        .with_context(|| format!("failed to open worktree at {}", worktree_dir.display()))?;
+    let platform = repo
+        .status(gix::progress::Discard)?
+        .untracked_files(gix::status::UntrackedFiles::Files);
+    let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
+    let mut dirty_data_record_paths: HashSet<String> = HashSet::new();
+    for item in iter {
+        let item = item?;
+        if item.summary().is_none() {
+            continue;
+        }
+        let rel_path: String = String::from_utf8_lossy(item.rela_path()).into_owned();
+        if is_data_path_in_folder(&rel_path, "") {
+            dirty_data_record_paths.insert(rel_path);
+        }
+    }
+    Ok(dirty_data_record_paths)
 }
 
 /// Candidate repo-relative paths for an `accept-all` / `reject-all` /
@@ -5483,30 +5539,15 @@ fn collect_all_ops_candidate_record_paths(
     let mut candidate_rel_paths: std::collections::HashSet<String> =
         std::collections::HashSet::new();
 
-    let repo = gix::open(&ctx.worktree_dir)
-        .with_context(|| format!("failed to open worktree at {}", ctx.worktree_dir.display()))?;
-    // Emit untracked files individually. gix defaults to
-    // `UntrackedFiles::Collapsed`, which reports a wholly-untracked directory
-    // (e.g. a brand-new table folder full of freshly created records) as a
-    // single directory entry rather than the individual `.json` files. We
-    // enumerate per-record paths below, so a collapsed `widgets/` entry fails
-    // the data-path `scope_filter` and every newly created record inside a new
-    // folder is silently dropped from the candidate set — leaving accept-all
-    // with nothing to do (DEV-10321). `UntrackedFiles::Files` emits each path.
-    let platform = repo
-        .status(gix::progress::Discard)?
-        .untracked_files(gix::status::UntrackedFiles::Files);
-    let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
-    for item in iter {
-        let item = item?;
-        if item.summary().is_none() {
-            continue;
+    // gix::status byte-dirty data records (unreviewed edits / newly created
+    // files) — the same enumeration the scoped pull uses. The shared helper
+    // emits each record in a brand-new folder individually (DEV-10321) and
+    // filters to data paths; re-narrow to `repo_folder` here for a
+    // `--folder`-scoped all-ops run.
+    for rel_path in list_byte_dirty_data_record_paths_via_gix_status(&ctx.worktree_dir)? {
+        if scope_filter(&rel_path) {
+            candidate_rel_paths.insert(rel_path);
         }
-        let rel_path: String = String::from_utf8_lossy(item.rela_path()).into_owned();
-        if !scope_filter(&rel_path) {
-            continue;
-        }
-        candidate_rel_paths.insert(rel_path);
     }
 
     for entry in &accepted_file.patches {

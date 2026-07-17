@@ -2539,6 +2539,16 @@ fn delete_remote_record(fixture: &BareFixture, rel_path: &str, msg: &str) {
     run_git(&fixture.source_dir, &["push", "origin", "main:main"]);
 }
 
+/// Check out a REAL git worktree for `ctx` at `refs/heads/main`, with the index
+/// synced to main — the state `gix::status` compares against in production
+/// (`worktree_reset_mixed` establishes it at the end of every pull). Needed for
+/// tests exercising the gix-status dirty-path scope in
+/// `compute_download_scope_paths`; the other download tests write records into a
+/// plain directory (no `.git`), so that scope source is a no-op for them.
+fn materialize_real_worktree_at_main(ctx: &ConnectionContext) {
+    crate::git_ops::ensure_full_worktree(&ctx.bare_repo, &ctx.worktree_dir, "main").unwrap();
+}
+
 #[test]
 fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
     if !git_available() {
@@ -3441,6 +3451,87 @@ fn download_treats_non_object_local_record_as_an_ordinary_edit_not_corruption() 
     .unwrap();
     assert_eq!(edited, serde_json::json!([]));
     // ...and the sibling's server update still pulled.
+    let bumped: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ctx.worktree_dir.join("posts/rec_keep.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(bumped["v"], 2);
+}
+
+#[test]
+fn download_stashes_corrupt_record_even_when_server_advanced_a_different_record() {
+    // DEV-10846 × DEV-10641 regression: the corrupt record sits on a path the
+    // server never touched and that carries no accepted patch, so it enters the
+    // download scope ONLY via the gix-status dirty-path source. This mirrors the
+    // `pull-corrupt-local-record.spec.ts` integration test (corrupt one record,
+    // advance a DIFFERENT one) — the scenario the scoped-download optimization
+    // (DEV-10846) silently stopped self-healing until this fix. Uses a REAL
+    // worktree so `gix::status` actually runs (the other corrupt-record tests
+    // advance the same record they corrupt, so server-diff scope covers them and
+    // gix-status is never exercised).
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(&fixture, &ctx, "posts/rec_keep.json", "{\n  \"v\": 1\n}\n");
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_edit.json",
+        "{\n  \"industry\": \"Tech\"\n}\n",
+    );
+
+    // A REAL worktree on main (index reflects main), THEN corrupt rec_edit on
+    // disk so gix::status flags it byte-dirty against the pre-advance index.
+    materialize_real_worktree_at_main(&ctx);
+    std::fs::write(
+        ctx.worktree_dir.join("posts/rec_edit.json"),
+        b"{ this is not valid json",
+    )
+    .unwrap();
+
+    // The server advances a DIFFERENT record. rec_edit is absent from the server
+    // diff and has no accepted patch, so ONLY the gix-status dirty scope pulls it
+    // back in for the DEV-10641 self-heal.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_keep.json",
+        "{\n  \"v\": 2\n}\n",
+        "server bumps rec_keep",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
+
+    // The corrupt record is reported + stashed even though the server never
+    // touched it — the whole point of the fix.
+    assert_eq!(result.hard_conflict_paths, vec!["Conn/posts/rec_edit.json"]);
+    assert_eq!(result.stash_files.len(), 1);
+    assert!(result.stash_files[0].ends_with("unreviewed-changes.json"));
+
+    // The clean server value (unchanged — the server touched rec_keep, not
+    // rec_edit) is materialized over the corrupt file on disk.
+    let recovered: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ctx.worktree_dir.join("posts/rec_edit.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(recovered["industry"], "Tech");
+
+    // The raw corrupt bytes are preserved verbatim in the stash (as a string).
+    let stash = crate::shared::unreviewed_changes::load(&accepted_patches_dir(&ctx)).unwrap();
+    assert_eq!(stash.patches.len(), 1);
+    assert_eq!(stash.patches[0].path, "posts/rec_edit.json");
+    assert_eq!(
+        stash.patches[0].patch,
+        serde_json::Value::String("{ this is not valid json".to_string())
+    );
+
+    // The disjoint sibling still pulled its server update.
     let bumped: serde_json::Value = serde_json::from_slice(
         &std::fs::read(ctx.worktree_dir.join("posts/rec_keep.json")).unwrap(),
     )
