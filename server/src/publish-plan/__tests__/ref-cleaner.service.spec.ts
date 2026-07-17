@@ -182,3 +182,33 @@ describe('RefCleanerService.rewriteForeignKeyValues', () => {
     expect(result).toEqual({ id: 1, authorId: 5 });
   });
 });
+
+describe('RefCleanerService.extractForeignKeyPaths caching', () => {
+  const svc = new RefCleanerService();
+
+  it('recomputes FK paths for an updated schema object that reuses the same $id', () => {
+    // Regression: destination-table schemas keep a stable `$id` (e.g.
+    // `postgres/hubspot_test.Contacts 3`) across schema CHANGES. Sync setup
+    // adds FK columns to an existing table's schema, so a cache keyed by
+    // `$id` alone returns the pre-update (FK-less) path list — plan-build
+    // then skips pseudo-ref stripping and edits fail in the edit phase with
+    // "Cannot resolve pseudo-ref". The memo must be per schema OBJECT, so a
+    // freshly-read updated schema always recomputes.
+    const schemaWithoutFks = buildSchemaWithFks({});
+    schemaWithoutFks.$id = 'postgres/hubspot_test.Contacts 3';
+    expect(svc.extractForeignKeyPaths(schemaWithoutFks)).toEqual([]);
+
+    const updatedSchemaWithFks = buildSchemaWithFks({ 'Associated Companies': { linkedTableId: 'Companies 3' } });
+    updatedSchemaWithFks.$id = 'postgres/hubspot_test.Contacts 3';
+
+    const pathsAfterUpdate = svc.extractForeignKeyPaths(updatedSchemaWithFks);
+    expect(pathsAfterUpdate).toEqual([{ path: ['Associated Companies'], targetRemoteTableId: 'Companies 3' }]);
+  });
+
+  it('returns the memoized result for repeated calls with the same schema object', () => {
+    const schema = buildSchemaWithFks({ authorId: { linkedTableId: 'authors' } });
+    const firstCallResult = svc.extractForeignKeyPaths(schema);
+    const secondCallResult = svc.extractForeignKeyPaths(schema);
+    expect(secondCallResult).toBe(firstCallResult);
+  });
+});

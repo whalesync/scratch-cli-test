@@ -132,18 +132,27 @@ export class RefCleanerService {
     return value;
   }
 
-  private fkPathsCache = new Map<string, Array<{ path: string[]; targetRemoteTableId: string; map?: string }>>();
+  // Memoized per schema OBJECT (WeakMap identity), never per `$id`: a schema's
+  // `$id` (e.g. `postgres/<schema>.<table>`) is stable across schema CHANGES,
+  // so an id-keyed process-lifetime cache goes stale the moment a sync setup
+  // adds FK columns to an existing table — plan-build then reuses the old
+  // (FK-less) path list, skips pseudo-ref stripping, and edits fail with
+  // "Cannot resolve pseudo-ref". Callers hold one schema instance per folder
+  // per plan build (SchemaHelperService per-build caches), so identity keying
+  // keeps the walk O(folders) per build while a fresh git read of an updated
+  // schema always recomputes.
+  private fkPathsCacheBySchemaObject = new WeakMap<
+    Schema,
+    Array<{ path: string[]; targetRemoteTableId: string; map?: string }>
+  >();
 
   /**
    * Traverses the schema to find all paths that are marked as foreign keys.
    */
   extractForeignKeyPaths(schema: Schema): Array<{ path: string[]; targetRemoteTableId: string; map?: string }> {
-    const schemaId = schema.$id;
-    if (typeof schemaId === 'string') {
-      const cached = this.fkPathsCache.get(schemaId);
-      if (cached) {
-        return cached;
-      }
+    const cached = this.fkPathsCacheBySchemaObject.get(schema);
+    if (cached) {
+      return cached;
     }
 
     const results: Array<{ path: string[]; targetRemoteTableId: string; map?: string }> = [];
@@ -213,11 +222,7 @@ export class RefCleanerService {
 
     walk(schema, []);
 
-    const outSchemaId = schema.$id;
-    if (typeof outSchemaId === 'string') {
-      if (this.fkPathsCache.size > 1000) this.fkPathsCache.clear(); // Keep memory bounded
-      this.fkPathsCache.set(outSchemaId, results);
-    }
+    this.fkPathsCacheBySchemaObject.set(schema, results);
 
     return results;
   }
