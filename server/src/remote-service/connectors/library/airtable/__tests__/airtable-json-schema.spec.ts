@@ -229,6 +229,56 @@ describe('airtableFieldToJsonSchema object-valued conformance (DEV-10652)', () =
   });
 });
 
+// DEV-10854. Airtable's `options.result.type` on a formula/rollup/lookup gives the
+// ELEMENT type but not the arity. A multi-level rollup (e.g. 5 levels deep), an array
+// aggregation (ARRAYUNIQUE / ARRAYCOMPACT / ...), or a rollup over a multi-valued lookup
+// surfaces an ARRAY of that element type, while a scalar aggregation surfaces a single
+// value. The generated schema must accept either, or `enforce_schema` rejects a valid
+// multi-valued result with `[…] is not of type "number"`.
+describe('airtableFieldToJsonSchema computed scalar-or-array conformance (DEV-10854)', () => {
+  const field = (type: AirtableDataType, resultType?: AirtableDataType): AirtableFieldsV2 =>
+    resultType
+      ? { id: 'fld', name: 'f', type, options: { isReversed: false, result: { id: 'r', name: 'r', type: resultType } } }
+      : { id: 'fld', name: 'f', type };
+
+  const formulaError = { error: '#ERROR!' };
+
+  describe.each([AirtableDataType.FORMULA, AirtableDataType.ROLLUP, AirtableDataType.LOOKUP])(
+    '%s with a number result type',
+    (type) => {
+      const schema = airtableFieldToJsonSchema(field(type, AirtableDataType.NUMBER));
+
+      it('accepts an array of numbers (multi-level / array-aggregating result)', () =>
+        expect(Value.Check(schema, [1, 2, 3])).toBe(true));
+      it('accepts an array of error objects', () => expect(Value.Check(schema, [formulaError])).toBe(true));
+      it('still accepts a bare scalar', () => expect(Value.Check(schema, 42)).toBe(true));
+      it('still accepts a top-level error object', () => expect(Value.Check(schema, formulaError)).toBe(true));
+      it('still rejects a wrong-type scalar', () => expect(Value.Check(schema, 'nope')).toBe(false));
+      it('rejects an array with a wrong-type element (not over-broadened)', () =>
+        expect(Value.Check(schema, [1, 'two'])).toBe(false));
+    },
+  );
+
+  describe('rollup with a singleLineText result type', () => {
+    const schema = airtableFieldToJsonSchema(field(AirtableDataType.ROLLUP, AirtableDataType.SINGLE_LINE_TEXT));
+
+    it('accepts an array of strings', () => expect(Value.Check(schema, ['a', 'b'])).toBe(true));
+    it('still accepts a bare string', () => expect(Value.Check(schema, 'Join Us')).toBe(true));
+    it('rejects an array with a wrong-type element', () => expect(Value.Check(schema, ['a', 2])).toBe(false));
+  });
+
+  describe('multipleLookupValues whose entire evaluation errors', () => {
+    const schema = airtableFieldToJsonSchema(
+      field(AirtableDataType.MULTIPLE_LOOKUP_VALUES, AirtableDataType.SINGLE_LINE_TEXT),
+    );
+
+    it('accepts a top-level { error } object', () => expect(Value.Check(schema, formulaError)).toBe(true));
+    it('still accepts the normal array of strings', () => expect(Value.Check(schema, ['a', 'b'])).toBe(true));
+    it('still accepts a per-item error object', () => expect(Value.Check(schema, [formulaError])).toBe(true));
+    it('rejects a bare non-array scalar', () => expect(Value.Check(schema, 123)).toBe(false));
+  });
+});
+
 // DEV-10753: Airtable link fields are symmetric. Surface the reciprocal-field id and the
 // single-vs-multi cardinality so the create-plan generator can suggest only one side.
 describe('multipleRecordLinks — reciprocal foreign-key annotation', () => {

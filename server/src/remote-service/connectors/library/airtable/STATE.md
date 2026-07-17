@@ -159,6 +159,14 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
   formula-result cases and the `multipleLookupValues` item type in `airtable-json-schema.ts`.
   Values are stored verbatim per the Connector Prime Directive — the fix is schema-only and
   takes effect on re-pull (which regenerates `schema.json`). Display polish: DEV-10665.
+- **Array-valued rollup / formula / lookup results** (DEV-10854). `options.result.type` reports
+  the *element* type but not the arity, so a multi-level rollup (e.g. 5 levels deep), an array
+  aggregation (`ARRAYUNIQUE` / `ARRAYCOMPACT` / …), or a rollup/formula over a multi-valued
+  lookup returns an **array** of that element type — which a scalar-only schema rejected
+  (`[…] is not of type "number"`). The formula/rollup/lookup schema now accepts scalar **or**
+  array of the element type (`formulaOrRollupResultSchema`), and `multipleLookupValues` also
+  accepts a top-level error object (a whole-lookup error is `{ error }`, not an array). Element
+  types are still validated. Schema-only, takes effect on re-pull.
 
 ## Gotchas
 - (connector-specific operational notes)

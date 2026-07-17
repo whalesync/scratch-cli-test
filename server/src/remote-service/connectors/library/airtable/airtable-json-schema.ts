@@ -179,8 +179,13 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
         // items by the lookup's result type (reusing the formula/rollup mapping).
         // This covers looked-up aiText objects and per-item formula errors, which a
         // flat Array(String) would wrongly reject; exotic result types fall back to
-        // Unknown items — strictly fewer false positives than String.
-        schema = Type.Array(formulaResultTypeToSchema(lookupResultType, description), { description });
+        // Unknown items — strictly fewer false positives than String. A lookup whose
+        // entire evaluation errors surfaces a top-level { error } / { specialValue }
+        // object instead of an array, so accept that shape too (DEV-10854).
+        schema = Type.Union(
+          [Type.Array(formulaResultTypeToSchema(lookupResultType, description)), formulaErrorSchema()],
+          { description },
+        );
       }
       break;
     }
@@ -248,7 +253,7 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
     case AirtableDataType.ROLLUP:
     case AirtableDataType.LOOKUP: {
       const resultType = field.options?.result?.type as AirtableDataType | undefined;
-      schema = formulaResultTypeToSchema(resultType, description);
+      schema = formulaOrRollupResultSchema(resultType, description);
       break;
     }
 
@@ -350,6 +355,21 @@ function formulaConnectorDataType(field: AirtableFieldsV2): string {
  */
 function formulaErrorSchema(): TSchema {
   return Type.Union([Type.Object({ error: Type.String() }), Type.Object({ specialValue: Type.String() })]);
+}
+
+/**
+ * Schema for a formula / rollup / lookup value. Airtable's `options.result.type`
+ * gives the ELEMENT type but not the arity: a multi-level rollup, an array
+ * aggregation (ARRAYUNIQUE / ARRAYCOMPACT / ARRAYSLICE / ARRAYFLATTEN), or a
+ * rollup/formula over a multi-valued lookup surfaces an ARRAY of that element
+ * type, while a scalar aggregation (SUM, MAX, a plain formula) surfaces a single
+ * value. The metadata doesn't distinguish the two, so accept either — a scalar
+ * (or error object) or an array of them — rather than flagging a valid
+ * multi-valued result in `enforce_schema` (DEV-10854).
+ */
+function formulaOrRollupResultSchema(resultType: AirtableDataType | undefined, description: string): TSchema {
+  const scalarOrErrorSchema = formulaResultTypeToSchema(resultType, description);
+  return Type.Union([scalarOrErrorSchema, Type.Array(scalarOrErrorSchema)], { description });
 }
 
 /**
