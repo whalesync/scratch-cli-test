@@ -360,6 +360,15 @@ The schema is written using JSON Schema notation, with some important extensions
   record exists remotely it is effectively read-only. You may populate it on a brand-new
   record, but MUST NOT change it on an existing record (the change is ignored on publish).
 - x-scratch-connector-data-type: the service-specific type for the field, use only for context
+- x-scratch-foreign-key: marks a field as a foreign-key / linked-record field. Its value holds
+  the remote ID(s) of the record(s) it points at — a single ID for a scalar link field, or an
+  array of IDs for a multi-value one. The annotation is an object; its `linkedTableId` names the
+  table the link points into. To point such a field at a record that does not have a remote ID
+  yet (e.g. one you are creating in the same batch), use a `@/` pseudo-reference — see
+  [editing data](editing-data.md).
+- x-scratch-asset-field: marks a field that holds a file/media asset (image, upload, etc.).
+  Values you see here that look like `@asset/<id>` are managed by Scratch's asset sync — leave
+  them as-is (see [editing data](editing-data.md)).
 - x-scratch-agent-instructions: a plain-text hint written for you (the agent). When present,
   read it carefully — it explains a non-obvious structural detail, a soft relationship between
   fields, or which sub-values are user-relevant vs. noise. Treat it as authoritative guidance
@@ -576,6 +585,58 @@ To create a new record, add a new `.json` file in the appropriate table folder.
 - **Write-once fields CAN be set here.** Fields marked `"x-scratch-write-once": true`
   are settable only at creation time (e.g. a list entry's parent). Set them now if
   needed — you will not be able to change them once the record exists.
+
+### Referencing a record you are also creating (pseudo-references)
+
+A foreign-key / linked-record field normally holds the **remote ID** of the
+record it points at. But a brand-new record you just created on disk has no
+remote ID yet — it only gets one when it is published. To point a link field at
+such a not-yet-published record, write a **pseudo-reference** instead of a
+remote ID:
+
+```
+@/<path to the target record file>
+```
+
+The path after `@/` is the target file's path **from the top of the workspace**
+(the level that holds the connection folders), written **without a leading
+slash**, and it **includes the connection folder as its first segment** — it is
+exactly the file's path as it appears in the workspace tree. For example, to
+reference a new author file at `AIRTABLE - Airtable/MyBase/Authors/new-author.json`:
+
+```json
+{
+  "Title": "My Post",
+  "Author": "@/AIRTABLE - Airtable/MyBase/Authors/new-author.json"
+}
+```
+
+- It is **not** an absolute filesystem path and **not** a `./`-relative path —
+  just the in-workspace file path prefixed with `@/` (the `/` is part of the
+  `@/` marker, not a leading slash on the path).
+- Works for scalar link fields (`"Author": "@/…/new-author.json"`) and
+  multi-value link fields (`"Tags": ["@/…/tag-a.json", "@/…/tag-b.json"]`).
+- At publish time Scratch resolves the pseudo-reference to the real remote ID
+  that the target record received when it was published, and substitutes it. If
+  the target file cannot be found, **publish fails with a clear error** rather
+  than shipping a dangling reference.
+- You can create a whole batch of interlinked new records this way (e.g. a new
+  author and a new post that references them) and publish them together — you do
+  **not** need to publish the referenced record first. Scratch creates the
+  records, then backfills the resolved references automatically.
+- If you already know a record's real remote ID (e.g. it is already published),
+  you can use that ID directly; a pseudo-reference is only needed when the
+  target has no remote ID yet.
+
+**A note on `@asset/<id>` references.** You may see values like
+`@asset/ast_...` in fields that hold images or file uploads (marked
+`x-scratch-asset-field` in the schema). These are a related, **system-managed**
+kind of reference: Scratch's asset sync mints them and resolves them to the
+real uploaded-file value at publish time. Unlike `@/` record references, the id
+is an internal database id you cannot see or derive from the workspace — so
+**leave existing `@asset/…` values untouched and never invent one.** To set a
+media field by hand, use the value shape the field's `schema.json` expects
+(commonly a public URL); do not fabricate an `@asset/` id.
 
 ## Updating records
 
