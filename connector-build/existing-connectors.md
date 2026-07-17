@@ -44,7 +44,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [YouTube](../server/src/remote-service/connectors/library/youtube/STATE.md) | ✅ | ❌ | ❌ | 🟠 | 👁️ | Free tier | ❌ | ❌ | 2026-06-15 |
 | [Zoho CRM](../server/src/remote-service/connectors/library/zoho/STATE.md) | ✅ | ❌ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | 2026-06-10 |
 
-> **`*` HubSpot — runs via an in-process fake, not the live API.** `hubspot-connector.spec.ts` drives `test-api-fakes/hubspot` (no key needed), so it executes on every pipeline run — but it validates connector code against a fake, not the real HubSpot API. The only **live** connector suite wired into CI today is **Notion**; every other live suite self-skips until its `INTEGRATION_TEST_<SVC>_*` variable is set.
+> **`*` HubSpot — CI coverage runs via an in-process fake, not the live API.** `hubspot-connector.spec.ts` drives `test-api-fakes/hubspot` (no key needed), so it executes on every pipeline run — but it validates connector code against a fake, not the real HubSpot API. A **live** spec now also exists — `hubspot-connector-live.spec.ts` (the associations write round-trip, DEV-10847) — but it self-skips until `INTEGRATION_TEST_HUBSPOT_API_KEY` (a test-portal Private App token) is wired as a GitLab CI/CD variable. The only live connector suite actually *running* in CI today is still **Notion**; every other live suite self-skips until its `INTEGRATION_TEST_<SVC>_*` variable is set.
 >
 > **`†` Postgres — partial.** Coverage is `postgres-create-schema.spec.ts` + `postgres-incremental-pull.spec.ts` only (schema-creation + incremental pull), and they run against the CI job's **own `postgres:16` sidecar**, not a third-party service. There is no core CRUD connector spec.
 >

@@ -3,5 +3,6 @@ export { createFallbackTableView, createFallbackTableViewFromColumnDefinitions }
 export { formatCellForGrid } from './format-cell';
 export { getByPath, setByPath } from './project-record';
 export { resolveDisplayString } from './resolve-display';
+export { packEditedCellValue, type PackedEdit } from './resolve-pack';
 export { flattenTableViewColumns, tableViewColumnEffectivePath, tableViewColumnPaths } from './table-view-columns';
 export type { ColumnAttributes, ColumnDataType, ColumnDefinition, NormalizedRecordRow } from './types';

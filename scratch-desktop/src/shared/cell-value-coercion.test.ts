@@ -43,6 +43,17 @@ describe('coerceCellInputTextAgainstExistingValueOrSchema', () => {
           '{"id":"AF<M","type":"number","number":30000}',
         ),
       ).toEqual({ id: 'AF<M', type: 'number', number: 30000 });
+      // An ARRAY leaf JSON-parses too — this is the path the desktop grid relies on
+      // for an editable codec FK column (DEV-10847): the pack seam serializes the
+      // packed `[{ id }]` to JSON, and the coercion parses it straight back onto the
+      // existing `associations.<type>.results` array leaf.
+      expect(
+        coerceCellInputTextAgainstExistingValueOrSchema(
+          [{ id: 'C1', type: 'contact_to_company' }],
+          null,
+          '[{"id":"C2"}]',
+        ),
+      ).toEqual([{ id: 'C2' }]);
     });
   });
 

@@ -17,6 +17,8 @@ const mockListRecords = jest.fn();
 const mockTestConnection = jest.fn();
 const mockGetApiQuota = jest.fn();
 const mockGetCustomObjectSchemas = jest.fn();
+const mockCreateAssociation = jest.fn();
+const mockDeleteAssociation = jest.fn();
 
 jest.mock('../hubspot-api-client', () => {
   return {
@@ -30,6 +32,8 @@ jest.mock('../hubspot-api-client', () => {
       testConnection: mockTestConnection,
       getApiQuota: mockGetApiQuota,
       getCustomObjectSchemas: mockGetCustomObjectSchemas,
+      createAssociation: mockCreateAssociation,
+      deleteAssociation: mockDeleteAssociation,
     })),
     HubspotError: class HubspotError extends Error {
       statusCode?: number;
@@ -367,6 +371,87 @@ describe('HubspotConnector', () => {
       await connector.updateRecords(tableSpec, [file]);
 
       expect(mockUpdateRecord).toHaveBeenCalledWith('companies', '99', { name: 'Only writable' });
+    });
+  });
+
+  // Association WRITE path (DEV-10847). `contacts` has associations
+  // (ASSOCIATIONS_BY_OBJECT_TYPE), so updateRecords fetches the current remote
+  // associations, diffs them against the file's desired `associations`, and
+  // creates the added ids / deletes the removed ones via the v4 API. This is what
+  // the now-editable "Associated X" grid column publishes.
+  describe('association sync (updateRecords diffs desired vs current)', () => {
+    const CONTACTS = 'contacts';
+
+    function fileWithAssociations(id: string, companyIds: string[]): ConnectorFile {
+      return {
+        ...makeFile(id, {}),
+        associations: { companies: { results: companyIds.map((cid) => ({ id: cid })) } },
+      };
+    }
+
+    it('creates the added association and deletes the removed one', async () => {
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      // Current remote state: linked to company C1. Returned for both the diff
+      // fetch and the post-write refetch.
+      mockGetRecord.mockResolvedValue({
+        id: '42',
+        properties: {},
+        associations: { companies: { results: [{ id: 'C1', type: 'contact_to_company' }] } },
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-02T00:00:00Z',
+        archived: false,
+      });
+
+      // Desired: drop C1, add C2.
+      const file = fileWithAssociations('42', ['C2']);
+      await connector.updateRecords(tableSpec, [file], [{ associations: file.associations }]);
+
+      expect(mockCreateAssociation).toHaveBeenCalledTimes(1);
+      expect(mockCreateAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C2');
+      expect(mockDeleteAssociation).toHaveBeenCalledTimes(1);
+      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C1');
+      // Association-only changeset → no property PATCH.
+      expect(mockUpdateRecord).not.toHaveBeenCalled();
+    });
+
+    it('makes no v4 calls when desired associations equal current (no-op)', async () => {
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      mockGetRecord.mockResolvedValue({
+        id: '7',
+        properties: {},
+        associations: { companies: { results: [{ id: 'C1', type: 'contact_to_company' }] } },
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-02T00:00:00Z',
+        archived: false,
+      });
+
+      // Desired matches current (the packed edit drops `type`, but the diff is by id).
+      const file = fileWithAssociations('7', ['C1']);
+      await connector.updateRecords(tableSpec, [file], [{ associations: file.associations }]);
+
+      expect(mockCreateAssociation).not.toHaveBeenCalled();
+      expect(mockDeleteAssociation).not.toHaveBeenCalled();
+    });
+
+    it('deletes every association when the edited list is emptied', async () => {
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      mockGetRecord.mockResolvedValue({
+        id: '9',
+        properties: {},
+        associations: { companies: { results: [{ id: 'C1' }, { id: 'C2' }] } },
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-02T00:00:00Z',
+        archived: false,
+      });
+
+      // Desired: cleared list — the "clear all links" edit.
+      const file = fileWithAssociations('9', []);
+      await connector.updateRecords(tableSpec, [file], [{ associations: file.associations }]);
+
+      expect(mockCreateAssociation).not.toHaveBeenCalled();
+      expect(mockDeleteAssociation).toHaveBeenCalledTimes(2);
+      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '9', 'companies', 'C1');
+      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '9', 'companies', 'C2');
     });
   });
 });

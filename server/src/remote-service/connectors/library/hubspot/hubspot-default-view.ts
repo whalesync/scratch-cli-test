@@ -1,9 +1,11 @@
 import { Kind, TSchema } from '@sinclair/typebox';
 import {
+  ColumnCodec,
   TablePropertyType,
   TableView,
   TableViewBannerGroup,
   TableViewCol,
+  TransformerTypes,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
@@ -412,7 +414,6 @@ function buildAssociationForeignKeyCol(assocType: string): TableViewCol {
     // Always prefixed with "Associated" so the column reads clearly on its own
     // (e.g. "Associated Emails"), both standalone and inside the Associations group.
     name: `Associated ${targetTableDisplayName}`,
-    readonly: true,
     // The flattened ids are foreign keys into the related object's table (its wsId is
     // the association type). Declared on the column because the FK annotation lives on
     // `results[].id` — below this column's path — so a schema-join can't recover it.
@@ -420,6 +421,39 @@ function buildAssociationForeignKeyCol(assocType: string): TableViewCol {
     // Flatten the [{ id, type }, …] array to its comma-joined ids for display; the
     // ids resolve to the related records via the schema's foreign-key annotation.
     displayTransformer: { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'join_comma' } },
+    // The column is EDITABLE: `codec` is the bidirectional collapse to/from the
+    // neutral CoreValue (here the list of related ids). `toCore` extracts the id
+    // list from the verbatim `[{ id, type }, …]` array; `fromCore` packs an edited
+    // id list back into `[{ id }, …]` — WITHOUT reshaping the on-disk data
+    // (Connector Prime Directive): the record still stores the raw `results` array,
+    // and the connector's v4-API publish path diffs by id. `type` is dropped on the
+    // packed element because HubSpot assigns the association label; it returns on the
+    // next pull. The grid runs `fromCore` on cell-edit; a sync uses the same pair.
+    codec: buildAssociationCodec(),
+  };
+}
+
+/**
+ * Bidirectional codec for an "Associated X" column. The neutral CoreValue is the
+ * list of related-record ids (`string[]`):
+ *   toCore  : `[{ id, type }, …]` → `["id1", "id2"]`     (jsonpath `$[*].id`)
+ *   fromCore: `["id1", "id2"]`    → `[{ id: "id1" }, …]` (map_array → wrap_object)
+ */
+function buildAssociationCodec(): ColumnCodec {
+  return {
+    toCore: {
+      type: TransformerTypes.JSONPath,
+      options: { expression: '$[*].id', arrayHandling: 'array' },
+    },
+    fromCore: {
+      type: TransformerTypes.MapArray,
+      options: {
+        elementTransformer: {
+          type: TransformerTypes.WrapObject,
+          options: { template: { id: '$value' } },
+        },
+      },
+    },
   };
 }
 

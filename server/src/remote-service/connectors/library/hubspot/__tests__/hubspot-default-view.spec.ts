@@ -191,6 +191,17 @@ describe('buildHubspotDefaultView', () => {
   });
 
   describe('association foreign-key columns', () => {
+    // The bidirectional codec every "Associated X" column carries: toCore extracts
+    // the id list from `[{ id, type }, …]`; fromCore packs an edited id list back
+    // into `[{ id }, …]` on write (DEV-10847).
+    const EXPECTED_ASSOCIATION_CODEC = {
+      toCore: { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'array' } },
+      fromCore: {
+        type: 'map_array',
+        options: { elementTransformer: { type: 'wrap_object', options: { template: { id: '$value' } } } },
+      },
+    };
+
     function assocSchema(types: string[]) {
       const associationProps: Record<string, TSchema> = {};
       for (const t of types) {
@@ -213,13 +224,16 @@ describe('buildHubspotDefaultView', () => {
       const col = v.cols.find((c) => c.kind === 'col' && c.path === 'associations.contacts.results') as TableViewCol;
       expect(col).toBeDefined();
       expect(col.name).toBe('Associated Contacts');
-      expect(col.readonly).toBe(true);
+      // Associations are editable (DEV-10847): no readonly flag, and a codec packs
+      // an edited id list back into the native `results` array on write.
+      expect(col.readonly).toBeUndefined();
       expect(col.hidden).toBeUndefined();
       expect(col.foreignKey).toEqual({ linkedTableId: 'contacts' });
       expect(col.displayTransformer).toEqual({
         type: 'jsonpath',
         options: { expression: '$[*].id', arrayHandling: 'join_comma' },
       });
+      expect(col.codec).toEqual(EXPECTED_ASSOCIATION_CODEC);
     });
 
     it('groups multiple related types under an "Associations" banner, named for each target', () => {
@@ -235,16 +249,18 @@ describe('buildHubspotDefaultView', () => {
       expect(byPath('associations.contacts.results')?.name).toBe('Associated Contacts');
       expect(byPath('associations.deals.results')?.name).toBe('Associated Deals');
       expect(byPath('associations.0-421.results')?.name).toBe('Associated Appointments');
-      // Every grouped column is a readonly FK column declaring its target table (the
-      // association type in its path) with the id-flattening display transformer.
+      // Every grouped column is an editable FK column declaring its target table (the
+      // association type in its path), with the id-flattening display transformer and
+      // the pack codec (DEV-10847).
       for (const col of group.cols) {
-        expect(col.readonly).toBe(true);
+        expect(col.readonly).toBeUndefined();
         const associationType = col.path.split('.')[1];
         expect(col.foreignKey).toEqual({ linkedTableId: associationType });
         expect(col.displayTransformer).toEqual({
           type: 'jsonpath',
           options: { expression: '$[*].id', arrayHandling: 'join_comma' },
         });
+        expect(col.codec).toEqual(EXPECTED_ASSOCIATION_CODEC);
       }
       // No standalone association columns leak out alongside the group.
       expect(v.cols.some((c) => c.kind === 'col' && c.path.startsWith('associations.'))).toBe(false);

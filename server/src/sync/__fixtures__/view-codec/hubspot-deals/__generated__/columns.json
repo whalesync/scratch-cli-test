@@ -353,91 +353,163 @@
   {
     "column": "Associated Notes",
     "columnId": "associations.notes.results",
-    "cardinality": "single",
+    "cardinality": "multi",
     "logicalType": "object",
     "primitiveType": "array",
     "toCore": {
       "type": "jsonpath",
       "options": {
         "expression": "$[*].id",
-        "arrayHandling": "join_comma"
+        "arrayHandling": "array"
       }
     },
-    "fromCore": null
+    "fromCore": {
+      "type": "map_array",
+      "options": {
+        "elementTransformer": {
+          "type": "wrap_object",
+          "options": {
+            "template": {
+              "id": "$value"
+            }
+          }
+        }
+      }
+    }
   },
   {
     "column": "Associated Tasks",
     "columnId": "associations.tasks.results",
-    "cardinality": "single",
+    "cardinality": "multi",
     "logicalType": "object",
     "primitiveType": "array",
     "toCore": {
       "type": "jsonpath",
       "options": {
         "expression": "$[*].id",
-        "arrayHandling": "join_comma"
+        "arrayHandling": "array"
       }
     },
-    "fromCore": null
+    "fromCore": {
+      "type": "map_array",
+      "options": {
+        "elementTransformer": {
+          "type": "wrap_object",
+          "options": {
+            "template": {
+              "id": "$value"
+            }
+          }
+        }
+      }
+    }
   },
   {
     "column": "Associated Tickets",
     "columnId": "associations.tickets.results",
-    "cardinality": "single",
+    "cardinality": "multi",
     "logicalType": "object",
     "primitiveType": "array",
     "toCore": {
       "type": "jsonpath",
       "options": {
         "expression": "$[*].id",
-        "arrayHandling": "join_comma"
+        "arrayHandling": "array"
       }
     },
-    "fromCore": null
+    "fromCore": {
+      "type": "map_array",
+      "options": {
+        "elementTransformer": {
+          "type": "wrap_object",
+          "options": {
+            "template": {
+              "id": "$value"
+            }
+          }
+        }
+      }
+    }
   },
   {
     "column": "Associated Contacts",
     "columnId": "associations.contacts.results",
-    "cardinality": "single",
+    "cardinality": "multi",
     "logicalType": "object",
     "primitiveType": "array",
     "toCore": {
       "type": "jsonpath",
       "options": {
         "expression": "$[*].id",
-        "arrayHandling": "join_comma"
+        "arrayHandling": "array"
       }
     },
-    "fromCore": null
+    "fromCore": {
+      "type": "map_array",
+      "options": {
+        "elementTransformer": {
+          "type": "wrap_object",
+          "options": {
+            "template": {
+              "id": "$value"
+            }
+          }
+        }
+      }
+    }
   },
   {
     "column": "Associated Companies",
     "columnId": "associations.companies.results",
-    "cardinality": "single",
+    "cardinality": "multi",
     "logicalType": "object",
     "primitiveType": "array",
     "toCore": {
       "type": "jsonpath",
       "options": {
         "expression": "$[*].id",
-        "arrayHandling": "join_comma"
+        "arrayHandling": "array"
       }
     },
-    "fromCore": null
+    "fromCore": {
+      "type": "map_array",
+      "options": {
+        "elementTransformer": {
+          "type": "wrap_object",
+          "options": {
+            "template": {
+              "id": "$value"
+            }
+          }
+        }
+      }
+    }
   },
   {
     "column": "Associated Deals",
     "columnId": "associations.deals.results",
-    "cardinality": "single",
+    "cardinality": "multi",
     "logicalType": "object",
     "primitiveType": "array",
     "toCore": {
       "type": "jsonpath",
       "options": {
         "expression": "$[*].id",
-        "arrayHandling": "join_comma"
+        "arrayHandling": "array"
       }
     },
-    "fromCore": null
+    "fromCore": {
+      "type": "map_array",
+      "options": {
+        "elementTransformer": {
+          "type": "wrap_object",
+          "options": {
+            "template": {
+              "id": "$value"
+            }
+          }
+        }
+      }
+    }
   }
 ]

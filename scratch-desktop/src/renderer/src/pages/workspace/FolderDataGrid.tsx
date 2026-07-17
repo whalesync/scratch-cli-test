@@ -57,6 +57,7 @@ import {
   createFallbackTableViewFromColumnDefinitions,
   flattenTableViewColumns,
   getByPath,
+  packEditedCellValue,
   resolveDisplayString,
 } from '../../../../shared/schema-columns';
 // ValidationResultRow is no longer used — validation data comes from diffData.validationByCell
@@ -1928,6 +1929,25 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const allowOverlay =
         !isReadOnly && status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';
 
+      // Editable codec column: a foreign-key ARRAY flattened for display (e.g.
+      // HubSpot's "Associated X", native `[{ id, type }, …]`). Show AND edit the
+      // flattened id list the display transformer produces — so the overlay is a
+      // clean comma list, not raw JSON — and let onCellEdited pack the edit back
+      // into the native array via the column's codec.fromCore. Takes precedence
+      // over the reference-name branch below: an array-of-objects can't resolve to
+      // names anyway, and editing ids is the intended UX (DEV-10847).
+      if (viewCol?.codec?.fromCore && viewCol.displayTransformer) {
+        const flattened = resolveDisplayString(val, viewCol);
+        return {
+          kind: GridCellKind.Text as const,
+          data: flattened,
+          displayData: flattened,
+          allowOverlay,
+          copyData: flattened,
+          themeOverride,
+        };
+      }
+
       // Foreign-key (reference) cell: show the linked record's name(s) instead of
       // the raw id when we resolved them (DEV-10530). The reference target lives
       // in another folder, so the id->name map is computed in the main process and
@@ -2460,7 +2480,30 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
 
       const fieldPath = resolveEffectivePath(colId, viewCol);
-      acceptGridCellChange(r.__filename, fieldPath, editableCellToString(newValue), 'grid overlay save');
+      const editedText = editableCellToString(newValue);
+
+      // Editable codec column (e.g. a flattened FK array): pack the edited id list
+      // back into the native shape via the column's codec.fromCore before writing.
+      // We serialize the packed native value to JSON and hand it to the same
+      // text->coerce->setByPath path — the on-disk leaf is an array, so the shared
+      // coercion JSON-parses it straight back (both here and in the main process),
+      // needing no codec knowledge on the write side. A fail-closed pack refuses
+      // the edit rather than corrupt the record.
+      if (viewCol?.codec?.fromCore) {
+        const packed = packEditedCellValue(viewCol, editedText);
+        if (!packed.ok) {
+          notifications.show({
+            color: 'red',
+            title: 'Failed to save cell',
+            message: 'Could not parse the edited value for this linked column.',
+          });
+          return;
+        }
+        acceptGridCellChange(r.__filename, fieldPath, JSON.stringify(packed.value), 'grid overlay save (codec)');
+        return;
+      }
+
+      acceptGridCellChange(r.__filename, fieldPath, editedText, 'grid overlay save');
     },
     [acceptGridCellChange, columns, pagedRows, viewColMap],
   );

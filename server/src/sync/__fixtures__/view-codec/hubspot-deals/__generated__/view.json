@@ -796,7 +796,6 @@
           "kind": "col",
           "path": "associations.notes.results",
           "name": "Associated Notes",
-          "readonly": true,
           "foreignKey": {
             "linkedTableId": "notes"
           },
@@ -806,13 +805,34 @@
               "expression": "$[*].id",
               "arrayHandling": "join_comma"
             }
+          },
+          "codec": {
+            "toCore": {
+              "type": "jsonpath",
+              "options": {
+                "expression": "$[*].id",
+                "arrayHandling": "array"
+              }
+            },
+            "fromCore": {
+              "type": "map_array",
+              "options": {
+                "elementTransformer": {
+                  "type": "wrap_object",
+                  "options": {
+                    "template": {
+                      "id": "$value"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         {
           "kind": "col",
           "path": "associations.tasks.results",
           "name": "Associated Tasks",
-          "readonly": true,
           "foreignKey": {
             "linkedTableId": "tasks"
           },
@@ -822,13 +842,34 @@
               "expression": "$[*].id",
               "arrayHandling": "join_comma"
             }
+          },
+          "codec": {
+            "toCore": {
+              "type": "jsonpath",
+              "options": {
+                "expression": "$[*].id",
+                "arrayHandling": "array"
+              }
+            },
+            "fromCore": {
+              "type": "map_array",
+              "options": {
+                "elementTransformer": {
+                  "type": "wrap_object",
+                  "options": {
+                    "template": {
+                      "id": "$value"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         {
           "kind": "col",
           "path": "associations.tickets.results",
           "name": "Associated Tickets",
-          "readonly": true,
           "foreignKey": {
             "linkedTableId": "tickets"
           },
@@ -838,13 +879,34 @@
               "expression": "$[*].id",
               "arrayHandling": "join_comma"
             }
+          },
+          "codec": {
+            "toCore": {
+              "type": "jsonpath",
+              "options": {
+                "expression": "$[*].id",
+                "arrayHandling": "array"
+              }
+            },
+            "fromCore": {
+              "type": "map_array",
+              "options": {
+                "elementTransformer": {
+                  "type": "wrap_object",
+                  "options": {
+                    "template": {
+                      "id": "$value"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         {
           "kind": "col",
           "path": "associations.contacts.results",
           "name": "Associated Contacts",
-          "readonly": true,
           "foreignKey": {
             "linkedTableId": "contacts"
           },
@@ -854,13 +916,34 @@
               "expression": "$[*].id",
               "arrayHandling": "join_comma"
             }
+          },
+          "codec": {
+            "toCore": {
+              "type": "jsonpath",
+              "options": {
+                "expression": "$[*].id",
+                "arrayHandling": "array"
+              }
+            },
+            "fromCore": {
+              "type": "map_array",
+              "options": {
+                "elementTransformer": {
+                  "type": "wrap_object",
+                  "options": {
+                    "template": {
+                      "id": "$value"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         {
           "kind": "col",
           "path": "associations.companies.results",
           "name": "Associated Companies",
-          "readonly": true,
           "foreignKey": {
             "linkedTableId": "companies"
           },
@@ -870,13 +953,34 @@
               "expression": "$[*].id",
               "arrayHandling": "join_comma"
             }
+          },
+          "codec": {
+            "toCore": {
+              "type": "jsonpath",
+              "options": {
+                "expression": "$[*].id",
+                "arrayHandling": "array"
+              }
+            },
+            "fromCore": {
+              "type": "map_array",
+              "options": {
+                "elementTransformer": {
+                  "type": "wrap_object",
+                  "options": {
+                    "template": {
+                      "id": "$value"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         {
           "kind": "col",
           "path": "associations.deals.results",
           "name": "Associated Deals",
-          "readonly": true,
           "foreignKey": {
             "linkedTableId": "deals"
           },
@@ -885,6 +989,28 @@
             "options": {
               "expression": "$[*].id",
               "arrayHandling": "join_comma"
+            }
+          },
+          "codec": {
+            "toCore": {
+              "type": "jsonpath",
+              "options": {
+                "expression": "$[*].id",
+                "arrayHandling": "array"
+              }
+            },
+            "fromCore": {
+              "type": "map_array",
+              "options": {
+                "elementTransformer": {
+                  "type": "wrap_object",
+                  "options": {
+                    "template": {
+                      "id": "$value"
+                    }
+                  }
+                }
+              }
             }
           }
         }

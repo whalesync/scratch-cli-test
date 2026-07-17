@@ -117,17 +117,53 @@
     "core": false
   },
   "associations.notes.results": {
-    "core": "62171168844, 63037286201"
+    "core": [
+      "62171168844",
+      "63037286201"
+    ],
+    "roundTrip": [
+      {
+        "id": "62171168844"
+      },
+      {
+        "id": "63037286201"
+      }
+    ]
   },
   "associations.tasks.results": {
-    "core": "62171169354"
+    "core": [
+      "62171169354"
+    ],
+    "roundTrip": [
+      {
+        "id": "62171169354"
+      }
+    ]
   },
   "associations.tickets.results": {},
   "associations.contacts.results": {
-    "core": "14823"
+    "core": [
+      "14823"
+    ],
+    "roundTrip": [
+      {
+        "id": "14823"
+      }
+    ]
   },
   "associations.companies.results": {
-    "core": "15832401504, 15832401504"
+    "core": [
+      "15832401504",
+      "15832401504"
+    ],
+    "roundTrip": [
+      {
+        "id": "15832401504"
+      },
+      {
+        "id": "15832401504"
+      }
+    ]
   },
   "associations.deals.results": {}
 }

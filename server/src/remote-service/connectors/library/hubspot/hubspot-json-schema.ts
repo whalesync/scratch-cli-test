@@ -88,7 +88,13 @@ function resolveConnectorDataType(property: HubspotProperty): string {
 
 /**
  * Build the associations sub-schema for an object type.
- * Associations are readonly since they're written via the separate v4 API.
+ *
+ * Associations are EDITABLE: on publish the connector diffs the record's desired
+ * associations against the remote state and creates/deletes the difference via the
+ * v4 associations API (see `syncAssociations` / `updateRecords` in
+ * `hubspot-connector.ts`). The default view exposes each type as an editable
+ * foreign-key column and packs an edited id list back into `results` via a codec
+ * (`buildAssociationForeignKeyCol`), so we no longer mark the group readonly.
  *
  * Each association is keyed by the related object type (`companies`, `contacts`,
  * `deals`, `0-421`, …), and every `results[].id` holds the related record's HubSpot
@@ -97,6 +103,11 @@ function resolveConnectorDataType(property: HubspotProperty): string {
  * `linkedTableId` is the association type. The FK resolves to whichever record in
  * that table has the matching `id`; if the user hasn't synced that table into the
  * workbook, the FK simply doesn't resolve (no table change needed here).
+ *
+ * `type` is Optional because a user-added link (created locally in the grid) only
+ * carries the `id` — HubSpot assigns the association `type` label, which arrives on
+ * the next pull. The verbatim shape a pull stores still includes `type`; making it
+ * optional just keeps a locally-added `{ id }` element from tripping enforce_schema.
  */
 function buildAssociationsSchema(objectType: string): TSchema | null {
   const associatedTypes = ASSOCIATIONS_BY_OBJECT_TYPE[objectType];
@@ -109,7 +120,7 @@ function buildAssociationsSchema(objectType: string): TSchema | null {
         results: Type.Array(
           Type.Object({
             id: Type.String({ [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: assocType } }),
-            type: Type.String(),
+            type: Type.Optional(Type.String()),
           }),
         ),
       }),
@@ -118,7 +129,6 @@ function buildAssociationsSchema(objectType: string): TSchema | null {
 
   return Type.Optional(
     Type.Object(assocProperties, {
-      [X_SCRATCH_READONLY]: true,
       description: 'Associations with other HubSpot objects',
     }),
   );
