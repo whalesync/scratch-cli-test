@@ -829,6 +829,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "relation",
             "x-scratch-foreign-key": {
+              "inverseFieldId": "hVNF",
               "linkedTableId": "36b81e58-1794-808e-ad29-d981a07c2ab3",
               "map": "id",
             },
