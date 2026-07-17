@@ -429,6 +429,23 @@ export class SchemaBuilderService {
   }
 
   /**
+   * The destination connector's schema-creation capabilities (or undefined when the
+   * connector can't create schema at all). Exposes the same object the create-plan
+   * generator reads, so callers outside plan generation — e.g. the sync-draft FK
+   * transformer attach, which needs `supportsManyToManyForeignKeys` to decide whether
+   * a foreignKey column is a single scalar or a list — can consult one connector fact
+   * without re-implementing connector resolution.
+   */
+  async getSchemaCreationCapabilitiesForConnectorAccount(
+    workbookId: WorkbookId,
+    connectorAccountId: string,
+    actor: Actor,
+  ): Promise<SchemaCreationCapabilities | undefined> {
+    const { connector } = await this.resolveConnectorForWorkbook(connectorAccountId, workbookId, actor);
+    return connector.getSchemaCreationCapabilities?.();
+  }
+
+  /**
    * Display names of tables that already exist on the destination connection,
    * scoped to the create parent (`remoteParentId`) so we only flag genuine
    * collisions — e.g. tables in the SAME Airtable base / Postgres schema /

@@ -210,6 +210,7 @@ export function generateCreatePlanFromSources(args: {
           notes,
           args.destinationReservedFieldNames,
           args.destinationMaxFieldNameLength,
+          args.destinationSupportsManyToManyForeignKeys ?? true,
         ),
       );
     } else {
@@ -220,6 +221,7 @@ export function generateCreatePlanFromSources(args: {
           markPrimaryField: true,
           reservedFieldNames: args.destinationReservedFieldNames,
           maxFieldNameLength: args.destinationMaxFieldNameLength,
+          destinationSupportsManyToManyForeignKeys: args.destinationSupportsManyToManyForeignKeys ?? true,
         },
         linkedIdToRef,
         mappingByLinkedId,
@@ -298,7 +300,7 @@ export function generateCreatePlanFromSources(args: {
 
 /** Key identifying a source field within the plan (data folder + dot path), for suppression lookup. */
 function reciprocalSuppressionKey(dataFolderId: string, fieldPath: string): string {
-  return `${dataFolderId} ${fieldPath}`;
+  return `${dataFolderId}\u0000${fieldPath}`;
 }
 
 /** One in-plan foreign-key field, with the pre-computed keys the reciprocal-pair logic needs. */
@@ -342,7 +344,7 @@ function computeReciprocalForeignKeySuppressions(
         foreignKeyFieldEntries.push({
           source,
           field,
-          sortKey: `${source.ref} ${field.path}`,
+          sortKey: `${source.ref}\u0000${field.path}`,
           suppressionKey: reciprocalSuppressionKey(source.dataFolderId, field.path),
         });
       }
@@ -435,6 +437,14 @@ function manyToManyUnsupportedByDestinationMessage(): string {
 }
 
 /**
+ * Note message for a multi-valued source foreign key narrowed to a single value because the destination
+ * stores a foreign key as one scalar column (Postgres/Supabase) rather than a list of linked ids.
+ */
+function foreignKeyNarrowedToSingleValueMessage(): string {
+  return 'only the first linked record will sync — this destination stores a foreign key as a single value, not a list, so any additional links are dropped';
+}
+
+/**
  * Build an add-fields plan for a source whose destination table exists: the
  * source's create-field specs minus any field the destination already has (by
  * name, case-insensitive). A name match whose existing kind matches the source is
@@ -455,6 +465,7 @@ function buildAddFieldsPlanForSource(
   notes: FieldMappingNote[],
   reservedFieldNames: string[] | undefined,
   maxFieldNameLength: number | undefined,
+  destinationSupportsManyToManyForeignKeys: boolean,
 ): CreateSchemaFieldsPlan {
   const existingDestinationFieldsByName = new Map(
     existingDestination.existingFields.map((field) => [normalizeNameForUniqueness(field.name), field] as const),
@@ -467,6 +478,7 @@ function buildAddFieldsPlanForSource(
       existingDestinationFieldsByName,
       reservedFieldNames,
       maxFieldNameLength,
+      destinationSupportsManyToManyForeignKeys,
     },
     linkedIdToRef,
     mappingByLinkedId,
@@ -499,6 +511,13 @@ interface CreateFieldSpecOptions {
   /** The destination's maximum field-name length, if capped. A longer requested name is middle-elided to
    *  fit (reserving room for any dedup suffix), so the plan never trips `FIELD_NAME_TOO_LONG` (DEV-10816). */
   maxFieldNameLength?: number;
+  /**
+   * Whether the destination can represent a many-to-many foreign key (a link field holding a list of ids).
+   * When false (Postgres/Supabase, whose FK is a single scalar column), a multi-valued source foreign key is
+   * still emitted — but narrowed to a single value — and its note is `downgraded` to warn that only the first
+   * linked record syncs. Absent ⇒ true (no narrowing). See DEV-10753.
+   */
+  destinationSupportsManyToManyForeignKeys?: boolean;
 }
 
 /** Map every field of a source to a create-field spec, pushing a note per field. */
@@ -676,13 +695,23 @@ function mapSchemaFieldToCreateFieldSpec(
         ...(renamedFromName ? { renamedFromName } : {}),
       });
     } else {
+      // A multi-valued source foreign key (e.g. a HubSpot association, which links many records) mapped
+      // onto a destination whose foreign key is a single scalar column (Postgres/Supabase) is NARROWED:
+      // only the first linked record can be stored. Emit the field, but downgrade the note so the plan UI
+      // warns that the rest are dropped. A genuinely single-valued source (isSingleValued) loses nothing.
+      const sourceForeignKeyIsMultiValued = schemaField.foreignKey?.isSingleValued !== true;
+      const narrowedToSingleValue =
+        sourceForeignKeyIsMultiValued && options.destinationSupportsManyToManyForeignKeys === false;
+      const narrowingClause = narrowedToSingleValue ? foreignKeyNarrowedToSingleValueMessage() : undefined;
       notes.push({
         sourceDataFolderId: source.dataFolderId,
         sourceFieldPath: schemaField.path,
         fieldName,
-        status: 'mapped',
+        status: narrowedToSingleValue ? 'downgraded' : 'mapped',
         mappedKind: 'foreignKey',
-        ...(renameClause ? { message: renameClause } : {}),
+        ...(composeNoteMessage(renameClause, narrowingClause)
+          ? { message: composeNoteMessage(renameClause, narrowingClause) }
+          : {}),
         ...(renamedFromName ? { renamedFromName } : {}),
       });
     }

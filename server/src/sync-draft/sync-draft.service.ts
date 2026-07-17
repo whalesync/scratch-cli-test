@@ -352,7 +352,7 @@ export class SyncDraftService {
     // Give every foreignKey column whose related table is ALSO synced here the pipeline
     // that resolves source FK ids → destination linked-record ids. Runs BEFORE the generic
     // picker so those columns end up with the FK pipeline (the picker then skips them).
-    await this.attachForeignKeyResolutionTransformers(draftId, tableMappings, actor);
+    await this.attachForeignKeyResolutionTransformers(workbookId, draftId, tableMappings, actor);
     // Now the destination fields are real: pick the sync transform for each remaining
     // newly-created column from its actual schema hints and write it to the draft.
     await this.attachTransformersToMaterializedColumns(workbookId, draftId, tableMappings, actor);
@@ -1009,6 +1009,7 @@ export class SyncDraftService {
    * transformers (user-set, or from the `fromSyncId` edit flow) is left untouched.
    */
   private async attachForeignKeyResolutionTransformers(
+    workbookId: WorkbookId,
     draftId: SyncDraftId,
     tableMappings: DraftTableMapping[],
     actor: Actor,
@@ -1029,6 +1030,13 @@ export class SyncDraftService {
     if (foreignKeyColumns.length === 0) return;
 
     const sourceFolderIdByRemoteTableId = await this.buildSourceFolderByRemoteTableIdMap(tableMappings);
+    // Destination connector-account id per FK-carrying table, so we can ask each whether a foreignKey
+    // column is a single scalar (Postgres/Supabase) or a multi-valued list (Airtable/Notion).
+    const connectorAccountIdByExistingDestinationFolderId =
+      await this.buildConnectorAccountIdByExistingDestinationFolderId(
+        foreignKeyColumns.map(({ tableMapping }) => tableMapping),
+      );
+    const destinationSupportsManyToManyByConnectorAccountId = new Map<string, boolean>();
     const sourceContextByFolderId = new Map<string, SourceContext | null>();
     let changed = false;
     for (const { tableMapping, columnMapping, linkedTableId } of foreignKeyColumns) {
@@ -1043,16 +1051,86 @@ export class SyncDraftService {
       const extraction = sourceContext
         ? foreignKeyIdExtractionTransformer(sourceContext, columnMapping.source.columnId)
         : null;
+      // A destination whose foreignKey is a single scalar column (Postgres/Supabase, whose FK references
+      // one primary key) can't hold an array of linked ids: writing one fails at publish (an empty list
+      // serializes to the `{}` array literal a `uuid` column rejects; a non-empty list overflows a scalar).
+      // So emit `single` — the first resolved id crosses, the rest are dropped — and `array` only where the
+      // destination genuinely holds a list. (TODO: warn the user that the extra links are dropped; and,
+      // longer term, model a multi-valued destination association as its own join table.)
+      const destinationSupportsManyToMany = await this.destinationSupportsManyToManyForeignKeys(
+        workbookId,
+        tableMapping,
+        connectorAccountIdByExistingDestinationFolderId,
+        destinationSupportsManyToManyByConnectorAccountId,
+        actor,
+      );
+      const outputType = destinationSupportsManyToMany ? 'array' : 'single';
       const transformers: TransformerConfig[] = [];
       if (extraction) transformers.push(extraction);
       transformers.push({
         type: TransformerTypes.SourceFkToDestFk,
-        options: { referencedDataFolderId, outputType: 'array' },
+        options: { referencedDataFolderId, outputType },
       });
       columnMapping.transformers = transformers;
       changed = true;
     }
     if (changed) await this.persistTableMappings(draftId, tableMappings);
+  }
+
+  /**
+   * `DataFolder.connectorAccountId` for each FK-carrying table whose destination is an EXISTING folder,
+   * fetched in one query. Placeholder-table destinations carry their connector-account id inline, so they
+   * are not looked up here. A scratch folder (no connection) maps to null.
+   */
+  private async buildConnectorAccountIdByExistingDestinationFolderId(
+    tableMappings: DraftTableMapping[],
+  ): Promise<Map<string, string | null>> {
+    const existingDestinationFolderIds = [
+      ...new Set(
+        tableMappings
+          .map((tableMapping) => tableMapping.destination)
+          .filter((destination) => destination.kind === 'existing')
+          .map((destination) => destination.dataFolderId),
+      ),
+    ];
+    if (existingDestinationFolderIds.length === 0) return new Map();
+    const folders = await this.db.client.dataFolder.findMany({
+      where: { id: { in: existingDestinationFolderIds } },
+      select: { id: true, connectorAccountId: true },
+    });
+    return new Map(folders.map((folder) => [folder.id, folder.connectorAccountId]));
+  }
+
+  /**
+   * Whether a table mapping's DESTINATION connector can represent a many-to-many foreign key (a link
+   * field holding a list of ids) rather than a single scalar FK column. Reads the connector's
+   * `SchemaCreationCapabilities.supportsManyToManyForeignKeys`, cached per connector account. Absent
+   * capabilities (or a scratch destination with no connection) ⇒ true, matching the create-plan
+   * generator's default of "no special N→N handling".
+   */
+  private async destinationSupportsManyToManyForeignKeys(
+    workbookId: WorkbookId,
+    tableMapping: DraftTableMapping,
+    connectorAccountIdByExistingDestinationFolderId: Map<string, string | null>,
+    supportsManyToManyByConnectorAccountId: Map<string, boolean>,
+    actor: Actor,
+  ): Promise<boolean> {
+    const destination = tableMapping.destination;
+    const connectorAccountId =
+      destination.kind === 'placeholderTable'
+        ? destination.connectorAccountId
+        : (connectorAccountIdByExistingDestinationFolderId.get(destination.dataFolderId) ?? null);
+    if (!connectorAccountId) return true;
+    const cached = supportsManyToManyByConnectorAccountId.get(connectorAccountId);
+    if (cached !== undefined) return cached;
+    const capabilities = await this.schemaBuilderService.getSchemaCreationCapabilitiesForConnectorAccount(
+      workbookId,
+      connectorAccountId,
+      actor,
+    );
+    const supportsManyToMany = capabilities?.supportsManyToManyForeignKeys ?? true;
+    supportsManyToManyByConnectorAccountId.set(connectorAccountId, supportsManyToMany);
+    return supportsManyToMany;
   }
 
   /** Map each source table's remote id → the draft source folder that pulls it (an FK's `referencedDataFolderId`). */

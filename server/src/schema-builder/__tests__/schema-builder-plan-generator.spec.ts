@@ -1096,4 +1096,47 @@ describe('generateCreatePlanFromSources — reciprocal foreign keys (DEV-10753)'
     expect(fieldNames(tables, 'right')).toContain('toLeft');
     expect(notes.some((note) => note.status === 'skipped_reciprocal')).toBe(false);
   });
+
+  it('downgrades a multi-valued one-way FK to a scalar-FK destination: field kept, note warns only the first links', () => {
+    // A HubSpot-style association (multi-valued, no inverseFieldId) into a Postgres destination whose FK is a
+    // single scalar column. The field is still emitted, but its note is `downgraded` to warn that only the
+    // first linked record syncs — this is what the plan-output UI shows the user.
+    const source: PlanGeneratorSource = {
+      ref: 'calls',
+      dataFolderId: 'calls',
+      tableName: 'Calls',
+      remoteTableIds: ['tblCalls'],
+      schemaFields: [field({ path: 'contacts', type: 'array', foreignKey: { linkedTableId: 'tblContacts' } })],
+    };
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      linkedTableMappings: [{ sourceLinkedTableId: 'tblContacts', destinationRemoteTableId: ['tblContactsDest'] }],
+      destinationSupportsManyToManyForeignKeys: false,
+    });
+    expect(fieldNames(tables, 'calls')).toContain('contacts');
+    const note = notes.find((n) => n.fieldName === 'contacts');
+    expect(note).toMatchObject({ status: 'downgraded', mappedKind: 'foreignKey' });
+    expect(note?.message).toContain('only the first linked record will sync');
+  });
+
+  it('does not downgrade a single-valued FK to a scalar-FK destination (no data is lost)', () => {
+    // A genuinely single-valued source FK fits a scalar destination column exactly — no narrowing, `mapped`.
+    const source: PlanGeneratorSource = {
+      ref: 'tasks',
+      dataFolderId: 'tasks',
+      tableName: 'Tasks',
+      remoteTableIds: ['tblTasks'],
+      schemaFields: [
+        field({ path: 'project', type: 'string', foreignKey: { linkedTableId: 'tblProjects', isSingleValued: true } }),
+      ],
+    };
+    const { notes } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      linkedTableMappings: [{ sourceLinkedTableId: 'tblProjects', destinationRemoteTableId: ['tblProjectsDest'] }],
+      destinationSupportsManyToManyForeignKeys: false,
+    });
+    expect(notes.find((n) => n.fieldName === 'project')).toMatchObject({ status: 'mapped', mappedKind: 'foreignKey' });
+  });
 });
