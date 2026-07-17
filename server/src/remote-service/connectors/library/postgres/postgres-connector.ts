@@ -43,6 +43,7 @@ import {
 import {
   applyPgClockSkew,
   assertModifiedAtColumnExists,
+  collectPgColumnNamesRejectingEmptyString,
   isGeneratedColumn,
   KnexPGClient,
   KnexPGClientError,
@@ -52,6 +53,7 @@ import {
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
   POSTGRES_SYSTEM_SCHEMAS,
+  replaceEmptyStringsWithNullForPgTypedColumns,
   resolvePgModifiedAtField,
   TableName,
   validateWhereFilter,
@@ -604,9 +606,13 @@ export class PostgresConnector extends Connector {
 
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const [schema, tableName] = tableSpec.id.remoteId;
+    const columnNamesRejectingEmptyString = collectPgColumnNamesRejectingEmptyString(tableSpec);
     return this.withPgClient(async (client) => {
       const pk = tableSpec.idPath;
-      return client.insertMany(schema, tableName, pk, files);
+      const recordsWithEmptyTypedValuesNulled = files.map((file) =>
+        replaceEmptyStringsWithNullForPgTypedColumns(file, columnNamesRejectingEmptyString),
+      );
+      return client.insertMany(schema, tableName, pk, recordsWithEmptyTypedValuesNulled);
     });
   }
 
@@ -616,10 +622,14 @@ export class PostgresConnector extends Connector {
     changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<ConnectorFile[]> {
     const [schema, tableName] = tableSpec.id.remoteId;
+    const columnNamesRejectingEmptyString = collectPgColumnNamesRejectingEmptyString(tableSpec);
     return this.withPgClient(async (client) => {
       const pk = tableSpec.idPath;
       const records = files.map((file, index) => {
-        const data = { ...(changedFields?.[index] ?? file) };
+        const data = replaceEmptyStringsWithNullForPgTypedColumns(
+          { ...(changedFields?.[index] ?? file) },
+          columnNamesRejectingEmptyString,
+        );
         delete data[pk];
         return { id: file[pk] as string | number, data };
       });

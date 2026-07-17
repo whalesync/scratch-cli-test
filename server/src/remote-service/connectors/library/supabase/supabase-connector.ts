@@ -47,6 +47,7 @@ import {
 import {
   applyPgClockSkew,
   assertModifiedAtColumnExists,
+  collectPgColumnNamesRejectingEmptyString,
   isGeneratedColumn,
   KnexPGClient,
   KnexPGClientError,
@@ -54,6 +55,7 @@ import {
   pgIncrementalPullSupport,
   pickTitleColumnPath,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
+  replaceEmptyStringsWithNullForPgTypedColumns,
   resolvePgModifiedAtField,
   SUPABASE_SYSTEM_SCHEMA_PATTERNS,
   SUPABASE_SYSTEM_SCHEMAS,
@@ -598,11 +600,15 @@ export class SupabaseConnector extends Connector {
 
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
+    const columnNamesRejectingEmptyString = collectPgColumnNamesRejectingEmptyString(tableSpec);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
       const pk = tableSpec.idPath;
 
-      return client.insertMany(schema, tableName, pk, files);
+      const recordsWithEmptyTypedValuesNulled = files.map((file) =>
+        replaceEmptyStringsWithNullForPgTypedColumns(file, columnNamesRejectingEmptyString),
+      );
+      return client.insertMany(schema, tableName, pk, recordsWithEmptyTypedValuesNulled);
     }, resolved.connectionString);
   }
 
@@ -616,13 +622,14 @@ export class SupabaseConnector extends Connector {
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
+    const columnNamesRejectingEmptyString = collectPgColumnNamesRejectingEmptyString(tableSpec);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
       const pk = tableSpec.idPath;
 
       const records = files.map((file, i) => ({
         id: file[pk] as string | number,
-        data: changedFields[i],
+        data: replaceEmptyStringsWithNullForPgTypedColumns(changedFields[i], columnNamesRejectingEmptyString),
       }));
 
       const persisted = await client.updateMany(schema, tableName, pk, records);

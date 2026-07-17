@@ -22,6 +22,10 @@ export {
   type ForeignKeyResolutions,
 } from './pg-create-schema';
 export {
+  collectPgColumnNamesRejectingEmptyString,
+  replaceEmptyStringsWithNullForPgTypedColumns,
+} from './pg-empty-string-coercion';
+export {
   PG_INCREMENTAL_CLOCK_SKEW_MS,
   applyPgClockSkew,
   assertModifiedAtColumnExists,

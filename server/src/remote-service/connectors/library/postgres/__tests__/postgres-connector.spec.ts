@@ -1,5 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import {
+  PostgresColumnType,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
@@ -207,6 +208,90 @@ describe('PostgresConnector CRUD batching', () => {
   it('declares filter and field selection support', () => {
     expect(connector.supportsFilters()).toBe(true);
     expect(connector.supportsFieldSelection()).toBe(true);
+  });
+});
+
+// A table with one column of every empty-string-rejecting Postgres type plus a
+// text column, mirroring how `fetchJsonTableSpec` annotates columns (nullable
+// columns are wrapped in `Type.Optional`, and the annotation survives that).
+function buildTypedTableSpec(): BaseJsonTableSpec {
+  return {
+    id: { wsId: 'typed_records', remoteId: ['public', 'typed_records'] },
+    slug: 'typed_records',
+    name: 'typed_records',
+    schema: Type.Object({
+      id: Type.Number({ [X_SCRATCH_CONNECTOR_DATA_TYPE]: PostgresColumnType.NUMERIC }),
+      name: Type.String({ [X_SCRATCH_CONNECTOR_DATA_TYPE]: PostgresColumnType.TEXT }),
+      close_date: Type.Optional(
+        Type.Union([Type.String({ format: 'date-time' }), Type.Null()], {
+          [X_SCRATCH_CONNECTOR_DATA_TYPE]: PostgresColumnType.TIMESTAMP,
+        }),
+      ),
+      revenue: Type.Optional(
+        Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_CONNECTOR_DATA_TYPE]: PostgresColumnType.NUMERIC }),
+      ),
+      is_active: Type.Optional(
+        Type.Union([Type.Boolean(), Type.Null()], { [X_SCRATCH_CONNECTOR_DATA_TYPE]: PostgresColumnType.BOOLEAN }),
+      ),
+      metadata: Type.Optional(
+        Type.Union([Type.Unknown(), Type.Null()], { [X_SCRATCH_CONNECTOR_DATA_TYPE]: PostgresColumnType.JSONB }),
+      ),
+    }),
+    idPath: dotPath('id'),
+  };
+}
+
+describe('PostgresConnector empty-string coercion for typed columns', () => {
+  let connector: PostgresConnector;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockDispose.mockResolvedValue(undefined);
+    connector = new PostgresConnector({ connectionString: 'postgres://test' });
+  });
+
+  it('nulls empty strings in timestamp/numeric/boolean/jsonb columns on create, but keeps them in text columns', async () => {
+    const files: ConnectorFile[] = [
+      { name: 'Has empty timestamp', close_date: '', revenue: 100, is_active: true, metadata: { k: 'v' } },
+      { name: '', close_date: '2026-01-01T00:00:00.000Z', revenue: '', is_active: '', metadata: '' },
+    ];
+    mockInsertMany.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+
+    await connector.createRecords(buildTypedTableSpec(), files);
+
+    expect(mockInsertMany).toHaveBeenCalledTimes(1);
+    expect(mockInsertMany).toHaveBeenCalledWith('public', 'typed_records', 'id', [
+      // Empty datetime → null; a real text empty string is preserved; other columns untouched.
+      { name: 'Has empty timestamp', close_date: null, revenue: 100, is_active: true, metadata: { k: 'v' } },
+      // Empty strings in numeric/boolean/jsonb → null; the real timestamp is preserved; text '' stays.
+      { name: '', close_date: '2026-01-01T00:00:00.000Z', revenue: null, is_active: null, metadata: null },
+    ]);
+  });
+
+  it('does not mutate the caller-provided files when coercing', async () => {
+    const file: ConnectorFile = { name: 'x', close_date: '' };
+    mockInsertMany.mockResolvedValue([{ id: 1 }]);
+
+    await connector.createRecords(buildTypedTableSpec(), [file]);
+
+    expect(file.close_date).toBe('');
+  });
+
+  it('nulls empty strings in typed columns on update (respecting changedFields)', async () => {
+    const files: ConnectorFile[] = [
+      { id: 1, name: 'Row 1', close_date: '2026-01-01T00:00:00.000Z' },
+      { id: 2, name: 'Row 2', close_date: '' },
+    ];
+    // Row 1 changed only close_date to '' (unset); row 2 falls back to the full file.
+    const changedFields: (Record<string, unknown> | undefined)[] = [{ close_date: '' }, undefined];
+    mockUpdateMany.mockResolvedValue([]);
+
+    await connector.updateRecords(buildTypedTableSpec(), files, changedFields);
+
+    expect(mockUpdateMany).toHaveBeenCalledWith('public', 'typed_records', 'id', [
+      { id: 1, data: { close_date: null } },
+      { id: 2, data: { name: 'Row 2', close_date: null } },
+    ]);
   });
 });
 
