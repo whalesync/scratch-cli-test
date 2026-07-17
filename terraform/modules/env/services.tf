@@ -180,6 +180,11 @@ resource "google_cloud_run_v2_service" "api_service" {
       dynamic "env" {
         for_each = merge(
           {
+            # Temporary kill-switch: bypass per-user API-token rate limiting on the api
+            # service. Desktop's on-load/on-focus request fan-out was tripping the 60 req/min
+            # default and surfacing "Couldn't load your account" 429s. Remove this line to
+            # re-enable limiting once the limit is right-sized.
+            "API_RATE_LIMIT_DISABLED" : "true",
             "APP_ENV" : var.app_env != null ? var.app_env : var.env_name,
             "GCP_PROJECT_NUMBER" : var.gcp_project_number,
             "GCS_ASSET_BUCKET" : google_storage_bucket.assets.name,
