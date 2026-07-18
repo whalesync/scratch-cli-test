@@ -36,6 +36,8 @@ Files that only appear because they _reference_ a deleted record (but aren't the
 
 ## Pseudo-ref handling
 
+> The canonical definition of the `@/…` reference format (workspace-absolute, connection folder first) lives in [`pseudo-refs.md`](./pseudo-refs.md); it wins on any conflict. This section covers only how the publish pipeline strips and resolves them.
+
 Pseudo-refs are references to records that don't yet have a real remote ID (they have scratch pending-publish IDs). The handling is a **two-pass strip + later backfill** pattern:
 
 ### During build
