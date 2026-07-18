@@ -8,6 +8,7 @@ import {
 } from '@spinner/shared-types';
 import get from 'lodash/get';
 import { DbService } from 'src/db/db.service';
+import { sanitizeConnectionFolderName } from 'src/workbook/connector-folder-path.util';
 import { AssetMappingResult, FkMappingResult, LookupTools } from './transformer.types';
 
 /**
@@ -76,6 +77,21 @@ export function createLookupTools(
       // instead of making a DB round-trip per FK element.
       let folderMappings = fkMappingCache.get(referencedDataFolderId);
       if (!folderMappings) {
+        // Resolve the DESTINATION connection's folder name once per referenced
+        // folder so the pseudo-ref this transformer emits is workspace-absolute
+        // (connection-folder-first), matching the canonical format (DEV-10880).
+        // `referencedDataFolderId` is the SOURCE folder of the referenced table
+        // pair, so we hop through SyncTablePair to that pair's DESTINATION folder
+        // and read ITS connection's display name — using the source connection
+        // here would emit a ref that resolves to the wrong connection at publish.
+        const referencedTablePair = await db.client.syncTablePair.findFirst({
+          where: { syncId, sourceDataFolderId: referencedDataFolderId },
+          select: { destinationDataFolder: { select: { connectorAccount: { select: { displayName: true } } } } },
+        });
+        const destinationConnectionFolder = referencedTablePair?.destinationDataFolder?.connectorAccount
+          ? sanitizeConnectionFolderName(referencedTablePair.destinationDataFolder.connectorAccount.displayName)
+          : null;
+
         const rows = await db.client.syncRemoteIdMapping.findMany({
           where: {
             syncId,
@@ -90,6 +106,7 @@ export function createLookupTools(
             folderMappings.set(row.sourceRemoteId, {
               destinationFilePath: row.destinationFilePath,
               destinationRemoteId: row.destinationRemoteId ?? null,
+              destinationConnectionFolder,
             });
           }
         }

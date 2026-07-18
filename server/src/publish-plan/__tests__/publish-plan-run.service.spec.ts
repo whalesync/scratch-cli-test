@@ -328,7 +328,13 @@ describe('PublishPlanRunService', () => {
         await service.runPipeline(PLAN_ID);
 
         expect(fileIndexService.upsertBatch).toHaveBeenCalledWith([
-          { workbookId: WORKBOOK_ID, folderPath: 'articles', filename: 'new.json', recordId: 'rec_created_9' },
+          {
+            workbookId: WORKBOOK_ID,
+            folderPath: 'articles',
+            filename: 'new.json',
+            recordId: 'rec_created_9',
+            connectorAccountId: CONNECTOR_ACCOUNT_ID,
+          },
         ]);
       });
 
@@ -342,7 +348,13 @@ describe('PublishPlanRunService', () => {
         await service.runPipeline(PLAN_ID);
 
         expect(fileIndexService.upsertBatch).toHaveBeenCalledWith([
-          { workbookId: WORKBOOK_ID, folderPath: 'articles', filename: 'new.json', recordId: '42' },
+          {
+            workbookId: WORKBOOK_ID,
+            folderPath: 'articles',
+            filename: 'new.json',
+            recordId: '42',
+            connectorAccountId: CONNECTOR_ACCOUNT_ID,
+          },
         ]);
       });
 
@@ -358,7 +370,13 @@ describe('PublishPlanRunService', () => {
         await service.runPipeline(PLAN_ID);
 
         expect(fileIndexService.upsertBatch).toHaveBeenCalledWith([
-          { workbookId: WORKBOOK_ID, folderPath: 'Companies', filename: 'new.json', recordId: 'uuid-nested-1' },
+          {
+            workbookId: WORKBOOK_ID,
+            folderPath: 'Companies',
+            filename: 'new.json',
+            recordId: 'uuid-nested-1',
+            connectorAccountId: CONNECTOR_ACCOUNT_ID,
+          },
         ]);
       });
 
@@ -798,7 +816,12 @@ describe('PublishPlanRunService', () => {
 
         await service.runPipeline(PLAN_ID);
 
-        expect(fileIndexService.getRecordId).toHaveBeenCalledWith(WORKBOOK_ID, 'Companies', 'c1.json');
+        expect(fileIndexService.getRecordId).toHaveBeenCalledWith(
+          WORKBOOK_ID,
+          'Companies',
+          'c1.json',
+          CONNECTOR_ACCOUNT_ID,
+        );
         const [, files] = jest.mocked(connector.updateRecords).mock.calls[0];
         expect(files[0]).toMatchObject({ id: { record_id: 'uuid-from-index' } });
       });

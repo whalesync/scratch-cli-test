@@ -122,6 +122,12 @@ const POSTS_REMOTE_TABLE_ID = POSTS_TABLE;
 const AUTHORS_FOLDER = 'authors';
 const POSTS_FOLDER = 'posts';
 
+// The connection's display name doubles as the first segment of a canonical,
+// workspace-absolute pseudo-ref (`@/<connection>/<folder>/<file>.json`). Co-pending
+// FK refs below are authored in this canonical form so the publish resolver's
+// segment→connection translation is exercised end-to-end (DEV-10880).
+const CONNECTION_DISPLAY_NAME = 'FEP Test PostgreSQL';
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeDbService(prisma: PrismaClient): DbService {
@@ -295,7 +301,7 @@ describe('Fetch → Edit → Publish Integration', () => {
         id: connectorAccountId,
         workbookId,
         service: Service.POSTGRES,
-        displayName: 'FEP Test PostgreSQL',
+        displayName: CONNECTION_DISPLAY_NAME,
         authType: AuthType.USER_PROVIDED_PARAMS,
         encryptedCredentials: encryptedCreds as unknown as any,
       },
@@ -761,7 +767,9 @@ describe('Fetch → Edit → Publish Integration', () => {
         content: JSON.stringify({
           name: 'Dave',
           best_friend_id: aliceRecordId,
-          favorite_post_id: `@/${post1File.path}`,
+          // Canonical workspace-absolute pseudo-ref (connection folder first) to an
+          // already-published Post1 — resolved at backfill time (DEV-10880).
+          favorite_post_id: `@/${CONNECTION_DISPLAY_NAME}/${post1File.path}`,
         }),
       },
     ]);
@@ -784,7 +792,10 @@ describe('Fetch → Edit → Publish Integration', () => {
     vfs.commitFiles(DIRTY_BRANCH, [
       {
         path: post4Path,
-        content: JSON.stringify({ title: 'Post 4', author_id: `@/${davePath}` }),
+        // Canonical workspace-absolute pseudo-ref to co-pending Dave — resolves only
+        // after Dave's CREATE phase writes his FileIndex row (scoped to this
+        // connection), which the BACKFILL phase then looks up (DEV-10880).
+        content: JSON.stringify({ title: 'Post 4', author_id: `@/${CONNECTION_DISPLAY_NAME}/${davePath}` }),
       },
     ]);
 

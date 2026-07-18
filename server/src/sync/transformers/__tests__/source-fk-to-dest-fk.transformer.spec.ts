@@ -5,12 +5,28 @@ import { FkMappingResult, LookupTools, SyncRecord, TransformContext } from '../t
 
 const REFERENCED_FOLDER = 'dfd_dest_authors' as DataFolderId;
 
+// The destination connection folder the producer prepends to make a pseudo-ref
+// workspace-absolute (DEV-10880). All `@/…` expectations below carry it.
+const DEST_CONN = 'DestConn';
+
 function createLookupTools(
-  mapping: Record<string, { destinationFilePath: string; destinationRemoteId: string | null }> = {},
+  mapping: Record<
+    string,
+    { destinationFilePath: string; destinationRemoteId: string | null; destinationConnectionFolder?: string | null }
+  > = {},
 ): LookupTools {
   return {
     getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<FkMappingResult | null> => {
-      return Promise.resolve(mapping[fk] ?? null);
+      const entry = mapping[fk];
+      if (!entry) return Promise.resolve(null);
+      return Promise.resolve({
+        destinationFilePath: entry.destinationFilePath,
+        destinationRemoteId: entry.destinationRemoteId,
+        // Default to a real connection folder so tests exercise the canonical
+        // workspace-absolute output; pass `null` explicitly to test the fallback.
+        destinationConnectionFolder:
+          entry.destinationConnectionFolder === undefined ? DEST_CONN : entry.destinationConnectionFolder,
+      });
     }),
     lookupFieldFromFkRecord: jest.fn(),
     getOrCreateDestinationAssetMapping: jest.fn(),
@@ -69,16 +85,28 @@ describe('sourceFkToDestFkTransformer', () => {
   });
 
   describe('scalar resolution', () => {
-    it('should resolve a string FK', async () => {
+    it('should resolve a string FK to a workspace-absolute pseudo-ref (connection folder first)', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'dest-authors/alice.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
-      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
     });
 
     it('should resolve a numeric FK', async () => {
       const lookup = createSimpleLookupTools({ '42': 'dest-authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(42, lookup));
-      expect(result).toEqual({ success: true, value: '@/dest-authors/bob.json' });
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/bob.json' });
+    });
+
+    it('should fall back to the connection-relative form when the destination connection folder is unknown', async () => {
+      const lookup = createLookupTools({
+        src_1: {
+          destinationFilePath: 'dest-authors/alice.json',
+          destinationRemoteId: null,
+          destinationConnectionFolder: null,
+        },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
+      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
     });
 
     it('should fail when FK cannot be resolved', async () => {
@@ -94,13 +122,16 @@ describe('sourceFkToDestFkTransformer', () => {
     it('should resolve an array of FKs', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2'], lookup));
-      expect(result).toEqual({ success: true, value: ['@/authors/alice.json', '@/authors/bob.json'] });
+      expect(result).toEqual({
+        success: true,
+        value: ['@/DestConn/authors/alice.json', '@/DestConn/authors/bob.json'],
+      });
     });
 
     it('should skip null/undefined elements in arrays', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', null, undefined], lookup));
-      expect(result).toEqual({ success: true, value: ['@/authors/alice.json'] });
+      expect(result).toEqual({ success: true, value: ['@/DestConn/authors/alice.json'] });
     });
 
     it('should fail if any array element cannot be resolved', async () => {
@@ -144,7 +175,7 @@ describe('sourceFkToDestFkTransformer', () => {
     it('should skip when destination already has the @/path reference (scalar)', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'dest-authors/alice.json' });
       const result = await sourceFkToDestFkTransformer.transform(
-        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', '@/dest-authors/alice.json'),
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', '@/DestConn/dest-authors/alice.json'),
       );
       expect(result).toEqual({ success: true, skip: true });
     });
@@ -173,8 +204,8 @@ describe('sourceFkToDestFkTransformer', () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(
         createContext(['src_1', 'src_2'], lookup, undefined, 'FOREIGN_KEY_MAPPING', [
-          '@/authors/alice.json',
-          '@/authors/bob.json',
+          '@/DestConn/authors/alice.json',
+          '@/DestConn/authors/bob.json',
         ]),
       );
       expect(result).toEqual({ success: true, skip: true });
@@ -191,12 +222,23 @@ describe('sourceFkToDestFkTransformer', () => {
       expect(result).toEqual({ success: true, skip: true });
     });
 
+    it('should re-write a stale connection-relative ref to the workspace-absolute form (does NOT skip)', async () => {
+      // A destination still holding the pre-fix connection-relative ref no longer
+      // matches the canonical form, so the transformer updates it. This is the
+      // one-time migration of pending refs on the first sync after the change.
+      const lookup = createSimpleLookupTools({ src_1: 'dest-authors/alice.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', '@/dest-authors/alice.json'),
+      );
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
+    });
+
     it('should NOT skip when value differs', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'dest-authors/alice.json' });
       const result = await sourceFkToDestFkTransformer.transform(
-        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', '@/dest-authors/bob.json'),
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', '@/DestConn/dest-authors/bob.json'),
       );
-      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
     });
 
     it('should NOT skip when destinationValue is undefined (new record)', async () => {
@@ -204,17 +246,17 @@ describe('sourceFkToDestFkTransformer', () => {
       const result = await sourceFkToDestFkTransformer.transform(
         createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', undefined),
       );
-      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
     });
 
     it('should NOT skip when array lengths differ', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(
-        createContext(['src_1', 'src_2'], lookup, undefined, 'FOREIGN_KEY_MAPPING', ['@/authors/alice.json']),
+        createContext(['src_1', 'src_2'], lookup, undefined, 'FOREIGN_KEY_MAPPING', ['@/DestConn/authors/alice.json']),
       );
       expect(result).toEqual({
         success: true,
-        value: ['@/authors/alice.json', '@/authors/bob.json'],
+        value: ['@/DestConn/authors/alice.json', '@/DestConn/authors/bob.json'],
       });
     });
 
@@ -222,13 +264,13 @@ describe('sourceFkToDestFkTransformer', () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(
         createContext(['src_1', 'src_2'], lookup, undefined, 'FOREIGN_KEY_MAPPING', [
-          '@/authors/alice.json',
-          '@/authors/WRONG.json',
+          '@/DestConn/authors/alice.json',
+          '@/DestConn/authors/WRONG.json',
         ]),
       );
       expect(result).toEqual({
         success: true,
-        value: ['@/authors/alice.json', '@/authors/bob.json'],
+        value: ['@/DestConn/authors/alice.json', '@/DestConn/authors/bob.json'],
       });
     });
   });
@@ -242,7 +284,7 @@ describe('sourceFkToDestFkTransformer', () => {
     it('should unwrap array input to first resolved value', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2'], lookup, singleOpts));
-      expect(result).toEqual({ success: true, value: '@/authors/alice.json' });
+      expect(result).toEqual({ success: true, value: '@/DestConn/authors/alice.json' });
     });
 
     it('should return null for empty array after ignoring unresolved', async () => {
@@ -260,13 +302,16 @@ describe('sourceFkToDestFkTransformer', () => {
     it('should behave the same as default for scalar input', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup, singleOpts));
-      expect(result).toEqual({ success: true, value: '@/authors/alice.json' });
+      expect(result).toEqual({ success: true, value: '@/DestConn/authors/alice.json' });
     });
 
     it('should preserve default array behavior when outputType is not set', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2'], lookup));
-      expect(result).toEqual({ success: true, value: ['@/authors/alice.json', '@/authors/bob.json'] });
+      expect(result).toEqual({
+        success: true,
+        value: ['@/DestConn/authors/alice.json', '@/DestConn/authors/bob.json'],
+      });
     });
   });
 
@@ -285,7 +330,7 @@ describe('sourceFkToDestFkTransformer', () => {
         src_1: { destinationFilePath: 'dest-authors/alice.json', destinationRemoteId: pendingId },
       });
       const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
-      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
     });
 
     it('should use file ref when destinationRemoteId is null', async () => {
@@ -293,7 +338,7 @@ describe('sourceFkToDestFkTransformer', () => {
         src_1: { destinationFilePath: 'dest-authors/alice.json', destinationRemoteId: null },
       });
       const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
-      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
     });
 
     it('should mix real IDs and file refs in arrays', async () => {
@@ -306,7 +351,7 @@ describe('sourceFkToDestFkTransformer', () => {
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2', 'src_3'], lookup));
       expect(result).toEqual({
         success: true,
-        value: ['real-id-10', '@/authors/bob.json', '@/authors/carol.json'],
+        value: ['real-id-10', '@/DestConn/authors/bob.json', '@/DestConn/authors/carol.json'],
       });
     });
 
@@ -340,7 +385,7 @@ describe('sourceFkToDestFkTransformer', () => {
       const result = await sourceFkToDestFkTransformer.transform(
         createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', 'stale-id-123'),
       );
-      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
     });
   });
 });

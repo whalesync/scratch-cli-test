@@ -7,6 +7,12 @@ export interface FileIndexEntry {
   folderPath: string;
   recordId: string;
   filename: string;
+  // The connection this row belongs to. `folderPath` is connection-relative and
+  // workbook-global, so this is the discriminator that lets a workspace-absolute
+  // pseudo-ref resolve to the right connection when two connections expose an
+  // identically-named folder (DEV-10880). Optional so legacy callers and
+  // connector-less (scratch) folders can omit it (stored NULL).
+  connectorAccountId?: string | null;
 }
 
 @Injectable()
@@ -50,6 +56,11 @@ export class FileIndexService {
             },
             update: {
               filename: entry.filename, // Filename might change (rename)
+              // Backfill the connection discriminator when a caller supplies one,
+              // but leave an already-set value intact when it doesn't (e.g. the
+              // rename upsert carries no connectorAccountId — `undefined` tells
+              // Prisma to skip the field rather than clobber it back to NULL).
+              connectorAccountId: entry.connectorAccountId ?? undefined,
               lastSeenAt: now,
             },
             create: {
@@ -57,6 +68,7 @@ export class FileIndexService {
               folderPath: entry.folderPath,
               recordId: entry.recordId,
               filename: entry.filename,
+              connectorAccountId: entry.connectorAccountId ?? null,
               lastSeenAt: now,
             },
           }),
@@ -98,46 +110,86 @@ export class FileIndexService {
     });
   }
 
-  async getRecordId(workbookId: string, folderPath: string, filename: string): Promise<string | null> {
-    const entry = await this.db.client.fileIndex.findFirst({
+  async getRecordId(
+    workbookId: string,
+    folderPath: string,
+    filename: string,
+    // When provided, prefer the row belonging to this connection so two
+    // connections exposing the same folderPath+filename resolve unambiguously.
+    // Falls back to any matching row when no scoped row exists (legacy /
+    // un-backfilled data). See `pickPreferredRecordId`.
+    connectorAccountId?: string | null,
+  ): Promise<string | null> {
+    const entries = await this.db.client.fileIndex.findMany({
       where: { workbookId, folderPath, filename },
-      select: { recordId: true },
+      select: { recordId: true, connectorAccountId: true },
     });
-    return entry?.recordId || null;
+    if (entries.length === 0) return null;
+    return pickPreferredRecordId(entries, connectorAccountId);
   }
 
+  /**
+   * Bulk `(folderPath, filename) → recordId` lookup, keyed by
+   * `${folderPath}:${filename}`.
+   *
+   * `connectorAccountId` on a lookup is a **row-preference** hint, not part of
+   * the returned key: when set, the row belonging to that connection wins over
+   * rows from other connections that happen to share the same
+   * `folderPath`+`filename` (the two-connections-share-a-folder case). When it
+   * is absent, or no scoped row exists, behavior is the legacy "first matching
+   * row wins" — so pre-DEV-10880 rows (NULL `connectorAccountId`) still resolve.
+   */
   async getRecordIds(
     workbookId: string,
-    lookups: { folderPath: string; filename: string }[],
+    lookups: { folderPath: string; filename: string; connectorAccountId?: string | null }[],
   ): Promise<Map<string, string>> {
     if (lookups.length === 0) return new Map();
 
-    // Group by folderPath so we can query with `filename IN (...)` per folder
-    // instead of a giant OR with thousands of conditions.
-    const byFolder = new Map<string, string[]>();
-    for (const { folderPath, filename } of lookups) {
-      const existing = byFolder.get(folderPath);
-      if (existing) {
-        existing.push(filename);
-      } else {
-        byFolder.set(folderPath, [filename]);
+    // Group filenames by folderPath so we can query with `filename IN (...)` per
+    // folder instead of a giant OR with thousands of conditions. Also remember
+    // the preferred connection per `${folderPath}:${filename}` so we can pick the
+    // right row when several connections share the key.
+    const filenamesByFolder = new Map<string, Set<string>>();
+    const preferredAccountByKey = new Map<string, string | null | undefined>();
+    for (const { folderPath, filename, connectorAccountId } of lookups) {
+      let filenameSet = filenamesByFolder.get(folderPath);
+      if (!filenameSet) {
+        filenameSet = new Set();
+        filenamesByFolder.set(folderPath, filenameSet);
+      }
+      filenameSet.add(filename);
+      const key = `${folderPath}:${filename}`;
+      // Keep the first non-undefined preference for a key (duplicate lookups for
+      // the same key with conflicting connections are a documented rare edge).
+      if (!preferredAccountByKey.has(key)) {
+        preferredAccountByKey.set(key, connectorAccountId);
       }
     }
 
-    const map = new Map<string, string>();
-
-    for (const [folderPath, filenames] of byFolder) {
-      for (const filenameChunk of chunk(filenames, 1000)) {
+    // Collect all matching rows per key, then pick the preferred one per key.
+    const rowsByKey = new Map<string, { connectorAccountId: string | null; recordId: string }[]>();
+    for (const [folderPath, filenameSet] of filenamesByFolder) {
+      for (const filenameChunk of chunk([...filenameSet], 1000)) {
         const entries = await this.db.client.fileIndex.findMany({
           where: { workbookId, folderPath, filename: { in: filenameChunk } },
-          select: { folderPath: true, filename: true, recordId: true },
+          select: { folderPath: true, filename: true, recordId: true, connectorAccountId: true },
         });
         for (const e of entries) {
-          map.set(`${e.folderPath}:${e.filename}`, e.recordId);
+          const key = `${e.folderPath}:${e.filename}`;
+          const rows = rowsByKey.get(key);
+          if (rows) {
+            rows.push({ connectorAccountId: e.connectorAccountId, recordId: e.recordId });
+          } else {
+            rowsByKey.set(key, [{ connectorAccountId: e.connectorAccountId, recordId: e.recordId }]);
+          }
         }
       }
     }
 
+    const map = new Map<string, string>();
+    for (const [key, rows] of rowsByKey) {
+      map.set(key, pickPreferredRecordId(rows, preferredAccountByKey.get(key)));
+    }
     return map;
   }
 
@@ -194,4 +246,22 @@ export class FileIndexService {
       where: { workbookId },
     });
   }
+}
+
+/**
+ * Choose one recordId from the rows matching a `(folderPath, filename)` key,
+ * preferring the row that belongs to `preferredConnectorAccountId` when one is
+ * requested. When no scoped row exists (or none was requested) this falls back
+ * to the first row — preserving the pre-DEV-10880 "any matching row" behavior
+ * so legacy rows (NULL `connectorAccountId`) keep resolving during rollout.
+ */
+export function pickPreferredRecordId(
+  rows: { connectorAccountId: string | null; recordId: string }[],
+  preferredConnectorAccountId: string | null | undefined,
+): string {
+  const scoped =
+    preferredConnectorAccountId != null
+      ? rows.find((row) => row.connectorAccountId === preferredConnectorAccountId)
+      : undefined;
+  return (scoped ?? rows[0]).recordId;
 }

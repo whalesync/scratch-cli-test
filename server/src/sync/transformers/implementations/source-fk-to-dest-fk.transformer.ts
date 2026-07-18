@@ -116,11 +116,17 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
           error: `Could not resolve foreign key "${fkStr}" to a destination path in DataFolder ${typedOptions.referencedDataFolderId}`,
         };
       }
-      // Use the real destination remote ID if it exists already, otherwise a reference to the file.
+      // Use the real destination remote ID if it exists already, otherwise a
+      // pseudo-reference to the destination file. The pseudo-ref must be
+      // workspace-absolute (connection folder first) per the canonical format —
+      // prepend the destination connection folder to the connection-relative
+      // destinationFilePath (DEV-10880). Fall back to the bare connection-relative
+      // form if the connection folder is unknown; the publish resolver accepts
+      // both.
       const ref =
         mapping.destinationRemoteId && !isScratchPendingPublishId(mapping.destinationRemoteId)
           ? mapping.destinationRemoteId
-          : `@/${mapping.destinationFilePath}`;
+          : buildDestinationPseudoRef(mapping.destinationConnectionFolder, mapping.destinationFilePath);
       resolved.push(ref);
 
       // Check if the existing destination value already matches
@@ -139,6 +145,20 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
     return warnings.length > 0 ? { success: true, value, warnings } : { success: true, value };
   },
 };
+
+/**
+ * Build a workspace-absolute pseudo-reference (`@/<connection>/<folder>/<file>.json`)
+ * for a destination record. `destinationFilePath` is connection-relative (no
+ * connection segment, no leading slash); prepend the destination connection
+ * folder to reach the canonical format. When the connection folder is unknown
+ * (null), fall back to the legacy connection-relative form — the publish
+ * resolver still resolves it (as a plan-connection-relative ref).
+ */
+function buildDestinationPseudoRef(destinationConnectionFolder: string | null, destinationFilePath: string): string {
+  return destinationConnectionFolder
+    ? `@/${destinationConnectionFolder}/${destinationFilePath}`
+    : `@/${destinationFilePath}`;
+}
 
 /**
  * Checks whether a single resolved element matches the corresponding destination element.

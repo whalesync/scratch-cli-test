@@ -560,13 +560,41 @@ model OrganizationMonthlyRunCount {
 
 // Tracks mapping between Git files and External Service IDs
 model FileIndex {
-  id         String    @id @default(cuid())
-  workbookId String // Maps to gitBucket/repoId
-  folderPath String
-  recordId   String
-  filename   String
-  lastSeenAt DateTime?
+  id                 String    @id @default(cuid())
+  workbookId         String // Maps to gitBucket/repoId
+  // Which connection (git repo) this row belongs to. `folderPath` is
+  // connection-relative and workbook-global, so two connections in the same
+  // workbook can expose an identically-named folder (e.g. two HubSpot
+  // connections both with `Contacts`); this column is the discriminator that
+  // lets a workspace-absolute pseudo-ref (`@/<connection>/…`) resolve to the
+  // right connection. Nullable for legacy rows written before DEV-10880 and for
+  // any connector-less (scratch) folder; the resolver falls back to a
+  // workbook-global lookup when it is null. Populated at every upsert site
+  // (both pull jobs + both publish dispatch sites) and backfilled by the
+  // `fileindex-connector-account-backfill` code-migration.
+  // No dedicated index on `connectorAccountId`: runtime lookups
+  // (getRecordId/getRecordIds) still query by (workbookId, folderPath, filename)
+  // and apply the connection preference in JS (pickPreferredRecordId), so they are
+  // served by the existing (workbookId, folderPath, filename) index; nothing
+  // filters on connectorAccountId in a hot path. The only query that constrains it
+  // is the one-time backfill (run in `ids` mode on large deployments to avoid a
+  // scan) — not worth a permanent index's write cost on a multi-million-row table.
+  connectorAccountId String?
+  folderPath         String
+  recordId           String
+  filename           String
+  lastSeenAt         DateTime?
 
+  // NOTE: the unique key intentionally does NOT include connectorAccountId. The
+  // discriminator disambiguates the common DEV-10880 case (two connections share
+  // a folder name → same folderPath, DIFFERENT recordId → two rows coexist,
+  // scoped-lookup picks the right one). A rarer pre-existing collision remains:
+  // if two same-service connections in one workbook hold a record with the SAME
+  // remote id (per-account id spaces can overlap, e.g. two HubSpot portals both
+  // with contact 551), this key collapses them to one row. connectorAccountId is
+  // NOT added to the unique key because it is nullable during rollout and Postgres
+  // treats NULLs as distinct, which would let the upsert insert duplicate rows for
+  // legacy (unscoped) records. Tracked separately from DEV-10880.
   @@unique([workbookId, folderPath, recordId])
   @@index([workbookId, folderPath, filename])
   @@index([workbookId, folderPath, lastSeenAt])

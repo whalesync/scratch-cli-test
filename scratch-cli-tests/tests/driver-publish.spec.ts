@@ -54,15 +54,17 @@ describeIfPostgres("driver: publish", () => {
   });
 
   it.skip("pseudo-ref FK to existing record: backfills authorId from @/ path", () => {
-    // Post 1 gets authorId = "@/public/authors/author-1.json"; after publish the
-    // backfill phase resolves it to the existing author's remote id (1).
+    // Post 1 gets authorId = "@/Smoke Postgres/public/authors/author-1.json" (the
+    // canonical workspace-absolute form, connection folder first — DEV-10880);
+    // after publish the backfill resolves it to the existing author's remote id (1).
     runDriver({ count: 1, addFk: "1-1" });
   });
 
   it.skip("pseudo-ref FK to new record: creates author then backfills authorId", () => {
-    // A new author-create-1.json is created locally alongside an edited post.
-    // The post gets authorId = "@/public/authors/author-create-1.json". The
-    // publish plan creates the author first, then backfills the post's FK.
+    // A new author-create-1.json is created locally alongside an edited post. The
+    // post gets authorId = "@/Smoke Postgres/public/authors/author-create-1.json"
+    // (canonical workspace-absolute form — DEV-10880). The publish plan creates the
+    // author first, then backfills the post's FK.
     runDriver({ count: 1, addFk: "1-0" });
   });
 });

@@ -1045,6 +1045,9 @@ export class PublishPlanRunService {
     useRemoteReturnedRows: boolean,
   ): Promise<void> {
     const idField = tableSpec.idPath;
+    // The connection this plan targets — used to scope pseudo-ref resolution and
+    // FileIndex lookups to the right connection (DEV-10880).
+    const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
 
     // `rawContents` is filtered (entries with no `content` are dropped). The
     // filter applies in lockstep with the downstream iteration below.
@@ -1053,8 +1056,11 @@ export class PublishPlanRunService {
       if (!e.content) continue;
       rawContents.push(e.content);
     }
-    const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents, (asset) =>
-      connector.resolveAssetReference(asset),
+    const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(
+      workbookId,
+      rawContents,
+      (asset) => connector.resolveAssetReference(asset),
+      connectorAccountId,
     );
 
     // Backfill-phase FK rewrite via `RecreatedIdMap`. Walk EVERY entry's FK
@@ -1074,7 +1080,6 @@ export class PublishPlanRunService {
     // Non-revert backfills with no FK literals matching the remap are
     // a no-op (the helper short-circuits on empty remap-by-folder).
     if (phase === 'backfill') {
-      const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
       if (connectorAccountId) {
         await this.rewriteRecreateFkReferences({
           resolvedOps: resolvedContents as ConnectorFile[],
@@ -1102,7 +1107,7 @@ export class PublishPlanRunService {
       let remoteId = entry.remoteRecordId;
       if (!remoteId) {
         const { folderPath, filename } = parsePath(entry.filePath);
-        remoteId = await this.fileIndexService.getRecordId(workbookId, folderPath, filename);
+        remoteId = await this.fileIndexService.getRecordId(workbookId, folderPath, filename, connectorAccountId);
       }
       if (!remoteId) {
         throw new Error(`Could not resolve remote ID for entry: ${entry.filePath}`);
@@ -1293,7 +1298,16 @@ export class PublishPlanRunService {
       rawOps.push(entryContent as ParsedContent);
     }
 
-    const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
+    // Scope pseudo-ref resolution to this plan's connection so a legacy
+    // connection-relative ref (or a co-pending ref to a shared-folder-name
+    // record) resolves within the right connection — same as the edit/backfill
+    // path (DEV-10880).
+    const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(
+      workbookId,
+      rawOps,
+      undefined,
+      connectorAccountId,
+    );
 
     // No FK rewrite here: revert-creates have their FK fields stripped at
     // plan-build (pass4) and re-applied via the BACKFILL phase, which runs
@@ -1321,7 +1335,13 @@ export class PublishPlanRunService {
     const returnedRecords = await connector.createRecords(tableSpec, operations);
 
     // Post-process
-    const fileIndexUpdates: { workbookId: string; folderPath: string; filename: string; recordId: string }[] = [];
+    const fileIndexUpdates: {
+      workbookId: string;
+      folderPath: string;
+      filename: string;
+      recordId: string;
+      connectorAccountId: string | null;
+    }[] = [];
     const refUpdates: { path: string; content: ParsedContent }[] = [];
     const gitFiles: { path: string; content: string }[] = [];
 
@@ -1341,6 +1361,10 @@ export class PublishPlanRunService {
           folderPath,
           filename,
           recordId: realId,
+          // Scope the freshly-created record to this plan's connection so a
+          // co-pending pseudo-ref backfill resolves to it unambiguously even when
+          // another connection exposes the same folderPath (DEV-10880).
+          connectorAccountId,
         });
 
         // Revert-create success: record the (prior → new) mapping so future
@@ -1446,11 +1470,19 @@ export class PublishPlanRunService {
       where: { workbookId, sourceFilePath: { in: filesToDelete } },
     });
 
-    // 2. Index
-    const fileIndexDeletes = validEntries.map((e) => {
-      const { folderPath, filename } = parsePath(e.filePath);
-      return { folderPath, filename };
-    });
+    // 2. Index — delete by the unique (folderPath, recordId) rather than
+    // (folderPath, filename). Two connections in one workbook can expose the same
+    // connection-relative folderPath with a same-named file (different recordIds);
+    // deleting by filename would also remove the SIBLING connection's index row
+    // (DEV-10880). Every validEntry has a remoteRecordId (filtered above), and
+    // recordId is part of the FileIndex unique key, so this targets exactly the
+    // row being deleted.
+    const fileIndexDeletes = validEntries
+      .filter((e) => e.remoteRecordId)
+      .map((e) => {
+        const { folderPath } = parsePath(e.filePath);
+        return { folderPath, recordId: e.remoteRecordId as string };
+      });
 
     if (fileIndexDeletes.length > 0) {
       await this.db.client.fileIndex.deleteMany({

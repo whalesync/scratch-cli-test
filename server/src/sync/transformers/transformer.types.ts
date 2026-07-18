@@ -23,8 +23,17 @@ export interface SyncRecord {
  * Result of resolving a source FK to a destination mapping.
  */
 export interface FkMappingResult {
+  /** Connection-relative path of the destination record file (no leading slash). */
   destinationFilePath: string;
   destinationRemoteId: string | null;
+  /**
+   * The destination connection's folder name — the first segment of a
+   * workspace-absolute pseudo-ref (`sanitizeConnectionFolderName(displayName)`).
+   * Prepended to `destinationFilePath` so the sync producer emits the canonical
+   * `@/<connection>/<folder>/<file>.json` form (DEV-10880). Null when the
+   * destination folder has no connection (should not happen for FK targets).
+   */
+  destinationConnectionFolder: string | null;
 }
 
 /**

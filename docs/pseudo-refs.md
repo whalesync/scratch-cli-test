@@ -173,15 +173,17 @@ therefore responsible for **translating the workspace-absolute path into the tar
 connection + connection-relative path** before looking it up — the connection segment
 selects the connection; the remainder is the connection-relative file path.
 
-> **Known gap (as of this doc's writing).** The publish resolver
-> (`server/src/publish-plan/ref-resolver.service.ts` → `FileIndexService`) currently
-> looks up the pseudo-reference path **verbatim** against a file index keyed
-> connection-relative. A workspace-absolute reference (with the connection segment)
-> therefore fails to resolve, while a connection-relative one happens to match. That
-> is a defect measured against this spec: the resolver (or the upload/apply step that
-> feeds it) must strip/translate the connection segment and resolve against the right
-> connection. Until that lands, workspace-absolute references authored through the
-> desktop can fail at publish with the "Cannot resolve pseudo-ref" error above.
+How this works today (DEV-10880): the publish resolver
+(`server/src/publish-plan/ref-resolver.service.ts`) maps the reference's leading
+connection-folder segment to a `connectorAccountId` (via the workbook's connections,
+matching either the bare sanitized display name or the legacy
+`"<SERVICE> - <displayName>"` form), strips it, and looks the connection-relative
+remainder up in the **`FileIndex`**. `FileIndex` carries a `connectorAccountId`
+discriminator so that two connections exposing the same folder name (e.g. two HubSpot
+connections both with `Contacts`) resolve unambiguously. The resolver is **lenient**:
+a legacy reference with no connection segment is resolved within the connection being
+published, so references authored before this change (and by the pre-fix sync
+producer) still resolve without a data migration.
 
 ## Related docs
 

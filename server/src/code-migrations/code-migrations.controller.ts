@@ -46,6 +46,7 @@ import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { ConnectionDrainTimeoutError, ConnectionQuiesceService } from './connection-quiesce.service';
 import { RunMigrationDto } from './dto/code-migrations.dto';
+import { resolveFolderPathsToConnectorAccountIds } from './fileindex-connector-account-backfill';
 import {
   accumulate,
   AuditLogEntry,
@@ -139,6 +140,18 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'on a later run.',
   },
   {
+    name: 'fileindex-connector-account-backfill',
+    supportsDryRun: true,
+    description:
+      'Backfills FileIndex.connectorAccountId for rows written before the column existed (DEV-10880), by ' +
+      'mapping each connection-relative folderPath back to its owning connection via the workbook’s ' +
+      'DataFolders. A folderPath owned by exactly one connection is scoped to it; a folderPath shared by ' +
+      'two connections in the same workbook (e.g. two HubSpot connections both with Contacts) is left NULL ' +
+      'and corrected by the next pull of each connection. Non-destructive (only NULL rows are written) and ' +
+      'idempotent — re-runs skip already-scoped rows. Supports dryRun. `ids` targets workbooks; `qty` takes ' +
+      'that many workbooks that still have unscoped rows.',
+  },
+  {
     name: 'webflow-folder-restructure-inverse',
     supportsDryRun: true,
     description:
@@ -221,6 +234,8 @@ export class CodeMigrationsController {
         return this.runNotionDataSourceBackfill(dto);
       case 'sync-mapping-v2-backfill':
         return this.runSyncMappingV2Backfill(dto);
+      case 'fileindex-connector-account-backfill':
+        return this.runFileIndexConnectorAccountBackfill(dto);
       case 'webflow-folder-restructure':
         return this.runWebflowFolderRestructure(dto);
       case 'webflow-folder-restructure-inverse':
@@ -618,6 +633,106 @@ export class CodeMigrationsController {
           this.logger.warn(`sync-mapping-v2-backfill: audit log failed for sync ${entry.entityId}: ${String(error)}`);
         }
       },
+    };
+  }
+
+  /**
+   * DEV-10880 — backfill `FileIndex.connectorAccountId` for rows written before
+   * the discriminator column existed.
+   *
+   * Per-workbook: recover each connection-relative folderPath's owning connection
+   * from the workbook's DataFolders (pure logic in
+   * [fileindex-connector-account-backfill.ts](./fileindex-connector-account-backfill.ts)),
+   * then `updateMany` the NULL rows of each unambiguously-owned folderPath. A
+   * folderPath shared by two connections is left NULL and corrected by a re-pull.
+   *
+   * Non-destructive (writes only NULL rows) and idempotent (re-runs skip
+   * already-scoped rows). Supports dryRun, which counts would-be updates without
+   * writing. `ids` targets specific workbooks; `qty` takes that many workbooks
+   * that still have unscoped rows.
+   */
+  private async runFileIndexConnectorAccountBackfill(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
+    const migrationName = 'fileindex-connector-account-backfill';
+    const dryRun = dto.dryRun ?? false;
+
+    // Candidate workbooks: those with FileIndex rows still lacking a
+    // connectorAccountId. `ids` targets them directly; `qty` takes that many
+    // distinct workbooks with unscoped rows (deterministic order for resumability).
+    let workbookIds: string[];
+    if (dto.ids && dto.ids.length > 0) {
+      workbookIds = dto.ids;
+    } else {
+      const unscopedWorkbookRows = await this.db.client.fileIndex.findMany({
+        where: { connectorAccountId: null },
+        select: { workbookId: true },
+        distinct: ['workbookId'],
+        orderBy: { workbookId: 'asc' },
+        take: dto.qty,
+      });
+      workbookIds = unscopedWorkbookRows.map((row) => row.workbookId);
+    }
+
+    const migratedIds: string[] = [];
+    let totalRowsScoped = 0;
+    let totalAmbiguousFolderPaths = 0;
+
+    for (const workbookId of workbookIds) {
+      const dataFolders = await this.db.client.dataFolder.findMany({
+        where: { workbookId },
+        select: { path: true, connectorAccountId: true },
+      });
+      const { unambiguousFolderPathToConnectorAccountId, ambiguousFolderPaths } =
+        resolveFolderPathsToConnectorAccountIds(dataFolders);
+      totalAmbiguousFolderPaths += ambiguousFolderPaths.size;
+
+      let workbookRowsScoped = 0;
+      for (const [folderPath, connectorAccountId] of unambiguousFolderPathToConnectorAccountId) {
+        if (dryRun) {
+          workbookRowsScoped += await this.db.client.fileIndex.count({
+            where: { workbookId, folderPath, connectorAccountId: null },
+          });
+          continue;
+        }
+        const { count } = await this.db.client.fileIndex.updateMany({
+          where: { workbookId, folderPath, connectorAccountId: null },
+          data: { connectorAccountId },
+        });
+        workbookRowsScoped += count;
+      }
+
+      totalRowsScoped += workbookRowsScoped;
+      if (workbookRowsScoped > 0) migratedIds.push(workbookId);
+      this.logger.log(
+        `${migrationName}: workbook ${workbookId} → ${workbookRowsScoped} rows scoped${dryRun ? ' (dry-run)' : ''}; ` +
+          `${ambiguousFolderPaths.size} ambiguous folderPath(s) left NULL`,
+      );
+    }
+
+    // Read against fresh DB state so it reflects rows this run wrote. Ambiguous
+    // folderPaths keep this above 0 until their connections are re-pulled.
+    const remainingCount = await this.db.client.fileIndex.count({ where: { connectorAccountId: null } });
+
+    this.logger.log(
+      `${migrationName} complete${dryRun ? ' (dry-run)' : ''}: scoped=${totalRowsScoped}; ` +
+        `ambiguousFolderPaths=${totalAmbiguousFolderPaths}; workbooks=${workbookIds.length}; remaining=${remainingCount}`,
+    );
+
+    return {
+      migratedIds,
+      remainingCount,
+      migrationName,
+      dryRun,
+      summary: [
+        {
+          label: dryRun ? 'FileIndex rows that would be scoped' : 'FileIndex rows scoped to a connection',
+          count: totalRowsScoped,
+        },
+        {
+          label: 'Ambiguous folderPaths left NULL (shared across connections; fixed by re-pull)',
+          count: totalAmbiguousFolderPaths,
+        },
+        { label: 'Workbooks processed', count: workbookIds.length },
+      ],
     };
   }
 

@@ -382,7 +382,9 @@ export class PublishPlanBuildService {
 
     const deletedLookups = deletedFiles.map((del) => {
       const { folderPath, filename: fileName } = parsePath(del.path);
-      return { folderPath, filename: fileName };
+      // Scope to the plan's connection so a folder name shared with another
+      // connection resolves the right connection's record (DEV-10880).
+      return { folderPath, filename: fileName, connectorAccountId };
     });
     let recordIdMap: Map<string, string> = new Map();
     try {

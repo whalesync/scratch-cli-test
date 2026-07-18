@@ -1070,7 +1070,11 @@ describe('transformRecordAsync', () => {
     const lookupTools: LookupTools = {
       getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<FkMappingResult | null> => {
         const map: Record<string, FkMappingResult> = {
-          src_author_1: { destinationFilePath: 'authors/alice.json', destinationRemoteId: 'wf-author-1' },
+          src_author_1: {
+            destinationFilePath: 'authors/alice.json',
+            destinationRemoteId: 'wf-author-1',
+            destinationConnectionFolder: null,
+          },
         };
         return Promise.resolve(map[fk] ?? null);
       }),

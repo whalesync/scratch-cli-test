@@ -1,0 +1,18 @@
+-- FileIndex is workbook-global and keyed by a connection-relative `folderPath`,
+-- so two connections in one workbook that expose an identically-named folder
+-- (e.g. two HubSpot connections both with `Contacts`) collapse onto the same
+-- key and cannot be told apart. That ambiguity is why a canonical
+-- workspace-absolute pseudo-ref (`@/<connection>/<folder>/<file>.json`) could
+-- not be resolved to the right connection (DEV-10880).
+--
+-- Add a nullable `connectorAccountId` discriminator. Nullable so the ADD COLUMN
+-- is instant and existing rows are untouched: the publish resolver falls back
+-- to the old workbook-global lookup when it is null, and rows gain the value on
+-- their next pull/publish (or via the `fileindex-connector-account-backfill`
+-- code-migration). No index is added on this column — runtime lookups still
+-- query by (workbookId, folderPath, filename) and apply the connection
+-- preference in JS, so they use the existing index; only the one-time backfill
+-- filters on connectorAccountId, which doesn't justify a permanent index's write
+-- cost on this table.
+-- AlterTable
+ALTER TABLE "FileIndex" ADD COLUMN "connectorAccountId" TEXT;

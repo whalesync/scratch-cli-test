@@ -1391,6 +1391,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
               folderPath,
               filename,
               recordId: f.recordId,
+              // Discriminator so a workspace-absolute pseudo-ref resolves to this
+              // connection even when another shares the folder name.
+              connectorAccountId: folderCtx.dataFolder.connectorAccountId ?? null,
             };
           })
           .filter((x): x is NonNullable<typeof x> => x !== null),

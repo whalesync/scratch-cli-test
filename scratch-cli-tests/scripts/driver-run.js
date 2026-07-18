@@ -1832,9 +1832,11 @@ async function main() {
         addFkIsNewAuthor = false;
       }
 
-      const authorRelPath = path.relative(getConnectionDir(state.workspaceDir), addFkAuthorFile)
-        .split(path.sep)
-        .join("/");
+      // Author the pseudo-ref in the canonical WORKSPACE-ABSOLUTE form: the path
+      // from the workspace root, so the connection folder ("Smoke Postgres") is the
+      // first segment (DEV-10880). Basing it on getConnectionDir() would drop the
+      // connection segment and produce the legacy connection-relative form.
+      const authorRelPath = path.relative(state.workspaceDir, addFkAuthorFile).split(path.sep).join("/");
       const pseudoRef = `@/${authorRelPath}`;
 
       const postRecord = readJsonFile(targetPostFile);

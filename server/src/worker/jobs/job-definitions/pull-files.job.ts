@@ -153,13 +153,16 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
       filePathCount: data.filePaths.length,
     });
 
-    // Resolve filePaths → recordIds via FileIndex
+    // Resolve filePaths → recordIds via FileIndex, scoped to this folder's
+    // connection so a folder name shared with another connection can't return
+    // the wrong connection's record (DEV-10880).
     const lookups = data.filePaths.map((fp) => {
       const normalized = fp.startsWith('/') ? fp.slice(1) : fp;
       const lastSlash = normalized.lastIndexOf('/');
       return {
         folderPath: lastSlash === -1 ? '' : normalized.substring(0, lastSlash),
         filename: lastSlash === -1 ? normalized : normalized.substring(lastSlash + 1),
+        connectorAccountId: dataFolder.connectorAccountId ?? null,
       };
     });
 
@@ -281,6 +284,9 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
                   folderPath,
                   filename,
                   recordId: f.recordId,
+                  // Discriminator so a workspace-absolute pseudo-ref resolves to
+                  // this connection even when another shares the folder name.
+                  connectorAccountId: dataFolder.connectorAccountId ?? null,
                 };
               })
               .filter((x): x is NonNullable<typeof x> => x !== null),
