@@ -7,14 +7,15 @@ import { PostgresColumnType } from '@spinner/shared-types';
 import { dotPath, type DotPath } from '../../types';
 import type { InformationSchemaColumn } from './knex-pg-types';
 
-export const PG_NUMERIC_TYPES = new Set([
+/**
+ * Fixed-width numeric types the `pg` driver materializes as a JS number. These stay `Type.Number()`
+ * and are stored as numbers on disk — for the small integer/float types that's lossless.
+ */
+export const PG_NUMBER_TYPES = new Set([
   'integer',
-  'bigint',
   'smallint',
   'serial',
-  'bigserial',
-  'numeric',
-  'decimal',
+  'smallserial',
   'real',
   'double precision',
   'float',
@@ -22,8 +23,18 @@ export const PG_NUMERIC_TYPES = new Set([
   'float8',
   'int2',
   'int4',
-  'int8',
 ]);
+
+/**
+ * Arbitrary-precision numeric types the `pg` driver returns as a precision-preserving STRING:
+ * `numeric`/`decimal` (once the global NUMERIC type-parser override is removed — DEV-10777) and
+ * `bigint`/`bigserial` (pg's default; already strings on disk today, but previously mis-typed as
+ * `Type.Number()`). We store the verbatim string rather than coercing to a lossy JS float.
+ */
+export const PG_NUMBER_STRING_TYPES = new Set(['numeric', 'decimal', 'bigint', 'bigserial', 'int8']);
+
+/** Every numeric-family type — the JS-number types plus the arbitrary-precision string types. */
+export const PG_NUMERIC_TYPES = new Set([...PG_NUMBER_TYPES, ...PG_NUMBER_STRING_TYPES]);
 
 export const PG_BOOLEAN_TYPES = new Set(['boolean', 'bool']);
 
@@ -60,10 +71,22 @@ export const PG_DATE_TYPES = new Set(['date']);
 
 export const PG_JSON_TYPES = new Set(['json', 'jsonb']);
 
+/**
+ * Schema for an arbitrary-precision numeric that the driver hands us as a verbatim string.
+ * A JS `number` is accepted too so records pulled BEFORE DEV-10777 (which stored these columns as
+ * floats) still satisfy `enforce_schema` and don't flag phantom errors until the connection is
+ * re-pulled and the on-disk value flips to the canonical string form.
+ */
+function arbitraryPrecisionNumericSchema(): TSchema {
+  return Type.Union([Type.String(), Type.Number()]);
+}
+
 /** Map a scalar PostgreSQL type name to a TypeBox schema and PostgresColumnType. */
 export function mapScalarPgType(typeName: string): { schema: TSchema; pgType: PostgresColumnType } {
   const t = typeName.toLowerCase();
-  if (PG_NUMERIC_TYPES.has(t)) return { schema: Type.Number(), pgType: PostgresColumnType.NUMERIC };
+  if (PG_NUMBER_TYPES.has(t)) return { schema: Type.Number(), pgType: PostgresColumnType.NUMERIC };
+  if (PG_NUMBER_STRING_TYPES.has(t))
+    return { schema: arbitraryPrecisionNumericSchema(), pgType: PostgresColumnType.NUMERIC_STRING };
   if (PG_BOOLEAN_TYPES.has(t)) return { schema: Type.Boolean(), pgType: PostgresColumnType.BOOLEAN };
   if (PG_TEXT_TYPES.has(t)) return { schema: Type.String(), pgType: PostgresColumnType.TEXT };
   if (PG_TIMESTAMP_TYPES.has(t))
@@ -95,6 +118,12 @@ export function mapPgType(
     const elementMapping = mapScalarPgType(elementUdtName);
     if (elementMapping.pgType === PostgresColumnType.NUMERIC) {
       schema = Type.Array(Type.Number());
+      pgType = PostgresColumnType.NUMERIC_ARRAY;
+    } else if (elementMapping.pgType === PostgresColumnType.NUMERIC_STRING) {
+      // numeric[]/decimal[]/bigint[] — each element is a precision-preserving string (with a legacy
+      // JS number tolerated pre-re-pull, mirroring the scalar case). Kept under NUMERIC_ARRAY so the
+      // view/coercion layer treats it like any other numeric array.
+      schema = Type.Array(arbitraryPrecisionNumericSchema());
       pgType = PostgresColumnType.NUMERIC_ARRAY;
     } else if (elementMapping.pgType === PostgresColumnType.BOOLEAN) {
       schema = Type.Array(Type.Boolean());

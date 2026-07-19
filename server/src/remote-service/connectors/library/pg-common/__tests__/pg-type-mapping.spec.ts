@@ -14,11 +14,29 @@ function stringFormatOf(schema: TSchema): string | undefined {
   return columnSchema.anyOf?.find((member) => member.type === 'string')?.format;
 }
 
+/** Member `type`s of a (possibly nested) TypeBox union schema, one level deep. */
+function unionMemberTypes(schema: TSchema): (string | undefined)[] {
+  return ((schema as { anyOf?: { type?: string }[] }).anyOf ?? []).map((member) => member.type);
+}
+
 describe('mapScalarPgType', () => {
-  it('maps numeric types to a number with the NUMERIC connector type', () => {
-    const { schema, pgType } = mapScalarPgType('integer');
-    expect((schema as { type?: string }).type).toBe('number');
-    expect(pgType).toBe(PostgresColumnType.NUMERIC);
+  it('maps fixed-width numeric types (integer, real, double precision) to a JS number with the NUMERIC connector type', () => {
+    for (const numberType of ['integer', 'smallint', 'serial', 'real', 'double precision', 'float8']) {
+      const { schema, pgType } = mapScalarPgType(numberType);
+      expect((schema as { type?: string }).type).toBe('number');
+      expect(pgType).toBe(PostgresColumnType.NUMERIC);
+    }
+  });
+
+  // DEV-10777: numeric/decimal (arbitrary precision) and bigint are returned by the driver as a
+  // precision-preserving string; we store that verbatim and type it NUMERIC_STRING. The schema also
+  // tolerates a legacy JS number so records pulled before this change still validate pre-re-pull.
+  it('maps arbitrary-precision numeric types (numeric, decimal, bigint) to a verbatim string with the NUMERIC_STRING connector type', () => {
+    for (const stringNumberType of ['numeric', 'decimal', 'bigint', 'bigserial']) {
+      const { schema, pgType } = mapScalarPgType(stringNumberType);
+      expect(pgType).toBe(PostgresColumnType.NUMERIC_STRING);
+      expect(unionMemberTypes(schema)).toEqual(expect.arrayContaining(['string', 'number']));
+    }
   });
 
   it('maps timestamp types to String(format: date-time)', () => {

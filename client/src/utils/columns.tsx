@@ -8,6 +8,7 @@ export const getColumnTypeIcon = (pgType: PostgresColumnType) => {
     case PostgresColumnType.TEXT:
       return <StyledLucideIcon Icon={Type} size={14} c="#888" />;
     case PostgresColumnType.NUMERIC:
+    case PostgresColumnType.NUMERIC_STRING:
       return <StyledLucideIcon Icon={Hash} size={14} c="#888" />;
     case PostgresColumnType.BOOLEAN:
       return <StyledLucideIcon Icon={ToggleLeft} size={14} c="#888" />;

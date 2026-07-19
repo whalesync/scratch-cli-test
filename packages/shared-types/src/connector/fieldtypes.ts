@@ -21,8 +21,19 @@ export type EntityId = {
 export enum PostgresColumnType {
   TEXT = 'text',
   TEXT_ARRAY = 'text[]',
+  /**
+   * Fixed-width numeric family the `pg` driver materializes as a JS number and we store as a
+   * number on disk: `integer`, `smallint`, `serial`, `real`, `double precision`, `float`, …
+   */
   NUMERIC = 'numeric',
   NUMERIC_ARRAY = 'numeric[]',
+  /**
+   * Arbitrary-precision numeric family the `pg` driver returns as a precision-preserving STRING —
+   * `numeric`/`decimal` and `bigint`/`bigserial` — which we store verbatim as that string rather
+   * than coercing to a lossy JS float (Connector Prime Directive; see DEV-10777). Kept distinct
+   * from {@link NUMERIC} so the view/validation layer can treat it as a numeric-valued string.
+   */
+  NUMERIC_STRING = 'numeric_string',
   BOOLEAN = 'boolean',
   BOOLEAN_ARRAY = 'boolean[]',
   JSONB = 'jsonb',

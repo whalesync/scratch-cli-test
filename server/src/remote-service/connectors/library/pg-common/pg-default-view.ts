@@ -76,6 +76,12 @@ function mapType(fieldSchema: TSchema): TablePropertyType | undefined {
   switch (pgType) {
     case PostgresColumnType.NUMERIC:
       return 'number';
+    case PostgresColumnType.NUMERIC_STRING:
+      // Arbitrary-precision numeric stored verbatim as a string (DEV-10777). Render as the string
+      // default rather than a 'number' cell, because the grid's number cell can't hold a string
+      // value. (Follow-up: a dedicated numeric-string view type could right-align while keeping the
+      // precise string.)
+      return undefined;
     case PostgresColumnType.BOOLEAN:
       return 'checkbox';
     case PostgresColumnType.TIMESTAMP:

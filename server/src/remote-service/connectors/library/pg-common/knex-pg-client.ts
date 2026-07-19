@@ -7,7 +7,6 @@
  * (Supabase, generic Postgres, etc.).
  */
 import knex, { type Knex } from 'knex';
-import pg from 'pg';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
 import {
   isGeneratedColumn,
@@ -20,12 +19,16 @@ import {
 } from './knex-pg-types';
 import { buildAddColumnsQuery, buildCreateTableQuery, type ForeignKeyResolutions } from './pg-create-schema';
 
-// 🚨🚨 Global impact alert 🚨🚨
-// PG library usually parses 'numeric' as a string to preserve arbitrary precision.
-// We prefer JS numbers for JSON serialization to avoid diffs, and so the schema type matches the JSON data's type.
-// Most of our users aren't using very large numbers.
-// This is a global change that will affect all users of the PG library.
-pg.types.setTypeParser(1700 /* TypeId.NUMERIC */, parseFloat);
+// NUMERIC / DECIMAL fidelity (DEV-10777): we intentionally do NOT register a global
+// `pg.types.setTypeParser(1700, parseFloat)`. The `pg` driver returns `numeric`/`decimal` as a
+// precision-preserving STRING by design (NUMERIC is arbitrary-precision); coercing it to a JS float
+// on read is lossy and violates the Connector Prime Directive — it reshapes the data to fit the
+// schema instead of the schema to fit the data. We store the driver's verbatim string and type the
+// column as a numeric-valued string (`PostgresColumnType.NUMERIC_STRING`); the fixed-width numeric
+// types (`integer`, `real`, `double precision`, …) are unaffected — the driver already hands those
+// back as JS numbers. Removing the override was verified safe: it mutated the process-global `pg`
+// parser, but the server's own schema (Prisma) has no `numeric`/`decimal` columns, so only the
+// Postgres/Supabase connectors were relying on it.
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -52,7 +55,15 @@ function escapeObjectKeys(obj: Record<string, unknown>): Record<string, unknown>
   return result;
 }
 
-/** Recursively convert Date objects to ISO strings and handle arrays. */
+/**
+ * Recursively convert Date objects to ISO strings and handle arrays.
+ *
+ * DEV-10777 ruling: the `Date → ISO` conversion is Connector-Prime-Directive-DEFENSIBLE, not a
+ * forbidden reshape. The `pg` driver parses `timestamp`/`date` OIDs into a JS `Date`, which is not
+ * JSON-serializable; RFC 3339 (`toISOString()`) is simply the faithful, lossless serialization of
+ * the value the driver produced — it renames no key and changes no container. This is unlike the
+ * NUMERIC coercion (removed above), which threw away precision. Left unchanged deliberately.
+ */
 function sanitizeFieldValue(value: unknown): unknown {
   if (value instanceof Date) {
     return value.toISOString();

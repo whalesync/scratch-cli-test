@@ -24,6 +24,10 @@ import type { BaseJsonTableSpec } from '../../types';
 const POSTGRES_COLUMN_TYPES_REJECTING_EMPTY_STRING: ReadonlySet<PostgresColumnType> = new Set([
   PostgresColumnType.TIMESTAMP,
   PostgresColumnType.NUMERIC,
+  // Arbitrary-precision numerics (numeric/decimal, bigint) reject `""` on write just like the
+  // fixed-width ones — even though we now store their read value as a string (DEV-10777), an empty
+  // string is still not a legal numeric literal.
+  PostgresColumnType.NUMERIC_STRING,
   PostgresColumnType.BOOLEAN,
   PostgresColumnType.JSONB,
 ]);
