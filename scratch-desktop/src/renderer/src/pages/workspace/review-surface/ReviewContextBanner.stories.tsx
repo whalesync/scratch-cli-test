@@ -15,6 +15,8 @@ const meta: Meta<typeof ReviewContextBanner> = {
     connections: CONNECTIONS,
     pendingCount: 12,
     approvedCount: 5,
+    onApproveAll: () => {},
+    approveDisabled: false,
     onDiscardAll: () => {},
     discardDisabled: false,
   },
@@ -35,11 +37,12 @@ export const PendingOnly: Story = {
   args: { pendingCount: 12, approvedCount: 0 },
 };
 
+/** Everything approved but not yet published — nothing left to approve, so "Approve all" is disabled. */
 export const ApprovedOnly: Story = {
-  args: { pendingCount: 0, approvedCount: 8 },
+  args: { pendingCount: 0, approvedCount: 8, approveDisabled: true },
 };
 
-/** Nothing left to review — counts are zero and "Discard all" is disabled. */
+/** Nothing left to review — counts are zero and both bulk actions are disabled. */
 export const NothingToReview: Story = {
-  args: { pendingCount: 0, approvedCount: 0, discardDisabled: true },
+  args: { pendingCount: 0, approvedCount: 0, approveDisabled: true, discardDisabled: true },
 };

@@ -587,6 +587,8 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         connections={connections}
         pendingCount={pendingCount}
         approvedCount={approvedCount}
+        onApproveAll={() => setBulkActionConfirm('approve')}
+        approveDisabled={pendingCount === 0 || bulkActionLoading}
         onDiscardAll={() => setBulkActionConfirm('discard')}
         discardDisabled={affectedRecordCount === 0 || bulkActionLoading}
       />

@@ -1,19 +1,21 @@
-import { ButtonPrimarySolid } from '@/components/base/buttons';
+import { ButtonPrimarySolid, IconButtonGhost } from '@/components/base/buttons';
 import { TextMono12Regular, TextTitle4 } from '@/components/base/text';
 import { Box } from '@mantine/core';
+import { EllipsisVertical } from 'lucide-react';
 import type { WorkspaceConnection } from '../../../types/local-files';
 import { deriveConnectorDisplayNameForFolder, folderLeafName } from './derive-review-banner-context';
 
 /**
  * The top context strip of the v2 review surface (design: `new-review-designs`): a yellow accent
  * bar + a two-line block — the Funnel Display title "Review before publishing to {connector} ·
- * {folder}" over a Geist-Mono "N pending · M approved" subtitle — with a primary "Discard all"
- * action on the right. The strip washes yellow (`#fffaf0`) while there are pending/approved changes
- * and falls back to the default panel background once there's nothing left to review.
+ * {folder}" over a Geist-Mono "N pending · M approved" subtitle. The right side leads with the
+ * primary "Approve all" action; the uncommon, destructive "Discard all" lives in a kebab (`⋮`)
+ * overflow menu beside it. The strip washes yellow (`#fffaf0`) while there are pending/approved
+ * changes and falls back to the default panel background once there's nothing left to review.
  *
  * Purely presentational — the host supplies the counts (from `diffData.filterCounts`) and the
- * discard handler; the connector name is derived from the folder path's first segment against the
- * workspace connections.
+ * approve/discard handlers; the connector name is derived from the folder path's first segment
+ * against the workspace connections.
  */
 interface ReviewContextBannerProps {
   selectedFolderPath: string | null;
@@ -23,6 +25,10 @@ interface ReviewContextBannerProps {
   pendingCount: number;
   /** Folder-wide approved-but-unpublished count — `diffData.filterCounts.unpublished`. */
   approvedCount: number;
+  /** Primary action: approve every pending change in the folder. */
+  onApproveAll: () => void;
+  /** Disabled when there's nothing pending to approve or a bulk action is already running. */
+  approveDisabled: boolean;
   onDiscardAll: () => void;
   /** Disabled when there's nothing to discard or a bulk action is already running. */
   discardDisabled: boolean;
@@ -41,6 +47,8 @@ export function ReviewContextBanner({
   connections,
   pendingCount,
   approvedCount,
+  onApproveAll,
+  approveDisabled,
   onDiscardAll,
   discardDisabled,
 }: ReviewContextBannerProps) {
@@ -95,9 +103,30 @@ export function ReviewContextBanner({
         </Box>
       </Box>
 
-      <ButtonPrimarySolid size="compact-sm" disabled={discardDisabled} onClick={onDiscardAll} style={{ flexShrink: 0 }}>
-        Discard all
-      </ButtonPrimarySolid>
+      <Box style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        <ButtonPrimarySolid size="compact-sm" disabled={approveDisabled} onClick={onApproveAll}>
+          Approve all
+        </ButtonPrimarySolid>
+        {/* Uncommon, destructive bulk actions live behind a kebab so "Approve all" stays the sole
+            primary CTA. Native menu per the desktop convention (never a Mantine dropdown). The
+            foreground is pinned to the fixed-dark banner title color while the strip is washed
+            yellow, since the theme-adaptive ghost foreground would vanish (light-on-light) in dark
+            mode. When there's nothing to discard the whole kebab is disabled, so the menu never
+            opens onto a lone greyed-out item. */}
+        <IconButtonGhost
+          size="compact-sm"
+          aria-label="More review actions"
+          disabled={discardDisabled}
+          c={hasChanges ? BANNER_YELLOW_TITLE : undefined}
+          onClick={() =>
+            window.scratchDesktop.showNativeContextMenu([{ id: 'discard-all', label: 'Discard all' }], (id) => {
+              if (id === 'discard-all') onDiscardAll();
+            })
+          }
+        >
+          <EllipsisVertical size={14} />
+        </IconButtonGhost>
+      </Box>
     </Box>
   );
 }
