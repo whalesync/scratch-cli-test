@@ -1,7 +1,10 @@
 # DEV-10880 — Align all pseudo-ref (`@/…`) producers + resolver to the canonical workspace-absolute format
 
-Status: **implemented + adversarially reviewed + all fixes applied; green (lint-strict, prettier, build 14/14, no schema drift). Pending: commit + prod backfill run.**
-Branch: `align-pseudo-ref-producers-v1`
+Status: **Resolved.** Code merged to `master` + deployed to prod (MRs !3085 docs + the resolver/FileIndex
+code change, commit `cc0c64a3c`). Prod data verified self-healed read-only (see [Final state](#final-state--prod-verification-2026-07-19));
+the `fileindex-connector-account-backfill` code-migration is a **no-op on current prod** and does not need to
+be run. Green (lint-strict, prettier, build, no schema drift).
+Branch: `align-pseudo-ref-producers-v2` (merged)
 Canonical spec: [`docs/pseudo-refs.md`](../../pseudo-refs.md)
 
 ## Problem (verified against prod `wkb_wi45a7p30d`)
@@ -164,3 +167,31 @@ An adversarial multi-agent review of the diff confirmed 6 defects. Applied fixes
 ## Sequencing
 Land lenient/translating resolver + producer + writes + schema together (one coherent change;
 resolver leniency means no flag-day). Run the backfill code-migration afterward. Tighten docs.
+
+## Final state — prod verification (2026-07-19)
+
+Both MRs are merged to `master` and deployed to `prod` (docs `aae66b5a9` + code `cc0c64a3c`). A
+read-only prod investigation (`connect_to_gcp_db_readonly.sh production`) confirmed the acceptance
+criteria are met **without running the backfill**:
+
+- **Code is live and scoping.** `FileIndex`: 2,112,265 rows total, **2,017,833 already carry
+  `connectorAccountId`** — the write-path (both pull jobs + both publish dispatch sites) is populating
+  the discriminator on every pull/publish.
+- **Repro workbook `wkb_wi45a7p30d` is repaired.** Its two HubSpot connections are `HubSpot` and
+  `HubSpot Testing` (distinct folder segments → the resolver's connection-segment routing
+  disambiguates them). All `Contacts` rows are scoped; the workbook is 97.7% scoped (203,138 /
+  208,022). Co-pending publishes resolve via fresh create-phase writes.
+- **The backfill would scope 0 rows.** Running the read-only equivalent of the dry-run across all 28
+  workbooks with unscoped rows, `would_scope = 0` for every one. Every live, unambiguous folder is
+  already scoped; the 94,432 leftover unscoped rows are **~93,556 orphans (99.1%)** — index rows whose
+  `folderPath` has no live DataFolder (folders/connections deleted months ago, e.g. `wkb_DyOZyRsutG`'s
+  `Airtable/Extreme/*` last seen 2026-03-02) — plus an ~876-row ambiguous shared-folder tail that the
+  next pull scopes. There is nothing left for the backfill to map to a live connection.
+
+**Decision:** do not run `fileindex-connector-account-backfill` on prod — it is a no-op on this data
+set. The self-healing write-path already satisfies "existing prod data migrated/repaired."
+
+**Spun-out follow-up:** the orphaned-row finding is a pre-existing cleanup gap unrelated to the
+pseudo-ref format — connection delete/reset (`ConnectorAccountService.removeConnectionData` /
+`resetConnection`) bulk-delete DataFolders via `deleteMany`, bypassing the per-folder `FileIndex` /
+`FileReference` cleanup. Tracked as **DEV-10885** (GC the ~93.5k orphans + close the cleanup gap).
