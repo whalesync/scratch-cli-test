@@ -454,4 +454,184 @@ describe('HubspotConnector', () => {
       expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '9', 'companies', 'C2');
     });
   });
+
+  // Published-quote recall → edit → re-publish (DEV-10886). HubSpot locks a
+  // published quote and rejects the property PATCH with "Published Quote cannot
+  // be edited". The `quotes` branch of updateRecords must recall it to DRAFT,
+  // apply the edit, then re-publish to the record's on-disk status.
+  describe('published-quote recall (updateRecords quotes branch)', () => {
+    const QUOTES = 'quotes';
+
+    function quotesSpec(): BaseJsonTableSpec {
+      return buildTableSpec(QUOTES, {
+        hs_title: {},
+        hs_terms: {},
+        hs_status: {},
+        hs_locked: { readonly: true },
+      });
+    }
+
+    /** A locked/published quote as the live GET returns it. */
+    function publishedQuoteRemote(overrides: Record<string, string> = {}) {
+      return {
+        id: '900',
+        properties: {
+          hs_title: 'Q1',
+          hs_terms: 'Old terms',
+          hs_status: 'APPROVAL_NOT_NEEDED',
+          hs_locked: 'true',
+          ...overrides,
+        },
+        associations: {},
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-02T00:00:00Z',
+        archived: false,
+      };
+    }
+
+    /** Minimal axios-shaped error so the connector's isAxiosError()/status checks fire. */
+    function axiosErrorWithStatus(status: number, data: unknown = {}): Error {
+      return Object.assign(new Error(`Request failed with status ${status}`), {
+        isAxiosError: true,
+        response: { status, data },
+      });
+    }
+
+    it('recalls a published quote, applies the edit, then re-publishes to the on-disk status', async () => {
+      const spec = quotesSpec();
+      // Pre-edit GET returns the locked/published quote; Phase-2 refetch returns
+      // the re-published, edited quote.
+      mockGetRecord
+        .mockResolvedValueOnce(publishedQuoteRemote())
+        .mockResolvedValueOnce(publishedQuoteRemote({ hs_terms: 'New terms' }));
+
+      const file = makeFile('900', {
+        hs_title: 'Q1',
+        hs_terms: 'New terms',
+        hs_status: 'APPROVAL_NOT_NEEDED',
+        hs_locked: 'true',
+      });
+
+      const [result] = await connector.updateRecords(spec, [file], [{ properties: { hs_terms: true } }]);
+
+      // Three PATCHes, in order: recall → edit → re-publish.
+      expect(mockUpdateRecord.mock.calls).toEqual([
+        [QUOTES, '900', { hs_status: 'DRAFT' }],
+        [QUOTES, '900', { hs_terms: 'New terms' }],
+        [QUOTES, '900', { hs_status: 'APPROVAL_NOT_NEEDED' }],
+      ]);
+      // Returned record is the refetched (re-published, edited) one.
+      expect((result as { properties: Record<string, unknown> }).properties.hs_terms).toBe('New terms');
+      expect((result as { properties: Record<string, unknown> }).properties.hs_status).toBe('APPROVAL_NOT_NEEDED');
+    });
+
+    it('edits a draft (unlocked) quote directly — no recall, no re-publish', async () => {
+      const spec = quotesSpec();
+      mockGetRecord
+        .mockResolvedValueOnce(publishedQuoteRemote({ hs_status: 'DRAFT', hs_locked: 'false' }))
+        .mockResolvedValueOnce(publishedQuoteRemote({ hs_status: 'DRAFT', hs_locked: 'false', hs_terms: 'New terms' }));
+
+      const file = makeFile('900', { hs_terms: 'New terms', hs_status: 'DRAFT' });
+
+      await connector.updateRecords(spec, [file], [{ properties: { hs_terms: true } }]);
+
+      // Only the edit PATCH — no hs_status transitions.
+      expect(mockUpdateRecord.mock.calls).toEqual([[QUOTES, '900', { hs_terms: 'New terms' }]]);
+    });
+
+    it('surfaces a clear error and does not edit when the quote is signed/paid (recall refused)', async () => {
+      const spec = quotesSpec();
+      mockGetRecord.mockResolvedValueOnce(publishedQuoteRemote());
+      // HubSpot refuses to recall a signed/paid quote.
+      mockUpdateRecord.mockRejectedValueOnce(
+        axiosErrorWithStatus(400, { message: 'Quote cannot be recalled', category: 'VALIDATION_ERROR' }),
+      );
+
+      const file = makeFile('900', { hs_terms: 'New terms', hs_status: 'APPROVAL_NOT_NEEDED' });
+
+      await expect(connector.updateRecords(spec, [file], [{ properties: { hs_terms: true } }])).rejects.toThrow(
+        /signed or paid/i,
+      );
+      // Only the recall was attempted; the edit never fired.
+      expect(mockUpdateRecord).toHaveBeenCalledTimes(1);
+      expect(mockUpdateRecord).toHaveBeenCalledWith(QUOTES, '900', { hs_status: 'DRAFT' });
+    });
+
+    it('lets a 403 (missing quote-write scope) on the recall surface as a scope error, not "signed or paid"', async () => {
+      const spec = quotesSpec();
+      mockGetRecord.mockResolvedValueOnce(publishedQuoteRemote());
+      // A missing scope on the PAT makes the recall PATCH 403 — NOT the 400
+      // VALIDATION_ERROR that signals an un-recallable (signed/paid) quote.
+      mockUpdateRecord.mockRejectedValueOnce(axiosErrorWithStatus(403, { message: 'missing scope' }));
+
+      const file = makeFile('900', { hs_terms: 'New terms', hs_status: 'APPROVAL_NOT_NEEDED' });
+
+      let caught: unknown;
+      try {
+        await connector.updateRecords(spec, [file], [{ properties: { hs_terms: true } }]);
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeDefined();
+      // The 403 was NOT rewrapped as the QUOTE_NOT_RECALLABLE "signed or paid" error…
+      expect((caught as Error).message).not.toMatch(/signed or paid/i);
+      // …it stays a raw axios error so extractConnectorErrorDetails routes it to
+      // the dedicated missing-scope message.
+      const details = connector.extractConnectorErrorDetails(caught);
+      expect(details.userFriendlyMessage).toMatch(/permission|scope/i);
+      // Only the recall was attempted; the edit never fired.
+      expect(mockUpdateRecord).toHaveBeenCalledTimes(1);
+    });
+
+    it('syncs associations inside the recall window — before the final re-publish re-locks (full publish)', async () => {
+      const spec = quotesSpec();
+      mockGetRecord
+        .mockResolvedValueOnce(publishedQuoteRemote())
+        .mockResolvedValueOnce(publishedQuoteRemote({ hs_terms: 'New terms' }));
+
+      // Full publish (no changedFields): the payload carries hs_status AND an
+      // association add. The dance must NOT let hs_status ride along in the
+      // content PATCH (that would re-lock the quote before syncAssociations runs).
+      const file: ConnectorFile = {
+        ...makeFile('900', { hs_title: 'Q1', hs_terms: 'New terms', hs_status: 'APPROVAL_NOT_NEEDED' }),
+        associations: { deals: { results: [{ id: 'D1' }] } },
+      };
+
+      await connector.updateRecords(spec, [file]);
+
+      const updateCalls = mockUpdateRecord.mock.calls as unknown as [string, string, Record<string, unknown>][];
+      // hs_status is touched ONLY by the recall (first) and the re-publish (last).
+      expect(updateCalls[0]).toEqual([QUOTES, '900', { hs_status: 'DRAFT' }]);
+      expect(updateCalls[updateCalls.length - 1]).toEqual([QUOTES, '900', { hs_status: 'APPROVAL_NOT_NEEDED' }]);
+      // The content PATCH carries no hs_status — so it never re-locks mid-window.
+      const contentPatches = updateCalls.filter((call) => !('hs_status' in call[2]));
+      expect(contentPatches).toEqual([[QUOTES, '900', { hs_title: 'Q1', hs_terms: 'New terms' }]]);
+      // The association write happened strictly before the final re-publish PATCH.
+      const republishInvocationOrder =
+        mockUpdateRecord.mock.invocationCallOrder[mockUpdateRecord.mock.invocationCallOrder.length - 1];
+      expect(mockCreateAssociation).toHaveBeenCalledWith(QUOTES, '900', 'deals', 'D1');
+      expect(mockCreateAssociation.mock.invocationCallOrder[0]).toBeLessThan(republishInvocationOrder);
+    });
+
+    it('best-effort restores the published status when the edit fails after recall', async () => {
+      const spec = quotesSpec();
+      mockGetRecord.mockResolvedValueOnce(publishedQuoteRemote());
+      mockUpdateRecord
+        .mockResolvedValueOnce(undefined) // recall → DRAFT
+        .mockRejectedValueOnce(axiosErrorWithStatus(400, { message: 'field invalid' })) // edit fails
+        .mockResolvedValueOnce(undefined); // best-effort restore → published
+
+      const file = makeFile('900', { hs_terms: 'New terms', hs_status: 'APPROVAL_NOT_NEEDED' });
+
+      await expect(connector.updateRecords(spec, [file], [{ properties: { hs_terms: true } }])).rejects.toThrow();
+
+      // recall → (failed) edit → restore to the original published status.
+      expect(mockUpdateRecord.mock.calls).toEqual([
+        [QUOTES, '900', { hs_status: 'DRAFT' }],
+        [QUOTES, '900', { hs_terms: 'New terms' }],
+        [QUOTES, '900', { hs_status: 'APPROVAL_NOT_NEEDED' }],
+      ]);
+    });
+  });
 });

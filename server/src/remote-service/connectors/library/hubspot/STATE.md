@@ -160,7 +160,7 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - **Coverage:** create+delete diff (incl. clear-all) is unit-tested against the fake (`__tests__/hubspot-connector.spec.ts`, "association sync"); the grid pack seam is unit-tested (`scratch-desktop/.../resolve-pack.test.ts`); a live associate→dissociate round-trip in `server/test/integration/hubspot-connector-live.spec.ts` **PASSES against real HubSpot** (verified 2026-07-16; self-skips in CI until `INTEGRATION_TEST_HUBSPOT_API_KEY` is wired as a masked GitLab variable). Remaining: a manual `/qa-desktop-app` pass to drive the edit→publish through the real desktop grid UI.
 
 ## Edge cases discovered
-- (none yet — see SKILL.md → Stage E for what to hunt for)
+- **Published quotes are locked (`hs_locked=true`) — publish auto-recalls (DEV-10886).** HubSpot rejects a content PATCH on a published quote with `Published Quote cannot be edited.` `updateRecords` has a `quotes`-only branch (`applyQuoteUpdateRecallingIfPublished`) that GETs the live quote, and if it's published/locked does HubSpot's own "Recall & edit": PATCH `hs_status` → `DRAFT` (recall), apply the content + association edits, then set `hs_status` to the record's **on-disk** status (idempotent/resumable target; a deliberate on-disk `DRAFT` just isn't re-published). **The dance owns `hs_status`**: it's stripped from the content PATCH and applied only as the final step, so every content/association write happens inside the unlocked window — even on a full publish, where `hs_status` would otherwise ride along and re-lock the quote before associations sync. On a failure **after** recall it best-effort restores the original published status so a live quote is never left silently unpublished. A quote e-signed by all parties or paid can't be recalled at all — HubSpot refuses the recall PATCH and the connector surfaces a clear "signed or paid … can no longer be edited" error (`QUOTE_NOT_RECALLABLE`) instead of the raw validation message.
 
 ## Gotchas
 - (connector-specific operational notes)
@@ -171,9 +171,9 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Live spec:** `server/test/integration/hubspot-connector.spec.ts` — 📄 ✅.
 - **Runs in CI pipeline:** ✅ — runs on **every** pipeline run with no key — but against `test-api-fakes/hubspot`, not the live API.
 - **Credentials / env vars:** none (in-process fake) — local in `server/.env.integration` (template `.env.integration.example`); CI in GitLab → Settings → CI/CD → Variables.
-- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
+- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · associations ✅ · published-quote recall ✅ · error handling ✅.
 - **State model:** Fully deterministic — `beforeEach` resets the fake store and seeds it; not a live-API test.
-- **Notes:** Fake-backed. Validates connector code/shape, not real HubSpot behaviour.
+- **Notes:** Fake-backed. Validates connector code/shape, not real HubSpot behaviour. The fake now models the published-quote lock (`test-api-fakes/hubspot`: quote `hs_locked` tracks `hs_status`; the PATCH route rejects a locked-quote content edit but allows a status-only PATCH — the recall/publish control), so the recall → edit → re-publish round-trip is covered end-to-end (`published quote recall (DEV-10886)`). The un-recallable (signed/paid) and best-effort-restore-on-failure paths are unit-tested with a mocked client (`__tests__/hubspot-connector.spec.ts` → "published-quote recall"). Live verification of the recall dance against a real published quote is deferred (needs a portal quote that's been published, which requires manual setup). No `scratch-cli-tests` HubSpot coverage exists, so the CLI suite needs no change.
 - [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP is settled (implemented).
 
 ## Open issues

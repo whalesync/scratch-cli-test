@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { store, HubspotRecord } from "../store";
+import { store, HubspotRecord, isPublishedQuoteStatus } from "../store";
 
 const router = Router();
 
@@ -288,6 +288,38 @@ router.post("/objects/:objectType", (req, res) => {
 router.patch("/objects/:objectType/:recordId", (req, res) => {
   const { objectType, recordId } = req.params;
   const { properties } = req.body;
+
+  // Model HubSpot's published-quote lock (DEV-10886): a published quote is locked
+  // and rejects any content-property PATCH with "Published Quote cannot be
+  // edited." hs_status is HubSpot's always-writable lock control (recall/publish),
+  // so a PATCH that touches ONLY hs_status is allowed even while locked; anything
+  // else is rejected. This is what forces the connector's recall → edit →
+  // re-publish dance.
+  if (objectType === "quotes") {
+    const current = store.getRecord(objectType, recordId);
+    if (
+      current &&
+      !current.archived &&
+      isPublishedQuoteStatus(current.properties.hs_status)
+    ) {
+      const incoming: Record<string, unknown> = properties ?? {};
+      const incomingKeys = Object.keys(incoming);
+      const isStatusOnlyChange =
+        incomingKeys.length > 0 &&
+        incomingKeys.every((key) => key === "hs_status");
+      if (!isStatusOnlyChange) {
+        res.status(400).json({
+          status: "error",
+          message:
+            `Quote with 'quoteId' of ${recordId} failed update validation. ` +
+            `Please correct the errors and then re-submit : Published Quote cannot be edited.`,
+          correlationId: "fake-correlation-id",
+          category: "VALIDATION_ERROR",
+        });
+        return;
+      }
+    }
+  }
 
   const record = store.updateRecord(objectType, recordId, properties ?? {});
   if (!record) {

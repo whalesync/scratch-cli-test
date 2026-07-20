@@ -36,6 +36,24 @@ interface QueuedError {
   body: unknown;
 }
 
+/**
+ * `hs_status` values in which HubSpot treats a quote as published and locks it
+ * against property edits (DEV-10886). A locked quote must be recalled
+ * (`hs_status` → an editable status like DRAFT) before it can be edited.
+ */
+export const PUBLISHED_LOCKED_QUOTE_STATUSES = new Set([
+  "APPROVAL_NOT_NEEDED",
+  "APPROVED",
+]);
+
+export function isPublishedQuoteStatus(
+  status: string | null | undefined,
+): boolean {
+  return (
+    typeof status === "string" && PUBLISHED_LOCKED_QUOTE_STATUSES.has(status)
+  );
+}
+
 let idCounter = 1;
 
 function generateRecordId(): string {
@@ -95,6 +113,7 @@ class Store {
     record.properties.hs_object_id = record.id;
     record.properties.createdate = now;
     record.properties.lastmodifieddate = now;
+    this.syncQuoteLockFlag(objectType, record);
     this.records.get(objectType)!.set(record.id, record);
     return record;
   }
@@ -113,7 +132,22 @@ class Store {
     record.properties = { ...record.properties, ...properties };
     record.updatedAt = new Date().toISOString();
     record.properties.lastmodifieddate = record.updatedAt;
+    this.syncQuoteLockFlag(objectType, record);
     return record;
+  }
+
+  /**
+   * Keep a quote's read-only `hs_locked` flag consistent with its `hs_status`,
+   * mirroring HubSpot: publishing a quote locks it; recalling it to a draft
+   * status unlocks it (DEV-10886). No-op for non-quote object types.
+   */
+  private syncQuoteLockFlag(objectType: string, record: HubspotRecord): void {
+    if (objectType !== "quotes") return;
+    record.properties.hs_locked = isPublishedQuoteStatus(
+      record.properties.hs_status,
+    )
+      ? "true"
+      : "false";
   }
 
   /**
@@ -302,6 +336,52 @@ class Store {
           fieldType: "text",
           description: "Company domain",
           hidden: false,
+        },
+      ],
+      quotes: [
+        {
+          name: "hs_title",
+          label: "Quote Title",
+          type: "string",
+          fieldType: "text",
+          description: "Quote title",
+          hidden: false,
+        },
+        {
+          name: "hs_terms",
+          label: "Terms",
+          type: "string",
+          fieldType: "textarea",
+          description: "Quote terms",
+          hidden: false,
+        },
+        {
+          name: "hs_status",
+          label: "Status",
+          type: "enumeration",
+          fieldType: "select",
+          description: "Quote status",
+          hidden: false,
+          options: [
+            { label: "Draft", value: "DRAFT" },
+            { label: "Pending Approval", value: "PENDING_APPROVAL" },
+            { label: "Approved", value: "APPROVED" },
+            { label: "Approval Not Needed", value: "APPROVAL_NOT_NEEDED" },
+          ],
+        },
+        {
+          // Read-only lock flag HubSpot flips to true once a quote is published.
+          name: "hs_locked",
+          label: "Locked",
+          type: "bool",
+          fieldType: "booleancheckbox",
+          description: "Whether the quote is locked",
+          hidden: false,
+          modificationMetadata: {
+            archivable: false,
+            readOnlyDefinition: true,
+            readOnlyValue: true,
+          },
         },
       ],
       deals: [

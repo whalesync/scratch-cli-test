@@ -34,6 +34,7 @@ import { buildHubspotJsonTableSpec, isReadonlyHubspotProperty } from './hubspot-
 import {
   ASSOCIATIONS_BY_OBJECT_TYPE,
   HubspotAssociation,
+  HubspotAssociationResult,
   HubspotDownloadProgress,
   HubspotRecord,
   OBJECT_CONFIG,
@@ -41,6 +42,69 @@ import {
 } from './hubspot-types';
 
 const LOG_SOURCE = 'HubspotConnector';
+
+// --- Published-quote recall (DEV-10886) -------------------------------------
+//
+// HubSpot locks a published quote (`hs_locked = true`) and rejects any property
+// PATCH with "Published Quote cannot be edited." To edit a published quote you
+// must do HubSpot's own "Recall & edit" dance: PATCH `hs_status` → DRAFT
+// (recall), make the change, then PATCH `hs_status` back to the published value.
+// A quote that has been e-signed by all parties or paid can't be recalled at all.
+
+/** The HubSpot object type whose records are published/locked quotes. */
+const QUOTES_OBJECT_TYPE = 'quotes';
+
+/** The quote property holding the publish state (`DRAFT`, `APPROVED`, …). */
+const QUOTE_STATUS_PROPERTY_NAME = 'hs_status';
+
+/** The read-only quote property HubSpot flips to `true` once a quote is published. */
+const QUOTE_LOCKED_PROPERTY_NAME = 'hs_locked';
+
+/** The `hs_status` value that recalls a quote back to an editable draft. */
+const QUOTE_DRAFT_STATUS = 'DRAFT';
+
+/**
+ * `hs_status` values in which HubSpot treats a quote as published and locks it
+ * against property edits. Used as the fallback signal when the read-only
+ * `hs_locked` property isn't present on the fetched record.
+ */
+const PUBLISHED_LOCKED_QUOTE_STATUSES = new Set(['APPROVAL_NOT_NEEDED', 'APPROVED']);
+
+/**
+ * Whether the remote quote is currently published and therefore locked against
+ * property edits. Prefers the authoritative read-only `hs_locked` flag and falls
+ * back to the published-status set when the flag isn't in the fetched properties.
+ */
+function isQuotePublishedAndLocked(remoteQuote: HubspotRecord): boolean {
+  if (remoteQuote.properties?.[QUOTE_LOCKED_PROPERTY_NAME] === 'true') {
+    return true;
+  }
+  const status = remoteQuote.properties?.[QUOTE_STATUS_PROPERTY_NAME];
+  return typeof status === 'string' && PUBLISHED_LOCKED_QUOTE_STATUSES.has(status);
+}
+
+/**
+ * The status the quote should end in once the edit lands. This is the record's
+ * **on-disk** `hs_status` — the user's intended final status (still the published
+ * value when they only edited, say, Terms; `DRAFT` if they deliberately
+ * un-published). Using the on-disk value keeps the recall dance idempotent/
+ * resumable (a crash mid-dance converges to the same end state on the next run).
+ * Falls back to the live status the quote had before recall when the on-disk
+ * record carries no `hs_status`. The recall dance owns `hs_status` entirely: it's
+ * applied as the final step (re-locking a recalled quote), never inside the
+ * content PATCH.
+ */
+function resolveQuoteDesiredFinalStatus(
+  onDiskQuoteFile: ConnectorFile,
+  remoteQuoteBeforeEdit: HubspotRecord,
+): string | undefined {
+  const onDiskStatus = (onDiskQuoteFile as unknown as HubspotRecord).properties?.[QUOTE_STATUS_PROPERTY_NAME];
+  if (typeof onDiskStatus === 'string' && onDiskStatus.trim() !== '') {
+    return onDiskStatus;
+  }
+  const liveStatus = remoteQuoteBeforeEdit.properties?.[QUOTE_STATUS_PROPERTY_NAME];
+  return typeof liveStatus === 'string' && liveStatus.trim() !== '' ? liveStatus : undefined;
+}
 
 /**
  * Resolve the property name to use for the modified-since filter, preferring an
@@ -357,6 +421,11 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   /**
    * Update records in HubSpot.
    * Updates properties via PATCH, then diffs and syncs associations via v4 API.
+   *
+   * Published quotes are a special case: HubSpot locks them and rejects the
+   * property PATCH, so their writes route through a recall → edit → re-publish
+   * dance ({@link applyQuoteUpdateRecallingIfPublished}). Every other object type
+   * takes the straight PATCH + association-sync path ({@link applyStandardUpdate}).
    */
   async updateRecords(
     tableSpec: BaseJsonTableSpec,
@@ -376,56 +445,34 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
       const file = files[i];
       const recordId = String(file.id);
       const cf = changedFields?.[i];
-      let wrote = false;
 
-      const hasPropertyChanges = !cf || 'properties' in cf;
-      if (hasPropertyChanges) {
-        let properties: Record<string, unknown>;
-        if (cf?.properties && typeof cf.properties === 'object' && !Array.isArray(cf.properties)) {
-          // Deep changedFields: only send the specific sub-properties that changed.
-          // A read-only property present here means the user genuinely edited a
-          // read-only property (changedFields is the published-vs-working diff) —
-          // surface it loudly instead of silently dropping the edit (DEV-10597).
-          const changedProps = cf.properties as Record<string, unknown>;
-          const fileProps = (file as unknown as HubspotRecord).properties ?? {};
-          properties = {};
-          const readonlyChangedPropertyNames: string[] = [];
-          for (const propKey of Object.keys(changedProps)) {
-            if (isReadonlyHubspotProperty(propKey, tableSpec)) {
-              readonlyChangedPropertyNames.push(propKey);
-              continue;
-            }
-            if (propKey in fileProps) {
-              properties[propKey] = fileProps[propKey];
-            }
-          }
-          if (readonlyChangedPropertyNames.length > 0) {
-            throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedPropertyNames));
-          }
-        } else {
-          properties = this.extractWritableProperties(file, tableSpec);
-        }
-        if (Object.keys(properties).length > 0) {
-          await this.client.updateRecord(objectType, recordId, properties);
-          wrote = true;
-        }
-      }
+      const propertiesToWrite = this.computeWritablePropertiesToPublish(file, tableSpec, cf);
+      // Only sync associations when this object supports them AND the changeset
+      // touches them (a full publish — `cf` undefined — always does). An
+      // `undefined` result means "leave associations alone".
+      const shouldSyncAssociations = (!cf || 'associations' in cf) && associationTypes.length > 0;
+      const desiredAssociations = shouldSyncAssociations
+        ? ((file as unknown as HubspotRecord).associations ?? {})
+        : undefined;
 
-      const hasAssociationChanges = !cf || 'associations' in cf;
-      if (hasAssociationChanges && associationTypes.length > 0) {
-        // Fetch current remote state to compute the diff
-        const currentRecord = await this.client.getRecord(objectType, recordId, propertyNames, associationTypes);
-        if (currentRecord) {
-          const currentAssociations = currentRecord.associations ?? {};
-          const desiredAssociations = (file as unknown as HubspotRecord).associations ?? {};
-          await this.syncAssociations(objectType, recordId, currentAssociations, desiredAssociations);
-          // Conservative: mark as written even when syncAssociations was a
-          // no-op (desired == current). The cost is one extra GET in the
-          // refetch phase; the benefit is no need to plumb a "did anything
-          // actually change" signal through syncAssociations.
-          wrote = true;
-        }
-      }
+      const wrote =
+        objectType === QUOTES_OBJECT_TYPE
+          ? await this.applyQuoteUpdateRecallingIfPublished({
+              recordId,
+              propertiesToWrite,
+              desiredAssociations,
+              onDiskQuoteFile: file,
+              propertyNames,
+              associationTypes,
+            })
+          : await this.applyStandardUpdate({
+              objectType,
+              recordId,
+              propertiesToWrite,
+              desiredAssociations,
+              propertyNames,
+              associationTypes,
+            });
 
       if (wrote) {
         writtenIndexes.push(i);
@@ -515,6 +562,267 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   }
 
   // --- Private helpers ---
+
+  /**
+   * Resolve the writable property payload to PATCH for one record, honoring the
+   * (possibly deep) `changedFields` diff. Returns `{}` when the changeset touches
+   * no writable property (association-only or empty changeset).
+   *
+   * Deep `changedFields`: only the specific sub-properties that changed are sent.
+   * A read-only property present among them means the user genuinely edited a
+   * read-only property (changedFields is the published-vs-working diff), so we
+   * surface it loudly instead of silently dropping the edit (DEV-10597). A full
+   * publish (`changedFields` undefined) or a shallow `{ properties: … }` marker
+   * falls back to every writable property on the file.
+   */
+  private computeWritablePropertiesToPublish(
+    file: ConnectorFile,
+    tableSpec: BaseJsonTableSpec,
+    changedFieldsForFile: Record<string, unknown> | undefined,
+  ): Record<string, unknown> {
+    const cf = changedFieldsForFile;
+    if (cf && !('properties' in cf)) {
+      // The changeset names other keys (e.g. associations) but not properties —
+      // nothing to PATCH.
+      return {};
+    }
+    if (cf?.properties && typeof cf.properties === 'object' && !Array.isArray(cf.properties)) {
+      const changedProps = cf.properties as Record<string, unknown>;
+      const fileProps = (file as unknown as HubspotRecord).properties ?? {};
+      const properties: Record<string, unknown> = {};
+      const readonlyChangedPropertyNames: string[] = [];
+      for (const propKey of Object.keys(changedProps)) {
+        if (isReadonlyHubspotProperty(propKey, tableSpec)) {
+          readonlyChangedPropertyNames.push(propKey);
+          continue;
+        }
+        if (propKey in fileProps) {
+          properties[propKey] = fileProps[propKey];
+        }
+      }
+      if (readonlyChangedPropertyNames.length > 0) {
+        throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedPropertyNames));
+      }
+      return properties;
+    }
+    return this.extractWritableProperties(file, tableSpec);
+  }
+
+  /**
+   * Standard (non-quote) update: PATCH the writable properties, then diff+sync
+   * associations. Returns whether any write fired (drives the Phase-2 refetch).
+   */
+  private async applyStandardUpdate(params: {
+    objectType: string;
+    recordId: string;
+    propertiesToWrite: Record<string, unknown>;
+    desiredAssociations: Record<string, HubspotAssociationResult> | undefined;
+    propertyNames: string[];
+    associationTypes: string[];
+  }): Promise<boolean> {
+    const { objectType, recordId, propertiesToWrite, desiredAssociations, propertyNames, associationTypes } = params;
+    let wrote = false;
+
+    if (Object.keys(propertiesToWrite).length > 0) {
+      await this.client.updateRecord(objectType, recordId, propertiesToWrite);
+      wrote = true;
+    }
+
+    if (desiredAssociations !== undefined) {
+      // Fetch current remote state to compute the diff.
+      const currentRecord = await this.client.getRecord(objectType, recordId, propertyNames, associationTypes);
+      if (currentRecord) {
+        await this.syncAssociations(objectType, recordId, currentRecord.associations ?? {}, desiredAssociations);
+        // Conservative: mark as written even when syncAssociations was a no-op
+        // (desired == current). The cost is one extra GET in the refetch phase;
+        // the benefit is no need to plumb a "did anything actually change" signal
+        // through syncAssociations.
+        wrote = true;
+      }
+    }
+
+    return wrote;
+  }
+
+  /**
+   * Update a quote, transparently recalling it first if it's published/locked
+   * (DEV-10886). HubSpot rejects a content PATCH on a published quote, so we do
+   * its own "Recall & edit": recall to DRAFT, apply the edits, then set the
+   * record's on-disk status (re-locking a recalled quote).
+   *
+   * The recall dance **owns `hs_status`**: it is stripped from the content PATCH
+   * and applied only as the final step. That guarantees every content and
+   * association write happens inside the unlocked (recalled) window — even on a
+   * full publish, where `hs_status` would otherwise ride along in the content
+   * PATCH and re-lock the quote before the associations are synced. It also
+   * avoids a redundant second `hs_status` PATCH.
+   *
+   * One GET reads the live quote (its lock state + status + current associations),
+   * reused for the association diff. Returns whether any write fired (drives the
+   * Phase-2 refetch).
+   *
+   * Failure handling:
+   *  - The recall itself is refused for a signed/paid quote → a clear, actionable
+   *    error ({@link recallPublishedQuoteToDraftOrThrow}).
+   *  - Any failure after a successful recall → best-effort restore of the original
+   *    published status, so a live quote is never left silently unpublished
+   *    ({@link bestEffortRestorePublishedQuoteStatus}).
+   */
+  private async applyQuoteUpdateRecallingIfPublished(params: {
+    recordId: string;
+    propertiesToWrite: Record<string, unknown>;
+    desiredAssociations: Record<string, HubspotAssociationResult> | undefined;
+    onDiskQuoteFile: ConnectorFile;
+    propertyNames: string[];
+    associationTypes: string[];
+  }): Promise<boolean> {
+    const { recordId, propertiesToWrite, desiredAssociations, onDiskQuoteFile, propertyNames, associationTypes } =
+      params;
+
+    // Split the payload: hs_status is driven by the recall dance (recall +
+    // final-status step), never sent in the content PATCH.
+    const statusChangeRequested = QUOTE_STATUS_PROPERTY_NAME in propertiesToWrite;
+    const contentPropertiesToWrite = { ...propertiesToWrite };
+    delete contentPropertiesToWrite[QUOTE_STATUS_PROPERTY_NAME];
+
+    const hasContentPropertyEdits = Object.keys(contentPropertiesToWrite).length > 0;
+    const hasAssociationChanges = desiredAssociations !== undefined;
+    if (!hasContentPropertyEdits && !hasAssociationChanges && !statusChangeRequested) {
+      return false;
+    }
+
+    // Read the live quote first (one GET, reused for the association diff below)
+    // to learn whether it's locked and what its live status is. A quotes
+    // property-only edit does one extra GET vs. the standard path — quotes are
+    // low-volume, so the clarity is worth it.
+    const remoteQuoteBeforeEdit = await this.client.getRecord(
+      QUOTES_OBJECT_TYPE,
+      recordId,
+      propertyNames,
+      associationTypes,
+    );
+    if (!remoteQuoteBeforeEdit) {
+      // Quote vanished between plan and publish (concurrent delete). Nothing to
+      // write; the refetch phase falls back to the input file. Non-destructive.
+      return false;
+    }
+
+    const quoteWasPublishedAndLocked = isQuotePublishedAndLocked(remoteQuoteBeforeEdit);
+    // Where the quote should end up (the user's intended final status, on-disk).
+    const desiredFinalStatus = resolveQuoteDesiredFinalStatus(onDiskQuoteFile, remoteQuoteBeforeEdit);
+    // Exactly what was live before we touched it — the failure-restore target.
+    const liveStatusBeforeRecall = remoteQuoteBeforeEdit.properties?.[QUOTE_STATUS_PROPERTY_NAME] ?? undefined;
+
+    if (quoteWasPublishedAndLocked) {
+      await this.recallPublishedQuoteToDraftOrThrow(recordId);
+    }
+    // Status the quote sits at once content edits run: DRAFT if we recalled,
+    // otherwise unchanged (the content PATCH never touches hs_status).
+    const quoteStatusDuringEdits = quoteWasPublishedAndLocked ? QUOTE_DRAFT_STATUS : liveStatusBeforeRecall;
+
+    try {
+      if (hasContentPropertyEdits) {
+        await this.client.updateRecord(QUOTES_OBJECT_TYPE, recordId, contentPropertiesToWrite);
+      }
+      if (desiredAssociations !== undefined) {
+        // Synced while the quote is unlocked (still DRAFT if we recalled), before
+        // the final status step below re-locks it.
+        await this.syncAssociations(
+          QUOTES_OBJECT_TYPE,
+          recordId,
+          remoteQuoteBeforeEdit.associations ?? {},
+          desiredAssociations,
+        );
+      }
+      // Final step: move hs_status to the desired end state. This re-publishes a
+      // recalled quote and carries through a deliberate status change on an
+      // unlocked one; no-op when it's already at the target.
+      await this.setQuoteStatusIfChanged(recordId, quoteStatusDuringEdits, desiredFinalStatus);
+    } catch (editOrRepublishError) {
+      if (quoteWasPublishedAndLocked) {
+        await this.bestEffortRestorePublishedQuoteStatus(recordId, liveStatusBeforeRecall);
+      }
+      throw editOrRepublishError;
+    }
+
+    return true;
+  }
+
+  /**
+   * Recall a published quote by PATCHing `hs_status` → DRAFT, unlocking it for
+   * edits. A quote that's been e-signed by all parties or paid can't be recalled
+   * at all — HubSpot refuses the PATCH; convert that into a clear, actionable
+   * error (routed through the per-record publish-failure path like any rejection).
+   */
+  private async recallPublishedQuoteToDraftOrThrow(recordId: string): Promise<void> {
+    try {
+      await this.client.updateRecord(QUOTES_OBJECT_TYPE, recordId, {
+        [QUOTE_STATUS_PROPERTY_NAME]: QUOTE_DRAFT_STATUS,
+      });
+    } catch (error) {
+      // Only a 400 VALIDATION_ERROR means "this quote can't be recalled" (signed/
+      // paid). A 403 is a missing quote-write scope on the PAT — let it propagate
+      // raw so extractConnectorErrorDetails routes it to the scope-specific
+      // message instead of this (a HubspotError would be matched first and mask it).
+      if (isAxiosError(error) && error.response?.status === 400) {
+        throw new HubspotError(
+          'This HubSpot quote has been signed or paid and can no longer be edited. HubSpot does not allow ' +
+            'recalling a signed or paid quote. Undo the change to this quote, then publish again.',
+          error.response.status,
+          'QUOTE_NOT_RECALLABLE',
+          error.response.data,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Move a quote's `hs_status` to `desiredStatus` as the final step of the recall
+   * dance — re-publishing a recalled quote, or carrying through a deliberate
+   * status change on an unlocked one. No-op when there's no desired status or it
+   * already matches `currentStatus` (e.g. a recalled quote whose intended final
+   * status is DRAFT, or an unlocked quote whose status didn't change), so we never
+   * fire a pointless PATCH.
+   */
+  private async setQuoteStatusIfChanged(
+    recordId: string,
+    currentStatus: string | undefined,
+    desiredStatus: string | undefined,
+  ): Promise<void> {
+    if (!desiredStatus || desiredStatus === currentStatus) {
+      return;
+    }
+    await this.client.updateRecord(QUOTES_OBJECT_TYPE, recordId, { [QUOTE_STATUS_PROPERTY_NAME]: desiredStatus });
+  }
+
+  /**
+   * After a recall succeeded but a later step failed, try to put the quote's
+   * status back to what was live before recall, so we never leave a published
+   * quote silently unpublished. Best-effort: a failure here is logged, not thrown
+   * (the original edit error is what the caller re-throws).
+   */
+  private async bestEffortRestorePublishedQuoteStatus(
+    recordId: string,
+    liveStatusBeforeRecall: string | undefined,
+  ): Promise<void> {
+    if (!liveStatusBeforeRecall || liveStatusBeforeRecall === QUOTE_DRAFT_STATUS) {
+      return;
+    }
+    try {
+      await this.client.updateRecord(QUOTES_OBJECT_TYPE, recordId, {
+        [QUOTE_STATUS_PROPERTY_NAME]: liveStatusBeforeRecall,
+      });
+    } catch (restoreError) {
+      WSLogger.warn({
+        source: LOG_SOURCE,
+        message:
+          `Failed to restore published status "${liveStatusBeforeRecall}" for recalled quote ${recordId} ` +
+          `after a publish error; the quote may be left in DRAFT and need manual re-publish`,
+        error: restoreError instanceof Error ? restoreError.message : String(restoreError),
+      });
+    }
+  }
 
   /**
    * Get cached property names for an object type, or fetch them.

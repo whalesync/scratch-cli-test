@@ -12,6 +12,7 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
   getServiceDisplayName: (service: string) => service,
 }));
 
+import { HubspotApiClient } from 'src/remote-service/connectors/library/hubspot/hubspot-api-client';
 import { HubspotConnector } from 'src/remote-service/connectors/library/hubspot/hubspot-connector';
 import { BaseJsonTableSpec, ConnectorFile, EntityId } from 'src/remote-service/connectors/types';
 
@@ -32,6 +33,11 @@ const COMPANIES_ENTITY_ID: EntityId = {
 const DEALS_ENTITY_ID: EntityId = {
   wsId: 'deals',
   remoteId: ['deals'],
+};
+
+const QUOTES_ENTITY_ID: EntityId = {
+  wsId: 'quotes',
+  remoteId: ['quotes'],
 };
 
 function createConnector(): HubspotConnector {
@@ -548,6 +554,113 @@ describe('HubspotConnector with fake API', () => {
       const companyAssocs = updated?.associations?.companies?.results ?? [];
       expect(companyAssocs).toHaveLength(1);
       expect(companyAssocs[0].id).toBe(company2.id);
+    });
+  });
+
+  // A published HubSpot quote is locked and rejects a property PATCH with
+  // "Published Quote cannot be edited" (DEV-10886). The fake models that lock; the
+  // connector must recall → edit → re-publish to get the change through.
+  describe('published quote recall (DEV-10886)', () => {
+    /** Seed a locked/published quote; returns its record id. */
+    function seedPublishedQuote(): string {
+      const quote = store.addRecord('quotes', {
+        hs_title: 'Q1',
+        hs_terms: 'Old terms',
+        hs_status: 'APPROVAL_NOT_NEEDED',
+      });
+      return quote.id;
+    }
+
+    it('the fake locks a published quote against a raw property edit but allows the recall', async () => {
+      const quoteId = seedPublishedQuote();
+      // Publishing flips hs_locked on.
+      expect(store.getRecord('quotes', quoteId)?.properties.hs_locked).toBe('true');
+
+      const client = new HubspotApiClient('fake-test-token');
+      // A raw property PATCH on a published quote is rejected...
+      await expect(client.updateRecord('quotes', quoteId, { hs_terms: 'Nope' })).rejects.toThrow();
+      // ...but recalling it to DRAFT is allowed, and unlocks it.
+      await expect(client.updateRecord('quotes', quoteId, { hs_status: 'DRAFT' })).resolves.toBeDefined();
+      expect(store.getRecord('quotes', quoteId)?.properties.hs_locked).toBe('false');
+    });
+
+    it('edits a published quote end-to-end via recall → edit → re-publish', async () => {
+      const quoteId = seedPublishedQuote();
+
+      const connector = createConnector();
+      const spec = await connector.fetchJsonTableSpec(QUOTES_ENTITY_ID);
+
+      const file: ConnectorFile = {
+        id: quoteId,
+        properties: { hs_title: 'Q1', hs_terms: 'New terms', hs_status: 'APPROVAL_NOT_NEEDED' },
+      } as unknown as ConnectorFile;
+
+      const [result] = await connector.updateRecords(spec, [file], [{ properties: { hs_terms: true } }]);
+
+      // The edit landed AND the quote is back to published (re-locked) — proving the
+      // recall → edit → re-publish dance ran against a fake that rejects locked edits.
+      const stored = store.getRecord('quotes', quoteId);
+      expect(stored?.properties.hs_terms).toBe('New terms');
+      expect(stored?.properties.hs_status).toBe('APPROVAL_NOT_NEEDED');
+      expect(stored?.properties.hs_locked).toBe('true');
+
+      // The returned ConnectorFile mirrors a fresh pull of the re-published quote.
+      const props = (result as unknown as { properties: Record<string, string> }).properties;
+      expect(props.hs_terms).toBe('New terms');
+      expect(props.hs_status).toBe('APPROVAL_NOT_NEEDED');
+    });
+
+    it('edits a published quote via a full publish (hs_status in the payload) — converges without a re-lock mid-window', async () => {
+      const quoteId = seedPublishedQuote();
+
+      const connector = createConnector();
+      const spec = await connector.fetchJsonTableSpec(QUOTES_ENTITY_ID);
+
+      // Full publish (no changedFields) sends the whole writable payload, which
+      // includes hs_status. The dance strips hs_status from the content PATCH, so
+      // that edit runs while the quote is still DRAFT (never re-locking it); the
+      // only re-lock is the final status step. The quote must still converge to
+      // its published state with the edited terms.
+      const file: ConnectorFile = {
+        id: quoteId,
+        properties: { hs_title: 'Q1', hs_terms: 'Full-publish terms', hs_status: 'APPROVAL_NOT_NEEDED' },
+      } as unknown as ConnectorFile;
+
+      await connector.updateRecords(spec, [file]);
+
+      const stored = store.getRecord('quotes', quoteId);
+      expect(stored?.properties.hs_terms).toBe('Full-publish terms');
+      expect(stored?.properties.hs_status).toBe('APPROVAL_NOT_NEEDED');
+      expect(stored?.properties.hs_locked).toBe('true');
+    });
+
+    it('edits a published quote AND adds an association in one recall window, ending re-published', async () => {
+      const deal = store.addRecord('deals', { dealname: 'D1' });
+      const quoteId = seedPublishedQuote();
+
+      const connector = createConnector();
+      const spec = await connector.fetchJsonTableSpec(QUOTES_ENTITY_ID);
+
+      // Deep changedFields touching BOTH a property and associations — the exact
+      // shape the desktop grid publishes when a user edits Terms and links a deal.
+      const desiredAssociations = { deals: { results: [{ id: deal.id }] } };
+      const file: ConnectorFile = {
+        id: quoteId,
+        properties: { hs_title: 'Q1', hs_terms: 'New terms', hs_status: 'APPROVAL_NOT_NEEDED' },
+        associations: desiredAssociations,
+      } as unknown as ConnectorFile;
+
+      await connector.updateRecords(
+        spec,
+        [file],
+        [{ properties: { hs_terms: true }, associations: desiredAssociations }],
+      );
+
+      const stored = store.getRecord('quotes', quoteId);
+      expect(stored?.properties.hs_terms).toBe('New terms');
+      expect(stored?.properties.hs_status).toBe('APPROVAL_NOT_NEEDED');
+      expect(stored?.properties.hs_locked).toBe('true');
+      expect(stored?.associations?.deals?.results.map((r) => r.id)).toContain(deal.id);
     });
   });
 
