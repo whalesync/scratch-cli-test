@@ -668,6 +668,38 @@ describe('HubspotConnector with fake API', () => {
       expect(stored?.properties.hs_locked).toBe('true');
       expect(stored?.associations?.deals?.results.map((r) => r.id)).toContain(deal.id);
     });
+
+    it('refuses to publish an e-sign quote and leaves it published (never recalls it) — DEV-10902', async () => {
+      // Our association sync can't round-trip HubSpot's "Signer" labeled
+      // association, so recalling/re-publishing an e-sign quote would strip its
+      // signers and leave it unpublished. The guard must refuse before recalling.
+      const quote = store.addRecord('quotes', {
+        hs_title: 'Q1',
+        hs_terms: 'Old terms',
+        hs_status: 'APPROVAL_NOT_NEEDED',
+        hs_esign_enabled: 'true',
+      });
+      expect(store.getRecord('quotes', quote.id)?.properties.hs_locked).toBe('true');
+
+      const connector = createConnector();
+      const spec = await connector.fetchJsonTableSpec(QUOTES_ENTITY_ID);
+
+      const file: ConnectorFile = {
+        id: quote.id,
+        properties: { hs_title: 'Q1', hs_terms: 'New terms', hs_status: 'APPROVAL_NOT_NEEDED' },
+      } as unknown as ConnectorFile;
+
+      await expect(connector.updateRecords(spec, [file], [{ properties: { hs_terms: true } }])).rejects.toThrow(
+        /e-signature|signer/i,
+      );
+
+      // The live quote is untouched: still published/locked, terms unchanged — it
+      // was never recalled to DRAFT.
+      const stored = store.getRecord('quotes', quote.id);
+      expect(stored?.properties.hs_terms).toBe('Old terms');
+      expect(stored?.properties.hs_status).toBe('APPROVAL_NOT_NEEDED');
+      expect(stored?.properties.hs_locked).toBe('true');
+    });
   });
 
   describe('deleteRecords', () => {

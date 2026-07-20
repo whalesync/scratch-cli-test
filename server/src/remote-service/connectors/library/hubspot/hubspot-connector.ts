@@ -64,6 +64,13 @@ const QUOTE_LOCKED_PROPERTY_NAME = 'hs_locked';
 const QUOTE_DRAFT_STATUS = 'DRAFT';
 
 /**
+ * The quote property HubSpot sets to `"true"` when e-signature is enabled. Such a
+ * quote requires ≥1 contact carrying the "Signer" **labeled** association before
+ * HubSpot will let it be published (`hs_status` → a published value).
+ */
+const QUOTE_ESIGN_ENABLED_PROPERTY_NAME = 'hs_esign_enabled';
+
+/**
  * `hs_status` values in which HubSpot treats a quote as published and locks it
  * against property edits. Used as the fallback signal when the read-only
  * `hs_locked` property isn't present on the fetched record.
@@ -81,6 +88,43 @@ function isQuotePublishedAndLocked(remoteQuote: HubspotRecord): boolean {
   }
   const status = remoteQuote.properties?.[QUOTE_STATUS_PROPERTY_NAME];
   return typeof status === 'string' && PUBLISHED_LOCKED_QUOTE_STATUSES.has(status);
+}
+
+/**
+ * Whether the remote quote has e-signature enabled. HubSpot rejects publishing
+ * such a quote (`hs_status` → published) unless it has ≥1 contact with the
+ * "Signer" **labeled** association. Our association sync can't yet round-trip
+ * that label (it diffs by id only and creates via the v4 `default` endpoint —
+ * see {@link syncAssociations} / DEV-10902), so recalling and re-publishing an
+ * e-sign quote would strip its signers and leave a live quote stuck unpublished.
+ */
+function isQuoteEsignEnabled(remoteQuote: HubspotRecord): boolean {
+  return remoteQuote.properties?.[QUOTE_ESIGN_ENABLED_PROPERTY_NAME] === 'true';
+}
+
+/**
+ * Whether re-running {@link HubspotConnector#syncAssociations} for `desired` would
+ * actually create or delete an association — i.e. the by-id set of some association
+ * type differs from `current`. Mirrors that method's id-only diff exactly, so it's
+ * `true` precisely when a v4 write would fire. A no-op resync (desired set matches
+ * remote by id) returns `false`: it touches nothing and leaves existing labels — a
+ * quote's "Signer" association included — intact. Used by the e-sign guard so a
+ * full publish that doesn't change associations isn't refused as if it would.
+ */
+function associationSyncWouldCreateOrDelete(
+  current: Record<string, HubspotAssociationResult>,
+  desired: Record<string, HubspotAssociationResult>,
+): boolean {
+  const allAssociationTypes = new Set([...Object.keys(current), ...Object.keys(desired)]);
+  for (const associationType of allAssociationTypes) {
+    const currentIds = new Set((current[associationType]?.results ?? []).map((association) => association.id));
+    const desiredIds = new Set((desired[associationType]?.results ?? []).map((association) => association.id));
+    if (currentIds.size !== desiredIds.size) return true;
+    for (const id of desiredIds) {
+      if (!currentIds.has(id)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -746,6 +790,34 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     const desiredFinalStatus = resolveQuoteDesiredFinalStatus(onDiskQuoteFile, remoteQuoteBeforeEdit);
     // Exactly what was live before we touched it — the failure-restore target.
     const liveStatusBeforeRecall = remoteQuoteBeforeEdit.properties?.[QUOTE_STATUS_PROPERTY_NAME] ?? undefined;
+
+    // E-sign guard (DEV-10886 follow-up / DEV-10902): HubSpot requires a "Signer"
+    // labeled association to publish an e-sign quote, and our association sync
+    // can't yet round-trip that label (it would drop signers and leave the quote
+    // unpublished). Refuse *before* recalling — while the quote is still whole —
+    // whenever this publish would recall it, actually mutate its associations, or
+    // move it to a published status. A no-op association resync (the desired set
+    // matches remote — e.g. a full publish that changed only a property) leaves
+    // the signer untouched, so it isn't refused; likewise a property-only edit
+    // that keeps a draft quote in DRAFT touches none of these and proceeds.
+    if (isQuoteEsignEnabled(remoteQuoteBeforeEdit)) {
+      const wouldRepublishToLockedStatus =
+        desiredFinalStatus !== undefined &&
+        PUBLISHED_LOCKED_QUOTE_STATUSES.has(desiredFinalStatus) &&
+        desiredFinalStatus !== liveStatusBeforeRecall;
+      const wouldMutateAssociations =
+        desiredAssociations !== undefined &&
+        associationSyncWouldCreateOrDelete(remoteQuoteBeforeEdit.associations ?? {}, desiredAssociations);
+      if (quoteWasPublishedAndLocked || wouldMutateAssociations || wouldRepublishToLockedStatus) {
+        throw new HubspotError(
+          'This is an e-signature quote, which HubSpot will not publish unless a contact is marked as a Signer. ' +
+            "Scratch can't yet preserve HubSpot signer associations when publishing, so publishing this change " +
+            'would remove the signers and leave the quote unpublished. Edit this quote directly in HubSpot instead.',
+          422,
+          'QUOTE_ESIGN_NOT_EDITABLE',
+        );
+      }
+    }
 
     if (quoteWasPublishedAndLocked) {
       await this.recallPublishedQuoteToDraftOrThrow(recordId);

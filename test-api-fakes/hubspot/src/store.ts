@@ -383,6 +383,16 @@ class Store {
             readOnlyValue: true,
           },
         },
+        {
+          // Whether e-signature is enabled. HubSpot refuses to publish such a
+          // quote without a "Signer" labeled association (DEV-10886 / DEV-10902).
+          name: "hs_esign_enabled",
+          label: "E-Signature Enabled",
+          type: "bool",
+          fieldType: "booleancheckbox",
+          description: "Whether e-signature is enabled for the quote",
+          hidden: false,
+        },
       ],
       deals: [
         {

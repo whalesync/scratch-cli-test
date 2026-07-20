@@ -614,6 +614,105 @@ describe('HubspotConnector', () => {
       expect(mockCreateAssociation.mock.invocationCallOrder[0]).toBeLessThan(republishInvocationOrder);
     });
 
+    // E-sign guard (DEV-10886 follow-up / DEV-10902): HubSpot won't publish an
+    // e-sign quote without a "Signer" labeled association, and our association
+    // sync can't round-trip that label — so recalling/re-publishing an e-sign
+    // quote would strip its signers and leave it unpublished. Refuse first.
+    it('refuses to publish an e-sign quote before recalling it — the quote is left untouched', async () => {
+      const spec = quotesSpec();
+      mockGetRecord.mockResolvedValueOnce(publishedQuoteRemote({ hs_esign_enabled: 'true' }));
+
+      const file = makeFile('900', { hs_terms: 'New terms', hs_status: 'APPROVAL_NOT_NEEDED' });
+
+      await expect(connector.updateRecords(spec, [file], [{ properties: { hs_terms: true } }])).rejects.toThrow(
+        /e-signature|signer/i,
+      );
+      // Threw before any write — the live quote is never recalled/unpublished.
+      expect(mockUpdateRecord).not.toHaveBeenCalled();
+      expect(mockCreateAssociation).not.toHaveBeenCalled();
+      expect(mockDeleteAssociation).not.toHaveBeenCalled();
+    });
+
+    it('refuses an association sync on an e-sign quote even when it is an unlocked draft', async () => {
+      const spec = quotesSpec();
+      // Draft (unlocked) e-sign quote — no recall needed — but syncing associations
+      // would still drop the signer label, so it's refused before any write.
+      mockGetRecord.mockResolvedValueOnce(
+        publishedQuoteRemote({ hs_status: 'DRAFT', hs_locked: 'false', hs_esign_enabled: 'true' }),
+      );
+
+      const file: ConnectorFile = {
+        ...makeFile('900', { hs_status: 'DRAFT' }),
+        associations: { contacts: { results: [{ id: 'K1' }] } },
+      };
+
+      await expect(connector.updateRecords(spec, [file], [{ associations: file.associations }])).rejects.toThrow(
+        /e-signature|signer/i,
+      );
+      expect(mockUpdateRecord).not.toHaveBeenCalled();
+      expect(mockCreateAssociation).not.toHaveBeenCalled();
+    });
+
+    it('still allows a property-only edit that keeps an e-sign quote in DRAFT (guard is not blanket)', async () => {
+      const spec = quotesSpec();
+      // Draft e-sign quote, property-only edit, staying in DRAFT: no recall, no
+      // association sync, no re-publish — nothing that could strip a signer.
+      mockGetRecord
+        .mockResolvedValueOnce(
+          publishedQuoteRemote({ hs_status: 'DRAFT', hs_locked: 'false', hs_esign_enabled: 'true' }),
+        )
+        .mockResolvedValueOnce(
+          publishedQuoteRemote({
+            hs_status: 'DRAFT',
+            hs_locked: 'false',
+            hs_esign_enabled: 'true',
+            hs_terms: 'New terms',
+          }),
+        );
+
+      const file = makeFile('900', { hs_terms: 'New terms', hs_status: 'DRAFT' });
+
+      await connector.updateRecords(spec, [file], [{ properties: { hs_terms: true } }]);
+
+      // Only the content edit fired — no hs_status transitions, no error.
+      expect(mockUpdateRecord.mock.calls).toEqual([[QUOTES, '900', { hs_terms: 'New terms' }]]);
+    });
+
+    it('allows a full publish of a draft e-sign quote when its associations are unchanged (no-op resync)', async () => {
+      const spec = quotesSpec();
+      // A full publish (no changedFields) always carries the file's associations,
+      // but here they match remote by id → syncAssociations is a no-op that leaves
+      // the signer untouched. The guard must NOT refuse it just because an
+      // association payload is present.
+      const draftEsignRemote = {
+        ...publishedQuoteRemote({ hs_status: 'DRAFT', hs_locked: 'false', hs_esign_enabled: 'true' }),
+        associations: {
+          contacts: {
+            results: [
+              { id: 'K1', type: 'quote_to_contact' },
+              { id: 'K1', type: 'quote_to_contact_signer' },
+            ],
+          },
+        },
+      };
+      mockGetRecord.mockResolvedValueOnce(draftEsignRemote).mockResolvedValueOnce({
+        ...draftEsignRemote,
+        properties: { ...draftEsignRemote.properties, hs_terms: 'New terms' },
+      });
+
+      const file: ConnectorFile = {
+        ...makeFile('900', { hs_terms: 'New terms', hs_status: 'DRAFT' }),
+        associations: { contacts: { results: [{ id: 'K1' }] } },
+      };
+
+      await connector.updateRecords(spec, [file]);
+
+      // The edit went through and no signer-destroying association writes fired.
+      expect(mockUpdateRecord.mock.calls).toEqual([[QUOTES, '900', { hs_terms: 'New terms' }]]);
+      expect(mockCreateAssociation).not.toHaveBeenCalled();
+      expect(mockDeleteAssociation).not.toHaveBeenCalled();
+    });
+
     it('best-effort restores the published status when the edit fails after recall', async () => {
       const spec = quotesSpec();
       mockGetRecord.mockResolvedValueOnce(publishedQuoteRemote());
