@@ -3910,6 +3910,74 @@ fn reconcile_moves_failed_op_to_failed_patches() {
 }
 
 #[test]
+fn reconcile_moves_all_failed_ops_when_more_than_twenty() {
+    // DEV-10756: the reconcile partitions purely on membership in the failed set,
+    // so it must scale past the server's 20-record display cap — EVERY rejected
+    // record moves to failed-patches.json and none is stranded in
+    // accepted-patches.json. The cap lived upstream (on the run-job progress the
+    // desktop passed as `--failed-ops-json`); this locks in that the partition
+    // itself never re-introduces it once handed the complete set.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    const RECORD_COUNT: usize = 25;
+    let mut accepted_patches = Vec::new();
+    let mut failed_ops = Vec::new();
+    for i in 0..RECORD_COUNT {
+        let path = format!("posts/rec_{i:02}.json");
+        seed_main_with_record(
+            &fixture,
+            &ctx,
+            &path,
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+        );
+        accepted_patches.push(crate::shared::re_anchor::AnchoredPatch {
+            path: path.clone(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"industry": "SaaS"}),
+            revert: false,
+        });
+        // The connector rejected every one of these (main did NOT advance for them).
+        failed_ops.push(crate::api::JobFailedOperation {
+            file_path: path,
+            phase: "edit".into(),
+            error: Some("industry must be one of: Tech, Bio".into()),
+            field_errors: None,
+        });
+    }
+    let connection_dir = accepted_patches_dir(&ctx);
+    crate::shared::accepted_patches::save_atomic(
+        &connection_dir,
+        &crate::shared::accepted_patches::AcceptedPatchesFile {
+            patches: accepted_patches,
+        },
+    )
+    .unwrap();
+
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &failed_ops).unwrap();
+
+    let accepted_after = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert!(
+        accepted_after.patches.is_empty(),
+        "no failed edit may remain in accepted-patches.json (found {})",
+        accepted_after.patches.len()
+    );
+    let failed_after = crate::shared::failed_patches::load(&connection_dir).unwrap();
+    assert_eq!(
+        failed_after.patches.len(),
+        RECORD_COUNT,
+        "every rejected record must land in failed-patches.json, past the 20-record display cap"
+    );
+}
+
+#[test]
 fn reconcile_drops_removed_key_no_op_survivor() {
     // Publish redesign (DEV-10048): a removed-key edit is a publish no-op (the
     // server never advances main for it), so re-anchor keeps it — but the

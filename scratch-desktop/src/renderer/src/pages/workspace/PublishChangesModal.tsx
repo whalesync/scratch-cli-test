@@ -1649,6 +1649,7 @@ export function PublishChangesModal({
           localPath,
           conn.connectionId,
           JSON.stringify(conn.failedOperations ?? []),
+          conn.pipelineId,
         );
       }
       invalidateWorkspaceLevelData();
@@ -1729,6 +1730,7 @@ export function PublishChangesModal({
             localPath,
             conn.connectionId,
             JSON.stringify(conn.failedOperations ?? []),
+            conn.pipelineId,
           );
         }
         // Bring any connections that did NOT run (e.g. advanced server-side via a

@@ -190,11 +190,14 @@ const scratchDesktop = {
   ): Promise<{ status: string; path: string; patchDropped: boolean; conflicts: number }> =>
     invoke('scratch:reconcile-published-record', workspacePath, filePath),
   // Publish redesign (DEV-10048): per-connection post-publish reconcile. `failedOpsJson`
-  // is the run-job's `failedOperations` array serialized to a JSON string.
+  // is the run-job's `failedOperations` array serialized to a JSON string. `pipelineId`
+  // (DEV-10756) makes the CLI fetch the COMPLETE failure set so failures beyond the
+  // server-side display cap aren't stranded; `failedOpsJson` is the fallback.
   reconcileAfterPublish: (
     workspacePath: string,
     connectionId: string,
     failedOpsJson: string,
+    pipelineId?: string,
   ): Promise<{
     status: string;
     connection: string;
@@ -202,7 +205,7 @@ const scratchDesktop = {
     filesUpdated: number;
     filesDeleted: number;
     failedCount: number;
-  }> => invoke('scratch:reconcile-after-publish', workspacePath, connectionId, failedOpsJson),
+  }> => invoke('scratch:reconcile-after-publish', workspacePath, connectionId, failedOpsJson, pipelineId),
   pullWorkspaceChanges: (
     workspacePath: string,
     opts?: { onDelete?: string; filePath?: string; connectionId?: string },

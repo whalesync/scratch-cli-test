@@ -960,9 +960,9 @@ ipcMain.handle('scratch:reconcile-published-record', async (_, workspacePath: st
 // aren't lost. `failedOpsJson` is the run-job's `failedOperations` as a JSON string.
 ipcMain.handle(
   'scratch:reconcile-after-publish',
-  async (_, workspacePath: string, connectionId: string, failedOpsJson: string) =>
+  async (_, workspacePath: string, connectionId: string, failedOpsJson: string, pipelineId?: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
-      const result = await reconcileAfterPublish(workspacePath, connectionId, failedOpsJson);
+      const result = await reconcileAfterPublish(workspacePath, connectionId, failedOpsJson, pipelineId);
       // Mirror the pull handler: re-seed schema validators for any folders the
       // reconcile materialized so validation counts stay current.
       await seedSchemaValidatorsAndPopulateProblems(workspacePath);

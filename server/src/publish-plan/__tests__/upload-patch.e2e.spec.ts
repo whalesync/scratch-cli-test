@@ -154,6 +154,15 @@ describeIfIntegration('/upload-patch end-to-end (real Prisma, mocked git/GCS/Bul
         for (const p of paths) dirty.delete(p);
         return Promise.resolve();
       }),
+      // DEV-10630 non-accumulation model: applyPatches resets `dirty` to `main`
+      // before applying this upload's patch, so the branch becomes exactly
+      // `main` + this upload. The harness has no separate `main` tree (main is
+      // the empty baseline), so clearing the in-memory dirty map models
+      // `resetRepo` — the same reset the real ScratchGitService performs.
+      resetDirtyToMain: jest.fn(() => {
+        dirty.clear();
+        return Promise.resolve();
+      }),
       // DEV-10316: post-apply dirty HEAD snapshot returned by applyPatches.
       getBranchHead: jest.fn().mockResolvedValue('postapply_head_sha'),
     };

@@ -604,6 +604,31 @@ export class CliWorkbookController {
     });
   }
 
+  /**
+   * CLI shim — the COMPLETE, paginated set of a publish plan's connector-rejected
+   * records (`failed-batch` operations), one entry per file path (DEV-10756).
+   * Used by `scratchmd files reconcile-after-publish --pipeline-id` (and the
+   * CLI-native `files publish` reconcile) to route *every* failure into
+   * `failed-patches.json` — the run-job's `publicProgress.failedOperations` is a
+   * capped display sample and must not be treated as the full list. Read-only;
+   * no audit log entry.
+   */
+  @Get(':id/publish-v2/:planId/failed-operations')
+  async getPublishPlanFailedOperations(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Param('planId') planId: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
+    return this.publishPlanCrudService.listFailedPublishPlanOperations(planId, {
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+    });
+  }
+
   // ── Workbook repo endpoints ─────────────────────────────────────────────────
 
   /**

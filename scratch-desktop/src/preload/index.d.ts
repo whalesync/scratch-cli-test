@@ -219,6 +219,7 @@ interface ScratchDesktopAPI {
     workspacePath: string,
     connectionId: string,
     failedOpsJson: string,
+    pipelineId?: string,
   ) => Promise<{
     status: string;
     connection: string;

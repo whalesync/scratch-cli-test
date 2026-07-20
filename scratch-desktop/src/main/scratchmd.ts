@@ -1039,14 +1039,30 @@ export interface ReconcileAfterPublishResult {
  * string of the run-job's `failedOperations` array (empty/`'[]'` when nothing was
  * rejected). Replaces the generic post-publish `pullWorkspaceChanges` so the
  * failed edits are routed back here instead of being lost.
+ *
+ * `pipelineId` (the run's publish plan; DEV-10756) makes the CLI fetch the
+ * COMPLETE set of connector rejections from the server rather than trusting
+ * `failedOpsJson`, which is a display sample capped server-side — so failures
+ * beyond the cap aren't stranded in `accepted-patches.json`. `failedOpsJson`
+ * stays as the fallback when the fetch fails.
  */
 export async function reconcileAfterPublish(
   workspacePath: string,
   connectionId: string,
   failedOpsJson: string,
+  pipelineId?: string,
 ): Promise<ReconcileAfterPublishResult> {
   return runScratchmdJson<ReconcileAfterPublishResult>(
-    ['--json', 'files', 'reconcile-after-publish', '--connection', connectionId, '--failed-ops-json', failedOpsJson],
+    [
+      '--json',
+      'files',
+      'reconcile-after-publish',
+      '--connection',
+      connectionId,
+      '--failed-ops-json',
+      failedOpsJson,
+      ...(pipelineId ? ['--pipeline-id', pipelineId] : []),
+    ],
     workspacePath,
   );
 }

@@ -836,6 +836,46 @@ impl ApiClient {
         .await
     }
 
+    /// The COMPLETE set of a publish plan's connector-rejected records
+    /// (`failed-batch` operations), one entry per file path, fetched paginated
+    /// (DEV-10756). The post-publish reconcile uses this — not the capped
+    /// `publicProgress.failedOperations` (max `PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP`
+    /// server-side) — so that *every* failure is routed into `failed-patches.json`.
+    ///
+    /// The server's `total` is the distinct failed-record count (equal to the
+    /// run's authoritative `failedCount`), so the loop stops once the whole set
+    /// has been accumulated.
+    pub async fn list_failed_publish_plan_operations(
+        &self,
+        workbook_id: &str,
+        pipeline_id: &str,
+    ) -> ApiResult<Vec<JobFailedOperation>> {
+        #[derive(serde::Deserialize)]
+        struct FailedOperationsPage {
+            #[serde(default)]
+            data: Vec<JobFailedOperation>,
+            #[serde(default)]
+            total: usize,
+        }
+        let endpoint =
+            format!("workbooks/{workbook_id}/publish-v2/{pipeline_id}/failed-operations");
+        let page_size: usize = 200;
+        let mut page: usize = 1;
+        let mut acc: Vec<JobFailedOperation> = Vec::new();
+        loop {
+            let page_data: FailedOperationsPage = self
+                .get_query(&endpoint, &format!("page={page}&pageSize={page_size}"))
+                .await?;
+            let fetched = page_data.data.len();
+            acc.extend(page_data.data);
+            if acc.len() >= page_data.total || fetched < page_size {
+                break;
+            }
+            page += 1;
+        }
+        Ok(acc)
+    }
+
     /// Step 1 of the upload-patch flow: request a presigned GCS PUT URL.
     /// Mirrors `packages/shared-types/src/dto/upload-patch/*`. The Rust CLI
     /// re-declares the wire types in serde rather than importing from TS.

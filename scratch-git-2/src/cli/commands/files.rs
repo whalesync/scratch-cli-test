@@ -291,9 +291,18 @@ pub enum FilesCommands {
         connection: String,
         /// JSON array of the run-job's `failedOperations`
         /// (`[{ "filePath", "phase", "error", "fieldErrors" }]`). Omitted/empty
-        /// when nothing was rejected.
+        /// when nothing was rejected. This is a capped display sample; prefer
+        /// `--pipeline-id`, which fetches the COMPLETE failure set. Kept as a
+        /// fallback for older callers and when the fetch fails (DEV-10756).
         #[arg(long = "failed-ops-json")]
         failed_ops_json: Option<String>,
+        /// The publish plan / pipeline id just run. When present, the reconcile
+        /// fetches the COMPLETE set of connector-rejected records from the server
+        /// (uncapped) so failures beyond the display cap aren't stranded in
+        /// `accepted-patches.json` (DEV-10756). Falls back to `--failed-ops-json`
+        /// if absent or if the fetch fails.
+        #[arg(long = "pipeline-id")]
+        pipeline_id: Option<String>,
     },
 
     /// One-time ops migration (DEV-10637): rewrite an already-pulled Shopify
@@ -727,13 +736,18 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::ReconcileAfterPublish {
             connection,
             failed_ops_json,
-        } => run_reconcile_after_publish(
-            &cwd,
-            server_url,
-            &connection,
-            failed_ops_json.as_deref(),
-            json,
-        ),
+            pipeline_id,
+        } => {
+            run_reconcile_after_publish(
+                &cwd,
+                server_url,
+                &connection,
+                failed_ops_json.as_deref(),
+                pipeline_id.as_deref(),
+                json,
+            )
+            .await
+        }
         FilesCommands::MigrateShopifyVerbatim {
             apply,
             push,
@@ -1959,6 +1973,18 @@ async fn publish_single_connection(
     if verbose {
         eprintln!(" done");
     }
+
+    // `run_job_failed_operations` off `publicProgress` is a capped display sample
+    // (max `PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP`); fetch the COMPLETE set by
+    // pipeline id so failures beyond the cap aren't stranded in
+    // `accepted-patches.json` (DEV-10756). Falls back to the capped list on error.
+    let run_job_failed_operations = resolve_complete_failed_ops(
+        client,
+        workbook_id,
+        Some(pipeline_id.as_str()),
+        run_job_failed_operations,
+    )
+    .await;
 
     // After a successful run-job, fetch origin and reconcile the local patch
     // file against the server's view of `main`. Patches whose outcome
@@ -6175,14 +6201,55 @@ fn run_reconcile_published(
 /// route rejected records → `failed-patches.json`, drop publish-no-op survivors,
 /// preserve unreviewed edits. `data_folders` is left empty — it only drives
 /// cosmetic empty-dir pruning, not the reconcile correctness.
-fn run_reconcile_after_publish(
+/// Resolve the COMPLETE set of connector-rejected records for a just-run publish
+/// plan (DEV-10756).
+///
+/// The run-job's `failedOperations` (parsed from `--failed-ops-json` / read off
+/// `publicProgress`) is capped at `PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP` for
+/// display, but the reconcile partitions patches by membership in this set — so a
+/// capped set silently strands every failure beyond the cap in
+/// `accepted-patches.json`. When `pipeline_id` is present we fetch the full,
+/// uncapped set from the server instead.
+///
+/// On any fetch error we warn and fall back to `fallback_capped_ops`: post-publish
+/// reconcile is best-effort (a failure here must never abort the publish flow), so
+/// a transient hiccup should not block routing the failures we already have on
+/// hand. This is strictly no worse than the pre-fix behaviour.
+async fn resolve_complete_failed_ops(
+    client: &crate::api::ApiClient,
+    workbook_id: &str,
+    pipeline_id: Option<&str>,
+    fallback_capped_ops: Vec<crate::api::JobFailedOperation>,
+) -> Vec<crate::api::JobFailedOperation> {
+    let Some(pipeline_id) = pipeline_id else {
+        return fallback_capped_ops;
+    };
+    match client
+        .list_failed_publish_plan_operations(workbook_id, pipeline_id)
+        .await
+    {
+        Ok(complete) => complete,
+        Err(err) => {
+            eprintln!(
+                "Warning: could not fetch the complete failure set for pipeline {pipeline_id} ({err}); \
+                 falling back to the capped list of {} record(s). Failures beyond the display cap may \
+                 not be routed to failed-patches.json this run.",
+                fallback_capped_ops.len()
+            );
+            fallback_capped_ops
+        }
+    }
+}
+
+async fn run_reconcile_after_publish(
     cwd: &Path,
     server_url: &str,
     connection: &str,
     failed_ops_json: Option<&str>,
+    pipeline_id: Option<&str>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let (_marker, workspace_dir, contexts, workspace_server_url) =
+    let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url, json)?;
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
@@ -6195,12 +6262,22 @@ fn run_reconcile_after_publish(
         .find(|c| c.connection_id == connection || c.conn_dir_name == connection)
         .ok_or_else(|| anyhow::anyhow!("Connection not found: {connection}"))?;
 
-    let failed_ops: Vec<crate::api::JobFailedOperation> = match failed_ops_json {
+    // `--failed-ops-json` is a capped display sample; prefer the COMPLETE set
+    // fetched by `--pipeline-id` so overflow failures aren't stranded (DEV-10756).
+    let fallback_capped_ops: Vec<crate::api::JobFailedOperation> = match failed_ops_json {
         Some(raw) if !raw.trim().is_empty() => {
             serde_json::from_str(raw).context("failed to parse --failed-ops-json")?
         }
         _ => Vec::new(),
     };
+    let client = crate::api::ApiClient::new(workspace_server_url.as_str(), token.as_str());
+    let failed_ops = resolve_complete_failed_ops(
+        &client,
+        workspace_marker.workbook.id.as_str(),
+        pipeline_id,
+        fallback_capped_ops,
+    )
+    .await;
 
     let result = download_single_repo(ctx, &workspace_dir, &token, &[], Some(&failed_ops))?;
 

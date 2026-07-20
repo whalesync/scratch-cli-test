@@ -21,7 +21,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 interface AxiosCall {
   url: string;
-  body: unknown;
+  body?: unknown;
+  params?: unknown;
 }
 
 const calls: AxiosCall[] = [];
@@ -33,7 +34,10 @@ const mockInstance = {
     calls.push({ url, body });
     return Promise.resolve({ data: responseQueue.shift() ?? {} });
   }),
-  get: vi.fn(),
+  get: vi.fn((url: string, config?: { params?: unknown }) => {
+    calls.push({ url, params: config?.params });
+    return Promise.resolve({ data: responseQueue.shift() ?? {} });
+  }),
   put: vi.fn(),
   patch: vi.fn(),
   delete: vi.fn(),
@@ -155,5 +159,34 @@ describe('publish.viaCliRoute.runJob', () => {
 
     const body = calls[0].body as Record<string, unknown>;
     expect('executeSinglePhase' in body).toBe(false);
+  });
+});
+
+describe('publish.viaCliRoute.failedOperations', () => {
+  it('GETs the complete failed-operations set with pagination params (DEV-10756)', async () => {
+    const { scratchApiClient } = await import('../scratch-api-client');
+    const page = {
+      data: [{ filePath: 'Folder/a.json', phase: 'edits', error: 'rejected' }],
+      total: 1,
+      page: 2,
+      pageSize: 200,
+    };
+    responseQueue.push(page);
+
+    const result = await scratchApiClient.publish.viaCliRoute.failedOperations('wkb_123', 'pipe_1', {
+      page: 2,
+      pageSize: 200,
+    });
+
+    // This is the complete-set channel the reconcile trusts — distinct from the
+    // capped `publicProgress.failedOperations`. If the server route/path changes,
+    // this and the Rust client must move together.
+    expect(calls).toEqual([
+      {
+        url: '/cli/v1/workbooks/wkb_123/publish-v2/pipe_1/failed-operations',
+        params: { page: 2, pageSize: 200 },
+      },
+    ]);
+    expect(result).toEqual(page);
   });
 });

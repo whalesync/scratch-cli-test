@@ -46,3 +46,19 @@ export type PublishFailedOperation = {
    */
   fieldErrors?: Record<string, string> | null;
 };
+
+/**
+ * Paginated response for `GET /cli/v1/workbooks/:id/publish-v2/:planId/failed-operations`
+ * (DEV-10756). Unlike the run-job's terminal `publicProgress.failedOperations` — a bounded
+ * display sample capped at `PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP` — this route returns the
+ * **complete** set of the plan's connector-rejected records (`failed-batch` operations),
+ * collapsed to one entry per file path. The desktop/CLI post-publish reconcile fetches it so
+ * that *every* failure (not just the first 20) is routed to `failed-patches.json`. `total` is
+ * the distinct failed-record count (equal to the run's authoritative `failedCount`).
+ */
+export interface PublishFailedOperationsResponse {
+  data: PublishFailedOperation[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

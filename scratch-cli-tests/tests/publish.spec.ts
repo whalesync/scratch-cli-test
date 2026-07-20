@@ -1118,6 +1118,193 @@ describeIfPostgres(
 );
 
 // ---------------------------------------------------------------------------
+// DEV-10756 — a publish that rejects MORE than the 20-record failed-operations
+// display cap must still route EVERY failure into failed-patches.json. Before
+// the fix, the desktop/CLI reconcile trusted the capped `publicProgress`
+// `failedOperations` list as the complete rejection set, so failures beyond 20
+// were stranded (error-free) in accepted-patches.json and silently re-published.
+// The fix has the reconcile fetch the COMPLETE set from the server by pipeline
+// id. This drives the CLI-native `files publish` path (the same reconcile the
+// desktop uses), seeds 25 VARCHAR(20)-violating rows, and asserts all 25 land
+// in failed-patches.json with none left accepted.
+// ---------------------------------------------------------------------------
+describeIfPostgres(
+  "Overflow failures past the 20-record cap all reach failed-patches.json (DEV-10756)",
+  () => {
+    let workspaceId: string;
+    let workspaceDir: string;
+    let connDirName: string;
+    let failingRecordCount: number;
+    const longName = "A".repeat(30); // 30 chars > VARCHAR(20) → every row is rejected
+    const ADDITIONAL_AUTHOR_ROWS = 22; // + the 3 seeded by setupAuthorsTable = 25 (> the cap of 20)
+    let hasFailed = false;
+
+    beforeAll(async () => {
+      await setupAuthorsTable();
+
+      // Seed enough extra VARCHAR(20) rows that a single publish fails on MORE
+      // than 20 records — the condition the summary cap used to truncate.
+      const client = new Client({ connectionString: postgresUrl });
+      await client.connect();
+      try {
+        for (let i = 0; i < ADDITIONAL_AUTHOR_ROWS; i++) {
+          const author_id = `40000000-0000-0000-0000-${String(i).padStart(12, "0")}`;
+          await client.query(
+            `INSERT INTO integration_authors (author_id, name, bio) VALUES ($1, $2, $3)`,
+            [author_id, `Author ${i}`, "seed"],
+          );
+        }
+      } finally {
+        await client.end();
+      }
+
+      const ws = cli.json<{ id: string }>([
+        "workspaces",
+        "create",
+        uniqueName("publish-overflow"),
+      ]);
+      workspaceId = ws.id;
+
+      const conn = cli.json<{ id: string }>([
+        "connections",
+        "--workspace",
+        workspaceId,
+        "add",
+        "--service",
+        TEST_CONNECTOR_SERVICE,
+        "--param",
+        `connectionString=${postgresUrl}`,
+      ]);
+      const connectionId = conn.id;
+
+      const parentDir = path.join(cli.home, "test-publish-overflow");
+      fs.mkdirSync(parentDir, { recursive: true });
+      const initResult = cli.json<{ directory: string }>(
+        ["workspaces", "init", workspaceId],
+        { cwd: parentDir },
+      );
+      workspaceDir = path.join(parentDir, initResult.directory);
+
+      const tables = cli.json<Array<{ id: string; displayName: string }>>([
+        "linked",
+        "--workspace",
+        workspaceId,
+        "available",
+        connectionId,
+      ]);
+      const authorsTable = tables.find(
+        (t) => t.displayName === "integration_authors",
+      );
+      if (!authorsTable) {
+        throw new Error(
+          `integration_authors not found in available tables: ${tables.map((t) => t.displayName).join(", ")}`,
+        );
+      }
+      const tableIdParts = authorsTable.id.split(",");
+      const linked = cli.json<{ id: string }>(
+        [
+          "linked",
+          "--workspace",
+          workspaceId,
+          "add",
+          "--connection-id",
+          connectionId,
+          ...tableIdParts.flatMap((p: string) => ["--table-id", p]),
+          "--name",
+          authorsTable.displayName,
+        ],
+        { cwd: workspaceDir },
+      );
+      cli.run(["linked", "--workspace", workspaceId, "pull", linked.id], {
+        cwd: workspaceDir,
+      });
+      cli.run(["files", "download"], { cwd: workspaceDir });
+
+      const marker = readMarker(workspaceDir);
+      connDirName = marker.connections[0]!.dirName;
+    }, 180_000);
+
+    afterAll(async () => {
+      if (workspaceId && (!hasFailed || !preserveOnFailure)) {
+        deleteWorkspace(cli, workspaceId);
+      }
+      if (workspaceDir && (!hasFailed || !preserveOnFailure)) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      await teardownAuthorsTable();
+    });
+
+    it("routes ALL >20 rejected records to failed-patches.json — none stranded as accepted", () => {
+      try {
+        // Push every author's name past the VARCHAR(20) limit so the run-job
+        // rejects each row (one `failed-batch` op per record).
+        const records = findJsonFiles(workspaceDir)
+          .map((p) => ({
+            p,
+            data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<
+              string,
+              unknown
+            >,
+          }))
+          .filter((r) => typeof r.data.author_id === "string");
+
+        // The whole point of the test: the failure count must EXCEED the
+        // 20-record display cap, or it wouldn't exercise the overflow bug.
+        expect(records.length).toBeGreaterThan(20);
+        failingRecordCount = records.length;
+
+        for (const rec of records) {
+          rec.data.name = longName;
+          fs.writeFileSync(rec.p, JSON.stringify(rec.data, null, 2) + "\n");
+        }
+
+        cli.run(["files", "accept-all"], { cwd: workspaceDir });
+        const uploadResult = cli.json<{ filesUpdated: number }>(
+          ["files", "upload"],
+          { cwd: workspaceDir },
+        );
+        expect(uploadResult.filesUpdated).toBe(failingRecordCount);
+
+        const publishResult = cli.json<{
+          status: string;
+          warnings: Array<{
+            name: string;
+            warning: { phase: string; failedCount: number };
+          }>;
+        }>(["files", "publish"], { cwd: workspaceDir });
+        expect(publishResult.status).toBe("published");
+
+        // The authoritative failed count (uncapped) is the whole set.
+        const warning = publishResult.warnings.find(
+          (w) => w.name === connDirName,
+        );
+        expect(warning?.warning.phase).toBe("run-job");
+        expect(warning?.warning.failedCount).toBe(failingRecordCount);
+
+        // The fix: EVERY rejected record is in failed-patches.json (not capped at
+        // 20), and NONE is left silently accepted. Pre-fix this would be 20 in
+        // failed-patches and (failingRecordCount - 20) stranded in accepted.
+        const failed = readFailedPatches(workspaceDir, connDirName);
+        expect(failed.patches).toHaveLength(failingRecordCount);
+        expect(
+          failed.patches.every((entry) => typeof entry.error === "string"),
+        ).toBe(true);
+
+        const accepted = readAcceptedPatches(workspaceDir, connDirName);
+        expect(accepted.patches).toHaveLength(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 300_000);
+  },
+);
+
+// ---------------------------------------------------------------------------
 // DEV-10596 — connector-scoped publish. `files upload --connection <id|dir>`
 // narrows the two-pass upload to ONE connection so the chosen connector
 // publishes regardless of any OTHER connection's state. Two connections (both

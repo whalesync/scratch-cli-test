@@ -30,6 +30,7 @@ import {
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 import { pickByShape } from './diff-utils';
+import { collapseFailedOperationsByPath } from './failed-operations.util';
 import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RecreatedIdMapService } from './recreated-id-map.service';
@@ -513,14 +514,10 @@ export class PublishPlanRunService {
           select: { filePath: true, phase: true, error: true },
           orderBy: { filePath: 'asc' },
         });
-        const failedOperationByPath = new Map<string, PublishFailedOperation>();
-        for (const row of failedRows) {
-          const existing = failedOperationByPath.get(row.filePath);
-          if (!existing || (existing.phase === 'rename-files' && row.phase !== 'rename-files')) {
-            failedOperationByPath.set(row.filePath, { filePath: row.filePath, phase: row.phase, error: row.error });
-          }
-        }
-        failedOperations = Array.from(failedOperationByPath.values()).slice(0, PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP);
+        // Collapse to one entry per record (shared rule; DEV-10756) and slice to
+        // the *display* cap. The complete, uncapped set is served separately by
+        // `listFailedPublishPlanOperations` for the post-publish reconcile.
+        failedOperations = collapseFailedOperationsByPath(failedRows).slice(0, PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP);
       }
 
       // If we exit early intentionally because of single-phase execution, retain the completed suffix.

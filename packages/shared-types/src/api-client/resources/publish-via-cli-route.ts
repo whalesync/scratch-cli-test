@@ -1,4 +1,8 @@
-import type { PlanJobResponse, RunJobResponse } from '../../dto/publish-plan/publish-job-responses.dto';
+import type {
+  PlanJobResponse,
+  PublishFailedOperationsResponse,
+  RunJobResponse,
+} from '../../dto/publish-plan/publish-job-responses.dto';
 import type { PublishPlanRunDto } from '../../dto/publish-plan/publish-plan.dto';
 import type { Http } from '../http';
 
@@ -65,6 +69,31 @@ export function createPublishViaCliRouteApi(http: Http) {
       const res = await http.post<RunJobResponse>(`/cli/v1/workbooks/${workbookId}/publish-v2/run-job`, body, {
         fallbackMessage: 'Failed to start run job',
       });
+      return res.data;
+    },
+
+    /**
+     * GET `/cli/v1/workbooks/:id/publish-v2/:planId/failed-operations` — the COMPLETE set of a
+     * plan's connector-rejected records (`failed-batch` operations), one entry per file path,
+     * paginated (DEV-10756). The post-publish reconcile uses this — not the capped
+     * `publicProgress.failedOperations` — so every failure lands in `failed-patches.json`.
+     *
+     * The load-bearing runtime consumer is the Rust CLI (`scratchmd files reconcile-after-publish
+     * --pipeline-id`), which mirrors this route directly via reqwest; this TypeScript method exists
+     * for the shared-types contract (no shadow types) and any future TS caller.
+     */
+    failedOperations: async (
+      workbookId: string,
+      pipelineId: string,
+      options?: { page?: number; pageSize?: number },
+    ): Promise<PublishFailedOperationsResponse> => {
+      const res = await http.get<PublishFailedOperationsResponse>(
+        `/cli/v1/workbooks/${workbookId}/publish-v2/${pipelineId}/failed-operations`,
+        {
+          params: { page: options?.page, pageSize: options?.pageSize },
+          fallbackMessage: 'Failed to list failed publish operations',
+        },
+      );
       return res.data;
     },
   };

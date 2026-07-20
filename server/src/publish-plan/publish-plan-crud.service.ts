@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import type { PublishFailedOperationsResponse } from '@spinner/shared-types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { DbService } from '../db/db.service';
+import { collapseFailedOperationsByPath } from './failed-operations.util';
 
 @Injectable()
 export class PublishPlanCrudService {
@@ -146,6 +148,45 @@ export class PublishPlanCrudService {
     ]);
 
     return { data, total, page, pageSize };
+  }
+
+  /**
+   * The COMPLETE set of a plan's connector-rejected records (`failed-batch`
+   * operations), collapsed to one entry per file path and paginated (DEV-10756).
+   *
+   * Unlike the run-job's terminal `publicProgress.failedOperations` — a bounded
+   * display sample capped at `PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP` — this is
+   * the full list the desktop/CLI post-publish reconcile trusts to route *every*
+   * failure into `failed-patches.json` (not just the first 20).
+   *
+   * The filter is `status: 'failed-batch'` (matching how the run's authoritative
+   * `failedCount` is computed), NOT `hasError` — a failed row can have a null
+   * error, and a non-failed row can carry an error. The collapse runs BEFORE
+   * pagination so a record with multiple failed rows (e.g. an `edit` plus a
+   * `rename-files`) is never split across a page boundary, and `total` is the
+   * distinct failed-record count (equal to `failedCount`).
+   */
+  async listFailedPublishPlanOperations(
+    pipelineId: string,
+    options?: { page?: number; pageSize?: number },
+  ): Promise<PublishFailedOperationsResponse> {
+    const page = options?.page ?? 1;
+    const pageSize = Math.min(options?.pageSize ?? 50, 200);
+    const skip = (page - 1) * pageSize;
+
+    const rows = await this.db.client.publishPlanOperation.findMany({
+      where: { planId: pipelineId, status: 'failed-batch' },
+      select: { filePath: true, phase: true, error: true },
+      orderBy: { filePath: 'asc' },
+    });
+
+    const collapsed = collapseFailedOperationsByPath(rows);
+    return {
+      data: collapsed.slice(skip, skip + pageSize),
+      total: collapsed.length,
+      page,
+      pageSize,
+    };
   }
 
   async deletePublishPlan(pipelineId: string) {
