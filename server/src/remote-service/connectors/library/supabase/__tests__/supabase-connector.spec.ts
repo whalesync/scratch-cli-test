@@ -18,11 +18,12 @@ jest.mock('../../../display-names', () => ({
 const mockFindAllColumnsInTable = jest.fn();
 const mockFindPrimaryColumnCandidates = jest.fn();
 const mockFindAllForeignKeysInTable = jest.fn();
+const mockFindSingleColumnUniqueIndexColumns = jest.fn();
 const mockSelectAll = jest.fn();
 const mockFindAllSchemas = jest.fn();
 const mockCreateTable = jest.fn();
 const mockAddColumns = jest.fn();
-const mockFindTablePrimaryKeyColumn = jest.fn();
+const mockFindTableUniquelyAddressableColumn = jest.fn();
 const mockDispose = jest.fn();
 
 jest.mock('../../pg-common/knex-pg-client', () => {
@@ -31,11 +32,12 @@ jest.mock('../../pg-common/knex-pg-client', () => {
       findAllColumnsInTable: mockFindAllColumnsInTable,
       findPrimaryColumnCandidates: mockFindPrimaryColumnCandidates,
       findAllForeignKeysInTable: mockFindAllForeignKeysInTable,
+      findSingleColumnUniqueIndexColumns: mockFindSingleColumnUniqueIndexColumns,
       selectAll: mockSelectAll,
       findAllSchemas: mockFindAllSchemas,
       createTable: mockCreateTable,
       addColumns: mockAddColumns,
-      findTablePrimaryKeyColumn: mockFindTablePrimaryKeyColumn,
+      findTableUniquelyAddressableColumn: mockFindTableUniquelyAddressableColumn,
       dispose: mockDispose,
     })),
     KnexPGClientError: class KnexPGClientError extends Error {
@@ -76,6 +78,9 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     mockDispose.mockResolvedValue(undefined);
     mockFindAllForeignKeysInTable.mockResolvedValue([]);
     mockFindPrimaryColumnCandidates.mockResolvedValue(['id']);
+    // Default: no single-column unique index reported, exercising the legacy
+    // PK-candidate fallback most tests were written against.
+    mockFindSingleColumnUniqueIndexColumns.mockResolvedValue([]);
   });
 
   async function fetchSchema(columns: InformationSchemaColumn[], foreignKeys: PostgresForeignKey[] = []) {
@@ -251,6 +256,33 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
       }),
     ]);
     expect(spec.idPath).toBe('id');
+  });
+
+  it('uses the single-column primary key reported by the unique-index introspection as idPath', async () => {
+    mockFindPrimaryColumnCandidates.mockResolvedValue(['id']);
+    mockFindSingleColumnUniqueIndexColumns.mockResolvedValue([
+      { column_name: 'id', native_type: 'uuid', is_primary_key: true },
+      { column_name: 'email', native_type: 'citext', is_primary_key: false },
+    ]);
+    const spec = await fetchSchema([
+      buildColumn({ column_name: 'id', udt_name: 'uuid', data_type: 'uuid' }),
+      buildColumn({ column_name: 'email' }),
+    ]);
+    expect(spec.idPath).toBe('id');
+  });
+
+  it('does NOT collapse a composite PK — idPath falls to a genuinely unique single column instead (DEV-10802)', async () => {
+    // Junction-style table: PK (order_id, product_id), plus a unique line_number.
+    mockFindPrimaryColumnCandidates.mockResolvedValue(['order_id', 'product_id']);
+    mockFindSingleColumnUniqueIndexColumns.mockResolvedValue([
+      { column_name: 'line_number', native_type: 'integer', is_primary_key: false },
+    ]);
+    const spec = await fetchSchema([
+      buildColumn({ column_name: 'order_id', data_type: 'integer', udt_name: 'int4' }),
+      buildColumn({ column_name: 'product_id', data_type: 'integer', udt_name: 'int4' }),
+      buildColumn({ column_name: 'line_number', data_type: 'integer', udt_name: 'int4' }),
+    ]);
+    expect(spec.idPath).toBe('line_number');
   });
 
   it('maps array columns to typed array schemas', async () => {
@@ -580,7 +612,7 @@ describe('SupabaseConnector schema creation', () => {
     });
 
     it('introspects a same-project foreign-key target primary key', async () => {
-      mockFindTablePrimaryKeyColumn.mockResolvedValue({ column: 'id', dataType: 'uuid' });
+      mockFindTableUniquelyAddressableColumn.mockResolvedValue({ column: 'id', nativeType: 'uuid' });
       mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
       const plan: NormalizedCreateTablePlan = {
         remoteParentId: [PROJECT_REF, 'public'],
@@ -598,7 +630,7 @@ describe('SupabaseConnector schema creation', () => {
 
       await connector.createTable(plan);
 
-      expect(mockFindTablePrimaryKeyColumn).toHaveBeenCalledWith('public', 'users');
+      expect(mockFindTableUniquelyAddressableColumn).toHaveBeenCalledWith('public', 'users');
       const foreignKeyResolutions = createTableCall()[3];
       expect(foreignKeyResolutions.get('author_id')).toEqual({
         kind: 'resolved',
@@ -628,7 +660,7 @@ describe('SupabaseConnector schema creation', () => {
 
       await connector.createTable(plan);
 
-      expect(mockFindTablePrimaryKeyColumn).not.toHaveBeenCalled();
+      expect(mockFindTableUniquelyAddressableColumn).not.toHaveBeenCalled();
       const foreignKeyResolutions = createTableCall()[3] as Map<string, { kind: string; reason: string }>;
       expect(foreignKeyResolutions.get('author_id')?.kind).toBe('unresolvable');
       expect(foreignKeyResolutions.get('author_id')?.reason).toMatch(/different Supabase project/i);

@@ -4,12 +4,14 @@ export {
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
   SUPABASE_SYSTEM_SCHEMAS,
   SUPABASE_SYSTEM_SCHEMA_PATTERNS,
+  chooseUniquelyAddressableColumn,
   isGeneratedColumn,
   type InformationSchemaCatalog,
   type InformationSchemaColumn,
   type PostgresEnumValue,
   type PostgresForeignKey,
   type PostgresUserDefinedType,
+  type SingleColumnUniqueIndexColumn,
   type TableName,
 } from './knex-pg-types';
 export {

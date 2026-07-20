@@ -43,6 +43,7 @@ import {
 import {
   applyPgClockSkew,
   assertModifiedAtColumnExists,
+  chooseUniquelyAddressableColumn,
   collectPgColumnNamesRejectingEmptyString,
   isGeneratedColumn,
   KnexPGClient,
@@ -59,6 +60,7 @@ import {
   validateWhereFilter,
   type ForeignKeyResolutions,
   type InformationSchemaColumn,
+  type SingleColumnUniqueIndexColumn,
 } from '../pg-common';
 import { buildPgDefaultView } from '../pg-common/pg-default-view';
 import { PostgresCredentials } from './postgres-types';
@@ -208,7 +210,8 @@ export class PostgresConnector extends Connector {
       parentPath: t.table_schema,
       ...(!hasUnique && {
         disabled: true as const,
-        disabledReason: "This table doesn't have a unique value column (primary key).",
+        disabledReason:
+          "This table has no single-column unique key (a primary key or unique index on one column), so its rows can't be uniquely identified.",
       }),
       ...(hasUnique &&
         !hasAutoGenPK && {
@@ -238,13 +241,14 @@ export class PostgresConnector extends Connector {
     const [schema, tableName] = id.remoteId;
 
     return this.withPgClient(async (client) => {
-      const [columns, pkCandidates, foreignKeys] = await Promise.all([
+      const [columns, pkCandidates, foreignKeys, singleColumnUniqueIndexColumns] = await Promise.all([
         client.findAllColumnsInTable(schema, tableName),
         client.findPrimaryColumnCandidates(schema, tableName),
         client.findAllForeignKeysInTable(schema, tableName),
+        client.findSingleColumnUniqueIndexColumns(schema, tableName),
       ]);
 
-      const primaryKey = this.pickPrimaryKey(pkCandidates, columns);
+      const primaryKey = this.pickPrimaryKey(pkCandidates, columns, singleColumnUniqueIndexColumns);
 
       const fkMap = new Map<string, string>();
       for (const fk of foreignKeys) {
@@ -307,14 +311,30 @@ export class PostgresConnector extends Connector {
   }
 
   /**
-   * Pick the best primary key column. Prefers a single auto-generated PK.
-   * Falls back to first PK candidate, then 'id'.
+   * Pick the column records are addressed by (`idPath`): a genuinely unique
+   * single column via {@link chooseUniquelyAddressableColumn} — single-column
+   * PK first, then an auto-generated unique column, then the first unique
+   * column. A table with only a composite PK has no such column (one column of
+   * it is NOT unique — matching on it would over-update/delete sibling rows,
+   * DEV-10802); those tables are disabled in {@link listTables}, and for
+   * already-added folders this falls back to the historical collapse (generated
+   * PK candidate, then first, then 'id') — the updateMany/deleteMany over-match
+   * guards keep that legacy path from corrupting data.
    */
-  private pickPrimaryKey(candidates: string[], columns: InformationSchemaColumn[]): string {
+  private pickPrimaryKey(
+    candidates: string[],
+    columns: InformationSchemaColumn[],
+    singleColumnUniqueIndexColumns: SingleColumnUniqueIndexColumn[],
+  ): string {
+    const uniquelyAddressableColumn = chooseUniquelyAddressableColumn(singleColumnUniqueIndexColumns, columns);
+    if (uniquelyAddressableColumn) {
+      return uniquelyAddressableColumn.column;
+    }
+
+    // Legacy fallback for tables with no single-column unique index.
     if (candidates.length === 1) {
       return candidates[0];
     }
-
     if (candidates.length > 1) {
       const colMap = new Map(columns.map((c) => [c.column_name, c]));
       const generated = candidates.find((name) => {
@@ -323,7 +343,6 @@ export class PostgresConnector extends Connector {
       });
       return generated ?? candidates[0];
     }
-
     return 'id';
   }
 
@@ -574,19 +593,19 @@ export class PostgresConnector extends Connector {
         continue;
       }
       const [targetSchema, targetTable] = this.splitRemoteTableId(fieldType.target.existingRemoteTableId);
-      const primaryKey = await client.findTablePrimaryKeyColumn(targetSchema, targetTable);
-      if (primaryKey === null) {
+      const referenceColumn = await client.findTableUniquelyAddressableColumn(targetSchema, targetTable);
+      if (referenceColumn === null) {
         resolutions.set(field.name, {
           kind: 'unresolvable',
-          reason: `couldn't create foreign key "${field.name}": the linked table "${targetSchema}.${targetTable}" has no primary key to reference`,
+          reason: `couldn't create foreign key "${field.name}": the linked table "${targetSchema}.${targetTable}" has no single-column primary key or unique column for a foreign key to reference`,
         });
         continue;
       }
       resolutions.set(field.name, {
         kind: 'resolved',
         targetTableQualified: `${targetSchema}.${targetTable}`,
-        targetPkColumn: primaryKey.column,
-        targetPkType: primaryKey.dataType,
+        targetPkColumn: referenceColumn.column,
+        targetPkType: referenceColumn.nativeType,
       });
     }
     return resolutions;

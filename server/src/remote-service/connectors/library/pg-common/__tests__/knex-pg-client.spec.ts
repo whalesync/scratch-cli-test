@@ -34,6 +34,11 @@ function makeQueryBuilder(rows: Record<string, unknown>[]) {
 const mockRef = jest.fn((col: string) => ({ __knexRef: col }));
 const mockRaw = jest.fn();
 const mockDestroy = jest.fn().mockResolvedValue(undefined);
+// Transactions pass a trx that shares the mocked `raw`, mirroring how knex's
+// trx exposes the same query API; errors thrown inside propagate (= rollback).
+const mockTransaction = jest.fn(async (transactionBody: (trx: { raw: jest.Mock }) => Promise<unknown>) =>
+  transactionBody({ raw: mockRaw }),
+);
 
 const knexInstance = jest.fn((table: string) => {
   lastTableArg = table;
@@ -42,10 +47,12 @@ const knexInstance = jest.fn((table: string) => {
   ref: jest.Mock;
   raw: jest.Mock;
   destroy: jest.Mock;
+  transaction: jest.Mock;
 };
 knexInstance.ref = mockRef;
 knexInstance.raw = mockRaw;
 knexInstance.destroy = mockDestroy;
+knexInstance.transaction = mockTransaction;
 
 jest.mock('knex', () => ({
   __esModule: true,
@@ -234,5 +241,73 @@ describe('KnexPGClient.updateMany sparse change-set grouping', () => {
     ]);
 
     expect(result).toEqual([{ name: 'a', id: 1 }, 'not_found', { name: 'c', id: 3 }]);
+  });
+
+  it('runs the batch inside a transaction', async () => {
+    await client.updateMany('public', 'records', 'id', [{ id: 1, data: { name: 'a' } }]);
+    expect(knexInstance.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws UPDATE_MULTIPLE_ROWS (rolling the transaction back) when one id matches multiple rows', async () => {
+    // A non-unique match column — e.g. one column of a composite primary key
+    // (DEV-10802) — makes a single id's UPDATE return several physical rows.
+    mockRaw.mockResolvedValue({
+      rows: [
+        { id: 1, name: 'a', sibling: 'x' },
+        { id: 1, name: 'a', sibling: 'y' },
+      ],
+    });
+
+    await expect(
+      client.updateMany('public', 'order_items', 'order_id', [{ id: 1, data: { name: 'a' } }]),
+    ).rejects.toMatchObject({
+      code: 'UPDATE_MULTIPLE_ROWS',
+    });
+    // The throw happens inside the transaction body, so knex rolls back.
+    expect(knexInstance.transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Regression tests for KnexPGClient.deleteMany's over-delete guard (DEV-10802):
+ * a DELETE matching on a non-unique column must roll back rather than silently
+ * destroying every sibling row sharing the value.
+ */
+describe('KnexPGClient.deleteMany over-delete guard', () => {
+  let client: KnexPGClient;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    client = new KnexPGClient('postgres://u:p@localhost:5432/db');
+  });
+
+  it('returns 0 for an empty id list without querying', async () => {
+    const result = await client.deleteMany('public', 'records', [], 'id');
+    expect(result).toBe(0);
+    expect(mockRaw).not.toHaveBeenCalled();
+    expect(knexInstance.transaction).not.toHaveBeenCalled();
+  });
+
+  it('deletes by id with bound parameters and returns the deleted-row count', async () => {
+    mockRaw.mockResolvedValue({ rows: [{ id: 1 }, { id: 2 }] });
+
+    const result = await client.deleteMany('public', 'records', [1, 2, 3], 'id');
+
+    expect(result).toBe(2);
+    expect(mockRaw).toHaveBeenCalledTimes(1);
+    const [query, bindings] = mockRaw.mock.calls[0] as [string, unknown[]];
+    expect(query).toContain('DELETE FROM "public"."records"');
+    expect(query).toContain('WHERE "id" IN (?, ?, ?)');
+    expect(query).toContain('RETURNING "id"');
+    expect(bindings).toEqual([1, 2, 3]);
+  });
+
+  it('throws DELETE_MULTIPLE_ROWS (rolling the transaction back) when one id matches multiple rows', async () => {
+    mockRaw.mockResolvedValue({ rows: [{ order_id: 1 }, { order_id: 1 }] });
+
+    await expect(client.deleteMany('public', 'order_items', [1], 'order_id')).rejects.toMatchObject({
+      code: 'DELETE_MULTIPLE_ROWS',
+    });
+    expect(knexInstance.transaction).toHaveBeenCalledTimes(1);
   });
 });

@@ -9,12 +9,13 @@
 import knex, { type Knex } from 'knex';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
 import {
-  isGeneratedColumn,
+  chooseUniquelyAddressableColumn,
   type InformationSchemaCatalog,
   type InformationSchemaColumn,
   type PostgresEnumValue,
   type PostgresForeignKey,
   type PostgresUserDefinedType,
+  type SingleColumnUniqueIndexColumn,
   type TableName,
 } from './knex-pg-types';
 import { buildAddColumnsQuery, buildCreateTableQuery, type ForeignKeyResolutions } from './pg-create-schema';
@@ -244,8 +245,17 @@ export class KnexPGClient {
   }
 
   /**
-   * Find tables that have at least one unique column (primary key or unique index on a single column).
-   * Returns a Set of "schema.table" strings for efficient lookup.
+   * Find tables that have at least one genuinely unique single column — a
+   * single-column, non-partial, non-expression, non-deferrable unique index
+   * (which includes a single-column primary key). Returns a Set of
+   * "schema.table" strings for efficient lookup.
+   *
+   * A composite primary key does NOT qualify (DEV-10802): `idPath` is one
+   * column, so a table whose only uniqueness is multi-column cannot be
+   * addressed row-by-row — updates/deletes matching on one column of a
+   * composite key would hit every row sharing that value. The filter here must
+   * stay in lockstep with {@link findSingleColumnUniqueIndexColumns}, which
+   * picks the actual column for tables this set admits.
    */
   async findTablesWithUniqueColumns(excludedSchemas: string[]): Promise<Set<string>> {
     const result = await this.knex.raw<{ rows: { table_schema: string; table_name: string }[] }>(
@@ -253,11 +263,51 @@ export class KnexPGClient {
        FROM pg_index i
        JOIN pg_class c ON c.oid = i.indrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE (i.indisprimary OR (i.indisunique AND array_length(i.indkey, 1) = 1))
+       WHERE i.indisunique
+         AND array_length(i.indkey, 1) = 1
+         AND i.indkey[0] <> 0
+         AND i.indpred IS NULL
+         AND i.indimmediate
          AND n.nspname NOT IN (${excludedSchemas.map(() => '?').join(', ')})`,
       excludedSchemas,
     );
     return new Set(result.rows.map((r) => `${r.table_schema}.${r.table_name}`));
+  }
+
+  /**
+   * The columns of one table that carry a single-column, non-partial,
+   * non-expression, non-deferrable unique index — the only columns a record can
+   * safely be addressed by (`idPath`) or a foreign key can reference. One column
+   * of a composite primary key is deliberately NOT returned (it is not unique on
+   * its own); the composite's index only appears here when some single column
+   * also has its own unique index. `native_type` comes from
+   * `format_type(atttypid, atttypmod)`, so enums/citext/arrays yield their real
+   * type name (schema-qualified when off the search_path) rather than
+   * information_schema's `USER-DEFINED`/`ARRAY` placeholders (DEV-10821).
+   * Ordered primary-key-first so callers can prefer the PK deterministically.
+   */
+  async findSingleColumnUniqueIndexColumns(
+    schema: string,
+    tableName: string,
+  ): Promise<SingleColumnUniqueIndexColumn[]> {
+    const result = await this.knex.raw<{ rows: SingleColumnUniqueIndexColumn[] }>(
+      `SELECT a.attname AS column_name,
+              format_type(a.atttypid, a.atttypmod) AS native_type,
+              i.indisprimary AS is_primary_key
+       FROM pg_index i
+       JOIN pg_class c ON c.oid = i.indrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+       WHERE c.relname = ? AND n.nspname = ?
+         AND i.indisunique
+         AND array_length(i.indkey, 1) = 1
+         AND i.indkey[0] <> 0
+         AND i.indpred IS NULL
+         AND i.indimmediate
+       ORDER BY i.indisprimary DESC, a.attnum ASC`,
+      [tableName, schema],
+    );
+    return result.rows;
   }
 
   /** Find all foreign key constraints for a table. */
@@ -383,35 +433,24 @@ export class KnexPGClient {
   }
 
   /**
-   * Resolve the primary-key column a foreign key should reference, plus its
-   * native type, for an existing table. Mirrors `pickPrimaryKey`: prefers the
-   * single PK candidate, then an auto-generated one. Returns null when the table
-   * has no usable primary key to reference.
+   * Resolve the column a foreign key into an existing table should reference,
+   * plus its exact native type (via `format_type`, never information_schema's
+   * `USER-DEFINED`/`ARRAY` placeholders — DEV-10821). Uses
+   * {@link chooseUniquelyAddressableColumn}, the same choice `pickPrimaryKey`
+   * makes for the table's `idPath`, so the foreign-key column holds exactly the
+   * values the sync pipeline writes into it. Returns null when the table has no
+   * single-column unique index to reference (e.g. only a composite primary key
+   * — Postgres itself rejects a foreign key onto one column of it).
    */
-  async findTablePrimaryKeyColumn(
+  async findTableUniquelyAddressableColumn(
     schema: string,
     tableName: string,
-  ): Promise<{ column: string; dataType: string } | null> {
-    const [candidates, columns] = await Promise.all([
-      this.findPrimaryColumnCandidates(schema, tableName),
+  ): Promise<{ column: string; nativeType: string } | null> {
+    const [singleColumnUniqueIndexColumns, allColumnsInTable] = await Promise.all([
+      this.findSingleColumnUniqueIndexColumns(schema, tableName),
       this.findAllColumnsInTable(schema, tableName),
     ]);
-    if (candidates.length === 0) {
-      return null;
-    }
-    const columnByName = new Map(columns.map((column) => [column.column_name, column]));
-    const chosenColumn =
-      candidates.length === 1
-        ? candidates[0]
-        : (candidates.find((name) => {
-            const column = columnByName.get(name);
-            return column !== undefined && isGeneratedColumn(column);
-          }) ?? candidates[0]);
-    const column = columnByName.get(chosenColumn);
-    if (column === undefined) {
-      return null;
-    }
-    return { column: chosenColumn, dataType: column.data_type };
+    return chooseUniquelyAddressableColumn(singleColumnUniqueIndexColumns, allColumnsInTable);
   }
 
   // -------------------------------------------------------------------------
@@ -601,25 +640,45 @@ export class KnexPGClient {
       }
     }
 
-    const updatedRowByPrimaryId = new Map<string, Record<string, unknown>>();
-    for (const { changedColumns, records: recordsInGroup } of recordsGroupedByChangedColumnSet.values()) {
-      const setClauses = changedColumns.map((column) => `${quoteId(column)} = v.${quoteId(column)}`);
-      const payload = recordsInGroup.map((r) => ({ ...r.data, [primaryId]: r.id }));
-      const jsonParam = JSON.stringify(payload);
+    // The whole batch runs in one transaction so the non-unique-key guard below
+    // can roll back EVERY group's changes — an over-match discovered in a late
+    // group must not leave earlier groups' updates applied.
+    const updatedRowByPrimaryId = await this.knex.transaction(async (transaction) => {
+      const updatedRowByPrimaryIdInTransaction = new Map<string, Record<string, unknown>>();
+      for (const { changedColumns, records: recordsInGroup } of recordsGroupedByChangedColumnSet.values()) {
+        const setClauses = changedColumns.map((column) => `${quoteId(column)} = v.${quoteId(column)}`);
+        const payload = recordsInGroup.map((r) => ({ ...r.data, [primaryId]: r.id }));
+        const jsonParam = JSON.stringify(payload);
 
-      const query = `
-        UPDATE ${quotedTable} AS t
-        SET ${setClauses.join(', ')}
-        FROM json_populate_recordset(null::${quotedTable}, ?::json) AS v
-        WHERE t.${quotedPk} = v.${quotedPk}
-        RETURNING t.*
-      `;
+        const query = `
+          UPDATE ${quotedTable} AS t
+          SET ${setClauses.join(', ')}
+          FROM json_populate_recordset(null::${quotedTable}, ?::json) AS v
+          WHERE t.${quotedPk} = v.${quotedPk}
+          RETURNING t.*
+        `;
 
-      const result = await this.knex.raw<{ rows: Record<string, unknown>[] }>(query, [jsonParam]);
-      for (const row of result.rows) {
-        updatedRowByPrimaryId.set(String(row[primaryId]), sanitizeRow(row));
+        const result = await transaction.raw<{ rows: Record<string, unknown>[] }>(query, [jsonParam]);
+        // Guard against a non-unique match column (e.g. one column of a composite
+        // primary key, DEV-10802): each id may update AT MOST one row, so the same
+        // primary-id value appearing on two returned rows proves the WHERE clause
+        // over-matched sibling rows. Throwing here rolls the transaction back.
+        const returnedRowCountByPrimaryIdValue = new Map<string, number>();
+        for (const row of result.rows) {
+          const primaryIdValue = String(row[primaryId]);
+          const returnedRowCount = (returnedRowCountByPrimaryIdValue.get(primaryIdValue) ?? 0) + 1;
+          if (returnedRowCount > 1) {
+            throw new KnexPGClientError(
+              `UPDATE on ${schema}.${tableName} matched multiple rows with "${primaryId}" = ${primaryIdValue} — "${primaryId}" is not a unique column, so a bulk update would corrupt sibling rows. All updates in this batch were rolled back.`,
+              'UPDATE_MULTIPLE_ROWS',
+            );
+          }
+          returnedRowCountByPrimaryIdValue.set(primaryIdValue, returnedRowCount);
+          updatedRowByPrimaryIdInTransaction.set(primaryIdValue, sanitizeRow(row));
+        }
       }
-    }
+      return updatedRowByPrimaryIdInTransaction;
+    });
 
     return records.map((r) => updatedRowByPrimaryId.get(String(r.id)) || 'not_found');
   }
@@ -628,7 +687,12 @@ export class KnexPGClient {
   // CRUD — Delete
   // -------------------------------------------------------------------------
 
-  /** Delete multiple rows by primary key. Returns the number of affected rows. */
+  /**
+   * Delete multiple rows by primary key. Returns the number of affected rows.
+   * Runs in a transaction with a `RETURNING` check so a non-unique match column
+   * (e.g. one column of a composite primary key, DEV-10802) rolls back instead
+   * of silently deleting every sibling row that shares the value.
+   */
   async deleteMany(
     schema: string,
     tableName: string,
@@ -636,8 +700,30 @@ export class KnexPGClient {
     primaryId: string,
   ): Promise<number> {
     if (recordIds.length === 0) return 0;
-    const count = await this.knex(`${schema}.${tableName}`).whereIn(primaryId, recordIds).del();
-    return count;
+    const quoteId = (name: string) => `"${name.replace(/"/g, '""')}"`;
+    const quotedTable = `${quoteId(schema)}.${quoteId(tableName)}`;
+    const quotedPk = quoteId(primaryId);
+    return this.knex.transaction(async (transaction) => {
+      const bindingPlaceholders = recordIds.map(() => '?').join(', ');
+      const result = await transaction.raw<{ rows: Record<string, unknown>[] }>(
+        `DELETE FROM ${quotedTable} WHERE ${quotedPk} IN (${bindingPlaceholders}) RETURNING ${quotedPk}`,
+        recordIds,
+      );
+      // Each id may delete AT MOST one row; a repeated returned value proves the
+      // match column is not unique and siblings were caught. Roll back.
+      const deletedPrimaryIdValues = new Set<string>();
+      for (const row of result.rows) {
+        const primaryIdValue = String(row[primaryId]);
+        if (deletedPrimaryIdValues.has(primaryIdValue)) {
+          throw new KnexPGClientError(
+            `DELETE on ${schema}.${tableName} matched multiple rows with "${primaryId}" = ${primaryIdValue} — "${primaryId}" is not a unique column, so a bulk delete would destroy sibling rows. All deletes in this batch were rolled back.`,
+            'DELETE_MULTIPLE_ROWS',
+          );
+        }
+        deletedPrimaryIdValues.add(primaryIdValue);
+      }
+      return result.rows.length;
+    });
   }
 
   /** Delete a single row by primary key. Returns 'not_found' if zero rows affected. */

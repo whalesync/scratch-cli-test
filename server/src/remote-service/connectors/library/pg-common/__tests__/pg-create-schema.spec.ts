@@ -91,6 +91,42 @@ describe('buildCreateTableQuery', () => {
       expect(sql).not.toContain('"author_id" uuid not null');
     });
 
+    it('emits the exact native type for exotic target PKs (enum / citext / array — DEV-10821)', () => {
+      // The resolutions carry `format_type` output, never information_schema's
+      // USER-DEFINED/ARRAY placeholders — the column type must land verbatim.
+      const exoticFks: ForeignKeyResolutions = new Map([
+        [
+          'status_ref',
+          {
+            kind: 'resolved',
+            targetTableQualified: 'app.orders',
+            targetPkColumn: 'status',
+            targetPkType: 'app.order_status',
+          },
+        ],
+        [
+          'email_ref',
+          { kind: 'resolved', targetTableQualified: 'public.users', targetPkColumn: 'email', targetPkType: 'citext' },
+        ],
+        [
+          'path_ref',
+          { kind: 'resolved', targetTableQualified: 'public.nodes', targetPkColumn: 'path', targetPkType: 'integer[]' },
+        ],
+      ]);
+      const sql = createTableSql(
+        [
+          field('status_ref', { kind: 'foreignKey', target: { existingRemoteTableId: ['app', 'orders'] } }),
+          field('email_ref', { kind: 'foreignKey', target: { existingRemoteTableId: ['public', 'users'] } }),
+          field('path_ref', { kind: 'foreignKey', target: { existingRemoteTableId: ['public', 'nodes'] } }),
+        ],
+        exoticFks,
+      );
+      expect(sql).toContain('"status_ref" app.order_status');
+      expect(sql).toContain('"email_ref" citext');
+      expect(sql).toContain('"path_ref" integer[]');
+      expect(sql).not.toContain('user-defined');
+    });
+
     it('skips an allowMultiple FK with a reason and emits no column', () => {
       const skipped = new Map<string, string>();
       const sql = createTableSql(
