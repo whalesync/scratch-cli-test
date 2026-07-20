@@ -2971,6 +2971,13 @@ fn run_accept(
         }
 
         crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+        // Re-accepting a failed edit folds it back into the normal review ladder
+        // (REVIEW_MODEL.md), so drop its failed-patches.json entry — otherwise the
+        // next post-publish reconcile keeps re-applying it (DEV-10751).
+        clear_failed_patches_for_record_paths(
+            &connection_dir,
+            path_pairs.iter().map(|(_, rel)| rel.as_str()),
+        )?;
         let rel_paths: Vec<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
         revalidate_paths_for_connection_context(ctx, &rel_paths, path_pairs.len() > 1)?;
 
@@ -3090,6 +3097,16 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
         for (rel_path, approved_bytes) in &resolved {
             write_or_remove_working_file(ctx, rel_path, approved_bytes.as_deref())?;
         }
+
+        // Drop any failed-patches.json entry for these paths. Without this a
+        // rejected failed edit is re-applied to the worktree by the next
+        // post-publish reconcile and resurrects (DEV-10751). failed-patches.json
+        // is the ONLY patch file reject writes — accepted-patches.json stays
+        // untouched, preserving the REVIEW_MODEL.md invariant.
+        clear_failed_patches_for_record_paths(
+            &connection_dir,
+            path_pairs.iter().map(|(_, rel)| rel.as_str()),
+        )?;
 
         all_rejected.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
@@ -5585,6 +5602,66 @@ fn collect_all_ops_candidate_record_paths(
     Ok(candidate_rel_paths)
 }
 
+/// Drop the `failed-patches.json` entries for a specific set of record paths and
+/// persist the result. A path with no failed entry is a no-op, and the file is
+/// only rewritten when something actually changed (an empty set deletes the file).
+///
+/// Called by the whole-path review actions (`accept` / `reject` / `discard`) so
+/// that once the user has reviewed a failed edit it stops being re-applied to the
+/// working tree by every subsequent post-publish reconcile (DEV-10751). Reject
+/// only touches `failed-patches.json` here — never `accepted-patches.json` — so
+/// the `REVIEW_MODEL.md` invariant that reject never mutates the accepted-patches
+/// file still holds.
+fn clear_failed_patches_for_record_paths<'a>(
+    connection_dir: &Path,
+    rel_paths: impl IntoIterator<Item = &'a str>,
+) -> anyhow::Result<()> {
+    let mut failed_file = crate::shared::failed_patches::load(connection_dir)?;
+    let mut changed = false;
+    for rel_path in rel_paths {
+        if crate::shared::failed_patches::get_entry(&failed_file, rel_path).is_some() {
+            crate::shared::failed_patches::remove_entry(&mut failed_file, rel_path);
+            changed = true;
+        }
+    }
+    if changed {
+        crate::shared::failed_patches::save_atomic(connection_dir, &failed_file)?;
+    }
+    Ok(())
+}
+
+/// Drop every `failed-patches.json` entry whose record path falls within
+/// `repo_folder` (or anywhere, when `repo_folder` is `None`), and persist the
+/// result. Returns the cleared record paths.
+///
+/// Used by the folder-scoped `-all` review actions. Unlike the candidate set
+/// those handlers enumerate for worktree/accepted work (byte-dirty ∪
+/// accepted-patches), this also clears a failed entry whose re-applied value now
+/// equals `main` and therefore leaves a *clean* worktree — reverting a whole
+/// folder should wipe its lingering failed annotations so nothing resurrects on
+/// the next reconcile (DEV-10751). Uses the same `is_data_path_in_folder` scope
+/// filter as `collect_all_ops_candidate_record_paths`.
+fn clear_failed_patches_in_folder_scope(
+    connection_dir: &Path,
+    repo_folder: Option<&str>,
+) -> anyhow::Result<Vec<String>> {
+    let mut failed_file = crate::shared::failed_patches::load(connection_dir)?;
+    let cleared_paths: Vec<String> = failed_file
+        .patches
+        .iter()
+        .filter(|entry| is_data_path_in_folder(&entry.path, repo_folder.unwrap_or("")))
+        .map(|entry| entry.path.clone())
+        .collect();
+    if cleared_paths.is_empty() {
+        return Ok(cleared_paths);
+    }
+    for path in &cleared_paths {
+        crate::shared::failed_patches::remove_entry(&mut failed_file, path);
+    }
+    crate::shared::failed_patches::save_atomic(connection_dir, &failed_file)?;
+    Ok(cleared_paths)
+}
+
 /// Load main + approved + worktree maps restricted to a candidate path set.
 /// Produces drop-in replacements for the maps the all-ops used to build from
 /// full-tree reads, but only the bytes for paths in `candidate_rel_paths` get
@@ -7211,6 +7288,11 @@ fn discard_all_unreviewed_changes_in_connection_repo(
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
+    // Wipe the folder's failed-patches.json entries so reverted failed edits stop
+    // resurrecting on the next reconcile (DEV-10751); covers clean-worktree failed
+    // entries the candidate set below misses.
+    clear_failed_patches_in_folder_scope(&connection_dir, repo_folder)?;
+
     // Candidate path set = gix::status (byte-dirty) ∪ accepted-patches.json
     // entries, scoped to `repo_folder` when set. Pre-§5.1 this routine read
     // the entire main tree + worktree to discover candidates; the candidate
@@ -7379,6 +7461,10 @@ fn discard_record_paths_in_connection_repo(
     }
 
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+    // Discarding a failed edit throws it away entirely — drop its
+    // failed-patches.json entry too so the reconcile stops re-applying it
+    // (DEV-10751).
+    clear_failed_patches_for_record_paths(&connection_dir, targets.iter().map(String::as_str))?;
 
     Ok(DiscardAllResult {
         files_discarded: targets.len() as i32,
@@ -7408,6 +7494,11 @@ fn accept_all_unreviewed_changes_in_connection_repo(
     sync_schema_files_from_worktree(ctx)?;
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
+
+    // Re-accepting a failed edit folds it back into the review ladder — clear the
+    // folder's failed-patches.json entries so they stop being re-applied by the
+    // reconcile (DEV-10751).
+    clear_failed_patches_in_folder_scope(&connection_dir, repo_folder)?;
 
     // Candidate path set = gix::status ∪ accepted-patches.json entries,
     // scoped to `repo_folder` when set. See
@@ -7491,6 +7582,12 @@ fn reject_all_unreviewed_changes_in_connection_repo(
     sync_schema_files_from_worktree(ctx)?;
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
+
+    // Clearing the folder's failed-patches.json entries is what actually stops
+    // reverted failed edits from resurrecting on the next reconcile (DEV-10751).
+    // Do it up front so it also covers a failed entry whose worktree is already
+    // clean (re-applied value == main), which the candidate set below misses.
+    clear_failed_patches_in_folder_scope(&connection_dir, repo_folder)?;
 
     // Candidate path set = gix::status ∪ accepted-patches.json entries; see
     // `collect_all_ops_candidate_record_paths`. reject-all only writes the

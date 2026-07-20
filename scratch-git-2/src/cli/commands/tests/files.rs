@@ -4081,6 +4081,269 @@ fn reconcile_keeps_failed_record_when_partial_publish_succeeded() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// DEV-10751 — a reviewed failed edit must leave failed-patches.json so the
+// post-publish reconcile stops re-applying it (no resurrection).
+// ---------------------------------------------------------------------------
+
+/// Seed a single `failed-patches.json` Update entry for `rel_path`.
+fn seed_failed_patch(connection_dir: &Path, rel_path: &str, patch: serde_json::Value) {
+    crate::shared::failed_patches::save_atomic(
+        connection_dir,
+        &crate::shared::failed_patches::FailedPatchesFile {
+            patches: vec![crate::shared::failed_patches::FailedPatch {
+                path: rel_path.to_string(),
+                kind: crate::shared::re_anchor::PatchKind::Update,
+                patch,
+                revert: false,
+                error: Some("connector rejected this edit".into()),
+                field_errors: None,
+            }],
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn reject_all_clears_failed_patches_so_edit_does_not_resurrect_on_next_reconcile() {
+    // The DEV-10751 scenario end to end: a connector-rejected edit lands in
+    // failed-patches.json and is re-applied to the worktree; the user reverts
+    // with reject-all; a later UNRELATED publish's reconcile must NOT bring the
+    // reverted edit back.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    materialize_real_worktree_at_main(&ctx);
+
+    // User accepted industry -> SaaS; the worktree holds the approved value.
+    let connection_dir = accepted_patches_dir(&ctx);
+    crate::shared::accepted_patches::save_atomic(
+        &connection_dir,
+        &crate::shared::accepted_patches::AcceptedPatchesFile {
+            patches: vec![crate::shared::re_anchor::AnchoredPatch {
+                path: "posts/rec_acme.json".to_string(),
+                kind: crate::shared::re_anchor::PatchKind::Update,
+                patch: serde_json::json!({"industry": "SaaS"}),
+                revert: false,
+            }],
+        },
+    )
+    .unwrap();
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+
+    // Publish: the connector rejected it -> reconcile moves it to
+    // failed-patches.json and re-applies it to the worktree.
+    let failed_op = crate::api::JobFailedOperation {
+        file_path: "posts/rec_acme.json".into(),
+        phase: "edit".into(),
+        error: Some("industry must be one of: Tech, Bio".into()),
+        field_errors: None,
+    };
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[failed_op]).unwrap();
+    assert_eq!(
+        crate::shared::failed_patches::load(&connection_dir)
+            .unwrap()
+            .patches
+            .len(),
+        1,
+        "sanity: the rejected edit is now in failed-patches.json"
+    );
+
+    // User reverts via the grid's "Reject all".
+    reject_all_unreviewed_changes_in_connection_repo(&ctx, &workspace_dir, None).unwrap();
+    assert!(
+        crate::shared::failed_patches::load(&connection_dir)
+            .unwrap()
+            .patches
+            .is_empty(),
+        "reject-all must clear the failed-patches.json entry (DEV-10751)"
+    );
+    let working_after_reject =
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/rec_acme.json")).unwrap();
+    assert!(
+        working_after_reject.contains("\"Tech\"") && !working_after_reject.contains("\"SaaS\""),
+        "reject-all restores the working file to approved (= main); got: {working_after_reject}"
+    );
+
+    // A later, unrelated publish reconciles again with no failures. The reverted
+    // edit must NOT come back.
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    assert!(
+        crate::shared::failed_patches::load(&connection_dir)
+            .unwrap()
+            .patches
+            .is_empty(),
+        "no failed entry may reappear on a later reconcile"
+    );
+    let working_after_reconcile =
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/rec_acme.json")).unwrap();
+    assert!(
+        working_after_reconcile.contains("\"Tech\"")
+            && !working_after_reconcile.contains("\"SaaS\""),
+        "the reverted edit must not resurrect in the worktree; got: {working_after_reconcile}"
+    );
+}
+
+#[test]
+fn reject_all_clears_failed_patches_entry_even_when_worktree_is_clean() {
+    // The incident's "matched exactly" pages: a failed entry whose re-applied
+    // value already equals main leaves a CLEAN worktree, so it is not byte-dirty
+    // and the candidate set misses it. reject-all must still drop the entry so it
+    // can't resurrect if main later diverges.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    materialize_real_worktree_at_main(&ctx);
+
+    // Failed entry present, but the worktree already matches main (clean).
+    let connection_dir = accepted_patches_dir(&ctx);
+    seed_failed_patch(
+        &connection_dir,
+        "posts/rec_acme.json",
+        serde_json::json!({"industry": "Tech"}),
+    );
+
+    reject_all_unreviewed_changes_in_connection_repo(&ctx, &workspace_dir, None).unwrap();
+
+    assert!(
+        crate::shared::failed_patches::load(&connection_dir)
+            .unwrap()
+            .patches
+            .is_empty(),
+        "reject-all must clear an in-scope failed entry even with a clean worktree"
+    );
+}
+
+#[test]
+fn discard_record_path_clears_failed_patches_entry() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    materialize_real_worktree_at_main(&ctx);
+
+    // A failed edit re-applied to the worktree (needs-approval) + its entry.
+    let connection_dir = accepted_patches_dir(&ctx);
+    seed_failed_patch(
+        &connection_dir,
+        "posts/rec_acme.json",
+        serde_json::json!({"industry": "SaaS"}),
+    );
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+
+    let rel = vec!["posts/rec_acme.json".to_string()];
+    let input_map: HashMap<&str, &str> =
+        HashMap::from([("posts/rec_acme.json", "Conn/posts/rec_acme.json")]);
+    discard_record_paths_in_connection_repo(&ctx, &rel, &input_map).unwrap();
+
+    assert!(
+        crate::shared::failed_patches::load(&connection_dir)
+            .unwrap()
+            .patches
+            .is_empty(),
+        "discard must clear the failed-patches.json entry (DEV-10751)"
+    );
+    let working = std::fs::read_to_string(ctx.worktree_dir.join("posts/rec_acme.json")).unwrap();
+    assert!(
+        working.contains("\"Tech\"") && !working.contains("\"SaaS\""),
+        "discard resets the working file to published (= main); got: {working}"
+    );
+}
+
+#[test]
+fn accept_all_clears_failed_patches_entry_when_re_accepting() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    materialize_real_worktree_at_main(&ctx);
+
+    let connection_dir = accepted_patches_dir(&ctx);
+    seed_failed_patch(
+        &connection_dir,
+        "posts/rec_acme.json",
+        serde_json::json!({"industry": "SaaS"}),
+    );
+    // Failed edit re-applied to the worktree (needs-approval).
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+
+    let result =
+        accept_all_unreviewed_changes_in_connection_repo(&ctx, &workspace_dir, None).unwrap();
+    assert_eq!(result.files_accepted, 1);
+
+    // Re-accepted: folded back into accepted-patches.json...
+    let accepted = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(accepted.patches.len(), 1);
+    assert_eq!(accepted.patches[0].path, "posts/rec_acme.json");
+    // ...and cleared from failed-patches.json.
+    assert!(
+        crate::shared::failed_patches::load(&connection_dir)
+            .unwrap()
+            .patches
+            .is_empty(),
+        "re-accepting a failed edit must clear its failed-patches.json entry"
+    );
+}
+
 mod discard_field_helper {
     use super::super::*;
     use crate::shared::accepted_patches::AcceptedPatchesFile;
@@ -4444,6 +4707,122 @@ mod entry_points {
         let path = fx.workspace_dir.join(CONN).join(rel_path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
+    }
+
+    fn seed_failed_patch(fx: &EpFixture, rel_path: &str, patch: serde_json::Value) {
+        crate::shared::failed_patches::save_atomic(
+            &fx.connection_dir,
+            &crate::shared::failed_patches::FailedPatchesFile {
+                patches: vec![crate::shared::failed_patches::FailedPatch {
+                    path: rel_path.to_string(),
+                    kind: crate::shared::re_anchor::PatchKind::Update,
+                    patch,
+                    revert: false,
+                    error: Some("connector rejected this edit".into()),
+                    field_errors: None,
+                }],
+            },
+        )
+        .unwrap();
+    }
+
+    /// DEV-10751: the whole-path `files reject <path>` entry point (the desktop's
+    /// single-record "Reject" — `scratch:reject-record`) must clear the record's
+    /// failed-patches.json entry, not just restore the worktree — otherwise the
+    /// reverted edit resurrects on the next post-publish reconcile. Exercises the
+    /// real `run_reject` CLI handler (arg-strip, workspace resolution, lock,
+    /// reindex), which the connection-repo-level tests bypass.
+    #[test]
+    fn run_reject_whole_path_clears_failed_patches_entry() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        seed_main(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+        );
+        // A failed edit re-applied to the worktree (needs-approval) + its entry.
+        write_working(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+        );
+        seed_failed_patch(
+            &fx,
+            "Companies/rec_acme.json",
+            serde_json::json!({"industry": "SaaS"}),
+        );
+
+        run_reject(
+            &fx.workspace_dir,
+            &["HubSpot/Companies/rec_acme.json".to_string()],
+            true,
+        )
+        .unwrap();
+
+        assert!(
+            crate::shared::failed_patches::load(&fx.connection_dir)
+                .unwrap()
+                .patches
+                .is_empty(),
+            "whole-path reject must clear the failed-patches.json entry (DEV-10751)"
+        );
+        let working =
+            std::fs::read_to_string(fx.workspace_dir.join(CONN).join("Companies/rec_acme.json"))
+                .unwrap();
+        assert!(
+            working.contains("\"Tech\"") && !working.contains("\"SaaS\""),
+            "reject restores the working file to approved (= main); got: {working}"
+        );
+    }
+
+    /// DEV-10751 companion: the whole-path `files accept <path>` entry point
+    /// (`scratch:accept-record`) folds a failed edit back into
+    /// `accepted-patches.json` and clears its failed-patches.json entry.
+    #[test]
+    fn run_accept_whole_path_clears_failed_patches_entry() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        seed_main(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+        );
+        write_working(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+        );
+        seed_failed_patch(
+            &fx,
+            "Companies/rec_acme.json",
+            serde_json::json!({"industry": "SaaS"}),
+        );
+
+        run_accept(
+            &fx.workspace_dir,
+            "http://localhost",
+            &["HubSpot/Companies/rec_acme.json".to_string()],
+            true,
+        )
+        .unwrap();
+
+        // Re-accepted into accepted-patches.json...
+        assert_eq!(load_patches(&fx).patches.len(), 1);
+        // ...and cleared from failed-patches.json.
+        assert!(
+            crate::shared::failed_patches::load(&fx.connection_dir)
+                .unwrap()
+                .patches
+                .is_empty(),
+            "whole-path accept must clear the failed-patches.json entry (DEV-10751)"
+        );
     }
 
     #[test]

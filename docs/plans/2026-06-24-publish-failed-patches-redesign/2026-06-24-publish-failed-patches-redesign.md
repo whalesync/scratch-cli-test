@@ -215,9 +215,14 @@ Two simplifications over the first sketch:
    and ships failures to the desktop — so a web user watching the same workbook sees those
    pending edits disappear (they "moved" to the desktop publisher). Recommend accepting this:
    the publisher owns the attempt; document it.
-4. **`failed-patches.json` lifecycle.** When are entries cleared? Recommend: cleared when
-   the user re-accepts (the edit re-enters `accepted-patches.json`) or discards — symmetric
-   with the review ladder; a stale entry is harmless (it's just an annotation source).
+4. **`failed-patches.json` lifecycle.** When are entries cleared? **Resolved (DEV-10751):**
+   the record-level review actions — `accept` / `reject` / `discard` and their `-all`
+   variants — clear the record's entry (accept folds it back into `accepted-patches.json`;
+   reject/discard drop it). The original "a stale entry is harmless (it's just an annotation
+   source)" assumption was **wrong**: the post-publish reconcile re-applies every entry to
+   the working tree, so an un-cleared entry resurrects the reverted edit on the next publish.
+   Follow-up: the field-in-folder variants (`reject-field` / `discard-field` / `accept-field`)
+   don't clear entries yet; doing so needs a field-granular `failed_patches::remove_field`.
 5. **DEV-10316 dirty-gate.** With `dirty` rebuilt from `main`, the phantom that inflates the
    gate disappears; confirm the gate's count logic still behaves with the scoped reconcile.
 

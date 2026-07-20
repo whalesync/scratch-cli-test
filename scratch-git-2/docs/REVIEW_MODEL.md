@@ -14,6 +14,8 @@ This invariant holds at every layer that exposes review actions — the CLI subc
 
 Why: once a field is in `accepted-patches.json`, it's a committed promise that the value will be published. Letting a Reject silently mutate that file (even with a "no-op" same-value snapshot) breaks the "Approved" tab classification, the publish plan, and the user's mental model that they only approved what they actually approved.
 
+> **Scope of this invariant:** it governs `accepted-patches.json`. Its sibling `failed-patches.json` (post-publish rejections — see below) is *not* a committed promise but a re-surfaced failure, so it is treated differently: any review action that resolves a record — `accept`, `reject`, or `discard` — clears that record's `failed-patches.json` entry so the reverted edit stops resurrecting on the next reconcile (DEV-10751). `reject` still never writes `accepted-patches.json`.
+
 ## The three states
 
 | State         | Where it lives                                                          | Git analogy                             |
@@ -169,7 +171,7 @@ Sibling to `accepted-patches.json`, at `<workspace>/.scratch/connections/<conn>/
 
 The error lives at the **entry** level, never on the RFC 6902 ops, so `patch` stays a conformant op array / merge patch and re-applies through the same machinery as an accepted patch.
 
-The failed edit is re-applied to the **working tree** during the post-publish reconcile (so it shows as **needs-approval**), but is NOT in `accepted-patches.json` — so it is not staged to publish again until the user deliberately re-accepts it (which removes the `failed-patches.json` entry and folds the edit back into `accepted-patches.json`). An empty set deletes the file; a clean publish leaves none behind. See the publish redesign doc, [`docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md).
+The failed edit is re-applied to the **working tree** during the post-publish reconcile (so it shows as **needs-approval**), but is NOT in `accepted-patches.json` — so it is not staged to publish again until the user reviews it. Reviewing the record clears its `failed-patches.json` entry (DEV-10751): **accept** removes the entry and folds the edit back into `accepted-patches.json` to retry; **reject** and **discard** remove the entry and revert the working tree. In every case the entry is dropped, so the reconcile stops re-applying it. (This holds for the whole-path and `-all` review actions; the field-in-folder variants — `reject-field`/`discard-field`/`accept-field` — do not clear entries yet, a tracked follow-up.) Before DEV-10751 nothing cleared these entries, so a reverted failed edit resurrected on the next publish. An empty set deletes the file; a clean publish leaves none behind. See the publish redesign doc, [`docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign/2026-06-24-publish-failed-patches-redesign.md).
 
 ### `unreviewed-changes.json` (the pull conflict stash, DEV-10523)
 

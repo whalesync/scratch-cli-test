@@ -211,9 +211,10 @@ pub fn upsert_entry(file: &mut FailedPatchesFile, entry: FailedPatch) {
     }
 }
 
-/// Remove the entry for a path. No-op if absent. Used when the user re-accepts or
-/// discards a failed edit (it leaves `failed-patches.json` and re-enters the
-/// normal review ladder).
+/// Remove the entry for a path. No-op if absent. Called when the user reviews a
+/// failed edit — reject, discard, or re-accept — so it leaves `failed-patches.json`
+/// and stops being re-applied to the worktree by the post-publish reconcile
+/// (DEV-10751). On re-accept the edit also re-enters `accepted-patches.json`.
 pub fn remove_entry(file: &mut FailedPatchesFile, path: &str) {
     file.patches.retain(|e| e.path != path);
 }
