@@ -235,11 +235,44 @@ export class FileReferenceService {
     });
   }
 
-  async deleteForFolder(workbookId: string, folderPath: string): Promise<void> {
+  /**
+   * Delete refs whose source file lives under a SINGLE folder being deleted —
+   * including files stored deeper than the folder's own path (Shopify-GID artifacts)
+   * — while preserving refs owned by a live child DataFolder nested inside it (e.g.
+   * a Webflow secondary-locale folder). Mirrors the longest-prefix ownership rule
+   * used for FileIndex, but expressed on `sourceFilePath` (a full file path).
+   *
+   * FileReference has no `connectorAccountId`, so it cannot distinguish two
+   * connections that share an identical folder path (folder paths carry no
+   * connection prefix — see `buildConnectorFolderPath`). In that rare case the
+   * sibling connection's refs under the same path are also removed and rebuilt on
+   * its next pull/publish — the accepted trade-off of the DEV-10885 no-column
+   * decision.
+   *
+   * All folder paths are WITHOUT a leading slash.
+   */
+  async deleteForFolderExcludingLiveChildren(
+    workbookId: string,
+    deletedFolderPath: string,
+    liveChildFolderPaths: string[],
+  ): Promise<void> {
+    const subtreePrefix = deletedFolderPath.endsWith('/') ? deletedFolderPath : `${deletedFolderPath}/`;
     await this.db.client.fileReference.deleteMany({
       where: {
         workbookId,
-        sourceFilePath: { startsWith: folderPath.endsWith('/') ? folderPath : `${folderPath}/` },
+        sourceFilePath: { startsWith: subtreePrefix },
+        // Exclude every live child folder's own subtree so its refs survive.
+        ...(liveChildFolderPaths.length > 0
+          ? {
+              AND: liveChildFolderPaths.map((childFolderPath) => ({
+                NOT: {
+                  sourceFilePath: {
+                    startsWith: childFolderPath.endsWith('/') ? childFolderPath : `${childFolderPath}/`,
+                  },
+                },
+              })),
+            }
+          : {}),
       },
     });
   }

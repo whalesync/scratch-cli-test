@@ -409,6 +409,7 @@ describe('DataFolderService.deleteFolder', () => {
       client: {
         dataFolder: {
           findUnique: jest.fn().mockResolvedValue(makeDataFolder()),
+          findMany: jest.fn().mockResolvedValue([]),
           delete: jest.fn().mockResolvedValue(undefined),
         },
         schedule: {
@@ -449,11 +450,11 @@ describe('DataFolderService.deleteFolder', () => {
     } as unknown as jest.Mocked<AuditLogService>;
 
     mockFileIndexService = {
-      removeAll: jest.fn().mockResolvedValue(undefined),
+      deleteRowsOwnedByDeletedFolder: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<FileIndexService>;
 
     mockFileReferenceService = {
-      deleteForFolder: jest.fn().mockResolvedValue(undefined),
+      deleteForFolderExcludingLiveChildren: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<FileReferenceService>;
 
     const stub = {} as unknown;
@@ -534,10 +535,20 @@ describe('DataFolderService.deleteFolder', () => {
   it('should clean up FileIndex, FileReference, and SyncMatchKeys rows that lack FK cascade', async () => {
     await service.deleteFolder(FOLDER_ID, ACTOR);
 
-    // FileIndex.folderPath and FileReference.sourceFilePath are stored without a leading slash,
-    // so the cleanup must pass the path without one to match.
-    expect(mockFileIndexService.removeAll).toHaveBeenCalledWith(WORKBOOK_ID, 'Companies');
-    expect(mockFileReferenceService.deleteForFolder).toHaveBeenCalledWith(WORKBOOK_ID, 'Companies');
+    // Owner-aware cleanup (DEV-10885): scoped by the folder's connectorAccountId and only the rows
+    // this folder owns (no live child folder here, so `otherLiveFolderPaths` is empty). FileIndex.folderPath
+    // and FileReference.sourceFilePath are stored without a leading slash, so the path is passed without one.
+    expect(mockFileIndexService.deleteRowsOwnedByDeletedFolder).toHaveBeenCalledWith(
+      WORKBOOK_ID,
+      CONNECTOR_ACCOUNT_ID,
+      'Companies',
+      [],
+    );
+    expect(mockFileReferenceService.deleteForFolderExcludingLiveChildren).toHaveBeenCalledWith(
+      WORKBOOK_ID,
+      'Companies',
+      [],
+    );
     expect(mockDb.client.syncMatchKeys.deleteMany).toHaveBeenCalledWith({ where: { dataFolderId: FOLDER_ID } });
   });
 
@@ -546,8 +557,8 @@ describe('DataFolderService.deleteFolder', () => {
 
     await service.deleteFolder(FOLDER_ID, ACTOR);
 
-    expect(mockFileIndexService.removeAll).not.toHaveBeenCalled();
-    expect(mockFileReferenceService.deleteForFolder).not.toHaveBeenCalled();
+    expect(mockFileIndexService.deleteRowsOwnedByDeletedFolder).not.toHaveBeenCalled();
+    expect(mockFileReferenceService.deleteForFolderExcludingLiveChildren).not.toHaveBeenCalled();
     expect(mockDb.client.syncMatchKeys.deleteMany).toHaveBeenCalledWith({ where: { dataFolderId: FOLDER_ID } });
   });
 });

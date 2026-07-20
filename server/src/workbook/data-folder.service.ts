@@ -764,10 +764,37 @@ export class DataFolderService {
     // FileIndex.folderPath and FileReference.sourceFilePath are stored without
     // a leading slash (see pull-linked-folder-files.job.ts), so we strip it here
     // to match — otherwise the queries match zero rows.
+    //
+    // Owner-aware (DEV-10885): a plain exact-path delete both (a) missed rows stored
+    // under a folderPath deeper than the DataFolder path (e.g. Shopify variants whose
+    // slash-bearing GID id leaks into folderPath) and (b) could delete a live child
+    // DataFolder's rows when one nests inside this one (e.g. a Webflow secondary-locale
+    // folder). We load the workbook's other live folder paths so the cleanup deletes
+    // only rows this folder is the longest-prefix owner of.
     if (dataFolder.path) {
       const folderPathNoSlash = dataFolder.path.replace(/^\//, '');
-      await this.fileIndexService.removeAll(dataFolder.workbookId, folderPathNoSlash);
-      await this.fileReferenceService.deleteForFolder(dataFolder.workbookId, folderPathNoSlash);
+      const otherLiveDataFolders = await this.db.client.dataFolder.findMany({
+        where: { workbookId: dataFolder.workbookId, id: { not: id }, path: { not: null } },
+        select: { path: true },
+      });
+      const otherLiveFolderPathsNoSlash = otherLiveDataFolders
+        .map((folder) => folder.path?.replace(/^\//, ''))
+        .filter((path): path is string => !!path);
+      const liveChildFolderPathsNoSlash = otherLiveFolderPathsNoSlash.filter((path) =>
+        path.startsWith(`${folderPathNoSlash}/`),
+      );
+
+      await this.fileIndexService.deleteRowsOwnedByDeletedFolder(
+        dataFolder.workbookId,
+        dataFolder.connectorAccountId,
+        folderPathNoSlash,
+        otherLiveFolderPathsNoSlash,
+      );
+      await this.fileReferenceService.deleteForFolderExcludingLiveChildren(
+        dataFolder.workbookId,
+        folderPathNoSlash,
+        liveChildFolderPathsNoSlash,
+      );
     }
     await this.db.client.syncMatchKeys.deleteMany({ where: { dataFolderId: id } });
 

@@ -31,6 +31,7 @@ import { checkWorkspacePermissions } from 'src/users/permissions';
 import { canCreateDataSource } from 'src/users/subscription-utils';
 import { Actor, SYSTEM_ACTOR } from 'src/users/types';
 import { extractApiDomain } from 'src/utils/urls';
+import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { DbService } from '../../db/db.service';
 import { PostHogService } from '../../posthog/posthog.service';
 import { EncryptedData } from '../../utils/encryption';
@@ -62,6 +63,7 @@ export class ConnectorAccountService {
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookEventService: WorkbookEventService,
     private readonly experimentsService: ExperimentsService,
+    private readonly bullEnqueuerService: BullEnqueuerService,
   ) {}
 
   /**
@@ -470,7 +472,7 @@ export class ConnectorAccountService {
 
     const workbook = await this.loadWorkbook(workbookId);
 
-    await this.removeConnectionData(account);
+    await this.removeConnectionData(account, actor);
 
     this.workbookEventService.sendWorkbookEvent(workbookId, {
       type: 'workbook-updated',
@@ -497,7 +499,7 @@ export class ConnectorAccountService {
   async removeBySystem(workbookId: WorkbookId, id: string): Promise<void> {
     const workbook = await this.loadWorkbook(workbookId);
     const account = await this.findOneByIdAdmin(id);
-    await this.removeConnectionData(account);
+    await this.removeConnectionData(account, SYSTEM_ACTOR);
 
     this.workbookEventService.sendWorkbookEvent(workbookId, {
       type: 'workbook-updated',
@@ -517,7 +519,7 @@ export class ConnectorAccountService {
    * Core cleanup logic shared by remove() and removeBySystem().
    * Deletes schedules, publish plans, DataFolders, git data, and the ConnectorAccount record.
    */
-  private async removeConnectionData(account: ConnectorAccount): Promise<void> {
+  private async removeConnectionData(account: ConnectorAccount, actor: Actor): Promise<void> {
     const { id, workbookId } = account;
 
     // Fetch all DataFolders for this connection (needed for schedule cleanup)
@@ -578,6 +580,38 @@ export class ConnectorAccountService {
     await this.db.client.connectorAccount.delete({
       where: { id, workbookId },
     });
+
+    // Orphan cleanup (DEV-10885): FileIndex/FileReference have no FK to DataFolder,
+    // so the DataFolder bulk-delete above leaves their rows behind. Run it in a
+    // durable background job so the user's delete doesn't block on an unbounded
+    // deleteMany (one connection had ~42k index rows). Safe to defer here (unlike
+    // resetConnection, which cleans inline): the FileIndex delete is scoped by the
+    // now-dead connectorAccountId, which a reconnect never reuses, so it can't touch
+    // a future connection's rows. The FileReference delete IS keyed by folder path
+    // (no connectorAccountId column) and folder paths carry no connection prefix, so
+    // the job guards it at run time — skipping any path a live DataFolder has since
+    // reclaimed (a reconnect + re-pull of the same service) — rather than trusting
+    // the enqueue-time assumption. Best-effort: the connection is already deleted, so
+    // a failed enqueue must not surface as an error (a re-pull rebuilds these caches,
+    // and Phase B's GC backstops anything missed).
+    try {
+      await this.bullEnqueuerService.enqueueCleanupConnectionIndexRowsJob(
+        {
+          workbookId: workbookId as WorkbookId,
+          connectorAccountId: id,
+          connectionFolderPaths: dataFolders.map((folder) => folder.path).filter((path): path is string => !!path),
+        },
+        actor,
+      );
+    } catch (err) {
+      WSLogger.error({
+        source: 'ConnectorAccountService.removeConnectionData',
+        message: 'Failed to enqueue FileIndex/FileReference cleanup job after connection removal',
+        error: err,
+        workbookId,
+        connectorAccountId: id,
+      });
+    }
   }
 
   /**
@@ -594,6 +628,14 @@ export class ConnectorAccountService {
 
     await this.assertGenericConnectorEnabled(account.service, actor);
 
+    // Capture the connection's folder paths BEFORE deleting the DataFolders — the
+    // FileReference cleanup below is keyed by source-file path, which can't be
+    // recovered once the DataFolders are gone.
+    const dataFolders = await this.db.client.dataFolder.findMany({
+      where: { workbookId, connectorAccountId: id },
+      select: { path: true },
+    });
+
     // Delete all data folders for this connection
     await this.db.client.dataFolder.deleteMany({
       where: { workbookId, connectorAccountId: id },
@@ -603,6 +645,25 @@ export class ConnectorAccountService {
     await this.db.client.publishPlan.deleteMany({
       where: { workbookId, connectorAccountId: id },
     });
+
+    // Clean up index rows that have no FK to DataFolder and so don't cascade
+    // (DEV-10885). Done INLINE here (not via the async delete-time job) because
+    // reset keeps the same connectorAccountId: a background sweep could race — and
+    // delete — the rows a re-pull writes right after. FileIndex is scoped by
+    // connectorAccountId, which covers nested sub-paths for free (mirror of
+    // FileIndexService.deleteForConnection); FileReference has no such column, so we
+    // prefix-delete under each folder path. No live-children guard is needed here (the
+    // async delete job has one) because reset runs inline within the same request, so
+    // no reconnect can have recreated a folder at these paths yet.
+    await this.db.client.fileIndex.deleteMany({ where: { workbookId, connectorAccountId: id } });
+    for (const { path } of dataFolders) {
+      if (!path) continue;
+      const folderPathNoSlash = path.replace(/^\//, '');
+      if (!folderPathNoSlash) continue;
+      await this.db.client.fileReference.deleteMany({
+        where: { workbookId, sourceFilePath: { startsWith: `${folderPathNoSlash}/` } },
+      });
+    }
 
     // Delete and re-init the connection's dedicated git repo
     try {

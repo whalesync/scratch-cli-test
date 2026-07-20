@@ -17,6 +17,7 @@ export enum CustomMetric {
   JOB_PUBLISH_COMPLETED = 'job_publish_completed',
   JOB_DELETE_WORKBOOK_COMPLETED = 'job_delete_workbook_completed',
   JOB_DISCARD_PENDING_CHANGES_COMPLETED = 'job_discard_pending_changes_completed',
+  JOB_CLEANUP_CONNECTION_INDEX_ROWS_COMPLETED = 'job_cleanup_connection_index_rows_completed',
 
   // BullMQ job metrics — failed
   JOB_PULL_LINKED_FOLDER_FILES_FAILED = 'job_pull_linked_folder_files_failed',
@@ -27,6 +28,7 @@ export enum CustomMetric {
   JOB_PUBLISH_FAILED = 'job_publish_failed',
   JOB_DELETE_WORKBOOK_FAILED = 'job_delete_workbook_failed',
   JOB_DISCARD_PENDING_CHANGES_FAILED = 'job_discard_pending_changes_failed',
+  JOB_CLEANUP_CONNECTION_INDEX_ROWS_FAILED = 'job_cleanup_connection_index_rows_failed',
 
   // BullMQ job metrics — error (worker-level errors)
   JOB_WORKER_ERROR = 'job_worker_error',
@@ -40,6 +42,7 @@ export enum CustomMetric {
   JOB_PUBLISH_CANCELED = 'job_publish_canceled',
   JOB_DELETE_WORKBOOK_CANCELED = 'job_delete_workbook_canceled',
   JOB_DISCARD_PENDING_CHANGES_CANCELED = 'job_discard_pending_changes_canceled',
+  JOB_CLEANUP_CONNECTION_INDEX_ROWS_CANCELED = 'job_cleanup_connection_index_rows_canceled',
 
   // BullMQ job metrics — stalled
   JOB_PULL_LINKED_FOLDER_FILES_STALLED = 'job_pull_linked_folder_files_stalled',
@@ -50,6 +53,7 @@ export enum CustomMetric {
   JOB_PUBLISH_STALLED = 'job_publish_stalled',
   JOB_DELETE_WORKBOOK_STALLED = 'job_delete_workbook_stalled',
   JOB_DISCARD_PENDING_CHANGES_STALLED = 'job_discard_pending_changes_stalled',
+  JOB_CLEANUP_CONNECTION_INDEX_ROWS_STALLED = 'job_cleanup_connection_index_rows_stalled',
 
   // Sync — unmatched-destination (Pass 3) accounting. Summed across all table
   // mappings within one sync run.
@@ -100,6 +104,10 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_DISCARD_PENDING_CHANGES_FAILED:
     case CustomMetric.JOB_DISCARD_PENDING_CHANGES_CANCELED:
     case CustomMetric.JOB_DISCARD_PENDING_CHANGES_STALLED:
+    case CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_COMPLETED:
+    case CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_FAILED:
+    case CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_CANCELED:
+    case CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_STALLED:
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
     case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
@@ -151,6 +159,10 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.JOB_DISCARD_PENDING_CHANGES_FAILED:
     case CustomMetric.JOB_DISCARD_PENDING_CHANGES_CANCELED:
     case CustomMetric.JOB_DISCARD_PENDING_CHANGES_STALLED:
+    case CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_COMPLETED:
+    case CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_FAILED:
+    case CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_CANCELED:
+    case CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_STALLED:
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
     case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
@@ -178,6 +190,7 @@ export const JOB_COMPLETED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_COMPLETED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_COMPLETED,
   [JobType.DiscardPendingChanges]: CustomMetric.JOB_DISCARD_PENDING_CHANGES_COMPLETED,
+  [JobType.CleanupConnectionIndexRows]: CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_COMPLETED,
   // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
   [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_COMPLETED,
 };
@@ -191,6 +204,7 @@ export const JOB_FAILED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_FAILED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_FAILED,
   [JobType.DiscardPendingChanges]: CustomMetric.JOB_DISCARD_PENDING_CHANGES_FAILED,
+  [JobType.CleanupConnectionIndexRows]: CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_FAILED,
   // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
   [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_FAILED,
 };
@@ -204,6 +218,7 @@ export const JOB_CANCELED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_CANCELED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_CANCELED,
   [JobType.DiscardPendingChanges]: CustomMetric.JOB_DISCARD_PENDING_CHANGES_CANCELED,
+  [JobType.CleanupConnectionIndexRows]: CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_CANCELED,
   // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
   [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_CANCELED,
 };
@@ -217,6 +232,7 @@ export const JOB_STALLED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_STALLED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_STALLED,
   [JobType.DiscardPendingChanges]: CustomMetric.JOB_DISCARD_PENDING_CHANGES_STALLED,
+  [JobType.CleanupConnectionIndexRows]: CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_STALLED,
   // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
   [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_STALLED,
 };

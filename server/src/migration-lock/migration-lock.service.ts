@@ -124,6 +124,11 @@ export class MigrationLockService {
       case JobType.SyncDataFolders:
       case JobType.TemporarySyncWithPull:
         return this.connectorAccountIdsForSync(data.syncId);
+      // Post-delete orphan cleanup touches exactly the one connection whose FileIndex/
+      // FileReference rows it removes. The ConnectorAccount is already deleted by the
+      // time this is enqueued, so it can't collide with a live migration lock.
+      case JobType.CleanupConnectionIndexRows:
+        return [data.connectorAccountId];
       // Workbook-scoped jobs that touch no single connection: the hard delete drains the whole
       // workbook, and the pre-flight discard clears every connection's working set at once.
       case JobType.DeleteWorkbook:

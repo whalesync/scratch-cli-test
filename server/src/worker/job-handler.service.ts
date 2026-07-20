@@ -24,6 +24,7 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { ApplyPatchesJobHandler } from './jobs/job-definitions/apply-patches.job';
+import { CleanupConnectionIndexRowsJobHandler } from './jobs/job-definitions/cleanup-connection-index-rows.job';
 import { DeleteWorkbookJobHandler } from './jobs/job-definitions/delete-workbook.job';
 import { DiscardPendingChangesJobHandler } from './jobs/job-definitions/discard-pending-changes.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
@@ -127,6 +128,13 @@ export class JobHandlerService {
 
       case JobType.DeleteWorkbook:
         return new DeleteWorkbookJobHandler(this.workbookService) as JobHandler<JobDefinition>;
+
+      case JobType.CleanupConnectionIndexRows:
+        return new CleanupConnectionIndexRowsJobHandler(
+          this.fileIndexService,
+          this.fileReferenceService,
+          this.dbService,
+        ) as JobHandler<JobDefinition>;
 
       case JobType.DiscardPendingChanges:
         return new DiscardPendingChangesJobHandler(

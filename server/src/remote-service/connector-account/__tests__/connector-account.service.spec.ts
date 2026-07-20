@@ -11,6 +11,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
+import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ConnectorsService } from '../../connectors/connectors.service';
 import { ConnectorAccountService } from '../connector-account.service';
 
@@ -53,6 +54,7 @@ describe('ConnectorAccountService', () => {
   let credentialEncryptionService: jest.Mocked<CredentialEncryptionService>;
   let workbookEventService: jest.Mocked<WorkbookEventService>;
   let experimentsService: jest.Mocked<ExperimentsService>;
+  let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
 
   beforeEach(() => {
     dbService = {
@@ -80,6 +82,14 @@ describe('ConnectorAccountService', () => {
           deleteMany: jest.fn().mockResolvedValue({}),
         },
         recreatedIdMap: {
+          deleteMany: jest.fn().mockResolvedValue({}),
+        },
+        // FileIndex/FileReference orphan cleanup (DEV-10885). remove() defers this to
+        // an async job, but resetConnection cleans them inline via these deleteManys.
+        fileIndex: {
+          deleteMany: jest.fn().mockResolvedValue({}),
+        },
+        fileReference: {
           deleteMany: jest.fn().mockResolvedValue({}),
         },
         workbook: {
@@ -116,6 +126,10 @@ describe('ConnectorAccountService', () => {
 
     experimentsService = {} as jest.Mocked<ExperimentsService>;
 
+    bullEnqueuerService = {
+      enqueueCleanupConnectionIndexRowsJob: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<BullEnqueuerService>;
+
     service = new ConnectorAccountService(
       dbService,
       connectorsService,
@@ -126,6 +140,7 @@ describe('ConnectorAccountService', () => {
       scratchGitService,
       workbookEventService,
       experimentsService,
+      bullEnqueuerService,
     );
   });
 
@@ -160,6 +175,16 @@ describe('ConnectorAccountService', () => {
       expect(dbService.client.connectorAccount.delete).toHaveBeenCalledWith({
         where: { id: ACCOUNT_ID, workbookId: WORKBOOK_ID },
       });
+      // Orphan FileIndex/FileReference cleanup deferred to a background job (DEV-10885),
+      // scoped to this connection and carrying its folder paths for FileReference cleanup.
+      expect(bullEnqueuerService.enqueueCleanupConnectionIndexRowsJob).toHaveBeenCalledWith(
+        {
+          workbookId: WORKBOOK_ID,
+          connectorAccountId: ACCOUNT_ID,
+          connectionFolderPaths: ['/folder1', '/folder2'],
+        },
+        ACTOR,
+      );
     });
 
     it('V2 workbook — no data folders still deletes git repo and account', async () => {

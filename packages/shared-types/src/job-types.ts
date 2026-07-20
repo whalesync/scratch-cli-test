@@ -19,6 +19,13 @@ export const JobType = {
   RehostAssets: 'rehost-assets',
   DeleteWorkbook: 'delete-workbook',
   /**
+   * Background cleanup after a connection is DELETED: remove the connection's FileIndex +
+   * FileReference rows (no FK to DataFolder, so they don't cascade). Deferred off the delete
+   * request so it doesn't block on an unbounded deleteMany. Reset cleans inline instead — see
+   * ConnectorAccountService. (DEV-10885)
+   */
+  CleanupConnectionIndexRows: 'cleanup-connection-index-rows',
+  /**
    * Pre-flight cleanup for a routine run: discard every connection's leftover working-set edits so
    * the run starts from the published baseline. Backs the `discard-pending-changes` routine action.
    */

@@ -51,8 +51,8 @@ const FOLDER_MOVE_REWRITE_TRANSACTION_MAX_WAIT_MS = 30 * 1000;
  * to the connection root with **no leading slash** (`My Site/Blog Posts/rec.json`),
  * the system-wide convention enforced by `validateRecordPath` (UploadPatchMeta),
  * `getAllFileContentsByFolderId`/sync's `path.replace(/^\//, '')` (SyncMatchKeys,
- * SyncRemoteIdMapping.destinationFilePath), `deleteForFolder(…, folderPathNoSlash)`
- * (FileReference), and `parsePath(filePath).folderPath` (RecreatedIdMap.folder).
+ * SyncRemoteIdMapping.destinationFilePath), `deleteForFolderExcludingLiveChildren(…,
+ * folderPathNoSlash)` (FileReference), and `parsePath(filePath).folderPath` (RecreatedIdMap.folder).
  * So FileIndex AND all five file-path columns match on the no-leading-slash form;
  * only `DataFolder.path` keeps the slash. (The git `move_folder` route normalizes
  * the slash away itself, so it takes the leading-slash form.)

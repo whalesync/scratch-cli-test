@@ -12,6 +12,7 @@ import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
 import { WORKER_QUEUE_NAME, WORKER_QUEUE_STREAM_OPTIONS } from 'src/worker/worker-queue.constants';
 import { ApplyPatchesJobDefinition } from '../worker/jobs/job-definitions/apply-patches.job';
+import { CleanupConnectionIndexRowsJobDefinition } from '../worker/jobs/job-definitions/cleanup-connection-index-rows.job';
 import { DeleteWorkbookJobDefinition } from '../worker/jobs/job-definitions/delete-workbook.job';
 import { DiscardPendingChangesJobDefinition } from '../worker/jobs/job-definitions/discard-pending-changes.job';
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
@@ -440,6 +441,38 @@ export class BullEnqueuerService implements OnModuleDestroy {
         data,
         bullJobId: id,
         workbookId,
+      },
+      data,
+      id,
+    );
+  }
+
+  /**
+   * Enqueue background cleanup of a DELETED connection's orphaned FileIndex /
+   * FileReference rows (DEV-10885). Deferred off the connection-delete request so it
+   * doesn't block on an unbounded deleteMany; the ConnectorAccount is already gone,
+   * so nothing races the cleanup. (Reset cleans inline instead — see
+   * ConnectorAccountService.)
+   */
+  async enqueueCleanupConnectionIndexRowsJob(
+    params: { workbookId: WorkbookId; connectorAccountId: string; connectionFolderPaths: string[] },
+    actor: Actor,
+  ): Promise<Job> {
+    const id = `cleanup-connection-index-rows-${params.connectorAccountId}-${createPlainId(5)}`;
+    const data: CleanupConnectionIndexRowsJobDefinition['data'] = {
+      type: JobType.CleanupConnectionIndexRows,
+      workbookId: params.workbookId,
+      userId: actor.userId,
+      connectorAccountId: params.connectorAccountId,
+      connectionFolderPaths: params.connectionFolderPaths,
+    };
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId: params.workbookId,
       },
       data,
       id,

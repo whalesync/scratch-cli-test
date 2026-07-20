@@ -235,17 +235,105 @@ export class FileIndexService {
     return entries.map((e) => e.filename);
   }
 
-  async removeAll(workbookId: string, folderPath: string): Promise<void> {
-    await this.db.client.fileIndex.deleteMany({
-      where: { workbookId, folderPath },
-    });
-  }
-
   async deleteForWorkbook(workbookId: string): Promise<void> {
     await this.db.client.fileIndex.deleteMany({
       where: { workbookId },
     });
   }
+
+  /**
+   * Delete every index row for a whole connection. Post-DEV-10880 each row carries
+   * `connectorAccountId`, so this single scoped delete removes the connection's rows
+   * regardless of `folderPath` — including rows stored under a `folderPath` deeper
+   * than the DataFolder path (e.g. a Shopify variant whose slash-bearing GID id
+   * leaks into `folderPath`). Used when a connection is deleted or reset (DEV-10885).
+   *
+   * NOTE: legacy rows written before DEV-10880 have `connectorAccountId = NULL` and
+   * are intentionally NOT matched here (Postgres treats NULL as distinct). Those
+   * pre-existing orphans are swept by the one-time GC migration (DEV-10885 Phase B).
+   */
+  async deleteForConnection(workbookId: string, connectorAccountId: string): Promise<void> {
+    await this.db.client.fileIndex.deleteMany({
+      where: { workbookId, connectorAccountId },
+    });
+  }
+
+  /**
+   * Delete the index rows owned by a SINGLE data folder that is being deleted,
+   * including rows stored under a `folderPath` deeper than the folder's own path
+   * (the Shopify-GID case that a plain exact-`folderPath` delete misses). Two guards
+   * keep this from deleting rows it shouldn't:
+   *  - Scoped by `connectorAccountId` (nullable): folder paths are workbook-global
+   *    and carry NO connection prefix (see `buildConnectorFolderPath`), so two
+   *    connections can own an identically-named folder. Scoping prevents deleting a
+   *    sibling connection's rows at the same `folderPath`.
+   *  - Longest-prefix ownership: a deeper `folderPath` is deleted only when this
+   *    folder is its longest-prefix owner among all live folders — so a live child
+   *    DataFolder nested inside this one (e.g. a Webflow secondary-locale folder at
+   *    `/<Site>/Collections/<Collection>/<Locale>`) keeps its rows.
+   *
+   * All folder paths are passed WITHOUT a leading slash to match how they are stored.
+   */
+  async deleteRowsOwnedByDeletedFolder(
+    workbookId: string,
+    connectorAccountId: string | null,
+    deletedFolderPath: string,
+    otherLiveFolderPathsInWorkbook: string[],
+  ): Promise<void> {
+    // Rows at the folder's own path always belong to it.
+    await this.db.client.fileIndex.deleteMany({
+      where: { workbookId, connectorAccountId, folderPath: deletedFolderPath },
+    });
+
+    // Rows deeper than the folder's path: keep only those this folder still owns.
+    const distinctDeeperFolderPaths = await this.db.client.fileIndex.findMany({
+      where: { workbookId, connectorAccountId, folderPath: { startsWith: `${deletedFolderPath}/` } },
+      select: { folderPath: true },
+      distinct: ['folderPath'],
+    });
+    const orphanedDeeperFolderPaths = distinctDeeperFolderPaths
+      .map((row) => row.folderPath)
+      .filter((folderPath) =>
+        isDeeperFolderPathOrphanedByDelete(folderPath, deletedFolderPath, otherLiveFolderPathsInWorkbook),
+      );
+
+    for (const folderPathBatch of chunk(orphanedDeeperFolderPaths, 1000)) {
+      await this.db.client.fileIndex.deleteMany({
+        where: { workbookId, connectorAccountId, folderPath: { in: folderPathBatch } },
+      });
+    }
+  }
+}
+
+/**
+ * Does the DataFolder at `ownerFolderPath` own a row stored at `rowFolderPath`?
+ * Ownership means the row is at that folder's own path or somewhere beneath it.
+ * Both paths are no-leading-slash. (`Foo` does NOT own `Foo Extra` — the `/`
+ * boundary check prevents sibling-prefix false positives.)
+ */
+export function folderPathOwns(ownerFolderPath: string, rowFolderPath: string): boolean {
+  return rowFolderPath === ownerFolderPath || rowFolderPath.startsWith(`${ownerFolderPath}/`);
+}
+
+/**
+ * A row stored at `rowFolderPath` (deeper than `deletedFolderPath`) is orphaned by
+ * deleting that folder iff the deleted folder is the row's LONGEST-prefix owner —
+ * i.e. no OTHER live folder owns it more specifically (a strictly longer prefix).
+ * This sweeps Shopify-GID artifact rows (owner is the plain folder) while preserving
+ * rows of a live nested child DataFolder (owner is the deeper child folder).
+ */
+export function isDeeperFolderPathOrphanedByDelete(
+  rowFolderPath: string,
+  deletedFolderPath: string,
+  otherLiveFolderPathsInWorkbook: string[],
+): boolean {
+  if (!folderPathOwns(deletedFolderPath, rowFolderPath)) return false;
+  for (const otherFolderPath of otherLiveFolderPathsInWorkbook) {
+    if (otherFolderPath.length > deletedFolderPath.length && folderPathOwns(otherFolderPath, rowFolderPath)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
