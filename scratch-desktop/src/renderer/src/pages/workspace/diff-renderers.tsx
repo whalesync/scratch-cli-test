@@ -13,6 +13,7 @@ import {
   PROSE_TEXT_STYLE,
   type FieldValueDiffKind,
 } from './field-value-types';
+import { computeJsonObjectLineDiff } from './json-line-diff';
 
 const ACTION_BUTTON_SIZE = 24;
 
@@ -165,6 +166,58 @@ export const InlineWordsDiff = memo(function InlineWordsDiff({
           );
         }
         return <span key={index}>{change.value}</span>;
+      })}
+    </Box>
+  );
+});
+
+/**
+ * Unified line diff for a JSON object/array field value. Pretty-prints both sides
+ * and highlights only the changed lines — added lines in the review-state wash,
+ * removed lines in red — so editing one property of an object (e.g. a Webflow image
+ * element) no longer marks the whole object as a single changed blob (DEV-10890).
+ * Sibling to `InlineWordsDiff`; shares the same redline tokens. Accepts either
+ * parsed values (review drawer) or display strings (detail grid) via `unknown`.
+ */
+export const InlineJsonDiff = memo(function InlineJsonDiff({
+  fromValue,
+  toValue,
+  diffKind,
+}: {
+  fromValue: unknown;
+  toValue: unknown;
+  diffKind: FieldValueDiffKind;
+}) {
+  const lines = useMemo(() => computeJsonObjectLineDiff(fromValue, toValue), [fromValue, toValue]);
+  const addedBg = getAddedBg(diffKind);
+  return (
+    <Box style={{ ...DIFF_TEXT_STYLE, padding: '6px 0', minWidth: 0 }}>
+      {lines.map((line, index) => {
+        const isAdded = line.kind === 'added';
+        const isRemoved = line.kind === 'removed';
+        return (
+          <Box
+            key={index}
+            style={{
+              display: 'flex',
+              gap: 6,
+              padding: '0 12px',
+              backgroundColor: isRemoved ? DIFF_REMOVED_BG : isAdded ? addedBg : 'transparent',
+              color: isRemoved
+                ? DIFF_REMOVED_FG
+                : isAdded
+                  ? 'var(--modified-needs-review-stroke)'
+                  : 'var(--fg-primary)',
+            }}
+          >
+            <span aria-hidden style={{ flexShrink: 0, width: 8, opacity: 0.6, userSelect: 'none' }}>
+              {isAdded ? '+' : isRemoved ? '-' : ' '}
+            </span>
+            <span style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {line.text.length > 0 ? line.text : ' '}
+            </span>
+          </Box>
+        );
       })}
     </Box>
   );

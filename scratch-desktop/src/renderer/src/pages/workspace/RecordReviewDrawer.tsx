@@ -17,7 +17,8 @@ import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../componen
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { isLongFormContent } from './content-paragraph-diff';
 import { ContentDiffWithMap } from './ContentDiffWithMap';
-import { FieldReviewActions } from './diff-renderers';
+import { FieldReviewActions, InlineJsonDiff } from './diff-renderers';
+import { shouldRenderValuesAsJsonObjectDiff } from './json-line-diff';
 import {
   applyAcceptedFieldChangeToOpenRecordData,
   getRecordName,
@@ -494,8 +495,10 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
     (key: string, label: string, effectivePath: string): ReactNode => {
       if (!recordData) return null;
       const displayData = recordData.displayData ?? {};
-      const fromValue = toDisplayString(recordData.row.__fromFields[effectivePath]);
-      const toValue = toDisplayString(getByPath(displayData, effectivePath));
+      const rawFromValue = recordData.row.__fromFields[effectivePath];
+      const rawToValue = getByPath(displayData, effectivePath);
+      const fromValue = toDisplayString(rawFromValue);
+      const toValue = toDisplayString(rawToValue);
       const actions = (
         <FieldReviewActions
           diffKind="unreviewed"
@@ -503,6 +506,15 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
           onUndo={busy ? undefined : () => rejectField(effectivePath)}
         />
       );
+      // Object/array values (e.g. a Webflow image element) render as a structural JSON line diff
+      // so editing one property highlights only that line instead of the whole object (DEV-10890).
+      if (shouldRenderValuesAsJsonObjectDiff(rawFromValue, rawToValue)) {
+        return (
+          <FieldBlockShell key={key} label={label} actions={actions}>
+            <InlineJsonDiff fromValue={rawFromValue} toValue={rawToValue} diffKind="unreviewed" />
+          </FieldBlockShell>
+        );
+      }
       // Long-form bodies (multi-paragraph descriptions) read terribly as a single struck-through
       // block, so route them to the rich paragraph diff + minimap; short fields stay compact.
       if (isLongFormContent(fromValue, toValue)) {
@@ -533,9 +545,19 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
     (key: string, label: string, effectivePath: string): ReactNode => {
       if (!recordData) return null;
       const displayData = recordData.displayData ?? {};
-      const fromValue = toDisplayString(recordData.row.__masterFields[effectivePath]);
-      const toValue = toDisplayString(getByPath(displayData, effectivePath));
+      const rawFromValue = recordData.row.__masterFields[effectivePath];
+      const rawToValue = getByPath(displayData, effectivePath);
+      const fromValue = toDisplayString(rawFromValue);
+      const toValue = toDisplayString(rawToValue);
       const actions = <ApprovedFieldMarker />;
+      // Object/array values render as a structural JSON line diff (see renderChangedFieldBlock).
+      if (shouldRenderValuesAsJsonObjectDiff(rawFromValue, rawToValue)) {
+        return (
+          <FieldBlockShell key={key} label={label} actions={actions}>
+            <InlineJsonDiff fromValue={rawFromValue} toValue={rawToValue} diffKind="unpublished" />
+          </FieldBlockShell>
+        );
+      }
       if (isLongFormContent(fromValue, toValue)) {
         return (
           <FieldBlockShell key={key} label={label} actions={actions}>

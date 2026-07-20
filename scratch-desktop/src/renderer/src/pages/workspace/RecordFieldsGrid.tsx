@@ -16,6 +16,7 @@ import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import { CollapsibleRow } from './collapsible-row';
 import {
   FieldReviewActions,
+  InlineJsonDiff,
   InlineWordsDiff,
   SideBySideCurrentDiff,
   SideBySideDiff,
@@ -25,6 +26,7 @@ import { FieldCellValue } from './field-cell-renderer';
 import { isPrettifiableMediaType, prettifyValue } from './field-prettifiers';
 import type { FieldValueDiffKind, FieldValueDisplayMode } from './field-value-types';
 import { DIFF_REMOVED_BG, DIFF_REMOVED_FG, DIFF_TEXT_STYLE, getAddedBg } from './field-value-types';
+import { shouldRenderValuesAsJsonObjectDiff } from './json-line-diff';
 import { RichTextHtml } from './RichTextHtml';
 import { RichTextMarkdown } from './RichTextMarkdown';
 import { ValidationTooltip } from './ValidationIndicator';
@@ -33,6 +35,16 @@ function isMediumOrLargeChange(row: RecordFieldRow): boolean {
   if (row.diffKind == null) return false;
   const { fieldSize } = classifyFieldChange(row.fromValue ?? '', row.value, undefined);
   return fieldSize === 'M' || fieldSize === 'L';
+}
+
+/**
+ * True when a changed row's value is a JSON object/array and should render as a
+ * structural line diff (`InlineJsonDiff`) rather than the word-diff / two-blob
+ * renderers, which treat the compact JSON string as one giant token (DEV-10890).
+ */
+function shouldRenderRowAsJsonDiff(row: RecordFieldRow): boolean {
+  if (row.diffKind == null) return false;
+  return shouldRenderValuesAsJsonObjectDiff(row.fromValue, row.value);
 }
 
 export interface RecordFieldRow {
@@ -272,6 +284,14 @@ function InlineValueCell({ row, mode = 'source' }: { row: RecordFieldRow; mode?:
   const displayRow = applyValueViewModeToRow(row, mode);
   const renderRichHtml = !isDiff && mode === 'preview' && isHtmlMediaType(row.contentMediaType);
   const renderRichMarkdown = !isDiff && mode === 'preview' && isMarkdownMediaType(row.contentMediaType);
+
+  if (isDiff && shouldRenderRowAsJsonDiff(row)) {
+    return (
+      <Box {...clickProps}>
+        <InlineJsonDiff fromValue={row.fromValue} toValue={row.value} diffKind={row.diffKind} />
+      </Box>
+    );
+  }
 
   if (isDiff && isMediumOrLargeChange(row)) {
     return (
@@ -701,7 +721,13 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                     : undefined
                 }
               >
-                {isSideBySide ? (
+                {shouldRenderRowAsJsonDiff(focusedRow) ? (
+                  <InlineJsonDiff
+                    fromValue={focusedRow.fromValue}
+                    toValue={focusedRow.value}
+                    diffKind={focusedRow.diffKind}
+                  />
+                ) : isSideBySide ? (
                   <SideBySideDiff
                     fromValue={focusedDisplayRow?.fromValue ?? ''}
                     value={focusedDisplayRow?.value ?? ''}
@@ -987,6 +1013,17 @@ function SideBySideValueCells({
   const renderRichMarkdown = !isDiff && mode === 'preview' && isMarkdownMediaType(row.contentMediaType);
 
   if (isDiff) {
+    if (shouldRenderRowAsJsonDiff(row)) {
+      // A structural JSON diff is inherently unified, so span both value columns rather than
+      // splitting the object across Current/New; only the edited line(s) highlight (DEV-10890).
+      return (
+        <Box style={{ gridColumn: 'span 2', minWidth: 0 }}>
+          <Box {...clickProps}>
+            <InlineJsonDiff fromValue={row.fromValue} toValue={row.value} diffKind={row.diffKind} />
+          </Box>
+        </Box>
+      );
+    }
     // Changed field: word-level diff — Current highlights removed words, New highlights added words.
     // Diffs always operate on raw (or prettified) text — preview mode falls back to source for diffs.
     const fromValue = displayRow.fromValue ?? '';
