@@ -163,7 +163,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     logo: 'https://static.scratch.md/connector-icons/hubspot.svg',
     incrementalPull: true,
     incrementalPullInstructions:
-      'Note: incremental pulls refresh record properties but not associations. Run periodic full pulls reconcile associations.',
+      'Note: incremental pulls re-fetch each changed record individually to include its associations, so large deltas pull slower than a full pull; associations changed WITHOUT a property change do not bump the modified date, so periodic full pulls still reconcile those.',
     credentialFields: {
       user_provided_params: [
         {
@@ -307,10 +307,13 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
    *
    * Full pull (default): scan every record via the list endpoint, including
    * associations. Incremental pull: switch to the CRM Search API filtered by the
-   * resolved modified-date property (the clock-skewed watermark), and return the
-   * new watermark for the job to persist. The Search API returns `properties`
-   * but not `associations`, so incremental pulls don't refresh association data
-   * — the periodic full pull reconciles association drift.
+   * resolved modified-date property (the clock-skewed watermark), re-fetch each
+   * changed record via single-record GET to hydrate its `associations` (the
+   * Search API never returns them, and emitting search results bare would wipe
+   * previously-pulled association data from the record file), and return the
+   * new watermark for the job to persist. Associations changed WITHOUT a
+   * property change don't bump the modified date, so the periodic full pull
+   * still reconciles that drift.
    */
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
@@ -330,6 +333,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
       // changed mid-pull aren't lost on the next run. Idempotent commits absorb
       // any duplicates this overlap creates.
       const newWatermark = new Date();
+      const associationTypesToHydrate = this.getAssociationTypes(objectType);
       for await (const batch of this.client.searchRecordsModifiedSince(
         objectType,
         propertyNames,
@@ -337,8 +341,38 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
         options.since,
         progress.afterCursor,
       )) {
+        // The Search API returns `properties` but never `associations`, and the
+        // pull job writes record files wholesale — so emitting search results
+        // directly would rewrite a previously-pulled record WITHOUT its
+        // `associations` key, silently wiping association data that is still
+        // live in HubSpot (a downstream sync then nulls the FK at the
+        // destination). Re-fetch each changed record via single-record GET —
+        // the only endpoint besides list that embeds `associations` in the
+        // same shape — so incremental files carry the same complete shape as
+        // full-pull files. Costs one GET per changed record; incremental
+        // deltas are small and `withRetry` absorbs 429s.
+        let filesToEmit: ConnectorFile[];
+        if (associationTypesToHydrate.length === 0) {
+          filesToEmit = batch.records as unknown as ConnectorFile[];
+        } else {
+          const recordsWithAssociationsHydrated: ConnectorFile[] = [];
+          for (const searchResultRecord of batch.records) {
+            const fullRecordWithAssociations = await this.client.getRecord(
+              objectType,
+              searchResultRecord.id,
+              propertyNames,
+              associationTypesToHydrate,
+            );
+            // null means the record was deleted/archived between the search
+            // page and this GET; skip it — deletion reconciliation owns that.
+            if (fullRecordWithAssociations) {
+              recordsWithAssociationsHydrated.push(fullRecordWithAssociations as unknown as ConnectorFile);
+            }
+          }
+          filesToEmit = recordsWithAssociationsHydrated;
+        }
         await callback({
-          files: batch.records as unknown as ConnectorFile[],
+          files: filesToEmit,
           connectorProgress: { afterCursor: batch.nextCursor },
         });
       }

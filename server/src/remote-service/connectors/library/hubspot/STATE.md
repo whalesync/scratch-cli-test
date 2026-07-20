@@ -127,9 +127,9 @@ Max records (or fields) per API request, **per operation** — services often di
 <Note any org-wide rate/quota limits (daily credits, concurrency, token-endpoint throttle) separately — they're independent of bulk size.>
 
 ## Incremental polling
-- **Supported:** <YES / NO>. Driver field = `<last-modified field>` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns <SUPPORTED/NOT_SUPPORTED> when <condition>.
-- **Mechanism:** <how a `since` pull is expressed — e.g. `If-Modified-Since` header / `updated_since` param / cursor> and **how the new watermark is derived** (server time captured before the first page? max record timestamp?). Note idempotency (mid-run edits re-pulled next time).
-- **Deletions:** <how deletes are detected on an incremental run — tombstone/deleted endpoint, or "not supported">.
+- **Supported:** YES. Driver field = `hs_lastmodifieddate` (`lastmodifieddate` for contacts; custom objects vary) — annotated `x-scratch-last-modified-field`, or user-declared via `modifiedAtField`; `incrementalPullSupport` returns NEEDS_CONFIGURATION when neither resolves (then the pull demotes to full).
+- **Mechanism:** CRM Search API (`POST /crm/v3/objects/{type}/search`) with `<modifiedAtField> GTE <watermark − 60s skew>`, sorted ascending, re-anchoring the window before Search's hard 10,000-offset ceiling (`hubspot-incremental.ts`). Watermark = client time captured before the first API call (mid-run edits re-pulled next time; idempotent commits absorb duplicates). **Associations:** the Search API never returns `associations`, so each changed record is re-fetched via single-record GET before its file is emitted — emitting bare search results would rewrite the file without its `associations` key and wipe live FK data (destination syncs then null the FK). Association changes that don't bump the modified date are reconciled by the periodic full pull.
+- **Deletions:** not detected on an incremental run — the periodic full pull reconciles.
 
 ## Endpoints (what the connector calls)
 **Super-concise** — distil only the endpoints THIS connector actually hits; do NOT paste the vendor's full API reference / OpenAPI dump. One row per (entity/area × op); add a note only where a quirk matters.

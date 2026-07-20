@@ -9,12 +9,14 @@ jest.mock('../../../display-names', () => ({
 const mockGetProperties = jest.fn();
 const mockListRecords = jest.fn();
 const mockSearchRecordsModifiedSince = jest.fn();
+const mockGetRecord = jest.fn();
 
 jest.mock('../hubspot-api-client', () => ({
   HubspotApiClient: jest.fn().mockImplementation(() => ({
     getProperties: mockGetProperties,
     listRecords: mockListRecords,
     searchRecordsModifiedSince: mockSearchRecordsModifiedSince,
+    getRecord: mockGetRecord,
   })),
   HubspotError: class HubspotError extends Error {},
 }));
@@ -27,7 +29,7 @@ import { HubspotConnector } from '../hubspot-connector';
  * `hs_lastmodifieddate` carries the last-modified-field annotation so the
  * connector auto-detects it.
  */
-function buildTableSpec(annotateModified: boolean): BaseJsonTableSpec {
+function buildTableSpec(annotateModified: boolean, objectType = 'companies'): BaseJsonTableSpec {
   const propsBag: Record<string, TSchema> = {
     name: Type.Union([Type.String(), Type.Null()]),
     hs_lastmodifieddate: Type.Union(
@@ -36,8 +38,8 @@ function buildTableSpec(annotateModified: boolean): BaseJsonTableSpec {
     ),
   };
   return {
-    id: { wsId: 'companies', remoteId: ['companies'] },
-    slug: 'companies',
+    id: { wsId: objectType, remoteId: [objectType] },
+    slug: objectType,
     name: 'Companies',
     schema: Type.Object({
       id: Type.String(),
@@ -99,6 +101,11 @@ describe('HubspotConnector.pullRecordFiles', () => {
     mockGetProperties.mockResolvedValue([{ name: 'name' }, { name: 'hs_lastmodifieddate' }]);
     mockListRecords.mockImplementation(() => onePage([{ id: 'L1' } as ConnectorFile]));
     mockSearchRecordsModifiedSince.mockImplementation(() => onePage([{ id: 'S1' } as ConnectorFile]));
+    // Incremental hydration: each searched record is re-fetched via GET so the
+    // emitted file carries `associations` (the Search API never returns them).
+    mockGetRecord.mockImplementation((_objectType: string, recordId: string) =>
+      Promise.resolve({ id: recordId, associations: { companies: { results: [] } } }),
+    );
     connector = new HubspotConnector('test-token');
   });
 
@@ -135,7 +142,50 @@ describe('HubspotConnector.pullRecordFiles', () => {
     expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
+    // The emitted file is the hydrated GET result (with `associations`), not
+    // the bare search result — a bare search result would overwrite the
+    // record file WITHOUT its associations key and wipe live FK data.
+    expect(callback).toHaveBeenCalledWith({
+      files: [{ id: 'S1', associations: { companies: { results: [] } } }],
+      connectorProgress: { afterCursor: undefined },
+    });
+    expect(mockGetRecord).toHaveBeenCalledWith(
+      'companies',
+      'S1',
+      ['name', 'hs_lastmodifieddate'],
+      ['notes', 'tasks', 'tickets', 'deals', 'contacts', 'companies'],
+    );
+  });
+
+  it('emits search results directly, without hydration GETs, for object types with no association types', async () => {
+    // `products` is absent from ASSOCIATIONS_BY_OBJECT_TYPE — there is nothing
+    // to hydrate, so the per-record GETs would be pure overhead.
+    await connector.pullRecordFiles(buildTableSpec(true, 'products'), callback, {}, {
+      pullMode: 'incremental',
+      since: new Date('2026-05-01T12:00:00.000Z'),
+    } as PullRecordFilesOptions);
+
+    expect(mockGetRecord).not.toHaveBeenCalled();
     expect(callback).toHaveBeenCalledWith({ files: [{ id: 'S1' }], connectorProgress: { afterCursor: undefined } });
+  });
+
+  it('skips records deleted between the search page and the hydration GET (getRecord → null)', async () => {
+    mockSearchRecordsModifiedSince.mockImplementation(() =>
+      onePage([{ id: 'S1' } as ConnectorFile, { id: 'S2-deleted' } as ConnectorFile]),
+    );
+    mockGetRecord.mockImplementation((_objectType: string, recordId: string) =>
+      Promise.resolve(recordId === 'S2-deleted' ? null : { id: recordId, associations: {} }),
+    );
+
+    await connector.pullRecordFiles(buildTableSpec(true), callback, {}, {
+      pullMode: 'incremental',
+      since: new Date('2026-05-01T12:00:00.000Z'),
+    } as PullRecordFilesOptions);
+
+    expect(callback).toHaveBeenCalledWith({
+      files: [{ id: 'S1', associations: {} }],
+      connectorProgress: { afterCursor: undefined },
+    });
   });
 
   it('uses the explicit modifiedAtField override for the search filter', async () => {

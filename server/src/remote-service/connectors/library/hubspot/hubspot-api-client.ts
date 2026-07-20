@@ -205,8 +205,8 @@ export class HubspotApiClient {
    * the search `after` cursor.
    *
    * Unlike {@link listRecords}, the Search API returns `properties` but **not**
-   * `associations` — incremental pulls therefore don't refresh association data
-   * (reconciled by the periodic full pull).
+   * `associations` — the connector's incremental pull re-fetches each returned
+   * record via {@link getRecord} to hydrate associations before emitting files.
    *
    * HubSpot's Search API also refuses to page past its first 10,000 results per
    * query: a request whose offset (`after`) reaches

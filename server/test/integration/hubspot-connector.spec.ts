@@ -348,7 +348,12 @@ describe('HubspotConnector with fake API', () => {
       expect(result.newWatermark).toBeInstanceOf(Date);
     });
 
-    it('omits associations on incremental pulls (documented limitation; full pulls still include them)', async () => {
+    it('hydrates associations on incremental pulls to match the full-pull shape', async () => {
+      // The Search API never returns `associations`, and the pull job writes
+      // record files wholesale — so an unhydrated incremental emit would
+      // rewrite the file WITHOUT its associations key, wiping FK data that is
+      // still live in HubSpot. The connector therefore re-fetches each changed
+      // record via single-record GET before emitting it.
       const contact = store.addRecord('contacts', { email: 'linked@example.com', firstname: 'Linked' });
       const company = store.addRecord('companies', { name: 'Acme Corp' });
       store.addAssociation('contacts', contact.id, 'companies', company.id);
@@ -359,12 +364,13 @@ describe('HubspotConnector with fake API', () => {
 
       // Full pull includes associations (baseline)...
       const fullFiles = await collectPulledFiles(connector, spec);
-      expect((fullFiles[0] as unknown as { associations?: unknown }).associations).toBeDefined();
+      const fullPullAssociations = (fullFiles[0] as unknown as { associations?: unknown }).associations;
+      expect(fullPullAssociations).toBeDefined();
 
-      // ...incremental (via Search) does not.
+      // ...and the incremental pull now carries the identical association data.
       const { files } = await pullIncremental(connector, spec, SINCE);
       expect(files).toHaveLength(1);
-      expect((files[0] as unknown as { associations?: unknown }).associations).toBeUndefined();
+      expect((files[0] as unknown as { associations?: unknown }).associations).toEqual(fullPullAssociations);
     });
 
     it('demotes to a full pull when the object exposes no last-modified property (custom object)', async () => {

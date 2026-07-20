@@ -14,8 +14,11 @@
  *
  * Two behaviors live with this mechanism (see the connector and
  * `CONNECTOR_GUIDE.md`):
- *   - The Search API returns `properties` but not `associations`, so incremental
- *     pulls don't refresh association data — the periodic `FULL_PULL` reconciles.
+ *   - The Search API returns `properties` but not `associations`, so the
+ *     connector re-fetches each changed record via single-record GET to hydrate
+ *     associations before emitting files (emitting search results bare would
+ *     wipe previously-pulled association data). Association changes that don't
+ *     bump the modified date are still reconciled by the periodic `FULL_PULL`.
  *   - HubSpot's Search API refuses to page past its first 10,000 results per
  *     query (offset `after` >= 10,000 returns HTTP 400, which is not retried), so
  *     a single `since` window can't be walked straight through when more than
