@@ -59,7 +59,11 @@ query Issues($after: String) {
 }
 \`\`\`
 
-\`authHeader\` is one of: \`"Bearer"\`, \`"Token"\`, \`"raw"\`, \`"X-API-Key"\`.
+\`authHeader\` is one of: \`"Bearer"\`, \`"Token"\`, \`"raw"\`, \`"X-API-Key"\`. If the
+service needs the key under a specific header with a scheme/prefix word (e.g.
+\`Authorization: Klaviyo-API-Key <key>\`), use the object form instead:
+\`"authHeader": { "style": "custom-header", "headerName": "Authorization", "valuePrefix": "Klaviyo-API-Key" }\`,
+which sends \`<headerName>: <valuePrefix> <key>\`.
 
 Each endpoint is one entity = one GraphQL query. The \`url\` is the GraphQL
 endpoint URL; the \`query\` is the full query string. Embed \`\\n\` for newlines

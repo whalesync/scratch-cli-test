@@ -304,6 +304,17 @@ export interface GenericApiConnectorExtras {
     style: GenericApiAuthHeaderStyle;
     /** Required when style === 'custom-header'; ignored otherwise (defaults to 'Authorization'). */
     headerName?: string;
+    /**
+     * Optional scheme/prefix word prepended to the key with a single space, so
+     * the header value becomes `<valuePrefix> <key>`. Used only when
+     * style === 'custom-header'; when unset the key is sent verbatim. This is
+     * what lets header-token schemes work, e.g. Klaviyo's
+     * `Authorization: Klaviyo-API-Key <key>` (headerName 'Authorization',
+     * valuePrefix 'Klaviyo-API-Key') or Okta's `Authorization: SSWS <key>`.
+     * The prefix is non-secret config — the key itself stays encrypted in
+     * credentials.
+     */
+    valuePrefix?: string;
   };
   endpoints: Array<GenericApiRestEndpoint | GenericApiGraphqlEndpoint>;
 }
@@ -359,6 +370,7 @@ export function isGenericApiConnectorExtras(extras: unknown): extras is GenericA
   if (auth.style !== 'bearer' && auth.style !== 'token' && auth.style !== 'raw' && auth.style !== 'custom-header') {
     return false;
   }
+  if (auth.valuePrefix !== undefined && typeof auth.valuePrefix !== 'string') return false;
   if (!Array.isArray(obj.endpoints)) return false;
   return true;
 }

@@ -181,9 +181,12 @@ function validateShape(parsed: unknown, apiType: 'rest' | 'graphql'): string | n
  *
  * Two input shapes are accepted:
  *   - String (wire / AI shape):  "Bearer", "X-API-Key", etc.
- *   - Object (canonical shape):  { style, headerName? }
+ *   - Object (canonical shape):  { style, headerName?, valuePrefix? } — valuePrefix
+ *     is the optional scheme word prepended to the key (e.g. "Klaviyo-API-Key").
  */
-function parseAuthHeader(raw: unknown): { style: GenericApiAuthHeaderStyle; headerName?: string } | string {
+function parseAuthHeader(
+  raw: unknown,
+): { style: GenericApiAuthHeaderStyle; headerName?: string; valuePrefix?: string } | string {
   if (typeof raw === 'string') {
     if (!(raw in VALID_AUTH_HEADERS)) {
       return `authHeader must be one of: Bearer, Token, raw, X-API-Key. Got: ${JSON.stringify(raw)}.`;
@@ -202,11 +205,16 @@ function parseAuthHeader(raw: unknown): { style: GenericApiAuthHeaderStyle; head
       if (typeof headerName !== 'string' || headerName === '') {
         return 'authHeader.headerName is required when style is "custom-header".';
       }
-      return { style: 'custom-header', headerName };
+      // Optional scheme/prefix prepended to the key (e.g. Klaviyo-API-Key, SSWS).
+      const valuePrefix = obj['valuePrefix'];
+      if (valuePrefix !== undefined && typeof valuePrefix !== 'string') {
+        return 'authHeader.valuePrefix must be a string when provided.';
+      }
+      return valuePrefix ? { style: 'custom-header', headerName, valuePrefix } : { style: 'custom-header', headerName };
     }
     return { style };
   }
-  return `authHeader must be a string (e.g. "Bearer") or an object like { "style": "custom-header", "headerName": "X-API-Key" }. Got: ${JSON.stringify(raw)}.`;
+  return `authHeader must be a string (e.g. "Bearer") or an object like { "style": "custom-header", "headerName": "Authorization", "valuePrefix": "Klaviyo-API-Key" }. Got: ${JSON.stringify(raw)}.`;
 }
 
 function validateEndpointShape(ep: unknown, index: number, apiType: 'rest' | 'graphql'): string | null {

@@ -65,6 +65,34 @@ describe('validatePastedConfig — REST happy path', () => {
     expect(result.extras.authHeader).toEqual({ style: 'custom-header', headerName: 'X-API-Key' });
   });
 
+  it('accepts a custom-header object with a valuePrefix (Klaviyo scheme)', () => {
+    const result = validatePastedConfig(
+      JSON.stringify({
+        authHeader: { style: 'custom-header', headerName: 'Authorization', valuePrefix: 'Klaviyo-API-Key' },
+        endpoints: [{ method: 'GET', url: 'https://a.klaviyo.com/api/profiles' }],
+      }),
+      'rest',
+    );
+    if (!result.ok) throw new Error('expected ok, got: ' + result.error.message);
+    expect(result.extras.authHeader).toEqual({
+      style: 'custom-header',
+      headerName: 'Authorization',
+      valuePrefix: 'Klaviyo-API-Key',
+    });
+  });
+
+  it('rejects a non-string valuePrefix', () => {
+    const result = validatePastedConfig(
+      JSON.stringify({
+        authHeader: { style: 'custom-header', headerName: 'Authorization', valuePrefix: 42 },
+        endpoints: [{ method: 'GET', url: 'https://api.example.com/x' }],
+      }),
+      'rest',
+    );
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error.message).toContain('valuePrefix');
+  });
+
   it('accepts JSON wrapped in markdown fences', () => {
     const result = validatePastedConfig(
       '```json\n{"authHeader":"Bearer","endpoints":[{"method":"GET","url":"https://x.com/y"}]}\n```',

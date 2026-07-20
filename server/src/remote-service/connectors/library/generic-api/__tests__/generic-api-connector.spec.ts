@@ -150,6 +150,33 @@ describe('buildAuthHeaders', () => {
       { name: 'X-API-Key', value: 'KEY' },
     ]);
   });
+
+  it('custom-header style with valuePrefix → prefixes the key with a single space (Klaviyo shape)', () => {
+    expect(
+      buildAuthHeaders(
+        {
+          ...EXTRAS,
+          authHeader: { style: 'custom-header', headerName: 'Authorization', valuePrefix: 'Klaviyo-API-Key' },
+        },
+        'pk_123',
+      ),
+    ).toEqual([{ name: 'Authorization', value: 'Klaviyo-API-Key pk_123' }]);
+  });
+
+  it('custom-header style with default header name + valuePrefix', () => {
+    expect(buildAuthHeaders({ ...EXTRAS, authHeader: { style: 'custom-header', valuePrefix: 'SSWS' } }, 'KEY')).toEqual(
+      [{ name: 'X-API-Key', value: 'SSWS KEY' }],
+    );
+  });
+
+  it('custom-header style with blank valuePrefix → key sent verbatim (no stray space)', () => {
+    expect(
+      buildAuthHeaders(
+        { ...EXTRAS, authHeader: { style: 'custom-header', headerName: 'X-Api-Key', valuePrefix: '  ' } },
+        'KEY',
+      ),
+    ).toEqual([{ name: 'X-Api-Key', value: 'KEY' }]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

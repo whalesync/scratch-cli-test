@@ -500,7 +500,7 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
  * authHeader style + the decrypted apiKey. Exported for testing.
  */
 export function buildAuthHeaders(extras: GenericApiConnectorExtras, apiKey: string): Header[] {
-  const { style, headerName } = extras.authHeader;
+  const { style, headerName, valuePrefix } = extras.authHeader;
   switch (style) {
     case 'bearer':
       return [{ name: 'Authorization', value: `Bearer ${apiKey}` }];
@@ -508,8 +508,13 @@ export function buildAuthHeaders(extras: GenericApiConnectorExtras, apiKey: stri
       return [{ name: 'Authorization', value: `Token ${apiKey}` }];
     case 'raw':
       return [{ name: 'Authorization', value: apiKey }];
-    case 'custom-header':
-      return [{ name: headerName ?? 'X-API-Key', value: apiKey }];
+    case 'custom-header': {
+      // Optional scheme/prefix (e.g. Klaviyo's `Klaviyo-API-Key`, Okta's `SSWS`)
+      // prepended with a single space; otherwise the key is sent verbatim.
+      const trimmedPrefix = valuePrefix?.trim();
+      const value = trimmedPrefix ? `${trimmedPrefix} ${apiKey}` : apiKey;
+      return [{ name: headerName ?? 'X-API-Key', value }];
+    }
   }
 }
 

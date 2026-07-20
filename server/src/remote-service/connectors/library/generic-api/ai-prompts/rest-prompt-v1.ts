@@ -51,6 +51,16 @@ Workflow you must follow:
 (Authorization: Token <key>), \`"raw"\` (Authorization: <key> verbatim), or
 \`"X-API-Key"\` (X-API-Key: <key>). Pick whichever the service expects.
 
+Some APIs put the key under a specific header with a **scheme/prefix word** in
+the value — e.g. Klaviyo wants \`Authorization: Klaviyo-API-Key <key>\` and Okta
+wants \`Authorization: SSWS <key>\`. The string forms above can't express that, so
+use the OBJECT form instead:
+\`"authHeader": { "style": "custom-header", "headerName": "Authorization", "valuePrefix": "Klaviyo-API-Key" }\`
+which sends \`<headerName>: <valuePrefix> <key>\`. Set \`headerName\` to the header the
+service names and \`valuePrefix\` to the scheme word that goes before the key. Omit
+\`valuePrefix\` when the key is sent verbatim (that's the same as the \`"X-API-Key"\`
+string form, just with a header name you choose).
+
 **URL conventions for GET endpoints:** put the first-page pagination params
 directly on the URL.
 

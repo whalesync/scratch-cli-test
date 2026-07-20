@@ -49,7 +49,7 @@ const AUTH_OPTIONS: Array<{ value: AuthStyleSelection; label: string }> = [
   { value: 'bearer', label: 'Authorization: Bearer <key>' },
   { value: 'token', label: 'Authorization: Token <key>' },
   { value: 'raw', label: 'Authorization: <key>' },
-  { value: 'custom-header', label: 'Custom header (e.g. X-API-Key)' },
+  { value: 'custom-header', label: 'Custom header / scheme (e.g. MyService-API-Key)' },
 ];
 
 const newEndpointId = () => `ep_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -116,7 +116,7 @@ const copyConfigJson = async (extras: GenericApiConnectorExtras) => {
   }
 };
 
-const describeAuth = (style: AuthStyleSelection, customHeaderName: string): string => {
+const describeAuth = (style: AuthStyleSelection, customHeaderName: string, customValuePrefix: string): string => {
   switch (style) {
     case 'bearer':
       return 'Authorization: Bearer';
@@ -124,8 +124,11 @@ const describeAuth = (style: AuthStyleSelection, customHeaderName: string): stri
       return 'Authorization: Token';
     case 'raw':
       return 'Authorization (raw)';
-    case 'custom-header':
-      return `${customHeaderName.trim() || 'X-API-Key'} header`;
+    case 'custom-header': {
+      const headerName = customHeaderName.trim() || 'X-API-Key';
+      const prefix = customValuePrefix.trim();
+      return prefix ? `${headerName}: ${prefix} <key>` : `${headerName} header`;
+    }
   }
 };
 
@@ -149,6 +152,7 @@ export function GenericApiConnectionModal({
   const [apiType, setApiType] = useState<ApiType>('rest');
   const [authStyle, setAuthStyle] = useState<AuthStyleSelection>('bearer');
   const [customHeaderName, setCustomHeaderName] = useState('X-API-Key');
+  const [customValuePrefix, setCustomValuePrefix] = useState('');
   const [restEndpoints, setRestEndpoints] = useState<GenericApiRestEndpoint[]>([blankRestEndpoint()]);
   const [graphqlEndpoints, setGraphqlEndpoints] = useState<GenericApiGraphqlEndpoint[]>([blankGraphqlEndpoint()]);
   const [userConfigured, setUserConfigured] = useState(false);
@@ -172,6 +176,7 @@ export function GenericApiConnectionModal({
       if (extras.authHeader.style === 'custom-header') {
         setAuthStyle('custom-header');
         setCustomHeaderName(extras.authHeader.headerName || 'X-API-Key');
+        setCustomValuePrefix(extras.authHeader.valuePrefix || '');
       } else {
         setAuthStyle(extras.authHeader.style);
       }
@@ -201,10 +206,10 @@ export function GenericApiConnectionModal({
       hasEndpoints: rows.length > 0,
       endpointCount: rows.length,
       endpointRows: rows,
-      authLabel: describeAuth(authStyle, customHeaderName),
+      authLabel: describeAuth(authStyle, customHeaderName, customValuePrefix),
       apiTypeLabel: apiType === 'rest' ? 'REST' : 'GraphQL',
     };
-  }, [apiType, restEndpoints, graphqlEndpoints, authStyle, customHeaderName, userConfigured]);
+  }, [apiType, restEndpoints, graphqlEndpoints, authStyle, customHeaderName, customValuePrefix, userConfigured]);
 
   const reset = () => {
     setDisplayName('');
@@ -212,6 +217,7 @@ export function GenericApiConnectionModal({
     setApiType('rest');
     setAuthStyle('bearer');
     setCustomHeaderName('X-API-Key');
+    setCustomValuePrefix('');
     setRestEndpoints([blankRestEndpoint()]);
     setGraphqlEndpoints([blankGraphqlEndpoint()]);
     setUserConfigured(false);
@@ -225,7 +231,11 @@ export function GenericApiConnectionModal({
   const buildExtras = (): GenericApiConnectorExtras => {
     const authHeader: GenericApiConnectorExtras['authHeader'] =
       authStyle === 'custom-header'
-        ? { style: 'custom-header', headerName: customHeaderName.trim() || 'X-API-Key' }
+        ? {
+            style: 'custom-header',
+            headerName: customHeaderName.trim() || 'X-API-Key',
+            ...(customValuePrefix.trim() ? { valuePrefix: customValuePrefix.trim() } : {}),
+          }
         : { style: authStyle };
     const endpoints: GenericApiConnectorExtras['endpoints'] =
       apiType === 'rest'
@@ -314,6 +324,7 @@ export function GenericApiConnectionModal({
     if (extras.authHeader.style === 'custom-header') {
       setAuthStyle('custom-header');
       setCustomHeaderName(extras.authHeader.headerName || 'X-API-Key');
+      setCustomValuePrefix(extras.authHeader.valuePrefix || '');
     } else {
       setAuthStyle(extras.authHeader.style);
     }
@@ -472,6 +483,8 @@ export function GenericApiConnectionModal({
         setAuthStyle={setAuthStyle}
         customHeaderName={customHeaderName}
         setCustomHeaderName={setCustomHeaderName}
+        customValuePrefix={customValuePrefix}
+        setCustomValuePrefix={setCustomValuePrefix}
         restEndpoints={restEndpoints}
         setRestEndpoints={(next) => {
           setRestEndpoints(next);
@@ -620,6 +633,8 @@ interface ManualEditorProps {
   setAuthStyle: (v: AuthStyleSelection) => void;
   customHeaderName: string;
   setCustomHeaderName: (v: string) => void;
+  customValuePrefix: string;
+  setCustomValuePrefix: (v: string) => void;
   restEndpoints: GenericApiRestEndpoint[];
   setRestEndpoints: (next: GenericApiRestEndpoint[]) => void;
   graphqlEndpoints: GenericApiGraphqlEndpoint[];
@@ -637,6 +652,8 @@ function ManualEditorModal({
   setAuthStyle,
   customHeaderName,
   setCustomHeaderName,
+  customValuePrefix,
+  setCustomValuePrefix,
   restEndpoints,
   setRestEndpoints,
   graphqlEndpoints,
@@ -678,15 +695,27 @@ function ManualEditorModal({
           }}
         />
         {authStyle === 'custom-header' && (
-          <TextInput
-            label="Custom header name"
-            placeholder="X-API-Key"
-            value={customHeaderName}
-            onChange={(e) => {
-              setCustomHeaderName(e.currentTarget.value);
-              markAuthChanged();
-            }}
-          />
+          <>
+            <TextInput
+              label="Custom header name"
+              placeholder="X-API-Key"
+              value={customHeaderName}
+              onChange={(e) => {
+                setCustomHeaderName(e.currentTarget.value);
+                markAuthChanged();
+              }}
+            />
+            <TextInput
+              label="Value prefix (optional)"
+              description="Scheme word prepended to the key, e.g. MyService-API-Key → sends “<header>: MyService-API-Key <key>”. Leave blank to send the key verbatim."
+              placeholder="MyService-API-Key"
+              value={customValuePrefix}
+              onChange={(e) => {
+                setCustomValuePrefix(e.currentTarget.value);
+                markAuthChanged();
+              }}
+            />
+          </>
         )}
 
         <Text size="sm" fw={500}>
