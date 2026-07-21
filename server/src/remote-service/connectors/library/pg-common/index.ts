@@ -16,10 +16,13 @@ export {
 } from './knex-pg-types';
 export {
   AUTO_PK_COLUMN,
+  PG_DUPLICATE_TABLE_SQLSTATE,
   POSTGRES_MAX_IDENTIFIER_LENGTH,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   buildAddColumnsQuery,
   buildCreateTableQuery,
+  duplicateTableCreateErrorMessage,
+  isDuplicateTableError,
   type ForeignKeyResolution,
   type ForeignKeyResolutions,
 } from './pg-create-schema';

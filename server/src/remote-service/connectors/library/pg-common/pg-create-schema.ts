@@ -30,6 +30,29 @@ export const AUTO_PK_COLUMN = 'id';
 /** Postgres identifier length limit (NAMEDATALEN - 1). Over-long names are truncated silently by PG, so we fail fast. */
 export const POSTGRES_MAX_IDENTIFIER_LENGTH = 63;
 
+/**
+ * Postgres SQLSTATE `42P07` (`duplicate_table`): a `CREATE TABLE` collided with an
+ * existing relation of the same name in the target schema. Raised only by table
+ * creation (never by ALTER / insert / select), so the create path can safely turn
+ * it into a message that names the table we were trying to create.
+ */
+export const PG_DUPLICATE_TABLE_SQLSTATE = '42P07';
+
+/** True when `error` is a Postgres `duplicate_table` (42P07) error. */
+export function isDuplicateTableError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === PG_DUPLICATE_TABLE_SQLSTATE
+  );
+}
+
+/** User-facing message for a create-table name collision, naming the table we tried to create. */
+export function duplicateTableCreateErrorMessage(tableName: string): string {
+  return `A table named "${tableName}" already exists in the target schema. Rename the new table, or map to the existing table instead.`;
+}
+
 /** Generous integer headroom added to a requested decimal scale to form `numeric(scale + headroom, scale)`. */
 const NUMERIC_PRECISION_HEADROOM = 8;
 

@@ -736,6 +736,26 @@ describe('PostgresConnector schema creation', () => {
       expect(mockDispose).toHaveBeenCalledTimes(1);
     });
 
+    it('surfaces an actionable message that names the table when it already exists (42P07)', async () => {
+      // A duplicate-table collision must not leak the raw Knex
+      // `create table … - relation "users" already exists` SQL (DEV-10910).
+      mockCreateTable.mockRejectedValue(Object.assign(new Error('relation already exists'), { code: '42P07' }));
+      const plan: NormalizedCreateTablePlan = {
+        ref: 't1',
+        name: 'users',
+        fields: [textField('name')],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe(
+        'A table named "users" already exists in the target schema. Rename the new table, or map to the existing table instead.',
+      );
+      expect(result.fields).toEqual([{ name: 'name', status: 'failed' }]);
+    });
+
     it('creates a non-public schema before the table', async () => {
       mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
       const plan: NormalizedCreateTablePlan = {

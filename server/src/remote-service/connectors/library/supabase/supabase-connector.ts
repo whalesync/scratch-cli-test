@@ -49,6 +49,8 @@ import {
   assertModifiedAtColumnExists,
   chooseUniquelyAddressableColumn,
   collectPgColumnNamesRejectingEmptyString,
+  duplicateTableCreateErrorMessage,
+  isDuplicateTableError,
   isGeneratedColumn,
   KnexPGClient,
   KnexPGClientError,
@@ -751,7 +753,10 @@ export class SupabaseConnector extends Connector {
         };
       }, connectionString);
     } catch (error) {
-      return this.failedTableResult(plan, this.extractConnectorErrorDetails(error).userFriendlyMessage);
+      const message = isDuplicateTableError(error)
+        ? duplicateTableCreateErrorMessage(tableName)
+        : this.extractConnectorErrorDetails(error).userFriendlyMessage;
+      return this.failedTableResult(plan, message);
     }
   }
 

@@ -696,7 +696,11 @@ describe('SupabaseConnector schema creation', () => {
       const result = await connector.createTable(plan);
 
       expect(result.status).toBe('failed');
-      expect(result.error).toBeDefined();
+      // A duplicate-table (42P07) collision surfaces an actionable message that NAMES the
+      // table, not the raw Knex `create table … - relation "users" already exists` SQL (DEV-10910).
+      expect(result.error).toBe(
+        'A table named "users" already exists in the target schema. Rename the new table, or map to the existing table instead.',
+      );
       expect(result.fields).toEqual([{ name: 'name', status: 'failed' }]);
       expect(mockDispose).toHaveBeenCalledTimes(1);
     });

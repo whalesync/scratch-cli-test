@@ -45,6 +45,8 @@ import {
   assertModifiedAtColumnExists,
   chooseUniquelyAddressableColumn,
   collectPgColumnNamesRejectingEmptyString,
+  duplicateTableCreateErrorMessage,
+  isDuplicateTableError,
   isGeneratedColumn,
   KnexPGClient,
   KnexPGClientError,
@@ -507,12 +509,15 @@ export class PostgresConnector extends Connector {
         };
       });
     } catch (error) {
+      const message = isDuplicateTableError(error)
+        ? duplicateTableCreateErrorMessage(tableName)
+        : this.extractConnectorErrorDetails(error).userFriendlyMessage;
       return {
         ref: plan.ref,
         name: tableName,
         status: 'failed',
         fields: plan.fields.map((field) => ({ name: field.name, status: 'failed' as const })),
-        error: this.extractConnectorErrorDetails(error).userFriendlyMessage,
+        error: message,
       };
     }
   }
