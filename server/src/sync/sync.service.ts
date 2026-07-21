@@ -88,6 +88,16 @@ export interface RemoteIdMappingPair {
   destinationFilePath: string | null;
 }
 
+/**
+ * Server-internal options for {@link SyncService.createSync} / {@link SyncService.updateSync}
+ * (never part of the REST body). `validateAgainstStoredSchemas` makes mapping validation
+ * read each folder's stored git schema instead of fetching it live from the connector —
+ * see {@link SyncService.loadSchemaForMappingValidation}.
+ */
+export interface SaveSyncOptions {
+  validateAgainstStoredSchemas?: boolean;
+}
+
 interface FileContent {
   folderId: DataFolderId;
   path: string;
@@ -308,9 +318,38 @@ export class SyncService {
   }
 
   /**
+   * The schema a save's mapping validation checks a folder's column mappings against.
+   * Default reads it LIVE from the connector (also rewriting the stored git copy) — the
+   * freshest check for an interactively edited sync. With `validateAgainstStoredSchemas`
+   * it reads the stored git copy instead: the sync-draft apply path passes that because
+   * every folder it touches has a just-written or pull-maintained stored schema, and
+   * re-fetching source+destination live per table pair made saving a many-table draft
+   * minutes-slow (DEV-10875). Returns null when no schema is available, in which case
+   * validation skips gracefully (matching the live path's behavior on fetch failure).
+   */
+  private async loadSchemaForMappingValidation(
+    dataFolderId: DataFolderId,
+    actor: Actor,
+    options: SaveSyncOptions,
+  ): Promise<TSchema | null> {
+    if (options.validateAgainstStoredSchemas) {
+      const storedSpec = await this.dataFolderService.getStoredSchema(dataFolderId, actor);
+      const storedSchema = storedSpec?.schema;
+      return storedSchema && typeof storedSchema === 'object' ? (storedSchema as TSchema) : null;
+    }
+    const spec = await this.dataFolderService.fetchSchemaSpec(dataFolderId, actor);
+    return spec?.schema ?? null;
+  }
+
+  /**
    * Creates a new sync.
    */
-  async createSync(workbookId: WorkbookId, body: SaveSyncBody, actor: Actor): Promise<unknown> {
+  async createSync(
+    workbookId: WorkbookId,
+    body: SaveSyncBody,
+    actor: Actor,
+    options: SaveSyncOptions = {},
+  ): Promise<unknown> {
     const parsed = saveSyncBodySchema.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(`Invalid sync body: ${parsed.error.message}`);
@@ -331,12 +370,12 @@ export class SyncService {
         const sourceId = tableMapping.sourceDataFolderId;
         const destId = tableMapping.destinationDataFolderId;
 
-        const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
-        const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
+        const sourceSchema = await this.loadSchemaForMappingValidation(sourceId, actor, options);
+        const destSchema = await this.loadSchemaForMappingValidation(destId, actor, options);
 
-        if (sourceFolder?.schema && destFolder?.schema) {
+        if (sourceSchema && destSchema) {
           const v1Cols = projectV2ColumnMappingsToV1(tableMapping.columnMappings);
-          const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, v1Cols);
+          const errors = validateSchemaMapping(sourceSchema, destSchema, v1Cols);
           if (errors.length > 0) {
             throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
           }
@@ -345,8 +384,8 @@ export class SyncService {
         // Constant column mappings have no source column for validateSchemaMapping
         // to type-check; verify their literal values against the destination
         // column type directly. Surfaced as HTTP 400 by SyncExceptionFilter.
-        if (destFolder?.schema) {
-          const constantMismatches = findConstantTypeMismatches(destFolder.schema, tableMapping.columnMappings);
+        if (destSchema) {
+          const constantMismatches = findConstantTypeMismatches(destSchema, tableMapping.columnMappings);
           if (constantMismatches.length > 0) {
             const mismatch = constantMismatches[0];
             throw new ConstantTypeMismatchError(mismatch.destinationColumnId, mismatch.expected, mismatch.got);
@@ -407,7 +446,13 @@ export class SyncService {
    * Updates an existing sync.
    * Replaces mapped folders and settings.
    */
-  async updateSync(workbookId: WorkbookId, syncId: SyncId, body: SaveSyncBody, actor: Actor): Promise<unknown> {
+  async updateSync(
+    workbookId: WorkbookId,
+    syncId: SyncId,
+    body: SaveSyncBody,
+    actor: Actor,
+    options: SaveSyncOptions = {},
+  ): Promise<unknown> {
     const parsed = saveSyncBodySchema.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(`Invalid sync body: ${parsed.error.message}`);
@@ -455,12 +500,12 @@ export class SyncService {
         const sourceId = tableMapping.sourceDataFolderId;
         const destId = tableMapping.destinationDataFolderId;
 
-        const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
-        const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
+        const sourceSchema = await this.loadSchemaForMappingValidation(sourceId, actor, options);
+        const destSchema = await this.loadSchemaForMappingValidation(destId, actor, options);
 
-        if (sourceFolder?.schema && destFolder?.schema) {
+        if (sourceSchema && destSchema) {
           const v1Cols = projectV2ColumnMappingsToV1(tableMapping.columnMappings);
-          const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, v1Cols);
+          const errors = validateSchemaMapping(sourceSchema, destSchema, v1Cols);
           if (errors.length > 0) {
             throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
           }
@@ -469,8 +514,8 @@ export class SyncService {
         // Constant column mappings have no source column for validateSchemaMapping
         // to type-check; verify their literal values against the destination
         // column type directly. Surfaced as HTTP 400 by SyncExceptionFilter.
-        if (destFolder?.schema) {
-          const constantMismatches = findConstantTypeMismatches(destFolder.schema, tableMapping.columnMappings);
+        if (destSchema) {
+          const constantMismatches = findConstantTypeMismatches(destSchema, tableMapping.columnMappings);
           if (constantMismatches.length > 0) {
             const mismatch = constantMismatches[0];
             throw new ConstantTypeMismatchError(mismatch.destinationColumnId, mismatch.expected, mismatch.got);

@@ -101,6 +101,9 @@ describe('SyncDraftService', () => {
       fetchSchemaSpec: jest.fn(),
       getSchemaPaths: jest.fn().mockResolvedValue([]),
       getStoredView: jest.fn().mockResolvedValue(null),
+      // Default: no stored git schema, so apply falls back to the live fetchSchemaSpec
+      // path. Tests for the stored-schema fast path override this per test.
+      getStoredSchema: jest.fn().mockResolvedValue(null),
     } as unknown as jest.Mocked<DataFolderService>;
 
     routineService = {
@@ -1191,7 +1194,9 @@ describe('SyncDraftService', () => {
       });
       (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
       (dataFolderService.createFolder as jest.Mock).mockResolvedValue({ id: 'dfd_new' });
-      (dataFolderService.fetchSchemaSpec as jest.Mock).mockResolvedValue({
+      // The just-created folder's schema was written to git by createFolder, so apply
+      // resolves the created field from the STORED copy — no second live connector fetch.
+      (dataFolderService.getStoredSchema as jest.Mock).mockResolvedValue({
         schema: {
           type: 'object',
           properties: { fields: { type: 'object', properties: { Name: { type: 'string' } } } },
@@ -1205,6 +1210,7 @@ describe('SyncDraftService', () => {
       expect(dataFolderService.createFolder).toHaveBeenCalledTimes(1);
       const folderCalls = (dataFolderService.createFolder as jest.Mock).mock.calls as Array<[{ tableId: string[] }]>;
       expect(folderCalls[0][0].tableId).toEqual(['base1', 'tbl1']);
+      expect(dataFolderService.fetchSchemaSpec).not.toHaveBeenCalled();
 
       const createSyncCalls = (syncService.createSync as jest.Mock).mock.calls as Array<
         [
@@ -1289,6 +1295,8 @@ describe('SyncDraftService', () => {
       });
       (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
       (dataFolderService.createFolder as jest.Mock).mockResolvedValue({ id: 'dfd_new' });
+      // getStoredSchema stays at its default null here, so this also covers the
+      // fallback: a missing stored copy falls through to the live fetchSchemaSpec.
       (dataFolderService.fetchSchemaSpec as jest.Mock).mockResolvedValue({
         schema: {
           type: 'object',
@@ -1300,6 +1308,7 @@ describe('SyncDraftService', () => {
 
       await service.apply(DRAFT_ID, ACTOR);
 
+      expect(dataFolderService.fetchSchemaSpec).toHaveBeenCalledTimes(1);
       const createSyncCalls = (syncService.createSync as jest.Mock).mock.calls as Array<
         [
           unknown,

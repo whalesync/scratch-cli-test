@@ -349,13 +349,30 @@ export class SyncDraftService {
 
     await this.materializePlaceholderTables(workbookId, draftId, tableMappings, results, actor);
     await this.materializeFieldAdditions(workbookId, draftId, tableMappings, results, actor);
+    // ONE source-context cache shared by both transformer-attach passes below, so each
+    // distinct source folder pays its live connector schema fetch (and the git schema/view
+    // rewrite fetchSchemaSpec performs as a side effect) once per materialize, not once per
+    // pass (DEV-10875).
+    const sourceContextByFolderId = new Map<string, SourceContext | null>();
     // Give every foreignKey column whose related table is ALSO synced here the pipeline
     // that resolves source FK ids → destination linked-record ids. Runs BEFORE the generic
     // picker so those columns end up with the FK pipeline (the picker then skips them).
-    await this.attachForeignKeyResolutionTransformers(workbookId, draftId, tableMappings, actor);
+    await this.attachForeignKeyResolutionTransformers(
+      workbookId,
+      draftId,
+      tableMappings,
+      sourceContextByFolderId,
+      actor,
+    );
     // Now the destination fields are real: pick the sync transform for each remaining
     // newly-created column from its actual schema hints and write it to the draft.
-    await this.attachTransformersToMaterializedColumns(workbookId, draftId, tableMappings, actor);
+    await this.attachTransformersToMaterializedColumns(
+      workbookId,
+      draftId,
+      tableMappings,
+      sourceContextByFolderId,
+      actor,
+    );
 
     const fresh = await this.loadDraftOrThrow(draftId);
     return { draft: SyncDraftEntity.from(fresh), results, status: aggregateMaterializeStatus(results) };
@@ -395,12 +412,22 @@ export class SyncDraftService {
     // Create destination data folders for materialized placeholder tables. Done
     // before the sync save and checkpointed per folder so a crash mid-apply
     // leaves orphan folders (litter), not duplicate folders on retry.
+    //
+    // Every folder backing a placeholder table went through createFolder — which fetches
+    // the table's live schema and writes it to git — AFTER materialize finished creating
+    // the table's fields. So for these folders the stored git schema already reflects
+    // every created field, and column resolution below reads that stored copy instead of
+    // paying a second live connector fetch per just-created table (DEV-10875).
+    const dataFolderIdsWithFreshStoredSchema = new Set<string>();
     for (const tableMapping of tableMappings) {
       if (tableMapping.destination.kind !== 'placeholderTable') continue;
       const destination = tableMapping.destination;
       const resolved = destination.resolved;
       if (!resolved?.remoteTableId) continue; // guarded by the precondition above
-      if (resolved.dataFolderId) continue; // already created on a prior attempt
+      if (resolved.dataFolderId) {
+        dataFolderIdsWithFreshStoredSchema.add(resolved.dataFolderId);
+        continue; // already created on a prior attempt
+      }
       const folder = await this.dataFolderService.createFolder(
         {
           name: resolved.actualName ?? destination.createSpec.name,
@@ -412,6 +439,7 @@ export class SyncDraftService {
         createRunContext('web'),
       );
       resolved.dataFolderId = folder.id;
+      dataFolderIdsWithFreshStoredSchema.add(folder.id);
       await this.persistTableMappings(draftId, tableMappings);
     }
 
@@ -428,6 +456,7 @@ export class SyncDraftService {
           tableMapping,
           destinationDataFolderId,
           schemaFieldsByFolderId,
+          dataFolderIdsWithFreshStoredSchema,
           actor,
         );
         columnMappings.push({
@@ -451,6 +480,7 @@ export class SyncDraftService {
               tableMapping,
               destinationDataFolderId,
               schemaFieldsByFolderId,
+              dataFolderIdsWithFreshStoredSchema,
               actor,
             ),
           }
@@ -478,12 +508,20 @@ export class SyncDraftService {
       publishAfterSync: draft.publishAfterSync,
     };
 
+    // Validate against the STORED git schemas, not live connector fetches — the default
+    // live validation re-fetches source+destination per table pair, the dominant cost of
+    // saving a many-table draft (DEV-10875). Stored is fresh for every folder this draft
+    // touches: created tables' schemas were written by createFolder above; an existing
+    // destination with created fields was live-refreshed by the column resolution above
+    // (getSchemaFields' fetchSchemaSpec rewrites git); and source / untouched-destination
+    // schemas are maintained by pull and are what the draft's mappings were built from.
+    const saveOptions = { validateAgainstStoredSchemas: true };
     let syncId: SyncId;
     if (draft.sourceSyncId) {
-      await this.syncService.updateSync(workbookId, draft.sourceSyncId, body, actor);
+      await this.syncService.updateSync(workbookId, draft.sourceSyncId, body, actor, saveOptions);
       syncId = draft.sourceSyncId;
     } else {
-      const created = await this.syncService.createSync(workbookId, body, actor);
+      const created = await this.syncService.createSync(workbookId, body, actor, saveOptions);
       syncId = (created as { id: SyncId }).id;
     }
 
@@ -931,10 +969,9 @@ export class SyncDraftService {
     workbookId: WorkbookId,
     draftId: SyncDraftId,
     tableMappings: DraftTableMapping[],
+    sourceContextByFolderId: Map<string, SourceContext | null>,
     actor: Actor,
   ): Promise<void> {
-    const sourceContextByFolderId = new Map<string, SourceContext | null>();
-
     let changed = false;
     for (const tableMapping of tableMappings) {
       const needsTransform = tableMapping.columnMappings.some(
@@ -1012,6 +1049,7 @@ export class SyncDraftService {
     workbookId: WorkbookId,
     draftId: SyncDraftId,
     tableMappings: DraftTableMapping[],
+    sourceContextByFolderId: Map<string, SourceContext | null>,
     actor: Actor,
   ): Promise<void> {
     const foreignKeyColumns: {
@@ -1037,7 +1075,6 @@ export class SyncDraftService {
         foreignKeyColumns.map(({ tableMapping }) => tableMapping),
       );
     const destinationSupportsManyToManyByConnectorAccountId = new Map<string, boolean>();
-    const sourceContextByFolderId = new Map<string, SourceContext | null>();
     let changed = false;
     for (const { tableMapping, columnMapping, linkedTableId } of foreignKeyColumns) {
       const referencedDataFolderId = sourceFolderIdByRemoteTableId.get(linkedTableId);
@@ -1244,12 +1281,18 @@ export class SyncDraftService {
     tableMapping: DraftTableMapping,
     destinationDataFolderId: string,
     schemaFieldsByFolderId: Map<string, SchemaField[]>,
+    dataFolderIdsWithFreshStoredSchema: Set<string>,
     actor: Actor,
   ): Promise<string> {
     if (destination.kind === 'existing') return destination.columnId;
 
     const target = this.resolvePlaceholderFieldTarget(destination.ref, tableMapping, destinationDataFolderId);
-    const fields = await this.getSchemaFields(target.dataFolderId, schemaFieldsByFolderId, actor);
+    const fields = await this.getSchemaFields(
+      target.dataFolderId,
+      schemaFieldsByFolderId,
+      dataFolderIdsWithFreshStoredSchema,
+      actor,
+    );
     const match = findCreatedDestinationField(fields, target);
     if (!match) {
       throw new UnprocessableEntityException({
@@ -1290,12 +1333,27 @@ export class SyncDraftService {
   private async getSchemaFields(
     dataFolderId: string,
     schemaFieldsByFolderId: Map<string, SchemaField[]>,
+    dataFolderIdsWithFreshStoredSchema: Set<string>,
     actor: Actor,
   ): Promise<SchemaField[]> {
     const cached = schemaFieldsByFolderId.get(dataFolderId);
     if (cached) return cached;
-    // Live fetch (also rewrites the git schema) so just-created tables and
-    // just-added fields are both reflected — createFields does not refresh git.
+    // A folder created for a materialized placeholder table had its live schema fetched and
+    // written to git by createFolder AFTER the table's fields were all created, so the
+    // stored copy is already complete — read it instead of a second live connector fetch.
+    // Falls through to the live fetch when the stored copy is missing (e.g. the git write
+    // failed non-fatally at creation).
+    if (dataFolderIdsWithFreshStoredSchema.has(dataFolderId)) {
+      const storedSpec = await this.dataFolderService.getStoredSchema(dataFolderId as DataFolderId, actor);
+      const storedSchema = storedSpec?.schema;
+      if (storedSchema && typeof storedSchema === 'object') {
+        const fields = extractSchemaFields(storedSchema as TSchema);
+        schemaFieldsByFolderId.set(dataFolderId, fields);
+        return fields;
+      }
+    }
+    // Live fetch (also rewrites the git schema) so just-added fields on an EXISTING
+    // destination table are reflected — createFields does not refresh git.
     const spec = await this.dataFolderService.fetchSchemaSpec(dataFolderId as DataFolderId, actor);
     if (!spec?.schema) {
       throw new UnprocessableEntityException({
