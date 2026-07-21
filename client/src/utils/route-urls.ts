@@ -151,6 +151,14 @@ export class RouteUrls {
     // the auth-gated /connect/:service claim page — it must be reachable with no scratch.md login,
     // because the installing user may not have an account yet.
     /^\/oauth\/install\/[^/]+$/,
+    // Self-service Shopify custom-app setup guide, plus the token-exchange API route it posts to. The
+    // page walks a user through creating a Shopify custom app and exchanging the OAuth code for an
+    // Admin API token; the /api/shopify-custom-app/token route proxies that exchange straight to
+    // Shopify. Both read only URL params / request body and never touch scratch.md user or auth data,
+    // so they must be reachable with no login — the guide is embedded in Whalesync Live Export where
+    // the user may not be signed in to Scratch. See DEV-10914.
+    /^\/shopify-custom-app$/,
+    /^\/api\/shopify-custom-app\/token$/,
   ];
 
   /**
