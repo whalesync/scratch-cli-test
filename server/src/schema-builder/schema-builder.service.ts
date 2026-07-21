@@ -345,7 +345,12 @@ export class SchemaBuilderService {
         primaryFieldPath: toDotPath(stored.titlePath),
         idFieldPath: typeof stored.idPath === 'string' ? stored.idPath : undefined,
         remoteTableIds: folder.tableId,
-        ...(folder.connectorService ? { connectorService: folder.connectorService } : {}),
+        ...(folder.connectorService
+          ? {
+              connectorService: folder.connectorService,
+              serviceDisplayName: getServiceDisplayName(folder.connectorService),
+            }
+          : {}),
         ...(viewTypeByPath ? { viewTypeByPath } : {}),
         ...(existingDestination ? { existingDestination } : {}),
       });
@@ -369,6 +374,7 @@ export class SchemaBuilderService {
       sources,
       destinationConnectorAccountId: dto.destinationConnectorAccountId,
       destinationConnectorService: connector.service,
+      destinationServiceDisplayName: getServiceDisplayName(connector.service),
       linkedTableMappings: dto.linkedTableMappings,
       existingDestinationTableNames,
       destinationReservedFieldNames: destinationCapabilities?.reservedFieldNames,

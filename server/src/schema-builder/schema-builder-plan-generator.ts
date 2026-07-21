@@ -45,6 +45,13 @@ export interface PlanGeneratorSource {
    */
   connectorService?: Service;
   /**
+   * Human-readable name of this source's connector service (e.g. 'Notion'),
+   * resolved by the caller via `getServiceDisplayName`. Used only to name the
+   * service in field-mapping notes (e.g. "Don't recognize this Notion field
+   * type …"). Absent ⇒ notes fall back to service-agnostic wording.
+   */
+  serviceDisplayName?: string;
+  /**
    * Remote table identifiers for THIS source. A sibling source's foreignKey
    * whose `linkedTableId` matches one of these resolves to an in-plan `{ ref }`.
    */
@@ -108,6 +115,13 @@ export function generateCreatePlanFromSources(args: {
    * name is disambiguated (`postgres_source_record_id` rather than `postgres_record_id`).
    */
   destinationConnectorService?: Service;
+  /**
+   * Human-readable name of the destination connector service (e.g. 'Airtable'),
+   * resolved by the caller via `getServiceDisplayName`. Used only to name the
+   * destination in field-mapping notes (e.g. "…already exists in Airtable…").
+   * Absent ⇒ notes fall back to service-agnostic wording ("on the destination").
+   */
+  destinationServiceDisplayName?: string;
   linkedTableMappings?: PlanGeneratorLinkedTableMapping[];
   /**
    * Display names of tables that already exist on the destination under the
@@ -211,6 +225,7 @@ export function generateCreatePlanFromSources(args: {
           args.destinationReservedFieldNames,
           args.destinationMaxFieldNameLength,
           args.destinationSupportsManyToManyForeignKeys ?? true,
+          args.destinationServiceDisplayName,
         ),
       );
     } else {
@@ -219,6 +234,7 @@ export function generateCreatePlanFromSources(args: {
         {
           allowSiblingRefForeignKeys: true,
           markPrimaryField: true,
+          destinationServiceDisplayName: args.destinationServiceDisplayName,
           reservedFieldNames: args.destinationReservedFieldNames,
           maxFieldNameLength: args.destinationMaxFieldNameLength,
           destinationSupportsManyToManyForeignKeys: args.destinationSupportsManyToManyForeignKeys ?? true,
@@ -466,6 +482,7 @@ function buildAddFieldsPlanForSource(
   reservedFieldNames: string[] | undefined,
   maxFieldNameLength: number | undefined,
   destinationSupportsManyToManyForeignKeys: boolean,
+  destinationServiceDisplayName: string | undefined,
 ): CreateSchemaFieldsPlan {
   const existingDestinationFieldsByName = new Map(
     existingDestination.existingFields.map((field) => [normalizeNameForUniqueness(field.name), field] as const),
@@ -476,6 +493,7 @@ function buildAddFieldsPlanForSource(
       allowSiblingRefForeignKeys: false,
       markPrimaryField: false,
       existingDestinationFieldsByName,
+      destinationServiceDisplayName,
       reservedFieldNames,
       maxFieldNameLength,
       destinationSupportsManyToManyForeignKeys,
@@ -505,6 +523,11 @@ interface CreateFieldSpecOptions {
    * match, or otherwise skipped — never recreated.
    */
   existingDestinationFieldsByName?: Map<string, ExistingDestinationField>;
+  /**
+   * Human-readable name of the destination connector service (e.g. 'Airtable'), used only to name the
+   * destination in the `exists` skip note. Absent ⇒ the note falls back to "on the destination".
+   */
+  destinationServiceDisplayName?: string;
   /** Field names the destination connector reserves (e.g. Postgres `id`) — seeded into the taken-names
    *  set so a colliding source field is renamed rather than dropped at create. Compared case-insensitively. */
   reservedFieldNames?: string[];
@@ -609,7 +632,11 @@ function mapSchemaFieldToCreateFieldSpec(
   const existingField = options.existingDestinationFieldsByName?.get(normalizeNameForUniqueness(requestedFieldName));
   if (existingField) {
     if (!schemaField.foreignKey) {
-      const sourceKind = inferLogicalFieldType(schemaField, source.viewTypeByPath?.[schemaField.path]).fieldType.kind;
+      const sourceKind = inferLogicalFieldType(
+        schemaField,
+        source.viewTypeByPath?.[schemaField.path],
+        source.serviceDisplayName,
+      ).fieldType.kind;
       if (sourceKind === existingField.kind) {
         notes.push({
           sourceDataFolderId: source.dataFolderId,
@@ -628,7 +655,9 @@ function mapSchemaFieldToCreateFieldSpec(
       sourceFieldPath: schemaField.path,
       fieldName: requestedFieldName,
       status: 'exists',
-      message: `a field named "${requestedFieldName}" already exists on the destination table with an incompatible type; skipped`,
+      message: `Skipping "${requestedFieldName}", a field with that name already exists in ${
+        options.destinationServiceDisplayName ?? 'the destination'
+      } with an incompatible type`,
     });
     return null;
   }
@@ -718,7 +747,11 @@ function mapSchemaFieldToCreateFieldSpec(
     return buildFieldSpec(fieldName, foreignKeyType, isPrimary, schemaField.description);
   }
 
-  const inferred = inferLogicalFieldType(schemaField, source.viewTypeByPath?.[schemaField.path]);
+  const inferred = inferLogicalFieldType(
+    schemaField,
+    source.viewTypeByPath?.[schemaField.path],
+    source.serviceDisplayName,
+  );
   const message = composeNoteMessage(renameClause, inferred.message);
   notes.push({
     sourceDataFolderId: source.dataFolderId,
@@ -784,7 +817,13 @@ export interface InferredFieldType {
  * to text. The field's logical type comes from its view hint / primitive like any
  * other field.
  */
-export function inferLogicalFieldType(field: SchemaField, viewType?: TablePropertyType): InferredFieldType {
+export function inferLogicalFieldType(
+  field: SchemaField,
+  viewType?: TablePropertyType,
+  sourceServiceDisplayName?: string,
+): InferredFieldType {
+  // "this Notion object field" when we know the source service, "this object field" otherwise.
+  const sourceServiceQualifier = sourceServiceDisplayName ? `${sourceServiceDisplayName} ` : '';
   if (viewType) {
     switch (viewType) {
       case 'checkbox':
@@ -803,7 +842,7 @@ export function inferLogicalFieldType(field: SchemaField, viewType?: TableProper
         return {
           status: 'downgraded',
           fieldType: { kind: 'text' },
-          message: 'complex object field; created as plain text',
+          message: `Can't unpack this ${sourceServiceQualifier}object field, syncing as plain text`,
         };
       default:
         // Open union (connector-specific hint) — fall through to type inference.
@@ -825,13 +864,15 @@ export function inferLogicalFieldType(field: SchemaField, viewType?: TableProper
       return {
         status: 'downgraded',
         fieldType: { kind: 'text' },
-        message: `${field.type} field; created as plain text`,
+        message: `Can't unpack this ${sourceServiceQualifier}${field.type} field, syncing as plain text`,
       };
     default:
       return {
         status: 'downgraded',
         fieldType: { kind: 'text' },
-        message: `unrecognized source type "${field.type}"; created as plain text`,
+        message: `Don't recognize ${
+          sourceServiceDisplayName ? `${sourceServiceDisplayName} ` : 'this '
+        }field type "${field.type}", syncing as plain text`,
       };
   }
 }

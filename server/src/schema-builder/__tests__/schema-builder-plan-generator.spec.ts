@@ -35,6 +35,29 @@ describe('inferLogicalFieldType', () => {
     });
   });
 
+  it('names the source service in downgrade/unrecognized notes when known, and stays generic when not', () => {
+    // Unrecognized type — names the service when we know it, "this" otherwise.
+    expect(inferLogicalFieldType(field({ path: 'x', type: 'weird' }), undefined, 'Notion').message).toBe(
+      'Don\'t recognize Notion field type "weird", syncing as plain text',
+    );
+    expect(inferLogicalFieldType(field({ path: 'x', type: 'weird' })).message).toBe(
+      'Don\'t recognize this field type "weird", syncing as plain text',
+    );
+
+    // Complex object/array field — "Can't unpack this <service> <type> field".
+    expect(inferLogicalFieldType(field({ path: 'o', type: 'object' }), undefined, 'Notion').message).toBe(
+      "Can't unpack this Notion object field, syncing as plain text",
+    );
+    expect(inferLogicalFieldType(field({ path: 'a', type: 'array' })).message).toBe(
+      "Can't unpack this array field, syncing as plain text",
+    );
+
+    // The 'object' view hint takes the same wording.
+    expect(inferLogicalFieldType(field({ path: 'o', type: 'string' }), 'object', 'Notion').message).toBe(
+      "Can't unpack this Notion object field, syncing as plain text",
+    );
+  });
+
   it('keeps read-only fields at their real type instead of downgrading to text', () => {
     // This tool copies a table for a sync, so a read-only source field becomes an
     // editable destination column of the SAME logical type (e.g. a read-only
@@ -431,10 +454,14 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
     const { fieldPlans, notes } = generateCreatePlanFromSources({
       sources: [source],
       destinationConnectorAccountId: 'destConn',
+      destinationServiceDisplayName: 'Airtable',
     });
     // age is neither created (name collision) nor adopted (kind mismatch) → exists.
     expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['name', 'bio']);
-    expect(notes.find((note) => note.fieldName === 'age')).toMatchObject({ status: 'exists' });
+    expect(notes.find((note) => note.fieldName === 'age')).toMatchObject({
+      status: 'exists',
+      message: 'Skipping "age", a field with that name already exists in Airtable with an incompatible type',
+    });
   });
 
   it('emits a sibling-ref foreignKey as needs_target when adding to an existing table', () => {
