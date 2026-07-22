@@ -900,6 +900,12 @@ model SyncDraft {
   /// @see packages/shared-types/src/dto/sync-draft/sync-draft-content.ts
   tableMappings Json
 
+  /// The BullMQ job id of the in-flight apply-sync-draft save job (DEV-10875), or null when no
+  /// save is running. Set by POST /sync-drafts/:draftId/save, cleared by the job on
+  /// completion/failure. May be stale after a worker crash — readers must check the referenced
+  /// job's state rather than treating "set" as "running".
+  activeSaveJobId String?
+
   /// Set once applied — an archived draft is never edited or re-applied.
   archivedAt    DateTime?
   /// The Sync produced by apply (set alongside archivedAt).

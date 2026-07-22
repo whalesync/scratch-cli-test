@@ -9,12 +9,14 @@ import type { SyncDraftId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { load as loadYaml } from 'js-yaml';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { JobService } from 'src/job/job.service';
 import { RoutineService } from 'src/routine/routine.service';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
 import { SyncService } from 'src/sync/sync.service';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
+import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { SyncDraftService } from '../sync-draft.service';
 
 const WORKBOOK_ID = 'wkb_test123' as WorkbookId;
@@ -36,6 +38,7 @@ function makeDraftRow(overrides: Record<string, unknown> = {}): Record<string, u
     schedule: null,
     sourceSyncId: null,
     tableMappings: [],
+    activeSaveJobId: null,
     archivedAt: null,
     appliedSyncId: null,
     ...overrides,
@@ -50,6 +53,8 @@ describe('SyncDraftService', () => {
   let schemaBuilderService: jest.Mocked<SchemaBuilderService>;
   let dataFolderService: jest.Mocked<DataFolderService>;
   let routineService: jest.Mocked<RoutineService>;
+  let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
+  let jobService: jest.Mocked<JobService>;
 
   beforeEach(() => {
     dbService = {
@@ -110,6 +115,16 @@ describe('SyncDraftService', () => {
       createRoutineFile: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<RoutineService>;
 
+    bullEnqueuerService = {
+      enqueueApplySyncDraftJob: jest.fn().mockResolvedValue({ id: 'apply-sync-draft-syd_test456-abc12' }),
+    } as unknown as jest.Mocked<BullEnqueuerService>;
+
+    jobService = {
+      // Default: any referenced save job has finished, so the guard/reuse paths are noops
+      // unless a test sets an in-flight state.
+      getJobsProgress: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<JobService>;
+
     service = new SyncDraftService(
       dbService,
       workbookService,
@@ -117,6 +132,8 @@ describe('SyncDraftService', () => {
       schemaBuilderService,
       dataFolderService,
       routineService,
+      bullEnqueuerService,
+      jobService,
     );
   });
 
@@ -565,6 +582,46 @@ describe('SyncDraftService', () => {
       expect(dbService.client.syncDraft.update).toHaveBeenCalled();
       const dest = res.draft.tableMappings[0].destination;
       expect(dest.kind === 'placeholderTable' && dest.resolved?.remoteTableId).toEqual(['base1', 'tbl1']);
+    });
+
+    it('ticks onPlaceholderCreatedInBatch with the DRAFT placeholder ref as each table lands mid-batch (DEV-10875)', async () => {
+      const row = makeDraftRow({ tableMappings: [placeholderTableDraft()] });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (schemaBuilderService.createTables as jest.Mock).mockImplementation(
+        async (_workbookId, _dto, _actor, progressOptions: { onTableResult?: (result: unknown) => Promise<void> }) => {
+          // The schema builder notifies per table as each creation lands; the materializer must
+          // translate the createSpec ref ('spec_contacts') to the draft placeholder ref.
+          await progressOptions?.onTableResult?.({
+            ref: 'spec_contacts',
+            name: 'Contacts',
+            status: 'created',
+            remoteTableId: ['base1', 'tbl1'],
+            fields: [],
+          });
+          return {
+            status: 'ok',
+            tables: [
+              {
+                ref: 'spec_contacts',
+                name: 'Contacts',
+                status: 'created',
+                remoteTableId: ['base1', 'tbl1'],
+                fields: [],
+              },
+            ],
+          };
+        },
+      );
+
+      const tickedPlaceholderRefs: string[] = [];
+      const res = await service.materialize(DRAFT_ID, ACTOR, {
+        onPlaceholderCreatedInBatch: (placeholderRef) => {
+          tickedPlaceholderRefs.push(placeholderRef);
+        },
+      });
+
+      expect(tickedPlaceholderRefs).toEqual(['ph_contacts']);
+      expect(res.status).toBe('ok');
     });
 
     it('binds pending foreignKey targets to sibling placeholders before create; leaves truly-unbound ones pending', async () => {
@@ -1475,6 +1532,101 @@ describe('SyncDraftService', () => {
 
       expect(sync.id).toBe('syn_new');
       expect(routineService.createRoutineFile).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('save (background job, DEV-10875)', () => {
+    it('enqueues the apply-sync-draft job, stores its id on the draft, and returns 202-style { jobId }', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow());
+      (dbService.client.syncDraft.update as jest.Mock).mockResolvedValue(makeDraftRow());
+
+      const response = await service.save(DRAFT_ID, { createRoutine: true }, ACTOR);
+
+      expect(workbookService.assertWritableWorkbook).toHaveBeenCalledWith(ACTOR, WORKBOOK_ID);
+      expect(bullEnqueuerService.enqueueApplySyncDraftJob).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        DRAFT_ID,
+        ACTOR,
+        { createRoutine: true },
+        expect.objectContaining({ trigger: 'web' }),
+      );
+      expect(response.jobId).toBe('apply-sync-draft-syd_test456-abc12');
+      expect(dbService.client.syncDraft.update).toHaveBeenCalledWith({
+        where: { id: DRAFT_ID },
+        data: { activeSaveJobId: 'apply-sync-draft-syd_test456-abc12' },
+      });
+    });
+
+    it('returns the running save job id instead of enqueuing a second job (single-flight)', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(
+        makeDraftRow({ activeSaveJobId: 'bull-running-1' }),
+      );
+      (jobService.getJobsProgress as jest.Mock).mockResolvedValue([{ state: 'active' }]);
+
+      const response = await service.save(DRAFT_ID, {}, ACTOR);
+
+      expect(response.jobId).toBe('bull-running-1');
+      expect(bullEnqueuerService.enqueueApplySyncDraftJob).not.toHaveBeenCalled();
+      expect(dbService.client.syncDraft.update).not.toHaveBeenCalled();
+    });
+
+    it('replaces a stale activeSaveJobId (finished or vanished job) with a fresh enqueue', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(
+        makeDraftRow({ activeSaveJobId: 'bull-finished-1' }),
+      );
+      (jobService.getJobsProgress as jest.Mock).mockResolvedValue([{ state: 'failed' }]);
+      (dbService.client.syncDraft.update as jest.Mock).mockResolvedValue(makeDraftRow());
+
+      const response = await service.save(DRAFT_ID, {}, ACTOR);
+
+      expect(bullEnqueuerService.enqueueApplySyncDraftJob).toHaveBeenCalledTimes(1);
+      expect(response.jobId).toBe('apply-sync-draft-syd_test456-abc12');
+    });
+
+    it('409s on an archived draft', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(
+        makeDraftRow({ archivedAt: new Date('2026-06-15T00:00:00.000Z') }),
+      );
+
+      await expect(service.save(DRAFT_ID, {}, ACTOR)).rejects.toThrow(ConflictException);
+      expect(bullEnqueuerService.enqueueApplySyncDraftJob).not.toHaveBeenCalled();
+    });
+
+    it('materialize 409s SYNC_DRAFT_SAVE_IN_PROGRESS while a save job is running, unless called by the job itself', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(
+        makeDraftRow({ activeSaveJobId: 'bull-running-1' }),
+      );
+      (jobService.getJobsProgress as jest.Mock).mockResolvedValue([{ state: 'active' }]);
+
+      await expect(service.materialize(DRAFT_ID, ACTOR)).rejects.toMatchObject({
+        response: { error: 'SYNC_DRAFT_SAVE_IN_PROGRESS', jobId: 'bull-running-1' },
+      });
+
+      // The job's own call bypasses the guard (empty draft → noop materialize).
+      const response = await service.materialize(DRAFT_ID, ACTOR, { calledByActiveSaveJob: true });
+      expect(response.status).toBe('noop');
+    });
+
+    it('apply 409s SYNC_DRAFT_SAVE_IN_PROGRESS while a save job is running', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(
+        makeDraftRow({ activeSaveJobId: 'bull-running-1' }),
+      );
+      (jobService.getJobsProgress as jest.Mock).mockResolvedValue([{ state: 'waiting' }]);
+
+      await expect(service.apply(DRAFT_ID, ACTOR)).rejects.toMatchObject({
+        response: { error: 'SYNC_DRAFT_SAVE_IN_PROGRESS', jobId: 'bull-running-1' },
+      });
+    });
+
+    it('clearActiveSaveJobIdIfOwnedByJob clears only when the id still points at that job', async () => {
+      (dbService.client.syncDraft.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+
+      await service.clearActiveSaveJobIdIfOwnedByJob(DRAFT_ID, 'bull-running-1');
+
+      expect(dbService.client.syncDraft.updateMany).toHaveBeenCalledWith({
+        where: { id: DRAFT_ID, activeSaveJobId: 'bull-running-1' },
+        data: { activeSaveJobId: null },
+      });
     });
   });
 });

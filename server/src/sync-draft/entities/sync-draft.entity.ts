@@ -18,6 +18,7 @@ export const SyncDraftEntity = {
       sourceSyncId: row.sourceSyncId as SyncId | null,
       publishAfterSync: row.publishAfterSync,
       tableMappings: (row.tableMappings ?? []) as unknown as DraftTableMapping[],
+      activeSaveJobId: row.activeSaveJobId,
       archivedAt: row.archivedAt ? row.archivedAt.toISOString() : null,
       appliedSyncId: row.appliedSyncId as SyncId | null,
       createdAt: row.createdAt.toISOString(),

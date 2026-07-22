@@ -17,6 +17,7 @@ import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.ser
 import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
+import { SyncDraftService } from 'src/sync-draft/sync-draft.service';
 import { SyncService } from 'src/sync/sync.service';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -24,6 +25,7 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { ApplyPatchesJobHandler } from './jobs/job-definitions/apply-patches.job';
+import { ApplySyncDraftJobHandler } from './jobs/job-definitions/apply-sync-draft.job';
 import { CleanupConnectionIndexRowsJobHandler } from './jobs/job-definitions/cleanup-connection-index-rows.job';
 import { DeleteWorkbookJobHandler } from './jobs/job-definitions/delete-workbook.job';
 import { DiscardPendingChangesJobHandler } from './jobs/job-definitions/discard-pending-changes.job';
@@ -59,6 +61,7 @@ export class JobHandlerService {
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
     private readonly experimentsService: ExperimentsService,
     private readonly auditLogService: AuditLogService,
+    private readonly syncDraftService: SyncDraftService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
   }
@@ -125,6 +128,13 @@ export class JobHandlerService {
 
       case JobType.ApplyPatches:
         return new ApplyPatchesJobHandler(this.applyPatchesService) as JobHandler<JobDefinition>;
+
+      case JobType.ApplySyncDraft:
+        return new ApplySyncDraftJobHandler(
+          prisma,
+          this.syncDraftService,
+          this.workbookEventService,
+        ) as JobHandler<JobDefinition>;
 
       case JobType.DeleteWorkbook:
         return new DeleteWorkbookJobHandler(this.workbookService) as JobHandler<JobDefinition>;

@@ -132,3 +132,37 @@ export interface ApplyUnresolvedPlaceholdersError {
 
 /** Apply returns the live `Sync` it produced. */
 export type ApplySyncDraftResponse = Sync;
+
+// ── POST /sync-drafts/:draftId/save (both phases, as a job) ───────────────────
+
+/**
+ * Save request body: enqueue the `apply-sync-draft` job, which runs materialize then apply in the
+ * background (DEV-10875) and reports progress via `ApplySyncDraftPublicProgress`. `createRoutine`
+ * mirrors the apply body's flag and is threaded through to the job's apply phase. `.default({})`
+ * keeps an empty/absent POST valid (→ `{}`), matching apply.
+ */
+export const saveSyncDraftSchema = z
+  .object({
+    createRoutine: z.boolean().optional(),
+  })
+  .default({});
+export type SaveSyncDraftDto = z.infer<typeof saveSyncDraftSchema>;
+
+/**
+ * 202 acknowledgement for a save: the BullMQ job id of the enqueued (or already-running)
+ * `apply-sync-draft` job. Poll it via GET /jobs/:jobId/progress (or the bulk-status endpoint);
+ * the same id is surfaced on `SyncDraft.activeSaveJobId` while the job is in flight. Saving a
+ * draft whose save job is already running returns that job's id rather than enqueuing a second
+ * one, so a double-click or a second tab collapses into "watch the same job".
+ */
+export interface SaveSyncDraftResponse {
+  jobId: string;
+}
+
+/** 409 body when materialize/apply is called directly while a background save job is running. */
+export interface SyncDraftSaveInProgressError {
+  error: 'SYNC_DRAFT_SAVE_IN_PROGRESS';
+  message: string;
+  /** The BullMQ job id of the in-flight save job — watch it instead of retrying. */
+  jobId: string;
+}

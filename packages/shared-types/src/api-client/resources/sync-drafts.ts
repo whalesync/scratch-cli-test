@@ -6,6 +6,8 @@ import type {
   CreateSyncDraftDto,
   MaterializeResponse,
   PatchSyncDraftDto,
+  SaveSyncDraftDto,
+  SaveSyncDraftResponse,
 } from '../../dto/sync-draft/sync-draft-api';
 import type { Http } from '../http';
 
@@ -63,6 +65,21 @@ export function createSyncDraftsApi(http: Http) {
     apply: async (draftId: string, body?: ApplySyncDraftDto): Promise<ApplySyncDraftResponse> => {
       const res = await http.post<Sync>(`/sync-drafts/${draftId}/apply`, body, {
         fallbackMessage: 'Failed to apply sync draft',
+      });
+      return res.data;
+    },
+
+    /**
+     * Both phases as a background job (DEV-10875): enqueue the `apply-sync-draft` job (materialize →
+     * apply) and return its job id immediately. Poll the job (GET /jobs/:jobId/progress) and render
+     * `ApplySyncDraftPublicProgress`; while it runs, `SyncDraft.activeSaveJobId` carries the same id
+     * so a reloaded page rediscovers the in-flight save. Saving while a save job is already running
+     * returns that job's id (single-flight). Retry after a partial failure just calls save again —
+     * placeholders already resolved are skipped.
+     */
+    save: async (draftId: string, body?: SaveSyncDraftDto): Promise<SaveSyncDraftResponse> => {
+      const res = await http.post<SaveSyncDraftResponse>(`/sync-drafts/${draftId}/save`, body, {
+        fallbackMessage: 'Failed to save sync draft',
       });
       return res.data;
     },

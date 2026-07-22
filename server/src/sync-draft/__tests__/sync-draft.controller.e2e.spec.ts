@@ -45,6 +45,7 @@ describe('SyncDraftController (controller-level e2e)', () => {
     patch: jest.Mock;
     materialize: jest.Mock;
     apply: jest.Mock;
+    save: jest.Mock;
     delete: jest.Mock;
   };
 
@@ -70,6 +71,7 @@ describe('SyncDraftController (controller-level e2e)', () => {
       patch: jest.fn().mockResolvedValue(draftResponse),
       materialize: jest.fn().mockResolvedValue({ draft: draftResponse, results: [], status: 'noop' }),
       apply: jest.fn().mockResolvedValue({ id: 'syn_new' }),
+      save: jest.fn().mockResolvedValue({ jobId: 'apply-sync-draft-syd_e2e-abc12' }),
       delete: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -247,6 +249,44 @@ describe('SyncDraftController (controller-level e2e)', () => {
       const res = await request(app.getHttpServer()).post(`/sync-drafts/${DRAFT_ID}/apply`).expect(422);
       expect(res.body.error).toBe('SYNC_DRAFT_UNRESOLVED_PLACEHOLDERS');
       expect(res.body.unresolvedRefs).toEqual(['ph_contacts']);
+    });
+  });
+
+  describe('POST /sync-drafts/:draftId/save (background job)', () => {
+    it('returns 202 with the enqueued job id and defaults createRoutine to false on an empty body', async () => {
+      const res = await request(app.getHttpServer()).post(`/sync-drafts/${DRAFT_ID}/save`).expect(202);
+      expect(res.body.jobId).toBe('apply-sync-draft-syd_e2e-abc12');
+      expect(syncDraftService.save).toHaveBeenCalledWith(DRAFT_ID, { createRoutine: false }, expect.anything());
+    });
+
+    it('forwards createRoutine: true from the body', async () => {
+      await request(app.getHttpServer())
+        .post(`/sync-drafts/${DRAFT_ID}/save`)
+        .send({ createRoutine: true })
+        .expect(202);
+      expect(syncDraftService.save).toHaveBeenCalledWith(DRAFT_ID, { createRoutine: true }, expect.anything());
+    });
+
+    it('rejects a non-boolean createRoutine with 400 (zod)', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/sync-drafts/${DRAFT_ID}/save`)
+        .send({ createRoutine: 'yes' })
+        .expect(400);
+      expect(res.body.issues).toBeDefined();
+      expect(syncDraftService.save).not.toHaveBeenCalled();
+    });
+
+    it('passes the save-in-progress conflict through as 409 with the running job id', async () => {
+      syncDraftService.save.mockRejectedValue(
+        new ConflictException({
+          error: 'SYNC_DRAFT_SAVE_IN_PROGRESS',
+          message: 'already saving',
+          jobId: 'bull-running-1',
+        }),
+      );
+      const res = await request(app.getHttpServer()).post(`/sync-drafts/${DRAFT_ID}/save`).expect(409);
+      expect(res.body.error).toBe('SYNC_DRAFT_SAVE_IN_PROGRESS');
+      expect(res.body.jobId).toBe('bull-running-1');
     });
   });
 

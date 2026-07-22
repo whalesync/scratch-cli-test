@@ -3,7 +3,13 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument -- app.getHttpServer() vs supertest's App */
 import { ExecutionContext, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { CreateFieldResult, CreateTableResult, PrimaryFieldRequirement } from '@spinner/shared-types';
+import {
+  CreateFieldResult,
+  CreateSchemaTablesDto,
+  CreateTableResult,
+  PrimaryFieldRequirement,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { ZodValidationPipe } from 'nestjs-zod';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
@@ -14,6 +20,7 @@ import { ConnectorAccountService } from 'src/remote-service/connector-account/co
 import { Connector } from 'src/remote-service/connectors/connector';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { dotPath } from 'src/remote-service/connectors/types';
+import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import request from 'supertest';
@@ -196,6 +203,74 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
         tableId: ['tblNew'],
       });
       expect(auditLogService.logEvent).toHaveBeenCalledTimes(1);
+    });
+
+    // The per-table progress observer (DEV-10875) is a service-level side channel — not reachable
+    // through the HTTP surface — so these two drive SchemaBuilderService.createTables directly.
+    describe('per-table progress observer', () => {
+      const actor: Actor = { userId: USER_ID, organizationId: ORG_ID } as Actor;
+      const twoTablesDto = {
+        connectorAccountId: CONNECTOR_ACCOUNT_ID,
+        tables: [
+          { ref: 't1', name: 'Posts', fields: [{ name: 'Title', fieldType: { kind: 'text' }, isPrimary: true }] },
+          { ref: 't2', name: 'Authors', fields: [{ name: 'Name', fieldType: { kind: 'text' }, isPrimary: true }] },
+        ],
+      } as CreateSchemaTablesDto;
+
+      function createTableStubResolvingEachRef(): jest.Mock {
+        return jest.fn(
+          (plan: { ref: string; name: string }): Promise<CreateTableResult> =>
+            Promise.resolve({
+              ref: plan.ref,
+              name: plan.name,
+              status: 'created',
+              remoteTableId: [`tbl_${plan.ref}`],
+              fields: [],
+            }),
+        );
+      }
+
+      it('notifies onTableResult after EACH table lands, not once at batch end', async () => {
+        const createTable = createTableStubResolvingEachRef();
+        connectorsService.getConnector.mockResolvedValue(
+          connectorStub({ supportsSchemaCreation: () => true, createTable }),
+        );
+        const service = app.get(SchemaBuilderService);
+
+        const observed: Array<{ ref: string; createTableCallsSoFar: number }> = [];
+        const response = await service.createTables(WORKBOOK_ID as WorkbookId, twoTablesDto, actor, {
+          onTableResult: (result) => {
+            // Capture how many creations had run when this tick fired — proves the first tick
+            // arrives mid-batch (after table 1, before table 2), not at batch end.
+            observed.push({ ref: result.ref, createTableCallsSoFar: createTable.mock.calls.length });
+          },
+        });
+
+        expect(observed).toEqual([
+          { ref: 't1', createTableCallsSoFar: 1 },
+          { ref: 't2', createTableCallsSoFar: 2 },
+        ]);
+        expect(response.status).toBe('ok');
+        expect(response.tables).toHaveLength(2);
+      });
+
+      it('an observer throw is swallowed: creation continues and the batch still succeeds', async () => {
+        const createTable = createTableStubResolvingEachRef();
+        connectorsService.getConnector.mockResolvedValue(
+          connectorStub({ supportsSchemaCreation: () => true, createTable }),
+        );
+        const service = app.get(SchemaBuilderService);
+
+        const response = await service.createTables(WORKBOOK_ID as WorkbookId, twoTablesDto, actor, {
+          onTableResult: () => {
+            throw new Error('observer bug');
+          },
+        });
+
+        expect(createTable).toHaveBeenCalledTimes(2);
+        expect(response.status).toBe('ok');
+        expect(response.tables.map((table) => table.status)).toEqual(['created', 'created']);
+      });
     });
   });
 

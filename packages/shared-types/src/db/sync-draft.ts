@@ -34,6 +34,14 @@ export interface SyncDraft {
   publishAfterSync: boolean;
   /** The desired-state working copy. */
   tableMappings: DraftTableMapping[];
+  /**
+   * The BullMQ job id of the in-flight `apply-sync-draft` save job, or null when no save is
+   * running. Set by POST /sync-drafts/:draftId/save and cleared by the job on completion/failure,
+   * so a cold page load (getOrCreate → get) rediscovers an in-flight save with no client-side
+   * state — poll it via GET /jobs/:jobId/progress. May be stale after a worker crash: always check
+   * the referenced job's state rather than treating "set" as "running".
+   */
+  activeSaveJobId: string | null;
   /** Set once the draft has been applied; an archived draft is never edited or re-applied. */
   archivedAt: string | null;
   /** The Sync produced by apply (set alongside archivedAt). */

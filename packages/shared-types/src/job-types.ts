@@ -30,6 +30,12 @@ export const JobType = {
    * the run starts from the published baseline. Backs the `discard-pending-changes` routine action.
    */
   DiscardPendingChanges: 'discard-pending-changes',
+  /**
+   * Save a SyncDraft as a background job (DEV-10875): runs materialize (create the draft's remote
+   * tables/fields) then apply (reconcile the draft into a live Sync), reporting per-placeholder
+   * progress through `ApplySyncDraftPublicProgress`. Enqueued by POST /sync-drafts/:draftId/save.
+   */
+  ApplySyncDraft: 'apply-sync-draft',
   // THROWAWAY (no Linear issue): temporary "pull then sync" job used to unblock
   // development of the real job-dependency system. Remove once dependencies land.
   TemporarySyncWithPull: 'temporary-sync-with-pull',

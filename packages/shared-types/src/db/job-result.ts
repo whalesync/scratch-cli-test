@@ -97,6 +97,10 @@ export type JobResultKind = 'pull' | 'sync' | 'publish' | 'rehost' | 'discard' |
  * so the shared derivation (and any frontend) can categorize a job without re-declaring the logic.
  */
 export function categorizeJobType(type: string): JobResultKind {
+  // 'apply-sync-draft' contains 'sync' but its progress is NOT the sync-job shape — it has no
+  // normalized renderer here (the Live Export save modal renders ApplySyncDraftPublicProgress
+  // directly), so keep it out of the substring buckets below.
+  if (type === JobType.ApplySyncDraft) return 'unknown';
   if (type.includes('discard')) return 'discard';
   if (type.includes('sync')) return 'sync';
   if (type.includes('publish') || type.includes('pipeline')) return 'publish';

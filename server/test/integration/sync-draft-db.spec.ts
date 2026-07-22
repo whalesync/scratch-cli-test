@@ -13,6 +13,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { createSyncId, createWorkbookId, type SyncId, type WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
+import { JobService } from 'src/job/job.service';
 import { RoutineService } from 'src/routine/routine.service';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
 import { SyncDraftService } from 'src/sync-draft/sync-draft.service';
@@ -20,6 +21,7 @@ import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
+import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 
 describe('SyncDraftService (real DB)', () => {
   let prisma: PrismaClient;
@@ -49,6 +51,10 @@ describe('SyncDraftService (real DB)', () => {
       {} as unknown as SchemaBuilderService,
       {} as unknown as DataFolderService,
       {} as unknown as RoutineService,
+      // The background-save path (enqueue + job-state checks) is out of scope here,
+      // like the other connector-facing services above.
+      {} as unknown as BullEnqueuerService,
+      {} as unknown as JobService,
     );
 
     const org = await prisma.organization.create({

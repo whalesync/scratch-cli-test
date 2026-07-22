@@ -153,6 +153,37 @@ export type DiscardPendingChangesPublicProgress = {
   connections: DiscardedConnectionProgress[];
 };
 
+// ── Save sync draft (apply-sync-draft) ───────────────────────────────────────
+
+/** One placeholder (table or field) whose remote creation failed during a save-sync-draft job. */
+export type ApplySyncDraftFailedRef = {
+  /** The draft placeholder `ref` (table or field addition) that failed. */
+  ref: string;
+  /** User-facing reason the creation failed (e.g. a name collision on the destination). */
+  error: string;
+};
+
+/**
+ * Progress for the `apply-sync-draft` job — the background "Save" of a Live Export sync draft
+ * (DEV-10875). The job wraps the existing two-phase saga: materialize (create the draft's remote
+ * tables, then its field additions) and apply (create destination data folders, then save the
+ * Sync). The placeholder counters advance as materialize checkpoints each ref, so a UI can render
+ * "Creating table 7 of 23"; `failedRefs` carries per-ref errors for inline display + retry.
+ * Declared as a `type` (not `interface`) so it stays structurally assignable to the JSON-safe index
+ * signature that `Job.publicProgress` flows through on the server (BullMQ data / Prisma `Json`).
+ */
+export type ApplySyncDraftPublicProgress = {
+  phase: 'materializing_tables' | 'materializing_fields' | 'creating_folders' | 'saving_sync' | 'done';
+  /** Placeholders (tables + field additions) the draft needs created on the destination service. */
+  totalPlaceholders: number;
+  /** Running count of placeholders resolved so far (created now, or already resolved by a prior attempt). */
+  resolvedPlaceholders: number;
+  /** Placeholders whose creation failed this run. Retrying the save skips everything already resolved. */
+  failedRefs: ApplySyncDraftFailedRef[];
+  /** The SyncId the draft reconciled into. Set on the terminal `done` checkpoint. */
+  syncId?: string;
+};
+
 // ── Publish (publish) ────────────────────────────────────────────────────────
 
 export type PublishPublicProgress = {

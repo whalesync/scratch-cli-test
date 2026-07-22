@@ -1,5 +1,5 @@
 import { ConflictException, Injectable } from '@nestjs/common';
-import { ConnectionMigratingBlockedResponseDto, JobType } from '@spinner/shared-types';
+import { ConnectionMigratingBlockedResponseDto, DraftTableMapping, JobType } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import type { JobData } from 'src/worker/jobs/union-types';
 
@@ -129,6 +129,11 @@ export class MigrationLockService {
       // time this is enqueued, so it can't collide with a live migration lock.
       case JobType.CleanupConnectionIndexRows:
         return [data.connectorAccountId];
+      // The background sync-draft save creates tables/fields on the draft's destination
+      // connections and reads its source folders, so it touches every connection the draft's
+      // table mappings reference.
+      case JobType.ApplySyncDraft:
+        return this.connectorAccountIdsForSyncDraft(data.draftId);
       // Workbook-scoped jobs that touch no single connection: the hard delete drains the whole
       // workbook, and the pre-flight discard clears every connection's working set at once.
       case JobType.DeleteWorkbook:
@@ -144,6 +149,34 @@ export class MigrationLockService {
       select: { connectorAccountId: true },
     });
     return this.dedupeNonNull(folders.map((folder) => folder.connectorAccountId));
+  }
+
+  /**
+   * Every connection a sync draft's table mappings reference: each mapping's source folder, each
+   * `existing` destination's folder (both resolved folder → connectorAccountId), and each
+   * `placeholderTable` destination's inline connectorAccountId (its folder doesn't exist yet). A
+   * deleted/empty draft resolves to no connections.
+   */
+  private async connectorAccountIdsForSyncDraft(draftId: string): Promise<string[]> {
+    const draftRow = await this.db.client.syncDraft.findUnique({
+      where: { id: draftId },
+      select: { tableMappings: true },
+    });
+    if (!draftRow) return [];
+    const tableMappings = (draftRow.tableMappings ?? []) as unknown as DraftTableMapping[];
+
+    const folderIds: string[] = [];
+    const placeholderConnectorAccountIds: string[] = [];
+    for (const tableMapping of tableMappings) {
+      folderIds.push(tableMapping.source.dataFolderId);
+      if (tableMapping.destination.kind === 'existing') {
+        folderIds.push(tableMapping.destination.dataFolderId);
+      } else {
+        placeholderConnectorAccountIds.push(tableMapping.destination.connectorAccountId);
+      }
+    }
+    const folderConnectorAccountIds = await this.connectorAccountIdsForFolders(folderIds);
+    return this.dedupeNonNull([...folderConnectorAccountIds, ...placeholderConnectorAccountIds]);
   }
 
   private async connectorAccountIdsForSync(syncId: string): Promise<string[]> {

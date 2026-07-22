@@ -54,6 +54,20 @@ import {
 const SOURCE = 'SchemaBuilderService';
 
 /**
+ * Progress observer for {@link SchemaBuilderService.createTables} (DEV-10875): tables in a batch are
+ * created sequentially against the remote service (often seconds each under rate limits), and
+ * `onTableResult` fires as EACH table's creation attempt finishes — with that table's Phase 1
+ * result — so a caller (the apply-sync-draft save job) can tick a per-table progress bar instead
+ * of waiting for the whole batch. Purely a side-channel: the result the callback sees may still be
+ * amended by Phase 2 (deferred foreignKey fields can demote it to `partial`), and an exception
+ * thrown by the callback is logged and swallowed so an observer bug can never fail — or, worse,
+ * duplicate — remote creation work.
+ */
+export interface CreateTablesProgressOptions {
+  onTableResult?: (result: CreateTableResult) => Promise<void> | void;
+}
+
+/**
  * The create-schema API (DEV-10378): validate logical table/field specs and (when
  * a connector supports it) create the tables/fields on the remote service, then
  * optionally materialize them as local DataFolders.
@@ -127,6 +141,7 @@ export class SchemaBuilderService {
     workbookId: WorkbookId,
     dto: CreateSchemaTablesDto,
     actor: Actor,
+    progressOptions: CreateTablesProgressOptions = {},
   ): Promise<CreateSchemaTablesResponse> {
     const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
     const { connector } = await this.resolveConnectorForWorkbook(dto.connectorAccountId, workbookId, actor);
@@ -180,7 +195,7 @@ export class SchemaBuilderService {
       return { status: 'not_supported', tables: [], unsupported: this.unsupported(connector) };
     }
 
-    return this.executeCreateTables(connector, dto, workbookId, workbook.organizationId, actor);
+    return this.executeCreateTables(connector, dto, workbookId, workbook.organizationId, actor, progressOptions);
   }
 
   /** Add fields to an existing remote table. */
@@ -541,10 +556,28 @@ export class SchemaBuilderService {
     workbookId: WorkbookId,
     organizationId: string,
     actor: Actor,
+    progressOptions: CreateTablesProgressOptions = {},
   ): Promise<CreateSchemaTablesResponse> {
     const plan = normalizeCreateSchema(dto);
     const refToRemoteTableId = new Map<string, string[]>();
     const results: CreateTableResult[] = [];
+
+    // Best-effort progress side-channel — see {@link CreateTablesProgressOptions}. An observer
+    // throw must never fail (or, on retry, duplicate) creation work that already landed remotely.
+    const notifyTableResultObserver = async (result: CreateTableResult) => {
+      if (!progressOptions.onTableResult) return;
+      try {
+        await progressOptions.onTableResult(result);
+      } catch (error) {
+        WSLogger.warn({
+          source: SOURCE,
+          message: 'createTables progress observer threw; continuing table creation',
+          workbookId,
+          tableRef: result.ref,
+          error: errorMessage(error),
+        });
+      }
+    };
 
     const createTable = connector.createTable?.bind(connector);
     if (!createTable) {
@@ -553,25 +586,28 @@ export class SchemaBuilderService {
 
     // Phase 1: create each table (and its non-deferred fields) in dependency order.
     for (const tablePlan of plan.tablesInCreationOrder) {
+      let tableResult: CreateTableResult;
       try {
         const resolvedPlan: NormalizedCreateTablePlan = {
           ...tablePlan,
           fields: tablePlan.fields.map((field) => this.resolveForeignKeyRefs(field, refToRemoteTableId)),
         };
-        const result = await createTable(resolvedPlan);
-        if (result.remoteTableId) {
-          refToRemoteTableId.set(tablePlan.ref, result.remoteTableId);
+        tableResult = await createTable(resolvedPlan);
+        if (tableResult.remoteTableId) {
+          refToRemoteTableId.set(tablePlan.ref, tableResult.remoteTableId);
         }
-        results.push(result);
+        results.push(tableResult);
       } catch (error) {
-        results.push({
+        tableResult = {
           ref: tablePlan.ref,
           name: tablePlan.name,
           status: 'failed',
           fields: [],
           error: errorMessage(error),
-        });
+        };
+        results.push(tableResult);
       }
+      await notifyTableResultObserver(tableResult);
     }
 
     // Phase 2: add deferred (cyclic / self-referential) foreignKey fields now that

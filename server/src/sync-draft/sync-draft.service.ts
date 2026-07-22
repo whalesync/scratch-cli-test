@@ -24,6 +24,7 @@ import {
   type MaterializePlaceholderResult,
   type MaterializeResponse,
   type SaveSyncBody,
+  type SaveSyncDraftResponse,
   ScheduleAction,
   type Sync,
   type SyncDraft,
@@ -43,6 +44,7 @@ import {
 } from '@spinner/shared-types';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
 import { buildSyncRoutineFile } from 'src/routine/routine-generator';
 import { RoutineService } from 'src/routine/routine.service';
@@ -56,12 +58,54 @@ import { Actor } from 'src/users/types';
 import { extractSchemaFields, findCreatedDestinationField, SchemaField } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
+import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { CreateSyncDraftDtoClass, PatchSyncDraftDtoClass } from './dto/sync-draft.dto';
 import { SyncDraftEntity } from './entities/sync-draft.entity';
 
 /** The placeholder-table variant of a draft table destination (carries the create plan + resolution). */
 type PlaceholderTableDestination = Extract<DraftTableDestination, { kind: 'placeholderTable' }>;
+
+/**
+ * Invoked by materialize after each remote-creation batch lands (and after a batch fails), with the
+ * cumulative per-ref results so far. `phase` says which materialize pass produced the batch —
+ * placeholder tables first, then field additions. This is how the background save job
+ * (apply-sync-draft) feeds its running "created 7 of 23" progress; the synchronous endpoint passes
+ * no callback and behaves exactly as before (DEV-10875).
+ */
+export type MaterializeBatchProgressCallback = (
+  phase: 'tables' | 'fields',
+  cumulativeResults: MaterializePlaceholderResult[],
+) => Promise<void> | void;
+
+export interface MaterializeSyncDraftOptions {
+  onBatchProgress?: MaterializeBatchProgressCallback;
+  /**
+   * Invoked as EACH individual table lands inside a placeholder-table creation batch (threaded
+   * through the schema builder's per-table observer), with the placeholder's draft `ref`. This is
+   * what makes a per-table progress bar tick during the long single-batch case (all new tables into
+   * one destination base) instead of jumping 0 → N at batch end. Early notice only: the
+   * authoritative per-ref results — and the draft-row checkpoint persistence — still arrive with
+   * the batch via {@link onBatchProgress}, and failures are only reported there.
+   */
+  onPlaceholderCreatedInBatch?: (placeholderRef: string) => Promise<void> | void;
+  /**
+   * Set ONLY by the apply-sync-draft job itself: skips the "another save job is running" 409 guard,
+   * which would otherwise reject the job's own materialize/apply calls.
+   */
+  calledByActiveSaveJob?: boolean;
+}
+
+export interface ApplySyncDraftOptions {
+  createRoutine?: boolean;
+  /**
+   * Invoked as apply advances through its phases — creating destination data folders, then saving
+   * the sync. Feeds the background save job's progress; the synchronous endpoint passes none.
+   */
+  onPhaseChange?: (phase: 'creating_folders' | 'saving_sync') => Promise<void> | void;
+  /** Set ONLY by the apply-sync-draft job itself — see {@link MaterializeSyncDraftOptions}. */
+  calledByActiveSaveJob?: boolean;
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -202,6 +246,8 @@ export class SyncDraftService {
     private readonly schemaBuilderService: SchemaBuilderService,
     private readonly dataFolderService: DataFolderService,
     private readonly routineService: RoutineService,
+    private readonly bullEnqueuerService: BullEnqueuerService,
+    private readonly jobService: JobService,
   ) {}
 
   /**
@@ -326,6 +372,105 @@ export class SyncDraftService {
   }
 
   /**
+   * Save the draft as a background job (DEV-10875): enqueue `apply-sync-draft` (which runs
+   * materialize then apply with progress reporting) and return its job id as a 202
+   * acknowledgement. Single-flight per draft: a transaction-scoped advisory lock serializes
+   * concurrent saves, and a save while the draft's `activeSaveJobId` still points at a running job
+   * returns that same job id instead of enqueuing a second one — a double-click or two tabs
+   * collapse into "watch the same job". A stale id (finished job, or a worker crash that never
+   * cleared it) is simply replaced by the new enqueue.
+   */
+  async save(draftId: SyncDraftId, dto: { createRoutine?: boolean }, actor: Actor): Promise<SaveSyncDraftResponse> {
+    const row = await this.loadDraftOrThrow(draftId);
+    const workbookId = row.workbookId as WorkbookId;
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+
+    const bullJobId = await this.db.client.$transaction(
+      async (tx) => {
+        // Transaction-scoped lock (auto-released on commit/rollback), keyed by the draft.
+        // Concurrent saves for the same draft queue behind it, so the check-then-enqueue
+        // below can't race itself.
+        const lockKey = `sync-draft-save:${draftId}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey})::bigint)`;
+
+        const lockedRow = await tx.syncDraft.findFirst({ where: { id: draftId } });
+        if (!lockedRow) {
+          throw new NotFoundException(`Sync draft ${draftId} not found`);
+        }
+        if (lockedRow.archivedAt) {
+          throw new ConflictException({
+            error: 'SYNC_DRAFT_ARCHIVED',
+            message: `Sync draft ${draftId} has already been applied.`,
+          });
+        }
+        if (lockedRow.activeSaveJobId && (await this.isBackgroundSaveJobStillRunning(lockedRow.activeSaveJobId))) {
+          return lockedRow.activeSaveJobId;
+        }
+
+        const job = await this.bullEnqueuerService.enqueueApplySyncDraftJob(
+          workbookId,
+          draftId,
+          actor,
+          { createRoutine: dto.createRoutine ?? false },
+          createRunContext('web'),
+        );
+        const enqueuedBullJobId = job.id?.toString();
+        if (!enqueuedBullJobId) {
+          throw new Error(`Apply-sync-draft job for draft ${draftId} was enqueued without an id`);
+        }
+        await tx.syncDraft.update({ where: { id: draftId }, data: { activeSaveJobId: enqueuedBullJobId } });
+        return enqueuedBullJobId;
+      },
+      // The enqueue inside the lock does a few DB + Redis round-trips; give it headroom beyond
+      // Prisma's 5s interactive-transaction default.
+      { timeout: 30_000 },
+    );
+
+    return { jobId: bullJobId };
+  }
+
+  /**
+   * Clear `activeSaveJobId` after the save job finishes — but only if it still points at THAT
+   * job, so a newer save's id (enqueued after this job was already observed finished) is never
+   * wiped. Called by the apply-sync-draft job handler on completion and failure.
+   */
+  async clearActiveSaveJobIdIfOwnedByJob(draftId: SyncDraftId, bullJobId: string): Promise<void> {
+    await this.db.client.syncDraft.updateMany({
+      where: { id: draftId, activeSaveJobId: bullJobId },
+      data: { activeSaveJobId: null },
+    });
+  }
+
+  /**
+   * The run-time single-flight guard for the legacy synchronous endpoints during rollout: reject
+   * a direct materialize/apply while a background save job is running the same phases, so the two
+   * paths can't interleave (e.g. both creating remote tables from the same unresolved
+   * placeholders). 409 with the running job's id so the client can watch it instead.
+   */
+  private async assertNoRunningBackgroundSaveJob(row: PrismaSyncDraft): Promise<void> {
+    if (!row.activeSaveJobId) return;
+    if (await this.isBackgroundSaveJobStillRunning(row.activeSaveJobId)) {
+      throw new ConflictException({
+        error: 'SYNC_DRAFT_SAVE_IN_PROGRESS',
+        message: `Sync draft ${row.id} is being saved by background job ${row.activeSaveJobId}; watch that job instead of retrying.`,
+        jobId: row.activeSaveJobId,
+      });
+    }
+  }
+
+  /**
+   * Whether the save job a draft's `activeSaveJobId` points at is still pending/running. Reads the
+   * DbJob row (by bull job id) rather than Redis; a job that finished, failed, was canceled, or
+   * whose record has vanished counts as not running — its stale id is safe to replace.
+   */
+  private async isBackgroundSaveJobStillRunning(bullJobId: string): Promise<boolean> {
+    const [jobEntity] = await this.jobService.getJobsProgress([bullJobId]);
+    if (!jobEntity) return false;
+    const terminalStates: string[] = ['completed', 'failed', 'canceled', 'unknown'];
+    return !terminalStates.includes(jobEntity.state);
+  }
+
+  /**
    * Phase 1 (materialize) — creates the still-unresolved remote tables/fields and
    * checkpoints each success back into the stored draft per `ref` the instant it
    * lands. Best-effort and re-callable: only unresolved placeholders are
@@ -333,7 +478,11 @@ export class SyncDraftService {
    * primitive). A lost response leaves an orphan remote table (litter), never a
    * mapping pointing at one.
    */
-  async materialize(draftId: SyncDraftId, actor: Actor): Promise<MaterializeResponse> {
+  async materialize(
+    draftId: SyncDraftId,
+    actor: Actor,
+    options: MaterializeSyncDraftOptions = {},
+  ): Promise<MaterializeResponse> {
     const row = await this.loadDraftOrThrow(draftId);
     const workbookId = row.workbookId as WorkbookId;
     await this.workbookService.assertWritableWorkbook(actor, workbookId);
@@ -343,12 +492,15 @@ export class SyncDraftService {
         message: `Sync draft ${draftId} has been applied and can no longer be materialized.`,
       });
     }
+    if (!options.calledByActiveSaveJob) {
+      await this.assertNoRunningBackgroundSaveJob(row);
+    }
 
     const tableMappings = SyncDraftEntity.from(row).tableMappings;
     const results: MaterializePlaceholderResult[] = [];
 
-    await this.materializePlaceholderTables(workbookId, draftId, tableMappings, results, actor);
-    await this.materializeFieldAdditions(workbookId, draftId, tableMappings, results, actor);
+    await this.materializePlaceholderTables(workbookId, draftId, tableMappings, results, actor, options);
+    await this.materializeFieldAdditions(workbookId, draftId, tableMappings, results, actor, options.onBatchProgress);
     // ONE source-context cache shared by both transformer-attach passes below, so each
     // distinct source folder pays its live connector schema fetch (and the git schema/view
     // rewrite fetchSchemaSpec performs as a side effect) once per materialize, not once per
@@ -386,7 +538,7 @@ export class SyncDraftService {
    * mapping, and create-or-updates the sync (diffing against `sourceSyncId`).
    * Archives the draft afterward (kept for debugging).
    */
-  async apply(draftId: SyncDraftId, actor: Actor, options: { createRoutine?: boolean } = {}): Promise<Sync> {
+  async apply(draftId: SyncDraftId, actor: Actor, options: ApplySyncDraftOptions = {}): Promise<Sync> {
     const row = await this.loadDraftOrThrow(draftId);
     const workbookId = row.workbookId as WorkbookId;
     const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
@@ -395,6 +547,9 @@ export class SyncDraftService {
         error: 'SYNC_DRAFT_ARCHIVED',
         message: `Sync draft ${draftId} has already been applied.`,
       });
+    }
+    if (!options.calledByActiveSaveJob) {
+      await this.assertNoRunningBackgroundSaveJob(row);
     }
 
     const draft = SyncDraftEntity.from(row);
@@ -419,6 +574,7 @@ export class SyncDraftService {
     // every created field, and column resolution below reads that stored copy instead of
     // paying a second live connector fetch per just-created table (DEV-10875).
     const dataFolderIdsWithFreshStoredSchema = new Set<string>();
+    await options.onPhaseChange?.('creating_folders');
     for (const tableMapping of tableMappings) {
       if (tableMapping.destination.kind !== 'placeholderTable') continue;
       const destination = tableMapping.destination;
@@ -445,6 +601,7 @@ export class SyncDraftService {
 
     // Build the native v2 mapping, resolving placeholder field refs → real column
     // path ids by name against each destination folder's (live) schema.
+    await options.onPhaseChange?.('saving_sync');
     const schemaFieldsByFolderId = new Map<string, SchemaField[]>();
     const v2TableMappings: TableMappingV2[] = [];
     for (const tableMapping of tableMappings) {
@@ -604,7 +761,9 @@ export class SyncDraftService {
     tableMappings: DraftTableMapping[],
     results: MaterializePlaceholderResult[],
     actor: Actor,
+    progressOptions: Pick<MaterializeSyncDraftOptions, 'onBatchProgress' | 'onPlaceholderCreatedInBatch'> = {},
   ): Promise<void> {
+    const { onBatchProgress, onPlaceholderCreatedInBatch } = progressOptions;
     // Resolve any pending `{ unresolvedLinkedTableId }` foreignKey targets the plan
     // generator left on these placeholders, binding each to the destination chosen
     // for that source table within this draft (a sibling placeholder → `{ ref }`, or
@@ -644,7 +803,17 @@ export class SyncDraftService {
       groups.set(key, group);
     }
 
+    // Report the already-resolved refs up front so a resumed save's progress starts from the
+    // checkpoint, not from zero.
+    if (results.length > 0) await onBatchProgress?.('tables', results);
+
     for (const group of groups.values()) {
+      // Early per-table ticks for the progress bar: tables in this batch are created sequentially
+      // on the remote service, and the schema builder notifies us as each one lands — the batch
+      // response below stays authoritative for results and checkpoint persistence.
+      const placeholderRefByCreateSpecRef = new Map(
+        group.placeholders.map((placeholder) => [placeholder.createSpec.ref, placeholder.ref]),
+      );
       try {
         const dto: CreateSchemaTablesDto = {
           connectorAccountId: group.connectorAccountId,
@@ -654,7 +823,13 @@ export class SyncDraftService {
           ),
           materializeLocally: false,
         };
-        const response = await this.schemaBuilderService.createTables(workbookId, dto, actor);
+        const response = await this.schemaBuilderService.createTables(workbookId, dto, actor, {
+          onTableResult: async (tableResult) => {
+            if (tableResult.status === 'failed' || !tableResult.remoteTableId) return;
+            const placeholderRef = placeholderRefByCreateSpecRef.get(tableResult.ref);
+            if (placeholderRef) await onPlaceholderCreatedInBatch?.(placeholderRef);
+          },
+        });
         for (const placeholder of group.placeholders) {
           const tableResult = response.tables.find((table) => table.ref === placeholder.createSpec.ref);
           if (tableResult && tableResult.status !== 'failed' && tableResult.remoteTableId) {
@@ -687,6 +862,7 @@ export class SyncDraftService {
           });
         }
       }
+      await onBatchProgress?.('tables', results);
     }
   }
 
@@ -830,6 +1006,7 @@ export class SyncDraftService {
     tableMappings: DraftTableMapping[],
     results: MaterializePlaceholderResult[],
     actor: Actor,
+    onBatchProgress?: MaterializeBatchProgressCallback,
   ): Promise<void> {
     // Bind any pending `{ unresolvedLinkedTableId }` foreignKey target carried on a
     // field addition to its destination within this draft. Placeholder siblings have
@@ -841,6 +1018,14 @@ export class SyncDraftService {
     });
 
     for (const tableMapping of tableMappings) {
+      // One progress report per table mapping that produced new per-ref results this iteration
+      // (created, alreadyResolved, or failed) — the field-additions analogue of the per-batch
+      // report in materializePlaceholderTables.
+      const resultsCountBeforeThisMapping = results.length;
+      const reportBatchProgressIfAnyNewResults = async () => {
+        if (results.length > resultsCountBeforeThisMapping) await onBatchProgress?.('fields', results);
+      };
+
       const additions = tableMapping.fieldAdditions ?? [];
       for (const addition of additions) {
         if (addition.resolved?.remoteFieldId) {
@@ -855,9 +1040,15 @@ export class SyncDraftService {
       }
 
       // Field additions only apply to an existing destination table.
-      if (tableMapping.destination.kind !== 'existing') continue;
+      if (tableMapping.destination.kind !== 'existing') {
+        await reportBatchProgressIfAnyNewResults();
+        continue;
+      }
       const unresolved = additions.filter((addition) => !addition.resolved?.remoteFieldId);
-      if (unresolved.length === 0) continue;
+      if (unresolved.length === 0) {
+        await reportBatchProgressIfAnyNewResults();
+        continue;
+      }
 
       const folder = await this.db.client.dataFolder.findFirst({
         where: { id: tableMapping.destination.dataFolderId },
@@ -872,6 +1063,7 @@ export class SyncDraftService {
             error: 'Destination folder has no connector account or remote table id.',
           });
         }
+        await reportBatchProgressIfAnyNewResults();
         continue;
       }
 
@@ -916,6 +1108,7 @@ export class SyncDraftService {
           });
         }
       }
+      await reportBatchProgressIfAnyNewResults();
     }
   }
 

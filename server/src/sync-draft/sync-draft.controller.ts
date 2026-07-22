@@ -15,6 +15,7 @@ import {
 import type {
   ApplySyncDraftResponse,
   MaterializeResponse,
+  SaveSyncDraftResponse,
   SyncDraft,
   SyncDraftId,
   WorkbookId,
@@ -23,7 +24,12 @@ import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { userToActor } from 'src/users/types';
-import { ApplySyncDraftDtoClass, CreateSyncDraftDtoClass, PatchSyncDraftDtoClass } from './dto/sync-draft.dto';
+import {
+  ApplySyncDraftDtoClass,
+  CreateSyncDraftDtoClass,
+  PatchSyncDraftDtoClass,
+  SaveSyncDraftDtoClass,
+} from './dto/sync-draft.dto';
 import { SyncDraftService } from './sync-draft.service';
 
 /**
@@ -85,6 +91,26 @@ export class SyncDraftController {
   ): Promise<ApplySyncDraftResponse> {
     const actor = userToActor(req.user);
     return this.syncDraftService.apply(draftId, actor, { createRoutine: dto.createRoutine ?? false });
+  }
+
+  /**
+   * Save the draft as a background job (DEV-10875): enqueue `apply-sync-draft` (materialize →
+   * apply with per-placeholder progress) and acknowledge with 202 `{ jobId }`. Poll the job via
+   * GET /jobs/:jobId/progress; while it runs, the draft's `activeSaveJobId` carries the same id so
+   * a reloaded page rediscovers the in-flight save. Single-flight per draft — saving while a save
+   * job is already running returns that job's id. The synchronous materialize/apply endpoints
+   * above remain for rollout/back-compat and 409 (`SYNC_DRAFT_SAVE_IN_PROGRESS`) while a save job
+   * is running.
+   */
+  @Post('sync-drafts/:draftId/save')
+  @HttpCode(202)
+  async save(
+    @Param('draftId') draftId: SyncDraftId,
+    @Body() dto: SaveSyncDraftDtoClass,
+    @Req() req: RequestWithUser,
+  ): Promise<SaveSyncDraftResponse> {
+    const actor = userToActor(req.user);
+    return this.syncDraftService.save(draftId, { createRoutine: dto.createRoutine ?? false }, actor);
   }
 
   @Delete('sync-drafts/:draftId')

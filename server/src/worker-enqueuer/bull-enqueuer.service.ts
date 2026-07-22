@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, OnModuleDestroy } from '@nestjs/common';
-import { createPlainId, DataFolderId, JobType, RunId, SyncId, WorkbookId } from '@spinner/shared-types';
+import { createPlainId, DataFolderId, JobType, RunId, SyncDraftId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { Job, Queue, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -12,6 +12,7 @@ import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
 import { WORKER_QUEUE_NAME, WORKER_QUEUE_STREAM_OPTIONS } from 'src/worker/worker-queue.constants';
 import { ApplyPatchesJobDefinition } from '../worker/jobs/job-definitions/apply-patches.job';
+import { ApplySyncDraftJobDefinition } from '../worker/jobs/job-definitions/apply-sync-draft.job';
 import { CleanupConnectionIndexRowsJobDefinition } from '../worker/jobs/job-definitions/cleanup-connection-index-rows.job';
 import { DeleteWorkbookJobDefinition } from '../worker/jobs/job-definitions/delete-workbook.job';
 import { DiscardPendingChangesJobDefinition } from '../worker/jobs/job-definitions/discard-pending-changes.job';
@@ -195,6 +196,45 @@ export class BullEnqueuerService implements OnModuleDestroy {
         bullJobId: id,
         workbookId,
         syncId,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
+      data,
+      id,
+    );
+  }
+
+  /**
+   * Enqueue the background "Save" of a sync draft (DEV-10875): the apply-sync-draft job runs
+   * materialize then apply on SyncDraftService, reporting per-placeholder progress. Single-flight
+   * per draft is enforced by the caller (SyncDraftService.save holds a draft-keyed advisory lock
+   * and reuses a still-running job's id), so the Bull job id here just needs to be unique — a
+   * retry after failure must be able to enqueue a fresh job.
+   */
+  async enqueueApplySyncDraftJob(
+    workbookId: WorkbookId,
+    draftId: SyncDraftId,
+    actor: Actor,
+    options: { createRoutine: boolean },
+    runContext: RunContext,
+  ): Promise<Job> {
+    const id = `apply-sync-draft-${draftId}-${createPlainId()}`;
+    const data: ApplySyncDraftJobDefinition['data'] = {
+      type: JobType.ApplySyncDraft,
+      workbookId,
+      draftId,
+      userId: actor.userId,
+      organizationId: actor.organizationId,
+      createRoutine: options.createRoutine,
+      trigger: runContext.trigger,
+    };
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
         runId: runContext.runId as RunId,
         runContext,
       },

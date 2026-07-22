@@ -2,6 +2,7 @@ import { RoutineRunId } from '@spinner/shared-types';
 import { Job as BullMQPlainJob } from 'bullmq';
 import { Progress } from './base-types';
 import { ApplyPatchesJobDefinition } from './job-definitions/apply-patches.job';
+import { ApplySyncDraftJobDefinition } from './job-definitions/apply-sync-draft.job';
 import { CleanupConnectionIndexRowsJobDefinition } from './job-definitions/cleanup-connection-index-rows.job';
 import { DeleteWorkbookJobDefinition } from './job-definitions/delete-workbook.job';
 import { DiscardPendingChangesJobDefinition } from './job-definitions/discard-pending-changes.job';
@@ -14,6 +15,7 @@ import { TemporarySyncWithPullJobDefinition } from './job-definitions/temporary-
 
 export type JobDefinition =
   | ApplyPatchesJobDefinition
+  | ApplySyncDraftJobDefinition
   | CleanupConnectionIndexRowsJobDefinition
   | DeleteWorkbookJobDefinition
   | DiscardPendingChangesJobDefinition

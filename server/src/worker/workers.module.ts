@@ -10,6 +10,7 @@ import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ConnectorsModule } from 'src/remote-service/connectors/connectors.module';
 import { RunCountModule } from 'src/run-count/run-count.module';
+import { SyncDraftModule } from 'src/sync-draft/sync-draft.module';
 import { SyncModule } from 'src/sync/sync.module';
 import { UserModule } from 'src/users/users.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
@@ -34,6 +35,7 @@ import { WorkersController } from './test/workers.controller';
     UserModule,
     ScratchGitModule,
     SyncModule,
+    SyncDraftModule,
     PublishPlanModule,
     AssetModule,
     PosthogModule,

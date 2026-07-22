@@ -1,6 +1,8 @@
 # Job-based Sync Draft Save (Live Export "Save" button)
 
-Status: **proposal** — [DEV-10875](https://linear.app/whalesync/issue/DEV-10875/saving-sync-needs-to-be-faster-or-give-more-feedback)
+Status: **server side implemented** (items 1–5 below; the Whalesync client migration and the
+retirement of the synchronous flow are still open) —
+[DEV-10875](https://linear.app/whalesync/issue/DEV-10875/saving-sync-needs-to-be-faster-or-give-more-feedback)
 
 ## Problem
 
@@ -83,16 +85,23 @@ events).
 - The existing `materialize` / `apply` endpoints stay during rollout (desktop/CLI/back-compat),
   feature-flagged off for Live Export once the job path ships.
 
-### Single-flight
+### Single-flight (as implemented)
 
 Two layers, both cheap:
 
-1. **Enqueue-time dedup**: BullMQ job id = `apply-sync-draft:<draftId>` (the existing
-   `enqueueJobWithId` path). A second Save while a job is active returns the same job id —
-   the double-click and two-tab cases collapse into "watch the same job".
-2. **Run-time guard**: `materialize` and `apply` take the same transaction-scoped
-   Postgres advisory lock `getOrCreate` uses, keyed by `draftId`. This also protects the
-   legacy synchronous endpoints against racing the job during rollout.
+1. **Enqueue-time dedup**: `save` runs its check-then-enqueue inside a transaction-scoped
+   Postgres advisory lock keyed by `draftId` (the same pattern `getOrCreate` uses). If the
+   draft's `activeSaveJobId` still points at a running job, `save` returns that job id
+   without enqueuing — the double-click and two-tab cases collapse into "watch the same
+   job". A stale id (finished job, worker crash) is replaced by a fresh enqueue, so the
+   BullMQ id itself stays unique per attempt (retry after failure must be able to enqueue).
+2. **Run-time guard**: `materialize` and `apply` 409 (`SYNC_DRAFT_SAVE_IN_PROGRESS`, with
+   the running job's id) while `activeSaveJobId` points at a live job, so the legacy
+   synchronous endpoints can't race the job during rollout; the job's own calls bypass the
+   guard. (The originally proposed transaction-scoped advisory lock *across* the phases
+   isn't practical — it would pin a DB connection/transaction open for the minutes the
+   remote creation takes — so the job-state check is the guard instead. Two concurrent
+   *legacy* materializes remain possible, exactly as today, until the legacy path retires.)
 
 ### Client flow (Whalesync Live Export — separate repo)
 
@@ -121,15 +130,15 @@ Two layers, both cheap:
 
 ## Work items
 
-| # | Item | Where |
-| - | ---- | ----- |
-| 1 | `ApplySyncDraft` job definition + enqueuer method | `server/src/worker/jobs/job-definitions/`, `worker-enqueuer/bull-enqueuer.service.ts` |
-| 2 | Progress callback threading through `materialize`/`apply` | `sync-draft.service.ts` |
-| 3 | `POST /sync-drafts/:draftId/save` + `SyncDraft.activeSaveJobId` (schema migration) | `sync-draft.controller.ts`, `schema.prisma` |
-| 4 | Advisory lock on `materialize`/`apply` keyed by draftId | `sync-draft.service.ts` |
-| 5 | Shared types: save response, job public progress | `packages/shared-types` (+ api-client `syncDrafts.save`) |
-| 6 | Live Export progress modal + reload/archived-draft handling | Whalesync repo |
-| 7 | Feature flag + rollout, then retire the synchronous two-call flow for Live Export | both |
+| # | Item | Where | Status |
+| - | ---- | ----- | ------ |
+| 1 | `ApplySyncDraft` job definition + enqueuer method | `server/src/worker/jobs/job-definitions/apply-sync-draft.job.ts`, `worker-enqueuer/bull-enqueuer.service.ts` | ✅ |
+| 2 | Progress callback threading through `materialize`/`apply` | `sync-draft.service.ts` | ✅ |
+| 3 | `POST /sync-drafts/:draftId/save` + `SyncDraft.activeSaveJobId` (schema migration) | `sync-draft.controller.ts`, `schema.prisma` | ✅ |
+| 4 | Single-flight: advisory-locked enqueue + `SYNC_DRAFT_SAVE_IN_PROGRESS` guard on `materialize`/`apply` | `sync-draft.service.ts` | ✅ (see note above) |
+| 5 | Shared types: save response, job public progress | `packages/shared-types` (+ api-client `syncDrafts.save`) | ✅ |
+| 6 | Live Export progress modal + reload/archived-draft handling | Whalesync repo | open |
+| 7 | Feature flag + rollout, then retire the synchronous two-call flow for Live Export | both | open |
 
 Items 1–5 are server-side and independently shippable; the synchronous endpoints keep
 working throughout, so the Whalesync client can migrate whenever ready.
