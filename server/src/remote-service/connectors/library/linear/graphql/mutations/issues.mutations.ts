@@ -77,6 +77,7 @@ export const ISSUES_DELETE_MUTATION = `mutation IssueDelete($id: String!) {
       subIssueSortOrder
       reactionData
       priorityLabel
+      trusted
       integrationSourceType
       inheritsSharedAccess
       identifier
@@ -97,6 +98,7 @@ export const ISSUES_READ_ONLY_FIELDS = new Set([
   'addedToCycleAt',
   'addedToProjectAt',
   'addedToTeamAt',
+  'agentSessions',
   'aiPromptProgresses',
   'archivedAt',
   'asksExternalUserRequester',

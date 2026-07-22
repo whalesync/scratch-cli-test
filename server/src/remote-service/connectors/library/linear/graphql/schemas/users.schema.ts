@@ -48,6 +48,7 @@ export const UsersSchema = Type.Object(
           issuerEntityId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           spEntityId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           priority: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          ssoVerifiedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           scimEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           ownersGroupPush: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
           adminsGroupPush: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
@@ -143,6 +144,7 @@ export const UsersSchema = Type.Object(
     supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
   },
   {
     $id: 'linear/users',
@@ -193,11 +195,12 @@ UsersSchema.properties.isAssignable[X_SCRATCH_READONLY] = true;
 UsersSchema.properties.supportsAgentSessions[X_SCRATCH_READONLY] = true;
 UsersSchema.properties.inviteHash[X_SCRATCH_READONLY] = true;
 UsersSchema.properties.gitHubUserId[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.hasGitHubCodeAccess[X_SCRATCH_READONLY] = true;
 
 /**
  * GraphQL query field selection for Users
  */
-export const USERS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen identityProvider { id createdAt updatedAt archivedAt defaultMigrated type samlEnabled ssoEndpoint ssoBinding ssoSignAlgo ssoSigningCert issuerEntityId spEntityId priority scimEnabled ownersGroupPush adminsGroupPush guestsGroupPush allowNameChange } initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId`;
+export const USERS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen identityProvider { id createdAt updatedAt archivedAt defaultMigrated type samlEnabled ssoEndpoint ssoBinding ssoSignAlgo ssoSigningCert issuerEntityId spEntityId priority ssoVerifiedAt scimEnabled ownersGroupPush adminsGroupPush guestsGroupPush allowNameChange } initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess`;
 
 /**
  * Entity configuration for Users

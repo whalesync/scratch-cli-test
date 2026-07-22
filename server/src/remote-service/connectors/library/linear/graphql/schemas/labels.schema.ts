@@ -39,6 +39,7 @@ export const LabelsSchema = Type.Object(
           retiredAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           organization: Type.Optional(Type.Unknown()),
           parent: Type.Optional(Type.Unknown()),
+          restrictedBy: Type.Optional(Type.Unknown()),
           resourceSections: Type.Optional(Type.Array(Type.Unknown())),
           pinnedResources: Type.Optional(Type.Array(Type.Unknown())),
           cyclesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -92,15 +93,19 @@ export const LabelsSchema = Type.Object(
           autoArchivePeriod: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           autoCloseParentIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           autoCloseChildIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-          markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
           joinByDefault: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inheritSlackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           slackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cycleCalenderUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          visibility: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
           displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           ancestors: Type.Optional(Type.Array(Type.Unknown())),
-          protected: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          restrictedById: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          protectedBy: Type.Optional(Type.Unknown()),
+          protectedById: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           issueCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          ledInitiativeCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           cycles: Type.Optional(Type.Unknown()),
           activeCycle: Type.Optional(Type.Unknown()),
           triageResponsibility: Type.Optional(Type.Unknown()),
@@ -111,6 +116,7 @@ export const LabelsSchema = Type.Object(
           gitAutomationStates: Type.Optional(Type.Unknown()),
           templates: Type.Optional(Type.Unknown()),
           webhooks: Type.Optional(Type.Unknown()),
+          initiativesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           issueSortOrderDefaultToBottom: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
@@ -162,6 +168,7 @@ export const LabelsSchema = Type.Object(
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -211,6 +218,7 @@ export const LabelsSchema = Type.Object(
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -289,7 +297,7 @@ LabelsSchema.properties.inheritedFrom[X_SCRATCH_READONLY] = true;
 /**
  * GraphQL query field selection for Labels
  */
-export const LABELS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name description color isGroup lastAppliedAt retiredAt team { id } creator { id } retiredBy { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId } parent { id } inheritedFrom { id createdAt updatedAt archivedAt name description color isGroup lastAppliedAt retiredAt }`;
+export const LABELS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name description color isGroup lastAppliedAt retiredAt team { id } creator { id } retiredBy { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } parent { id } inheritedFrom { id createdAt updatedAt archivedAt name description color isGroup lastAppliedAt retiredAt }`;
 
 /**
  * Entity configuration for Labels

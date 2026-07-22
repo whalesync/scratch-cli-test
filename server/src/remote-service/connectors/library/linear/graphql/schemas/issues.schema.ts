@@ -75,6 +75,7 @@ export const IssuesSchema = Type.Object(
           retiredAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           organization: Type.Optional(Type.Unknown()),
           parent: Type.Optional(Type.Unknown()),
+          restrictedBy: Type.Optional(Type.Unknown()),
           resourceSections: Type.Optional(Type.Array(Type.Unknown())),
           pinnedResources: Type.Optional(Type.Array(Type.Unknown())),
           cyclesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -128,15 +129,19 @@ export const IssuesSchema = Type.Object(
           autoArchivePeriod: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           autoCloseParentIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           autoCloseChildIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-          markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
           joinByDefault: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inheritSlackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           slackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cycleCalenderUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          visibility: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
           displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           ancestors: Type.Optional(Type.Array(Type.Unknown())),
-          protected: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          restrictedById: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          protectedBy: Type.Optional(Type.Unknown()),
+          protectedById: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           issueCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          ledInitiativeCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           cycles: Type.Optional(Type.Unknown()),
           activeCycle: Type.Optional(Type.Unknown()),
           triageResponsibility: Type.Optional(Type.Unknown()),
@@ -147,6 +152,7 @@ export const IssuesSchema = Type.Object(
           gitAutomationStates: Type.Optional(Type.Unknown()),
           templates: Type.Optional(Type.Unknown()),
           webhooks: Type.Optional(Type.Unknown()),
+          initiativesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           issueSortOrderDefaultToBottom: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
@@ -378,6 +384,7 @@ export const IssuesSchema = Type.Object(
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -427,6 +434,7 @@ export const IssuesSchema = Type.Object(
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -476,6 +484,7 @@ export const IssuesSchema = Type.Object(
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -525,6 +534,7 @@ export const IssuesSchema = Type.Object(
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -583,6 +593,7 @@ export const IssuesSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    trusted: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     inheritsSharedAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     favorite: Type.Optional(
       Type.Union([
@@ -597,6 +608,7 @@ export const IssuesSchema = Type.Object(
           projectTab: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           predefinedViewType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           initiativeTab: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          pipelineTab: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           owner: Type.Optional(Type.Unknown()),
           sortOrder: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           issue: Type.Optional(Type.Unknown()),
@@ -610,12 +622,15 @@ export const IssuesSchema = Type.Object(
           initiative: Type.Optional(Type.Unknown()),
           label: Type.Optional(Type.Unknown()),
           projectLabel: Type.Optional(Type.Unknown()),
+          initiativeLabel: Type.Optional(Type.Unknown()),
           user: Type.Optional(Type.Unknown()),
           customer: Type.Optional(Type.Unknown()),
           dashboard: Type.Optional(Type.Unknown()),
           pullRequest: Type.Optional(Type.Unknown()),
+          aiConversation: Type.Optional(Type.Unknown()),
           release: Type.Optional(Type.Unknown()),
           releasePipeline: Type.Optional(Type.Unknown()),
+          releaseNote: Type.Optional(Type.Unknown()),
           team: Type.Optional(Type.Unknown()),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -693,6 +708,7 @@ export const IssuesSchema = Type.Object(
           reactionData: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
           priorityLabel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           sourceComment: Type.Optional(Type.Unknown()),
+          trusted: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inheritsSharedAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           favorite: Type.Optional(Type.Unknown()),
           identifier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -701,6 +717,7 @@ export const IssuesSchema = Type.Object(
           sharedAccess: Type.Optional(Type.Unknown()),
           customerTicketCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           parent: Type.Optional(Type.Unknown()),
+          agentSessions: Type.Optional(Type.Unknown()),
           aiPromptProgresses: Type.Optional(Type.Unknown()),
           formerAttachments: Type.Optional(Type.Unknown()),
           description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -715,6 +732,16 @@ export const IssuesSchema = Type.Object(
           asksRequester: Type.Optional(Type.Unknown()),
           asksExternalUserRequester: Type.Optional(Type.Unknown()),
           stateHistory: Type.Optional(Type.Unknown()),
+        }),
+        Type.Null(),
+      ]),
+    ),
+    agentSessions: Type.Optional(
+      Type.Union([
+        Type.Object({
+          edges: Type.Optional(Type.Array(Type.Unknown())),
+          nodes: Type.Optional(Type.Array(Type.Unknown())),
+          pageInfo: Type.Optional(Type.Unknown()),
         }),
         Type.Null(),
       ]),
@@ -889,6 +916,7 @@ export const IssuesSchema = Type.Object(
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -932,6 +960,7 @@ IssuesSchema.properties.activitySummary[X_SCRATCH_READONLY] = true;
 IssuesSchema.properties.addedToCycleAt[X_SCRATCH_READONLY] = true;
 IssuesSchema.properties.addedToProjectAt[X_SCRATCH_READONLY] = true;
 IssuesSchema.properties.addedToTeamAt[X_SCRATCH_READONLY] = true;
+IssuesSchema.properties.agentSessions[X_SCRATCH_READONLY] = true;
 IssuesSchema.properties.aiPromptProgresses[X_SCRATCH_READONLY] = true;
 IssuesSchema.properties.archivedAt[X_SCRATCH_READONLY] = true;
 IssuesSchema.properties.asksExternalUserRequester[X_SCRATCH_READONLY] = true;
@@ -985,7 +1014,7 @@ IssuesSchema.properties.url[X_SCRATCH_READONLY] = true;
 /**
  * GraphQL query field selection for Issues
  */
-export const ISSUES_QUERY_FIELDS = `id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary summary { id createdAt updatedAt archivedAt content evalLogId generationStatus generatedAt } labelIds team { id } cycle { id } project { id } projectMilestone { id createdAt updatedAt archivedAt name targetDate progressHistory currentProgress sortOrder description status progress } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } recurringIssueTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } previousIdentifiers creator { id } assignee { id } delegate { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId } snoozedBy { id } state { id } subIssueSortOrder reactionData priorityLabel sourceComment { id createdAt updatedAt archivedAt body issueId documentContentId projectUpdateId initiativeUpdateId projectId initiativeId parentId resolvedAt resolvingCommentId editedAt bodyData quotedText reactionData threadSummary isArtificialAgentSessionRoot url hideInLinear } inheritsSharedAccess favorite { id } identifier url branchName sharedAccess { isShared viewerHasOnlySharedAccess sharedWithCount disallowedIssueFields } customerTicketCount parent { id } description documentContent { id createdAt updatedAt archivedAt content restoredAt } reactions { id createdAt updatedAt archivedAt emoji } syncedWith { id service } asksRequester { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId } asksExternalUserRequester { id createdAt updatedAt archivedAt name displayName email avatarUrl lastSeen }`;
+export const ISSUES_QUERY_FIELDS = `id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary summary { id createdAt updatedAt archivedAt content evalLogId generationStatus generatedAt } labelIds team { id } cycle { id } project { id } projectMilestone { id createdAt updatedAt archivedAt name targetDate progressHistory currentProgress sortOrder description status progress } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } recurringIssueTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } previousIdentifiers creator { id } assignee { id } delegate { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } snoozedBy { id } state { id } subIssueSortOrder reactionData priorityLabel sourceComment { id createdAt updatedAt archivedAt body issueId documentContentId projectUpdateId initiativeUpdateId projectId initiativeId parentId resolvedAt resolvingCommentId editedAt bodyData quotedText reactionData threadSummary isArtificialAgentSessionRoot url hideInLinear } trusted inheritsSharedAccess favorite { id } identifier url branchName sharedAccess { isShared viewerHasOnlySharedAccess sharedWithCount disallowedIssueFields } customerTicketCount parent { id } description documentContent { id createdAt updatedAt archivedAt content restoredAt } reactions { id createdAt updatedAt archivedAt emoji } syncedWith { id service } asksRequester { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } asksExternalUserRequester { id createdAt updatedAt archivedAt name displayName email avatarUrl lastSeen }`;
 
 /**
  * Entity configuration for Issues

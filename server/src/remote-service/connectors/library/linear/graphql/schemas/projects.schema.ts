@@ -89,6 +89,7 @@ export const ProjectsSchema = Type.Object(
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -138,6 +139,7 @@ export const ProjectsSchema = Type.Object(
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          hasGitHubCodeAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
         }),
         Type.Null(),
       ]),
@@ -226,6 +228,7 @@ export const ProjectsSchema = Type.Object(
           reactionData: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
           priorityLabel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           sourceComment: Type.Optional(Type.Unknown()),
+          trusted: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inheritsSharedAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           favorite: Type.Optional(Type.Unknown()),
           identifier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -234,6 +237,7 @@ export const ProjectsSchema = Type.Object(
           sharedAccess: Type.Optional(Type.Unknown()),
           customerTicketCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           parent: Type.Optional(Type.Unknown()),
+          agentSessions: Type.Optional(Type.Unknown()),
           aiPromptProgresses: Type.Optional(Type.Unknown()),
           formerAttachments: Type.Optional(Type.Unknown()),
           description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -332,6 +336,7 @@ export const ProjectsSchema = Type.Object(
           projectTab: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           predefinedViewType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           initiativeTab: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          pipelineTab: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           owner: Type.Optional(Type.Unknown()),
           sortOrder: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           issue: Type.Optional(Type.Unknown()),
@@ -345,12 +350,15 @@ export const ProjectsSchema = Type.Object(
           initiative: Type.Optional(Type.Unknown()),
           label: Type.Optional(Type.Unknown()),
           projectLabel: Type.Optional(Type.Unknown()),
+          initiativeLabel: Type.Optional(Type.Unknown()),
           user: Type.Optional(Type.Unknown()),
           customer: Type.Optional(Type.Unknown()),
           dashboard: Type.Optional(Type.Unknown()),
           pullRequest: Type.Optional(Type.Unknown()),
+          aiConversation: Type.Optional(Type.Unknown()),
           release: Type.Optional(Type.Unknown()),
           releasePipeline: Type.Optional(Type.Unknown()),
+          releaseNote: Type.Optional(Type.Unknown()),
           team: Type.Optional(Type.Unknown()),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -491,7 +499,7 @@ ProjectsSchema.properties.url[X_SCRATCH_READONLY] = true;
 /**
  * GraphQL query field selection for Projects
  */
-export const PROJECTS_QUERY_FIELDS = `id createdAt updatedAt archivedAt updateReminderFrequencyInWeeks updateReminderFrequency frequencyResolution updateRemindersDay updateRemindersHour name description slugId icon color status { id createdAt updatedAt archivedAt name color description position type indefinite } creator { id } lead { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId } facets { id createdAt updatedAt archivedAt sortOrder sourcePage } projectUpdateRemindersPausedUntilAt startDate startDateResolution targetDate targetDateResolution startedAt completedAt canceledAt autoArchivedAt trashed sortOrder prioritySortOrder convertedFromIssue { id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary labelIds previousIdentifiers subIssueSortOrder reactionData priorityLabel inheritsSharedAccess identifier url branchName customerTicketCount description } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } priority lastUpdate { id createdAt updatedAt archivedAt body editedAt reactionData bodyData slugId health infoSnapshot isDiffHidden url isStale diff diffMarkdown commentCount } health healthUpdatedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress slackNewIssue slackIssueComments slackIssueStatuses labelIds favorite { id } url progress scope slackChannelId microsoftTeamsChannelId content documentContent { id createdAt updatedAt archivedAt content restoredAt } state priorityLabel syncedWith { id service }`;
+export const PROJECTS_QUERY_FIELDS = `id createdAt updatedAt archivedAt updateReminderFrequencyInWeeks updateReminderFrequency frequencyResolution updateRemindersDay updateRemindersHour name description slugId icon color status { id createdAt updatedAt archivedAt name color description position type indefinite } creator { id } lead { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } facets { id createdAt updatedAt archivedAt sortOrder sourcePage } projectUpdateRemindersPausedUntilAt startDate startDateResolution targetDate targetDateResolution startedAt completedAt canceledAt autoArchivedAt trashed sortOrder prioritySortOrder convertedFromIssue { id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary labelIds previousIdentifiers subIssueSortOrder reactionData priorityLabel trusted inheritsSharedAccess identifier url branchName customerTicketCount description } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } priority lastUpdate { id createdAt updatedAt archivedAt body editedAt reactionData bodyData slugId health infoSnapshot isDiffHidden url isStale diff diffMarkdown commentCount } health healthUpdatedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress slackNewIssue slackIssueComments slackIssueStatuses labelIds favorite { id } url progress scope slackChannelId microsoftTeamsChannelId content documentContent { id createdAt updatedAt archivedAt content restoredAt } state priorityLabel syncedWith { id service }`;
 
 /**
  * Entity configuration for Projects
