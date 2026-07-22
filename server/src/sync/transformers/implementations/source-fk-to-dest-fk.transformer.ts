@@ -140,8 +140,21 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
       return warnings.length > 0 ? { success: true, skip: true, warnings } : { success: true, skip: true };
     }
 
-    const isDestScalar = isSourceScalar || typedOptions.outputType === 'single';
-    const value = isDestScalar ? (resolved[0] ?? null) : resolved;
+    // Output shape: `outputType` is the DESTINATION-shape contract the sync builder set —
+    // `'array'` means the destination link field holds a LIST, so even a SCALAR source (a
+    // Webflow single-Reference id) resolves to a one-element array; without this, the scalar
+    // leaked through to an array-consuming destination pack and failed the sync ("map_array
+    // expects an array as input", DEV-10942). `'single'` means the destination holds one id
+    // (a scalar-FK destination like Supabase) — first resolved id, rest dropped. When ABSENT
+    // (legacy stored mappings predating outputType), mirror the source's shape as before.
+    let value: string | string[] | null;
+    if (typedOptions.outputType === 'array') {
+      value = resolved;
+    } else if (typedOptions.outputType === 'single' || isSourceScalar) {
+      value = resolved[0] ?? null;
+    } else {
+      value = resolved;
+    }
     return warnings.length > 0 ? { success: true, value, warnings } : { success: true, value };
   },
 };

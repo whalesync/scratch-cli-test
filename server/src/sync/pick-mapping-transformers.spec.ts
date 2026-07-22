@@ -60,4 +60,41 @@ describe('pickMappingTransformers', () => {
   it('does NOT coerce into a structured destination even for an unknown source (needs a pack hint)', () => {
     expect(pickMappingTransformers(undefined, field({ type: 'object' }))).toEqual([]);
   });
+
+  describe('unknown / object source → destination pack (pre-pack stringify)', () => {
+    const stringify: TransformerConfig = { type: 'auto_convert', options: { targetType: 'string' } };
+
+    it('stringifies an object source before the destination pack', () => {
+      expect(pickMappingTransformers(field({ type: 'object' }), field({ suggestedInTransformer: pack }))).toEqual([
+        stringify,
+        pack,
+      ]);
+    });
+
+    it("stringifies an 'unknown'-typed source before the pack (un-modeled connector field)", () => {
+      expect(pickMappingTransformers(field({ type: 'unknown' }), field({ suggestedInTransformer: pack }))).toEqual([
+        stringify,
+        pack,
+      ]);
+    });
+
+    it('stringifies a missing source field (drilled/computed path) before the pack', () => {
+      expect(pickMappingTransformers(undefined, field({ suggestedInTransformer: pack }))).toEqual([stringify, pack]);
+    });
+
+    it('leaves a declared array source to the pack (its natural pairing is an array-consuming pack)', () => {
+      expect(pickMappingTransformers(field({ type: 'array' }), field({ suggestedInTransformer: pack }))).toEqual([
+        pack,
+      ]);
+    });
+
+    it('leaves known scalar sources un-stringified before the pack', () => {
+      expect(pickMappingTransformers(field({ type: 'number' }), field({ suggestedInTransformer: pack }))).toEqual([
+        pack,
+      ]);
+      expect(pickMappingTransformers(field({ type: 'string' }), field({ suggestedInTransformer: pack }))).toEqual([
+        pack,
+      ]);
+    });
+  });
 });

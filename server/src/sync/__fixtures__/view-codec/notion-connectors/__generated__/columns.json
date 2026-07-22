@@ -136,8 +136,30 @@
     "cardinality": "multi",
     "logicalType": "object",
     "primitiveType": "array",
-    "toCore": null,
-    "fromCore": null
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$.relation[*].id",
+        "arrayHandling": "array"
+      }
+    },
+    "fromCore": {
+      "type": "map_array",
+      "options": {
+        "elementTransformer": {
+          "type": "wrap_object",
+          "options": {
+            "template": {
+              "id": "$value"
+            }
+          }
+        },
+        "resultTemplate": {
+          "type": "relation",
+          "relation": "$value"
+        }
+      }
+    }
   },
   {
     "column": "Tags",

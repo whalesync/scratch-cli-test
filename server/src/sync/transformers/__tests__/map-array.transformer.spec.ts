@@ -83,6 +83,31 @@ describe('mapArrayTransformer', () => {
     expect(result).toEqual({ success: false, error: 'map_array requires an "elementTransformer" option' });
   });
 
+  describe('resultTemplate (envelope after the element mapping)', () => {
+    const notionRelationPackOptions: MapArrayOptions = {
+      elementTransformer: { type: 'wrap_object', options: { template: { id: '$value' } } },
+      resultTemplate: { type: 'relation', relation: '$value' },
+    };
+
+    it('wraps the mapped array into the envelope (Notion relation pack)', async () => {
+      const result = await mapArrayTransformer.transform(createContext(['id1', 'id2'], notionRelationPackOptions));
+      expect(result).toEqual({
+        success: true,
+        value: { type: 'relation', relation: [{ id: 'id1' }, { id: 'id2' }] },
+      });
+    });
+
+    it('wraps an EMPTY array for null input — the cleared shape, not a dropped field', async () => {
+      const result = await mapArrayTransformer.transform(createContext(null, notionRelationPackOptions));
+      expect(result).toEqual({ success: true, value: { type: 'relation', relation: [] } });
+    });
+
+    it('wraps an empty input array into the cleared shape', async () => {
+      const result = await mapArrayTransformer.transform(createContext([], notionRelationPackOptions));
+      expect(result).toEqual({ success: true, value: { type: 'relation', relation: [] } });
+    });
+  });
+
   it('should propagate errors from the inner transformer', async () => {
     const result = await mapArrayTransformer.transform(
       createContext(['a', 'b'], {

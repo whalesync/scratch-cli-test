@@ -140,6 +140,8 @@ const transformerConfigSchema: z.ZodType = z.discriminatedUnion('type', [
     options: z
       .object({
         elementTransformer: z.lazy(() => transformerConfigSchema),
+        // Optional envelope applied after the element mapping ("$value" ← the mapped array).
+        resultTemplate: z.record(z.string(), z.unknown()).optional(),
       })
       .strict(),
   }),

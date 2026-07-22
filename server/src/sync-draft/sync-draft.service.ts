@@ -506,6 +506,10 @@ export class SyncDraftService {
     // rewrite fetchSchemaSpec performs as a side effect) once per materialize, not once per
     // pass (DEV-10875).
     const sourceContextByFolderId = new Map<string, SourceContext | null>();
+    // Likewise ONE destination-fields cache (per table mapping ref) shared by both passes —
+    // the FK pass reads the created FK field's pack hint from the same live-fetched schema
+    // the transform picker reads its hints from.
+    const destinationFieldsByTableMappingRef = new Map<string, SchemaField[] | null>();
     // Give every foreignKey column whose related table is ALSO synced here the pipeline
     // that resolves source FK ids → destination linked-record ids. Runs BEFORE the generic
     // picker so those columns end up with the FK pipeline (the picker then skips them).
@@ -514,6 +518,7 @@ export class SyncDraftService {
       draftId,
       tableMappings,
       sourceContextByFolderId,
+      destinationFieldsByTableMappingRef,
       actor,
     );
     // Now the destination fields are real: pick the sync transform for each remaining
@@ -523,6 +528,7 @@ export class SyncDraftService {
       draftId,
       tableMappings,
       sourceContextByFolderId,
+      destinationFieldsByTableMappingRef,
       actor,
     );
 
@@ -1163,6 +1169,7 @@ export class SyncDraftService {
     draftId: SyncDraftId,
     tableMappings: DraftTableMapping[],
     sourceContextByFolderId: Map<string, SourceContext | null>,
+    destinationFieldsByTableMappingRef: Map<string, SchemaField[] | null>,
     actor: Actor,
   ): Promise<void> {
     let changed = false;
@@ -1175,7 +1182,12 @@ export class SyncDraftService {
       if (!needsTransform) continue;
 
       try {
-        const destinationFields = await this.materializedDestinationFields(workbookId, tableMapping, actor);
+        const destinationFields = await this.resolveMaterializedDestinationFieldsCached(
+          workbookId,
+          tableMapping,
+          destinationFieldsByTableMappingRef,
+          actor,
+        );
         if (!destinationFields) continue; // table didn't materialize
         const sourceContext = await this.resolveSourceContext(
           tableMapping.source.dataFolderId,
@@ -1243,11 +1255,13 @@ export class SyncDraftService {
     draftId: SyncDraftId,
     tableMappings: DraftTableMapping[],
     sourceContextByFolderId: Map<string, SourceContext | null>,
+    destinationFieldsByTableMappingRef: Map<string, SchemaField[] | null>,
     actor: Actor,
   ): Promise<void> {
     const foreignKeyColumns: {
       tableMapping: DraftTableMapping;
       columnMapping: DraftColumnMapping;
+      destinationRef: string;
       linkedTableId: string;
     }[] = [];
     for (const tableMapping of tableMappings) {
@@ -1255,7 +1269,14 @@ export class SyncDraftService {
         if (columnMapping.destination.kind !== 'placeholderField') continue;
         if (columnMapping.transformers && columnMapping.transformers.length > 0) continue;
         const linkedTableId = this.foreignKeyLinkedTableIdForColumn(columnMapping.destination.ref, tableMapping);
-        if (linkedTableId) foreignKeyColumns.push({ tableMapping, columnMapping, linkedTableId });
+        if (linkedTableId) {
+          foreignKeyColumns.push({
+            tableMapping,
+            columnMapping,
+            destinationRef: columnMapping.destination.ref,
+            linkedTableId,
+          });
+        }
       }
     }
     if (foreignKeyColumns.length === 0) return;
@@ -1269,7 +1290,7 @@ export class SyncDraftService {
       );
     const destinationSupportsManyToManyByConnectorAccountId = new Map<string, boolean>();
     let changed = false;
-    for (const { tableMapping, columnMapping, linkedTableId } of foreignKeyColumns) {
+    for (const { tableMapping, columnMapping, destinationRef, linkedTableId } of foreignKeyColumns) {
       const referencedDataFolderId = sourceFolderIdByRemoteTableId.get(linkedTableId);
       if (!referencedDataFolderId) continue; // the related table isn't synced here — can't resolve.
 
@@ -1301,10 +1322,61 @@ export class SyncDraftService {
         type: TransformerTypes.SourceFkToDestFk,
         options: { referencedDataFolderId, outputType },
       });
+      // `source_fk_to_dest_fk` emits a RAW id array (ids and/or `@/…` pseudo-refs) — the
+      // native link shape for a service like Airtable, but not for one whose link field is
+      // an envelope (Notion relation: `{ type: 'relation', relation: [{ id }] }`). Append the
+      // created destination field's declared pack (its `x-scratch-suggested-in-transformer`
+      // hint) so the resolved ids land in the field's native shape; a connector whose link
+      // field IS the raw array declares no pack and nothing is appended (DEV-10942).
+      // Best-effort: a failed destination-schema fetch skips the pack rather than failing
+      // materialize — matching this pass's overall stance.
+      try {
+        const destinationFields = await this.resolveMaterializedDestinationFieldsCached(
+          workbookId,
+          tableMapping,
+          destinationFieldsByTableMappingRef,
+          actor,
+        );
+        const createdFieldTarget = this.resolveCreatedFieldTarget(destinationRef, tableMapping);
+        const destinationField =
+          destinationFields && createdFieldTarget
+            ? findCreatedDestinationField(destinationFields, createdFieldTarget)
+            : undefined;
+        if (destinationField?.suggestedInTransformer) {
+          transformers.push(destinationField.suggestedInTransformer);
+        }
+      } catch (error) {
+        WSLogger.warn({
+          source: 'SyncDraftService.materialize',
+          message: 'Failed to resolve the destination pack for a foreignKey column; leaving the raw id pipeline',
+          draftId,
+          tableMappingRef: tableMapping.ref,
+          columnRef: destinationRef,
+          error: errorMessage(error),
+        });
+      }
       columnMapping.transformers = transformers;
       changed = true;
     }
     if (changed) await this.persistTableMappings(draftId, tableMappings);
+  }
+
+  /**
+   * {@link materializedDestinationFields} memoized per table mapping `ref` — shared by the
+   * FK-transformer pass and the transform-picking pass so each destination table pays its
+   * (live, for placeholder tables) schema fetch once per materialize.
+   */
+  private async resolveMaterializedDestinationFieldsCached(
+    workbookId: WorkbookId,
+    tableMapping: DraftTableMapping,
+    destinationFieldsByTableMappingRef: Map<string, SchemaField[] | null>,
+    actor: Actor,
+  ): Promise<SchemaField[] | null> {
+    const cached = destinationFieldsByTableMappingRef.get(tableMapping.ref);
+    if (cached !== undefined) return cached;
+    const fields = await this.materializedDestinationFields(workbookId, tableMapping, actor);
+    destinationFieldsByTableMappingRef.set(tableMapping.ref, fields);
+    return fields;
   }
 
   /**

@@ -518,6 +518,18 @@ export interface WrapObjectOptions {
 export interface MapArrayOptions {
   /** Transformer to apply to each array element */
   elementTransformer: TransformerConfig;
+  /**
+   * Optional envelope applied AFTER the element mapping: an object template in which every
+   * `"$value"` (at any depth) is replaced with the mapped array — the same substitution
+   * wrap_object uses. Lets a single map_array config express a "map the elements, then wrap
+   * the list" destination pack, e.g. Notion's relation property: elements `id → { id }`, then
+   * `{ type: 'relation', relation: '$value' }`. When present, a null/undefined input maps to
+   * an EMPTY array before wrapping (yielding the service's "cleared" shape, e.g.
+   * `{ type: 'relation', relation: [] }`) — mirroring wrap_object's emptyTemplate
+   * clear-on-empty behavior. Without it, null passes through as null (field left unchanged),
+   * exactly as before.
+   */
+  resultTemplate?: Record<string, unknown>;
 }
 
 /** Options for the skip_if_dest_array_matches transformer */

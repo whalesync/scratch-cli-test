@@ -207,5 +207,23 @@ describe('getSuggestedTransform', () => {
         ),
       ).toEqual([richTextUnpack, richTextPack]);
     });
+
+    it('stringifies an UNKNOWN-typed source before the pack (nothing guarantees a CoreValue string)', () => {
+      // Webflow's un-modeled e-commerce fields (`sku-properties`/`sku-values`, `Type.Unknown()` until
+      // DEV-10937) resolve with NO primitiveType. Their runtime values are raw arrays/objects, so
+      // without the stringify they land verbatim in Notion rich_text's string-only `content` slot and
+      // every create fails (DEV-10875's validation_error → unresolvable-pseudo-ref cascade).
+      expect(chainOf(getSuggestedTransform(col({}), col({ primitiveType: 'string', fromCore: richTextPack })))).toEqual(
+        [autoConvert('string'), richTextPack],
+      );
+    });
+
+    it('does NOT stringify an unknown-typed MULTI source before the pack (reshape handles the arm)', () => {
+      const suggestion = getSuggestedTransform(
+        col({ cardinality: 'multi' }),
+        col({ cardinality: 'multi', fromCore: richTextPack }),
+      );
+      expect(chainOf(suggestion)).toEqual([richTextPack]);
+    });
   });
 });

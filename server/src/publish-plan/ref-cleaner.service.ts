@@ -240,12 +240,29 @@ export class RefCleanerService {
 
     if (head === '[]') {
       if (Array.isArray(root)) {
+        const indexesToRemoveDescending: number[] = [];
         for (let i = 0; i < root.length; i++) {
           if (tail.length === 0) {
             root[i] = this.checkAndStrip(root[i], shouldStrip);
           } else if (root[i] && typeof root[i] === 'object') {
-            this.stripAtNodes(root[i] as Record<string, unknown>, tail, shouldStrip);
+            // When the FK ref sits on a scalar LEAF inside each repeating element — e.g. a
+            // Notion relation's `relation[].id`, where a co-pending link is
+            // `{ id: '@/…pseudo-ref' }` — nulling the leaf alone would leave a husk the
+            // service rejects on write (`{ id: null }`). Drop the WHOLE element instead, so
+            // a stripped link converges to the service's own "no link" shape
+            // (`relation: []`, never `[{ id: null }]`) — DEV-10942. Elements whose leaf
+            // doesn't match — or whose tail isn't a plain-key path to a scalar — recurse
+            // exactly as before.
+            const leafValue = this.scalarLeafAtPlainKeyPath(root[i] as Record<string, unknown>, tail);
+            if (leafValue !== undefined && shouldStrip(leafValue)) {
+              indexesToRemoveDescending.unshift(i);
+            } else {
+              this.stripAtNodes(root[i] as Record<string, unknown>, tail, shouldStrip);
+            }
           }
+        }
+        for (const indexToRemove of indexesToRemoveDescending) {
+          root.splice(indexToRemove, 1);
         }
       }
     } else {
@@ -266,6 +283,22 @@ export class RefCleanerService {
     } else {
       return shouldStrip(value) ? null : value;
     }
+  }
+
+  /**
+   * The scalar value at a plain-key path inside a repeating element, or undefined when the
+   * path traverses another `[]`, a segment is missing, or the terminal isn't a string/number.
+   * Strip predicates only ever match scalar ref values, so a non-scalar leaf simply falls
+   * back to the normal recursion in {@link stripAtNodes}.
+   */
+  private scalarLeafAtPlainKeyPath(element: Record<string, unknown>, path: string[]): unknown {
+    let node: unknown = element;
+    for (const segment of path) {
+      if (segment === '[]') return undefined;
+      if (!node || typeof node !== 'object' || Array.isArray(node)) return undefined;
+      node = (node as Record<string, unknown>)[segment];
+    }
+    return typeof node === 'string' || typeof node === 'number' ? node : undefined;
   }
 
   /**

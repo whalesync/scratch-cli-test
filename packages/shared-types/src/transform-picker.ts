@@ -113,6 +113,16 @@ const AUTO_CONVERTIBLE_TARGET_TYPES: ReadonlySet<string> = new Set<AutoConvertOp
 const NON_SCALAR_SOURCE_PRIMITIVE_TYPES: ReadonlySet<string> = new Set(['object', 'array']);
 
 /**
+ * Whether a source field's declared type (from {@link FieldTransformHints.type}) gives NO guarantee
+ * that the runtime value entering a destination pack is a string: the type is absent, the schema says
+ * `'unknown'` (an un-modeled connector field, `Type.Unknown()`), or it is a nested `object`. A declared
+ * `array` deliberately does NOT count — an array source's natural pairing is an array-consuming pack.
+ */
+function sourceValueMayReachPackAsNonString(sourceType: string | undefined): boolean {
+  return sourceType === undefined || sourceType === 'unknown' || sourceType === 'object';
+}
+
+/**
  * Pick the transformer pipeline to copy a value from `sourceField` to
  * `destinationField`, from the connector-declared schema hints on each:
  *
@@ -141,7 +151,21 @@ export function pickMappingTransformers(
   destinationField: FieldTransformHints | undefined,
 ): TransformerConfig[] {
   const transformers: TransformerConfig[] = [];
-  if (sourceField?.suggestedTransformer) transformers.push(sourceField.suggestedTransformer);
+  if (sourceField?.suggestedTransformer) {
+    transformers.push(sourceField.suggestedTransformer);
+  } else if (destinationField?.suggestedInTransformer && sourceValueMayReachPackAsNonString(sourceField?.type)) {
+    // Same hole as getSuggestedTransform's pre-pack stringify (see below): a destination pack
+    // consumes a CoreValue STRING, but with no source unpack hint nothing normalizes the raw
+    // value. A source whose declared type is `object`, or whose type is UNKNOWN (absent /
+    // `'unknown'` — an un-modeled connector field like Webflow's e-commerce `sku-properties`,
+    // or a drilled path with no flattened field), can hand the pack a raw object that the
+    // service then rejects (DEV-10828 / DEV-10875: objects landing in Notion rich_text's
+    // string-only `content` slot). JSON-stringify first — identity for strings, total for
+    // everything else. Known scalars (number/boolean) still reach a native pack un-stringified,
+    // and a declared `array` source is left alone (its natural pairing is an array-consuming
+    // pack, e.g. a multi_select `map_array`).
+    transformers.push({ type: TransformerTypes.AutoConvert, options: { targetType: 'string' } });
+  }
   if (destinationField?.suggestedInTransformer) transformers.push(destinationField.suggestedInTransformer);
   if (transformers.length > 0) return transformers;
 
@@ -289,8 +313,7 @@ export function getSuggestedTransform(
   } else if (
     destination.fromCore &&
     source.cardinality === 'single' &&
-    source.primitiveType !== undefined &&
-    NON_SCALAR_SOURCE_PRIMITIVE_TYPES.has(source.primitiveType)
+    (source.primitiveType === undefined || NON_SCALAR_SOURCE_PRIMITIVE_TYPES.has(source.primitiveType))
   ) {
     // A scalar-cardinality source whose raw value is a nested object / JSON array is NOT a valid
     // CoreValue (which must be a string), and with no `toCore` codec nothing normalizes it. A
@@ -302,8 +325,18 @@ export function getSuggestedTransform(
     // object→string degrade on the pack-LESS path (see `coercionFloorForDestination` and
     // auto-convert's `convertToString`), extending it to the pack path the floor skips. Gated on
     // `destination.fromCore` so the pack-less path keeps flooring exactly as before (no double
-    // coercion), and on non-scalar sources only so scalar numbers/booleans still reach a native
-    // number/checkbox pack un-stringified.
+    // coercion).
+    //
+    // An UNKNOWN-typed source (`primitiveType` absent — the connector schema declares no type, e.g.
+    // Webflow's un-modeled e-commerce fields `sku-properties`/`sku-values`, typed `Type.Unknown()`
+    // until DEV-10937 models them) is stringified too: nothing guarantees its runtime value is a
+    // CoreValue string, and an object/array slipping through the pack un-stringified is a guaranteed
+    // connector rejection (DEV-10875's Notion `validation_error` cascade). `auto_convert('string')`
+    // is identity for strings and total for everything else, so the chain stays correct for every
+    // runtime shape. The one trade-off: an unknown-typed source that happens to hold a number now
+    // reaches a native number/checkbox pack as "5" instead of 5 — that pairing only arises from a
+    // schema-blind manual mapping, and the durable fix there is typing the source schema. KNOWN
+    // scalar sources (number/boolean) still reach a native pack un-stringified.
     transformerChain.push({ type: TransformerTypes.AutoConvert, options: { targetType: 'string' } });
   }
 

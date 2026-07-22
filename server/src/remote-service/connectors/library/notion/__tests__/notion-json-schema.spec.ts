@@ -105,7 +105,20 @@ describe('notionPropertyToJsonSchema — transform hints', () => {
 
   it('deferred / reference types carry no pack hint', () => {
     expect(prop('multi_select')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toBeUndefined();
-    expect(prop('relation', { relation: { database_id: 'db1' } })[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toBeUndefined();
+  });
+
+  it('relation packs a CoreValue id array into the relation envelope (DEV-10942)', () => {
+    // What `source_fk_to_dest_fk` emits is a raw id array; without this pack it lands
+    // verbatim in the property and Notion rejects the write. Each id wraps to `{ id }`,
+    // the list into the `{ type: 'relation', relation: [...] }` envelope; an empty/null
+    // value packs to `relation: []` — Notion's clear shape.
+    expect(prop('relation', { relation: { database_id: 'db1' } })[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
+      type: 'map_array',
+      options: {
+        elementTransformer: { type: 'wrap_object', options: { template: { id: '$value' } } },
+        resultTemplate: { type: 'relation', relation: '$value' },
+      },
+    });
   });
 });
 
@@ -186,13 +199,44 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
       expect(required).not.toContain('has_more');
     });
 
-    it('puts the foreign-key options on the outer envelope', () => {
-      expect(s[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'db_linked', map: 'id' });
+    it('puts the foreign-key options on the outer envelope, without the legacy `map`', () => {
+      // `map: 'id'` used to ride here, but its only consumer (file-reference extraction)
+      // read `envelope.id` — the property's OWN id — producing a bogus reference row per
+      // relation. The linked-page ids are extracted from the id leaf instead.
+      expect(s[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'db_linked' });
+    });
+
+    it('ALSO puts the foreign-key options on the inner relation[].id leaf (DEV-10942)', () => {
+      // The leaf annotation is what makes refs nested inside the envelope
+      // (`relation: [{ id: '…' }]`) visible to the schema-driven FK walkers: the publish
+      // ref-cleaner drops a stripped ref's enclosing element, and file-reference extraction
+      // reads the linked-page ids for inbound-reference detection.
+      const relationItems = props(s).relation.items as Record<string, Record<string, Record<string, unknown>>>;
+      expect(relationItems.properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'db_linked',
+      });
+    });
+
+    it('carries inverseFieldId on the leaf for a dual_property relation', () => {
+      const dual = prop('relation', {
+        relation: {
+          database_id: 'db_linked',
+          type: 'dual_property',
+          dual_property: { synced_property_id: 'prop_back', synced_property_name: 'Back' },
+        },
+      });
+      const relationItems = props(dual).relation.items as Record<string, Record<string, Record<string, unknown>>>;
+      expect(relationItems.properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'db_linked',
+        inverseFieldId: 'prop_back',
+      });
     });
 
     it('omits foreign-key options when the relation has no database_id', () => {
       const noFk = prop('relation', { relation: {} });
       expect(noFk[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
+      const relationItems = props(noFk).relation.items as Record<string, Record<string, Record<string, unknown>>>;
+      expect(relationItems.properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
     });
 
     // DEV-10753: a dual_property (symmetric) relation carries the reciprocal property's id so the
@@ -207,7 +251,6 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
       });
       expect(dual[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
         linkedTableId: 'db_linked',
-        map: 'id',
         inverseFieldId: 'prop_back',
       });
     });
@@ -216,7 +259,7 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
       const single = prop('relation', {
         relation: { database_id: 'db_linked', type: 'single_property', single_property: {} },
       });
-      expect(single[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'db_linked', map: 'id' });
+      expect(single[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'db_linked' });
     });
   });
 

@@ -212,3 +212,100 @@ describe('RefCleanerService.extractForeignKeyPaths caching', () => {
     expect(secondCallResult).toBe(firstCallResult);
   });
 });
+
+/**
+ * The Notion-relation shape (DEV-10942): the FK value is not a flat id array but ids nested
+ * inside an envelope — `properties.X = { type: 'relation', relation: [{ id }], has_more }` —
+ * with the FK options annotated BOTH on the envelope (like every property) and on the inner
+ * `relation[].id` leaf (so the cleaner can reach refs the envelope path can't see). Stripping
+ * must drop the whole `{ id }` element, never leave `{ id: null }` (Notion rejects it).
+ */
+describe('RefCleanerService — FK refs nested inside an envelope (Notion relation shape)', () => {
+  const svc = new RefCleanerService();
+
+  function buildNotionRelationSchema(options: { annotateEnvelope: boolean }): Schema {
+    // Mirrors the real Notion shape (see notion-json-schema): the same map-less FK options
+    // on the envelope and on the id leaf whose value IS the linked id.
+    const fkOptions = { linkedTableId: 'categories-db' };
+    return Type.Object({
+      id: Type.String(),
+      properties: Type.Object({
+        Category: Type.Object(
+          {
+            type: Type.String(),
+            relation: Type.Array(Type.Object({ id: Type.String({ [X_SCRATCH_FOREIGN_KEY_OPTIONS]: fkOptions }) })),
+            has_more: Type.Boolean(),
+          },
+          options.annotateEnvelope ? { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: fkOptions } : {},
+        ),
+      }),
+    }) as unknown as Schema;
+  }
+
+  function relationContent(ids: string[]): ParsedContent {
+    return {
+      id: 'page_1',
+      properties: {
+        Category: {
+          type: 'relation',
+          relation: ids.map((id) => ({ id })),
+          has_more: false,
+        },
+      },
+    };
+  }
+
+  it('stripPseudoRefs drops the co-pending {id: "@/…"} element and keeps resolved ids + envelope keys', () => {
+    const schema = buildNotionRelationSchema({ annotateEnvelope: true });
+    const content = relationContent(['@/Notion/categories/scratch_pending_publish_x.json', 'real-page-id']);
+
+    const result = svc.stripPseudoRefs(content, schema) as Record<string, unknown>;
+
+    expect(result).toEqual({
+      id: 'page_1',
+      properties: {
+        Category: { type: 'relation', relation: [{ id: 'real-page-id' }], has_more: false },
+      },
+    });
+  });
+
+  it('stripDeletedRecordRefs drops elements whose id is a deleted record id', () => {
+    const schema = buildNotionRelationSchema({ annotateEnvelope: true });
+    const content = relationContent(['deleted-page-id', 'kept-page-id']);
+
+    const result = svc.stripDeletedRecordRefs(content, schema, new Set(['deleted-page-id'])) as Record<string, unknown>;
+
+    expect(result).toEqual({
+      id: 'page_1',
+      properties: {
+        Category: { type: 'relation', relation: [{ id: 'kept-page-id' }], has_more: false },
+      },
+    });
+  });
+
+  it('nullifyAllForeignKeyFields empties the relation list (leaf-only annotation), preserving the envelope', () => {
+    // With the annotation on the id leaf, pass4's "strip every FK" empties the repeating
+    // elements — `relation: []`, the service's own "no links" shape — instead of leaving
+    // `[{ id: null }]` husks.
+    const schema = buildNotionRelationSchema({ annotateEnvelope: false });
+    const content = relationContent(['page-a', 'page-b']);
+
+    const result = svc.nullifyAllForeignKeyFields(content, schema) as Record<string, unknown>;
+
+    expect(result).toEqual({
+      id: 'page_1',
+      properties: {
+        Category: { type: 'relation', relation: [], has_more: false },
+      },
+    });
+  });
+
+  it('drops every element when all nested refs match (fully co-pending relation)', () => {
+    const schema = buildNotionRelationSchema({ annotateEnvelope: true });
+    const content = relationContent(['@/Notion/categories/a.json', '@/Notion/categories/b.json']);
+
+    const result = svc.stripPseudoRefs(content, schema) as Record<string, unknown>;
+    const properties = result.properties as Record<string, { relation: unknown[] }>;
+    expect(properties.Category.relation).toEqual([]);
+  });
+});

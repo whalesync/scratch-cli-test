@@ -12,6 +12,7 @@ import {
   X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
+  type ForeignKeyOptionSchema,
   type TransformerConfig,
   type VirtualFieldDef,
 } from '@spinner/shared-types';
@@ -283,7 +284,7 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
   let extraEnvelopeKeys: Record<string, TSchema> | undefined;
   let virtualFields: VirtualFieldDef[] | undefined;
   let assetFieldOptions: AssetFieldOptions | undefined;
-  let foreignKeyOptions: { linkedTableId: string; map: string; inverseFieldId?: string } | undefined;
+  let foreignKeyOptions: ForeignKeyOptionSchema | undefined;
 
   switch (property.type) {
     case 'title':
@@ -428,24 +429,43 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
       break;
 
     case 'relation':
-      innerValueSchema = Type.Array(Type.Object({ id: Type.String() }));
-      // Real relation data carries a sibling `has_more` flag (Notion truncates
-      // the relation array to 25 on response).
-      extraEnvelopeKeys = { has_more: Type.Optional(Type.Boolean()) };
       // A Notion `dual_property` relation is symmetric: the linked database carries a mirror
       // relation whose id is `dual_property.synced_property_id`. Surfacing it lets the
       // create-plan generator recognize the reciprocal pair and suggest only one side
       // (DEV-10753). A `single_property` relation is one-way and has no reciprocal to
       // deduplicate. Notion relations are always multi-valued, so `isSingleValued` is never set.
+      //
+      // No `map` in these options (an earlier shape carried `map: 'id'`, a Notion-only
+      // extension outside {@link ForeignKeyOptionSchema}): the only `map` consumer is
+      // file-reference extraction (FileReferenceService.extractIds), which reads `node[map]`
+      // at the annotated path — and on the ENVELOPE that read `properties.X.id`, the
+      // property's OWN id, emitting one bogus file-reference row per relation and never the
+      // real links. The real linked-page ids now come from the map-less `relation[].id` leaf
+      // annotation below (DEV-10942).
       foreignKeyOptions = property.relation.database_id
         ? {
             linkedTableId: property.relation.database_id,
-            map: 'id',
             ...(property.relation.type === 'dual_property' && property.relation.dual_property?.synced_property_id
               ? { inverseFieldId: property.relation.dual_property.synced_property_id }
               : {}),
           }
         : undefined;
+      // The FK options are ALSO annotated on the inner `id` LEAF (the envelope gets them below,
+      // like every property), mirroring HubSpot's `results[].id` leaf. The leaf path is what
+      // makes refs NESTED inside the envelope visible to the schema-driven FK walkers:
+      //   - the publish ref-cleaner strips a co-pending `relation: [{ id: '@/…' }]` pseudo-ref
+      //     by dropping its enclosing `{ id }` element (never `{ id: null }`, which Notion
+      //     rejects) — see RefCleanerService.stripAtNodes (DEV-10942);
+      //   - file-reference extraction reads the linked-page ids here, feeding delete-phase
+      //     inbound-reference detection (findRefsToFiles).
+      innerValueSchema = Type.Array(
+        Type.Object({
+          id: Type.String(foreignKeyOptions ? { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: foreignKeyOptions } : {}),
+        }),
+      );
+      // Real relation data carries a sibling `has_more` flag (Notion truncates
+      // the relation array to 25 on response).
+      extraEnvelopeKeys = { has_more: Type.Optional(Type.Boolean()) };
       break;
 
     case 'rollup':
@@ -562,6 +582,21 @@ function notionInboundPackTransformer(notionType: string): TransformerConfig | u
       );
     case 'select':
       return notionWrapTransformer({ type: 'select', select: { name: '$value' } }, { type: 'select', select: null });
+    case 'relation':
+      // Packs a CoreValue id ARRAY (what `source_fk_to_dest_fk` emits — resolved destination
+      // page ids and/or `@/…` pseudo-refs for co-pending records) into the relation envelope:
+      // each id → `{ id }`, then the list into `{ type: 'relation', relation: [...] }`. Without
+      // this pack the raw id array lands verbatim in the property and Notion rejects the write
+      // ("body.properties.X.title should be defined…", DEV-10942). An empty/null value packs to
+      // `{ type: 'relation', relation: [] }` — Notion's clear shape (map_array wraps the empty
+      // array whenever `resultTemplate` is set).
+      return {
+        type: TransformerTypes.MapArray,
+        options: {
+          elementTransformer: { type: TransformerTypes.WrapObject, options: { template: { id: '$value' } } },
+          resultTemplate: { type: 'relation', relation: '$value' },
+        },
+      };
     default:
       return undefined;
   }

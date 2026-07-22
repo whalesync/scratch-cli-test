@@ -48,11 +48,11 @@
   },
   "properties.Difficulty.select.name": {},
   "properties.Links.relation": {
-    "core": [
-      {
-        "id": "15851c96-d209-80f8-8dfa-d450548df7b9"
-      }
-    ]
+    "core": [],
+    "roundTrip": {
+      "type": "relation",
+      "relation": []
+    }
   },
   "properties.Tags.multi_select": {
     "core": [

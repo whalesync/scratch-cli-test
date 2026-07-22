@@ -62,11 +62,11 @@
     }
   },
   "properties.Links.relation": {
-    "core": [
-      {
-        "id": "774e29e9-dbfb-47a4-bc01-02d4f49ada7c"
-      }
-    ]
+    "core": [],
+    "roundTrip": {
+      "type": "relation",
+      "relation": []
+    }
   },
   "properties.Tags.multi_select": {
     "core": [

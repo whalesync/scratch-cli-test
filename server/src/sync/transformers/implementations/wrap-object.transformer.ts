@@ -65,8 +65,10 @@ export const wrapObjectTransformer: FieldTransformer = {
 /**
  * Replace every `"$value"` in the template — at any depth, inside nested objects
  * and arrays — with the source value, keeping all other template values as-is.
+ * Exported for map_array's `resultTemplate` (the same substitution applied to the
+ * mapped array).
  */
-function applyTemplate(template: unknown, value: unknown): unknown {
+export function applyTemplate(template: unknown, value: unknown): unknown {
   if (template === '$value') return value;
   if (Array.isArray(template)) return template.map((entry) => applyTemplate(entry, value));
   if (template !== null && typeof template === 'object') {

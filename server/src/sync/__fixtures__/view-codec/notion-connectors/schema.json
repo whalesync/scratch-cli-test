@@ -705,7 +705,10 @@
                   ],
                   "properties": {
                     "id": {
-                      "type": "string"
+                      "type": "string",
+                      "x-scratch-foreign-key": {
+                        "linkedTableId": "a0b982eb-0e2d-4041-b86c-7e612994e07c"
+                      }
                     }
                   }
                 }
@@ -717,8 +720,31 @@
             "x-scratch-connector-data-type": "relation",
             "x-scratch-remote-field-id": "b%3EjG",
             "x-scratch-foreign-key": {
-              "linkedTableId": "a0b982eb-0e2d-4041-b86c-7e612994e07c",
-              "map": "id"
+              "linkedTableId": "a0b982eb-0e2d-4041-b86c-7e612994e07c"
+            },
+            "x-scratch-suggested-in-transformer": {
+              "type": "map_array",
+              "options": {
+                "elementTransformer": {
+                  "type": "wrap_object",
+                  "options": {
+                    "template": {
+                      "id": "$value"
+                    }
+                  }
+                },
+                "resultTemplate": {
+                  "type": "relation",
+                  "relation": "$value"
+                }
+              }
+            },
+            "x-scratch-suggested-transformer": {
+              "type": "jsonpath",
+              "options": {
+                "expression": "$.relation[*].id",
+                "arrayHandling": "array"
+              }
             }
           },
           "Tags": {

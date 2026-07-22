@@ -1093,6 +1093,105 @@ describe('SyncDraftService', () => {
       ]);
     });
 
+    it('appends the destination pack after source_fk_to_dest_fk when the created FK field declares one (Notion relation)', async () => {
+      // Same shape as the pipeline test above, but the destination schema's created FK field
+      // carries an `x-scratch-suggested-in-transformer` pack (Notion relation: ids → [{id}] →
+      // {type:'relation', relation:[...]}). Without the pack the raw id array lands verbatim in
+      // the relation property and Notion rejects the write (DEV-10942).
+      const notionRelationPack = {
+        type: 'map_array',
+        options: {
+          elementTransformer: { type: 'wrap_object', options: { template: { id: '$value' } } },
+          resultTemplate: { type: 'relation', relation: '$value' },
+        },
+      };
+      const tableMappings = [
+        {
+          ref: 'tm_appt',
+          source: { dataFolderId: 'dfd_appt_src' },
+          destination: { kind: 'existing', dataFolderId: 'dfd_appt_dst' },
+          fieldAdditions: [
+            {
+              ref: 'fa_companies',
+              createFieldSpec: {
+                name: 'Associated Companies',
+                fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'companies' } },
+              },
+            },
+          ],
+          columnMappings: [
+            {
+              source: { columnId: 'associations.companies.results' },
+              destination: { kind: 'placeholderField', ref: 'fa_companies' },
+            },
+          ],
+        },
+        {
+          ref: 'tm_comp',
+          source: { dataFolderId: 'dfd_comp_src' },
+          destination: { kind: 'existing', dataFolderId: 'dfd_comp_dst' },
+          columnMappings: [
+            { source: { columnId: 'id' }, destination: { kind: 'existing', columnId: 'fields.hubspot_record_id' } },
+          ],
+        },
+      ];
+      const row = makeDraftRow({ tableMappings });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (dbService.client.syncDraft.update as jest.Mock).mockResolvedValue(row);
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_appt_src', tableId: ['0-421'] },
+        { id: 'dfd_appt_dst', tableId: ['base1', 'tblAppt'] },
+        { id: 'dfd_comp_src', tableId: ['companies'] },
+        { id: 'dfd_comp_dst', tableId: ['base1', 'tblComp'] },
+      ]);
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue({
+        connectorAccountId: 'coa_1',
+        tableId: ['base1', 'tblAppt'],
+      });
+      schemaBuilderService.createFields.mockResolvedValue({
+        status: 'ok',
+        remoteTableId: ['base1', 'tblAppt'],
+        fields: [{ name: 'Associated Companies', status: 'created', remoteFieldId: 'fld_assoc' }],
+      } as never);
+      (dataFolderService.getStoredView as jest.Mock).mockResolvedValue({
+        name: 'Default',
+        cols: [
+          {
+            kind: 'col',
+            path: 'associations.companies.results',
+            name: 'Associated Companies',
+            displayTransformer: { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'join_comma' } },
+          },
+        ],
+      });
+      // One fetchSchemaSpec mock serves both the source context and the destination fields:
+      // the destination's created FK field carries the remote field id + the relation pack.
+      (dataFolderService.fetchSchemaSpec as jest.Mock).mockResolvedValue({
+        schema: {
+          type: 'object',
+          properties: {
+            'Associated Companies': {
+              type: 'object',
+              'x-scratch-remote-field-id': 'fld_assoc',
+              'x-scratch-suggested-in-transformer': notionRelationPack,
+            },
+          },
+        },
+      });
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      const apptMapping = res.draft.tableMappings.find((tableMapping) => tableMapping.ref === 'tm_appt');
+      const fkColumn = apptMapping?.columnMappings.find(
+        (columnMapping) => columnMapping.source.columnId === 'associations.companies.results',
+      );
+      expect(fkColumn?.transformers).toEqual([
+        { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'array' } },
+        { type: 'source_fk_to_dest_fk', options: { referencedDataFolderId: 'dfd_comp_src', outputType: 'array' } },
+        notionRelationPack,
+      ]);
+    });
+
     it('emits outputType `single` for an FK column whose destination connector holds a scalar foreign key', async () => {
       // Same shape as the array case above, but the destination is a Postgres-like connector whose foreignKey
       // is a single scalar column (supportsManyToManyForeignKeys: false). A scalar column can't hold a list, so

@@ -315,6 +315,51 @@ describe('sourceFkToDestFkTransformer', () => {
     });
   });
 
+  describe('outputType: array', () => {
+    const arrayOpts: SourceFkToDestFkOptions = {
+      referencedDataFolderId: REFERENCED_FOLDER,
+      outputType: 'array',
+    };
+
+    it('wraps a SCALAR source into a one-element array (destination link field holds a list)', async () => {
+      // A Webflow single-Reference field is one id string, but the destination the sync
+      // builder chose (Notion relation / Airtable link) holds a LIST — the chain's
+      // downstream pack consumes an array, and a leaked scalar fails the sync with
+      // "map_array expects an array as input" (DEV-10942).
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json' });
+      const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup, arrayOpts));
+      expect(result).toEqual({ success: true, value: ['@/DestConn/authors/alice.json'] });
+    });
+
+    it('keeps an array source as an array', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
+      const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2'], lookup, arrayOpts));
+      expect(result).toEqual({
+        success: true,
+        value: ['@/DestConn/authors/alice.json', '@/DestConn/authors/bob.json'],
+      });
+    });
+
+    it('resolves an unresolved-and-ignored scalar to an EMPTY array (clears the list downstream)', async () => {
+      const lookup = createSimpleLookupTools();
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('missing', lookup, { ...arrayOpts, onUnresolved: 'ignore' }),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: [],
+        warnings: [expect.stringContaining('Skipped unresolved foreign key "missing"')],
+      });
+    });
+
+    it('still passes null through for a null source (field untouched / cleared by the pack)', async () => {
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(null, createSimpleLookupTools(), arrayOpts),
+      );
+      expect(result).toEqual({ success: true, value: null });
+    });
+  });
+
   describe('destinationRemoteId vs file ref selection', () => {
     it('should use real destinationRemoteId when it exists', async () => {
       const lookup = createLookupTools({
