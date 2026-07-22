@@ -72,6 +72,17 @@ export interface SchemaCreationCapabilities {
    * (or absent), one side is. Absent ⇒ treated as `true` (no special N→N handling). (DEV-10753)
    */
   supportsManyToManyForeignKeys?: boolean;
+  /**
+   * Whether the destination enforces UNIQUE table names within a create parent — so a new table whose name
+   * collides with one that already exists there must be renamed with a numeric suffix to be creatable
+   * (Airtable base, Postgres/Supabase schema, Webflow site). When `false`, the destination happily holds
+   * multiple tables of the same name under one parent (Notion — a page can contain any number of databases
+   * sharing a title), so the create-plan generator must NOT rename a new table against existing destination
+   * tables; doing so produces spurious ` 2`/` 3` suffixes on brand-new databases (DEV-10943). In-plan
+   * duplicate names are still deduplicated regardless, since the create request itself rejects two tables of
+   * the same name (`DUPLICATE_TABLE_NAME`). Absent ⇒ treated as `true`.
+   */
+  requiresUniqueTableNames?: boolean;
 }
 
 /**

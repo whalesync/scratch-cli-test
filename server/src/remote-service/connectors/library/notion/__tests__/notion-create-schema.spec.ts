@@ -177,6 +177,10 @@ describe('NOTION_SCHEMA_CREATION_CAPABILITIES', () => {
       ]),
     );
   });
+
+  it('does not require unique table names — a Notion page may hold multiple same-titled databases (DEV-10943)', () => {
+    expect(NOTION_SCHEMA_CREATION_CAPABILITIES.requiresUniqueTableNames).toBe(false);
+  });
 });
 
 describe('helpers', () => {

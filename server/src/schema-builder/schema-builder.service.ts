@@ -371,19 +371,26 @@ export class SchemaBuilderService {
       });
     }
 
-    // When the plan creates at least one NEW table, fetch the destination's
-    // existing table names (scoped to the create parent) so the generator can
-    // resolve name conflicts up front instead of failing opaquely at create time.
-    const createsNewTable = sources.some((source) => !source.existingDestination);
-    const existingDestinationTableNames = createsNewTable
-      ? await this.existingDestinationTableNamesForParent(connector, dto.remoteParentId)
-      : [];
-
     // The destination's primary-field requirement drives the generator's fallback:
     // when a connector mandates a primary field but the source designated none
     // (its title column wasn't recognized), the generator promotes one so the plan
     // is valid out of the box rather than failing create-time validation.
     const destinationCapabilities = connector.getSchemaCreationCapabilities?.();
+
+    // When the plan creates at least one NEW table, fetch the destination's
+    // existing table names (scoped to the create parent) so the generator can
+    // resolve name conflicts up front instead of failing opaquely at create time.
+    // Skipped for a destination that does NOT enforce unique table names within a
+    // parent (Notion — a page may hold many databases sharing a title): renaming a
+    // brand-new table against those would append spurious ` 2`/` 3` suffixes even
+    // though the name is free (DEV-10943). In-plan duplicates are still deduped by
+    // the generator regardless, since the create request rejects same-named tables.
+    const destinationRequiresUniqueTableNames = destinationCapabilities?.requiresUniqueTableNames ?? true;
+    const createsNewTable = sources.some((source) => !source.existingDestination);
+    const existingDestinationTableNames =
+      createsNewTable && destinationRequiresUniqueTableNames
+        ? await this.existingDestinationTableNamesForParent(connector, dto.remoteParentId)
+        : [];
 
     const { tables, fieldPlans, notes, tableNotes } = generateCreatePlanFromSources({
       sources,

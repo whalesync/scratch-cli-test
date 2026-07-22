@@ -475,6 +475,40 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
       expect(res.body.tableNotes).toEqual([]);
     });
 
+    it('does not rename a new table against existing destination tables when the destination allows duplicate table names (Notion — DEV-10943)', async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+      const listTables = jest
+        .fn()
+        .mockResolvedValue([{ id: { wsId: 'w', remoteId: ['dbExisting', 'dsExisting'] }, displayName: 'Authors' }]);
+      connectorsService.getConnector.mockResolvedValue(
+        connectorStub({
+          service: 'NOTION',
+          listTables,
+          getSchemaCreationCapabilities: () => ({
+            supportedFieldKinds: ['text'],
+            primaryField: null,
+            requiresUniqueTableNames: false,
+          }),
+        }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({
+          sources: [{ dataFolderId: 'src_authors' }],
+          destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID,
+          remoteParentId: ['pageX'],
+        })
+        .expect(201);
+
+      // The brand-new database keeps its bare name despite a same-named database existing elsewhere...
+      expect(res.body.plan.tables[0].name).toBe('Authors');
+      expect(res.body.tableNotes).toEqual([]);
+      // ...and we never even list the destination's tables, since collision detection is pointless there.
+      expect(listTables).not.toHaveBeenCalled();
+    });
+
     it('still generates a plan when listing destination tables fails (graceful degradation)', async () => {
       dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
       dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);

@@ -45,6 +45,11 @@ export const NOTION_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
   },
   // Notion relation properties hold a list of linked records, so it can represent a two-way N→N link.
   supportsManyToManyForeignKeys: true,
+  // A Notion page can contain any number of databases that share a title — database names are not unique —
+  // so a new table must NOT be renamed against existing databases. Without this the create-plan generator
+  // suffixed brand-new databases with ` 2`/` 3` against same-named databases elsewhere in the workspace
+  // (DEV-10943). In-plan duplicate names are still deduped, which `DUPLICATE_TABLE_NAME` validation requires.
+  requiresUniqueTableNames: false,
 };
 
 /**
