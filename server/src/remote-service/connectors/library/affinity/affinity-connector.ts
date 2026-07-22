@@ -121,7 +121,6 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
           key: 'apiKey',
           type: 'password',
           label: 'API Key',
-          placeholder: 'Affinity v2 API key',
           description: 'Generate an API key in Affinity at Settings → Manage Apps → New App.',
           required: true,
         },

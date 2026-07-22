@@ -206,7 +206,7 @@ export class GoHighLevelConnector extends Connector {
           key: 'locationId',
           type: 'string',
           label: 'Location ID',
-          placeholder: 'e.g. ve9EPM428h8vShlRW1KT',
+          placeholder: 've9EPM428h8vShlRW1KT',
           description: 'The sub-account ("Location") ID the token belongs to. Found in your HighLevel dashboard URL.',
           required: true,
         },

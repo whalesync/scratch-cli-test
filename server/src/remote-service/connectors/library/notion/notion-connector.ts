@@ -122,7 +122,13 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [
-        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
+        {
+          key: 'apiKey',
+          type: 'password',
+          label: 'Internal Integration Secret',
+          placeholder: 'ntn_...',
+          required: true,
+        },
       ],
     },
   });

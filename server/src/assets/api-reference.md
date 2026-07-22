@@ -1705,8 +1705,8 @@ Returns metadata for all available connectors. **No authentication required.**
         {
           "key": "apiKey",
           "type": "password",
-          "label": "API Key",
-          "placeholder": "Enter API Key",
+          "label": "Personal Access Token",
+          "placeholder": "pat...",
           "required": true
         }
       ]

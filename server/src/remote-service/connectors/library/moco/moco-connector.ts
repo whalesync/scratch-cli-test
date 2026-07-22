@@ -80,7 +80,6 @@ export class MocoConnector extends Connector {
           key: 'apiKey',
           type: 'password',
           label: 'API Key',
-          placeholder: 'Enter your Moco API key',
           description: 'Generate an API key in your Moco account under Integrations',
           required: true,
         },

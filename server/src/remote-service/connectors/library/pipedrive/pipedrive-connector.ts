@@ -65,9 +65,7 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     incrementalPullInstructions: null,
     oauth: { label: 'OAuth' },
     credentialFields: {
-      user_provided_params: [
-        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
-      ],
+      user_provided_params: [{ key: 'apiKey', type: 'password', label: 'API Token', required: true }],
     },
   });
 

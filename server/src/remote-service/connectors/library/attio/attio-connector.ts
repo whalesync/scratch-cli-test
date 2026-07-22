@@ -77,7 +77,6 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
           key: 'apiKey',
           type: 'password',
           label: 'Access Token',
-          placeholder: 'Attio API access token',
           description: 'Generate an access token in Attio at Settings → Developers → Create access token.',
           required: true,
         },

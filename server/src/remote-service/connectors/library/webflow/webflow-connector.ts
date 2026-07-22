@@ -166,9 +166,7 @@ export class WebflowConnector extends Connector {
     incrementalPullInstructions:
       'Incremental pull using Webflow’s last-updated filter. The Assets, Pages, and Ecommerce Orders tables are not supported.',
     credentialFields: {
-      user_provided_params: [
-        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
-      ],
+      user_provided_params: [{ key: 'apiKey', type: 'password', label: 'API Token', required: true }],
     },
   });
   override supportsFileUpload = true;

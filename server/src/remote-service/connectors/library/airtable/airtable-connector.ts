@@ -106,7 +106,7 @@ export class AirtableConnector extends Connector {
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [
-        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
+        { key: 'apiKey', type: 'password', label: 'Personal Access Token', placeholder: 'pat...', required: true },
       ],
     },
   });

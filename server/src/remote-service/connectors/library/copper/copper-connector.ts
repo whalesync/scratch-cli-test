@@ -63,12 +63,13 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     visible: true,
     credentialFields: {
       user_provided_params: [
-        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter your Copper API key', required: true },
+        { key: 'apiKey', type: 'password', label: 'API Key', required: true },
         {
           key: 'email',
           type: 'string',
           label: 'Account Email',
-          placeholder: 'The email the API key was generated under',
+          placeholder: 'you@company.com',
+          description: 'The email the API key was generated under.',
           required: true,
         },
       ],

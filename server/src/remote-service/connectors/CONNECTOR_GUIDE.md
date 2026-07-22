@@ -915,7 +915,13 @@ export class MyConnector extends Connector {
     setupGuide: { label: 'Setup Guide', url: '/my-service-setup' }, // optional — link shown above credential fields
     credentialFields: {
       user_provided_params: [
-        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
+        // `label` is required and names the credential (e.g. "API Key", "Access
+        // Token"). Set `placeholder` ONLY when the value has a distinctive,
+        // recognizable shape — a prefix or format the user can match against
+        // what they already hold (e.g. `pat-na1-...`, `postgres://user:password@host`).
+        // Do NOT use the placeholder to repeat an instruction like "Enter API Key";
+        // if the token is shapeless (a bare UUID or random string), omit it.
+        { key: 'apiKey', type: 'password', label: 'API Key', required: true },
       ],
     },
   });
