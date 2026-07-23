@@ -111,6 +111,49 @@ function unwrapNotionProperty(value: unknown): unknown {
   return value;
 }
 
+/**
+ * The three (cross-version) boolean flags that mark a Notion page as archived or
+ * trashed: legacy `archived` (2025-09-03), `in_trash` (the 2026-03-11 rename of
+ * the soft-delete), and the distinct 2026-03-11 `is_archived`. A page pulled
+ * under either API version carries whichever spelling(s) its version emits.
+ */
+const NOTION_ARCHIVE_FLAG_FIELDS = ['archived', 'in_trash', 'is_archived'] as const;
+type NotionArchiveFlagField = (typeof NOTION_ARCHIVE_FLAG_FIELDS)[number];
+
+/**
+ * True when a Notion page is currently archived or trashed — any of the
+ * {@link NOTION_ARCHIVE_FLAG_FIELDS} is `true`.
+ *
+ * Archived pages are pulled verbatim (they stay paired with their source record
+ * on sync), so a synced edit lands on an archived page. Notion rejects editing
+ * an archived page ("Can't edit block that is archived. You must unarchive the
+ * block before editing."), so `updateRecords` clears these flags in the same
+ * `pages.update` that writes the properties — unarchiving and updating in one
+ * call, which restores the mirror without a delete/recreate (DEV-10957).
+ */
+export function isArchivedOrTrashedNotionPage(page: Record<string, unknown>): boolean {
+  return NOTION_ARCHIVE_FLAG_FIELDS.some((field) => page[field] === true);
+}
+
+/**
+ * Build the `pages.update` fields that unarchive a page. Only emits the flags
+ * the page actually carries (set to `false`), so we don't send a spelling the
+ * pinned API version doesn't understand. Empty when the page isn't archived.
+ *
+ * We clear whichever of `archived` / `in_trash` / `is_archived` are `true`:
+ * across API versions a user may see either the legacy `archived` or the newer
+ * `is_archived`, and we can't be sure which, so we handle both.
+ */
+function buildNotionUnarchiveFields(page: Record<string, unknown>): Partial<Record<NotionArchiveFlagField, false>> {
+  const unarchiveFields: Partial<Record<NotionArchiveFlagField, false>> = {};
+  for (const field of NOTION_ARCHIVE_FLAG_FIELDS) {
+    if (page[field] === true) {
+      unarchiveFields[field] = false;
+    }
+  }
+  return unarchiveFields;
+}
+
 export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   readonly service = Service.NOTION;
   static displayName = 'Notion';
@@ -1005,8 +1048,19 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       const properties = this.transformPropertiesForUpdate(writableChangedProperties);
 
       if (Object.keys(properties).length > 0) {
+        // If the destination page is archived in Notion, editing it would fail
+        // forever ("Can't edit block that is archived. You must unarchive the
+        // block before editing."). `pages.update` accepts the archive flags
+        // alongside `properties`, so we clear whichever flag(s) the pulled record
+        // carries in the SAME request — unarchiving and updating in one call,
+        // restoring the mirror without a delete/recreate (DEV-10957). A page
+        // archived in the sub-second window between the destination pull and this
+        // write still looks live here; that run's edit fails, but the next pull
+        // surfaces the flag and the following run unarchives it (self-healing).
+        const unarchiveFields = buildNotionUnarchiveFields(file);
         await this.client.updatePage({
           page_id: pageId,
+          ...unarchiveFields,
           properties: properties as CreatePageParameters['properties'],
         });
         updatedIndexes.push(i);
