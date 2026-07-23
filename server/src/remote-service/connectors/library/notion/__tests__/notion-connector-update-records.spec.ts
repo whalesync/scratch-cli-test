@@ -178,6 +178,79 @@ describe('NotionConnector.updateRecords', () => {
     expect((result as { page_content?: { id: string }[] }).page_content?.[0]?.id).toBe('block_fresh');
   });
 
+  // DEV-10955: Notion caps each rich_text/title span's content at 2000 chars and
+  // rejects an over-cap write. The span-split must run on the *update* path, not
+  // just create. The sparse changedFields diff drops each property's unchanged
+  // `type` envelope key (only the edited `rich_text` array survives), so keying
+  // the split off `prop.type` skipped it on every edit and refailed the record
+  // forever. The split must key off the value-bearing property instead.
+  it('splits an over-cap rich_text span on the update path even though the diff lacks the `type` key', async () => {
+    const longContent = 'a'.repeat(5000);
+    const files: ConnectorFile[] = [
+      {
+        id: 'page_1',
+        properties: {
+          Body: { id: 'pid_a', type: 'rich_text', rich_text: [{ type: 'text', text: { content: 'old' } }] },
+        },
+      },
+    ];
+    // The sparse changed-fields diff for an edited rich_text property carries only
+    // the changed `rich_text` array — the unchanged `type`/`id` keys are gone.
+    const changedFields: Record<string, unknown>[] = [
+      {
+        properties: {
+          Body: {
+            rich_text: [{ type: 'text', text: { content: longContent }, plain_text: longContent }],
+          },
+        },
+      },
+    ];
+
+    await connector.updateRecords(buildTableSpec(), files, changedFields);
+
+    expect(mockUpdatePage).toHaveBeenCalledTimes(1);
+    const [callArg] = mockUpdatePage.mock.calls[0] as [{ page_id: string; properties: Record<string, unknown> }];
+    const sentBody = callArg.properties.Body as { rich_text: { text: { content: string } }[] };
+    // 5000 chars → 3 spans (2000 + 2000 + 1000), each within the cap, concatenating
+    // back to the original value with no separator.
+    expect(sentBody.rich_text).toHaveLength(3);
+    for (const span of sentBody.rich_text) {
+      expect(span.text.content.length).toBeLessThanOrEqual(2000);
+    }
+    expect(sentBody.rich_text.map((span) => span.text.content).join('')).toBe(longContent);
+  });
+
+  // Same over-cap split must run for a `title` property on the update path.
+  it('splits an over-cap title span on the update path even though the diff lacks the `type` key', async () => {
+    const longContent = 'b'.repeat(4001);
+    const files: ConnectorFile[] = [
+      {
+        id: 'page_1',
+        properties: {
+          Name: { id: 'pid_a', type: 'title', title: [{ type: 'text', text: { content: 'old' } }] },
+        },
+      },
+    ];
+    const changedFields: Record<string, unknown>[] = [
+      {
+        properties: {
+          Name: { title: [{ type: 'text', text: { content: longContent }, plain_text: longContent }] },
+        },
+      },
+    ];
+
+    await connector.updateRecords(buildTableSpec(), files, changedFields);
+
+    expect(mockUpdatePage).toHaveBeenCalledTimes(1);
+    const [callArg] = mockUpdatePage.mock.calls[0] as [{ page_id: string; properties: Record<string, unknown> }];
+    const sentName = callArg.properties.Name as { title: { text: { content: string } }[] };
+    expect(sentName.title).toHaveLength(3);
+    for (const span of sentName.title) {
+      expect(span.text.content.length).toBeLessThanOrEqual(2000);
+    }
+    expect(sentName.title.map((span) => span.text.content).join('')).toBe(longContent);
+  });
+
   // DEV-10742: `pages.retrieve` echoes Notion's top-level `request_id` transport
   // wrapper, which pull (Search / data-source query) never carries. Left on the
   // refetched record it makes the post-publish blob differ from the next pull, so

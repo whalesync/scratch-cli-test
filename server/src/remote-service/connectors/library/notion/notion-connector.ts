@@ -865,8 +865,18 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       // ≤ 2000"). Split any oversized span across consecutive spans so a long
       // synced value publishes instead of being rejected. Only the outbound
       // payload is reshaped; the record on disk is untouched.
-      if ((propType === 'rich_text' || propType === 'title') && Array.isArray(rest[propType])) {
-        rest[propType] = splitRichTextSpansToNotionLimit(rest[propType] as unknown[]);
+      //
+      // Key the split off the value-bearing property (`rich_text` / `title`),
+      // not off `prop.type`: the update path feeds a sparse changed-fields diff
+      // (`computeChangedFields` → `pickByShape`) that drops the unchanged `type`
+      // envelope key, so `propType` is undefined for an edited long-text field.
+      // Reading `prop.type` here would skip the split on every edit and refail
+      // the record forever (DEV-10955). The value key is present on both the
+      // create path (full read-format record) and the update path (the diff).
+      for (const spanArrayPropertyKey of ['rich_text', 'title'] as const) {
+        if (Array.isArray(rest[spanArrayPropertyKey])) {
+          rest[spanArrayPropertyKey] = splitRichTextSpansToNotionLimit(rest[spanArrayPropertyKey] as unknown[]);
+        }
       }
 
       // Only include if there's actual content to update
