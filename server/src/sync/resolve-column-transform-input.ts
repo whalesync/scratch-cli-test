@@ -46,6 +46,11 @@ export function resolveColumnTransformInput(args: {
     displayTransformerAsToCore(viewNode?.displayTransformer) ??
     ancestorField?.suggestedTransformer;
   const fromCore = viewNode?.codec?.fromCore ?? ancestorField?.suggestedInTransformer;
+  // The pack's declared input primitive rides with the schema hint, not the view codec — so it applies
+  // only when `fromCore` came from the ancestor field's `suggestedInTransformer` (a native pack), not a
+  // view-supplied codec.
+  const fromCoreInputType =
+    viewNode?.codec?.fromCore === undefined ? ancestorField?.suggestedInTransformerInputType : undefined;
 
   const jsonType = resolveSchemaTypeAtPath(schema, columnId);
   const logicalType = viewNode?.logicalType ?? ancestorField?.type;
@@ -59,6 +64,7 @@ export function resolveColumnTransformInput(args: {
     ...(logicalType !== undefined ? { logicalType } : {}),
     ...(toCore ? { toCore } : {}),
     ...(fromCore ? { fromCore } : {}),
+    ...(fromCoreInputType ? { fromCoreInputType } : {}),
   };
 }
 
@@ -72,10 +78,12 @@ export function resolveColumnTransformInput(args: {
 export function columnTransformInputFromSchemaField(field: SchemaField | undefined): ColumnTransformInput {
   const jsonType = field?.type;
   const fromCore = field?.suggestedInTransformer;
+  const fromCoreInputType = field?.suggestedInTransformerInputType;
   return {
     cardinality: fromCore ? transformerInputCardinality(fromCore) : nativeCardinality(jsonType),
     ...(jsonType && jsonType !== 'unknown' ? { primitiveType: jsonType, logicalType: jsonType } : {}),
     ...(fromCore ? { fromCore } : {}),
+    ...(fromCoreInputType ? { fromCoreInputType } : {}),
   };
 }
 

@@ -525,6 +525,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               },
               "type": "wrap_object",
             },
+            "x-scratch-suggested-in-transformer-input-type": "string",
             "x-scratch-suggested-transformer": {
               "options": {
                 "arrayHandling": "concat",
@@ -564,6 +565,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               },
               "type": "wrap_object",
             },
+            "x-scratch-suggested-in-transformer-input-type": "boolean",
           },
           "Due Date": {
             "description": "Due Date",
@@ -655,6 +657,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               },
               "type": "wrap_object",
             },
+            "x-scratch-suggested-in-transformer-input-type": "string",
           },
           "Estimate": {
             "description": "Estimate",
@@ -698,6 +701,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               },
               "type": "wrap_object",
             },
+            "x-scratch-suggested-in-transformer-input-type": "number",
           },
           "Link": {
             "description": "Link",
@@ -741,6 +745,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               },
               "type": "wrap_object",
             },
+            "x-scratch-suggested-in-transformer-input-type": "string",
           },
           "Linked Count": {
             "description": "Linked Count",
@@ -942,6 +947,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               },
               "type": "wrap_object",
             },
+            "x-scratch-suggested-in-transformer-input-type": "string",
             "x-scratch-virtual-fields": [
               {
                 "displayLabel": "Name",
@@ -998,6 +1004,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               },
               "type": "wrap_object",
             },
+            "x-scratch-suggested-in-transformer-input-type": "string",
           },
           "Priority": {
             "description": "Priority",
@@ -1059,6 +1066,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               },
               "type": "wrap_object",
             },
+            "x-scratch-suggested-in-transformer-input-type": "string",
           },
           "Score": {
             "description": "Score",

@@ -9,8 +9,10 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
+  X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
+  type PackInputPrimitive,
 } from '@spinner/shared-types';
 
 /**
@@ -102,6 +104,8 @@ export interface SchemaField {
   suggestedTransformer?: TransformerConfig;
   /** Pack transform applied when this field is a sync destination (plain → native). */
   suggestedInTransformer?: TransformerConfig;
+  /** The CoreValue primitive `suggestedInTransformer` consumes (`'string'`/`'number'`/`'boolean'`), when declared. */
+  suggestedInTransformerInputType?: PackInputPrimitive;
   readonly?: boolean;
   foreignKey?: { linkedTableId: string; inverseFieldId?: string; isSingleValued?: boolean };
 }
@@ -196,6 +200,10 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     if (suggested) field.suggestedTransformer = suggested;
     const suggestedIn = schema[X_SCRATCH_SUGGESTED_IN_TRANSFORMER] as TransformerConfig | undefined;
     if (suggestedIn) field.suggestedInTransformer = suggestedIn;
+    const suggestedInInputType = schema[X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE] as
+      | PackInputPrimitive
+      | undefined;
+    if (suggestedInInputType) field.suggestedInTransformerInputType = suggestedInInputType;
     if (schema[X_SCRATCH_READONLY] === true) field.readonly = true;
     const fk = schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] as ForeignKeyOptionSchema | undefined;
     if (fk?.linkedTableId) {

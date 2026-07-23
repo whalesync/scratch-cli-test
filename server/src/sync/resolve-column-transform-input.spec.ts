@@ -169,6 +169,22 @@ describe('columnTransformInputFromSchemaField (destination side)', () => {
     });
   });
 
+  it('propagates the declared pack input primitive (fromCoreInputType) from the schema field (DEV-10952)', () => {
+    const destField: SchemaField = {
+      path: 'Notes',
+      type: 'object', // Notion property envelope
+      suggestedInTransformer: notesPack,
+      suggestedInTransformerInputType: 'string',
+    };
+    expect(columnTransformInputFromSchemaField(destField)).toEqual({
+      cardinality: 'single',
+      primitiveType: 'object',
+      logicalType: 'object',
+      fromCore: notesPack,
+      fromCoreInputType: 'string',
+    });
+  });
+
   it('handles an undefined destination field', () => {
     expect(columnTransformInputFromSchemaField(undefined)).toEqual({ cardinality: 'single' });
   });

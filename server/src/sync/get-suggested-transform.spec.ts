@@ -26,10 +26,20 @@ const richTextPack: ClientSafeTransformer = {
 
 const takeFirst: TransformerConfig = { type: 'jsonpath', options: { expression: '$[*]', arrayHandling: 'first' } };
 const wrapArray: TransformerConfig = { type: 'auto_convert', options: { targetType: 'array' } };
-const autoConvert = (targetType: 'string' | 'number'): TransformerConfig => ({
+const autoConvert = (targetType: 'string' | 'number' | 'boolean'): TransformerConfig => ({
   type: 'auto_convert',
   options: { targetType },
 });
+
+// A native-scalar pack (Notion `number`) and a boolean pack (Notion `checkbox`).
+const numberPack: ClientSafeTransformer = {
+  type: 'wrap_object',
+  options: { template: { type: 'number', number: '$value' } },
+};
+const checkboxPack: ClientSafeTransformer = {
+  type: 'wrap_object',
+  options: { template: { type: 'checkbox', checkbox: '$value' } },
+};
 
 describe('getSuggestedTransform', () => {
   it('always returns a valid result with a non-empty options tuple', () => {
@@ -224,6 +234,105 @@ describe('getSuggestedTransform', () => {
         col({ cardinality: 'multi', fromCore: richTextPack }),
       );
       expect(chainOf(suggestion)).toEqual([richTextPack]);
+    });
+  });
+
+  // DEV-10952: a pack that DECLARES the primitive it consumes (`fromCoreInputType`) gets a robust,
+  // source-type-agnostic pre-pack coercion — closing the legacy heuristic's blind spots for KNOWN
+  // scalars and arrays landing in a text pack, while leaving native-scalar packs their raw value.
+  describe('declared pack input type (DEV-10952)', () => {
+    // A text-shaped pack whose `$value` slot needs a string (Notion rich_text/title `content`).
+    const textPack = { ...richTextPack };
+
+    it('stringifies a KNOWN numeric scalar source before a string-consuming pack (Postgres serial pkey `2`)', () => {
+      // The legacy heuristic exempts `number`, so `2` reached Notion rich_text raw → every record rejected.
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'number' }),
+            col({ primitiveType: 'string', fromCore: textPack, fromCoreInputType: 'string' }),
+          ),
+        ),
+      ).toEqual([autoConvert('string'), textPack]);
+    });
+
+    it('JOINS (not take-first) a multi array source into a string-consuming pack, keeping every element', () => {
+      // Postgres `integer[]` / Airtable `multipleAttachments`: the join stringifies the whole array
+      // ("0, -2147483648"), instead of take-first handing a lone raw element to the pack.
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ cardinality: 'multi', primitiveType: 'array' }),
+            col({ cardinality: 'single', primitiveType: 'string', fromCore: textPack, fromCoreInputType: 'string' }),
+          ),
+        ),
+      ).toEqual([autoConvert('string'), textPack]);
+    });
+
+    it('does NOT double-coerce a string source into a string-consuming pack (verbatim text → rich_text)', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'string' }),
+            col({ primitiveType: 'string', fromCore: textPack, fromCoreInputType: 'string' }),
+          ),
+        ),
+      ).toEqual([textPack]);
+    });
+
+    it('runs a source toCore then packs (no extra stringify) into a string-consuming pack', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ toCore: richTextUnpack }),
+            col({ primitiveType: 'string', fromCore: textPack, fromCoreInputType: 'string' }),
+          ),
+        ),
+      ).toEqual([richTextUnpack, textPack]);
+    });
+
+    it('leaves a numeric scalar source un-coerced into a NUMBER-consuming pack (number → Notion number)', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'number' }),
+            col({ primitiveType: 'object', fromCore: numberPack, fromCoreInputType: 'number' }),
+          ),
+        ),
+      ).toEqual([numberPack]);
+    });
+
+    it('coerces a string source to number before a NUMBER-consuming pack (text "5" → Notion number)', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'string' }),
+            col({ primitiveType: 'object', fromCore: numberPack, fromCoreInputType: 'number' }),
+          ),
+        ),
+      ).toEqual([autoConvert('number'), numberPack]);
+    });
+
+    it('leaves a boolean scalar source un-coerced into a BOOLEAN-consuming pack (checkbox)', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'boolean' }),
+            col({ primitiveType: 'object', fromCore: checkboxPack, fromCoreInputType: 'boolean' }),
+          ),
+        ),
+      ).toEqual([checkboxPack]);
+    });
+
+    it('stringifies an object source into a string-consuming pack (attachment object → rich_text)', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'object' }),
+            col({ primitiveType: 'string', fromCore: textPack, fromCoreInputType: 'string' }),
+          ),
+        ),
+      ).toEqual([autoConvert('string'), textPack]);
     });
   });
 });

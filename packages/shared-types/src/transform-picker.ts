@@ -21,7 +21,20 @@ export interface FieldTransformHints {
   suggestedTransformer?: TransformerConfig;
   /** Pack transform applied when this field is a sync destination. */
   suggestedInTransformer?: TransformerConfig;
+  /** The CoreValue primitive `suggestedInTransformer` CONSUMES, when the pack constrains it. See {@link PackInputPrimitive}. */
+  suggestedInTransformerInputType?: PackInputPrimitive;
 }
+
+/**
+ * The CoreValue primitive a destination `fromCore`/`suggestedInTransformer` pack CONSUMES in its
+ * `$value` slot: `'string'` for a text-shaped pack (a Notion rich_text/title/url/select string slot,
+ * a Webflow option id), `'number'`/`'boolean'` for a native-scalar pack (a Notion number/checkbox).
+ * Declared per single-value pack by the connector; drives the picker's pre-pack coercion so a
+ * non-matching source value is coerced to the pack's input primitive before it reaches the connector
+ * write (DEV-10952). Absent → the pack's input is unconstrained and the legacy source-type heuristic
+ * decides.
+ */
+export type PackInputPrimitive = 'string' | 'number' | 'boolean';
 
 /**
  * The connector-neutral CORE value — the lingua franca a value is copied *through* during a
@@ -94,6 +107,13 @@ export interface ColumnTransformInput {
   toCore?: TransformerConfig;
   /** Resolved pack codec (CoreValue → native); consumed when this column is the sync DESTINATION. */
   fromCore?: TransformerConfig;
+  /**
+   * The CoreValue primitive `fromCore` CONSUMES in its `$value` slot, when the pack constrains it (see
+   * {@link PackInputPrimitive}). Set by the resolver from the destination field's connector hint. When
+   * present, the picker guarantees the value entering the pack matches it — coercing a non-matching
+   * source (a raw number into a text slot, a first-/join-collapsed array, a JSON object) first (DEV-10952).
+   */
+  fromCoreInputType?: PackInputPrimitive;
 }
 
 const AUTO_CONVERTIBLE_TARGET_TYPES: ReadonlySet<string> = new Set<AutoConvertOptions['targetType']>([
@@ -151,22 +171,34 @@ export function pickMappingTransformers(
   destinationField: FieldTransformHints | undefined,
 ): TransformerConfig[] {
   const transformers: TransformerConfig[] = [];
-  if (sourceField?.suggestedTransformer) {
-    transformers.push(sourceField.suggestedTransformer);
-  } else if (destinationField?.suggestedInTransformer && sourceValueMayReachPackAsNonString(sourceField?.type)) {
-    // Same hole as getSuggestedTransform's pre-pack stringify (see below): a destination pack
-    // consumes a CoreValue STRING, but with no source unpack hint nothing normalizes the raw
-    // value. A source whose declared type is `object`, or whose type is UNKNOWN (absent /
-    // `'unknown'` — an un-modeled connector field like Webflow's e-commerce `sku-properties`,
-    // or a drilled path with no flattened field), can hand the pack a raw object that the
-    // service then rejects (DEV-10828 / DEV-10875: objects landing in Notion rich_text's
-    // string-only `content` slot). JSON-stringify first — identity for strings, total for
-    // everything else. Known scalars (number/boolean) still reach a native pack un-stringified,
-    // and a declared `array` source is left alone (its natural pairing is an array-consuming
-    // pack, e.g. a multi_select `map_array`).
-    transformers.push({ type: TransformerTypes.AutoConvert, options: { targetType: 'string' } });
+  if (sourceField?.suggestedTransformer) transformers.push(sourceField.suggestedTransformer);
+  if (destinationField?.suggestedInTransformer) {
+    const packInputType = destinationField.suggestedInTransformerInputType;
+    if (packInputType) {
+      // The pack declares the primitive it CONSUMES. Guarantee the value entering it matches, coercing
+      // a non-matching source first (a Postgres integer `2` / an object into a text pack; a text `"5"`
+      // into a number pack) rather than letting the raw value reach the connector write and be rejected
+      // (DEV-10952). With a source unpack the value is already a CoreValue STRING; without one the raw
+      // source value carries its declared JSON primitive. `auto_convert` is identity when it already
+      // matches and total otherwise.
+      const primitiveEnteringPack = sourceField?.suggestedTransformer ? 'string' : sourceField?.type;
+      if (primitiveEnteringPack !== packInputType) {
+        transformers.push({ type: TransformerTypes.AutoConvert, options: { targetType: packInputType } });
+      }
+    } else if (!sourceField?.suggestedTransformer && sourceValueMayReachPackAsNonString(sourceField?.type)) {
+      // LEGACY heuristic for a pack that does NOT declare its input type: a destination pack consumes a
+      // CoreValue STRING, but with no source unpack hint nothing normalizes the raw value. A source
+      // whose declared type is `object`, or whose type is UNKNOWN (absent / `'unknown'` — an un-modeled
+      // connector field like Webflow's e-commerce `sku-properties`, or a drilled path with no flattened
+      // field), can hand the pack a raw object that the service then rejects (DEV-10828 / DEV-10875:
+      // objects landing in Notion rich_text's string-only `content` slot). JSON-stringify first —
+      // identity for strings, total for everything else. Known scalars (number/boolean) still reach a
+      // native pack un-stringified, and a declared `array` source is left alone (its natural pairing is
+      // an array-consuming pack, e.g. a multi_select `map_array`).
+      transformers.push({ type: TransformerTypes.AutoConvert, options: { targetType: 'string' } });
+    }
+    transformers.push(destinationField.suggestedInTransformer);
   }
-  if (destinationField?.suggestedInTransformer) transformers.push(destinationField.suggestedInTransformer);
   if (transformers.length > 0) return transformers;
 
   // No connector hints on either side. Append a generic coercion to the destination
@@ -261,17 +293,17 @@ function selectCardinalityReshape(
  * append a generic `auto_convert` to its primitive type so the pipeline is TOTAL BY CONSTRUCTION
  * (a non-scalar going into a text column serializes rather than failing save-time validation). Skipped
  * when the destination primitive is unknown / non-coercible (a structured native destination relies on
- * its own pack), when the cardinality reshape already guaranteed that primitive, or when the pair is
- * already the same shape and same type (no coercion needed).
+ * its own pack), when the value entering the destination stage already matches that primitive, or when
+ * the pair is already the same shape and same type (no coercion needed).
  */
 function coercionFloorForDestination(
   source: ColumnTransformInput,
   destination: ColumnTransformInput,
-  reshapeOutputPrimitive: CardinalityReshape['outputPrimitive'],
+  primitiveEnteringDestinationStage: string | undefined,
 ): TransformerConfig | undefined {
   const targetType = destination.primitiveType;
   if (!targetType || !AUTO_CONVERTIBLE_TARGET_TYPES.has(targetType)) return undefined;
-  if (reshapeOutputPrimitive === targetType) return undefined; // the middle already produced this shape
+  if (primitiveEnteringDestinationStage === targetType) return undefined; // already the target shape
   const isSameShapeSameType =
     source.toCore === undefined &&
     source.cardinality === destination.cardinality &&
@@ -312,49 +344,71 @@ export function getSuggestedTransform(
     transformerChain.push(source.toCore);
   } else if (
     destination.fromCore &&
+    destination.fromCoreInputType === undefined &&
     source.cardinality === 'single' &&
     (source.primitiveType === undefined || NON_SCALAR_SOURCE_PRIMITIVE_TYPES.has(source.primitiveType))
   ) {
-    // A scalar-cardinality source whose raw value is a nested object / JSON array is NOT a valid
-    // CoreValue (which must be a string), and with no `toCore` codec nothing normalizes it. A
-    // destination `fromCore` pack assumes it receives a CoreValue and substitutes the value straight
-    // into its native envelope — e.g. Notion's `rich_text` pack drops it into a string-only `content`
-    // slot via `wrap_object` — so the raw object reaches the connector's write API and is rejected
-    // (DEV-10828: Shopify's `featuredImage` / `category` objects mapped to a Notion rich_text column).
-    // JSON-stringify it into a CoreValue string first. This mirrors the coercion floor's own
-    // object→string degrade on the pack-LESS path (see `coercionFloorForDestination` and
-    // auto-convert's `convertToString`), extending it to the pack path the floor skips. Gated on
-    // `destination.fromCore` so the pack-less path keeps flooring exactly as before (no double
-    // coercion).
+    // LEGACY pre-pack stringify, for a pack that does NOT declare the primitive it consumes
+    // (`fromCoreInputType`). A scalar-cardinality source whose raw value is a nested object / JSON
+    // array is NOT a valid CoreValue (which must be a string), and with no `toCore` codec nothing
+    // normalizes it. A destination `fromCore` pack assumes it receives a CoreValue and substitutes the
+    // value straight into its native envelope — e.g. Notion's `rich_text` pack drops it into a
+    // string-only `content` slot via `wrap_object` — so the raw object reaches the connector's write
+    // API and is rejected (DEV-10828: Shopify's `featuredImage` / `category` objects mapped to a Notion
+    // rich_text column). JSON-stringify it into a CoreValue string first.
     //
-    // An UNKNOWN-typed source (`primitiveType` absent — the connector schema declares no type, e.g.
-    // Webflow's un-modeled e-commerce fields `sku-properties`/`sku-values`, typed `Type.Unknown()`
-    // until DEV-10937 models them) is stringified too: nothing guarantees its runtime value is a
-    // CoreValue string, and an object/array slipping through the pack un-stringified is a guaranteed
-    // connector rejection (DEV-10875's Notion `validation_error` cascade). `auto_convert('string')`
-    // is identity for strings and total for everything else, so the chain stays correct for every
-    // runtime shape. The one trade-off: an unknown-typed source that happens to hold a number now
-    // reaches a native number/checkbox pack as "5" instead of 5 — that pairing only arises from a
-    // schema-blind manual mapping, and the durable fix there is typing the source schema. KNOWN
-    // scalar sources (number/boolean) still reach a native pack un-stringified.
+    // This narrow, source-type heuristic is the FALLBACK now. When the pack DECLARES its input type
+    // (`fromCoreInputType`), step 3 below handles the coercion for EVERY source shape — including known
+    // scalars (a Postgres integer `2`) and collapsed arrays that this legacy guard deliberately skipped
+    // (DEV-10952). Gated on `destination.fromCore` so the pack-less path keeps flooring exactly as
+    // before (no double coercion). KNOWN scalar sources (number/boolean) still reach an un-declared
+    // native pack un-stringified.
     transformerChain.push({ type: TransformerTypes.AutoConvert, options: { targetType: 'string' } });
   }
 
   // 2. Middle: reshape the source cardinality arm to the destination's (the only stage that knows both).
-  const reshape = selectCardinalityReshape(source.cardinality, destination.cardinality, destination.logicalType);
+  //    A string-consuming pack is TEXT-LIKE for the collapse policy: a multi→single copy into it JOINS
+  //    every element (comma-separated) rather than taking the first, since the joined string is exactly
+  //    what the pack's text slot wants — a Postgres `integer[]` lands as "0, -2147483648", not a lone
+  //    "0", and every attachment survives (DEV-10952). The declared pack input type overrides the
+  //    envelope's raw JSON `logicalType` (a Notion property envelope is `object`, which would otherwise
+  //    force take-first).
+  const collapseLogicalType = destination.fromCoreInputType === 'string' ? 'string' : destination.logicalType;
+  const reshape = selectCardinalityReshape(source.cardinality, destination.cardinality, collapseLogicalType);
   transformerChain.push(...reshape.transformers);
+
+  // The JSON primitive the chain is known to produce BEFORE the destination stage: the reshape's
+  // guarantee, else — when a `toCore` ran — the arm implied by the destination cardinality
+  // (single→string, multi→array), else — for a raw same-cardinality source with no codec — the source's
+  // own declared primitive (a scalar copied straight through). Lets both the pack coercion and the floor
+  // no-op when the value already matches the target.
+  const primitiveEnteringDestinationStage =
+    reshape.outputPrimitive ??
+    (source.toCore
+      ? destination.cardinality === 'multi'
+        ? 'array'
+        : 'string'
+      : source.cardinality === destination.cardinality
+        ? source.primitiveType
+        : undefined);
 
   // 3. Destination half: CoreValue → native (source-agnostic). Explicit pack, else the coercion floor.
   if (destination.fromCore) {
+    // Guarantee the value entering the pack matches the primitive it CONSUMES, when declared — coercing
+    // a non-matching source (a raw number into a text slot, a first-collapsed array element, a JSON
+    // object; or a text `"5"` into a number slot) rather than letting the raw value reach the connector
+    // write and be rejected (DEV-10952). `auto_convert` is identity when the value already matches and
+    // total for every other shape. When the pack declares no input type, the legacy step-1 stringify
+    // (above) is the only pre-pack coercion, unchanged.
+    if (destination.fromCoreInputType && primitiveEnteringDestinationStage !== destination.fromCoreInputType) {
+      transformerChain.push({
+        type: TransformerTypes.AutoConvert,
+        options: { targetType: destination.fromCoreInputType },
+      });
+    }
     transformerChain.push(destination.fromCore);
   } else {
-    // The JSON primitive the chain is known to produce before any floor: the reshape's guarantee, else —
-    // when a `toCore` ran — the arm implied by the destination cardinality (single→string, multi→array).
-    // This lets the floor no-op when the value already matches the target (rich_text→text is just [toCore]).
-    const guaranteedPrimitive =
-      reshape.outputPrimitive ??
-      (source.toCore ? (destination.cardinality === 'multi' ? 'array' : 'string') : undefined);
-    const floor = coercionFloorForDestination(source, destination, guaranteedPrimitive);
+    const floor = coercionFloorForDestination(source, destination, primitiveEnteringDestinationStage);
     if (floor) transformerChain.push(floor);
   }
 

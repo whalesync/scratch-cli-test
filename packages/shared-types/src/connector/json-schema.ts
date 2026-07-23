@@ -39,6 +39,18 @@ export const X_SCRATCH_SUGGESTED_TRANSFORMER = 'x-scratch-suggested-transformer'
 // The suggested transformer to auto-apply when this field is selected as a destination in the sync editor.
 export const X_SCRATCH_SUGGESTED_IN_TRANSFORMER = 'x-scratch-suggested-in-transformer';
 
+// The CoreValue primitive that this field's `x-scratch-suggested-in-transformer` pack CONSUMES in its
+// `$value` slot, when the pack constrains it: `'string'` for a text-shaped pack (a Notion
+// rich_text/title/url/select string slot, a Webflow option id), `'number'`/`'boolean'` for a
+// native-scalar pack (a Notion number/checkbox). Lets the connector-agnostic transform picker
+// guarantee the value entering a pack matches the primitive it needs — coercing a non-matching source
+// (a Postgres integer `2`, a JSON object, a collapsed array element) BEFORE the pack rather than
+// letting the raw value reach the connector write and be rejected (`text.content should be a string`,
+// DEV-10952). Only set on SINGLE-value packs; an array-folding pack (Notion relation `map_array`)
+// omits it. Absent → the pack's input is unconstrained and the picker's legacy source-type heuristic
+// decides (unchanged for any connector that declares no pack input type).
+export const X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE = 'x-scratch-suggested-in-transformer-input-type';
+
 // An array of virtual field definitions that provide human-readable shortcuts for complex nested fields.
 export const X_SCRATCH_VIRTUAL_FIELDS = 'x-scratch-virtual-fields';
 

@@ -10,9 +10,11 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
+  X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
   type ForeignKeyOptionSchema,
+  type PackInputPrimitive,
   type TransformerConfig,
   type VirtualFieldDef,
 } from '@spinner/shared-types';
@@ -509,7 +511,12 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
   // Declarative transform hints so a sync wraps/unwraps the Notion envelope
   // automatically (see notionInboundPackTransformer / notionOutboundUnpackTransformer).
   const inboundPack = notionInboundPackTransformer(property.type);
-  if (inboundPack) schema[X_SCRATCH_SUGGESTED_IN_TRANSFORMER] = inboundPack;
+  if (inboundPack) {
+    schema[X_SCRATCH_SUGGESTED_IN_TRANSFORMER] = inboundPack;
+    // The primitive this pack consumes, so the picker coerces a non-matching source before it (DEV-10952).
+    const inboundPackInputType = notionInboundPackInputType(property.type);
+    if (inboundPackInputType) schema[X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE] = inboundPackInputType;
+  }
   // `title`/`files` already expose their unpack via a virtual field; don't override it.
   if (!virtualFields) {
     const outboundUnpack = notionOutboundUnpackTransformer(property.type);
@@ -597,6 +604,35 @@ function notionInboundPackTransformer(notionType: string): TransformerConfig | u
           resultTemplate: { type: 'relation', relation: '$value' },
         },
       };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The CoreValue primitive that {@link notionInboundPackTransformer}'s pack CONSUMES in its `$value`
+ * slot, for the SINGLE-value packs — so the connector-agnostic transform picker can guarantee the
+ * value entering the pack matches, coercing a non-matching source first instead of letting it reach
+ * Notion's write API and be rejected (DEV-10952: a Postgres integer `2` or an Airtable attachment
+ * object landing raw in a `rich_text`/`title` string slot). Text-shaped slots (title/rich_text
+ * `content`, url/email/phone/select/date strings) consume `'string'`; the native-scalar slots consume
+ * `'number'` (number) / `'boolean'` (checkbox). `relation` is a multi-value `map_array` pack (its
+ * element ids are already CoreValue strings), so it declares nothing here.
+ */
+function notionInboundPackInputType(notionType: string): PackInputPrimitive | undefined {
+  switch (notionType) {
+    case 'title':
+    case 'rich_text':
+    case 'url':
+    case 'email':
+    case 'phone_number':
+    case 'select':
+    case 'date':
+      return 'string';
+    case 'number':
+      return 'number';
+    case 'checkbox':
+      return 'boolean';
     default:
       return undefined;
   }

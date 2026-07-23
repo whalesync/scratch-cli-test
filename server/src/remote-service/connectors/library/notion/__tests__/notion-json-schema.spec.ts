@@ -8,6 +8,7 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
+  X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
 } from '@spinner/shared-types';
@@ -105,6 +106,26 @@ describe('notionPropertyToJsonSchema — transform hints', () => {
 
   it('deferred / reference types carry no pack hint', () => {
     expect(prop('multi_select')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toBeUndefined();
+  });
+
+  // DEV-10952: each single-value pack declares the CoreValue primitive it consumes, so the picker
+  // coerces a non-matching source (a Postgres integer, an attachment object, a text "5") before it.
+  it('declares the pack input primitive: string for text slots, number/boolean for native scalars', () => {
+    for (const stringPackType of ['title', 'rich_text', 'url', 'email', 'phone_number', 'select', 'date']) {
+      expect(prop(stringPackType)[X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE]).toBe('string');
+    }
+    expect(prop('number')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE]).toBe('number');
+    expect(prop('checkbox')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE]).toBe('boolean');
+  });
+
+  it('relation (a multi-value map_array pack) declares no single-value input type', () => {
+    expect(
+      prop('relation', { relation: { database_id: 'db1' } })[X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE],
+    ).toBeUndefined();
+  });
+
+  it('a type with no pack hint declares no input type', () => {
+    expect(prop('multi_select')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE]).toBeUndefined();
   });
 
   it('relation packs a CoreValue id array into the relation envelope (DEV-10942)', () => {

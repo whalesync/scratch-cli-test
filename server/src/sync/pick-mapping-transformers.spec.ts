@@ -97,4 +97,57 @@ describe('pickMappingTransformers', () => {
       ]);
     });
   });
+
+  // DEV-10952: when the pack DECLARES the primitive it consumes, coercion is driven by that primitive
+  // (not the source-type heuristic), closing the blind spot for known scalars / arrays into a text pack.
+  describe('declared pack input type (DEV-10952)', () => {
+    const stringify: TransformerConfig = { type: 'auto_convert', options: { targetType: 'string' } };
+    const numberPack: TransformerConfig = { type: 'wrap_object', options: { template: { number: '$value' } } };
+    const toNumber: TransformerConfig = { type: 'auto_convert', options: { targetType: 'number' } };
+
+    it('stringifies a KNOWN numeric source into a string-consuming pack (Postgres integer → rich_text)', () => {
+      expect(
+        pickMappingTransformers(
+          field({ type: 'number' }),
+          field({ suggestedInTransformer: pack, suggestedInTransformerInputType: 'string' }),
+        ),
+      ).toEqual([stringify, pack]);
+    });
+
+    it('does NOT stringify a string source into a string-consuming pack', () => {
+      expect(
+        pickMappingTransformers(
+          field({ type: 'string' }),
+          field({ suggestedInTransformer: pack, suggestedInTransformerInputType: 'string' }),
+        ),
+      ).toEqual([pack]);
+    });
+
+    it('runs source unpack (already a CoreValue string) then the string pack — no extra coercion', () => {
+      expect(
+        pickMappingTransformers(
+          field({ type: 'object', suggestedTransformer: unpack }),
+          field({ suggestedInTransformer: pack, suggestedInTransformerInputType: 'string' }),
+        ),
+      ).toEqual([unpack, pack]);
+    });
+
+    it('coerces a string source to number before a number-consuming pack (text "5" → Notion number)', () => {
+      expect(
+        pickMappingTransformers(
+          field({ type: 'string' }),
+          field({ suggestedInTransformer: numberPack, suggestedInTransformerInputType: 'number' }),
+        ),
+      ).toEqual([toNumber, numberPack]);
+    });
+
+    it('leaves a numeric source un-coerced into a number-consuming pack', () => {
+      expect(
+        pickMappingTransformers(
+          field({ type: 'number' }),
+          field({ suggestedInTransformer: numberPack, suggestedInTransformerInputType: 'number' }),
+        ),
+      ).toEqual([numberPack]);
+    });
+  });
 });
