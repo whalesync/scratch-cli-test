@@ -103,7 +103,9 @@ describe('pickMappingTransformers', () => {
   describe('declared pack input type (DEV-10952)', () => {
     const stringify: TransformerConfig = { type: 'auto_convert', options: { targetType: 'string' } };
     const numberPack: TransformerConfig = { type: 'wrap_object', options: { template: { number: '$value' } } };
-    const toNumber: TransformerConfig = { type: 'auto_convert', options: { targetType: 'number' } };
+    // Coercion into a native-scalar pack carries `preserveNull` so an empty source clears the field via
+    // the pack's emptyTemplate instead of coercing null→0 (DEV-10953).
+    const toNumber: TransformerConfig = { type: 'auto_convert', options: { targetType: 'number', preserveNull: true } };
 
     it('stringifies a KNOWN numeric source into a string-consuming pack (Postgres integer → rich_text)', () => {
       expect(

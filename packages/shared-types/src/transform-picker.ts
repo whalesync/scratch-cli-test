@@ -143,6 +143,22 @@ function sourceValueMayReachPackAsNonString(sourceType: string | undefined): boo
 }
 
 /**
+ * The `auto_convert` that guarantees a value matches the primitive a destination pack CONSUMES
+ * ({@link PackInputPrimitive}), inserted before the pack. For a native-scalar pack (`'number'` /
+ * `'boolean'`) it sets `preserveNull` so an empty/cleared source stays `null` all the way into the pack —
+ * letting the pack's `emptyTemplate` clear the field (e.g. Notion number → `{ number: null }`) instead of
+ * coercing `null → 0` / `false` and writing a spurious `0` / `false` (DEV-10953). A `'string'` pack needs
+ * no flag: `auto_convert('string')` maps `null → ''`, which `wrap_object` already treats as empty, so the
+ * string coercion stays byte-identical.
+ */
+function packInputCoercion(packInputType: PackInputPrimitive): TransformerConfig {
+  return {
+    type: TransformerTypes.AutoConvert,
+    options: packInputType === 'string' ? { targetType: 'string' } : { targetType: packInputType, preserveNull: true },
+  };
+}
+
+/**
  * Pick the transformer pipeline to copy a value from `sourceField` to
  * `destinationField`, from the connector-declared schema hints on each:
  *
@@ -183,7 +199,7 @@ export function pickMappingTransformers(
       // matches and total otherwise.
       const primitiveEnteringPack = sourceField?.suggestedTransformer ? 'string' : sourceField?.type;
       if (primitiveEnteringPack !== packInputType) {
-        transformers.push({ type: TransformerTypes.AutoConvert, options: { targetType: packInputType } });
+        transformers.push(packInputCoercion(packInputType));
       }
     } else if (!sourceField?.suggestedTransformer && sourceValueMayReachPackAsNonString(sourceField?.type)) {
       // LEGACY heuristic for a pack that does NOT declare its input type: a destination pack consumes a
@@ -401,10 +417,7 @@ export function getSuggestedTransform(
     // total for every other shape. When the pack declares no input type, the legacy step-1 stringify
     // (above) is the only pre-pack coercion, unchanged.
     if (destination.fromCoreInputType && primitiveEnteringDestinationStage !== destination.fromCoreInputType) {
-      transformerChain.push({
-        type: TransformerTypes.AutoConvert,
-        options: { targetType: destination.fromCoreInputType },
-      });
+      transformerChain.push(packInputCoercion(destination.fromCoreInputType));
     }
     transformerChain.push(destination.fromCore);
   } else {

@@ -30,6 +30,13 @@ const autoConvert = (targetType: 'string' | 'number' | 'boolean'): TransformerCo
   type: 'auto_convert',
   options: { targetType },
 });
+// The pre-pack coercion into a native-scalar pack (number/checkbox) carries `preserveNull`, so an empty
+// source stays null into the pack and its `emptyTemplate` clears the field instead of writing 0/false
+// (DEV-10953). Distinct from the pack-less coercion floor (`autoConvert`), which never preserves null.
+const packCoerce = (targetType: 'number' | 'boolean'): TransformerConfig => ({
+  type: 'auto_convert',
+  options: { targetType, preserveNull: true },
+});
 
 // A native-scalar pack (Notion `number`) and a boolean pack (Notion `checkbox`).
 const numberPack: ClientSafeTransformer = {
@@ -302,7 +309,9 @@ describe('getSuggestedTransform', () => {
       ).toEqual([numberPack]);
     });
 
-    it('coerces a string source to number before a NUMBER-consuming pack (text "5" → Notion number)', () => {
+    it('coerces a string source to number before a NUMBER-consuming pack, preserving null (HubSpot "215000000" → Notion number, DEV-10953)', () => {
+      // HubSpot delivers every number as a string; the coercion carries `preserveNull` so an empty value
+      // clears the Notion number (via the pack's emptyTemplate) instead of coercing null→0 and writing 0.
       expect(
         chainOf(
           getSuggestedTransform(
@@ -310,7 +319,18 @@ describe('getSuggestedTransform', () => {
             col({ primitiveType: 'object', fromCore: numberPack, fromCoreInputType: 'number' }),
           ),
         ),
-      ).toEqual([autoConvert('number'), numberPack]);
+      ).toEqual([packCoerce('number'), numberPack]);
+    });
+
+    it('coerces a string source to boolean before a BOOLEAN-consuming pack, preserving null (DEV-10953)', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'string' }),
+            col({ primitiveType: 'object', fromCore: checkboxPack, fromCoreInputType: 'boolean' }),
+          ),
+        ),
+      ).toEqual([packCoerce('boolean'), checkboxPack]);
     });
 
     it('leaves a boolean scalar source un-coerced into a BOOLEAN-consuming pack (checkbox)', () => {

@@ -512,3 +512,39 @@ describe('notionPropertyToJsonSchema — pack/unpack round-trips for matchable t
     expect(unpacked).toBe(SAMPLE);
   });
 });
+
+describe('number pack coercion (DEV-10953)', () => {
+  // A HubSpot-style source delivers numbers as strings, so the transform picker feeds Notion's number
+  // pack the chain [auto_convert→number (preserveNull), wrap_object]. This exercises that exact chain to
+  // prove (a) a numeric string becomes a REAL number Notion accepts, and (b) `preserveNull` lets an empty
+  // value stay null so the pack's emptyTemplate CLEARS the field, rather than coercing null→0 and writing 0.
+  const numberPack = prop('number')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER] as TransformerConfig;
+  const coerceToNumber: TransformerConfig = {
+    type: 'auto_convert',
+    options: { targetType: 'number', preserveNull: true },
+  };
+
+  async function runPackChain(value: unknown): Promise<unknown> {
+    const result = await applyTransformerPipeline([coerceToNumber, numberPack], value, {
+      sourceRecord: { id: 'r', filePath: 'r.json', fields: {} },
+      sourceFieldPath: 'field',
+      sourceTableSpec: null,
+      sourceService: Service.NOTION,
+      destinationFieldPath: 'field',
+      destinationTableSpec: null,
+      destinationService: Service.NOTION,
+      lookupTools: createNullLookupTools(),
+      phase: 'DATA',
+    });
+    if (!result.success) throw new Error(`transform failed: ${result.error}`);
+    return result.value;
+  }
+
+  it('coerces a numeric string into a real number in the Notion number envelope', async () => {
+    expect(await runPackChain('215000000')).toEqual({ type: 'number', number: 215000000 });
+  });
+
+  it('clears the field for an empty value (null → {number: null}), never 0', async () => {
+    expect(await runPackChain(null)).toEqual({ type: 'number', number: null });
+  });
+});
