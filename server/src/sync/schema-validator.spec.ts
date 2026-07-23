@@ -1,6 +1,12 @@
 import { Type } from '@sinclair/typebox';
 import { ColumnMapping, ColumnMappingV2 } from '@spinner/shared-types';
-import { findConstantTypeMismatches, isTypeCompatible, validateSchemaMapping } from './schema-validator';
+import { extractSchemaPaths } from 'src/utils/schema-helpers';
+import {
+  findConstantTypeMismatches,
+  getSchemaAtPath,
+  isTypeCompatible,
+  validateSchemaMapping,
+} from './schema-validator';
 
 describe('isTypeCompatible', () => {
   it('matches identical primitives', () => {
@@ -158,6 +164,29 @@ describe('validateSchemaMapping', () => {
       },
     ];
     expect(validateSchemaMapping(dottedSource, dottedDest, columnMappings)).toHaveLength(0);
+  });
+
+  it('resolves a subfield expanded through a non-first union branch (DEV-11030 picture_id.url)', () => {
+    // Pipedrive's picture field is `Union[Number, Object({url}), Null]`. The plan
+    // generator (extractSchemaPaths) walks ALL non-null branches and offers a
+    // `picture_id.url` column; save-time validation previously unwrapped only the
+    // FIRST non-null branch (Number → no properties) and rejected the plan's own
+    // mapping with "Source field 'picture_id.url' not found in schema".
+    const pipedrivePersonLikeSource = Type.Object({
+      picture_id: Type.Union([
+        Type.Number(),
+        Type.Object({ url: Type.Optional(Type.Union([Type.String(), Type.Null()])) }),
+        Type.Null(),
+      ]),
+    });
+    const plainTextDest = Type.Object({ picture_url: Type.Union([Type.String(), Type.Null()]) });
+    const columnMappings: ColumnMapping[] = [{ sourceColumnId: 'picture_id.url', destinationColumnId: 'picture_url' }];
+    expect(validateSchemaMapping(pipedrivePersonLikeSource, plainTextDest, columnMappings)).toHaveLength(0);
+
+    // The invariant that broke: every path the plan expands must resolve at save time.
+    for (const expandedPath of extractSchemaPaths(pipedrivePersonLikeSource)) {
+      expect(getSchemaAtPath(pipedrivePersonLikeSource, expandedPath)).toBeDefined();
+    }
   });
 });
 

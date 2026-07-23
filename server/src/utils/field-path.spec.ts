@@ -55,6 +55,17 @@ describe('segmentFieldPathAgainstSchema', () => {
     const nullableObject = Type.Union([Type.Object({ 'a.b': Type.String() }), Type.Null()]);
     expect(segmentFieldPathAgainstSchema(nullableObject, 'a.b')).toEqual(['a.b']);
   });
+
+  it('segments through an object branch that is not the first non-null union branch', () => {
+    // Pipedrive picture shape (DEV-11030): the object branch sits AFTER a scalar branch.
+    const mixedUnion = Type.Object({
+      picture_id: Type.Union([Type.Number(), Type.Object({ 'url.with.dots': Type.String() }), Type.Null()]),
+    });
+    expect(segmentFieldPathAgainstSchema(mixedUnion, 'picture_id.url.with.dots')).toEqual([
+      'picture_id',
+      'url.with.dots',
+    ]);
+  });
 });
 
 describe('segmentFieldPathAgainstObject', () => {
@@ -91,6 +102,39 @@ describe('getSchemaAtFieldPath', () => {
 
   it('still resolves clean nested paths', () => {
     expect(getSchemaAtFieldPath(notionDestSchema, 'properties.Name.title')?.type).toBe('array');
+  });
+
+  it('resolves a subfield through a union whose object branch is not first (DEV-11030 picture_id.url)', () => {
+    // The exact Pipedrive picture shape: `Union[Number, Object({url}), Null]`. The
+    // plan expands `picture_id.url` from the object branch; the resolver must find
+    // it too instead of stopping at the scalar first branch and reporting
+    // "Source field 'picture_id.url' not found in schema".
+    const pipedrivePersonLikeSchema = Type.Object({
+      picture_id: Type.Union([
+        Type.Number(),
+        Type.Object({ url: Type.Optional(Type.Union([Type.String(), Type.Null()])) }),
+        Type.Null(),
+      ]),
+    });
+    const found = getSchemaAtFieldPath(pipedrivePersonLikeSchema, 'picture_id.url');
+    expect(found).toBeDefined();
+    const foundUnionBranches = (found as { anyOf?: { type?: string }[] } | undefined)?.anyOf;
+    expect(foundUnionBranches?.some((branch) => branch.type === 'string')).toBe(true);
+  });
+
+  it('resolves subfields from every object branch of a multi-object union', () => {
+    const multiObjectUnion = Type.Object({
+      field: Type.Union([Type.Object({ first: Type.String() }), Type.Object({ second: Type.Number() }), Type.Null()]),
+    });
+    expect(getSchemaAtFieldPath(multiObjectUnion, 'field.first')?.type).toBe('string');
+    expect(getSchemaAtFieldPath(multiObjectUnion, 'field.second')?.type).toBe('number');
+  });
+
+  it('resolves through a oneOf union wrapper like schema-helpers propertySchemaAt does', () => {
+    const oneOfWrapped = Type.Object({
+      field: Type.Unsafe<unknown>({ oneOf: [Type.Number(), Type.Object({ inner: Type.String() })] }),
+    });
+    expect(getSchemaAtFieldPath(oneOfWrapped, 'field.inner')?.type).toBe('string');
   });
 });
 

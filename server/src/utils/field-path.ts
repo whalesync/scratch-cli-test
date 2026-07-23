@@ -100,32 +100,53 @@ function segmentFieldPathAgainstStructure<Node>(
 }
 
 /**
- * Unwrap a nullable/Optional `anyOf` wrapper to the underlying object schema, and
- * return it only when it is an object carrying `properties`. Mirrors the wrapper
- * handling the previous {@link getSchemaAtPath} implementation did inline.
+ * Every object-with-`properties` schema reachable from `schema` without crossing a
+ * value node: the node itself when it is an object carrying `properties`, or —
+ * when it is a union wrapper (`anyOf`/`oneOf` with no own `type`) — the object
+ * branches of every non-null variant, recursively.
+ *
+ * A union may mix scalar and object branches: Pipedrive's picture field is
+ * `Union[Number, Object({url}), Null]`. Plan-side subfield expansion
+ * (`extractSchemaPaths` / `extractSchemaFields` in schema-helpers.ts) walks ALL
+ * non-null branches, so it offers a `picture_id.url` column — resolution here must
+ * search all branches too. Unwrapping only the FIRST non-null branch (`Number` →
+ * no `properties`) made the save-time resolver reject the very mapping the plan
+ * generated, so the untouched default Pipedrive Persons/Organizations export could
+ * not be saved (DEV-11030). Matches `propertySchemaAt` in schema-helpers.ts.
  */
-function objectSchemaWithProperties(schema: TSchema | undefined): TSchema | undefined {
-  let node: TSchema | undefined = schema;
-  if (node && node.type === undefined) {
-    const anyOfBranches = (node as { anyOf?: TSchema[] }).anyOf;
-    if (anyOfBranches) {
-      node = anyOfBranches.find((branch) => branch.type !== 'null');
-    }
+function objectSchemaBranchesWithProperties(schema: TSchema | undefined): TSchema[] {
+  if (!schema) return [];
+  if (schema.type === 'object' && schema.properties) return [schema];
+  if (schema.type !== undefined) return [];
+  const unionWrapper = schema as { anyOf?: TSchema[]; oneOf?: TSchema[] };
+  const unionBranches = unionWrapper.anyOf ?? unionWrapper.oneOf;
+  if (!unionBranches) return [];
+  const objectBranches: TSchema[] = [];
+  for (const branch of unionBranches) {
+    if (branch.type === 'null') continue;
+    objectBranches.push(...objectSchemaBranchesWithProperties(branch));
   }
-  if (!node || node.type !== 'object' || !node.properties) {
-    return undefined;
-  }
-  return node;
+  return objectBranches;
 }
 
 function schemaPropertyNames(schema: TSchema): string[] | undefined {
-  const objectSchema = objectSchemaWithProperties(schema);
-  return objectSchema ? Object.keys(objectSchema.properties as Record<string, TSchema>) : undefined;
+  const objectBranches = objectSchemaBranchesWithProperties(schema);
+  if (objectBranches.length === 0) return undefined;
+  const propertyNames = new Set<string>();
+  for (const objectBranch of objectBranches) {
+    for (const propertyName of Object.keys(objectBranch.properties as Record<string, TSchema>)) {
+      propertyNames.add(propertyName);
+    }
+  }
+  return Array.from(propertyNames);
 }
 
 function schemaPropertyValue(schema: TSchema, key: string): TSchema | undefined {
-  const objectSchema = objectSchemaWithProperties(schema);
-  return objectSchema ? (objectSchema.properties as Record<string, TSchema>)[key] : undefined;
+  for (const objectBranch of objectSchemaBranchesWithProperties(schema)) {
+    const childSchema = (objectBranch.properties as Record<string, TSchema>)[key];
+    if (childSchema !== undefined) return childSchema;
+  }
+  return undefined;
 }
 
 /** Segment `path` using the property names present in `schema` at each level. */
