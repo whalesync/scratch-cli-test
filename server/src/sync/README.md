@@ -133,10 +133,14 @@ Files are read and parsed from both source and destination DataFolders into `Con
 
 Iterate source records:
 
-- **Matched record** → `applyColumnMappings({ bucket: 'matched', ... })` merges the transformed source fields into the existing destination file (source-mapped fields win; destination fields not covered by a matched/`always` mapping are preserved).
+- **Matched record** → `applyColumnMappings({ bucket: 'matched', ... })` merges the transformed source fields into the existing destination file (source-mapped fields win; destination fields not covered by a matched/`always` mapping are preserved). A write is skipped when the merge is byte-identical to the existing record (the `isEqual` no-op skip), **unless** archive-repair fires (below).
 - **Unmatched-source record** → a new destination file is created: a temporary ID is generated via `createScratchPendingPublishId()` and injected, the filename is resolved from the destination schema's `slugColumnRemoteId` (falling back to the temp ID, deduplicated), and the match key is auto-injected. Skipped entirely when `unmatchedSourcePolicy.type === 'ignore'`.
 
 In the `DATA` phase `source_fk_to_dest_fk` passes through raw values while `lookup_field` resolves from the FK cache (see [Transformers](#transformers)).
+
+#### Archive-repair for matched records (DEV-11013)
+
+A destination record can be archived/soft-deleted in the service while its source row still exists. With no field drift the merge above is a no-op and the mirror stays silently archived. So, in the `DATA` phase, Pass 2 consults the **destination connector's** registry hook `resolveMatchedRecordArchiveRepairFields(recordFields)` (via `resolveMatchedRecordArchiveRepairFieldsForService`) for every matched record. When it returns a non-null overlay — e.g. Notion's `{ is_archived: false }` — those fields are `set()` onto the transformed record, which makes it differ from disk and bypasses the `isEqual` skip, so the record is written and published (restoring the page on the next run regardless of drift). Connectors with no archive concept register no hook and the overlay is `null` (no-op). This keeps archive-flag spellings out of the generic executor; it never learns a service's field names. Repaired records count toward the `unarchived` audit total.
 
 ### Pass 3: unmatched-destination write (v2)
 

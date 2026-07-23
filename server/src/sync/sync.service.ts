@@ -45,6 +45,7 @@ import set from 'lodash/set';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { resolveMatchedRecordArchiveRepairFieldsForService } from 'src/remote-service/connectors/connector-registry';
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { BaseJsonTableSpec, DotPath, dotPath, readRecordIdAsString } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
@@ -1454,6 +1455,28 @@ export class SyncService {
               result.warnings.push({ sourceRemoteId, warning: w });
             }
 
+            // DEV-11013: repair an archived / soft-deleted destination record whose
+            // source row still exists. The destination connector reports the field
+            // overlay that would unarchive it (e.g. Notion's is_archived → false);
+            // overlaying it makes the record differ from disk so it is written and
+            // published even when NO mapped field drifted — otherwise the no-op skip
+            // below would leave the mirror silently archived. Gated to the DATA phase
+            // (like constants); the FK phase re-reads the record after the clear and
+            // finds nothing to repair.
+            let appliedArchiveRepair = false;
+            if (phase === 'DATA' && existingRecord) {
+              const archiveRepairFields = resolveMatchedRecordArchiveRepairFieldsForService(
+                destinationFolder.connectorService as Service,
+                existingRecord.fields,
+              );
+              if (archiveRepairFields) {
+                for (const [repairFieldPath, repairValue] of Object.entries(archiveRepairFields)) {
+                  set(transformedFields, repairFieldPath, repairValue);
+                }
+                appliedArchiveRepair = true;
+              }
+            }
+
             // Skip writing if the transformed fields are identical to the existing record —
             // this avoids unnecessary file writes that produce only whitespace changes.
             if (existingRecord && isEqual(transformedFields, existingRecord.fields)) {
@@ -1462,7 +1485,7 @@ export class SyncService {
 
             result.recordsUpdated++;
             result.updatedPaths.push(destinationPath);
-            if (hasMatchedBucketConstant) {
+            if (hasMatchedBucketConstant || appliedArchiveRepair) {
               result.unmatchedDestinationCounts.unarchived++;
             }
           }

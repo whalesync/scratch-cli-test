@@ -154,6 +154,44 @@ function buildNotionUnarchiveFields(page: Record<string, unknown>): Partial<Reco
   return unarchiveFields;
 }
 
+/**
+ * Archive flags the publish diff cleared at the record's TOP LEVEL
+ * (`archived` / `in_trash` / `is_archived` → `false`). This is the DEV-11013
+ * signal: Live Export reconciliation wrote `is_archived: false` onto a matched
+ * destination record to repair an archived page whose source row still exists —
+ * possibly with NO other field drift — so the publish diff carries the cleared
+ * flag even though the file no longer reports the page as archived. `updateRecords`
+ * folds these into the same `pages.update` to actually unarchive the page.
+ */
+function unarchiveFieldsFromChangedDiff(
+  changed: Record<string, unknown>,
+): Partial<Record<NotionArchiveFlagField, false>> {
+  const unarchiveFields: Partial<Record<NotionArchiveFlagField, false>> = {};
+  for (const field of NOTION_ARCHIVE_FLAG_FIELDS) {
+    if (changed[field] === false) {
+      unarchiveFields[field] = false;
+    }
+  }
+  return unarchiveFields;
+}
+
+/**
+ * Registry hook (`resolveMatchedRecordArchiveRepairFields`): the field overlay
+ * that unarchives a matched destination page whose source row still exists, or
+ * `null` when the page isn't archived. Live Export reconciliation (sync Pass 2)
+ * overlays these so an archived-but-otherwise-identical mirror is restored on the
+ * next run with no field drift required (DEV-11013). The overlay is exactly the
+ * flags {@link buildNotionUnarchiveFields} would clear — top-level `is_archived`
+ * / `in_trash` / `archived` set to `false` — which the publish diff then carries
+ * into `updateRecords` (see {@link unarchiveFieldsFromChangedDiff}).
+ */
+export function resolveNotionMatchedRecordArchiveRepairFields(
+  recordFields: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const unarchiveFields = buildNotionUnarchiveFields(recordFields);
+  return Object.keys(unarchiveFields).length > 0 ? unarchiveFields : null;
+}
+
 export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   readonly service = Service.NOTION;
   static displayName = 'Notion';
@@ -1047,21 +1085,32 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
       const properties = this.transformPropertiesForUpdate(writableChangedProperties);
 
-      if (Object.keys(properties).length > 0) {
-        // If the destination page is archived in Notion, editing it would fail
-        // forever ("Can't edit block that is archived. You must unarchive the
-        // block before editing."). `pages.update` accepts the archive flags
-        // alongside `properties`, so we clear whichever flag(s) the pulled record
-        // carries in the SAME request — unarchiving and updating in one call,
-        // restoring the mirror without a delete/recreate (DEV-10957). A page
-        // archived in the sub-second window between the destination pull and this
-        // write still looks live here; that run's edit fails, but the next pull
-        // surfaces the flag and the following run unarchives it (self-healing).
-        const unarchiveFields = buildNotionUnarchiveFields(file);
+      // Clear the archive flag(s) as part of this PATCH when either signal fires:
+      //   - the pulled file still reports the page as archived (DEV-10957): a
+      //     property edit landing on an archived page would fail forever ("Can't
+      //     edit block that is archived. You must unarchive the block before
+      //     editing."), so we clear whichever flag(s) the record carries in the
+      //     SAME request — unarchiving and updating in one call, restoring the
+      //     mirror without a delete/recreate. A page archived in the sub-second
+      //     window between the destination pull and this write still looks live
+      //     here; that run's edit fails, but the next pull surfaces the flag and
+      //     the following run unarchives it (self-healing).
+      //   - the publish diff itself cleared an archive flag (DEV-11013): Live
+      //     Export reconciliation wrote `is_archived: false` onto a matched
+      //     destination record to repair an archived page whose source row still
+      //     exists — possibly with NO other property drift, so `properties` is
+      //     empty. `pages.update` accepts the archive flags on their own, so we
+      //     still issue the PATCH to restore the page.
+      // Union both signals; either alone is enough to fire the write.
+      const unarchiveFields = { ...buildNotionUnarchiveFields(file), ...unarchiveFieldsFromChangedDiff(changed) };
+      const hasPropertyUpdate = Object.keys(properties).length > 0;
+      const hasUnarchive = Object.keys(unarchiveFields).length > 0;
+
+      if (hasPropertyUpdate || hasUnarchive) {
         await this.client.updatePage({
           page_id: pageId,
           ...unarchiveFields,
-          properties: properties as CreatePageParameters['properties'],
+          ...(hasPropertyUpdate ? { properties: properties as CreatePageParameters['properties'] } : {}),
         });
         updatedIndexes.push(i);
       } else {
@@ -1574,6 +1623,7 @@ connectorRegistry.register({
   advancedSettings: NotionConnector.advancedSettings,
   supportedAuthMethods: ['oauth', 'user_provided_params'],
   rateLimiterSpec: { points: 3, duration: 1 }, // Notion: 3 req/s per integration
+  resolveMatchedRecordArchiveRepairFields: resolveNotionMatchedRecordArchiveRepairFields,
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Notion', Service.NOTION);

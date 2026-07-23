@@ -106,6 +106,24 @@ export interface ConnectorRegistration {
    * read when it might change the result.
    */
   incrementalPullAutoDetectsFromSchema?: boolean;
+  /**
+   * Pure (no credentials, no network) hook that, given a **matched** destination
+   * record's on-disk fields, returns the field overlay that would repair an
+   * archived / soft-deleted destination record back to live — or `null` when the
+   * record isn't archived (the common case) or the connector has no such notion.
+   *
+   * Used by Live Export reconciliation (sync Pass 2). When a destination page is
+   * archived in the service but its source row still exists, the sync plans no
+   * edit if no field drifted, so the mirror silently stays archived (DEV-11013).
+   * Overlaying these fields onto the matched record forces a write (bypassing the
+   * no-op skip) whose publish restores the page — for Notion, clearing whichever
+   * of `archived` / `in_trash` / `is_archived` the pulled record carries.
+   *
+   * Kept connector-scoped so the generic sync executor never learns a service's
+   * archive-flag spelling; connectors with no archive-repair notion omit it and
+   * the registry helper returns `null` (like `resolveIncrementalPullSupport`).
+   */
+  resolveMatchedRecordArchiveRepairFields?: (recordFields: Record<string, unknown>) => Record<string, unknown> | null;
 }
 
 class ConnectorRegistry {
@@ -159,4 +177,19 @@ export function resolveIncrementalPullSupportForService(params: {
     });
   }
   return IncrementalPullSupport.SUPPORTED;
+}
+
+/**
+ * Resolve the archive-repair field overlay for a **matched** destination record
+ * from its connector service — without instantiating the connector or hitting
+ * any remote API. Returns `null` for unknown services, connectors that register
+ * no {@link ConnectorRegistration.resolveMatchedRecordArchiveRepairFields}, and
+ * records that aren't archived. See that field's doc for the DEV-11013 use case.
+ */
+export function resolveMatchedRecordArchiveRepairFieldsForService(
+  service: string,
+  recordFields: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const registration = connectorRegistry.get(service);
+  return registration?.resolveMatchedRecordArchiveRepairFields?.(recordFields) ?? null;
 }

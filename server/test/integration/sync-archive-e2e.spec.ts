@@ -16,6 +16,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import {
+  ConnectorMetadata,
   createDataFolderId,
   createSyncId,
   createWorkbookId,
@@ -26,6 +27,7 @@ import {
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -486,5 +488,81 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
     const ws = writtenByPath('dest/ws.json');
     expect(ws).toBeDefined();
     expect(ws!.archived).toBe(true);
+  });
+
+  // ===========================================================================
+  // DEV-11013: Pass 2 unarchive repair for a MATCHED destination record whose
+  // source still exists but which was archived in the service with no field
+  // drift. Distinct from the DEV-10008 constant-mapping path above: no
+  // `when: 'matched'` constant is configured — the sync consults the connector's
+  // registry hook and forces the unarchive write automatically.
+  // ===========================================================================
+  describe('DEV-11013: unarchive matched destination record with no field drift', () => {
+    const ARCHIVE_REPAIR_SERVICE = 'FAKE_ARCHIVE_REPAIR_SVC';
+
+    beforeAll(() => {
+      // Register a throwaway connector whose archive-repair hook clears a boolean
+      // `archived` flag. Exercises the generic sync path (registry lookup →
+      // overlay → forced write) without coupling this suite to a real connector.
+      // The connector-registry is a per-test-file singleton, so one registration
+      // holds for the whole suite and never collides with other files.
+      if (!connectorRegistry.get(ARCHIVE_REPAIR_SERVICE)) {
+        connectorRegistry.register({
+          service: ARCHIVE_REPAIR_SERVICE,
+          metadata: {} as ConnectorMetadata,
+          advancedSettings: [],
+          supportedAuthMethods: [],
+          createConnector: () => Promise.reject(new Error('not instantiated in this test')),
+          resolveMatchedRecordArchiveRepairFields: (fields) => (fields.archived === true ? { archived: false } : null),
+        });
+      }
+    });
+
+    const matchOnlyMapping = (): TableMappingV2 => ({
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: [{ destinationColumnId: 'name', source: { kind: 'column', columnId: 'name' } }],
+      recordMatching: { sourceColumnId: 'email', destinationColumnId: 'email' },
+    });
+
+    it('forces an unarchive write for a matched record even when no mapped field drifted', async () => {
+      await prisma.dataFolder.update({
+        where: { id: destFolderId },
+        data: { connectorService: ARCHIVE_REPAIR_SERVICE },
+      });
+      // Source and destination agree on every mapped field (name); the only
+      // difference is the destination is archived. Without the repair hook the
+      // isEqual no-op skip would leave it archived (the DEV-11013 bug).
+      setFolderContents(
+        [{ path: 'src/s1.json', content: '{"id":"s1","email":"john@example.com","name":"John"}' }],
+        [{ path: 'dest/d1.json', content: '{"id":"dest1","email":"john@example.com","name":"John","archived":true}' }],
+      );
+
+      const result = await syncService.syncTableMapping(syncId, matchOnlyMapping(), workbookId, actor);
+
+      expect(result.errors).toHaveLength(0);
+      const d1 = writtenByPath('dest/d1.json');
+      expect(d1).toBeDefined();
+      expect(d1).toMatchObject({ id: 'dest1', name: 'John', archived: false });
+      expect(result.recordsUpdated).toBe(1);
+      expect(result.unmatchedDestinationCounts.unarchived).toBe(1);
+    });
+
+    it('leaves a matched but non-archived record untouched (no spurious write)', async () => {
+      await prisma.dataFolder.update({
+        where: { id: destFolderId },
+        data: { connectorService: ARCHIVE_REPAIR_SERVICE },
+      });
+      setFolderContents(
+        [{ path: 'src/s1.json', content: '{"id":"s1","email":"john@example.com","name":"John"}' }],
+        [{ path: 'dest/d1.json', content: '{"id":"dest1","email":"john@example.com","name":"John","archived":false}' }],
+      );
+
+      const result = await syncService.syncTableMapping(syncId, matchOnlyMapping(), workbookId, actor);
+
+      expect(writtenByPath('dest/d1.json')).toBeUndefined();
+      expect(result.recordsUpdated).toBe(0);
+      expect(result.unmatchedDestinationCounts.unarchived).toBe(0);
+    });
   });
 });

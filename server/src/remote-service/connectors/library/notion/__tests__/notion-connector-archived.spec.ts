@@ -28,7 +28,11 @@ jest.mock('turndown', () =>
   })),
 );
 
-import { isArchivedOrTrashedNotionPage, NotionConnector } from '../notion-connector';
+import {
+  isArchivedOrTrashedNotionPage,
+  NotionConnector,
+  resolveNotionMatchedRecordArchiveRepairFields,
+} from '../notion-connector';
 
 function buildTableSpec(): BaseJsonTableSpec {
   return {
@@ -145,5 +149,77 @@ describe('NotionConnector.updateRecords — unarchive-and-update archived pages 
     expect(body).not.toHaveProperty('archived');
     expect(body).not.toHaveProperty('in_trash');
     expect(body).not.toHaveProperty('is_archived');
+  });
+});
+
+describe('NotionConnector.updateRecords — unarchive with no property drift (DEV-11013)', () => {
+  let connector: NotionConnector;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockUpdatePage.mockResolvedValue({ object: 'page', id: 'pg', properties: {} });
+    mockRetrievePage.mockImplementation(({ page_id }: { page_id: string }) =>
+      Promise.resolve({ object: 'page', id: page_id, properties: {} }),
+    );
+    connector = new NotionConnector('fake-key');
+  });
+
+  it('issues an unarchive-only PATCH when the diff clears is_archived and no property drifted', async () => {
+    // Live Export reconciliation wrote is_archived:false onto the matched record,
+    // so the file no longer reports the page as archived, but the publish diff
+    // carries the cleared flag. There is no property body to write — the PATCH
+    // exists solely to unarchive the page (restoring an otherwise-identical mirror).
+    const file = { id: 'pg', is_archived: false, properties: {} } as ConnectorFile;
+
+    await connector.updateRecords(buildTableSpec(), [file], [{ is_archived: false }]);
+
+    expect(mockUpdatePage).toHaveBeenCalledTimes(1);
+    const body = lastUpdatePageBody();
+    expect(body).toMatchObject({ page_id: 'pg', is_archived: false });
+    expect(body).not.toHaveProperty('properties');
+  });
+
+  it('clears the trash flag when the diff cleared in_trash', async () => {
+    const file = { id: 'pg', in_trash: false, properties: {} } as ConnectorFile;
+
+    await connector.updateRecords(buildTableSpec(), [file], [{ in_trash: false }]);
+
+    const body = lastUpdatePageBody();
+    expect(body).toMatchObject({ page_id: 'pg', in_trash: false });
+    expect(body).not.toHaveProperty('properties');
+  });
+
+  it('folds the cleared flag alongside a concurrent property edit', async () => {
+    const file = { id: 'pg', is_archived: false, properties: {} } as ConnectorFile;
+
+    await connector.updateRecords(buildTableSpec(), [file], [{ is_archived: false, ...titleChange('New') }]);
+
+    const body = lastUpdatePageBody();
+    expect(body).toMatchObject({ page_id: 'pg', is_archived: false });
+    expect(body).toHaveProperty('properties.Name');
+  });
+
+  it('is a no-op (no PATCH) when nothing drifted and no archive flag was cleared', async () => {
+    const file = { id: 'pg', is_archived: false, properties: {} } as ConnectorFile;
+
+    const [result] = await connector.updateRecords(buildTableSpec(), [file], [{}]);
+
+    expect(mockUpdatePage).not.toHaveBeenCalled();
+    expect(result).toBe(file);
+  });
+});
+
+describe('resolveNotionMatchedRecordArchiveRepairFields (DEV-11013)', () => {
+  it('returns the unarchive overlay for an archived record', () => {
+    expect(resolveNotionMatchedRecordArchiveRepairFields({ is_archived: true })).toEqual({ is_archived: false });
+    expect(resolveNotionMatchedRecordArchiveRepairFields({ archived: true, is_archived: true })).toEqual({
+      archived: false,
+      is_archived: false,
+    });
+  });
+
+  it('returns null for a live record (nothing to repair)', () => {
+    expect(resolveNotionMatchedRecordArchiveRepairFields({})).toBeNull();
+    expect(resolveNotionMatchedRecordArchiveRepairFields({ is_archived: false, in_trash: false })).toBeNull();
   });
 });
