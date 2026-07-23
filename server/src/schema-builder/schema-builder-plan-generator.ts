@@ -10,6 +10,7 @@ import type {
   TableMappingNote,
   TablePropertyType,
 } from '@spinner/shared-types';
+import { nativeCardinality, transformerOutputCardinality } from 'src/sync/resolve-column-transform-input';
 import type { SchemaField } from 'src/utils/schema-helpers';
 import { allocateUniqueName, elideNameToMaxLength, normalizeNameForUniqueness } from './schema-builder-unique-names';
 
@@ -177,6 +178,15 @@ export function generateCreatePlanFromSources(args: {
    * Absent ⇒ treated as true (no special N→N handling). See DEV-10753.
    */
   destinationSupportsManyToManyForeignKeys?: boolean;
+  /**
+   * Whether the destination keeps only the FIRST value when a multi-valued source is written into one of
+   * its single-valued text fields (`SchemaCreationCapabilities.keepsOnlyFirstValueWhenMultiValueMappedToTextField`).
+   * True for Notion, whose `rich_text` / `title` fields are a non-scalar object envelope the sync can't
+   * comma-join. When true, a multi-valued source field mapped to a created text field gets a `downgraded`
+   * note warning that only the first value is exported (DEV-10956). Absent ⇒ false (the destination
+   * comma-joins every value losslessly, so no data is lost and no note is emitted).
+   */
+  destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField?: boolean;
 }): GeneratedPlan {
   // linkedTableId → in-plan table ref (for resolving sibling foreign keys).
   const linkedIdToRef = new Map<string, string>();
@@ -225,6 +235,7 @@ export function generateCreatePlanFromSources(args: {
           args.destinationReservedFieldNames,
           args.destinationMaxFieldNameLength,
           args.destinationSupportsManyToManyForeignKeys ?? true,
+          args.destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField ?? false,
           args.destinationServiceDisplayName,
         ),
       );
@@ -238,6 +249,8 @@ export function generateCreatePlanFromSources(args: {
           reservedFieldNames: args.destinationReservedFieldNames,
           maxFieldNameLength: args.destinationMaxFieldNameLength,
           destinationSupportsManyToManyForeignKeys: args.destinationSupportsManyToManyForeignKeys ?? true,
+          destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField:
+            args.destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField ?? false,
         },
         linkedIdToRef,
         mappingByLinkedId,
@@ -461,6 +474,29 @@ function foreignKeyNarrowedToSingleValueMessage(): string {
 }
 
 /**
+ * Note message for a multi-valued source field (Postgres `text[]`, an Airtable multi-select) narrowed to its
+ * first value because the destination stores this field as a single value, not a list, and can't comma-join
+ * the rest into it (Notion `rich_text` / `title`). The value counterpart of
+ * {@link foreignKeyNarrowedToSingleValueMessage} (DEV-10956).
+ */
+function multiValueNarrowedToFirstValueMessage(): string {
+  return 'only the first value will sync — this destination stores this field as a single value, not a list, so any additional values are dropped';
+}
+
+/**
+ * Whether a source field yields MULTIPLE values (a `string[]` CoreValue) when read as a sync source —
+ * mirroring the transform picker's own cardinality read (`resolveColumnTransformInput`): a field whose
+ * unpack hint (`suggestedTransformer`) emits an array is multi-valued, else a field whose native JSON shape
+ * is an `array` (Postgres `text[]`, an Airtable multi-select). Everything else is single-valued.
+ */
+function sourceFieldIsMultiValued(field: SchemaField): boolean {
+  const cardinality = field.suggestedTransformer
+    ? transformerOutputCardinality(field.suggestedTransformer)
+    : nativeCardinality(field.type);
+  return cardinality === 'multi';
+}
+
+/**
  * Build an add-fields plan for a source whose destination table exists: the
  * source's create-field specs minus any field the destination already has (by
  * name, case-insensitive). A name match whose existing kind matches the source is
@@ -482,6 +518,7 @@ function buildAddFieldsPlanForSource(
   reservedFieldNames: string[] | undefined,
   maxFieldNameLength: number | undefined,
   destinationSupportsManyToManyForeignKeys: boolean,
+  destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField: boolean,
   destinationServiceDisplayName: string | undefined,
 ): CreateSchemaFieldsPlan {
   const existingDestinationFieldsByName = new Map(
@@ -497,6 +534,7 @@ function buildAddFieldsPlanForSource(
       reservedFieldNames,
       maxFieldNameLength,
       destinationSupportsManyToManyForeignKeys,
+      destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField,
     },
     linkedIdToRef,
     mappingByLinkedId,
@@ -541,6 +579,13 @@ interface CreateFieldSpecOptions {
    * linked record syncs. Absent ⇒ true (no narrowing). See DEV-10753.
    */
   destinationSupportsManyToManyForeignKeys?: boolean;
+  /**
+   * Whether the destination keeps only the FIRST value when a multi-valued source is written into a created
+   * single-value text field (Notion — its `rich_text` / `title` fields can't comma-join). When true, a
+   * multi-valued source field mapped to a `text`/`longText` create field gets a `downgraded` truncation note
+   * (DEV-10956). Absent/false ⇒ the destination comma-joins losslessly, so no note is emitted.
+   */
+  destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField?: boolean;
 }
 
 /** Map every field of a source to a create-field spec, pushing a note per field. */
@@ -751,6 +796,11 @@ function mapSchemaFieldToCreateFieldSpec(
     schemaField,
     source.viewTypeByPath?.[schemaField.path],
     source.serviceDisplayName,
+    {
+      sourceIsMultiValued: sourceFieldIsMultiValued(schemaField),
+      destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField:
+        options.destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField ?? false,
+    },
   );
   const message = composeNoteMessage(renameClause, inferred.message);
   notes.push({
@@ -816,8 +866,43 @@ export interface InferredFieldType {
  * column in the destination (which has no read-only concept) rather than collapse
  * to text. The field's logical type comes from its view hint / primitive like any
  * other field.
+ *
+ * `options` supplies the cross-column signals a single field's own type can't carry: whether the source
+ * yields MULTIPLE values, and whether the destination keeps only the first of them in a text field. When
+ * both hold, the mapping truncates (only the first value is exported) and the note is re-worded to say so
+ * (DEV-10956) — see {@link multiValueNarrowedToFirstValueMessage}.
  */
 export function inferLogicalFieldType(
+  field: SchemaField,
+  viewType?: TablePropertyType,
+  sourceServiceDisplayName?: string,
+  options?: {
+    /** Whether the source field yields multiple values (a `string[]` CoreValue) when read as a sync source. */
+    sourceIsMultiValued?: boolean;
+    /** Whether the destination keeps only the first value when a multi-value source lands in a text field. */
+    destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField?: boolean;
+  },
+): InferredFieldType {
+  const base = inferBaseLogicalFieldType(field, viewType, sourceServiceDisplayName);
+
+  // A multi-valued source (Postgres `text[]`, an Airtable multi-select) mapped onto a single-value text field
+  // of a destination that can't comma-join (Notion `rich_text` / `title`) loses every value but the first.
+  // The base mapping already downgrades an array/object source to text, but its "syncing as plain text"
+  // wording implies the whole value lands; replace it with an accurate truncation warning so the plan tells
+  // the user only the first value is exported (DEV-10956).
+  const truncatesMultiValueToFirst =
+    options?.sourceIsMultiValued === true &&
+    options?.destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField === true &&
+    (base.fieldType.kind === 'text' || base.fieldType.kind === 'longText');
+  if (truncatesMultiValueToFirst) {
+    return { status: 'downgraded', fieldType: base.fieldType, message: multiValueNarrowedToFirstValueMessage() };
+  }
+  return base;
+}
+
+/** The type-only mapping — a field's logical create type from its own view hint / JSON primitive, with no
+ *  cross-column (cardinality) signal. {@link inferLogicalFieldType} layers the truncation downgrade on top. */
+function inferBaseLogicalFieldType(
   field: SchemaField,
   viewType?: TablePropertyType,
   sourceServiceDisplayName?: string,

@@ -1,3 +1,4 @@
+import { TransformerTypes } from '@spinner/shared-types';
 import type { SchemaField } from 'src/utils/schema-helpers';
 import {
   generateCreatePlanFromSources,
@@ -56,6 +57,62 @@ describe('inferLogicalFieldType', () => {
     expect(inferLogicalFieldType(field({ path: 'o', type: 'string' }), 'object', 'Notion').message).toBe(
       "Can't unpack this Notion object field, syncing as plain text",
     );
+  });
+
+  describe('multi-value → first-value truncation warning (DEV-10956)', () => {
+    const takeFirst = {
+      sourceIsMultiValued: true,
+      destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField: true,
+    };
+
+    it('warns that only the first value is exported for a multi-valued source into a take-first text field', () => {
+      // Postgres `text[]` / Airtable multi-select → a created Notion text field: the picker take-firsts, so
+      // the note must say only the first value survives — NOT the misleading "syncing as plain text".
+      const result = inferLogicalFieldType(field({ path: 'tags', type: 'array' }), undefined, 'Notion', takeFirst);
+      expect(result).toMatchObject({ status: 'downgraded', fieldType: { kind: 'text' } });
+      expect(result.message).toBe(
+        'only the first value will sync — this destination stores this field as a single value, not a list, so any additional values are dropped',
+      );
+    });
+
+    it('detects a multi-valued source declared by an array-emitting suggestedTransformer, not just a native array', () => {
+      const arraySource = field({
+        path: 'people',
+        type: 'object',
+        suggestedTransformer: {
+          type: TransformerTypes.JSONPath,
+          options: { expression: '$[*]', arrayHandling: 'array' },
+        },
+      });
+      expect(inferLogicalFieldType(arraySource, undefined, 'Notion', takeFirst)).toMatchObject({
+        status: 'downgraded',
+      });
+      expect(inferLogicalFieldType(arraySource, undefined, 'Notion', takeFirst).message).toContain(
+        'only the first value will sync',
+      );
+    });
+
+    it('keeps the base "syncing as plain text" wording when the destination comma-joins (flag absent/false)', () => {
+      // Airtable / Postgres text fields join every value losslessly — no truncation, so the base note stands.
+      expect(
+        inferLogicalFieldType(field({ path: 'tags', type: 'array' }), undefined, undefined, {
+          sourceIsMultiValued: true,
+        }).message,
+      ).toBe("Can't unpack this array field, syncing as plain text");
+    });
+
+    it('does not warn for a single-valued source even into a take-first destination', () => {
+      const singleValued = {
+        sourceIsMultiValued: false,
+        destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField: true,
+      };
+      expect(
+        inferLogicalFieldType(field({ path: 's', type: 'string' }), undefined, 'Notion', singleValued),
+      ).toMatchObject({
+        status: 'mapped',
+        fieldType: { kind: 'text' },
+      });
+    });
   });
 
   it('keeps read-only fields at their real type instead of downgrading to text', () => {
@@ -218,6 +275,43 @@ describe('generateCreatePlanFromSources', () => {
       kind: 'foreignKey',
       target: { existingRemoteTableId: ['destTbl'] },
     });
+  });
+});
+
+describe('generateCreatePlanFromSources — multi-value → first-value truncation warning (DEV-10956)', () => {
+  const withArrayField: PlanGeneratorSource = {
+    ref: 'items',
+    dataFolderId: 'items',
+    tableName: 'Items',
+    remoteTableIds: ['tblItems'],
+    primaryFieldPath: 'name',
+    schemaFields: [field({ path: 'name', type: 'string' }), field({ path: 'tags', type: 'array' })],
+  };
+
+  it('emits a downgraded truncation note when the destination keeps only the first value (Notion)', () => {
+    const { notes } = generateCreatePlanFromSources({
+      sources: [withArrayField],
+      destinationConnectorAccountId: 'destConn',
+      destinationServiceDisplayName: 'Notion',
+      destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField: true,
+    });
+
+    const tagsNote = notes.find((n) => n.sourceFieldPath === 'tags');
+    expect(tagsNote).toMatchObject({ status: 'downgraded', mappedKind: 'text' });
+    expect(tagsNote?.message).toBe(
+      'only the first value will sync — this destination stores this field as a single value, not a list, so any additional values are dropped',
+    );
+  });
+
+  it('keeps the base downgrade wording for a comma-joining destination (flag absent)', () => {
+    const { notes } = generateCreatePlanFromSources({
+      sources: [withArrayField],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    const tagsNote = notes.find((n) => n.sourceFieldPath === 'tags');
+    expect(tagsNote).toMatchObject({ status: 'downgraded', mappedKind: 'text' });
+    expect(tagsNote?.message).toBe("Can't unpack this array field, syncing as plain text");
   });
 });
 

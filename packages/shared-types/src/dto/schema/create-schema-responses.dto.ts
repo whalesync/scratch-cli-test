@@ -83,6 +83,18 @@ export interface SchemaCreationCapabilities {
    * the same name (`DUPLICATE_TABLE_NAME`). Absent ⇒ treated as `true`.
    */
   requiresUniqueTableNames?: boolean;
+  /**
+   * Whether writing a MULTI-valued source (an array field like Postgres `text[]` or an Airtable
+   * multi-select) into one of this destination's single-valued TEXT fields keeps only the FIRST value
+   * rather than concatenating every value. True for Notion: its `rich_text` / `title` properties are a
+   * non-scalar object envelope, so the sync's cardinality reshape take-firsts (only the first array
+   * element lands) instead of comma-joining — see the transform picker's `TEXT_LIKE_DESTINATION_LOGICAL_TYPES`
+   * check in `transform-picker.ts`, which a Notion text field's `object` logical type fails. Destinations
+   * whose text fields are plain scalar strings (Airtable, Postgres) comma-join every value losslessly, so
+   * they leave this absent/false. The create-plan generator uses it to emit a `downgraded` note warning that
+   * a multi-value field will be reduced to its first value on export (DEV-10956). Absent ⇒ treated as `false`.
+   */
+  keepsOnlyFirstValueWhenMultiValueMappedToTextField?: boolean;
 }
 
 /**

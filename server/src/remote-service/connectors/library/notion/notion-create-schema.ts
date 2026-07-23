@@ -50,6 +50,11 @@ export const NOTION_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
   // suffixed brand-new databases with ` 2`/` 3` against same-named databases elsewhere in the workspace
   // (DEV-10943). In-plan duplicate names are still deduped, which `DUPLICATE_TABLE_NAME` validation requires.
   requiresUniqueTableNames: false,
+  // Notion `rich_text` / `title` properties are a non-scalar object envelope, so a multi-valued source
+  // (Postgres `text[]`, an Airtable multi-select) written into a created text field is collapsed by the sync
+  // to only its FIRST value — the picker take-firsts because a Notion text field's `object` logical type
+  // isn't text-like (it can't comma-join). The create-plan generator warns about this data loss (DEV-10956).
+  keepsOnlyFirstValueWhenMultiValueMappedToTextField: true,
 };
 
 /**

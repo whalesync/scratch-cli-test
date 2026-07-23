@@ -149,14 +149,14 @@ function displayTransformerAsToCore(
  *  connector that stores values in their natural shape (Airtable: text = `string`, options = `string[]`)
  *  is honest here; the misleading "native array but single" fields (Notion `rich_text`) always declare a
  *  transformer, so they never reach this fallback. */
-function nativeCardinality(jsonType: string | undefined): ColumnCardinality {
+export function nativeCardinality(jsonType: string | undefined): ColumnCardinality {
   return jsonType === 'array' ? 'multi' : 'single';
 }
 
 /** The cardinality a `toCore` extract EMITS: a jsonpath keeping the list (`arrayHandling: 'array'`), an
  *  `auto_convert` to `array`, or an element-wise `array`/`map` transformer is multi; everything else emits
  *  a single value (a jsonpath concat/join/first, `wrap_object`, `notion_to_html`, `slugify`, …). */
-function transformerOutputCardinality(toCore: TransformerConfig): ColumnCardinality {
+export function transformerOutputCardinality(toCore: TransformerConfig): ColumnCardinality {
   switch (toCore.type) {
     case TransformerTypes.JSONPath:
       return toCore.options.arrayHandling === 'array' ? 'multi' : 'single';

@@ -413,6 +413,10 @@ export class SchemaBuilderService {
       // Absent ⇒ true: only a destination that explicitly can't hold a two-way link (Postgres/Supabase)
       // drops both sides of a reciprocal N→N pair from a symmetric source (DEV-10753).
       destinationSupportsManyToManyForeignKeys: destinationCapabilities?.supportsManyToManyForeignKeys ?? true,
+      // Absent ⇒ false: only a destination whose text fields can't comma-join (Notion) truncates a
+      // multi-valued source to its first value, earning a downgrade note (DEV-10956).
+      destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField:
+        destinationCapabilities?.keepsOnlyFirstValueWhenMultiValueMappedToTextField ?? false,
     });
 
     // Sync transforms are NOT computed here: in a create plan every mapped
