@@ -93,6 +93,7 @@ describe('PublishPlanRunService', () => {
   let fileIndexService: jest.Mocked<FileIndexService>;
   let fileReferenceService: jest.Mocked<FileReferenceService>;
   let refResolverService: jest.Mocked<RefResolverService>;
+  let refCleanerService: jest.Mocked<RefCleanerService>;
   let schemaService: jest.Mocked<SchemaHelperService>;
   let experimentsService: jest.Mocked<ExperimentsService>;
   let recreatedIdMapService: jest.Mocked<RecreatedIdMapService>;
@@ -123,6 +124,9 @@ describe('PublishPlanRunService', () => {
 
     refResolverService = {
       resolveBatchPseudoRefs: jest.fn().mockImplementation((_wkbId, contents) => Promise.resolve(contents)),
+      // Default: every pseudo-ref resolves (empty unresolvable set), so the backfill drop
+      // path is a noop unless a test models a failed relation target (DEV-10954).
+      findUnresolvablePseudoRefs: jest.fn().mockResolvedValue(new Set<string>()),
     } as unknown as jest.Mocked<RefResolverService>;
 
     const credentialService = {
@@ -162,9 +166,11 @@ describe('PublishPlanRunService', () => {
       deleteForWorkbook: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<RecreatedIdMapService>;
 
-    const refCleanerService = {
+    refCleanerService = {
       extractForeignKeyPaths: jest.fn().mockReturnValue([]),
       rewriteForeignKeyValues: jest.fn().mockImplementation((content: unknown) => content),
+      // Default: passthrough (nothing to strip). The backfill drop test overrides this.
+      stripSpecificPseudoRefs: jest.fn().mockImplementation((content: unknown) => content),
     } as unknown as jest.Mocked<RefCleanerService>;
 
     const module: TestingModule = await Test.createTestingModule({
@@ -267,7 +273,7 @@ describe('PublishPlanRunService', () => {
    * phase. Generalization of `setupEditPhaseEntries` for create/delete.
    */
   function setupPhaseEntries(
-    phase: 'edit' | 'create' | 'delete',
+    phase: 'edit' | 'create' | 'delete' | 'backfill',
     entries: Array<{
       id: string;
       filePath: string;
@@ -973,6 +979,87 @@ describe('PublishPlanRunService', () => {
       // changedFields passed to connector should contain the TRANSFORMED value,
       // not the raw @/ pseudo-ref from the DB
       expect(cfArg).toEqual([{ author: 'author_remote_456' }]);
+    });
+  });
+
+  describe('dispatchUpdateBatch — backfill relation cascade (DEV-10954)', () => {
+    it('drops an unresolvable relation link in the backfill phase and still publishes the record', async () => {
+      const failedRelationRef = '@/Notion/companies/scratch_pending_publish_failed.json';
+      refResolverService.findUnresolvablePseudoRefs.mockResolvedValue(new Set([failedRelationRef]));
+      // The cleaner drops the failed relation element, leaving the resolvable one behind.
+      refCleanerService.stripSpecificPseudoRefs.mockReturnValue({
+        id: 'rec_1',
+        properties: { Companies: { type: 'relation', relation: [{ id: 'real-company-id' }] } },
+      } as never);
+
+      setupPhaseEntries('backfill', [
+        {
+          id: 'op_1',
+          filePath: 'deals/d1.json',
+          content: {
+            id: 'rec_1',
+            properties: {
+              Companies: { type: 'relation', relation: [{ id: failedRelationRef }, { id: 'real-company-id' }] },
+            },
+          },
+          changedFields: {
+            properties: { Companies: { relation: [{ id: failedRelationRef }, { id: 'real-company-id' }] } },
+          },
+          remoteRecordId: 'rec_1',
+        },
+      ]);
+
+      await service.runPipeline(PLAN_ID);
+
+      // The unresolvable ref was detected and stripped (not thrown), and the record published
+      // with only the resolvable link.
+      expect(refResolverService.findUnresolvablePseudoRefs).toHaveBeenCalled();
+      expect(refCleanerService.stripSpecificPseudoRefs).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        new Set([failedRelationRef]),
+      );
+      expect(connector.updateRecords).toHaveBeenCalledTimes(1);
+      const [, files] = connector.updateRecords.mock.calls[0];
+      expect(files[0]).toEqual({
+        id: 'rec_1',
+        properties: { Companies: { type: 'relation', relation: [{ id: 'real-company-id' }] } },
+      });
+    });
+
+    it("skips a backfill op (no update, no throw) when the record's own create never landed", async () => {
+      // The dependent record's OWN create failed, so its id is absent from the FileIndex.
+      // The orphaned backfill must be skipped rather than throwing "Could not resolve remote ID".
+      jest.mocked(fileIndexService.getRecordId).mockResolvedValue(null as never);
+
+      setupPhaseEntries('backfill', [
+        {
+          id: 'op_1',
+          filePath: 'deals/d1.json',
+          content: { title: 'X' },
+          changedFields: { title: 'X' },
+          remoteRecordId: null,
+        },
+      ]);
+
+      await expect(service.runPipeline(PLAN_ID)).resolves.not.toThrow();
+      expect(connector.updateRecords).not.toHaveBeenCalled();
+    });
+
+    it('does NOT consult findUnresolvablePseudoRefs in the edit phase (only backfill drops)', async () => {
+      setupEditPhaseEntries([
+        {
+          id: 'op_1',
+          filePath: 'articles/a1.json',
+          content: { id: 'rec_1', title: 'New' },
+          changedFields: { title: 'New' },
+          remoteRecordId: 'rec_1',
+        },
+      ]);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(refResolverService.findUnresolvablePseudoRefs).not.toHaveBeenCalled();
     });
   });
 

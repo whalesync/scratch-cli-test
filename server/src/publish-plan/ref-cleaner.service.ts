@@ -107,6 +107,37 @@ export class RefCleanerService {
   }
 
   /**
+   * Strip only the pseudo-refs (`@/` references) whose exact string is in
+   * `unresolvableRefStrings`, leaving every other (resolvable) ref untouched.
+   * Same schema-aware, element-dropping behavior as {@link stripPseudoRefs} — a
+   * co-pending Notion `relation[].id` link collapses the WHOLE element so the field
+   * converges to `relation: []`, never `[{ id: null }]` (DEV-10942). Used by the
+   * publish backfill phase to drop a relation whose target record never landed while
+   * keeping every resolvable link (DEV-10954). A no-op when the set is empty.
+   */
+  stripSpecificPseudoRefs(
+    content: ParsedContent,
+    schema: Schema | null,
+    unresolvableRefStrings: Set<string>,
+  ): ParsedContent {
+    if (!content || !schema || unresolvableRefStrings.size === 0) return content;
+
+    const result = structuredClone(content);
+    const fkPaths = this.extractForeignKeyPaths(schema);
+
+    for (const fk of fkPaths) {
+      this.stripAtNodes(
+        result,
+        fk.path,
+        (value) =>
+          (typeof value === 'string' || typeof value === 'number') && unresolvableRefStrings.has(String(value)),
+      );
+    }
+
+    return result;
+  }
+
+  /**
    * Strip all `@asset/` pseudo-refs from content. Schema-agnostic: walks all string values
    * recursively. Arrays have matching elements filtered out; scalar strings are set to null.
    */

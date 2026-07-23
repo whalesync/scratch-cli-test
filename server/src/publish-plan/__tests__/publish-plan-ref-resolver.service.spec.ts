@@ -231,4 +231,41 @@ describe('PublishRefResolverService', () => {
       );
     });
   });
+
+  describe('findUnresolvablePseudoRefs (DEV-10954)', () => {
+    const workbookId = 'wkb_test';
+
+    it('returns the refs that miss the FileIndex and omits those that resolve', async () => {
+      setConnections([HUBSPOT]);
+      // "marcos.json" resolves; "gone.json" does not (its target create failed / never landed).
+      fileIndexService.getRecordIds.mockResolvedValue(new Map([['Contacts:marcos.json', 'contact_123']]));
+
+      const contents = [{ a: '@/HubSpot/Contacts/marcos.json', b: '@/HubSpot/Contacts/gone.json' }];
+      const unresolvable = await service.findUnresolvablePseudoRefs(workbookId, contents, HUBSPOT.id);
+
+      expect([...unresolvable]).toEqual(['@/HubSpot/Contacts/gone.json']);
+    });
+
+    it('returns an empty set (and does no DB work) when the batch has no pseudo-refs', async () => {
+      const unresolvable = await service.findUnresolvablePseudoRefs(workbookId, [{ name: 'plain' }], HUBSPOT.id);
+
+      expect(unresolvable.size).toBe(0);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(fileIndexService.getRecordIds).not.toHaveBeenCalled();
+      expect(connectorAccountFindMany).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty set when every ref resolves', async () => {
+      setConnections([HUBSPOT]);
+      fileIndexService.getRecordIds.mockResolvedValue(new Map([['Contacts:marcos.json', 'contact_123']]));
+
+      const unresolvable = await service.findUnresolvablePseudoRefs(
+        workbookId,
+        [{ a: '@/HubSpot/Contacts/marcos.json' }],
+        HUBSPOT.id,
+      );
+
+      expect(unresolvable.size).toBe(0);
+    });
+  });
 });

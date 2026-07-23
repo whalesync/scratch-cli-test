@@ -254,6 +254,42 @@ export class RefResolverService {
   }
 
   /**
+   * The `@/…` pseudo-ref strings in a batch of contents that do NOT resolve to a
+   * record id in the FileIndex — computed with the exact same resolution logic
+   * {@link resolveBatchPseudoRefs} uses, so a ref counts as unresolvable here iff
+   * that method would throw on it. The publish backfill phase uses this to DROP a
+   * relation link whose target record never landed (its create failed, or it isn't
+   * in this plan) instead of failing the whole dependent record (DEV-10954). Only
+   * `@/` refs are considered (not `@asset/`). Returns an empty set when the batch
+   * carries no pseudo-refs (no DB work in the common case).
+   */
+  async findUnresolvablePseudoRefs(
+    workbookId: string,
+    contents: ParsedContent[],
+    planConnectorAccountId?: string | null,
+  ): Promise<Set<string>> {
+    const refStrings = new Set<string>();
+    for (const content of contents) {
+      this.collectPseudoRefStrings(content, refStrings);
+    }
+    if (refStrings.size === 0) return new Set();
+
+    const connectionFolderToAccountId = await this.buildConnectionFolderToAccountIdMap(workbookId);
+    const refStringToRecordId = await this.resolvePseudoRefStrings(
+      workbookId,
+      [...refStrings],
+      connectionFolderToAccountId,
+      planConnectorAccountId ?? null,
+    );
+
+    const unresolvableRefStrings = new Set<string>();
+    for (const refString of refStrings) {
+      if (!refStringToRecordId.has(refString)) unresolvableRefStrings.add(refString);
+    }
+    return unresolvableRefStrings;
+  }
+
+  /**
    * Extract all `@asset/<assetDbId>` references from an object recursively.
    */
   private extractAssetRefs(content: unknown, refs: Set<string>): void {

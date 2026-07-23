@@ -308,4 +308,33 @@ describe('RefCleanerService — FK refs nested inside an envelope (Notion relati
     const properties = result.properties as Record<string, { relation: unknown[] }>;
     expect(properties.Category.relation).toEqual([]);
   });
+
+  it('stripSpecificPseudoRefs drops ONLY the listed ref and keeps other pseudo-refs (DEV-10954)', () => {
+    // Backfill scenario: one relation target failed to publish (its ref is unresolvable), a
+    // second is still co-pending-but-resolvable, and a third already resolved. Only the
+    // failed one is dropped; the resolvable pseudo-ref stays so resolveBatchPseudoRefs can
+    // resolve it, and the real id is untouched.
+    const schema = buildNotionRelationSchema({ annotateEnvelope: true });
+    const failedRef = '@/Notion/categories/scratch_pending_publish_failed.json';
+    const stillPendingRef = '@/Notion/categories/scratch_pending_publish_ok.json';
+    const content = relationContent([failedRef, stillPendingRef, 'real-page-id']);
+
+    const result = svc.stripSpecificPseudoRefs(content, schema, new Set([failedRef])) as Record<string, unknown>;
+
+    expect(result).toEqual({
+      id: 'page_1',
+      properties: {
+        Category: { type: 'relation', relation: [{ id: stillPendingRef }, { id: 'real-page-id' }], has_more: false },
+      },
+    });
+  });
+
+  it('stripSpecificPseudoRefs is a no-op when the unresolvable set is empty', () => {
+    const schema = buildNotionRelationSchema({ annotateEnvelope: true });
+    const content = relationContent(['@/Notion/categories/scratch_pending_publish_x.json', 'real-page-id']);
+
+    const result = svc.stripSpecificPseudoRefs(content, schema, new Set()) as Record<string, unknown>;
+
+    expect(result).toEqual(content);
+  });
 });

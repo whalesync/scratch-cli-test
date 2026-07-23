@@ -1093,6 +1093,101 @@ describe('SyncDraftService', () => {
       ]);
     });
 
+    it('attaches the FK pipeline for a `{ ref }` target pointing at a sibling placeholder table (DEV-10954)', async () => {
+      // Two placeholder tables created in the SAME draft: Appointments' "Associated Companies"
+      // FK targets the Companies sibling via `{ ref: 'spec_comp' }` (a shape the draft DTO
+      // admits and materialize creates the relation for). The FK-transformer pass must resolve
+      // that ref → the sibling mapping's SOURCE folder (dfd_comp_src) and attach the resolution
+      // pipeline — otherwise raw source ids are published into the relation (the bug).
+      const tableMappings = [
+        {
+          ref: 'tm_appt',
+          source: { dataFolderId: 'dfd_appt_src' },
+          destination: {
+            kind: 'placeholderTable',
+            ref: 'ph_appt',
+            connectorAccountId: 'coa_1',
+            remoteParentId: ['base1'],
+            createSpec: {
+              ref: 'spec_appt',
+              name: 'Appointments',
+              fields: [
+                { name: 'Name', fieldType: { kind: 'text' } },
+                { name: 'Associated Companies', fieldType: { kind: 'foreignKey', target: { ref: 'spec_comp' } } },
+              ],
+            },
+          },
+          columnMappings: [
+            {
+              source: { columnId: 'associations.companies.results' },
+              destination: { kind: 'placeholderField', ref: 'Associated Companies' },
+            },
+          ],
+        },
+        {
+          ref: 'tm_comp',
+          source: { dataFolderId: 'dfd_comp_src' },
+          destination: {
+            kind: 'placeholderTable',
+            ref: 'ph_comp',
+            connectorAccountId: 'coa_1',
+            remoteParentId: ['base1'],
+            createSpec: {
+              ref: 'spec_comp',
+              name: 'Companies',
+              fields: [{ name: 'Name', fieldType: { kind: 'text' } }],
+            },
+          },
+          columnMappings: [],
+        },
+      ];
+      const row = makeDraftRow({ tableMappings });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (dbService.client.syncDraft.update as jest.Mock).mockResolvedValue(row);
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_appt_src', tableId: ['0-421'] },
+        { id: 'dfd_comp_src', tableId: ['companies'] },
+      ]);
+      schemaBuilderService.createTables.mockResolvedValue({
+        status: 'ok',
+        tables: [
+          {
+            ref: 'spec_appt',
+            name: 'Appointments',
+            status: 'created',
+            remoteTableId: ['base1', 'tblAppt'],
+            fields: [],
+          },
+          { ref: 'spec_comp', name: 'Companies', status: 'created', remoteTableId: ['base1', 'tblComp'], fields: [] },
+        ],
+      } as never);
+      (dataFolderService.getStoredView as jest.Mock).mockResolvedValue({
+        name: 'Default',
+        cols: [
+          {
+            kind: 'col',
+            path: 'associations.companies.results',
+            name: 'Associated Companies',
+            displayTransformer: { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'join_comma' } },
+          },
+        ],
+      });
+      (dataFolderService.fetchSchemaSpec as jest.Mock).mockResolvedValue({
+        schema: { type: 'object', properties: {} },
+      });
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      const apptMapping = res.draft.tableMappings.find((tableMapping) => tableMapping.ref === 'tm_appt');
+      const fkColumn = apptMapping?.columnMappings.find(
+        (columnMapping) => columnMapping.source.columnId === 'associations.companies.results',
+      );
+      expect(fkColumn?.transformers).toEqual([
+        { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'array' } },
+        { type: 'source_fk_to_dest_fk', options: { referencedDataFolderId: 'dfd_comp_src', outputType: 'array' } },
+      ]);
+    });
+
     it('appends the destination pack after source_fk_to_dest_fk when the created FK field declares one (Notion relation)', async () => {
       // Same shape as the pipeline test above, but the destination schema's created FK field
       // carries an `x-scratch-suggested-in-transformer` pack (Notion relation: ids → [{id}] →

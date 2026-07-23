@@ -1258,30 +1258,51 @@ export class SyncDraftService {
     destinationFieldsByTableMappingRef: Map<string, SchemaField[] | null>,
     actor: Actor,
   ): Promise<void> {
+    // A source table's remote id → the draft source folder that pulls it — the folder an
+    // `{ unresolvedLinkedTableId }` foreignKey target resolves against. Built up front so the
+    // collection loop can turn each column's target into its referenced source folder.
+    const sourceFolderIdByRemoteTableId = await this.buildSourceFolderByRemoteTableIdMap(tableMappings);
+    // A placeholder table's create-spec ref → that table mapping's SOURCE folder — the folder a
+    // sibling `{ ref }` foreignKey target resolves against (the ref names a table created in this
+    // same draft, and its source records are what `source_fk_to_dest_fk` resolves ids against).
+    const sourceDataFolderIdByPlaceholderCreateSpecRef = new Map<string, DataFolderId>();
+    for (const tableMapping of tableMappings) {
+      if (tableMapping.destination.kind === 'placeholderTable') {
+        sourceDataFolderIdByPlaceholderCreateSpecRef.set(
+          tableMapping.destination.createSpec.ref,
+          tableMapping.source.dataFolderId as DataFolderId,
+        );
+      }
+    }
+
     const foreignKeyColumns: {
       tableMapping: DraftTableMapping;
       columnMapping: DraftColumnMapping;
       destinationRef: string;
-      linkedTableId: string;
+      referencedDataFolderId: DataFolderId;
     }[] = [];
     for (const tableMapping of tableMappings) {
       for (const columnMapping of tableMapping.columnMappings) {
         if (columnMapping.destination.kind !== 'placeholderField') continue;
         if (columnMapping.transformers && columnMapping.transformers.length > 0) continue;
-        const linkedTableId = this.foreignKeyLinkedTableIdForColumn(columnMapping.destination.ref, tableMapping);
-        if (linkedTableId) {
+        const referencedDataFolderId = this.foreignKeyReferencedSourceFolderIdForColumn(
+          columnMapping.destination.ref,
+          tableMapping,
+          sourceFolderIdByRemoteTableId,
+          sourceDataFolderIdByPlaceholderCreateSpecRef,
+        );
+        if (referencedDataFolderId) {
           foreignKeyColumns.push({
             tableMapping,
             columnMapping,
             destinationRef: columnMapping.destination.ref,
-            linkedTableId,
+            referencedDataFolderId,
           });
         }
       }
     }
     if (foreignKeyColumns.length === 0) return;
 
-    const sourceFolderIdByRemoteTableId = await this.buildSourceFolderByRemoteTableIdMap(tableMappings);
     // Destination connector-account id per FK-carrying table, so we can ask each whether a foreignKey
     // column is a single scalar (Postgres/Supabase) or a multi-valued list (Airtable/Notion).
     const connectorAccountIdByExistingDestinationFolderId =
@@ -1290,10 +1311,7 @@ export class SyncDraftService {
       );
     const destinationSupportsManyToManyByConnectorAccountId = new Map<string, boolean>();
     let changed = false;
-    for (const { tableMapping, columnMapping, destinationRef, linkedTableId } of foreignKeyColumns) {
-      const referencedDataFolderId = sourceFolderIdByRemoteTableId.get(linkedTableId);
-      if (!referencedDataFolderId) continue; // the related table isn't synced here — can't resolve.
-
+    for (const { tableMapping, columnMapping, destinationRef, referencedDataFolderId } of foreignKeyColumns) {
       const sourceContext = await this.resolveSourceContext(
         tableMapping.source.dataFolderId,
         sourceContextByFolderId,
@@ -1456,20 +1474,49 @@ export class SyncDraftService {
   }
 
   /**
-   * The source linked-table id a placeholderField column's foreignKey points at, or
-   * null when the column isn't a foreignKey (or its target isn't a pending source link
-   * id). Reads the created field spec the ref names — a field addition or a placeholder
-   * table's create spec — which materialize leaves carrying `{ unresolvedLinkedTableId }`.
+   * The foreignKey target a placeholderField column points at, or null when the column
+   * isn't a foreignKey. Reads the created field spec the ref names — a field addition or
+   * a placeholder table's create spec. The target is whichever branch the plan generator
+   * or client persisted: `{ unresolvedLinkedTableId }` (a pending source link id), `{ ref }`
+   * (a sibling placeholder table created in this same draft), or `{ existingRemoteTableId }`.
    */
-  private foreignKeyLinkedTableIdForColumn(ref: string, tableMapping: DraftTableMapping): string | null {
+  private foreignKeyTargetForColumn(ref: string, tableMapping: DraftTableMapping): ForeignKeyTarget | null {
     const additionSpec = tableMapping.fieldAdditions?.find((field) => field.ref === ref)?.createFieldSpec;
     const placeholderSpec =
       tableMapping.destination.kind === 'placeholderTable'
         ? tableMapping.destination.createSpec.fields.find((spec) => spec.name === ref)
         : undefined;
     const fieldType = (additionSpec ?? placeholderSpec)?.fieldType;
-    if (fieldType?.kind === 'foreignKey' && 'unresolvedLinkedTableId' in fieldType.target) {
-      return fieldType.target.unresolvedLinkedTableId;
+    return fieldType?.kind === 'foreignKey' ? fieldType.target : null;
+  }
+
+  /**
+   * The draft SOURCE folder a placeholderField foreignKey column resolves its related
+   * records against — the `referencedDataFolderId` for `source_fk_to_dest_fk` — or null
+   * when the column isn't a resolvable-in-draft foreignKey. Both target shapes the draft
+   * can carry map to the same source folder:
+   *  - `{ unresolvedLinkedTableId }` — the source's own linked-table remote id, mapped
+   *    via the draft source folder that pulls that remote table.
+   *  - `{ ref }` — a sibling placeholder table created in this same draft; resolved to
+   *    that sibling mapping's source folder (whose synced records the FK resolves against).
+   *    Without this, a schema-valid `{ ref }` target was accepted at save but never got
+   *    resolution transformers, so the sync published raw source ids (DEV-10954).
+   * An `{ existingRemoteTableId }` target points at a pre-existing destination table not
+   * (necessarily) synced through this draft's source folders — nothing to resolve against.
+   */
+  private foreignKeyReferencedSourceFolderIdForColumn(
+    ref: string,
+    tableMapping: DraftTableMapping,
+    sourceFolderIdByRemoteTableId: Map<string, DataFolderId>,
+    sourceDataFolderIdByPlaceholderCreateSpecRef: Map<string, DataFolderId>,
+  ): DataFolderId | null {
+    const target = this.foreignKeyTargetForColumn(ref, tableMapping);
+    if (!target) return null;
+    if ('unresolvedLinkedTableId' in target) {
+      return sourceFolderIdByRemoteTableId.get(target.unresolvedLinkedTableId) ?? null;
+    }
+    if ('ref' in target) {
+      return sourceDataFolderIdByPlaceholderCreateSpecRef.get(target.ref) ?? null;
     }
     return null;
   }

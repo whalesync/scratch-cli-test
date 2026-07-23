@@ -1053,9 +1053,40 @@ export class PublishPlanRunService {
       if (!e.content) continue;
       rawContents.push(e.content);
     }
+    // Backfill runs strictly AFTER every create in this plan (see the phase order), so a
+    // relation pseudo-ref that STILL doesn't resolve here means its target record never
+    // landed — the target's create failed (e.g. rejected by the service), or it isn't in
+    // this plan. Rather than fail the whole dependent record (which throws in
+    // resolveBatchPseudoRefs and re-fails every subsequent run), drop just those
+    // unresolvable relation links — a schema-aware element drop, so a Notion relation
+    // converges to `relation: []` rather than `[{ id: null }]` — and warn. The remaining
+    // resolvable links still resolve below, and because the on-disk envelope keeps the
+    // pseudo-ref, a future plan re-emits a backfill and resolves it once the target lands
+    // (DEV-10954). Gated on the backfill phase: an unresolved ref in the edit phase (which
+    // runs before create) may name a target that creates later this same plan.
+    let contentsToResolve = rawContents;
+    if (phase === 'backfill') {
+      const unresolvablePseudoRefStrings = await this.refResolverService.findUnresolvablePseudoRefs(
+        workbookId,
+        rawContents,
+        connectorAccountId,
+      );
+      if (unresolvablePseudoRefStrings.size > 0) {
+        WSLogger.warn({
+          source: 'PublishPlanRunService.dispatchUpdateBatch',
+          message: `Dropping ${unresolvablePseudoRefStrings.size} unresolvable relation link(s) from backfill: their target record(s) failed to publish or are not in this plan`,
+          planId,
+          workbookId,
+          droppedPseudoRefs: [...unresolvablePseudoRefStrings],
+        });
+        contentsToResolve = rawContents.map((content) =>
+          this.refCleanerService.stripSpecificPseudoRefs(content, tableSpec.schema, unresolvablePseudoRefStrings),
+        );
+      }
+    }
     const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(
       workbookId,
-      rawContents,
+      contentsToResolve,
       (asset) => connector.resolveAssetReference(asset),
       connectorAccountId,
     );
@@ -1107,6 +1138,20 @@ export class PublishPlanRunService {
         remoteId = await this.fileIndexService.getRecordId(workbookId, folderPath, filename, connectorAccountId);
       }
       if (!remoteId) {
+        if (phase === 'backfill') {
+          // The record's OWN create failed (its id never landed in the FileIndex), so this
+          // orphaned backfill op has nothing to update. That failure is already surfaced as the
+          // create op's error; warn and skip rather than throwing a second, confusing error that
+          // would re-fail every run (DEV-10954). A missing id in the edit phase is still a genuine
+          // error (the record should already exist remotely), so keep throwing there.
+          WSLogger.warn({
+            source: 'PublishPlanRunService.dispatchUpdateBatch',
+            message: `Skipping backfill for ${entry.filePath}: its own create did not land, so it has no remote id yet`,
+            planId,
+            workbookId,
+          });
+          continue;
+        }
         throw new Error(`Could not resolve remote ID for entry: ${entry.filePath}`);
       }
       // Only overwrite the PK when the content's existing value is
