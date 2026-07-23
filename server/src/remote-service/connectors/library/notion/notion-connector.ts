@@ -76,7 +76,11 @@ import {
   isNotionStandalonePagesTable,
   NOTION_STANDALONE_PAGES_DISPLAY_NAME,
 } from './notion-standalone-pages';
-import { extractNotionRejectedPropertyName, splitRichTextSpansToNotionLimit } from './notion-write-validation';
+import {
+  extractNotionRejectedPropertyName,
+  findUnwritableNotionDateBoundary,
+  splitRichTextSpansToNotionLimit,
+} from './notion-write-validation';
 
 export const PAGE_CONTENT_COLUMN_NAME = 'Page Content';
 export const PAGE_CONTENT_COLUMN_ID = 'WS_PAGE_CONTENT';
@@ -876,6 +880,25 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       for (const spanArrayPropertyKey of ['rich_text', 'title'] as const) {
         if (Array.isArray(rest[spanArrayPropertyKey])) {
           rest[spanArrayPropertyKey] = splitRichTextSpansToNotionLimit(rest[spanArrayPropertyKey] as unknown[]);
+        }
+      }
+
+      // Notion *accepts* an out-of-range date (year outside 0001–9999, e.g. an
+      // extended-year "+010000-…" from a Postgres 9999-12-31 timestamp rolled
+      // across a UTC offset) but stores it as its invalid sentinel, so the
+      // property becomes `{ start: "Invalid DateTime" }` — garbage that breaks
+      // Notion-side filters/sorts (DEV-10960). Skip the property with a per-field
+      // warning so the field is left unchanged rather than corrupted.
+      if (propType === 'date') {
+        const unwritableDateBoundary = findUnwritableNotionDateBoundary(rest.date);
+        if (unwritableDateBoundary !== undefined) {
+          WSLogger.warn({
+            source: 'NotionConnector',
+            message: `Skipping out-of-range date value for property "${key}"; Notion accepts only four-digit years (0001–9999). Field left unchanged.`,
+            propertyName: key,
+            value: unwritableDateBoundary,
+          });
+          continue;
         }
       }
 

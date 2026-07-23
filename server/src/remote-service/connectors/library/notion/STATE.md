@@ -92,7 +92,7 @@ Entities that can't be a standalone Scratch table, for either reason: **(i) scop
 | text | ⬜ | ⬜ | ⬜ | |
 | number | ⬜ | ⬜ | ⬜ | |
 | boolean | ⬜ | ⬜ | ⬜ | |
-| date / datetime | ⬜ | ⬜ | ⬜ | tz handling? |
+| date / datetime | ⬜ | ⬜ | ⬜ | tz handling? Out-of-range years (outside 0001–9999, e.g. extended-year `+010000-…`) are skipped on write with a warning — Notion accepts them but stores `"Invalid DateTime"` (DEV-10960). |
 | single-select | ⬜ | ⬜ | ⬜ | id vs label? |
 | multi-select | ⬜ | ⬜ | ⬜ | |
 | relation / FK | ⬜ | ⬜ | ⬜ | linkedTableId? |

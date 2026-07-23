@@ -118,6 +118,40 @@ describe('NotionConnector.updateRecords', () => {
     expect(callArg.properties.Notes).toEqual({ rich_text: [] });
   });
 
+  // DEV-10960: an out-of-range date (extended-year "+010000-…" from a Postgres
+  // 9999-12-31 timestamp) is accepted by Notion but stored as "Invalid DateTime".
+  // The write path must skip that property (leaving the field unchanged) while
+  // still writing the other changed properties.
+  it('skips an out-of-range date property, still writing the other changed properties', async () => {
+    const files: ConnectorFile[] = [
+      {
+        id: 'page_1',
+        properties: {
+          Due: { id: 'pid_a', type: 'date', date: { start: '2026-01-01' } },
+          Title: { id: 'pid_b', type: 'title', title: [{ plain_text: 'Old' }] },
+        },
+      },
+    ];
+    const changedFields: Record<string, unknown>[] = [
+      {
+        properties: {
+          Due: { type: 'date', date: { start: '+010000-01-01T07:59:59.000Z' } },
+          Title: { type: 'title', title: [{ type: 'text', text: { content: 'New' }, plain_text: 'New' }] },
+        },
+      },
+    ];
+
+    await connector.updateRecords(buildTableSpec(), files, changedFields);
+
+    expect(mockUpdatePage).toHaveBeenCalledTimes(1);
+    const [callArg] = mockUpdatePage.mock.calls[0] as [{ page_id: string; properties: Record<string, unknown> }];
+    // The corrupt date is omitted (Notion leaves the field unchanged) but the title still ships.
+    expect(callArg.properties.Due).toBeUndefined();
+    expect(callArg.properties.Title).toEqual({
+      title: [{ type: 'text', text: { content: 'New' }, plain_text: 'New' }],
+    });
+  });
+
   it('throws when only read-only properties changed (does not silently no-op)', async () => {
     const files: ConnectorFile[] = [
       {

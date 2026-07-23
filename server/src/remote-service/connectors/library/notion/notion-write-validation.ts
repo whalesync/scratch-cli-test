@@ -112,6 +112,57 @@ export function splitRichTextSpansToNotionLimit(spans: readonly unknown[]): unkn
 }
 
 /**
+ * Notion date properties accept only a calendar year Notion can represent: an
+ * RFC 3339 timestamp (or bare `YYYY-MM-DD`) with a four-digit year, 0001–9999.
+ * A value outside that range is *accepted* by Notion's write API but stored as
+ * its invalid sentinel — the property literally becomes `{ start: "Invalid
+ * DateTime" }`, which shows as garbage in the UI and breaks Notion-side
+ * filters/sorts (DEV-10960).
+ *
+ * The canonical trigger is an extended-year ISO string such as
+ * `"+010000-01-01T07:59:59.000Z"` — produced when a Postgres `timestamp` of
+ * `9999-12-31 23:59:59` rolls into year 10000 as it crosses a UTC offset, then
+ * `Date#toISOString()` emits the six-digit `±YYYYYY` extended-year form. Notion
+ * can't parse that, so the write path must skip the property (leaving the field
+ * unchanged) rather than ship a value Notion mangles.
+ */
+export const NOTION_MIN_DATE_YEAR = 1;
+export const NOTION_MAX_DATE_YEAR = 9999;
+
+/**
+ * Whether a single Notion date boundary string (`date.start` / `date.end`) is
+ * one Notion can store faithfully: it must parse to a real instant AND fall
+ * within Notion's four-digit-year range. Rejects unparseable values and the
+ * extended-year form (`+010000-…`, whose `getUTCFullYear()` is 10000).
+ */
+export function isNotionWritableDateBoundary(value: string): boolean {
+  const parsed = new Date(value);
+  const epochMilliseconds = parsed.getTime();
+  if (Number.isNaN(epochMilliseconds)) {
+    return false;
+  }
+  const year = parsed.getUTCFullYear();
+  return year >= NOTION_MIN_DATE_YEAR && year <= NOTION_MAX_DATE_YEAR;
+}
+
+/**
+ * Inspect an outbound Notion `date` property value (`{ start, end?, time_zone? }`
+ * or `null`) and return the first boundary string Notion can't store faithfully,
+ * or `undefined` when every present boundary is writable (including a `null`
+ * clear, which carries no boundary). Callers use the returned value to skip the
+ * property with a per-field warning.
+ */
+export function findUnwritableNotionDateBoundary(dateValue: unknown): string | undefined {
+  if (!dateValue || typeof dateValue !== 'object') {
+    return undefined;
+  }
+  const { start, end } = dateValue as { start?: unknown; end?: unknown };
+  return [start, end].find(
+    (boundary): boundary is string => typeof boundary === 'string' && !isNotionWritableDateBoundary(boundary),
+  );
+}
+
+/**
  * Best-effort extraction of the property name from a Notion validation-error
  * message. Notion phrases these against the request-body JSON path, e.g.
  *   "body.properties.Body.rich_text[0].text.content.length should be ≤ `2000`…"

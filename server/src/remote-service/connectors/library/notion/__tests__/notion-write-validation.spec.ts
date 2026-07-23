@@ -2,6 +2,8 @@ import {
   NOTION_RICH_TEXT_MAX_CONTENT_LENGTH,
   chunkStringToNotionRichTextLimit,
   extractNotionRejectedPropertyName,
+  findUnwritableNotionDateBoundary,
+  isNotionWritableDateBoundary,
   splitRichTextSpansToNotionLimit,
 } from '../notion-write-validation';
 
@@ -111,5 +113,50 @@ describe('extractNotionRejectedPropertyName', () => {
   it('returns undefined when the message is not property-scoped', () => {
     expect(extractNotionRejectedPropertyName('Something went wrong')).toBeUndefined();
     expect(extractNotionRejectedPropertyName('body.parent.data_source_id is invalid')).toBeUndefined();
+  });
+});
+
+describe('isNotionWritableDateBoundary', () => {
+  it('accepts four-digit-year date-time and date-only values', () => {
+    expect(isNotionWritableDateBoundary('2025-02-20T13:00:00.000-05:00')).toBe(true);
+    expect(isNotionWritableDateBoundary('2025-02-20')).toBe(true);
+    expect(isNotionWritableDateBoundary('9999-12-31T23:59:59.000Z')).toBe(true);
+    expect(isNotionWritableDateBoundary('0001-01-01')).toBe(true);
+  });
+
+  it('rejects the extended-year form Notion stores as "Invalid DateTime"', () => {
+    // 9999-12-31 23:59:59 rolled into year 10000 across a UTC offset (DEV-10960).
+    expect(isNotionWritableDateBoundary('+010000-01-01T07:59:59.000Z')).toBe(false);
+  });
+
+  it('rejects unparseable values', () => {
+    expect(isNotionWritableDateBoundary('Invalid DateTime')).toBe(false);
+    expect(isNotionWritableDateBoundary('not-a-date')).toBe(false);
+    expect(isNotionWritableDateBoundary('')).toBe(false);
+  });
+});
+
+describe('findUnwritableNotionDateBoundary', () => {
+  it('returns undefined for an in-range date value', () => {
+    expect(findUnwritableNotionDateBoundary({ start: '2025-02-20' })).toBeUndefined();
+    expect(
+      findUnwritableNotionDateBoundary({ start: '2025-02-20', end: '2025-02-21', time_zone: null }),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined for a null clear (no boundary to check)', () => {
+    expect(findUnwritableNotionDateBoundary(null)).toBeUndefined();
+  });
+
+  it('returns the offending boundary when start is out of range', () => {
+    expect(findUnwritableNotionDateBoundary({ start: '+010000-01-01T07:59:59.000Z' })).toBe(
+      '+010000-01-01T07:59:59.000Z',
+    );
+  });
+
+  it('returns the offending boundary when only end is out of range', () => {
+    expect(findUnwritableNotionDateBoundary({ start: '2025-02-20', end: '+010000-01-01T07:59:59.000Z' })).toBe(
+      '+010000-01-01T07:59:59.000Z',
+    );
   });
 });
