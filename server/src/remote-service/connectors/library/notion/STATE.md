@@ -98,7 +98,7 @@ Entities that can't be a standalone Scratch table, for either reason: **(i) scop
 | relation / FK | ⬜ | ⬜ | ⬜ | linkedTableId? |
 | attachment / asset | ⬜ | ⬜ | ⬜ | |
 | formula / computed | ➖ | ➖ | ➖ | read-only |
-| rich text / html | ⬜ | ⬜ | ⬜ | |
+| rich text / html | ⬜ | ⬜ | ⬜ | Notion caps each `rich_text`/`title` span's `text.content` at 2000 chars; on push we auto-split an over-cap value across consecutive spans (`notion-write-validation.ts`) so long synced text publishes instead of being rejected. |
 
 ## Bulk operation limits / pagination
 Max records (or fields) per API request, **per operation** — services often differ between read/create/update/delete. If the service has **per-entity** limits (rare), note them here AND in that entity's row in the entity table.

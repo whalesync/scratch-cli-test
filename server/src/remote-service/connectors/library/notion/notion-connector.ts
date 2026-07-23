@@ -76,6 +76,7 @@ import {
   isNotionStandalonePagesTable,
   NOTION_STANDALONE_PAGES_DISPLAY_NAME,
 } from './notion-standalone-pages';
+import { extractNotionRejectedPropertyName, splitRichTextSpansToNotionLimit } from './notion-write-validation';
 
 export const PAGE_CONTENT_COLUMN_NAME = 'Page Content';
 export const PAGE_CONTENT_COLUMN_ID = 'WS_PAGE_CONTENT';
@@ -859,6 +860,15 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       // The Notion update API expects just the property value, not the type wrapper
       const rest = Object.fromEntries(Object.entries(prop).filter(([k]) => k !== 'type' && k !== 'id'));
 
+      // Notion rejects a write whose rich-text/title span exceeds 2000 chars
+      // (DEV: "body.properties.<Field>.rich_text[0].text.content.length should be
+      // ≤ 2000"). Split any oversized span across consecutive spans so a long
+      // synced value publishes instead of being rejected. Only the outbound
+      // payload is reshaped; the record on disk is untouched.
+      if ((propType === 'rich_text' || propType === 'title') && Array.isArray(rest[propType])) {
+        rest[propType] = splitRichTextSpansToNotionLimit(rest[propType] as unknown[]);
+      }
+
       // Only include if there's actual content to update
       if (Object.keys(rest).length > 0) {
         transformed[key] = rest;
@@ -1223,9 +1233,14 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         };
       }
 
-      // Catch-all for any other Notion API error codes (e.g. ValidationError, ConflictError)
+      // Catch-all for any other Notion API error codes (e.g. ValidationError, ConflictError).
+      // Notion phrases validation failures against the request-body JSON path
+      // ("body.properties.<Field>.…"); surface the field name up front so the
+      // per-record error identifies which field was rejected, not just the table.
+      const rejectedPropertyName = extractNotionRejectedPropertyName(notionError.message);
+      const fieldPrefix = rejectedPropertyName ? `field "${rejectedPropertyName}" — ` : '';
       return {
-        userFriendlyMessage: `Notion API error (${notionError.code}): ${notionError.message}`,
+        userFriendlyMessage: `Notion API error (${notionError.code}): ${fieldPrefix}${notionError.message}`,
         description: notionError.message,
       };
     }
