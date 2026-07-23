@@ -1,7 +1,7 @@
 import { Service, TransformerConfig } from '@spinner/shared-types';
-import get from 'lodash/get';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { applyTransformerPipeline, createNullLookupTools, SyncRecord } from 'src/sync/transformers';
+import { readFieldValueAtPath } from 'src/utils/field-path';
 import { extractSchemaFields } from 'src/utils/schema-helpers';
 
 /**
@@ -66,7 +66,7 @@ export async function deriveCanonicalMatchKey(
   field: MatchFieldReductionContext,
   suggestedUnpackTransformer: TransformerConfig | undefined,
 ): Promise<string | null> {
-  const rawValue = get(field.record.fields, field.fieldPath);
+  const rawValue = readFieldValueAtPath(field.record.fields, field.fieldPath);
 
   if (isNonEmptyMatchPrimitive(rawValue)) {
     return String(rawValue).trim();

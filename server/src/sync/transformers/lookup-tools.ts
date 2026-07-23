@@ -6,8 +6,8 @@ import {
   SyncId,
   WorkbookId,
 } from '@spinner/shared-types';
-import get from 'lodash/get';
 import { DbService } from 'src/db/db.service';
+import { readFieldValueAtPath } from 'src/utils/field-path';
 import { sanitizeConnectionFolderName } from 'src/workbook/connector-folder-path.util';
 import { AssetMappingResult, FkMappingResult, LookupTools } from './transformer.types';
 
@@ -135,7 +135,7 @@ export function createLookupTools(
         // Extract the field using the dot-path.
         // Normalize undefined (missing path) to null so callers can distinguish
         // "record not found" (undefined) from "field is null/missing" (null).
-        const value: unknown = get(cachedRecord.recordData as object, fieldPath);
+        const value: unknown = readFieldValueAtPath(cachedRecord.recordData, fieldPath);
         return value === undefined ? null : value;
       }
 

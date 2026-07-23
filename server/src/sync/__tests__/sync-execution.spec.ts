@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import type {
   AutoConvertOptions,
   ColumnMappingV1,
@@ -8,6 +9,7 @@ import type {
 } from '@spinner/shared-types';
 import { transformV1ToV2 } from '@spinner/shared-types';
 import { Service } from 'src/remote-service/connectors/service-constants';
+import type { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import {
   applyColumnMappings,
   classifyDestinationRecord,
@@ -989,5 +991,77 @@ describe('classifyDestinationRecord', () => {
 
   it('returns "unmatchedWithoutMatchKey" when the record has no canonical match key', () => {
     expect(classifyDestinationRecord(null, new Set(['rec_123']))).toBe('unmatchedWithoutMatchKey');
+  });
+});
+
+// ===========================================================================
+// transformRecordAsync — field names that literally contain dots (DEV-10959)
+//
+// A Postgres column named `col.with.dots` maps to a Notion property of the same
+// name. The source value must be READ from the flat `col.with.dots` key (not a
+// nested `col → with → dots` miss that would be treated as a clear), and WRITTEN
+// under the dotted property name at `properties.col.with.dots.rich_text`.
+// ===========================================================================
+describe('transformRecordAsync — dotted field names', () => {
+  // Only `.schema` is read by the executor (it drives dot-safe destination-path
+  // segmentation); the rest of the spec is irrelevant to this test.
+  const destinationSpec = {
+    schema: Type.Object({
+      properties: Type.Object({
+        'col.with.dots': Type.Object({ rich_text: Type.Array(Type.Object({})) }),
+      }),
+    }),
+  } as unknown as BaseJsonTableSpec;
+
+  it('reads a dotted source column and writes a dotted destination property on the create path', async () => {
+    const mappings: ColumnMappingV1[] = [
+      { sourceColumnId: 'col.with.dots', destinationColumnId: 'properties.col.with.dots.rich_text' },
+    ];
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { 'col.with.dots': 'hello' } };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      mappings,
+      null,
+      destinationSpec,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      undefined,
+      SYNC_CONTEXT,
+    );
+
+    // Flat key preserved on both sides — NOT `{ col: { with: { dots: ... } } }`.
+    expect(fields).toEqual({ properties: { 'col.with.dots': { rich_text: 'hello' } } });
+  });
+
+  it('updates a dotted destination property in place, preserving surrounding keys', async () => {
+    const mappings: ColumnMappingV1[] = [
+      { sourceColumnId: 'col.with.dots', destinationColumnId: 'properties.col.with.dots.rich_text' },
+    ];
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { 'col.with.dots': 'updated' } };
+    const baseFields = {
+      properties: {
+        Name: { title: 'keep me' },
+        'col.with.dots': { rich_text: 'old' },
+      },
+    };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      mappings,
+      null,
+      destinationSpec,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual({
+      properties: {
+        Name: { title: 'keep me' },
+        'col.with.dots': { rich_text: 'updated' },
+      },
+    });
   });
 });

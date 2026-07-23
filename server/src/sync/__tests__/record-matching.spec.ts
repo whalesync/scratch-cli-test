@@ -72,6 +72,19 @@ describe('deriveCanonicalMatchKey', () => {
     const ctx = { record: recordWith({ rich_text: [] }), fieldPath: 'id', tableSpec: null };
     expect(await deriveCanonicalMatchKey(ctx, NOTION_RICH_TEXT_UNPACK)).toBeNull();
   });
+
+  it('reads a match field whose name literally contains dots (DEV-10959)', async () => {
+    // Matching on a Postgres column named `col.with.dots`: the value must be read
+    // from that flat key, not a nested `col → with → dots` miss that would yield a
+    // null match key and silently mis-pair (or skip) the record.
+    const ctx = {
+      record: { id: 'r1', filePath: 'r1.json', fields: { 'col.with.dots': 'match-me' } },
+      fieldPath: 'col.with.dots',
+      tableSpec: null,
+      service: Service.NOTION,
+    };
+    expect(await deriveCanonicalMatchKey(ctx, undefined)).toBe('match-me');
+  });
 });
 
 describe('getFieldUnpackTransformer', () => {

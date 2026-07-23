@@ -39,9 +39,7 @@ import {
   ValidateSyncMappingTypesResponse,
   WorkbookId,
 } from '@spinner/shared-types';
-import get from 'lodash/get';
 import isEqual from 'lodash/isEqual';
-import set from 'lodash/set';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
@@ -77,6 +75,7 @@ import {
 } from 'src/sync/transformers';
 import { MappingTypeTrace, traceMappingType } from 'src/sync/transformers/type-validator';
 import { Actor } from 'src/users/types';
+import { readFieldValueAtPath, setFieldValueAtPath } from 'src/utils/field-path';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { deduplicateFileName, resolveBaseFileName } from 'src/workbook/util';
@@ -1346,7 +1345,7 @@ export class SyncService {
         let skippedNoMatchKey = 0;
         for (const [sourceId, sourceRecord] of batchRecordsById) {
           if (!batchMappings.has(sourceId)) {
-            const matchKeyValue = get(sourceRecord.fields, tableMapping.recordMatching.sourceColumnId);
+            const matchKeyValue = readFieldValueAtPath(sourceRecord.fields, tableMapping.recordMatching.sourceColumnId);
             if (
               matchKeyValue === undefined ||
               matchKeyValue === null ||
@@ -1405,17 +1404,19 @@ export class SyncService {
 
             // Generate a temporary ID for the new record so it can be matched on subsequent syncs,
             // but only if the column mappings haven't already set the destination ID column.
-            const existingIdValue = get(transformedFields, destIdColumn);
+            const existingIdValue = readFieldValueAtPath(transformedFields, destIdColumn);
             const hasExplicitId =
               existingIdValue != null && (typeof existingIdValue === 'string' || typeof existingIdValue === 'number');
             const tempId = hasExplicitId ? String(existingIdValue) : createScratchPendingPublishId();
             if (!hasExplicitId) {
-              set(transformedFields, destIdColumn, tempId);
+              setFieldValueAtPath(transformedFields, destIdColumn, tempId, destinationTableSpec?.schema);
             }
 
             // Resolve filename: prefer slug from destination schema, fall back to temp ID
             const slugPath = destinationTableSpec?.slugPath ?? destinationTableSpec?.slugColumnRemoteId;
-            const slugValue = slugPath ? (get(transformedFields, slugPath) as string | undefined) : undefined;
+            const slugValue = slugPath
+              ? (readFieldValueAtPath(transformedFields, slugPath) as string | undefined)
+              : undefined;
             const baseName = resolveBaseFileName({ slugValue, idValue: tempId });
             const fileName = deduplicateFileName(baseName, '.json', usedDestFileNames, tempId);
             destinationPath = destinationFolderPath ? `${destinationFolderPath}/${fileName}` : fileName;
@@ -1471,7 +1472,7 @@ export class SyncService {
               );
               if (archiveRepairFields) {
                 for (const [repairFieldPath, repairValue] of Object.entries(archiveRepairFields)) {
-                  set(transformedFields, repairFieldPath, repairValue);
+                  setFieldValueAtPath(transformedFields, repairFieldPath, repairValue, destinationTableSpec?.schema);
                 }
                 appliedArchiveRepair = true;
               }
@@ -1908,7 +1909,7 @@ export class SyncService {
       const sizeBefore = fkValues.size;
 
       for (const record of sourceRecords) {
-        const val = get(record.fields, mapping.sourceColumnId);
+        const val = readFieldValueAtPath(record.fields, mapping.sourceColumnId);
         if (val === null || val === undefined) continue;
         if (Array.isArray(val)) {
           for (const elem of val) {
@@ -2312,7 +2313,7 @@ export class SyncService {
 
     const fields: PreviewFieldResult[] = [];
     for (const mapping of columnMappings) {
-      const sourceValue = get(record.fields, mapping.sourceColumnId);
+      const sourceValue = readFieldValueAtPath(record.fields, mapping.sourceColumnId);
       let transformedValue: unknown = sourceValue;
       let warning: string | undefined;
 
@@ -2374,7 +2375,7 @@ export class SyncService {
       );
       if (sourceMatchKey === null) {
         recordMatchingWarning = describeUnusableMatchValue(
-          get(record.fields, recordMatching.sourceColumnId),
+          readFieldValueAtPath(record.fields, recordMatching.sourceColumnId),
           recordMatching.sourceColumnId,
         );
       }

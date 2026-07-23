@@ -1,5 +1,6 @@
 import { TSchema } from '@sinclair/typebox';
 import { ColumnMapping, ColumnMappingV2 } from '@spinner/shared-types';
+import { getSchemaAtFieldPath } from 'src/utils/field-path';
 
 /**
  * Validates that the source and destination fields in a mapping are compatible.
@@ -127,31 +128,16 @@ export function findConstantTypeMismatches(
 /**
  * Traverses a JSON schema using a dot-notation path to find a nested schema.
  * Supports traversing 'properties' of objects.
+ *
+ * A path segment (a connector field name) may itself contain a dot — a Postgres
+ * column literally named `col.with.dots`, an Airtable "No. of Employees" — which a
+ * naive `path.split('.')` would mis-segment, so this delegates to the schema-aware
+ * resolver that recovers the real segment boundaries from the schema's own
+ * property names before descending (DEV-10959). Behavior is identical for every
+ * path whose segment names contain no dots.
  */
 export function getSchemaAtPath(schema: TSchema, path: string): TSchema | undefined {
-  const parts = path.split('.');
-  let current: TSchema | undefined = schema;
-
-  for (const part of parts) {
-    if (!current) {
-      return undefined;
-    }
-
-    // Unwrap Optional/Union wrapper to get to the object if needed
-    if (current.type === undefined && (current as { anyOf?: unknown }).anyOf) {
-      const unwrapped = unwrapSchema(current);
-      if (unwrapped) current = unwrapped;
-    }
-
-    if (current.type !== 'object' || !current.properties) {
-      return undefined;
-    }
-
-    const properties = current.properties as Record<string, TSchema>;
-    current = properties[part];
-  }
-
-  return current;
+  return getSchemaAtFieldPath(schema, path);
 }
 
 /**

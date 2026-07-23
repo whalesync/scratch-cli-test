@@ -141,6 +141,24 @@ describe('validateSchemaMapping', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("Destination field 'nope' not found");
   });
+
+  it('resolves source and destination field names that literally contain dots (DEV-10959)', () => {
+    // A Postgres column named `col.with.dots` maps to a Notion property of the
+    // same name. Both paths embed the dotted name; naive `split('.')` previously
+    // reported "Source field 'col.with.dots' not found in schema".
+    const dottedSource = Type.Object({ 'col.with.dots': Type.String() });
+    const dottedDest = Type.Object({
+      properties: Type.Object({ 'col.with.dots': Type.Object({ rich_text: Type.Array(Type.Object({})) }) }),
+    });
+    const columnMappings: ColumnMapping[] = [
+      {
+        sourceColumnId: 'col.with.dots',
+        destinationColumnId: 'properties.col.with.dots.rich_text',
+        transformers: [{ type: 'wrap_object', options: { template: {} } }],
+      },
+    ];
+    expect(validateSchemaMapping(dottedSource, dottedDest, columnMappings)).toHaveLength(0);
+  });
 });
 
 describe('findConstantTypeMismatches', () => {

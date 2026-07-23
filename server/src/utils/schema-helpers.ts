@@ -14,6 +14,7 @@ import {
   X_SCRATCH_VIRTUAL_FIELDS,
   type PackInputPrimitive,
 } from '@spinner/shared-types';
+import { segmentFieldPathAgainstSchema } from 'src/utils/field-path';
 
 /**
  * `x-scratch-*` keys that annotate a CONTAINER node — an object whose properties
@@ -175,7 +176,11 @@ function propertySchemaAt(schema: TSchema | undefined, key: string): TSchema | u
 export function resolveSchemaTypeAtPath(schema: TSchema, dotPath: string): string {
   if (!dotPath) return resolveSchemaType(schema);
   let node: TSchema | undefined = schema;
-  for (const segment of dotPath.split('.')) {
+  // Segment against the schema's real property names rather than a naive
+  // `split('.')`, so a field literally named `col.with.dots` resolves to its flat
+  // property instead of a nested `col → with → dots` miss (DEV-10959). Descent
+  // stays on propertySchemaAt to keep its oneOf / past-envelope drilling.
+  for (const segment of segmentFieldPathAgainstSchema(schema, dotPath)) {
     node = propertySchemaAt(node, segment);
     if (!node) return 'unknown';
   }

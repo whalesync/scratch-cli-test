@@ -12,9 +12,6 @@ import {
   TransformerTypes,
   transformV1ToV2,
 } from '@spinner/shared-types';
-import get from 'lodash/get';
-import set from 'lodash/set';
-import zipObjectDeep from 'lodash/zipObjectDeep';
 import { WSLogger } from 'src/logger';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import {
@@ -25,6 +22,7 @@ import {
   SyncPhase,
   SyncRecord,
 } from 'src/sync/transformers';
+import { readFieldValueAtPath, setFieldValueAtPath } from 'src/utils/field-path';
 
 export interface TransformRecordResult {
   fields: Record<string, unknown>;
@@ -66,10 +64,10 @@ function forceAutoConvertToPreserveNullForClear(configs: TransformerConfig[]): T
  * directly by the v1 unit-test surface in `sync.service.spec.ts`.
  *
  * @param baseFields - If provided (existing record), clones it and overlays the
- *   mapped values via lodash `set`, preserving the original JSON key ordering.
- *   Do NOT replace this with merge/spread/Object.assign — those reorder keys
- *   and corrupt the destination file layout. When omitted (new record), builds
- *   a fresh object with `zipObjectDeep`.
+ *   mapped values at their destination paths (via {@link setFieldValueAtPath}),
+ *   preserving the original JSON key ordering. Do NOT replace this with
+ *   merge/spread/Object.assign — those reorder keys and corrupt the destination
+ *   file layout. When omitted (new record), builds a fresh object the same way.
  */
 export async function transformRecordAsync(
   sourceRecord: SyncRecord,
@@ -87,8 +85,13 @@ export async function transformRecordAsync(
 
   const phaseFilteredMappings = columnMappings.filter((mapping) => getColumnMappingPhase(mapping) === phase);
 
+  // Destination schema doubles as the dot-safe segmentation dictionary for every
+  // destination-path write below: a created Notion property literally named
+  // `col.with.dots` lands at that flat key rather than nested `col → with → dots`.
+  const destinationSchema = destinationTableSpec?.schema;
+
   for (const mapping of phaseFilteredMappings) {
-    let sourceValue = get(sourceRecord.fields, mapping.sourceColumnId);
+    let sourceValue = readFieldValueAtPath(sourceRecord.fields, mapping.sourceColumnId);
     let clearingAbsentSourceField = false;
 
     if (sourceValue === undefined) {
@@ -105,7 +108,7 @@ export async function transformRecordAsync(
       // nothing to clear, and emitting a cleared value would add a key the
       // destination's own pull omits for an empty field.
       const destinationHoldsValueToClear =
-        baseFields !== undefined && get(baseFields, mapping.destinationColumnId) !== undefined;
+        baseFields !== undefined && readFieldValueAtPath(baseFields, mapping.destinationColumnId) !== undefined;
       if (!destinationHoldsValueToClear) {
         continue;
       }
@@ -158,7 +161,7 @@ export async function transformRecordAsync(
           getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
           matchDestinationAssetByHash: () => Promise.resolve([]),
         },
-        destinationValue: baseFields ? get(baseFields, mapping.destinationColumnId) : undefined,
+        destinationValue: baseFields ? readFieldValueAtPath(baseFields, mapping.destinationColumnId) : undefined,
         phase,
       });
 
@@ -205,12 +208,20 @@ export async function transformRecordAsync(
   if (baseFields) {
     const fields = structuredClone(baseFields);
     for (let i = 0; i < definedPaths.length; i++) {
-      set(fields, definedPaths[i], definedValues[i]);
+      setFieldValueAtPath(fields, definedPaths[i], definedValues[i], destinationSchema);
     }
     return { fields, warnings };
   }
 
-  return { fields: zipObjectDeep(definedPaths, definedValues) as Record<string, unknown>, warnings };
+  // New record: build a fresh fields object. Segment each destination path against
+  // the destination schema (the target keys don't exist yet, so the object itself
+  // can't be the segmentation dictionary) so a dotted property name is written as
+  // a flat key — the dot-safe replacement for `zipObjectDeep`.
+  const fields: Record<string, unknown> = {};
+  for (let i = 0; i < definedPaths.length; i++) {
+    setFieldValueAtPath(fields, definedPaths[i], definedValues[i], destinationSchema);
+  }
+  return { fields, warnings };
 }
 
 // ============================================================================
@@ -363,7 +374,7 @@ export async function applyColumnMappings(args: ApplyColumnMappingsArgs): Promis
 
   if (args.phase === 'DATA' && constantMappings.length > 0) {
     for (const c of constantMappings) {
-      set(result.fields, c.destinationColumnId, c.value);
+      setFieldValueAtPath(result.fields, c.destinationColumnId, c.value, args.destinationTableSpec?.schema);
     }
   }
 
