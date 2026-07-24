@@ -295,6 +295,26 @@ describe('selectPlanFieldsFromTableView', () => {
       expect(gated.schemaFields[0].path).toBe('title');
     });
 
+    it("prefers a column's semantic logicalType over its render type for viewTypeByPath", () => {
+      // A display-transformer column (e.g. Attio) renders as text (`type:'string'`)
+      // but declares its true semantic type as `logicalType`; the plan generator must
+      // build the destination field from THAT, not text (DEV-11040).
+      const schema = Type.Object({
+        values: Type.Object({ amount: Type.Array(Type.Object({})), label: Type.Array(Type.Object({})) }),
+      });
+      const view: TableView = {
+        name: 'Default',
+        cols: [
+          { kind: 'col', name: 'Amount', path: 'values.amount', type: 'string', logicalType: 'number' },
+          { kind: 'col', name: 'Label', path: 'values.label', type: 'string' },
+        ],
+      };
+
+      const { viewTypeByPath } = selectPlanFieldsFromTableView({ schema, view });
+      expect(viewTypeByPath['values.amount']).toBe('number'); // logicalType wins
+      expect(viewTypeByPath['values.label']).toBe('string'); // falls back to render type
+    });
+
     it('falls back to the column path and unknown type when no schema field backs it', () => {
       const schema = Type.Object({ name: Type.String() });
       const view: TableView = {

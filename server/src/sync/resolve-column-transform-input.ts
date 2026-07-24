@@ -103,7 +103,15 @@ function findViewNodeAtPath(view: TableView, path: string): ViewNodeAtPath | und
   }
   for (const col of columns) {
     if (col.path === path) {
-      return { codec: col.codec, displayTransformer: col.displayTransformer, logicalType: col.type };
+      // Prefer the column's explicit semantic `logicalType` (set when the render
+      // `type` was forced to text for a display-transformer column) over the
+      // render `type`, so a flattened number/date/boolean column exports as that
+      // type instead of text.
+      return {
+        codec: col.codec,
+        displayTransformer: col.displayTransformer,
+        logicalType: col.logicalType ?? col.type,
+      };
     }
     for (const subfield of col.subfields ?? []) {
       if (`${col.path}.${subfield.relativePath}` === path) {

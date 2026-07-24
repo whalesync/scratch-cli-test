@@ -7,7 +7,7 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
-import { buildAttioDisplayTransformer } from './attio-value-expressions';
+import { attioExportLogicalType, buildAttioDisplayTransformer } from './attio-value-expressions';
 
 // ── Top-level fixed fields ──
 
@@ -328,6 +328,16 @@ function buildValueCol(attrSlug: string, attrSchema: TSchema | undefined, values
     hidden,
   };
 
-  if (displayTransformer) col.displayTransformer = displayTransformer;
+  if (displayTransformer) {
+    col.displayTransformer = displayTransformer;
+    // The render `type` above was forced to text for the grid, but the flattened
+    // value is really a number / date / boolean / url. Declare that SEMANTIC type
+    // as `logicalType` so sync / Live Export creates the destination field with
+    // the right type and doesn't export the value as text (DEV-11040). Only
+    // attach it when it actually differs from the rendered `type` (text-like
+    // extractions like status / email are already 'string').
+    const logicalType = attioExportLogicalType(connectorDataType);
+    if (logicalType && logicalType !== col.type) col.logicalType = logicalType;
+  }
   return col;
 }

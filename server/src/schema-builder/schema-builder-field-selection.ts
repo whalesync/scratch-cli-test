@@ -125,7 +125,12 @@ export function selectPlanFieldsFromTableView(args: {
     }
 
     schemaFields.push(derivedField);
-    if (col.type) viewTypeByPath[path] = col.type;
+    // Prefer the column's explicit semantic `logicalType` over the render `type`:
+    // a display-transformer column is rendered as text (`type:'string'`) but its
+    // flattened value is really a number / date / boolean / url, and the created
+    // destination field must be built for THAT type — not text.
+    const columnLogicalType = col.logicalType ?? col.type;
+    if (columnLogicalType) viewTypeByPath[path] = columnLogicalType;
   }
 
   return { schemaFields, viewTypeByPath };

@@ -191,6 +191,37 @@ describe('buildAttioDefaultView (object)', () => {
     });
   });
 
+  describe('logicalType (semantic export type, decoupled from the render type)', () => {
+    // A display-transformer column renders as text (`type:'string'`) but must carry
+    // its true semantic type as `logicalType` so sync / Live Export creates the
+    // destination field for that type instead of exporting a number/date/bool as
+    // text (DEV-11040).
+    it('declares the semantic type for number/currency/checkbox/date/url columns', () => {
+      const cases: Array<[string, string]> = [
+        ['values.estimated_arr', 'number'], // currency → number
+        ['values.is_active', 'checkbox'], // checkbox
+        ['values.founded_date', 'date'], // date
+        ['values.domains', 'url'], // domain → url
+      ];
+      for (const [path, expectedLogicalType] of cases) {
+        const col = view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol;
+        expect(col.type).toBe('string'); // render type stays text (the grid constraint)
+        expect(col.logicalType).toBe(expectedLogicalType);
+      }
+    });
+
+    it('omits logicalType for text-like extractions (already string)', () => {
+      for (const path of [
+        'values.name', // text
+        'values.description', // text
+        'values.email_addresses', // email-address → string
+      ]) {
+        const col = view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol;
+        expect(col.logicalType).toBeUndefined();
+      }
+    });
+  });
+
   describe('display transformer (declarative value-array flattening)', () => {
     it('extracts the scalar value via JSONPath for simple value types', () => {
       const name = view.cols.find((c) => c.kind === 'col' && c.path === 'values.name') as TableViewCol;
@@ -198,10 +229,11 @@ describe('buildAttioDefaultView (object)', () => {
         type: 'jsonpath',
         options: { expression: '$[0].value', arrayHandling: 'first' },
       });
+      // Currency lives under `currency_value`, not `value` (DEV-11039).
       const arr = view.cols.find((c) => c.kind === 'col' && c.path === 'values.estimated_arr') as TableViewCol;
       expect(arr.displayTransformer).toEqual({
         type: 'jsonpath',
-        options: { expression: '$[0].value', arrayHandling: 'first' },
+        options: { expression: '$[0].currency_value', arrayHandling: 'first' },
       });
     });
 

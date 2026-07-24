@@ -53,6 +53,22 @@ export type TableViewCol = {
 
   // Hint to the renderer on how to format.
   type?: TablePropertyType;
+
+  // The column's SEMANTIC type for sync / Live Export purposes, when it differs
+  // from the render `type` above. `type` is a rendering hint (which grid cell to
+  // draw); `logicalType` is what the value actually IS once flattened — the type
+  // a sync's transform picker and the create-schema plan generator should treat
+  // it as when copying it to another service.
+  //
+  // The two diverge when a column carries a `displayTransformer` that flattens a
+  // structured raw value to a scalar: the grid must render such a column through
+  // the text cell (`type:'string'`) because only that cell consults the
+  // `displayTransformer` — but the flattened value is really a number / date /
+  // boolean / url, and the export layer must see THAT so the destination field is
+  // created with the right type and the value isn't packed as text (e.g. an Attio
+  // currency/number attribute whose grid cell is text but whose exported value is
+  // a number). When unset, the export layer falls back to `type`.
+  logicalType?: TablePropertyType;
   readonly?: boolean;
 
   // Write-once: editable while the record is brand-new (not yet published) but

@@ -147,6 +147,35 @@ describe('resolveColumnTransformInput (dissolves the Notion inner-path mole)', (
     expect(input.logicalType).toBe('string'); // from the subfield's own type
     expect(input.cardinality).toBe('single');
   });
+
+  it("prefers a column's explicit logicalType over its render type (Attio-style text-rendered number)", () => {
+    // A display-transformer column renders as text (`type:'string'`) but declares its
+    // real semantic type in `logicalType`; the export layer must read THAT (DEV-11040).
+    const numberSchema = {
+      type: 'object',
+      properties: { values: { type: 'object', properties: { amount: { type: 'array', items: { type: 'object' } } } } },
+    } as unknown as TSchema;
+    const numberView: TableView = {
+      name: 'default',
+      cols: [
+        {
+          kind: 'col',
+          path: 'values.amount',
+          name: 'Amount',
+          type: 'string', // grid renders text so it consults the displayTransformer
+          logicalType: 'number', // ...but the flattened value is really a number
+          displayTransformer: { type: 'jsonpath', options: { expression: '$[0].value', arrayHandling: 'first' } },
+        },
+      ],
+    };
+    const input = resolveColumnTransformInput({
+      columnId: 'values.amount',
+      schema: numberSchema,
+      fieldsByPath: new Map(extractSchemaFields(numberSchema).map((field) => [field.path, field])),
+      view: numberView,
+    });
+    expect(input.logicalType).toBe('number');
+  });
 });
 
 describe('columnTransformInputFromSchemaField (destination side)', () => {
