@@ -42,6 +42,7 @@ import './implementations/source-asset-to-dest-asset.transformer';
 import './implementations/source-fk-to-dest-fk.transformer';
 import './implementations/string-to-number.transformer';
 import './implementations/trim.transformer';
+import './implementations/value-map.transformer';
 import './implementations/webflow-option-id-to-value.transformer';
 import './implementations/webflow-option.transformer';
 import './implementations/wrap-object.transformer';

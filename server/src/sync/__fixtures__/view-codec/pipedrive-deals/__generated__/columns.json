@@ -1,0 +1,150 @@
+[
+  {
+    "column": "Title",
+    "columnId": "title",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "ID",
+    "columnId": "id",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Add time",
+    "columnId": "add_time",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Update time",
+    "columnId": "update_time",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Expected close date",
+    "columnId": "expected_close_date",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Status",
+    "columnId": "status",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Value",
+    "columnId": "value",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Organization",
+    "columnId": "org_id",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Deal Select",
+    "columnId": "custom_fields.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "number",
+    "toCore": {
+      "type": "value_map",
+      "options": {
+        "mapping": {
+          "33": "Opt, B",
+          "34": "émoji 🚀 opt"
+        }
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Deal Tags",
+    "columnId": "custom_fields.ffffffffffffffffffffffffffffffffffffffff",
+    "cardinality": "multi",
+    "logicalType": "string",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "map_array",
+      "options": {
+        "elementTransformer": {
+          "type": "value_map",
+          "options": {
+            "mapping": {
+              "36": "Tag One",
+              "37": "Tag \"Two\"",
+              "38": "标签三"
+            }
+          }
+        }
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Deal Dates (Value)",
+    "columnId": "custom_fields.dddddddddddddddddddddddddddddddddddddddd.value",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Deal Dates (Until)",
+    "columnId": "custom_fields.dddddddddddddddddddddddddddddddddddddddd.until",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Deal Budget (Value)",
+    "columnId": "custom_fields.cccccccccccccccccccccccccccccccccccccccc.value",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Deal Budget (Currency)",
+    "columnId": "custom_fields.cccccccccccccccccccccccccccccccccccccccc.currency",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  }
+]

@@ -1,4 +1,4 @@
-import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport, type TableView } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -20,6 +20,7 @@ import {
   TablePreview,
 } from '../../types';
 import { PipedriveApiClient, PipedriveError, PipedriveListResume } from './pipedrive-api-client';
+import { buildPipedriveDefaultView } from './pipedrive-default-view';
 import { buildPipedriveUpdatedSince } from './pipedrive-incremental';
 import { buildPipedriveJsonTableSpec } from './pipedrive-json-schema';
 import {
@@ -116,6 +117,15 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     }
 
     return buildPipedriveJsonTableSpec(id, entityType, this.client);
+  }
+
+  /**
+   * Curated default grid view — date typing, select labels, joined email/phone
+   * values, and hidden container/stub columns. Pure function of the spec; see
+   * {@link buildPipedriveDefaultView}.
+   */
+  override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
+    return buildPipedriveDefaultView(spec);
   }
 
   /**

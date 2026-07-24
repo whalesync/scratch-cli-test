@@ -35,14 +35,15 @@ At-a-glance progress through the build journey, so anyone can see where this con
 | 5 | **Full write CRUD** (create + edit + delete exercised, push) | ⬜ | |
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | |
 | 7 | **Edge cases & quirks tested** (Pass 2 tricky parts) | ⬜ | |
-| 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics — e.g. custom fields, plugin fields, real-vs-meta) | ⬜ | |
+| 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics — e.g. custom fields, plugin fields, real-vs-meta) | ✅ | 2026-07-23: `buildPipedriveDefaultView` (pipedrive-default-view.ts) — date typing (DEV-11033), enum/set label codecs (DEV-11034), email/phone value join (DEV-11035), Custom Fields banner group + hidden container/stub columns (DEV-11036); daterange/timerange schema shape fixed to verbatim `{value, until}` (DEV-11032) |
 | 9 | **OAuth** (final / pre-release — OAuth client created with the user, *or* requirements documented) | ⬜ | API-key covers all testing; this is the last step |
 
 ## TODOs — known pending tasks
 Living checklist of what's left: gaps found while adopting human-built code, unfinished entities/fields, deferred edge cases, and follow-up issues. Check items off as they land. Coarser than the coverage matrix; broader than **Open issues** (which is only for broken ❌ cells with Linear links).
 
-- [ ] <pending task> <(link issue if any)>
-- [ ] <…>
+- [x] Default view + schema-shape fixes from the Live Export audit: DEV-11032 (daterange/timerange `{value, until}`), DEV-11033 (date typing), DEV-11034 (enum/set labels via `value_map` codec), DEV-11035 (email/phone value join), DEV-11036 (hide `custom_fields`/composite containers + notes stubs) — landed 2026-07-23
+- [ ] DEV-11031: source deletes never mirrored (soft-delete invisible to list pulls; needs tombstone/absence reconciliation)
+- [ ] DEV-11030 [core]: `picture_id.url` union-subfield plan save blocker (the default view now sidesteps it by pinning `picture_id` to a number column, but the core resolver mismatch remains)
 
 ## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
 These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.

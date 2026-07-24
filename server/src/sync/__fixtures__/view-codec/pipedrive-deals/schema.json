@@ -1,0 +1,273 @@
+{
+  "id": {
+    "wsId": "deals",
+    "remoteId": [
+      "deals"
+    ]
+  },
+  "slug": "deals",
+  "name": "Deals",
+  "schema": {
+    "$id": "pipedrive/deals",
+    "title": "Deals",
+    "type": "object",
+    "required": [
+      "title"
+    ],
+    "properties": {
+      "id": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "ID",
+        "x-scratch-remote-field-id": "id",
+        "x-scratch-readonly": true
+      },
+      "title": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Title",
+        "x-scratch-remote-field-id": "title"
+      },
+      "add_time": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Add time",
+        "x-scratch-remote-field-id": "add_time",
+        "x-scratch-readonly": true
+      },
+      "update_time": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Update time",
+        "x-scratch-remote-field-id": "update_time",
+        "x-scratch-readonly": true,
+        "x-scratch-last-modified-field": true
+      },
+      "expected_close_date": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "const": "0000-00-00",
+            "type": "string"
+          },
+          {
+            "const": "-0001-11-30",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Expected close date",
+        "x-scratch-remote-field-id": "expected_close_date"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Status",
+        "x-scratch-remote-field-id": "status"
+      },
+      "value": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Value",
+        "x-scratch-remote-field-id": "value"
+      },
+      "org_id": {
+        "x-scratch-foreign-key": {
+          "linkedTableId": "organizations"
+        },
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Organization",
+        "x-scratch-remote-field-id": "org_id"
+      },
+      "custom_fields": {
+        "description": "Custom fields",
+        "type": "object",
+        "properties": {
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+            "anyOf": [
+              {
+                "title": "Opt, B",
+                "const": 33,
+                "type": "number"
+              },
+              {
+                "title": "émoji 🚀 opt",
+                "const": 34,
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Deal Select",
+            "x-scratch-remote-field-id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          "ffffffffffffffffffffffffffffffffffffffff": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "title": "Tag One",
+                  "const": 36,
+                  "type": "number"
+                },
+                {
+                  "title": "Tag \"Two\"",
+                  "const": 37,
+                  "type": "number"
+                },
+                {
+                  "title": "标签三",
+                  "const": 38,
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "description": "Deal Tags",
+            "x-scratch-remote-field-id": "ffffffffffffffffffffffffffffffffffffffff"
+          },
+          "dddddddddddddddddddddddddddddddddddddddd": {
+            "x-scratch-connector-data-type": "daterange",
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "value",
+                  "until"
+                ],
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "format": "date",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "format": "date",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Deal Dates",
+            "x-scratch-remote-field-id": "dddddddddddddddddddddddddddddddddddddddd"
+          },
+          "cccccccccccccccccccccccccccccccccccccccc": {
+            "x-scratch-connector-data-type": "monetary",
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "value",
+                  "currency"
+                ],
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "currency": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Deal Budget",
+            "x-scratch-remote-field-id": "cccccccccccccccccccccccccccccccccccccccc"
+          }
+        }
+      }
+    }
+  },
+  "idPath": "id",
+  "titlePath": "title",
+  "basePath": [],
+  "generatedAt": "2026-07-23T00:00:00.000Z"
+}

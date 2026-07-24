@@ -5,6 +5,7 @@ import * as path from 'path';
 import { AirtableConnector } from 'src/remote-service/connectors/library/airtable/airtable-connector';
 import { HubspotConnector } from 'src/remote-service/connectors/library/hubspot/hubspot-connector';
 import { NotionConnector } from 'src/remote-service/connectors/library/notion/notion-connector';
+import { PipedriveConnector } from 'src/remote-service/connectors/library/pipedrive/pipedrive-connector';
 import { StripeConnector } from 'src/remote-service/connectors/library/stripe/stripe-connector';
 import { WebflowConnector } from 'src/remote-service/connectors/library/webflow/webflow-connector';
 import { Service } from 'src/remote-service/connectors/service-constants';
@@ -132,6 +133,7 @@ const DEFAULT_VIEW_BUILDERS_BY_CONNECTOR: Record<string, (spec: BaseJsonTableSpe
   hubspot: (spec) => new HubspotConnector('test-token').buildDefaultView(spec),
   stripe: (spec) => new StripeConnector({ apiKey: 'test-key' }).buildDefaultView(spec),
   notion: (spec) => new NotionConnector('test-key').buildDefaultView(spec),
+  pipedrive: (spec) => new PipedriveConnector('test-token').buildDefaultView(spec),
 };
 
 function buildDefaultViewForFixture(fixtureName: string, spec: BaseJsonTableSpec): TableView {

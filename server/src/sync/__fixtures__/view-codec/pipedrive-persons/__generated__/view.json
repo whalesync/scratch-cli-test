@@ -1,0 +1,103 @@
+{
+  "name": "Default",
+  "cols": [
+    {
+      "kind": "col",
+      "path": "name",
+      "name": "Name",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "id",
+      "name": "ID",
+      "type": "number",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "add_time",
+      "name": "Add time",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "update_time",
+      "name": "Update time",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "emails",
+      "name": "Emails",
+      "type": "string",
+      "displayTransformer": {
+        "type": "jsonpath",
+        "options": {
+          "expression": "$[*].value",
+          "arrayHandling": "join_comma"
+        }
+      }
+    },
+    {
+      "kind": "col",
+      "path": "phones",
+      "name": "Phones",
+      "type": "string",
+      "displayTransformer": {
+        "type": "jsonpath",
+        "options": {
+          "expression": "$[*].value",
+          "arrayHandling": "join_comma"
+        }
+      }
+    },
+    {
+      "kind": "col",
+      "path": "birthday",
+      "name": "Birthday",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "picture_id",
+      "name": "Picture",
+      "type": "number",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "org_id",
+      "name": "Organization",
+      "type": "number"
+    },
+    {
+      "kind": "banner-group",
+      "name": "Custom Fields",
+      "cols": [
+        {
+          "kind": "col",
+          "path": "custom_fields.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "Backup Phone",
+          "type": "string",
+          "displayTransformer": {
+            "type": "jsonpath",
+            "options": {
+              "expression": "$[*].value",
+              "arrayHandling": "join_comma"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "col",
+      "path": "custom_fields",
+      "name": "Custom Fields (raw)",
+      "type": "object",
+      "hidden": true
+    }
+  ]
+}

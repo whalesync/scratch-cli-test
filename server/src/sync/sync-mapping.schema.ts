@@ -156,6 +156,15 @@ const transformerConfigSchema: z.ZodType = z.discriminatedUnion('type', [
       .strict()
       .optional(),
   }),
+  z.object({
+    type: z.literal(TransformerTypes.ValueMap),
+    options: z
+      .object({
+        mapping: z.record(z.string(), z.string()),
+        onUnmapped: z.enum(['passthrough', 'null']).optional(),
+      })
+      .strict(),
+  }),
 ]);
 
 // -- V1 column / table / sync mapping schemas (legacy on-disk shape) --

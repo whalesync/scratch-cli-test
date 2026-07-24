@@ -3,6 +3,7 @@ import type {
   JSONPathOptions,
   MapArrayOptions,
   TransformerConfig,
+  ValueMapOptions,
   WrapObjectOptions,
 } from '../sync-mapping';
 import { applyJsonPath } from './apply-jsonpath';
@@ -51,6 +52,8 @@ function applyAnyTransformer(config: TransformerConfig, value: unknown): ClientS
         return { ok: true, value: applyWrapObject(config.options, value) };
       case 'map_array':
         return applyMapArray(config.options, value);
+      case 'value_map':
+        return { ok: true, value: applyValueMap(config.options, value) };
       default:
         // Server-only arms (FK / asset / lookup) and any arm not (yet) ported to
         // the client fall through here — the caller refuses the write.
@@ -96,6 +99,24 @@ function applyTemplate(template: unknown, value: unknown): unknown {
     return result;
   }
   return template;
+}
+
+/**
+ * `value_map` — replace a scalar with its dictionary entry, keyed by the value's string form.
+ * Faithful port of `server/src/sync/transformers/implementations/value-map.transformer.ts`:
+ * empty (null/undefined/"") maps to `null`; an unmapped scalar passes through as its string form
+ * (or maps to `null` under `onUnmapped: 'null'`); a non-scalar throws (fail-closed above) — wrap
+ * in `map_array` to map an array's elements.
+ */
+function applyValueMap(options: ValueMapOptions, value: unknown): unknown {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+    throw new Error('value_map requires a scalar source value; wrap it in map_array for arrays');
+  }
+  const mappingKey = String(value);
+  const mappedValue = options.mapping[mappingKey];
+  if (mappedValue !== undefined) return mappedValue;
+  return options.onUnmapped === 'null' ? null : mappingKey;
 }
 
 /**

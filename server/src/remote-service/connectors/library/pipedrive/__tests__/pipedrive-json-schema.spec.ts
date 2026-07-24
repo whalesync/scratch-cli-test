@@ -192,6 +192,36 @@ describe('pipedriveFieldToJsonSchema', () => {
     },
   );
 
+  // DEV-11032: the v2 API's verbatim range shapes are `{value, until}` — the write API rejects
+  // the documented-looking `{start_date, end_date}` / `{start_time, end_time}` shapes outright.
+  it('maps daterange to the verbatim v2 {value, until} object (not {start_date, end_date})', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'daterange' }));
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const objectBranch: { properties?: Record<string, unknown> } = schema!.anyOf.find(
+      (s: { type?: string }) => s.type === 'object',
+    );
+    expect(Object.keys(objectBranch.properties ?? {}).sort()).toEqual(['until', 'value']);
+    expect(objectBranch.properties).not.toHaveProperty('start_date');
+  });
+
+  it('maps timerange to the verbatim v2 {value, until, timezone_id?, timezone_name?} object', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'timerange' }));
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const objectBranch: { properties?: Record<string, unknown>; required?: string[] } = schema!.anyOf.find(
+      (s: { type?: string }) => s.type === 'object',
+    );
+    expect(Object.keys(objectBranch.properties ?? {}).sort()).toEqual([
+      'timezone_id',
+      'timezone_name',
+      'until',
+      'value',
+    ]);
+    expect(objectBranch.required).toEqual(['value', 'until']);
+    expect(objectBranch.properties).not.toHaveProperty('start_time');
+  });
+
   // DEV-10453 finding 3: emails/participants are arrays of objects (not strings) and project_id is
   // a number (not a string). They're keyed on field_code because Pipedrive's metadata field_type
   // misdescribes them — there is no dedicated `email`/`participants` field type.

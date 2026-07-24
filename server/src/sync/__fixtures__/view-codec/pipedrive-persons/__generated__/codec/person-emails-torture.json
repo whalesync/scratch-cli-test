@@ -1,0 +1,32 @@
+{
+  "name": {
+    "core": "fable_qa_person_emails3 — その他"
+  },
+  "id": {
+    "core": 5
+  },
+  "add_time": {
+    "core": "2026-07-23T21:00:00Z"
+  },
+  "update_time": {
+    "core": "2026-07-23T21:05:00Z"
+  },
+  "emails": {
+    "core": "fable.qa+one@example.com, fable_qa.two@example.com, fable-qa-three@sub.example.co.jp"
+  },
+  "phones": {
+    "core": "+1 604 555 0100"
+  },
+  "birthday": {
+    "core": "0000-00-00"
+  },
+  "picture_id": {
+    "core": 42
+  },
+  "org_id": {
+    "core": 1
+  },
+  "custom_fields.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+    "core": ""
+  }
+}

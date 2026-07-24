@@ -1,0 +1,48 @@
+{
+  "title": {
+    "core": "fable_qa_deal_enumset1 — émoji 🚀 «quotes»"
+  },
+  "id": {
+    "core": 9
+  },
+  "add_time": {
+    "core": "2026-07-23T21:12:57Z"
+  },
+  "update_time": {
+    "core": "2026-07-23T21:30:00Z"
+  },
+  "expected_close_date": {
+    "core": "2999-12-31"
+  },
+  "status": {
+    "core": "open"
+  },
+  "value": {
+    "core": 15000
+  },
+  "org_id": {
+    "core": 1
+  },
+  "custom_fields.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+    "core": "Opt, B"
+  },
+  "custom_fields.ffffffffffffffffffffffffffffffffffffffff": {
+    "core": [
+      "Tag One",
+      "Tag \"Two\"",
+      "标签三"
+    ]
+  },
+  "custom_fields.dddddddddddddddddddddddddddddddddddddddd.value": {
+    "core": "2026-01-01"
+  },
+  "custom_fields.dddddddddddddddddddddddddddddddddddddddd.until": {
+    "core": "2026-12-31"
+  },
+  "custom_fields.cccccccccccccccccccccccccccccccccccccccc.value": {
+    "core": 1234.56
+  },
+  "custom_fields.cccccccccccccccccccccccccccccccccccccccc.currency": {
+    "core": "EUR"
+  }
+}

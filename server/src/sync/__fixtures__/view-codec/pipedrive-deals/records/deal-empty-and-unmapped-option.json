@@ -1,0 +1,16 @@
+{
+  "id": 10,
+  "title": "fable_qa_deal_empty",
+  "add_time": "2026-07-23T21:12:57Z",
+  "update_time": null,
+  "expected_close_date": null,
+  "status": "lost",
+  "value": null,
+  "org_id": null,
+  "custom_fields": {
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": 99,
+    "ffffffffffffffffffffffffffffffffffffffff": [36, 99],
+    "dddddddddddddddddddddddddddddddddddddddd": null,
+    "cccccccccccccccccccccccccccccccccccccccc": null
+  }
+}

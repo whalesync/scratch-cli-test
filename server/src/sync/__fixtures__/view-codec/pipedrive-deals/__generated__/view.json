@@ -1,0 +1,147 @@
+{
+  "name": "Default",
+  "cols": [
+    {
+      "kind": "col",
+      "path": "title",
+      "name": "Title",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "id",
+      "name": "ID",
+      "type": "number",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "add_time",
+      "name": "Add time",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "update_time",
+      "name": "Update time",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "expected_close_date",
+      "name": "Expected close date",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "status",
+      "name": "Status",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "value",
+      "name": "Value",
+      "type": "number"
+    },
+    {
+      "kind": "col",
+      "path": "org_id",
+      "name": "Organization",
+      "type": "number"
+    },
+    {
+      "kind": "banner-group",
+      "name": "Custom Fields",
+      "cols": [
+        {
+          "kind": "col",
+          "path": "custom_fields.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "name": "Deal Select",
+          "type": "string",
+          "codec": {
+            "toCore": {
+              "type": "value_map",
+              "options": {
+                "mapping": {
+                  "33": "Opt, B",
+                  "34": "émoji 🚀 opt"
+                }
+              }
+            }
+          }
+        },
+        {
+          "kind": "col",
+          "path": "custom_fields.ffffffffffffffffffffffffffffffffffffffff",
+          "name": "Deal Tags",
+          "type": "string",
+          "codec": {
+            "toCore": {
+              "type": "map_array",
+              "options": {
+                "elementTransformer": {
+                  "type": "value_map",
+                  "options": {
+                    "mapping": {
+                      "36": "Tag One",
+                      "37": "Tag \"Two\"",
+                      "38": "标签三"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "kind": "col",
+          "path": "custom_fields.dddddddddddddddddddddddddddddddddddddddd.value",
+          "name": "Deal Dates (Value)",
+          "type": "date"
+        },
+        {
+          "kind": "col",
+          "path": "custom_fields.dddddddddddddddddddddddddddddddddddddddd.until",
+          "name": "Deal Dates (Until)",
+          "type": "date"
+        },
+        {
+          "kind": "col",
+          "path": "custom_fields.dddddddddddddddddddddddddddddddddddddddd",
+          "name": "Deal Dates (raw)",
+          "type": "object",
+          "hidden": true
+        },
+        {
+          "kind": "col",
+          "path": "custom_fields.cccccccccccccccccccccccccccccccccccccccc.value",
+          "name": "Deal Budget (Value)",
+          "type": "number"
+        },
+        {
+          "kind": "col",
+          "path": "custom_fields.cccccccccccccccccccccccccccccccccccccccc.currency",
+          "name": "Deal Budget (Currency)",
+          "type": "string"
+        },
+        {
+          "kind": "col",
+          "path": "custom_fields.cccccccccccccccccccccccccccccccccccccccc",
+          "name": "Deal Budget (raw)",
+          "type": "object",
+          "hidden": true
+        }
+      ]
+    },
+    {
+      "kind": "col",
+      "path": "custom_fields",
+      "name": "Custom Fields (raw)",
+      "type": "object",
+      "hidden": true
+    }
+  ]
+}

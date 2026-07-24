@@ -1,0 +1,16 @@
+{
+  "id": 9,
+  "title": "fable_qa_deal_enumset1 — émoji 🚀 «quotes»",
+  "add_time": "2026-07-23T21:12:57Z",
+  "update_time": "2026-07-23T21:30:00Z",
+  "expected_close_date": "2999-12-31",
+  "status": "open",
+  "value": 15000,
+  "org_id": 1,
+  "custom_fields": {
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": 33,
+    "ffffffffffffffffffffffffffffffffffffffff": [36, 37, 38],
+    "dddddddddddddddddddddddddddddddddddddddd": { "value": "2026-01-01", "until": "2026-12-31" },
+    "cccccccccccccccccccccccccccccccccccccccc": { "value": 1234.56, "currency": "EUR" }
+  }
+}

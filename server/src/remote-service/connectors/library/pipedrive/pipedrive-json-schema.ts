@@ -253,11 +253,15 @@ export function pipedriveFieldToJsonSchema(
       }
       return Type.Union([Type.String(), Type.Null()]);
 
+    // The v2 API's verbatim range shapes are `{value, until}` — NOT the `{start_date,end_date}` /
+    // `{start_time,end_time}` shapes the docs suggest (the write API rejects those with
+    // ERR_SCHEMA_VALIDATION_FAILED). `timerange` additionally carries the timezone pair, mirroring
+    // the custom `time` case above. Probed live on both GET and write. (DEV-11032)
     case 'daterange':
       return nullableCompositeFieldSchema(
         Type.Object({
-          start_date: Type.Union([Type.String({ format: 'date' }), Type.Null()]),
-          end_date: Type.Union([Type.String({ format: 'date' }), Type.Null()]),
+          value: Type.Union([Type.String({ format: 'date' }), Type.Null()]),
+          until: Type.Union([Type.String({ format: 'date' }), Type.Null()]),
         }),
         { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'daterange' },
       );
@@ -265,8 +269,10 @@ export function pipedriveFieldToJsonSchema(
     case 'timerange':
       return nullableCompositeFieldSchema(
         Type.Object({
-          start_time: Type.Union([Type.String(), Type.Null()]),
-          end_time: Type.Union([Type.String(), Type.Null()]),
+          value: Type.Union([Type.String(), Type.Null()]),
+          until: Type.Union([Type.String(), Type.Null()]),
+          timezone_id: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          timezone_name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
         { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'timerange' },
       );

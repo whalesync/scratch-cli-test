@@ -346,6 +346,7 @@ export const TransformerTypes = {
   WrapObject: 'wrap_object',
   MapArray: 'map_array',
   SkipIfDestArrayMatches: 'skip_if_dest_array_matches',
+  ValueMap: 'value_map',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -382,6 +383,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.WrapObject, label: 'Wrap Object' },
   { type: TransformerTypes.MapArray, label: 'Map Array' },
   { type: TransformerTypes.SkipIfDestArrayMatches, label: 'Skip If Dest Array Matches' },
+  { type: TransformerTypes.ValueMap, label: 'Value Map' },
 ];
 
 /** Get the display label for a transformer type */
@@ -532,6 +534,24 @@ export interface MapArrayOptions {
   resultTemplate?: Record<string, unknown>;
 }
 
+/** Options for the value_map transformer */
+export interface ValueMapOptions {
+  /**
+   * Source value → output string, keyed by the source value's STRING form (`String(value)`, so the
+   * number `33` is looked up as `"33"`). Built for select-style fields whose stored value is an
+   * option id and whose human label lives only in metadata: the connector bakes the id → label
+   * dictionary into the config at view-build time (the view regenerates on every pull, so the
+   * dictionary stays as fresh as the schema itself).
+   */
+  mapping: Record<string, string>;
+  /**
+   * What to do with a scalar that has no `mapping` entry: `'passthrough'` (default) emits its
+   * string form verbatim — right for open option sets where an unknown id is still meaningful —
+   * or `'null'` drops it.
+   */
+  onUnmapped?: 'passthrough' | 'null';
+}
+
 /** Options for the skip_if_dest_array_matches transformer */
 export interface SkipIfDestArrayMatchesOptions {
   /** JSONPath expression to extract a comparable value from each source element (default: "$") */
@@ -559,7 +579,8 @@ export type TransformerOptions =
   | ReplaceRegexOptions
   | WrapObjectOptions
   | MapArrayOptions
-  | SkipIfDestArrayMatchesOptions;
+  | SkipIfDestArrayMatchesOptions
+  | ValueMapOptions;
 
 /** Options for the notion_file_url transformer */
 export interface NotionFileUrlOptions {
@@ -592,7 +613,8 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.ReplaceRegex; options: ReplaceRegexOptions }
   | { type: typeof TransformerTypes.WrapObject; options: WrapObjectOptions }
   | { type: typeof TransformerTypes.MapArray; options: MapArrayOptions }
-  | { type: typeof TransformerTypes.SkipIfDestArrayMatches; options?: SkipIfDestArrayMatchesOptions };
+  | { type: typeof TransformerTypes.SkipIfDestArrayMatches; options?: SkipIfDestArrayMatchesOptions }
+  | { type: typeof TransformerTypes.ValueMap; options: ValueMapOptions };
 
 /**
  * Transformer arms that are SERVER-ONLY: their options carry a branded `DataFolderId` and

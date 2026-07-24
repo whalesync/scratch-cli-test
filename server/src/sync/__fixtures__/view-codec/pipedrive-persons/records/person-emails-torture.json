@@ -1,0 +1,18 @@
+{
+  "id": 5,
+  "name": "fable_qa_person_emails3 — その他",
+  "add_time": "2026-07-23T21:00:00Z",
+  "update_time": "2026-07-23T21:05:00Z",
+  "emails": [
+    { "label": "work", "value": "fable.qa+one@example.com", "primary": true },
+    { "label": "home, secondary", "value": "fable_qa.two@example.com", "primary": false },
+    { "label": "その他", "value": "fable-qa-three@sub.example.co.jp", "primary": false }
+  ],
+  "phones": [{ "label": "work", "value": "+1 604 555 0100", "primary": true }],
+  "birthday": "0000-00-00",
+  "picture_id": 42,
+  "org_id": 1,
+  "custom_fields": {
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": []
+  }
+}

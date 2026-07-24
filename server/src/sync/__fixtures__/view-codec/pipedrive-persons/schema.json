@@ -1,0 +1,238 @@
+{
+  "id": {
+    "wsId": "persons",
+    "remoteId": [
+      "persons"
+    ]
+  },
+  "slug": "persons",
+  "name": "Persons",
+  "schema": {
+    "$id": "pipedrive/persons",
+    "title": "Persons",
+    "type": "object",
+    "required": [
+      "name"
+    ],
+    "properties": {
+      "id": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "ID",
+        "x-scratch-remote-field-id": "id",
+        "x-scratch-readonly": true
+      },
+      "name": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Name",
+        "x-scratch-remote-field-id": "name"
+      },
+      "add_time": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Add time",
+        "x-scratch-remote-field-id": "add_time",
+        "x-scratch-readonly": true
+      },
+      "update_time": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Update time",
+        "x-scratch-remote-field-id": "update_time",
+        "x-scratch-readonly": true,
+        "x-scratch-last-modified-field": true
+      },
+      "emails": {
+        "x-scratch-connector-data-type": "email",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "primary": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Emails",
+        "x-scratch-remote-field-id": "emails"
+      },
+      "phones": {
+        "x-scratch-connector-data-type": "phone",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "primary": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Phones",
+        "x-scratch-remote-field-id": "phones"
+      },
+      "birthday": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "const": "0000-00-00",
+            "type": "string"
+          },
+          {
+            "const": "-0001-11-30",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Birthday",
+        "x-scratch-remote-field-id": "birthday"
+      },
+      "picture_id": {
+        "x-scratch-readonly": true,
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Picture",
+        "x-scratch-remote-field-id": "picture_id"
+      },
+      "org_id": {
+        "x-scratch-foreign-key": {
+          "linkedTableId": "organizations"
+        },
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Organization",
+        "x-scratch-remote-field-id": "org_id"
+      },
+      "custom_fields": {
+        "description": "Custom fields",
+        "type": "object",
+        "properties": {
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "x-scratch-connector-data-type": "phone",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "primary": {
+                  "type": "boolean"
+                },
+                "label": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Backup Phone",
+            "x-scratch-remote-field-id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      }
+    }
+  },
+  "idPath": "id",
+  "titlePath": "name",
+  "basePath": [],
+  "generatedAt": "2026-07-23T00:00:00.000Z"
+}

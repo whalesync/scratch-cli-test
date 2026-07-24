@@ -1,0 +1,110 @@
+[
+  {
+    "column": "Name",
+    "columnId": "name",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "ID",
+    "columnId": "id",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Add time",
+    "columnId": "add_time",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Update time",
+    "columnId": "update_time",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Emails",
+    "columnId": "emails",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].value",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Phones",
+    "columnId": "phones",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].value",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Birthday",
+    "columnId": "birthday",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Picture",
+    "columnId": "picture_id",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Organization",
+    "columnId": "org_id",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Backup Phone",
+    "columnId": "custom_fields.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].value",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  }
+]

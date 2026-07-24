@@ -1,0 +1,39 @@
+{
+  "title": {
+    "core": "fable_qa_deal_empty"
+  },
+  "id": {
+    "core": 10
+  },
+  "add_time": {
+    "core": "2026-07-23T21:12:57Z"
+  },
+  "update_time": {
+    "core": null
+  },
+  "expected_close_date": {
+    "core": null
+  },
+  "status": {
+    "core": "lost"
+  },
+  "value": {
+    "core": null
+  },
+  "org_id": {
+    "core": null
+  },
+  "custom_fields.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+    "core": "99"
+  },
+  "custom_fields.ffffffffffffffffffffffffffffffffffffffff": {
+    "core": [
+      "Tag One",
+      "99"
+    ]
+  },
+  "custom_fields.dddddddddddddddddddddddddddddddddddddddd.value": {},
+  "custom_fields.dddddddddddddddddddddddddddddddddddddddd.until": {},
+  "custom_fields.cccccccccccccccccccccccccccccccccccccccc.value": {},
+  "custom_fields.cccccccccccccccccccccccccccccccccccccccc.currency": {}
+}
