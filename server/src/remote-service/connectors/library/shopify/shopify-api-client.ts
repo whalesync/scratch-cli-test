@@ -222,13 +222,47 @@ function normalizeDomain(input: string): string {
   return domain;
 }
 
+// ============= Query Field Augmentation =============
+
+/**
+ * Rewrite a specific nested selection inside a generated query-fields string. Some Shopify
+ * sub-objects are pulled shallower than a CMS export needs because the codegen caps nesting
+ * depth (`ruleSet { appliedDisjunctively }` never requests its `rules`) or treats a field as a
+ * bare reference (`featuredImage { id }`). Rather than hand-edit the generated files (codegen
+ * overwrites them), we augment the selection here at runtime — the same layering the SEO
+ * metafield fragment uses. The extra fields land VERBATIM (Connector Prime Directive); nothing
+ * is reshaped. Throws if the expected generated selection isn't present, so a codegen change
+ * surfaces loudly here instead of silently dropping the augmentation.
+ */
+export function augmentNestedSelection(
+  queryFields: string,
+  generatedSelection: string,
+  augmentedSelection: string,
+): string {
+  if (!queryFields.includes(generatedSelection)) {
+    throw new Error(
+      `Shopify query augmentation failed: expected "${generatedSelection}" in the generated query fields — ` +
+        `the codegen output changed. Update the augmentation in shopify-api-client.ts.`,
+    );
+  }
+  return queryFields.replace(generatedSelection, augmentedSelection);
+}
+
 // ============= Query Field Mapping =============
 
 const QUERY_FIELDS_MAP: Record<string, string> = {
-  products: PRODUCTS_QUERY_FIELDS,
+  // Pull `featuredImage.url`/`altText` (codegen queries reference-only `{ id }`), so a CMS
+  // export has a displayable image URL to pluck instead of a bare GID stub (DEV-11020).
+  products: augmentNestedSelection(PRODUCTS_QUERY_FIELDS, 'featuredImage { id }', 'featuredImage { id altText url }'),
   product_variants: PRODUCT_VARIANTS_QUERY_FIELDS,
   product_media: PRODUCT_MEDIA_QUERY_FIELDS,
-  collections: COLLECTIONS_QUERY_FIELDS,
+  // Pull smart-collection `rules` (the entire definition of a smart collection); codegen's
+  // depth limit stops at `ruleSet { appliedDisjunctively }` and never requests them (DEV-11019).
+  collections: augmentNestedSelection(
+    COLLECTIONS_QUERY_FIELDS,
+    'ruleSet { appliedDisjunctively }',
+    'ruleSet { appliedDisjunctively rules { column relation condition } }',
+  ),
   pages: PAGES_QUERY_FIELDS + SEO_METAFIELD_QUERY_FRAGMENT,
   blogs: BLOGS_QUERY_FIELDS + SEO_METAFIELD_QUERY_FRAGMENT,
   articles: ARTICLES_QUERY_FIELDS + SEO_METAFIELD_QUERY_FRAGMENT,
@@ -239,6 +273,11 @@ const QUERY_FIELDS_MAP: Record<string, string> = {
   files: FILES_QUERY_FIELDS,
   metaobjects: METAOBJECTS_QUERY_FIELDS,
 };
+
+/** The effective GraphQL field selection for an entity, including runtime augmentations. Exposed for tests. */
+export function getQueryFieldsForEntity(entityType: string): string | undefined {
+  return QUERY_FIELDS_MAP[entityType];
+}
 
 // ============= GraphQL Root Field Mapping =============
 

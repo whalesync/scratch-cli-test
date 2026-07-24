@@ -7,6 +7,7 @@ import {
   TableViewSubfield,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
+import { ENTITY_REGISTRY, EntityType } from './graphql';
 
 // ── Priority fields per entity type ──
 // Fields listed here appear first, in this order. Anything not listed goes after alphabetically.
@@ -50,6 +51,52 @@ const HIDDEN_FIELDS = new Set([
 ]);
 
 /**
+ * Object fields whose column should DISPLAY a single inner leaf ("pluck") instead of the
+ * raw object — the same idea as the count/money shape detectors, but keyed by field name
+ * where the shape is entity-specific rather than a recognizable `{count, precision}` /
+ * `{amount, currencyCode}` shape. The verbatim object stays on disk (Connector Prime
+ * Directive); the view just pre-selects the leaf as a subfield, and the raw object is still
+ * reachable via the built-in "All" option. A pluck applies only when the field's schema is
+ * actually an object exposing that inner path, so a same-named scalar field is left alone.
+ */
+const PLUCK_SUBFIELD_BY_FIELD_NAME: Record<string, { relativePath: string; name: string; type: TablePropertyType }> = {
+  // articles.author is `{ name }` — Notion otherwise gets the literal `{"name":"…"}` (DEV-11018).
+  author: { relativePath: 'name', name: 'Name', type: 'string' },
+  // products.category is a taxonomy object `{ fullName, id, isLeaf, … }` (DEV-11020).
+  category: { relativePath: 'fullName', name: 'Full Name', type: 'string' },
+  // products.featuredImage is `{ id, url, altText }` once the query pulls url/altText (DEV-11020).
+  featuredImage: { relativePath: 'url', name: 'URL', type: 'url' },
+};
+
+/**
+ * Nested object fields to surface as a foreign-key column plucked to the linked record's id,
+ * rather than dumping the whole object as text. Keyed by `<entityType>.<fieldId>`. The
+ * verbatim object stays on disk (Connector Prime Directive); the view points the column at
+ * the inner id and declares the FK so a destination sync makes it a relation (DEV-11017).
+ */
+const NESTED_FOREIGN_KEY_COLS: Record<string, { idPath: string; linkedTableId: string; name: string }> = {
+  // articles.blog is the full blog object; pluck blog.id and link to the Blogs table.
+  // Safe as a read-side column: `blog` is already strip-on-update for articles.
+  'articles.blog': { idPath: 'blog.id', linkedTableId: 'blogs', name: 'Blog' },
+};
+
+/**
+ * The injected parent foreign key for a child entity (variants/media → products,
+ * line-items/shipping-lines → orders), or undefined for a top-level entity. The value is
+ * the flat FK field the pull injects (`productId`/`orderId`) plus the parent table's wsId,
+ * which is the `linkedTableId` a destination sync resolves the relation against (DEV-11017).
+ */
+function parentForeignKeyForEntity(entityType: string): { field: string; linkedTableId: string } | undefined {
+  const config = ENTITY_REGISTRY[entityType as EntityType] as
+    | { parent?: { entityType: string; foreignKey: string } }
+    | undefined;
+  if (config?.parent) {
+    return { field: config.parent.foreignKey, linkedTableId: config.parent.entityType };
+  }
+  return undefined;
+}
+
+/**
  * Build a default TableView for a Shopify entity type by reading the TypeBox schema.
  * Prioritizes important fields, hides system metadata, and maps types.
  */
@@ -62,10 +109,12 @@ export function buildShopifyDefaultView(schema: TSchema, entityType: string): Ta
   const sorted = sortFields(fieldIds, priority);
   const cols: (TableViewCol | TableViewBannerGroup)[] = [];
 
+  const parentForeignKey = parentForeignKeyForEntity(entityType);
   let verbatimSeoBannerEmitted = false;
 
   for (const fieldId of sorted) {
     const fieldSchema = properties[fieldId];
+    const nestedForeignKey = NESTED_FOREIGN_KEY_COLS[`${entityType}.${fieldId}`];
     if (fieldId === 'seo') {
       // Native `seo` object (products/collections) — expand its title/description into columns.
       cols.push(buildSeoBannerGroup(fieldSchema));
@@ -77,6 +126,15 @@ export function buildShopifyDefaultView(schema: TSchema, entityType: string): Ta
         cols.push(buildVerbatimSeoMetafieldBannerGroup(properties.seoTitle, properties.seoDescription));
         verbatimSeoBannerEmitted = true;
       }
+    } else if (nestedForeignKey) {
+      // Nested object relation (articles.blog): plucked to its inner id + FK, instead of a
+      // JSON blob. Read-only — we surface the link but never publish edits back through it.
+      cols.push(buildForeignKeyCol(nestedForeignKey.idPath, nestedForeignKey.name, nestedForeignKey.linkedTableId));
+    } else if (parentForeignKey && fieldId === parentForeignKey.field) {
+      // Injected parent FK (variants/media `productId`, line-items/shipping-lines `orderId`):
+      // declare the relation so it exports as a link. Read-only — it's a structural back-
+      // reference derived from the pull, not a user-editable field.
+      cols.push(buildForeignKeyCol(fieldId, formatFieldName(fieldId), parentForeignKey.linkedTableId));
     } else {
       cols.push(buildCol(fieldId, fieldSchema));
     }
@@ -270,5 +328,43 @@ function buildCol(fieldId: string, fieldSchema: TSchema): TableViewCol {
     return col;
   }
 
+  // Entity-specific "pluck" (articles.author → name, products.category → fullName,
+  // products.featuredImage → url): show a single inner leaf instead of the raw object,
+  // but only when the field really is an object exposing that path.
+  const pluck = PLUCK_SUBFIELD_BY_FIELD_NAME[fieldId];
+  if (pluck) {
+    const obj = unwrapToObject(fieldSchema);
+    if (obj && objectHasProperty(obj, pluck.relativePath)) {
+      col.subfields = [{ relativePath: pluck.relativePath, name: pluck.name, type: pluck.type }];
+      col.selectedSubfield = 0;
+      col.type = pluck.type;
+      return col;
+    }
+  }
+
   return col;
+}
+
+/** Check if an object schema has a (top-level) property with the given name. */
+function objectHasProperty(objSchema: TSchema, propName: string): boolean {
+  const props = (objSchema as TSchema & { properties?: Record<string, TSchema> }).properties;
+  return props ? propName in props : false;
+}
+
+/**
+ * Build a read-only foreign-key column pointing at `path` (a flat FK field or a plucked inner
+ * id) and linking to `linkedTableId` (the target table's wsId). The column's `foreignKey` is
+ * what `selectPlanFieldsFromTableView` reads to make the field a relation at the destination;
+ * it's read-only because these links are structural (parent back-references / strip-on-update),
+ * not values we publish edits back through.
+ */
+function buildForeignKeyCol(path: string, name: string, linkedTableId: string): TableViewCol {
+  return {
+    kind: 'col',
+    path,
+    name,
+    type: 'string',
+    readonly: true,
+    foreignKey: { linkedTableId },
+  };
 }

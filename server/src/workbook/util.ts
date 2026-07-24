@@ -59,6 +59,32 @@ export function isUsableFileNameSlug(slug: string): boolean {
 }
 
 /**
+ * Make a record ID safe to use as a filename base.
+ *
+ * Record IDs can contain path separators and other characters that are unsafe in a
+ * filename — most notably Shopify GIDs like `gid://shopify/ProductVariant/51423653331240`,
+ * whose slashes would turn the "filename" into a nested directory path and cause the
+ * record to be lost at commit time (the whole table then reads as empty, and the
+ * stale-file cleanup deletes the mis-staged tree — DEV-11015).
+ *
+ * Every character outside `[A-Za-z0-9._-]` is replaced with `-`, runs of `-` are
+ * collapsed, and any leading `-`/`.` is trimmed so the result can never become a
+ * flag-like (`-x.json`) or hidden (`.json`) filename once the extension is appended.
+ * Unlike {@link normalizeFileName} it deliberately preserves case and digits (it does
+ * NOT lowercase or strip alphanumerics), so two distinct record IDs stay distinct —
+ * this matters because the sanitized ID is also used as the collision-breaking suffix
+ * in {@link deduplicateFileName}, where uniqueness is the whole point. Falls back to
+ * `record` only for an empty/all-unsafe ID (a degenerate record with no usable id).
+ */
+export function sanitizeRecordIdForFileName(recordId: string): string {
+  const safe = recordId
+    .replace(/[^A-Za-z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+/, '');
+  return safe.length > 0 ? safe : 'record';
+}
+
+/**
  * Resolves the preferred base filename (without extension) for a record.
  * Priority: slug value > title value > ID value.
  * Slug and title values are run through normalizeFileName for safety, then

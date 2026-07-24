@@ -96,6 +96,50 @@ describe('buildGitFilesFromConnectorFiles — filename dedup', () => {
     expect(batch2[0].path).toBe('/CRM/john-smith-recB.json');
   });
 
+  it('sanitizes a slash-containing record id (Shopify GID) so the file is not staged into a nested path', () => {
+    // DEV-11015: variants/media/files have no slug, so the filename falls back to the
+    // record id — a GID like `gid://shopify/ProductVariant/…`. Used verbatim, its
+    // slashes turned the file into `Product Variants/gid:/shopify/ProductVariant/<id>.json`
+    // (a nested tree), which the stale-file cleanup then deleted. The path must be a
+    // single flat `.json` file directly under the folder.
+    const usedFileNames = new Set<string>();
+    const existingFileNames = new Map<string, string>();
+
+    const built = buildGitFilesFromConnectorFiles(
+      '/Product Variants',
+      [rec('gid://shopify/ProductVariant/51423653331240')],
+      tableSpec,
+      usedFileNames,
+      existingFileNames,
+      [undefined], // no suggested filename → falls back to the (sanitized) record id
+    );
+
+    expect(built).toHaveLength(1);
+    expect(built[0].path).toBe('/Product Variants/gid-shopify-ProductVariant-51423653331240.json');
+    expect(built[0].path.split('/')).toHaveLength(3); // "", "Product Variants", "<file>.json" — no extra nesting
+    expect(built[0].recordId).toBe('gid://shopify/ProductVariant/51423653331240');
+  });
+
+  it('never reintroduces a path separator via the collision suffix for slash-containing ids', () => {
+    // Two GID-id records whose suggested names collide fall through to the
+    // `<base>-<recordId>` dedup form; the record-id suffix must also be sanitized.
+    const usedFileNames = new Set<string>();
+    const existingFileNames = new Map<string, string>();
+
+    const built = buildGitFilesFromConnectorFiles(
+      '/Product Media',
+      [rec('gid://shopify/MediaImage/1'), rec('gid://shopify/MediaImage/2')],
+      tableSpec,
+      usedFileNames,
+      existingFileNames,
+      ['image', 'image'], // identical suggested names → second collides
+    );
+
+    expect(built[0].path).toBe('/Product Media/image.json');
+    expect(built[1].path).toBe('/Product Media/image-gid-shopify-MediaImage-2.json');
+    expect(built[1].path).not.toContain('/shopify/');
+  });
+
   it('reuses an existing record’s prior filename via the existingFileNames lookup', () => {
     // Sanity check: when a record is already in the index, its prior filename
     // is reused verbatim — usedFileNames does not block reuse.

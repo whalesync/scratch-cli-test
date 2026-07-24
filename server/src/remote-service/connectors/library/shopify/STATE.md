@@ -141,8 +141,12 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 
 | FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
 |---|:--:|:--:|---|
-| `<Entity>.<field>` → `<table>` | ⬜ | ⬜ | |
-- Association endpoint (if any): <describe> — ⬜
+| `product_variants.productId` → Products | ✅ | ⬜ | Injected parent FK; declared as a read-only view FK (DEV-11017) |
+| `product_media.productId` → Products | ✅ | ⬜ | Injected parent FK; read-only view FK (DEV-11017) |
+| `order_line_items.orderId` → Orders | ✅ | ⬜ | Injected parent FK; read-only view FK. Orders are Plus-only |
+| `order_shipping_lines.orderId` → Orders | ✅ | ⬜ | Injected parent FK; read-only view FK. Orders are Plus-only |
+| `articles.blog` → Blogs | ✅ | ⬜ | Plucked to `blog.id`; read-only view FK (DEV-11017). `blog` is strip-on-update |
+- Association endpoint (if any): none — parent links are injected at pull time (`pullChildRecords`), not a separate association endpoint.
 
 ## Edge cases discovered
 - **SEO metafields (articles/pages/blogs) — DEV-10637.** These entities have no native `seo`
@@ -156,6 +160,30 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - **Files images — DEV-10637.** A MediaImage keeps its nested `image { url … }` object verbatim;
   we no longer flatten it to a top-level `url` (that flatten also dropped altText/width/height).
   GenericFile/Video/ExternalVideo legitimately carry a top-level `url` and no `image`.
+- **Default-view foreign keys — DEV-11017.** `buildShopifyDefaultView` declares FK columns so a
+  destination sync (e.g. Notion relation) resolves them instead of shipping raw GID text: the
+  injected parent FK on every child entity (`product_variants`/`product_media` `productId` →
+  Products, `order_line_items`/`order_shipping_lines` `orderId` → Orders) and `articles.blog`
+  plucked to `blog.id` → Blogs. All are read-only view columns (`selectPlanFieldsFromTableView`
+  reads `col.foreignKey`); the verbatim objects stay on disk. `blog` is already strip-on-update.
+- **Default-view object plucks — DEV-11018 / DEV-11020.** Entity-specific object fields display a
+  single inner leaf instead of a JSON blob (same idea as the count/money shape detectors, keyed by
+  field name): `articles.author` → `name`, `products.category` → `fullName`,
+  `products.featuredImage` → `url`. The raw object stays on disk and is still reachable via "All".
+- **Smart-collection rules — DEV-11019.** The codegen depth cap stopped the collections query at
+  `ruleSet { appliedDisjunctively }`, so smart-collection `rules` were never pulled. The query is
+  augmented at runtime (`augmentNestedSelection` in `shopify-api-client.ts`, same layering as the
+  SEO metafield fragment) to `ruleSet { appliedDisjunctively rules { column relation condition } }`.
+  The rules land **verbatim** into the generated `ruleSet.rules: Array(Unknown)` schema.
+- **featuredImage reference stub — DEV-11020.** Codegen queries `featuredImage`/`featuredMedia` as
+  reference-only `{ id }`. The products query is augmented at runtime to `featuredImage { id altText
+  url }` so a CMS export has a displayable URL to pluck. (`product_variants.image` is already
+  queried in full — not reference-only — so no change was needed there.)
+- **Slash-containing record ids (GIDs) — DEV-11015 (shared [core] fix).** Slug-less tables
+  (`product_variants`/`product_media`/`files`) fall back to the record id as the filename, and
+  Shopify ids are GIDs (`gid://shopify/…`). The shared pull filename builder now sanitizes the id
+  (`sanitizeRecordIdForFileName`) so its slashes don't stage records into a nested path (which the
+  stale-file cleanup then deleted, silently emptying the table).
 
 ## Gotchas
 - **Historical data migration (DEV-10637):** records pulled before the verbatim switch still

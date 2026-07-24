@@ -1,4 +1,10 @@
-import { deduplicateFileName, isUsableFileNameSlug, normalizeFileName, resolveBaseFileName } from './util';
+import {
+  deduplicateFileName,
+  isUsableFileNameSlug,
+  normalizeFileName,
+  resolveBaseFileName,
+  sanitizeRecordIdForFileName,
+} from './util';
 
 describe('isUsableFileNameSlug', () => {
   it('accepts slugs starting with a letter', () => {
@@ -111,6 +117,37 @@ describe('normalizeFileName', () => {
 
   it('should handle all-special-character input resulting in empty string', () => {
     expect(normalizeFileName('!!!@@@###')).toBe('');
+  });
+});
+
+describe('sanitizeRecordIdForFileName', () => {
+  it('strips the path separators out of a Shopify GID so it stays a single filename', () => {
+    // The DEV-11015 bug: this GID used verbatim staged as `gid:/shopify/ProductVariant/…`.
+    const result = sanitizeRecordIdForFileName('gid://shopify/ProductVariant/51423653331240');
+    expect(result).not.toContain('/');
+    expect(result).toBe('gid-shopify-ProductVariant-51423653331240');
+  });
+
+  it('keeps distinct GIDs distinct (preserves the unique numeric id)', () => {
+    const a = sanitizeRecordIdForFileName('gid://shopify/Product/10358826008872');
+    const b = sanitizeRecordIdForFileName('gid://shopify/Product/10358826008873');
+    expect(a).not.toBe(b);
+  });
+
+  it('preserves case and digits (unlike normalizeFileName) so ids do not collide', () => {
+    expect(sanitizeRecordIdForFileName('recABC123')).toBe('recABC123');
+    expect(sanitizeRecordIdForFileName('recAbc123')).not.toBe(sanitizeRecordIdForFileName('recABC123'));
+  });
+
+  it('produces a usable, visible slug (never leading . or -)', () => {
+    expect(isUsableFileNameSlug(sanitizeRecordIdForFileName('gid://shopify/Media/1'))).toBe(true);
+    expect(sanitizeRecordIdForFileName('/leading/slash')).not.toMatch(/^[-.]/);
+    expect(sanitizeRecordIdForFileName('...dots')).toBe('dots');
+  });
+
+  it('falls back to "record" for an empty or all-unsafe id', () => {
+    expect(sanitizeRecordIdForFileName('')).toBe('record');
+    expect(sanitizeRecordIdForFileName('///')).toBe('record');
   });
 });
 

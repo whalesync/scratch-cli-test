@@ -292,6 +292,133 @@ describe('buildShopifyDefaultView', () => {
     });
   });
 
+  describe('foreign-key columns (DEV-11017)', () => {
+    it('declares the injected parent FK (product_variants.productId) as a relation to Products', () => {
+      const variantsSchema = Type.Object({
+        displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        productId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      });
+      const variantsView = buildShopifyDefaultView(variantsSchema, 'product_variants');
+      const col = variantsView.cols.find((c) => c.kind === 'col' && c.path === 'productId') as TableViewCol;
+      expect(col).toBeDefined();
+      expect(col.foreignKey).toEqual({ linkedTableId: 'products' });
+      expect(col.readonly).toBe(true);
+    });
+
+    it('declares product_media.productId as a relation to Products', () => {
+      const mediaSchema = Type.Object({
+        id: Type.String(),
+        productId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      });
+      const mediaView = buildShopifyDefaultView(mediaSchema, 'product_media');
+      const col = mediaView.cols.find((c) => c.kind === 'col' && c.path === 'productId') as TableViewCol;
+      expect(col.foreignKey).toEqual({ linkedTableId: 'products' });
+    });
+
+    it('plucks articles.blog to blog.id and links it to Blogs (no raw blog object column)', () => {
+      const articlesSchema = Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        blog: Type.Optional(
+          Type.Union([
+            Type.Object({
+              id: Type.Optional(Type.String()),
+              handle: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            }),
+            Type.Null(),
+          ]),
+        ),
+      });
+      const articlesView = buildShopifyDefaultView(articlesSchema, 'articles');
+      const blogCol = articlesView.cols.find((c) => c.kind === 'col' && c.path === 'blog.id') as TableViewCol;
+      expect(blogCol).toBeDefined();
+      expect(blogCol.name).toBe('Blog');
+      expect(blogCol.foreignKey).toEqual({ linkedTableId: 'blogs' });
+      expect(blogCol.readonly).toBe(true);
+      // The raw blog object column is NOT emitted (that was the JSON blob).
+      const rawBlogCol = articlesView.cols.find((c) => c.kind === 'col' && c.path === 'blog');
+      expect(rawBlogCol).toBeUndefined();
+    });
+
+    it('leaves top-level entities without a parent FK column', () => {
+      // products has no injected parent FK, so no productId column is invented.
+      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'productId');
+      expect(col).toBeUndefined();
+    });
+  });
+
+  describe('object pluck subfields (DEV-11018 / DEV-11020)', () => {
+    it('plucks articles.author to its name', () => {
+      const articlesSchema = Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        author: Type.Optional(
+          Type.Union([Type.Object({ name: Type.Optional(Type.Union([Type.String(), Type.Null()])) }), Type.Null()]),
+        ),
+      });
+      const articlesView = buildShopifyDefaultView(articlesSchema, 'articles');
+      const col = articlesView.cols.find((c) => c.kind === 'col' && c.path === 'author') as TableViewCol;
+      expect(col.subfields).toEqual([{ relativePath: 'name', name: 'Name', type: 'string' }]);
+      expect(col.selectedSubfield).toBe(0);
+    });
+
+    it('plucks products.category to its fullName', () => {
+      const productsSchema = Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        category: Type.Optional(
+          Type.Union([
+            Type.Object({
+              fullName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              id: Type.Optional(Type.String()),
+              isLeaf: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            }),
+            Type.Null(),
+          ]),
+        ),
+      });
+      const productsView = buildShopifyDefaultView(productsSchema, 'products');
+      const col = productsView.cols.find((c) => c.kind === 'col' && c.path === 'category') as TableViewCol;
+      expect(col.subfields).toEqual([{ relativePath: 'fullName', name: 'Full Name', type: 'string' }]);
+      expect(col.selectedSubfield).toBe(0);
+    });
+
+    it('plucks products.featuredImage to its url once url/altText are present', () => {
+      const productsSchema = Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        featuredImage: Type.Optional(
+          Type.Union([
+            Type.Object({
+              id: Type.Optional(Type.String()),
+              url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              altText: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            }),
+            Type.Null(),
+          ]),
+        ),
+      });
+      const productsView = buildShopifyDefaultView(productsSchema, 'products');
+      const col = productsView.cols.find((c) => c.kind === 'col' && c.path === 'featuredImage') as TableViewCol;
+      expect(col.subfields).toEqual([{ relativePath: 'url', name: 'URL', type: 'url' }]);
+      expect(col.selectedSubfield).toBe(0);
+    });
+
+    it('does not pluck a same-named field that is not an object exposing the path', () => {
+      // A hypothetical scalar `category` must be left alone (shape guard).
+      const productsSchema = Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        category: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      });
+      const productsView = buildShopifyDefaultView(productsSchema, 'products');
+      const col = productsView.cols.find((c) => c.kind === 'col' && c.path === 'category') as TableViewCol;
+      expect(col.subfields).toBeUndefined();
+    });
+  });
+
   describe('money object subfields', () => {
     const shippingView = buildShopifyDefaultView(buildShippingLineSchema(), 'order_shipping_lines');
 

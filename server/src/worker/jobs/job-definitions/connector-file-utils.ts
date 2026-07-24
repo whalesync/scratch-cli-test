@@ -5,7 +5,12 @@ import {
   readRecordIdAsString,
 } from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
-import { deduplicateFileName, isUsableFileNameSlug, normalizeFileName } from '../../../workbook/util';
+import {
+  deduplicateFileName,
+  isUsableFileNameSlug,
+  normalizeFileName,
+  sanitizeRecordIdForFileName,
+} from '../../../workbook/util';
 
 /** Joins a data-folder path with a file name without producing `//` (collapse slashes, trim trailing). */
 export function fullPathFromFolderAndFileName(parentPath: string, fileName: string): string {
@@ -48,22 +53,29 @@ export function buildGitFilesFromConnectorFiles(
     const parsedRecord = record as JsonSafeObject;
     const content = formatRecordJson(parsedRecord as Record<string, unknown>);
     const recordId = readRecordIdAsString(record, idPath) ?? '';
+    // Sanitized once and used both as the fallback filename base and as the
+    // collision-breaking suffix below. The raw record ID can contain path
+    // separators (Shopify GIDs are `gid://shopify/.../<id>`); using it verbatim in
+    // either position turns the filename into a nested path and loses the record
+    // (DEV-11015). Sanitizing preserves per-record uniqueness (no lowercasing/
+    // stripping), so the dedup suffix still disambiguates.
+    const sanitizedRecordId = sanitizeRecordIdForFileName(recordId);
 
     let fileName = existingFileNames.get(recordId);
 
     if (!fileName) {
       const suggested = suggestedFileNames[i];
-      let baseName = recordId;
+      let baseName = sanitizedRecordId;
       if (suggested && suggested.trim()) {
         const normalized = normalizeFileName(suggested);
         // Reject results that would produce hidden-file (`.json`) or flag-like
         // (`-foo.json`) filenames once the extension is appended. Falls back
-        // to the record ID, which is guaranteed ASCII + non-empty.
+        // to the sanitized record ID, which is guaranteed a usable, path-safe base.
         if (isUsableFileNameSlug(normalized)) {
           baseName = normalized;
         }
       }
-      fileName = deduplicateFileName(baseName, '.json', usedFileNames, recordId);
+      fileName = deduplicateFileName(baseName, '.json', usedFileNames, sanitizedRecordId);
     } else {
       // If we reuse an existing filename, we should still mark it as used
       // so we don't accidentally derive it for another new file.

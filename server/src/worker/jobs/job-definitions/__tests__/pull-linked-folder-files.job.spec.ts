@@ -1110,6 +1110,36 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.incrementalCursor).toBeDefined();
       });
+
+      // (g) Defense in depth (DEV-11015): the stale-file cleanup must delete only leaf FILES.
+      // A directory entry (records mis-staged into a nested path) would recursively wipe every
+      // file under it while reporting a single deletion — the failure mode that emptied the
+      // variants table. It must be skipped, not deleted.
+      it('deletes only stale files and skips directory entries during cleanup', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, {
+          lastFullPullAt: new Date('2026-04-15T00:00:00.000Z'),
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(false); // full pull → deletion runs
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+        // `main` has a stray directory (mis-staged nested record paths) plus a genuinely stale
+        // file. Nothing was pulled this run, so both are absent from `pulledPaths`.
+        (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
+          { name: 'gid:', path: 'Products/gid:', type: 'directory' },
+          { name: 'stale.json', path: 'Products/stale.json', type: 'file' },
+        ]);
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'full' } });
+
+        expect(mockScratchGitService.deleteFilesFromBranch).toHaveBeenCalledTimes(1);
+        // deleteFilesFromBranch(repoId, branch, paths, message) — only the file, never the directory.
+        const deleteCalls = (mockScratchGitService.deleteFilesFromBranch as jest.Mock).mock.calls as Array<
+          [string, string, string[], string]
+        >;
+        expect(deleteCalls[0][2]).toEqual(['Products/stale.json']);
+      });
     });
   });
 });

@@ -1273,7 +1273,28 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     try {
       const mainFiles = await this.scratchGitService.listRepoFiles(repoId, MAIN_BRANCH, folderPath);
+
+      // Defense in depth (DEV-11015): only ever delete leaf FILES. A directory entry
+      // that isn't in `pulledPaths` means records were mis-staged into a nested path
+      // (e.g. an unsanitized record-id filename containing '/'); deleting that
+      // directory recursively wipes every file under it while the server reports a
+      // single deletion ("Remove 1 deleted files" that removed 248). Skip directories
+      // and warn loudly rather than silently mass-deleting a table.
+      const staleDirectories = mainFiles.filter(
+        (f) => f.type === 'directory' && !f.name.startsWith('.') && !pulledPaths.has(f.path),
+      );
+      if (staleDirectories.length > 0) {
+        WSLogger.warn({
+          source: LOG_SOURCE,
+          message: 'Skipping unexpected directory entries during stale-file cleanup (possible mis-staged record paths)',
+          workbookId: dataFolder.workbookId,
+          dataFolderId: dataFolder.id,
+          directoryPaths: staleDirectories.map((f) => f.path),
+        });
+      }
+
       const filesToDelete = mainFiles
+        .filter((f) => f.type === 'file')
         .filter((f) => !f.name.startsWith('.'))
         .filter((f) => !pulledPaths.has(f.path))
         .map((f) => f.path);
