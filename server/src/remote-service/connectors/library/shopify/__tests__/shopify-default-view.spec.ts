@@ -349,6 +349,109 @@ describe('buildShopifyDefaultView', () => {
     });
   });
 
+  describe('nested reference foreign keys (DEV-11049)', () => {
+    function buildVariantsSchemaWithNestedProduct() {
+      return Type.Object({
+        displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        // Verbatim `{ id }` back-reference pulled by the query fields.
+        product: Type.Optional(
+          Type.Union([Type.Object({ id: Type.Optional(Type.String()) }), Type.Null()], {
+            [X_SCRATCH_READONLY]: true,
+          }),
+        ),
+        // Injected flat parent FK — duplicates the same Products relation.
+        productId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      });
+    }
+
+    it('plucks product_variants.product to product.id and links it to Products', () => {
+      const variantsView = buildShopifyDefaultView(buildVariantsSchemaWithNestedProduct(), 'product_variants');
+      const productCol = variantsView.cols.find((c) => c.kind === 'col' && c.path === 'product.id') as TableViewCol;
+      expect(productCol).toBeDefined();
+      expect(productCol.name).toBe('Product');
+      expect(productCol.foreignKey).toEqual({ linkedTableId: 'products' });
+      expect(productCol.readonly).toBe(true);
+      // The raw `product` object column is NOT emitted (that was the JSON blob).
+      const rawProductCol = variantsView.cols.find((c) => c.kind === 'col' && c.path === 'product');
+      expect(rawProductCol).toBeUndefined();
+    });
+
+    it('hides the redundant injected productId column when product.id already links Products', () => {
+      const variantsView = buildShopifyDefaultView(buildVariantsSchemaWithNestedProduct(), 'product_variants');
+      const productIdCol = variantsView.cols.find((c) => c.kind === 'col' && c.path === 'productId') as TableViewCol;
+      expect(productIdCol).toBeDefined();
+      expect(productIdCol.hidden).toBe(true);
+      expect(productIdCol.foreignKey).toBeUndefined();
+    });
+
+    it('links order_line_items product/variant while keeping the orderId parent FK visible', () => {
+      const lineItemsSchema = Type.Object({
+        name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        product: Type.Optional(Type.Union([Type.Object({ id: Type.Optional(Type.String()) }), Type.Null()])),
+        variant: Type.Optional(Type.Union([Type.Object({ id: Type.Optional(Type.String()) }), Type.Null()])),
+        orderId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      });
+      const lineItemsView = buildShopifyDefaultView(lineItemsSchema, 'order_line_items');
+
+      const productCol = lineItemsView.cols.find((c) => c.kind === 'col' && c.path === 'product.id') as TableViewCol;
+      expect(productCol.foreignKey).toEqual({ linkedTableId: 'products' });
+
+      const variantCol = lineItemsView.cols.find((c) => c.kind === 'col' && c.path === 'variant.id') as TableViewCol;
+      expect(variantCol.name).toBe('Variant');
+      expect(variantCol.foreignKey).toEqual({ linkedTableId: 'product_variants' });
+
+      // orderId targets Orders — not covered by a nested FK — so it stays a visible FK column.
+      const orderIdCol = lineItemsView.cols.find((c) => c.kind === 'col' && c.path === 'orderId') as TableViewCol;
+      expect(orderIdCol.foreignKey).toEqual({ linkedTableId: 'orders' });
+      expect(orderIdCol.hidden).toBeUndefined();
+    });
+  });
+
+  describe('Relay connection objects are hidden (DEV-11049)', () => {
+    it('hides a `{ edges, nodes, pageInfo }` connection field (blogs.articles)', () => {
+      const blogsSchema = Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        articles: Type.Optional(
+          Type.Union([
+            Type.Object({
+              edges: Type.Optional(Type.Array(Type.Unknown())),
+              nodes: Type.Optional(Type.Array(Type.Unknown())),
+              pageInfo: Type.Optional(Type.Unknown()),
+            }),
+            Type.Null(),
+          ]),
+        ),
+      });
+      const blogsView = buildShopifyDefaultView(blogsSchema, 'blogs');
+      const articlesCol = blogsView.cols.find((c) => c.kind === 'col' && c.path === 'articles') as TableViewCol;
+      expect(articlesCol).toBeDefined();
+      expect(articlesCol.hidden).toBe(true);
+    });
+
+    it('does not hide a plain object that merely has a nodes-like property', () => {
+      // `feed` is `{ location, path }` — not a connection — so it stays visible.
+      const blogsSchema = Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        id: Type.String(),
+        feed: Type.Optional(
+          Type.Union([
+            Type.Object({
+              location: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              path: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            }),
+            Type.Null(),
+          ]),
+        ),
+      });
+      const blogsView = buildShopifyDefaultView(blogsSchema, 'blogs');
+      const feedCol = blogsView.cols.find((c) => c.kind === 'col' && c.path === 'feed') as TableViewCol;
+      expect(feedCol.hidden).toBeUndefined();
+    });
+  });
+
   describe('object pluck subfields (DEV-11018 / DEV-11020)', () => {
     it('plucks articles.author to its name', () => {
       const articlesSchema = Type.Object({

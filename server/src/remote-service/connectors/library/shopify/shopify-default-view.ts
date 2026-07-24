@@ -72,12 +72,22 @@ const PLUCK_SUBFIELD_BY_FIELD_NAME: Record<string, { relativePath: string; name:
  * Nested object fields to surface as a foreign-key column plucked to the linked record's id,
  * rather than dumping the whole object as text. Keyed by `<entityType>.<fieldId>`. The
  * verbatim object stays on disk (Connector Prime Directive); the view points the column at
- * the inner id and declares the FK so a destination sync makes it a relation (DEV-11017).
+ * the inner id and declares the FK so a destination sync makes it a relation (DEV-11017,
+ * DEV-11049). All of these reference objects are read-only (strip-on-update / whole entity
+ * read-only), so surfacing them as a link never publishes edits back through them.
  */
 const NESTED_FOREIGN_KEY_COLS: Record<string, { idPath: string; linkedTableId: string; name: string }> = {
   // articles.blog is the full blog object; pluck blog.id and link to the Blogs table.
   // Safe as a read-side column: `blog` is already strip-on-update for articles.
   'articles.blog': { idPath: 'blog.id', linkedTableId: 'blogs', name: 'Blog' },
+  // product_variants.product is the verbatim `{ id }` back-reference to the owning product. It
+  // links to the same Products table as the injected `productId` FK, so the injected column is
+  // suppressed in favor of this verbatim one (see suppressedInjectedParentForeignKeyTables).
+  'product_variants.product': { idPath: 'product.id', linkedTableId: 'products', name: 'Product' },
+  // order_line_items references its product and variant in addition to its parent order; these
+  // are distinct relations from the injected `orderId` parent FK (DEV-11049).
+  'order_line_items.product': { idPath: 'product.id', linkedTableId: 'products', name: 'Product' },
+  'order_line_items.variant': { idPath: 'variant.id', linkedTableId: 'product_variants', name: 'Variant' },
 };
 
 /**
@@ -110,6 +120,12 @@ export function buildShopifyDefaultView(schema: TSchema, entityType: string): Ta
   const cols: (TableViewCol | TableViewBannerGroup)[] = [];
 
   const parentForeignKey = parentForeignKeyForEntity(entityType);
+  // Tables already linked by a nested-object FK actually present in this schema. When the
+  // injected parent FK (`productId`) points at the same table as a verbatim nested reference
+  // (`product` → `product.id`), we drop the injected column so the relation isn't duplicated
+  // (DEV-11049). Keyed by target table so `order_line_items` (parent → Orders, nested → Products/
+  // Product Variants) keeps its `orderId` FK while `product_variants` sheds its redundant one.
+  const tablesLinkedByAnEmittedNestedForeignKey = collectNestedForeignKeyTargetTables(entityType, properties);
   let verbatimSeoBannerEmitted = false;
 
   for (const fieldId of sorted) {
@@ -131,10 +147,17 @@ export function buildShopifyDefaultView(schema: TSchema, entityType: string): Ta
       // JSON blob. Read-only — we surface the link but never publish edits back through it.
       cols.push(buildForeignKeyCol(nestedForeignKey.idPath, nestedForeignKey.name, nestedForeignKey.linkedTableId));
     } else if (parentForeignKey && fieldId === parentForeignKey.field) {
-      // Injected parent FK (variants/media `productId`, line-items/shipping-lines `orderId`):
-      // declare the relation so it exports as a link. Read-only — it's a structural back-
-      // reference derived from the pull, not a user-editable field.
-      cols.push(buildForeignKeyCol(fieldId, formatFieldName(fieldId), parentForeignKey.linkedTableId));
+      if (tablesLinkedByAnEmittedNestedForeignKey.has(parentForeignKey.linkedTableId)) {
+        // A verbatim nested reference (e.g. product_variants `product` → `product.id`) already
+        // links this table, so the injected flat FK would be a duplicate relation. Keep the
+        // field on the record but hide the redundant column (DEV-11049).
+        cols.push({ kind: 'col', path: fieldId, name: formatFieldName(fieldId), type: 'string', hidden: true });
+      } else {
+        // Injected parent FK (media `productId`, line-items/shipping-lines `orderId`): declare
+        // the relation so it exports as a link. Read-only — it's a structural back-reference
+        // derived from the pull, not a user-editable field.
+        cols.push(buildForeignKeyCol(fieldId, formatFieldName(fieldId), parentForeignKey.linkedTableId));
+      }
     } else {
       cols.push(buildCol(fieldId, fieldSchema));
     }
@@ -300,7 +323,11 @@ function buildVerbatimSeoMetafieldBannerGroup(
 /** Build a TableViewCol from a field ID and its TypeBox schema. */
 function buildCol(fieldId: string, fieldSchema: TSchema): TableViewCol {
   const isReadonly = fieldSchema?.[X_SCRATCH_READONLY] === true;
-  const hidden = HIDDEN_FIELDS.has(fieldId) || undefined;
+  // Hide named system fields and Relay connection objects (`{ edges, nodes, pageInfo }`). The
+  // latter are to-many relations we don't pull (e.g. `blogs.articles`, `articles.comments`),
+  // so they'd otherwise render as an empty/confusing JSON blob column (DEV-11049). The forward
+  // side of each such relation is already surfaced as an FK on the child entity.
+  const hidden = HIDDEN_FIELDS.has(fieldId) || isRelayConnectionObject(fieldSchema) || undefined;
 
   const col: TableViewCol = {
     kind: 'col',
@@ -349,6 +376,31 @@ function buildCol(fieldId: string, fieldSchema: TSchema): TableViewCol {
 function objectHasProperty(objSchema: TSchema, propName: string): boolean {
   const props = (objSchema as TSchema & { properties?: Record<string, TSchema> }).properties;
   return props ? propName in props : false;
+}
+
+/**
+ * Collect the set of linked-table ids that a nested-object FK (NESTED_FOREIGN_KEY_COLS) will
+ * actually emit for this entity — i.e. the config field is present in the schema. Used to
+ * suppress an injected parent FK that would duplicate one of these verbatim relations.
+ */
+function collectNestedForeignKeyTargetTables(entityType: string, properties: Record<string, TSchema>): Set<string> {
+  const targetTables = new Set<string>();
+  for (const fieldId of Object.keys(properties)) {
+    const nestedForeignKey = NESTED_FOREIGN_KEY_COLS[`${entityType}.${fieldId}`];
+    if (nestedForeignKey) targetTables.add(nestedForeignKey.linkedTableId);
+  }
+  return targetTables;
+}
+
+/**
+ * Detect a Relay/GraphQL connection object — one shaped like `{ edges, nodes, pageInfo }`. These
+ * are to-many relation envelopes (e.g. `blogs.articles`, `article.comments`) that the connector
+ * doesn't pull, so their column would only ever show an empty/confusing JSON blob.
+ */
+function isRelayConnectionObject(fieldSchema: TSchema): boolean {
+  const obj = unwrapToObject(fieldSchema);
+  if (!obj) return false;
+  return objectHasProperty(obj, 'pageInfo') && (objectHasProperty(obj, 'edges') || objectHasProperty(obj, 'nodes'));
 }
 
 /**

@@ -141,12 +141,15 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 
 | FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
 |---|:--:|:--:|---|
-| `product_variants.productId` → Products | ✅ | ⬜ | Injected parent FK; declared as a read-only view FK (DEV-11017) |
-| `product_media.productId` → Products | ✅ | ⬜ | Injected parent FK; read-only view FK (DEV-11017) |
+| `product_variants.product` → Products | ✅ | ⬜ | Plucked to `product.id`; read-only view FK (DEV-11049). Supersedes the injected `productId`, which is hidden as a duplicate |
+| `product_media.productId` → Products | ✅ | ⬜ | Injected parent FK; read-only view FK (DEV-11017). No verbatim `product` ref is pulled for media |
 | `order_line_items.orderId` → Orders | ✅ | ⬜ | Injected parent FK; read-only view FK. Orders are Plus-only |
+| `order_line_items.product` → Products | ✅ | ⬜ | Plucked to `product.id`; read-only view FK (DEV-11049) |
+| `order_line_items.variant` → Product Variants | ✅ | ⬜ | Plucked to `variant.id`; read-only view FK (DEV-11049) |
 | `order_shipping_lines.orderId` → Orders | ✅ | ⬜ | Injected parent FK; read-only view FK. Orders are Plus-only |
 | `articles.blog` → Blogs | ✅ | ⬜ | Plucked to `blog.id`; read-only view FK (DEV-11017). `blog` is strip-on-update |
 - Association endpoint (if any): none — parent links are injected at pull time (`pullChildRecords`), not a separate association endpoint.
+- Reverse to-many connections (`blogs.articles`, `articles.comments`, `metaobjects.referencedBy`, `product_variants.presentmentPrices`) are `{ edges, nodes, pageInfo }` envelopes we don't pull; the default view hides them (DEV-11049). Each one's forward side is already an FK on the child (e.g. `articles.blog`).
 
 ## Edge cases discovered
 - **SEO metafields (articles/pages/blogs) — DEV-10637.** These entities have no native `seo`
@@ -160,12 +163,18 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - **Files images — DEV-10637.** A MediaImage keeps its nested `image { url … }` object verbatim;
   we no longer flatten it to a top-level `url` (that flatten also dropped altText/width/height).
   GenericFile/Video/ExternalVideo legitimately carry a top-level `url` and no `image`.
-- **Default-view foreign keys — DEV-11017.** `buildShopifyDefaultView` declares FK columns so a
-  destination sync (e.g. Notion relation) resolves them instead of shipping raw GID text: the
-  injected parent FK on every child entity (`product_variants`/`product_media` `productId` →
-  Products, `order_line_items`/`order_shipping_lines` `orderId` → Orders) and `articles.blog`
-  plucked to `blog.id` → Blogs. All are read-only view columns (`selectPlanFieldsFromTableView`
-  reads `col.foreignKey`); the verbatim objects stay on disk. `blog` is already strip-on-update.
+- **Default-view foreign keys — DEV-11017 / DEV-11049.** `buildShopifyDefaultView` declares FK
+  columns so a destination sync (e.g. Notion relation) resolves them instead of shipping raw GID
+  text. Two sources: (1) the injected parent FK on child entities that don't carry a verbatim
+  parent ref (`product_media` `productId` → Products, `order_line_items`/`order_shipping_lines`
+  `orderId` → Orders); and (2) verbatim nested `{ id }` references plucked to `<field>.id` —
+  `articles.blog` → Blogs, `product_variants.product` → Products, and `order_line_items`
+  `product` → Products / `variant` → Product Variants (DEV-11049). All are read-only view columns
+  (`selectPlanFieldsFromTableView` reads `col.foreignKey`); the verbatim objects stay on disk.
+  When a nested ref links the same table as the injected parent FK (`product_variants.product`
+  vs the injected `productId`), the injected column is emitted **hidden** so the relation isn't
+  duplicated. Reverse to-many connection envelopes (`{ edges, nodes, pageInfo }`, e.g.
+  `blogs.articles`) are hidden entirely — they're not pulled and their forward FK already exists.
 - **Default-view object plucks — DEV-11018 / DEV-11020.** Entity-specific object fields display a
   single inner leaf instead of a JSON blob (same idea as the count/money shape detectors, keyed by
   field name): `articles.author` → `name`, `products.category` → `fullName`,
