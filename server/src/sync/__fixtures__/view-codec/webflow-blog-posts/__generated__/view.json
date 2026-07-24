@@ -72,7 +72,8 @@
     {
       "kind": "col",
       "path": "fieldData.image",
-      "name": "Image"
+      "name": "Image",
+      "logicalType": "string"
     },
     {
       "kind": "col",
@@ -107,7 +108,8 @@
     {
       "kind": "col",
       "path": "fieldData.content-type",
-      "name": "Content-type"
+      "name": "Content-type",
+      "logicalType": "string"
     },
     {
       "kind": "col",

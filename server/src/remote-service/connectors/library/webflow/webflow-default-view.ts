@@ -4,6 +4,7 @@ import {
   TableView,
   TableViewBannerGroup,
   TableViewCol,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
 
@@ -239,6 +240,7 @@ function buildFieldDataCol(fieldName: string, fieldSchema: TSchema): TableViewCo
     path: `fieldData.${fieldName}`,
     name: formatCamelCaseName(fieldName),
     type: mapFieldType(inner),
+    logicalType: unopinionatedExportTypeForCollectionItemField(inner),
     readonly: isReadonly || undefined,
   };
 }
@@ -302,6 +304,33 @@ function mapFieldType(schema: TSchema | undefined): TablePropertyType | undefine
   if (kind === 'Boolean') return 'checkbox';
   if (kind === 'Number' || kind === 'Integer') return 'number';
   if (kind === 'Array' || kind === 'Object') return 'object';
+  return undefined;
+}
+
+/**
+ * The WEAK, unopinionated SEMANTIC type to export a collection-item field as, when it isn't a clean
+ * scalar the export can copy as-is (DEV-10937).
+ *
+ * A Webflow collection field whose value is an OBJECT or ARRAY (an Image, MultiImage, or Video Link
+ * embed) — or an UNRECOGNIZED Webflow field type that lands as `Type.Unknown` (the Ecommerce SKU
+ * `price`, `compare-at-price`, `sku-values`, `download-files`, `ec-sku-subscription-plan`,
+ * `ec-sku-billing-method` fields, …) — can't be represented as a scalar. Live Export / sync would
+ * otherwise emit a "Can't unpack this Webflow object field" / "Don't recognize Webflow field type"
+ * planning warning and downgrade it to text anyway. Declaring that plain-text outcome up front as a
+ * weak `logicalType: 'string'` maps the field cleanly to a text column with NO warning, without
+ * touching the render `type` (the grid still draws these however `mapFieldType` says).
+ *
+ * Foreign-key fields (Reference / MultiReference) are exempt — they export as references, not text —
+ * and so are clean scalars, whose own type already exports correctly (return `undefined` = "no
+ * override; fall back to the render type / JSON primitive").
+ */
+function unopinionatedExportTypeForCollectionItemField(inner: TSchema | undefined): TablePropertyType | undefined {
+  if (!inner) return undefined;
+  // Foreign keys are exported as references (an array of them is a multi-value FK), never as text.
+  if (inner[X_SCRATCH_FOREIGN_KEY_OPTIONS] !== undefined) return undefined;
+  const jsonType = (inner as TSchema & { type?: string }).type;
+  // `object` / `array` (structured), or no JSON `type` at all (Type.Unknown / a bare union) → weak text.
+  if (jsonType === 'object' || jsonType === 'array' || jsonType === undefined) return 'string';
   return undefined;
 }
 

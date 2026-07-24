@@ -3,6 +3,7 @@ import {
   TableViewBannerGroup,
   TableViewCol,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
 import { buildWebflowDefaultView } from '../webflow-default-view';
@@ -46,6 +47,18 @@ function makeCollectionItemSchema() {
         field(Type.Array(Type.String()) as unknown as ReturnType<typeof Type.String>, {
           connectorDataType: 'MultiReference',
         }),
+      ),
+      // A Reference / MultiReference foreign key: `logicalType` must NOT force these to text —
+      // they export as references (DEV-10937).
+      category: Type.Optional(Type.String({ [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'cat-collection' } })),
+      categories: Type.Optional(
+        Type.Array(Type.String(), {
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'cat-collection' },
+        }) as unknown as ReturnType<typeof Type.String>,
+      ),
+      // An unrecognized Webflow field type (an Ecommerce SKU `price` / `sku-values` field lands here).
+      skuPrice: Type.Optional(
+        field(Type.Unknown() as unknown as ReturnType<typeof Type.String>, { connectorDataType: 'ec-price' }),
       ),
       readonlyField: Type.Optional(field(Type.String(), { readonly: true })),
     }),
@@ -158,6 +171,49 @@ describe('buildWebflowDefaultView — collection_items', () => {
     it('should map date-time fixed fields to date type', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'lastUpdated') as TableViewCol;
       expect(col.type).toBe('date');
+    });
+  });
+
+  // DEV-10937: object / array / unknown collection fields (Webflow EComm SKU `price`, `main-image`,
+  // `more-images`, … especially) export as WEAK, unopinionated text so Live Export / sync maps them to
+  // a plain text column without a "can't unpack" / "don't recognize" planning warning. The render
+  // `type` is untouched; only `logicalType` is added. Foreign keys and clean scalars are exempt.
+  describe('logicalType (weak export type)', () => {
+    const colAt = (path: string) => view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol;
+
+    it('declares logicalType "string" for an Object field, keeping render type "object"', () => {
+      const col = colAt('fieldData.heroImage');
+      expect(col.type).toBe('object');
+      expect(col.logicalType).toBe('string');
+    });
+
+    it('declares logicalType "string" for a plain Array field (no FK)', () => {
+      const col = colAt('fieldData.tags');
+      expect(col.type).toBe('object');
+      expect(col.logicalType).toBe('string');
+    });
+
+    it('declares logicalType "string" for an unrecognized (Unknown) field type', () => {
+      const col = colAt('fieldData.skuPrice');
+      expect(col.logicalType).toBe('string');
+    });
+
+    it('does NOT force a Reference foreign key to text', () => {
+      const col = colAt('fieldData.category');
+      expect(col.logicalType).toBeUndefined();
+    });
+
+    it('does NOT force a MultiReference foreign key to text', () => {
+      const col = colAt('fieldData.categories');
+      expect(col.logicalType).toBeUndefined();
+    });
+
+    it('leaves clean scalars without a logicalType override', () => {
+      expect(colAt('fieldData.name').logicalType).toBeUndefined();
+      expect(colAt('fieldData.rating').logicalType).toBeUndefined();
+      expect(colAt('fieldData.published').logicalType).toBeUndefined();
+      expect(colAt('fieldData.websiteUrl').logicalType).toBeUndefined();
+      expect(colAt('fieldData.publishDate').logicalType).toBeUndefined();
     });
   });
 

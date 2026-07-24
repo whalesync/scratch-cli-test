@@ -111,7 +111,7 @@
     "column": "Image",
     "columnId": "fieldData.image",
     "cardinality": "single",
-    "logicalType": "object",
+    "logicalType": "string",
     "primitiveType": "object",
     "toCore": null,
     "fromCore": null

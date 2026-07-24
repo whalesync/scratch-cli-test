@@ -35,7 +35,7 @@ At-a-glance progress through the build journey, so anyone can see where this con
 | 5 | **Full write CRUD** (create + edit + delete exercised, push) | ⬜ | |
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | |
 | 7 | **Edge cases & quirks tested** (Pass 2 tricky parts) | ⬜ | |
-| 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics — e.g. custom fields, plugin fields, real-vs-meta) | ⬜ | |
+| 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics — e.g. custom fields, plugin fields, real-vs-meta) | ⬜ | **DEV-10937:** collection-item object/array/`Unknown` fields (Ecommerce SKU `price`, `sku-values`, `main-image`, `more-images`, `ec-sku-*`, …) now declare a weak `logicalType: 'string'` so Live Export / sync maps them to a plain text column WITHOUT a "can't unpack" / "don't recognize" planning warning; render `type` unchanged, foreign keys exempt. |
 | 9 | **OAuth** (final / pre-release — OAuth client created with the user, *or* requirements documented) | ⬜ | API-key covers all testing; this is the last step |
 
 ## TODOs — known pending tasks
