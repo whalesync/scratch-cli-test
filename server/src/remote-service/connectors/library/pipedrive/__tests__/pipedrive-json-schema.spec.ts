@@ -126,13 +126,25 @@ describe('pipedriveFieldToJsonSchema', () => {
     },
   );
 
-  it('maps phone to array with CONNECTOR_DATA_TYPE annotation', () => {
+  it('maps a SYSTEM phone field to array with CONNECTOR_DATA_TYPE annotation', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'phone' }));
     expect(schema).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.type).toBe('array');
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('phone');
+  });
+
+  // DEV-11042: in v2 only the SYSTEM phone field is the multi-value array; a CUSTOM phone field is
+  // a bare string. Typing it as an array both floods verbatim records with anyOf errors and makes
+  // the default view attach an array codec that JSON-parses the string and aborts the whole sync.
+  it('maps a CUSTOM phone field to String | Null with no phone annotation (DEV-11042)', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'phone', is_custom_field: true }));
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.map((s: { type?: string }) => s.type).sort()).toEqual(['null', 'string']);
   });
 
   // DEV-10453 finding 3: in v2 only CUSTOM monetary fields are `{value, currency}` objects; the
@@ -835,6 +847,23 @@ describe('schema regression lock — verbatim v2 records validate against the ge
     expectValid(spec.schema, {
       title: '[Sample] Deal',
       custom_fields: { abc123timehash: { value: '12:00:00', timezone_id: 272, timezone_name: 'Asia/Singapore' } },
+    });
+  });
+
+  it('validates a deal with a custom phone field stored as a bare string (DEV-11042)', async () => {
+    const spec = await buildSpec('deals', [
+      makeField({ field_code: 'title', field_type: 'varchar' }),
+      makeField({
+        field_code: '474bb89a7efcbb033d55e43d6bb2d9f04f507253',
+        field_name: 'Address phone',
+        field_type: 'phone',
+        is_custom_field: true,
+      }),
+    ]);
+    // Pipedrive v2 returns a custom phone as a bare string, not the system multi-value array.
+    expectValid(spec.schema, {
+      title: '[Sample] Deal',
+      custom_fields: { '474bb89a7efcbb033d55e43d6bb2d9f04f507253': '+34 915 000 000' },
     });
   });
 

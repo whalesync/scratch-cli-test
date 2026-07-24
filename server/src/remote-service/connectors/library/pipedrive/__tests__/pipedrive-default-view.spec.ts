@@ -154,6 +154,21 @@ describe('buildPipedriveDefaultView', () => {
     }
   });
 
+  it('renders a CUSTOM phone field (a bare string) as a plain column with no array codec (DEV-11042)', async () => {
+    // A Pipedrive v2 custom phone field stores a bare string ("+34 915 000 000"), NOT the system
+    // multi-value array. It must not get the `$[*].value` join_comma jsonpath codec — that codec
+    // JSON-parses the bare string, throws, and aborts the entire table's sync.
+    const view = await buildViewForDeals([
+      makeField({ field_code: 'title', field_name: 'Title', field_type: 'varchar' }),
+      makeField({ field_code: CUSTOM_HASH, field_name: 'Address Phone', field_type: 'phone', is_custom_field: true }),
+    ]);
+
+    const phoneColumn = findColumn(view, `custom_fields.${CUSTOM_HASH}`);
+    expect(phoneColumn?.type).toBe('string');
+    expect(phoneColumn?.displayTransformer).toBeUndefined();
+    expect(phoneColumn?.codec).toBeUndefined();
+  });
+
   it('unpacks composite fields into named subfield columns and hides the raw container (DEV-11036)', async () => {
     const view = await buildViewForDeals([
       makeField({

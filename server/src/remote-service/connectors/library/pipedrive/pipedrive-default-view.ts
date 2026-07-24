@@ -136,9 +136,19 @@ function buildColumnsForField(
     return [{ kind: 'col', path, name, type: 'number', ...(isReadonly ? { readonly: true } : {}) }];
   }
 
+  const nonNullFieldSchema = unwrapNullableUnionMember(fieldSchema);
+
   // Multi-value email/phone arrays (`[{value, label, primary}]`): render and sync the
   // comma-joined values — "a@x.com, b@y.com" — not concatenated JSON fragments (DEV-11035).
-  if (connectorDataType === 'email' || connectorDataType === 'phone') {
+  // Guard on the schema actually being an array: a CUSTOM phone field is a bare string (not the
+  // system multi-value array), so its `$[*].value` join_comma codec would JSON-parse the string
+  // and throw, aborting the entire table's sync (DEV-11042). A non-array phone/email falls through
+  // to a plain column below.
+  if (
+    (connectorDataType === 'email' || connectorDataType === 'phone') &&
+    nonNullFieldSchema !== undefined &&
+    nonNullFieldSchema.type === 'array'
+  ) {
     return [
       {
         kind: 'col',
@@ -153,8 +163,6 @@ function buildColumnsForField(
       },
     ];
   }
-
-  const nonNullFieldSchema = unwrapNullableUnionMember(fieldSchema);
 
   // Composite objects (monetary/address/daterange/time/timerange): one column per subfield —
   // named "<Field> (<Subfield>)" so sibling composites don't collide on "value" — plus the raw

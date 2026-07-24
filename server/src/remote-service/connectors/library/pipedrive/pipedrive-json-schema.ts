@@ -278,6 +278,16 @@ export function pipedriveFieldToJsonSchema(
       );
 
     case 'phone':
+      // In Pipedrive v2 only the SYSTEM phone field (persons'/organizations' `phone`) is the
+      // multi-value `[{value, primary, label}]` array; a CUSTOM phone field is a bare string
+      // (e.g. a deal's `"+34 915 000 000"`). Typing a custom phone as an array both floods
+      // verbatim records with anyOf errors AND makes the default view attach its `$[*].value`
+      // join_comma jsonpath codec, which JSON-parses the bare string, throws, and aborts the whole
+      // table's sync (DEV-11042). Drop the `phone` annotation on the string shape so the view never
+      // treats it as an array. Mirrors `case 'monetary'`/`case 'time'`.
+      if (field.is_custom_field) {
+        return Type.Union([Type.String(), Type.Null()]);
+      }
       return Type.Array(
         Type.Object({
           value: Type.Union([Type.String(), Type.Null()]),
