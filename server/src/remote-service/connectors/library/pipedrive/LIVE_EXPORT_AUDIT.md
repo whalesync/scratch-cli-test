@@ -202,6 +202,36 @@ Churned fields are the rich_text-packed JSON containers and datetime strings (`c
 diff never converges. Same DEV-10556 family as Airtable but a distinct mechanism (rich_text
 normalization vs empty-field omission).
 
+## Retest 2026-07-24 (after 997b3a7c6 union-resolver + 1bf4e82bb default view)
+
+Fresh workbooks on all three destinations: wkb_kPi2CwnW2e (Supabase, tables `… 2`),
+wkb_IK4PSfAjE2 (Airtable, `Deals 5`/`Leads 3`/…), wkb_NZiklitVxi (Notion, db 2ad108fa…).
+Source re-seeded to canonical state first. Reports /tmp/retest-pipedrive-*.json,
+/tmp/crud2-pipedrive-*.json.
+
+| Original finding | Verdict |
+|---|---|
+| DEV-11030 picture_id.url save blocker | **FIXED** — default plan saves with zero skipped fields on all 3 |
+| DEV-11032 daterange/timerange shape | **FIXED** — `(Value)`/`(Until)` real date/text columns, populated |
+| DEV-11033 dates as text | **FIXED (dynamic entities)** — timestamptz/dateTime/date everywhere; residual: leads/notes static schemas lack `format` → still text → DEV-11043 (Low) |
+| DEV-11034 enum/set raw ids | **FIXED** — labels export ("Opt, B", joined set labels) |
+| DEV-11035 emails/phones JSON fragments | **FIXED (persons)** — comma-joined values; but see DEV-11042 regression |
+| DEV-11036 junk columns | **FIXED** — containers + notes stubs hidden; nice display names throughout |
+| DEV-11031 deletes never mirrored | **STILL BROKEN** — round-2 delete (deal 18) mirrored nowhere |
+| DEV-10556 churn | **WORSE on Supabase** — 242/251 now churn (datetime string vs timestamptz repr); Airtable/Notion ~full churn unchanged |
+
+New findings from the retest:
+
+| Issue | Layer | Summary | Status |
+|---|---|---|---|
+| DEV-11042 | transport | **REGRESSION (Urgent)**: custom phone field is a bare string; schema+view treat it as array → jsonpath codec throws → ENTIRE Deals sync aborts (no publish at all) on every destination. Retest continued with `--skip-fields fable_qa_phone` | filed |
+| DEV-11043 | transport | leads/notes static schemas missing `format: 'date-time'` → their date columns still text | filed (Low) |
+| DEV-11044 | core | Invalid source date `"2026-02-29"` (Pipedrive stores unvalidated) permanently rejects the record on all 3 destinations, refails every run | filed (Medium) |
+
+CRUD round 2 (with phone skipped): edits + create mirrored on all 3 ✅ (incl. long-text edit),
+delete still not mirrored ❌. First-run publish: 250/251 on each destination (the 1 = DEV-11044
+invalid-date lead).
+
 ## Human remainder (not automatable — do before launch)
 
 - [ ] OAuth connect flow in real UI (Pipedrive supports OAuth)
@@ -224,4 +254,5 @@ normalization vs empty-field omission).
 ## Log
 
 - 2026-07-23 — claude (/test-live-export pipedrive supabase,airtable,notion) — audit started; preflight passed for all 3 destinations; recon done; tables chosen.
+- 2026-07-24 — claude — RETEST after fixes (997b3a7c6 + 1bf4e82bb): DEV-11030/11032/11034/11036 fixed, DEV-11033 fixed for dynamic entities, DEV-11035 fixed for persons; found Urgent regression DEV-11042 (custom phone string vs array codec aborts Deals sync) + DEV-11043/11044; DEV-11031 still broken; Supabase churn worsened to 242/251 (datetime repr — DEV-10556 comment). Fix verdicts commented on every issue.
 - 2026-07-23 — claude — seeded torture data (15 deals / 217+ persons / 5 orgs / 4 leads / 5 notes, 18 custom fields); found + filed DEV-11030 save blocker; ran all three destinations on isolated session server :3011 (shared :3010 was wedged by parallel audits; also restarted a deadlocked shared scratch-git on :3100); CRUD + drift passes done; filed DEV-11029…11036, commented DEV-10556 + DEV-10957; doc closed out.
