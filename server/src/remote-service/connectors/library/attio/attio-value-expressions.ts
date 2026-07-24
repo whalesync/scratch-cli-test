@@ -14,8 +14,8 @@ import { AttioAttributeType } from './attio-types';
  *   - the default view's per-column `displayTransformer` (grid) via
  *     `buildAttioDisplayTransformer` below, consumed in attio-default-view.ts
  *
- * Types not listed here (e.g. `interaction`) are too complex for a simple
- * extraction and are left as raw arrays (rendered as JSON in the grid).
+ * Types not listed here are too complex for a simple extraction and are left as
+ * raw arrays (rendered as JSON in the grid).
  */
 export const ATTIO_VALUE_EXPRESSION: Partial<Record<AttioAttributeType, string>> = {
   text: '$[0].value',
@@ -37,6 +37,13 @@ export const ATTIO_VALUE_EXPRESSION: Partial<Record<AttioAttributeType, string>>
   'actor-reference': '$[0].referenced_actor_id',
   location: '$[0].locality',
   'personal-name': '$[0].full_name',
+  // An `interaction` value (the computed `first/last/next email|calendar interaction`
+  // fields) is `{ interaction_type, interacted_at, owner_actor, ... }`. The single
+  // scalar a user cares about is WHEN it happened, so flatten to the `interacted_at`
+  // timestamp. Read-only/system-managed (no write key). Before DEV-11052 this type
+  // had no expression, so the grid showed raw JSON and Live Export downgraded it to
+  // text ("Can't unpack this Attio object field"); it now flattens to a date.
+  interaction: '$[0].interacted_at',
 };
 
 /**
@@ -76,6 +83,9 @@ const ATTIO_EXPORT_LOGICAL_TYPE: Partial<Record<AttioAttributeType, TablePropert
   'actor-reference': 'string',
   location: 'string',
   'personal-name': 'string',
+  // `interacted_at` is a wall-clock timestamp — export as a real `date` column so a
+  // strict destination gets a date field, not text (mirrors `timestamp`). See DEV-11052.
+  interaction: 'date',
 };
 
 /**

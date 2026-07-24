@@ -21,8 +21,16 @@ import {
   TablePreview,
 } from '../../types';
 import { AttioApiClient, AttioError } from './attio-api-client';
-import { buildAttioDefaultView, LIST_VIEW_CONFIG, OBJECT_VIEW_CONFIG } from './attio-default-view';
 import {
+  buildAttioDefaultView,
+  buildAttioFlatView,
+  LIST_VIEW_CONFIG,
+  MEMBERS_FLAT_VIEW_CONFIG,
+  OBJECT_VIEW_CONFIG,
+  TASKS_FLAT_VIEW_CONFIG,
+} from './attio-default-view';
+import {
+  ATTIO_MEMBERS_TABLE_REMOTE_ID,
   buildAttioListTableSpec,
   buildAttioMembersTableSpec,
   buildAttioObjectTableSpec,
@@ -143,7 +151,9 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
     // target for `actor-reference` fields. Its own endpoint + fixed shape, so
     // its own table kind; all writes disabled.
     const membersTable: TablePreview = {
-      id: { wsId: 'workspace_members', remoteId: ['members'] },
+      // remoteId is `['members']` (see ATTIO_MEMBERS_TABLE_REMOTE_ID) — the id that
+      // `actor-reference` foreign keys target and that becomes this folder's tableId.
+      id: { wsId: 'workspace_members', remoteId: [...ATTIO_MEMBERS_TABLE_REMOTE_ID] },
       displayName: 'Workspace Members',
       disabledCreates: true,
       disabledUpdates: true,
@@ -180,8 +190,9 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
       case 'list':
         return buildAttioDefaultView(spec.schema, LIST_VIEW_CONFIG);
       case 'members':
+        return buildAttioFlatView(spec.schema, MEMBERS_FLAT_VIEW_CONFIG);
       case 'tasks':
-        return undefined;
+        return buildAttioFlatView(spec.schema, TASKS_FLAT_VIEW_CONFIG);
       default:
         return assertUnreachable(parsed);
     }
@@ -518,7 +529,7 @@ export function parseAttioTableId(id: EntityId): AttioTableKind {
     if (!slug) throw new AttioError(`Invalid Attio list id: missing list slug in remoteId`);
     return { kind: 'list', listSlug: slug };
   }
-  if (head === 'members') return { kind: 'members' };
+  if (head === ATTIO_MEMBERS_TABLE_REMOTE_ID[0]) return { kind: 'members' };
   if (head === 'tasks') return { kind: 'tasks' };
   if (!head) throw new AttioError('Invalid Attio table id: empty remoteId');
   return { kind: 'object', objectSlug: head };

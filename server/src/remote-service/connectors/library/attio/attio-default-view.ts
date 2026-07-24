@@ -104,6 +104,35 @@ export const LIST_VIEW_CONFIG: AttioObjectViewConfig = {
 };
 
 /**
+ * Per-table display config for Attio's FLAT tables (tasks, members) — the ones
+ * whose records are a flat set of top-level fields rather than the object/list
+ * `values[]` envelope. See {@link buildAttioFlatView}.
+ */
+export interface AttioFlatViewConfig {
+  /** Field to show first (the title column). */
+  titleField?: string;
+  /** Fields to hide by default (system/noise fields). */
+  hiddenFields?: string[];
+}
+
+/**
+ * Tasks view: content is the title; the raw system-actor object is hidden. Giving
+ * tasks a view (rather than falling back to raw schema flattening) is what makes the
+ * date fields export as real dates instead of text, drops the `id` triple from the
+ * export as a junk text column, and surfaces `assignees` as its schema-declared
+ * foreign key onto Workspace Members (DEV-11052).
+ */
+export const TASKS_FLAT_VIEW_CONFIG: AttioFlatViewConfig = {
+  titleField: 'content_plaintext',
+  hiddenFields: ['created_by_actor'],
+};
+
+/** Members view: email is the title (matches the table's `titlePath`). */
+export const MEMBERS_FLAT_VIEW_CONFIG: AttioFlatViewConfig = {
+  titleField: 'email_address',
+};
+
+/**
  * Build a default TableView for an Attio object (companies, people, deals) or list.
  *
  * Column order: title attribute -> id -> priority attributes -> remaining attributes
@@ -178,6 +207,50 @@ export function buildAttioDefaultView(schema: TSchema, config: AttioObjectViewCo
   return { name: 'Default', cols };
 }
 
+/**
+ * Build a default TableView for one of Attio's FLAT tables (tasks, members).
+ *
+ * Unlike objects/lists, these have no `values[]` envelope — their records are a
+ * flat set of top-level fields — so each top-level property becomes one column via
+ * the same `buildFixedCol` used for object fixed fields (date/url/number/boolean
+ * types unwrapped from nullable unions, read-only / write-once from the schema, and
+ * the `id` triple defaulted to its record subfield). Column order: title, then id,
+ * then the remaining fields in schema order.
+ *
+ * Foreign keys aren't set on the columns here — they live on the schema (e.g. tasks'
+ * `assignees`), and the create-plan field selection recovers them by joining each
+ * column back to its backing schema field.
+ */
+export function buildAttioFlatView(schema: TSchema, config: AttioFlatViewConfig): TableView {
+  const topLevel: Record<string, TSchema> =
+    (schema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
+  const hiddenFields = new Set(config.hiddenFields ?? []);
+
+  const fieldKeys = Object.keys(topLevel);
+  const colByFieldKey = new Map<string, TableViewCol>();
+  for (const fieldKey of fieldKeys) {
+    const col = buildFixedCol(fieldKey, topLevel[fieldKey]);
+    if (hiddenFields.has(fieldKey)) col.hidden = true;
+    colByFieldKey.set(fieldKey, col);
+  }
+
+  // Order: title first, id next, then everything else in schema order.
+  const orderedFieldKeys: string[] = [];
+  const pushOnce = (fieldKey: string) => {
+    if (colByFieldKey.has(fieldKey) && !orderedFieldKeys.includes(fieldKey)) orderedFieldKeys.push(fieldKey);
+  };
+  if (config.titleField) pushOnce(config.titleField);
+  pushOnce('id');
+  for (const fieldKey of fieldKeys) pushOnce(fieldKey);
+
+  const cols: TableViewCol[] = [];
+  for (const fieldKey of orderedFieldKeys) {
+    const col = colByFieldKey.get(fieldKey);
+    if (col) cols.push(col);
+  }
+  return { name: 'Default', cols };
+}
+
 // ── Helpers ──
 
 /** Move the title field and priority fields to the front of the list. */
@@ -219,13 +292,30 @@ function formatFieldName(fieldId: string): string {
     .join(' ');
 }
 
+/**
+ * Unwrap a nullable `anyOf`/`oneOf` union (`Union([T, Null])`) to its single
+ * non-null variant so the mapper reads `format`/`Kind` off the real value node.
+ * Attio's flat tables (tasks, members) declare nullable fields as such unions —
+ * e.g. `completed_at: Union([String({format:'date-time'}), Null])` — whose format
+ * sits on the inner String, not the union envelope. Returns the input unchanged
+ * when it isn't a nullable union.
+ */
+function unwrapNullableUnion(fieldSchema: TSchema): TSchema {
+  const unionSchema = fieldSchema as TSchema & { anyOf?: TSchema[]; oneOf?: TSchema[] };
+  const variants = unionSchema.anyOf ?? unionSchema.oneOf;
+  if (!variants) return fieldSchema;
+  const nonNull = variants.filter((variant) => (variant as TSchema & { type?: string }).type !== 'null');
+  return nonNull.length === 1 ? nonNull[0] : fieldSchema;
+}
+
 /** Map a fixed top-level field to a TablePropertyType. */
 function mapFixedFieldType(fieldSchema: TSchema | undefined): TablePropertyType | undefined {
   if (!fieldSchema) return undefined;
-  const format = (fieldSchema as TSchema & { format?: string }).format;
+  const valueSchema = unwrapNullableUnion(fieldSchema);
+  const format = (valueSchema as TSchema & { format?: string }).format;
   if (format === 'date-time') return 'date';
   if (format === 'uri') return 'url';
-  const kind = fieldSchema[Kind] as string | undefined;
+  const kind = valueSchema[Kind] as string | undefined;
   if (kind === 'Boolean') return 'checkbox';
   if (kind === 'Number' || kind === 'Integer') return 'number';
   if (kind === 'Object' || kind === 'Array' || kind === 'Union' || kind === 'Unknown') return 'object';
@@ -321,7 +411,7 @@ function buildValueCol(attrSlug: string, attrSchema: TSchema | undefined, values
     // cell kind that consults `displayTransformer`. A 'number' / 'checkbox' /
     // 'url' type hint would instead route to a cell kind that renders the raw
     // value array (NaN / empty / JSON) and ignore the transformer entirely.
-    // Columns without a transformer (e.g. `interaction`) keep their mapped type.
+    // Columns without a transformer keep their mapped type.
     type: displayTransformer ? 'string' : mapValueType(connectorDataType),
     readonly: isReadonly || undefined,
     writeOnce: isWriteOnce || undefined,

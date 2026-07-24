@@ -35,7 +35,7 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. **All ⬜ pending live 
 | 5 | **Full write CRUD** (create + edit + delete, pushed) | ✅ | all entity kinds incl. **Tasks (P6)**: edit/create/delete pushed via CLI + API-verified. **Required a publish-pipeline fix** — see Edge cases: nested-IdPath bug |
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ✅ | FKs declared (P1) on record-reference + actor-reference; move parent→parent verified (person→Atlas) |
 | 7 | **Edge cases & quirks tested** (Pass 2) | ✅ | field-type matrix (11 types round-tripped live), select/status terse-write, date no-tz-shift, task content write-once (immutable on update), read-only `is_writable` propagation — all live-verified |
-| 8 | **View(s) built** (default view) | 🔄 | `attio-default-view.ts` builds object + list views. **DEV-10532:** each value column now carries a declarative `displayTransformer` (JSONPath from `attio-value-expressions.ts`, e.g. `$[0].value` / `$[0].status.title`) typed `string`, so the desktop grid flattens the verbatim value array to a clean scalar instead of raw JSON (mirrors Notion rich-text). **DEV-11039:** currency reads `$[0].currency_value` (not `$[0].value`), else the field is silently dropped in the grid and on export. **DEV-11040:** a text-rendered column also declares its true semantic type via the view's `logicalType` (number/date/checkbox/url) so Live Export / sync builds the destination field for that type instead of exporting numbers/dates/bools as text. Not yet confirmed in desktop |
+| 8 | **View(s) built** (default view) | 🔄 | `attio-default-view.ts` builds object + list views, plus **flat views for tasks + members** (`buildAttioFlatView`, **DEV-11052**) so their date fields export as `date` (not text), the `id` triple isn't emitted as a junk text column, and tasks' `assignees` surfaces as its FK. **DEV-10532:** each value column now carries a declarative `displayTransformer` (JSONPath from `attio-value-expressions.ts`, e.g. `$[0].value` / `$[0].status.title`) typed `string`, so the desktop grid flattens the verbatim value array to a clean scalar instead of raw JSON (mirrors Notion rich-text). **DEV-11039:** currency reads `$[0].currency_value` (not `$[0].value`), else the field is silently dropped in the grid and on export. **DEV-11040:** a text-rendered column also declares its true semantic type via the view's `logicalType` (number/date/checkbox/url) so Live Export / sync builds the destination field for that type instead of exporting numbers/dates/bools as text. Not yet confirmed in desktop |
 | 9 | **OAuth** (final / pre-release) | ⬜ | Not wired; Bearer wire format already matches so add `'oauth'` + `AttioOAuthProvider` when ready |
 
 ## TODOs — known pending tasks
@@ -46,7 +46,7 @@ Surfaced by the DEV-10303 code review. Coarser than the coverage matrix. **The s
 - [x] **Read-only labeling gap.** ✅ 2026-06-12 (PLAN P2). Schema now derives `x-scratch-readonly` from **`is_writable === false`** (+ `is_archived`) via `isAttributeReadonly` in `valueArraySchemaForAttribute`. **Correction:** do NOT use `is_system_attribute` — verified live that Attio sets it `true` for writable standard fields (`name`/`description`/`domains`); it would wrongly lock them. `is_writable` is the precise flag on both object and list attributes. Unit tests added. (Pending: desktop visual confirm.)
 - [x] **List-entry New→Push friction.** ✅ 2026-06-12 (PLAN P3). `parent_record_id`/`parent_object` are visible + **write-once** (`x-scratch-write-once`, DEV-10408): editable when creating an entry, read-only once it exists. (Pending: desktop grid-create confirm.)
 - [x] **Write-once / create-only field support** ✅ 2026-06-15 (**DEV-10408**). Added the `x-scratch-write-once` schema annotation (shared-types) + `TableViewCol.writeOnce`; the desktop renders such fields writable on a new (unpublished) record and read-only once it exists (combining the flag with the row's diff status), and the scratch-git `enforce_schema` validator warns when a write-once field changes on an existing record (silent on new ones). Applied to list-entry `parent_record_id`/`parent_object` and task `content_plaintext`. Copper set-on-create FKs can adopt the same flag next.
-- [x] **Workspace members** ✅ 2026-06-12 (P4). `GET /v2/workspace_members` (underscore — the `-members` guess 404s), read-only table at `/Workspace Members`. Still TODO: point `actor-reference` FKs at it (folds into P1).
+- [x] **Workspace members** ✅ 2026-06-12 (P4). `GET /v2/workspace_members` (underscore — the `-members` guess 404s), read-only table at `/Workspace Members`. `actor-reference` FKs point at it via its remoteId `'members'` (DEV-11052).
 - [x] **Custom / extra objects + all lists** ✅ 2026-06-12 (P5). `listObjects()` now drives `listTables`; all lists exposed. Events/Products/Users/Workspaces light up; custom objects use the same path.
 - [ ] **Planned entities (remaining):** Tasks (`/v2/tasks`, spec'd in PLAN P6 — deferred to post-GCS-reauth), Notes, Comments/Threads.
 - [ ] **Incremental polling not wired** — no `x-scratch-last-modified-field`; evaluate Attio's filter-based `since` pull; deletions not detected.
@@ -77,7 +77,7 @@ Best-case future state; `Status` tracks built/planned.
 | Events / Products / Users / Workspaces (extra standard objects) | `<slug>` object | ✅ | ➖ | ➖ | ➖ | ⬜ | **built (P5)** — exposed via `listObjects()`; Products + Users pulled & verified; same object codepath as companies/people/deals (writes identical, not separately re-pushed) |
 | Custom objects (user-defined) | `<slug>` object | ➖ | ➖ | ➖ | ➖ | ⬜ | **built (P5)** — same codepath as above; none defined in the test workspace, so validated against the extra standard objects instead |
 | Workspace members | `workspace_members` (`/Workspace Members`) | ✅ | ➖ | ➖ | ➖ | ➖ | **built (P4), read-only** — `GET /v2/workspace_members`; 1 member pulled verbatim; all writes disabled. Distinct from the `users` *object* |
-| Tasks | `tasks` (`/Tasks`) | ✅ | ✅ | ✅ | ✅ | ⬜ | **built + full CRUD validated (P6)** — `/v2/tasks`; content write-once (immutable on update); create needs all 6 fields; assignees→members, linked_records→records |
+| Tasks | `tasks` (`/Tasks`) | ✅ | ✅ | ✅ | ✅ | ✅ | **built + full CRUD validated (P6)** — `/v2/tasks`; content write-once (immutable on update); create needs all 6 fields; assignees→members (FK, DEV-11052), linked_records→records; flat default view (DEV-11052) |
 | Notes | — | ⬜ | ⬜ | ⬜ | ⬜ | ➖ | planned (`/v2/notes` list, or per-record) |
 
 ### 3. Scoped / non-top-level entities
@@ -105,13 +105,13 @@ Every Attio attribute `type`, with its on-disk read key, write key, and the disp
 | status | ✅ | ✅ | ➖ | read `$[0].status.title`, **write terse string title** (`convertStatus`) — wrote `"Status 2"`, read back full object ✓ |
 | select | ✅ | ✅ | ➖ | read `$[0].option.title`, **write terse string** (`convertSelect`) — wrote `"Option 2"`; multiselect = array (`Option 1`+`Option 3`) ✓ |
 | record-reference | ✅ | ✅ | ✅ | `$[0].target_record_id` → `target_object`+`target_record_id`; **FK declared + move parent→parent verified** |
-| actor-reference | ✅ | ➖ | ✅ | `$[0].referenced_actor_id` → `referenced_actor_type`+`referenced_actor_id`; FK → Workspace Members; set on deal create |
+| actor-reference | ✅ | ➖ | ✅ | `$[0].referenced_actor_id` → `referenced_actor_type`+`referenced_actor_id`; FK → Workspace Members (`linkedTableId: 'members'` = its remoteId, **DEV-11052** — was the wsId `workspace_members`, which never resolved so the field was uncheckable in Live Export); set on deal create |
 | location | ✅ | ✅ | ➖ | `$[0].locality` → line_1..4/locality/region/postcode/country_code/lat/long (set SF/CA/US) |
 | domain | ✅ | ➖ | ➖ | `$[0].domain` → `domain` (read-verified on company `domains`) |
 | email-address | ✅ | ➖ | ✅ | `$[0].email_address` → `email_address`; derived keys stripped by allowlist; set on person create |
 | phone-number | ✅ | ✅ | ➖ | read `$[0].phone_number` → write `original_phone_number`+`country_code` (set +1415…) |
 | personal-name | ✅ | ➖ | ✅ | `$[*].first_name` → first_name/last_name/full_name (set on person create) |
-| interaction | ➖ | ➖ | ➖ | system/read-only — no virtual field, no write key |
+| interaction | ✅ | ➖ | ➖ | **DEV-11052:** `$[0].interacted_at` (timestamp) → grid shows the interaction date, Live Export creates a `date` column (was raw JSON / downgraded text). System-managed read-only, no write key |
 | record-id | ➖ | ➖ | ➖ | system id — read-only |
 
 ## Bulk operation limits / pagination
@@ -158,7 +158,7 @@ Org-wide rate limit: **100 req/s per workspace token** (`rateLimiterSpec { point
 Cross-cutting: base `https://api.attio.com`; `Authorization: Bearer <token>`, `Accept: application/json`; 60s timeout; envelope `{ data: <T> }` on every response.
 
 ## Foreign keys / associations
-✅ **FKs declared 2026-06-13 (P1).** `foreignKeyOptionsForAttribute` annotates `x-scratch-foreign-key` on single-target `record-reference` attrs (`linkedTableId` = target slug, resolved from `config.record_reference.allowed_object_ids[0]` via an object-id→slug map) and on `actor-reference` attrs (→ `workspace_members`). Multi-target references deferred. The write path was already correct (`target_object`+`target_record_id` allowlist).
+✅ **FKs declared 2026-06-13 (P1).** `foreignKeyOptionsForAttribute` annotates `x-scratch-foreign-key` on single-target `record-reference` attrs (`linkedTableId` = target slug, resolved from `config.record_reference.allowed_object_ids[0]` via an object-id→slug map) and on `actor-reference` attrs (→ Members, `linkedTableId: 'members'`). Multi-target references deferred. The write path was already correct (`target_object`+`target_record_id` allowlist). **DEV-11052:** the actor-reference FK now targets the Members table's **remoteId** (`'members'`), not its wsId (`'workspace_members'`) — the create-plan generator matches an FK against each source folder's `tableId` (= remoteId), so keying off the wsId left it permanently `needs_target` (uncheckable in the Live Export wizard). Objects are unaffected: their wsId == remoteId == api_slug. Tasks' `assignees` (multi-valued actor-reference) also declared FK → Members.
 
 | FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
 |---|:--:|:--:|---|
@@ -167,7 +167,8 @@ Cross-cutting: base `https://api.attio.com`; `Authorization: Bearer <token>`, `A
 | `people.associated_users` → `users` | ✅ | ➖ | single-target → the `users` object (P5) |
 | `deals.associated_company` → `companies` | ✅ | ➖ | single-target |
 | `deals.associated_people` → `people` | ✅ | ➖ | single-target (multi-value array) |
-| `*.created_by` / `deals.owner` (`actor-reference`) → `workspace_members` | ✅ | ➖ | actor-reference → Workspace Members table (P4) |
+| `*.created_by` / `deals.owner` / `*_connection_user` (`actor-reference`) → Members (`members`) | ✅ | ➖ | actor-reference → Workspace Members table (P4); `linkedTableId: 'members'` (DEV-11052) |
+| `tasks.assignees` (multi-valued actor-reference) → Members (`members`) | ✅ | ➖ | DEV-11052 — declared FK so it's checkable in Live Export instead of opaque text |
 - Association endpoint: none — Attio relations are `record-reference` attributes on the record (write `target_object`+`target_record_id`), not a separate association endpoint.
 - **Multi-target record-references** (a reference allowing >1 object type) are **not** declared — a single `linkedTableId` can't express N targets. None present in the test workspace; revisit if a use case appears.
 

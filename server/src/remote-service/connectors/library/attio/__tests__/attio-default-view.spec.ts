@@ -1,5 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import {
+  TableView,
   TableViewCol,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
@@ -8,9 +9,25 @@ import {
 import {
   AttioObjectViewConfig,
   buildAttioDefaultView,
+  buildAttioFlatView,
   LIST_VIEW_CONFIG,
+  MEMBERS_FLAT_VIEW_CONFIG,
   OBJECT_VIEW_CONFIG,
+  TASKS_FLAT_VIEW_CONFIG,
 } from '../attio-default-view';
+import { buildAttioMembersTableSpec, buildAttioTasksTableSpec } from '../attio-json-schema';
+
+const mockFlatEntityId = { wsId: 'tasks', remoteId: ['tasks'] };
+
+/** The view's plain columns (narrowing out banner groups, which flat views never emit). */
+function flatCols(view: TableView): TableViewCol[] {
+  return view.cols.filter((c): c is TableViewCol => c.kind === 'col');
+}
+
+/** Find a column by its json path in a view. */
+function colAt(view: TableView, path: string): TableViewCol | undefined {
+  return flatCols(view).find((c) => c.path === path);
+}
 
 /** Build an Attio attribute value-array schema with annotations. */
 function attr(connectorDataType: string, opts: { readonly?: boolean } = {}) {
@@ -463,5 +480,63 @@ describe('custom config', () => {
     const view = buildAttioDefaultView(schema, config);
     const first = view.cols[0] as TableViewCol;
     expect(first.path).toBe('custom_values.title');
+  });
+});
+
+describe('buildAttioFlatView (tasks) — DEV-11052', () => {
+  const spec = buildAttioTasksTableSpec(mockFlatEntityId);
+  const view = buildAttioFlatView(spec.schema, TASKS_FLAT_VIEW_CONFIG);
+
+  it('puts the title (content) first, then id', () => {
+    expect(flatCols(view)[0].path).toBe('content_plaintext');
+    expect(flatCols(view)[1].path).toBe('id');
+  });
+
+  it('maps the nullable date-time fields to `date` (not object/text)', () => {
+    expect(colAt(view, 'completed_at')?.type).toBe('date');
+    expect(colAt(view, 'deadline_at')?.type).toBe('date');
+    expect(colAt(view, 'created_at')?.type).toBe('date');
+  });
+
+  it('maps is_completed to a checkbox', () => {
+    expect(colAt(view, 'is_completed')?.type).toBe('checkbox');
+  });
+
+  it('shows the id triple as its record subfield (task_id), not the raw envelope', () => {
+    const idCol = colAt(view, 'id');
+    expect(idCol?.subfields?.[idCol.selectedSubfield ?? -1]?.relativePath).toBe('task_id');
+  });
+
+  it('hides the raw created_by_actor system object', () => {
+    expect(colAt(view, 'created_by_actor')?.hidden).toBe(true);
+  });
+
+  it('preserves read-only / write-once flags from the schema', () => {
+    expect(colAt(view, 'completed_at')?.readonly).toBe(true);
+    expect(colAt(view, 'created_at')?.readonly).toBe(true);
+    expect(colAt(view, 'content_plaintext')?.writeOnce).toBe(true);
+    // deadline_at is editable.
+    expect(colAt(view, 'deadline_at')?.readonly).toBeUndefined();
+  });
+});
+
+describe('buildAttioFlatView (members) — DEV-11052', () => {
+  const spec = buildAttioMembersTableSpec({ wsId: 'workspace_members', remoteId: ['members'] });
+  const view = buildAttioFlatView(spec.schema, MEMBERS_FLAT_VIEW_CONFIG);
+
+  it('puts the email (title) first, then id', () => {
+    expect(flatCols(view)[0].path).toBe('email_address');
+    expect(flatCols(view)[1].path).toBe('id');
+  });
+
+  it('maps created_at to a date and keeps the whole record read-only', () => {
+    expect(colAt(view, 'created_at')?.type).toBe('date');
+    expect(colAt(view, 'created_at')?.readonly).toBe(true);
+    expect(colAt(view, 'first_name')?.readonly).toBe(true);
+  });
+
+  it('shows the id triple as its member-id subfield', () => {
+    const idCol = colAt(view, 'id');
+    expect(idCol?.subfields?.[idCol.selectedSubfield ?? -1]?.relativePath).toBe('workspace_member_id');
   });
 });

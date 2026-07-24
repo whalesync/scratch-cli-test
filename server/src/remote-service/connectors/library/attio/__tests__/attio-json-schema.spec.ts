@@ -141,13 +141,14 @@ describe('attio-json-schema virtual fields', () => {
     expect(vf[0].type).toBe('boolean');
   });
 
-  it('should not add virtual fields to interaction attributes', async () => {
+  it('extracts the interacted_at timestamp from interaction attributes (DEV-11052)', async () => {
     mockClient.listObjectAttributes.mockResolvedValue([
       makeAttribute({ api_slug: 'last_interaction', type: 'interaction', title: 'Last Interaction' }),
     ]);
     const spec = await buildAttioObjectTableSpec(mockEntityId, 'companies', mockClient);
-    const vf = spec.schema.properties.values.properties.last_interaction[X_SCRATCH_VIRTUAL_FIELDS];
-    expect(vf).toBeUndefined();
+    const vf = spec.schema.properties.values.properties.last_interaction[X_SCRATCH_VIRTUAL_FIELDS] as VirtualFieldDef[];
+    expect(vf[0].type).toBe('string');
+    expect(vf[0].suggestedTransformer.options).toMatchObject({ expression: '$[0].interacted_at' });
   });
 
   it('should skip archived attributes', async () => {
@@ -243,8 +244,12 @@ describe('attio-json-schema foreign keys', () => {
   it('declares a foreign key on an actor-reference (→ workspace members table)', async () => {
     mockClient.listObjectAttributes.mockResolvedValue([makeAttribute({ api_slug: 'owner', type: 'actor-reference' })]);
     const spec = await buildAttioObjectTableSpec(mockEntityId, 'deals', mockClient);
+    // The FK target is the Members table's remoteId ('members'), NOT its wsId
+    // ('workspace_members') — that's what the create-plan generator matches a source
+    // folder's tableId against, so keying off wsId left it permanently unresolvable
+    // (DEV-11052).
     expect(spec.schema.properties.values.properties.owner[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
-      linkedTableId: 'workspace_members',
+      linkedTableId: 'members',
     });
   });
 
@@ -298,5 +303,21 @@ describe('attio-json-schema tasks content (write-once)', () => {
     // System-set fields stay read-only.
     expect(spec.schema.properties.id[X_SCRATCH_READONLY]).toBe(true);
     expect(spec.schema.properties.created_at[X_SCRATCH_READONLY]).toBe(true);
+  });
+});
+
+describe('attio-json-schema tasks assignees foreign key (DEV-11052)', () => {
+  it('declares assignees as a multi-valued FK onto the Members table', () => {
+    const spec = buildAttioTasksTableSpec(mockEntityId);
+    // Points at the Members remoteId ('members'), same target as object actor-references.
+    expect(spec.schema.properties.assignees[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'members',
+      isSingleValued: false,
+    });
+  });
+
+  it('does NOT declare a foreign key on linked_records (multi-target)', () => {
+    const spec = buildAttioTasksTableSpec(mockEntityId);
+    expect(spec.schema.properties.linked_records[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
   });
 });

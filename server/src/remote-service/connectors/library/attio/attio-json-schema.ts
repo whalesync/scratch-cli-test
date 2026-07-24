@@ -38,6 +38,9 @@ function buildVirtualField(attr: AttioAttribute): VirtualFieldDef[] | undefined 
     'actor-reference': 'string',
     location: 'string',
     'personal-name': 'string',
+    // The extracted `interacted_at` scalar is a timestamp; the sync editor renders it
+    // as a string (dates flatten to their ISO string). See DEV-11052.
+    interaction: 'string',
   };
 
   return [
@@ -91,11 +94,24 @@ function isAttributeReadonly(attr: AttioAttribute): boolean {
 }
 
 /**
- * The `id.wsId` of the Workspace Members table (see `buildAttioMembersTableSpec`
- * and the connector's `listTables`). `actor-reference` attributes are FKs onto
- * it. Must stay in sync with both sites.
+ * The Workspace Members table's **remote id** (`EntityId.remoteId`), which is what
+ * gets persisted as its `DataFolder.tableId` on import. `actor-reference` attributes
+ * are foreign keys onto this table, and the create-plan generator resolves a foreign
+ * key by matching its `linkedTableId` against each source folder's `tableId`
+ * (`schema-builder.service.ts` sets `remoteTableIds: folder.tableId`). So the FK
+ * target MUST be the members table's `remoteId`, NOT its `wsId`.
+ *
+ * These two diverge ONLY for the members table: `listTables` gives it
+ * `{ wsId: 'workspace_members', remoteId: ['members'] }`. For the standard objects
+ * they coincide (`wsId === remoteId[0] === api_slug`), which is why record-reference
+ * FKs — keyed off the slug — resolve fine. Keying the actor-reference FK off the
+ * `wsId` ('workspace_members') instead left it permanently `needs_target`: it could
+ * never bind to the Members table even when that table was in the plan, so the field
+ * was uncheckable in the Live Export create wizard (DEV-11052). Exported and reused
+ * by the connector's `listTables` / `parseAttioTableId` so the two can't drift.
  */
-const MEMBERS_TABLE_WS_ID = 'workspace_members';
+export const ATTIO_MEMBERS_TABLE_REMOTE_ID = ['members'] as const;
+const MEMBERS_FOREIGN_KEY_LINKED_TABLE_ID = ATTIO_MEMBERS_TABLE_REMOTE_ID[0];
 
 /**
  * Foreign-key options for an attribute, if it's a relation we can declare:
@@ -114,7 +130,7 @@ function foreignKeyOptionsForAttribute(
   objectIdToSlug: Map<string, string>,
 ): { linkedTableId: string } | undefined {
   if (attr.type === 'actor-reference') {
-    return { linkedTableId: MEMBERS_TABLE_WS_ID };
+    return { linkedTableId: MEMBERS_FOREIGN_KEY_LINKED_TABLE_ID };
   }
   if (attr.type === 'record-reference') {
     const config = attr.config as { record_reference?: { allowed_object_ids?: unknown } } | null;
@@ -320,8 +336,11 @@ export function buildAttioMembersTableSpec(id: EntityId): BaseJsonTableSpec {
  * system-set). `content_plaintext` is settable on create but **immutable on
  * update** (Attio rejects content changes), so it is marked **write-once**
  * (`x-scratch-write-once`): editable while the task is new, read-only once it
- * exists remotely (DEV-10408). `linked_records` / `assignees` are arrays
- * (leaves in the grid; editable as whole-array replacements through the raw file).
+ * exists remotely (DEV-10408). `assignees` is a multi-valued `actor-reference`,
+ * so it carries a foreign key onto the Workspace Members table (like the object
+ * `actor-reference` attributes) — DEV-11052. `linked_records` is a multi-target
+ * relation (its `target_object` varies per row), which a single `linkedTableId`
+ * can't express, so it stays a plain array leaf.
  */
 export function buildAttioTasksTableSpec(id: EntityId): BaseJsonTableSpec {
   const ro = { [X_SCRATCH_READONLY]: true } as const;
@@ -343,6 +362,15 @@ export function buildAttioTasksTableSpec(id: EntityId): BaseJsonTableSpec {
           { referenced_actor_type: Type.String(), referenced_actor_id: Type.String() },
           { additionalProperties: true },
         ),
+        {
+          // Assignees are workspace members: declare the FK so Live Export / sync
+          // treats it as a relation onto the Members table instead of opaque text.
+          // Multi-valued (a task can have several assignees).
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
+            linkedTableId: MEMBERS_FOREIGN_KEY_LINKED_TABLE_ID,
+            isSingleValued: false,
+          },
+        },
       ),
       created_by_actor: Type.Union([Type.Object({}, { additionalProperties: true }), Type.Null()], ro),
       created_at: Type.String({ format: 'date-time', ...ro }),
