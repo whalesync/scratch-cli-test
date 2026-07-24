@@ -14,7 +14,13 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { CreateDestinationList, WorkbookId, type ValidatedCreateConnectorAccountDto } from '@spinner/shared-types';
+import {
+  CreateDestinationList,
+  CreateDestinationLookup,
+  CreateDestinationSearchResult,
+  WorkbookId,
+  type ValidatedCreateConnectorAccountDto,
+} from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../../auth/types';
 import { checkWorkspacePermissions } from '../../users/permissions';
@@ -84,6 +90,33 @@ export class ConnectorAccountController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
     return this.service.listCreateDestinations(connectorAccountId, actor);
+  }
+
+  @Get(':connectorAccountId/create-destinations/search')
+  async searchCreateDestinations(
+    @Param('workbookId') workbookId: string,
+    @Param('connectorAccountId') connectorAccountId: string,
+    @Query('searchTerm') searchTerm: string,
+    @Req() req: RequestWithUser,
+  ): Promise<CreateDestinationSearchResult> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.searchCreateDestinations(connectorAccountId, searchTerm, actor);
+  }
+
+  @Get(':connectorAccountId/create-destinations/lookup')
+  async lookupCreateDestination(
+    @Param('workbookId') workbookId: string,
+    @Param('connectorAccountId') connectorAccountId: string,
+    @Query('destinationId') destinationId: string,
+    @Req() req: RequestWithUser,
+  ): Promise<CreateDestinationLookup> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    if (!destinationId?.trim()) {
+      throw new BadRequestException('destinationId is required');
+    }
+    return this.service.lookupCreateDestination(connectorAccountId, destinationId, actor);
   }
 
   @Get(':connectorAccountId/tables/search')

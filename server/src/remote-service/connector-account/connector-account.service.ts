@@ -10,7 +10,10 @@ import type { Service } from '@spinner/shared-types';
 import {
   ConnectorAccountId,
   createConnectorAccountId,
+  CreateDestination,
   CreateDestinationList,
+  CreateDestinationLookup,
+  CreateDestinationSearchResult,
   GenericApiConnectorExtras,
   isGenericApiConnectorExtras,
   ShopifyConnectorExtras,
@@ -50,6 +53,13 @@ import { TableList, TableSearchResult } from './entities/table-list.entity';
 import { TableSchemaPreview } from './entities/table-schema-preview.entity';
 import { TestConnectionResponse } from './entities/test-connection.entity';
 import { DecryptedCredentials } from './types/encrypted-credentials.interface';
+
+/**
+ * Cap for the in-process create-destination search fallback (connectors that only
+ * implement `listCreateDestinations` and have small lists — Airtable bases,
+ * Postgres schemas). Search-backed connectors (Notion) apply their own cap.
+ */
+const CREATE_DESTINATION_SEARCH_RESULT_CAP = 50;
 
 @Injectable()
 export class ConnectorAccountService {
@@ -774,6 +784,131 @@ export class ConnectorAccountService {
       return { destinations };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
+    }
+  }
+
+  /**
+   * Search the places a new table can be created for a connection. Prefers the
+   * connector's own server-side search (Notion, whose shared-page list can far
+   * exceed the base-list cap); otherwise filters the full `listCreateDestinations`
+   * list in-process (fine for connectors with small lists). Results are sorted by
+   * name and `hasMore` is set when matches were cut off at the cap. Empty/whitespace
+   * `searchTerm` behaves like the list endpoint. Throws a 400 when the connector
+   * supports neither listing nor searching create destinations.
+   */
+  async searchCreateDestinations(
+    connectorAccountId: string,
+    searchTerm: string,
+    actor: Actor,
+  ): Promise<CreateDestinationSearchResult> {
+    const { account, connector } = await this.buildConnectorForAccount(connectorAccountId, actor);
+
+    if (!connector.searchCreateDestinations && !connector.listCreateDestinations) {
+      throw new BadRequestException(
+        `${getServiceDisplayName(account.service)} does not support listing table create destinations`,
+      );
+    }
+
+    const normalizedSearchTerm = searchTerm ?? '';
+
+    try {
+      const result = connector.searchCreateDestinations
+        ? await connector.searchCreateDestinations(normalizedSearchTerm)
+        : await this.filterCreateDestinationsInProcess(connector, normalizedSearchTerm);
+      const sortedDestinations = result.destinations.sort((a, b) => a.name.localeCompare(b.name));
+      return { destinations: sortedDestinations, hasMore: result.hasMore };
+    } catch (error) {
+      throw exceptionForConnectorError(error, connector);
+    }
+  }
+
+  /**
+   * Resolve one create-destination by remote id. Prefers the connector's own
+   * by-id lookup (Notion's `GET /v1/pages/:id`); otherwise finds the id within
+   * the full `listCreateDestinations` list. Returns `{ destination: null }` (200)
+   * when the connection cannot access the id — a definitive "the saved selection
+   * is stale". Transport/server failures propagate as normal errors so a temporary
+   * outage is never mistaken for a stale id. Throws a 400 when the connector
+   * supports neither lookup nor listing.
+   */
+  async lookupCreateDestination(
+    connectorAccountId: string,
+    destinationId: string,
+    actor: Actor,
+  ): Promise<CreateDestinationLookup> {
+    const { account, connector } = await this.buildConnectorForAccount(connectorAccountId, actor);
+
+    if (!connector.lookupCreateDestination && !connector.listCreateDestinations) {
+      throw new BadRequestException(
+        `${getServiceDisplayName(account.service)} does not support listing table create destinations`,
+      );
+    }
+
+    try {
+      if (connector.lookupCreateDestination) {
+        const destination = await connector.lookupCreateDestination(destinationId);
+        return { destination };
+      }
+      // Fallback for connectors with a small, complete list: an id absent from the
+      // list is inaccessible (null), matching the lookup contract.
+      const allDestinations = connector.listCreateDestinations ? await connector.listCreateDestinations() : [];
+      const destination = allDestinations.find((candidate) => candidate.id === destinationId) ?? null;
+      return { destination };
+    } catch (error) {
+      throw exceptionForConnectorError(error, connector);
+    }
+  }
+
+  /**
+   * In-process create-destination search for connectors that only implement
+   * `listCreateDestinations` (their lists are small). Case-insensitive substring
+   * match on the name, capped at {@link CREATE_DESTINATION_SEARCH_RESULT_CAP};
+   * an empty term returns the first capped page.
+   */
+  private async filterCreateDestinationsInProcess(
+    connector: Connector,
+    searchTerm: string,
+  ): Promise<{ destinations: CreateDestination[]; hasMore: boolean }> {
+    if (!connector.listCreateDestinations) {
+      return { destinations: [], hasMore: false };
+    }
+    const allDestinations = await connector.listCreateDestinations();
+    const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+    const matchingDestinations = normalizedSearchTerm
+      ? allDestinations.filter((destination) => destination.name.toLowerCase().includes(normalizedSearchTerm))
+      : allDestinations;
+    const cappedDestinations = matchingDestinations.slice(0, CREATE_DESTINATION_SEARCH_RESULT_CAP);
+    return {
+      destinations: cappedDestinations,
+      hasMore: matchingDestinations.length > cappedDestinations.length,
+    };
+  }
+
+  /**
+   * Load a connection and build its connector, applying the generic-connector
+   * gate. Shared by the create-destination search/lookup endpoints; mirrors the
+   * inline setup the older table endpoints use.
+   */
+  private async buildConnectorForAccount(
+    connectorAccountId: string,
+    actor: Actor,
+  ): Promise<{ account: ConnectorAccount & DecryptedCredentials; connector: Connector }> {
+    const account = await this.findOneById(connectorAccountId, actor);
+
+    await this.assertGenericConnectorEnabled(account.service, actor);
+
+    try {
+      const connector = await this.connectorsService.getConnector({
+        service: account.service,
+        connectorAccount: account,
+        decryptedCredentials: account,
+        userId: actor.userId,
+      });
+      return { account, connector };
+    } catch (error) {
+      throw new InternalServerErrorException(error instanceof Error ? error.message : String(error), {
+        cause: error instanceof Error ? error : new Error(String(error)),
+      });
     }
   }
 

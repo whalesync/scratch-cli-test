@@ -1,5 +1,7 @@
 import type {
   CreateDestinationList,
+  CreateDestinationLookup,
+  CreateDestinationSearchResult,
   TableList,
   TableSchemaPreview,
   TableSearchResult,
@@ -80,6 +82,32 @@ export function createConnectorAccountsApi(http: Http) {
       const res = await http.get<CreateDestinationList>(
         `/workbooks/${workbookId}/connections/${connectorAccountId}/create-destinations`,
         { fallbackMessage: 'Failed to list create destinations' },
+      );
+      return res.data;
+    },
+
+    /** GET `/workbooks/:id/connections/:connectionId/create-destinations/search` — search where a new table can be created. (web + desktop) */
+    searchCreateDestinations: async (
+      workbookId: string,
+      connectorAccountId: string,
+      searchTerm: string,
+    ): Promise<CreateDestinationSearchResult> => {
+      const res = await http.get<CreateDestinationSearchResult>(
+        `/workbooks/${workbookId}/connections/${connectorAccountId}/create-destinations/search`,
+        { params: { searchTerm }, fallbackMessage: 'Failed to search create destinations' },
+      );
+      return res.data;
+    },
+
+    /** GET `/workbooks/:id/connections/:connectionId/create-destinations/lookup` — resolve one create-destination by id. (web + desktop) */
+    getCreateDestination: async (
+      workbookId: string,
+      connectorAccountId: string,
+      destinationId: string,
+    ): Promise<CreateDestinationLookup> => {
+      const res = await http.get<CreateDestinationLookup>(
+        `/workbooks/${workbookId}/connections/${connectorAccountId}/create-destinations/lookup`,
+        { params: { destinationId }, fallbackMessage: 'Failed to resolve create destination' },
       );
       return res.data;
     },

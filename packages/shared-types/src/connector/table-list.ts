@@ -59,6 +59,30 @@ export interface CreateDestination {
 /** Response for `GET .../connections/:id/create-destinations`. */
 export interface CreateDestinationList {
   destinations: CreateDestination[];
+  /**
+   * True when the base list was capped and more destinations exist than are
+   * returned here — a hint for the UI to prompt "type to search all pages".
+   */
+  hasMore?: boolean;
+}
+
+/** Response for `GET .../connections/:id/create-destinations/search`. */
+export interface CreateDestinationSearchResult {
+  destinations: CreateDestination[];
+  /** True when matches were cut off at the cap. */
+  hasMore: boolean;
+}
+
+/** Response for `GET .../connections/:id/create-destinations/lookup`. */
+export interface CreateDestinationLookup {
+  /**
+   * The resolved destination, or `null` when the connection cannot access the id
+   * (deleted, or the connection was reauthorized into a different account). A
+   * `null` here is an explicit "the saved selection is stale"; a transport/server
+   * failure surfaces as a normal error status instead, so callers can distinguish
+   * "confirmed gone" from "could not verify".
+   */
+  destination: CreateDestination | null;
 }
 
 /** Response for `GET .../connections/:id/tables/schema` (client-facing view of a table spec). */

@@ -121,6 +121,48 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   listCreateDestinations?(): Promise<CreateDestination[]>;
 
   /**
+   * Search the create destinations by name — the search-backed sibling of
+   * {@link listCreateDestinations} for connectors whose full destination list is
+   * too large to return in one page (e.g. Notion, where a workspace can share far
+   * more pages than the list cap, so typing must query the service rather than
+   * filter the capped slice).
+   *
+   * Optional. When a connector implements {@link listCreateDestinations} but not
+   * this, the REST layer falls back to filtering the full list in-process — fine
+   * for connectors whose lists are small (Airtable bases, Postgres schemas). A
+   * connector implements this only when its list can exceed the cap and it can
+   * search server-side.
+   *
+   * @param searchTerm Case-insensitive term to match against destination names.
+   *   An empty/whitespace term behaves like {@link listCreateDestinations} (the
+   *   first capped page of destinations).
+   * @returns Matching destinations (unsorted; the REST layer sorts by name) and
+   *   `hasMore` set when matches were cut off at the cap.
+   * @throws Error if the destinations cannot be searched.
+   */
+  searchCreateDestinations?(searchTerm: string): Promise<{ destinations: CreateDestination[]; hasMore: boolean }>;
+
+  /**
+   * Resolve a single create destination by its remote id — used to verify a saved
+   * selection that may sit beyond the list/search cap, and to refresh its display
+   * name after a rename.
+   *
+   * Returns `null` when the connection cannot access the id (the destination was
+   * deleted, or the connection was reauthorized into a different account). This
+   * `null` is a definitive "the saved selection is stale" that callers act on; a
+   * transport/server failure must throw instead, so a temporary outage is never
+   * mistaken for a stale id.
+   *
+   * Optional. When a connector implements {@link listCreateDestinations} but not
+   * this, the REST layer falls back to finding the id within the full list.
+   *
+   * @param destinationId The remote id to resolve.
+   * @returns The destination, or `null` if the connection cannot access it.
+   * @throws Error on transport/server failures (never mapped to `null`).
+   */
+  lookupCreateDestination?(destinationId: string): Promise<CreateDestination | null>;
+
+  /**
    * Search for tables by name. Only used when tableDiscoveryMode is SEARCH.
    * Connectors opting into SEARCH mode must override this method.
    * @param searchTerm The search term to filter tables by.

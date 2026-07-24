@@ -83,6 +83,13 @@ import {
 } from './notion-write-validation';
 
 export const PAGE_CONTENT_COLUMN_NAME = 'Page Content';
+
+/**
+ * Page size for the create-destination list and search — the pages a new Notion
+ * database can be created under. `has_more` from the same response drives the
+ * `hasMore` truncation flag.
+ */
+const NOTION_CREATE_DESTINATION_PAGE_SIZE = 100;
 export const PAGE_CONTENT_COLUMN_ID = 'WS_PAGE_CONTENT';
 
 type NotionDownloadProgress = {
@@ -393,11 +400,54 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   override async listCreateDestinations(): Promise<CreateDestination[]> {
     const response = await this.client.search({
       filter: { property: 'object', value: 'page' },
-      page_size: 100,
+      page_size: NOTION_CREATE_DESTINATION_PAGE_SIZE,
     });
     return response.results
       .filter((result): result is PageObjectResponse => result.object === 'page' && 'properties' in result)
       .map((page) => ({ id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName }));
+  }
+
+  /**
+   * Search the pages a new Notion database can be created under. Hits
+   * `POST /v1/search` with the term so results reach pages beyond the
+   * {@link listCreateDestinations} cap — the whole point of the search endpoint,
+   * since a workspace can share far more pages than one page of results. An
+   * empty/whitespace term returns the first page, mirroring the list endpoint.
+   */
+  override async searchCreateDestinations(
+    searchTerm: string,
+  ): Promise<{ destinations: CreateDestination[]; hasMore: boolean }> {
+    const response = await this.client.search({
+      ...(searchTerm.trim() ? { query: searchTerm } : {}),
+      filter: { property: 'object', value: 'page' },
+      page_size: NOTION_CREATE_DESTINATION_PAGE_SIZE,
+    });
+    const destinations = response.results
+      .filter((result): result is PageObjectResponse => result.object === 'page' && 'properties' in result)
+      .map((page) => ({ id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName }));
+    return { destinations, hasMore: response.has_more };
+  }
+
+  /**
+   * Resolve one Notion page by id via `GET /v1/pages/:id`. A page the integration
+   * cannot see — deleted, or the connection reauthorized into a different
+   * workspace — comes back as a Notion `object_not_found` / `restricted_resource`
+   * error, which maps to `null` (a definitive "stale selection"). Any other error
+   * (transport, rate limit, server) propagates so the caller keeps the saved id.
+   */
+  override async lookupCreateDestination(destinationId: string): Promise<CreateDestination | null> {
+    try {
+      const page = (await this.client.retrievePage({ page_id: destinationId })) as PageObjectResponse;
+      return { id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName };
+    } catch (error) {
+      if (
+        error instanceof NotionError &&
+        (error.code === NotionApiErrorCode.ObjectNotFound || error.code === NotionApiErrorCode.RestrictedResource)
+      ) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   /**
