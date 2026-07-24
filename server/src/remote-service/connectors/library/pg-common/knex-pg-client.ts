@@ -42,6 +42,39 @@ function escapeKnexSpecialCharacters(column: string): string {
   return column.replace(/\?/g, '\\?');
 }
 
+/**
+ * Undo knex's identifier alias-splitting for a column whose real name contains `" as "`.
+ *
+ * Knex's identifier formatter treats a bare `" as "` inside any identifier as SQL aliasing and
+ * rewrites e.g. `"Marked as done time"` into `"Marked" as "done time"` — silently corrupting the
+ * column name in CREATE / INSERT / SELECT / UPDATE for any Postgres/Supabase column whose name
+ * contains " as " (a legitimate name we must preserve verbatim — Connector Prime Directive). There
+ * is no config hook to disable the split: it happens in knex's module-level `wrapString` BEFORE the
+ * `wrapIdentifier` hook runs. But knex funnels every such split through `client.alias(first, second)`
+ * with both halves already quoted, and this client never emits an intentional SQL alias through the
+ * query builder (the only `... AS ...` it uses lives inside `knex.raw` strings, which bypass this
+ * path). So overriding `alias` to rejoin the halves into one correctly-quoted identifier is a safe,
+ * global fix. Each half is a `wrapIdentifierImpl` result (`"…"` with any inner `"` doubled); we
+ * unwrap both, rejoin with " as ", and re-quote. (DEV-11051)
+ */
+function rejoinKnexAliasSplitIdentifier(quotedFirstHalf: string, quotedSecondHalf: string): string {
+  const unwrapQuotedIdentifier = (quoted: string): string =>
+    quoted.replace(/^"/, '').replace(/"$/, '').replace(/""/g, '"');
+  const rejoinedIdentifier = `${unwrapQuotedIdentifier(quotedFirstHalf)} as ${unwrapQuotedIdentifier(quotedSecondHalf)}`;
+  return `"${rejoinedIdentifier.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Install {@link rejoinKnexAliasSplitIdentifier} on a knex instance so identifiers containing
+ * `" as "` survive verbatim. Exported so tests can build SQL strings through a connection-less knex
+ * with the same behavior the {@link KnexPGClient} constructor applies. `knex.client` is typed `any`;
+ * narrow it to just the `alias` hook we replace. (DEV-11051)
+ */
+export function applyVerbatimIdentifierQuoting(knexInstance: Knex): void {
+  const knexClientAliasHook = knexInstance.client as { alias: (first: string, second: string) => string };
+  knexClientAliasHook.alias = rejoinKnexAliasSplitIdentifier;
+}
+
 /** Escape an array of column names for use in Knex select(). */
 function escapeColumns(columns: string[]): string[] {
   return columns.map(escapeKnexSpecialCharacters);
@@ -122,6 +155,10 @@ export class KnexPGClient {
       },
       pool: { min: 0, max: 1, createTimeoutMillis: 10_000 },
     });
+
+    // Preserve column names containing " as " (e.g. Pipedrive's "Marked as done time") verbatim
+    // across CREATE / INSERT / SELECT / UPDATE — see {@link rejoinKnexAliasSplitIdentifier}.
+    applyVerbatimIdentifierQuoting(this.knex);
   }
 
   /** Destroy the underlying connection pool. Must be called when done. */

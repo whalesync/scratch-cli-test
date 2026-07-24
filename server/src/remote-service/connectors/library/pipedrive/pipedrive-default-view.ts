@@ -35,6 +35,9 @@ import type { PipedriveEntityType } from './pipedrive-types';
  *   timerange — their unpacked subfield columns stay visible), and notes'
  *   server-hydrated stubs are `hidden` — kept toggleable in the grid but
  *   excluded from a plan/export.
+ * - **Linked-people FK** (DEV-11051): activity `participants` — verbatim
+ *   `[{person_id, primary}]` — is surfaced as a multi-value foreign key to the
+ *   persons table (flattened to its person ids) instead of a raw JSON blob.
  *
  * A composite field's subfield columns are named "<Field> (<Subfield>)" so
  * sibling monetary/daterange fields don't all collide on "value" at the
@@ -134,6 +137,46 @@ function buildColumnsForField(
   // never proposes the dead `picture_id.url` subfield column (DEV-11030's unsavable plan).
   if (fieldCode === 'picture_id') {
     return [{ kind: 'col', path, name, type: 'number', ...(isReadonly ? { readonly: true } : {}) }];
+  }
+
+  // Activity `participants` — the "linked people" — is a multi-value FK to the persons table,
+  // stored verbatim as `[{person_id, primary}]`. Left generic it falls through to a `type: 'object'`
+  // JSON blob; instead flatten to the person ids for display and declare the foreign key so a plan
+  // links it to the persons table. The FK annotation lives BELOW this column's path (on
+  // `participants[].person_id`), so it is declared on the view column, mirroring HubSpot's
+  // "Associated X" columns. The column stays editable: the codec collapses to/from the neutral list
+  // of person ids without reshaping the on-disk `[{person_id, primary}]` array (Connector Prime
+  // Directive) — `primary` is dropped on the packed element and returns on the next pull. (DEV-11051)
+  if (entityType === 'activities' && fieldCode === 'participants') {
+    return [
+      {
+        kind: 'col',
+        path,
+        name,
+        type: 'string',
+        foreignKey: { linkedTableId: 'persons' },
+        displayTransformer: {
+          type: 'jsonpath',
+          options: { expression: '$[*].person_id', arrayHandling: 'join_comma' },
+        },
+        codec: {
+          toCore: {
+            type: TransformerTypes.JSONPath,
+            options: { expression: '$[*].person_id', arrayHandling: 'array' },
+          },
+          fromCore: {
+            type: TransformerTypes.MapArray,
+            options: {
+              elementTransformer: {
+                type: TransformerTypes.WrapObject,
+                options: { template: { person_id: '$value' } },
+              },
+            },
+          },
+        },
+        ...(isReadonly ? { readonly: true } : {}),
+      },
+    ];
   }
 
   const nonNullFieldSchema = unwrapNullableUnionMember(fieldSchema);

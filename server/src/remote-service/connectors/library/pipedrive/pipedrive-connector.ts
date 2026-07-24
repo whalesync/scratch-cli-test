@@ -64,7 +64,11 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     // Pipedrive entity and `updated_since` is unconditional, so there are no
     // notes to show
     incrementalPullInstructions: null,
-    oauth: { label: 'OAuth' },
+    // OAuth is intentionally NOT declared: the public Pipedrive marketplace app isn't approved
+    // yet, so OAuth must not be offered as a connect option in any environment — only API-key
+    // (user_provided_params) auth is surfaced. Re-add this (and 'oauth' to `supportedAuthMethods`
+    // in the registration below) once the public app is approved. (DEV-11051; cf. DEV-10734)
+    // oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [{ key: 'apiKey', type: 'password', label: 'API Token', required: true }],
     },
@@ -369,7 +373,10 @@ connectorRegistry.register({
   service: Service.PIPEDRIVE,
   metadata: PipedriveConnector.metadata,
   advancedSettings: [],
-  supportedAuthMethods: ['oauth', 'user_provided_params'],
+  // 'oauth' is intentionally omitted until the public Pipedrive app is approved — see the
+  // commented-out `oauth` metadata declaration above. The OAuth provider plumbing stays wired so
+  // re-enabling is a one-line change, but no OAuth connect option is offered. (DEV-11051)
+  supportedAuthMethods: ['user_provided_params'],
   rateLimiterSpec: { points: 10, duration: 2 },
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

@@ -40,18 +40,10 @@ export class ConnectorsMetadataController {
       };
     }
 
-    // Pipedrive OAuth is wired up for the private TEST app only; the public prod app
-    // (marketplace install flow + review) is a follow-up. Hide OAuth as a connect
-    // option in production so only API key (user_provided_params) is selectable there.
-    if (this.config.isProductionEnvironment() && metadata[Service.PIPEDRIVE]) {
-      const pipedrive = metadata[Service.PIPEDRIVE];
-      metadata[Service.PIPEDRIVE] = {
-        ...pipedrive,
-        oauth: undefined,
-        supportedAuthMethods: pipedrive.supportedAuthMethods.filter((m) => m !== 'oauth'),
-        defaultAuthMethod: 'user_provided_params',
-      };
-    }
+    // Pipedrive OAuth is not offered in ANY environment yet (the public marketplace app isn't
+    // approved), so it is disabled at the source — the connector declares no `oauth` metadata and
+    // omits 'oauth' from its supportedAuthMethods (see pipedrive-connector.ts). No per-environment
+    // override is needed here. (DEV-11051)
 
     return metadata;
   }

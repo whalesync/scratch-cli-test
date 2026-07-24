@@ -121,9 +121,10 @@ export class OAuthService {
     options: ValidatedOAuthInitiateOptionsDto,
   ): Promise<OAuthInitiateResponse> {
     // Pipedrive OAuth is wired for the private TEST app only; the public prod app
-    // isn't live yet. The connect UI already hides OAuth for Pipedrive in production
-    // (connectors-metadata.controller); refuse to initiate it here too as a backstop
-    // against a crafted request.
+    // isn't approved yet. The connector no longer offers OAuth as a connect option in
+    // any environment (pipedrive-connector.ts declares no `oauth` metadata — DEV-11051),
+    // but the provider plumbing stays wired for internal test-app use; refuse to initiate
+    // in production here as a backstop against a crafted request.
     if (service.toUpperCase() === Service.PIPEDRIVE && this.config.isProductionEnvironment()) {
       throw new BadRequestException('Pipedrive OAuth is not available in production');
     }

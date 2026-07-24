@@ -48,11 +48,15 @@ const knexInstance = jest.fn((table: string) => {
   raw: jest.Mock;
   destroy: jest.Mock;
   transaction: jest.Mock;
+  client: { alias: (first: string, second: string) => string };
 };
 knexInstance.ref = mockRef;
 knexInstance.raw = mockRaw;
 knexInstance.destroy = mockDestroy;
 knexInstance.transaction = mockTransaction;
+// The constructor installs a custom identifier-alias hook (applyVerbatimIdentifierQuoting); give the
+// mocked knex a `client` object for it to write to.
+knexInstance.client = { alias: (first, second) => `${first} as ${second}` };
 
 jest.mock('knex', () => ({
   __esModule: true,

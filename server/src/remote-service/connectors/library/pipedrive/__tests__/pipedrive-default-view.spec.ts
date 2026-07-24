@@ -218,6 +218,42 @@ describe('buildPipedriveDefaultView', () => {
     expect(findColumn(view, 'content')?.hidden).toBeUndefined();
   });
 
+  it('surfaces activity participants as a multi-value FK to persons, not a JSON blob (DEV-11051)', async () => {
+    mockClient.getFields.mockResolvedValue([
+      makeField({ field_code: 'subject', field_name: 'Subject', field_type: 'varchar' }),
+      // `participants` is overridden to the verbatim `[{person_id, primary}]` array shape by the
+      // schema builder regardless of the metadata field_type.
+      makeField({ field_code: 'participants', field_name: 'Participants', field_type: 'varchar' }),
+    ]);
+    const spec = await buildPipedriveJsonTableSpec(
+      { wsId: 'activities', remoteId: ['activities'] },
+      'activities',
+      mockClient as unknown as PipedriveApiClient,
+    );
+    const view = buildPipedriveDefaultView(spec);
+
+    const participantsColumn = findColumn(view, 'participants');
+    // Rendered through the text cell so the display transformer runs, but declared as an FK so a
+    // plan links it to persons — never a raw object/JSON blob.
+    expect(participantsColumn?.type).toBe('string');
+    expect(participantsColumn?.foreignKey).toEqual({ linkedTableId: 'persons' });
+    expect(participantsColumn?.displayTransformer).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$[*].person_id', arrayHandling: 'join_comma' },
+    });
+    // Editable: the codec collapses to/from the neutral list of person ids without reshaping the
+    // on-disk `[{person_id, primary}]` array.
+    expect(participantsColumn?.codec?.toCore).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$[*].person_id', arrayHandling: 'array' },
+    });
+    expect(participantsColumn?.codec?.fromCore).toEqual({
+      type: 'map_array',
+      options: { elementTransformer: { type: 'wrap_object', options: { template: { person_id: '$value' } } } },
+    });
+    expect(participantsColumn?.readonly).toBeUndefined();
+  });
+
   it('pins picture_id to a plain number column with no url subfield (avoids the DEV-11030 plan trap)', async () => {
     mockClient.getFields.mockResolvedValue([
       makeField({ field_code: 'name', field_name: 'Name', field_type: 'varchar' }),
@@ -232,6 +268,31 @@ describe('buildPipedriveDefaultView', () => {
 
     expect(findColumn(view, 'picture_id')?.type).toBe('number');
     expect(findColumn(view, 'picture_id.url')).toBeUndefined();
+  });
+
+  it('types static-schema (leads/notes) timestamp fields as date columns so they export as timestamps (DEV-11043)', async () => {
+    mockClient.getFields.mockResolvedValue([]);
+
+    const leadsSpec = await buildPipedriveJsonTableSpec(
+      { wsId: 'leads', remoteId: ['leads'] },
+      'leads',
+      mockClient as unknown as PipedriveApiClient,
+    );
+    const leadsView = buildPipedriveDefaultView(leadsSpec);
+    // add_time/update_time/archive_time carry format: 'date-time'; expected_close_date is date-only.
+    for (const path of ['add_time', 'update_time', 'archive_time', 'expected_close_date']) {
+      expect(findColumn(leadsView, path)?.type).toBe('date');
+    }
+
+    const notesSpec = await buildPipedriveJsonTableSpec(
+      { wsId: 'notes', remoteId: ['notes'] },
+      'notes',
+      mockClient as unknown as PipedriveApiClient,
+    );
+    const notesView = buildPipedriveDefaultView(notesSpec);
+    for (const path of ['add_time', 'update_time']) {
+      expect(findColumn(notesView, path)?.type).toBe('date');
+    }
   });
 
   it("groups a lead's flat custom-field hash keys under the Custom Fields banner", async () => {

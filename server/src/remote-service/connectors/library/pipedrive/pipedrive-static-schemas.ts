@@ -54,6 +54,17 @@ function dateOrNull(): TSchema {
 }
 
 /**
+ * A nullable ISO date-time (timestamp) column. Pipedrive's timestamp system fields (`add_time`,
+ * `update_time`, `archive_time`, …) carry a full date-time, so they get `format: 'date-time'` — a
+ * faithful fact about the data, matching what the dynamic builder derives from its
+ * `pipedriveDateFieldHoldsDateTime` (`_time`-suffix) convention. Without it the default view types
+ * these as plain text and they export as text columns rather than real timestamps (DEV-11043).
+ */
+function dateTimeOrNull(): TSchema {
+  return Type.Union([Type.String({ format: 'date-time' }), Type.Null()]);
+}
+
+/**
  * A nullable v1 monetary object (`{amount, currency}` or `null`). Unlike v2 deals' flat numeric
  * system `value`, a v1 lead's `value` is genuinely an object — but Pipedrive returns `null` when
  * it is unset, so the object must be wrapped in a nullable union (annotation on the outer union,
@@ -108,7 +119,7 @@ const LEADS_SYSTEM_SCHEMA: Record<string, TSchema> = {
   person_id: foreignKey(numberOrNull(), 'persons'),
   organization_id: foreignKey(numberOrNull(), 'organizations'),
   is_archived: booleanOrNull(),
-  archive_time: readonly(stringOrNull()),
+  archive_time: readonly(dateTimeOrNull()),
   source_name: readonly(stringOrNull()),
   source_deal_id: readonly(numberOrNull()),
   origin: readonly(stringOrNull()),
@@ -117,8 +128,8 @@ const LEADS_SYSTEM_SCHEMA: Record<string, TSchema> = {
   channel_id: stringOrNull(),
   was_seen: booleanOrNull(),
   next_activity_id: readonly(numberOrNull()),
-  add_time: readonly(stringOrNull()),
-  update_time: { ...readonly(stringOrNull()), [X_SCRATCH_LAST_MODIFIED_FIELD]: true },
+  add_time: readonly(dateTimeOrNull()),
+  update_time: { ...readonly(dateTimeOrNull()), [X_SCRATCH_LAST_MODIFIED_FIELD]: true },
   visible_to: Type.Union([Type.String(), Type.Number(), Type.Null()]),
   cc_email: readonly(stringOrNull()),
 };
@@ -150,8 +161,8 @@ const NOTES_SYSTEM_SCHEMA: Record<string, TSchema> = {
   project_id: numberOrNull(),
   task_id: numberOrNull(),
   content: stringOrNull(),
-  add_time: readonly(stringOrNull()),
-  update_time: { ...readonly(stringOrNull()), [X_SCRATCH_LAST_MODIFIED_FIELD]: true },
+  add_time: readonly(dateTimeOrNull()),
+  update_time: { ...readonly(dateTimeOrNull()), [X_SCRATCH_LAST_MODIFIED_FIELD]: true },
   active_flag: readonly(booleanOrNull()),
   pinned_to_deal_flag: booleanOrNull(),
   pinned_to_person_flag: booleanOrNull(),
@@ -178,8 +189,8 @@ const PIPELINES_SYSTEM_SCHEMA: Record<string, TSchema> = {
   order_nr: numberOrNull(),
   is_deal_probability_enabled: booleanOrNull(),
   is_deleted: readonly(booleanOrNull()),
-  add_time: readonly(stringOrNull()),
-  update_time: readonly(stringOrNull()),
+  add_time: readonly(dateTimeOrNull()),
+  update_time: readonly(dateTimeOrNull()),
 };
 
 /**
@@ -195,8 +206,8 @@ const STAGES_SYSTEM_SCHEMA: Record<string, TSchema> = {
   is_deal_rot_enabled: booleanOrNull(),
   days_to_rotten: numberOrNull(),
   is_deleted: readonly(booleanOrNull()),
-  add_time: readonly(stringOrNull()),
-  update_time: readonly(stringOrNull()),
+  add_time: readonly(dateTimeOrNull()),
+  update_time: readonly(dateTimeOrNull()),
 };
 
 /**

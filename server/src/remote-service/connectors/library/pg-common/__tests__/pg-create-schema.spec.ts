@@ -1,5 +1,6 @@
 import { type CreateFieldSpec, type CreateFieldType } from '@spinner/shared-types';
 import knex, { type Knex } from 'knex';
+import { applyVerbatimIdentifierQuoting } from '../knex-pg-client';
 import {
   buildAddColumnsQuery,
   buildCreateTableQuery,
@@ -227,5 +228,52 @@ describe('POSTGRES_SCHEMA_CREATION_CAPABILITIES', () => {
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.primaryField).toBeNull();
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxTableNameLength).toBe(63);
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxFieldNameLength).toBe(63);
+  });
+});
+
+/**
+ * Regression tests for DEV-11051: a Postgres column whose real name contains " as " (e.g.
+ * Pipedrive's "Marked as done time") must be quoted as ONE identifier, not split by knex's
+ * identifier formatter into `"Marked" as "done time"` (which is a SQL syntax error on CREATE and
+ * silently corrupts INSERT/SELECT/UPDATE). {@link applyVerbatimIdentifierQuoting} installs the fix
+ * the KnexPGClient constructor applies; here we prove it on connection-less SQL strings.
+ */
+describe('applyVerbatimIdentifierQuoting — column names containing " as "', () => {
+  const quotingKnex: Knex = knex({ client: 'pg' });
+  applyVerbatimIdentifierQuoting(quotingKnex);
+
+  afterAll(async () => {
+    await quotingKnex.destroy();
+  });
+
+  it('quotes a CREATE TABLE column name containing " as " as a single identifier', () => {
+    const sql = buildCreateTableQuery(
+      quotingKnex,
+      'pipedrive',
+      'Activities',
+      [field('Marked as done time', { kind: 'date', includesTime: true })],
+      new Map(),
+    ).toString();
+
+    expect(sql).toContain('"Marked as done time" timestamptz');
+    expect(sql).not.toContain('"Marked" as "done time"');
+  });
+
+  it('quotes INSERT / SELECT / UPDATE column names containing " as " verbatim', () => {
+    expect(quotingKnex('pipedrive.Activities').insert({ 'Marked as done time': 'x' }).toQuery()).toContain(
+      '("Marked as done time")',
+    );
+    expect(quotingKnex('pipedrive.Activities').select('Marked as done time').toQuery()).toContain(
+      'select "Marked as done time"',
+    );
+    expect(quotingKnex('pipedrive.Activities').update({ 'Marked as done time': 'x' }).toQuery()).toContain(
+      'set "Marked as done time" =',
+    );
+  });
+
+  it('leaves ordinary identifiers (including schema-qualified names) unchanged', () => {
+    expect(quotingKnex('pipedrive.Activities').select('Subject').toQuery()).toBe(
+      'select "Subject" from "pipedrive"."Activities"',
+    );
   });
 });
