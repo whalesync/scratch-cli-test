@@ -151,6 +151,17 @@ function foreignKeyIdExtractionTransformer(
   };
 }
 
+/**
+ * Stable string key for a connector remote table id (an ordered id-segment array,
+ * e.g. `['base1', 'tblComp']` or `['public', 'companies']`). Used to match a
+ * foreignKey `{ existingRemoteTableId }` target against a sibling table mapping's
+ * destination remote table id. A NUL byte can't appear in a real id segment, so it
+ * is an unambiguous join separator.
+ */
+function remoteTableIdKey(remoteTableId: string[]): string {
+  return remoteTableId.join('\u0000');
+}
+
 /** Every foreignKey field across a draft's placeholder create-specs and field additions. */
 function collectDraftForeignKeyReferences(tableMappings: DraftTableMapping[]): DraftForeignKeyReference[] {
   const references: DraftForeignKeyReference[] = [];
@@ -1274,6 +1285,12 @@ export class SyncDraftService {
         );
       }
     }
+    // A sibling mapping's DESTINATION remote table id → that mapping's SOURCE folder — the folder a
+    // concrete `{ existingRemoteTableId }` foreignKey target resolves against when the referenced
+    // table is itself synced in this draft (Attio→Supabase: each destination table is provisioned
+    // up front, so a cross-table reference is persisted as `{ existingRemoteTableId }`, not `{ ref }`).
+    const sourceDataFolderIdByDestinationRemoteTableIdKey =
+      await this.buildSourceFolderIdByDestinationRemoteTableIdKeyMap(tableMappings);
 
     const foreignKeyColumns: {
       tableMapping: DraftTableMapping;
@@ -1290,6 +1307,7 @@ export class SyncDraftService {
           tableMapping,
           sourceFolderIdByRemoteTableId,
           sourceDataFolderIdByPlaceholderCreateSpecRef,
+          sourceDataFolderIdByDestinationRemoteTableIdKey,
         );
         if (referencedDataFolderId) {
           foreignKeyColumns.push({
@@ -1474,6 +1492,52 @@ export class SyncDraftService {
   }
 
   /**
+   * Map each table mapping's DESTINATION remote table id (keyed via {@link remoteTableIdKey}) →
+   * that mapping's SOURCE folder — used to resolve a foreignKey `{ existingRemoteTableId }` target
+   * whose table is itself synced in this draft. A placeholder table's remote id comes from its
+   * materialize writeback (`resolved.remoteTableId`, populated before this pass runs); an existing
+   * destination's comes from its data folder's `tableId`, fetched in one query. First mapping wins
+   * on the rare chance two mappings target the same destination table.
+   */
+  private async buildSourceFolderIdByDestinationRemoteTableIdKeyMap(
+    tableMappings: DraftTableMapping[],
+  ): Promise<Map<string, DataFolderId>> {
+    const existingDestinationFolderIds = [
+      ...new Set(
+        tableMappings
+          .map((tableMapping) => tableMapping.destination)
+          .filter((destination) => destination.kind === 'existing')
+          .map((destination) => destination.dataFolderId),
+      ),
+    ];
+    const remoteTableIdByExistingDestinationFolderId = new Map<string, string[]>();
+    if (existingDestinationFolderIds.length > 0) {
+      const folders = await this.db.client.dataFolder.findMany({
+        where: { id: { in: existingDestinationFolderIds } },
+        select: { id: true, tableId: true },
+      });
+      for (const folder of folders) {
+        remoteTableIdByExistingDestinationFolderId.set(folder.id, folder.tableId);
+      }
+    }
+
+    const sourceDataFolderIdByDestinationRemoteTableIdKey = new Map<string, DataFolderId>();
+    for (const tableMapping of tableMappings) {
+      const destination = tableMapping.destination;
+      const destinationRemoteTableId =
+        destination.kind === 'placeholderTable'
+          ? destination.resolved?.remoteTableId
+          : remoteTableIdByExistingDestinationFolderId.get(destination.dataFolderId);
+      if (!destinationRemoteTableId || destinationRemoteTableId.length === 0) continue;
+      const key = remoteTableIdKey(destinationRemoteTableId);
+      if (!sourceDataFolderIdByDestinationRemoteTableIdKey.has(key)) {
+        sourceDataFolderIdByDestinationRemoteTableIdKey.set(key, tableMapping.source.dataFolderId as DataFolderId);
+      }
+    }
+    return sourceDataFolderIdByDestinationRemoteTableIdKey;
+  }
+
+  /**
    * The foreignKey target a placeholderField column points at, or null when the column
    * isn't a foreignKey. Reads the created field spec the ref names — a field addition or
    * a placeholder table's create spec. The target is whichever branch the plan generator
@@ -1501,14 +1565,22 @@ export class SyncDraftService {
    *    that sibling mapping's source folder (whose synced records the FK resolves against).
    *    Without this, a schema-valid `{ ref }` target was accepted at save but never got
    *    resolution transformers, so the sync published raw source ids (DEV-10954).
-   * An `{ existingRemoteTableId }` target points at a pre-existing destination table not
-   * (necessarily) synced through this draft's source folders — nothing to resolve against.
+   *  - `{ existingRemoteTableId }` — a concrete destination table. When that table is ALSO
+   *    synced by a sibling mapping in this same draft (its destination resolves to the same
+   *    remote table id), resolve to that sibling's source folder — the FK IS resolvable
+   *    in-draft. This is the Attio→Supabase create-destination shape: each destination table
+   *    is provisioned first, so a cross-table reference is persisted as `{ existingRemoteTableId }`
+   *    (not a sibling `{ ref }`); without this branch the sync published the raw source ids
+   *    into the destination's real FK column and the connector rejected them. A target whose
+   *    table is not synced here maps to nothing (null) — a pre-existing table with no source
+   *    folder to resolve against, as before.
    */
   private foreignKeyReferencedSourceFolderIdForColumn(
     ref: string,
     tableMapping: DraftTableMapping,
     sourceFolderIdByRemoteTableId: Map<string, DataFolderId>,
     sourceDataFolderIdByPlaceholderCreateSpecRef: Map<string, DataFolderId>,
+    sourceDataFolderIdByDestinationRemoteTableIdKey: Map<string, DataFolderId>,
   ): DataFolderId | null {
     const target = this.foreignKeyTargetForColumn(ref, tableMapping);
     if (!target) return null;
@@ -1518,7 +1590,7 @@ export class SyncDraftService {
     if ('ref' in target) {
       return sourceDataFolderIdByPlaceholderCreateSpecRef.get(target.ref) ?? null;
     }
-    return null;
+    return sourceDataFolderIdByDestinationRemoteTableIdKey.get(remoteTableIdKey(target.existingRemoteTableId)) ?? null;
   }
 
   /**

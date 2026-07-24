@@ -1188,6 +1188,91 @@ describe('SyncDraftService', () => {
       ]);
     });
 
+    it('attaches the FK pipeline for an `{ existingRemoteTableId }` target that a sibling mapping syncs (Attio → Supabase)', async () => {
+      // The Attio→Supabase create-destination bug: People's "Company" FK was persisted with a
+      // concrete `{ existingRemoteTableId }` target (the already-provisioned Supabase companies
+      // table) rather than a sibling `{ ref }`. That table IS synced here — the Companies table
+      // mapping's destination folder points at the same remote table — so the FK-transformer pass
+      // must resolve the target → that sibling's SOURCE folder (dfd_comp_src) and attach the
+      // resolution pipeline. Without it, the raw Attio `target_record_id` is published straight
+      // into the Postgres FK column and Supabase rejects it (foreign key constraint).
+      const tableMappings = [
+        {
+          ref: 'tm_people',
+          source: { dataFolderId: 'dfd_people_src' },
+          destination: { kind: 'existing', dataFolderId: 'dfd_people_dst' },
+          fieldAdditions: [
+            {
+              ref: 'fa_company',
+              createFieldSpec: {
+                name: 'Company',
+                fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: ['public', 'companies'] } },
+              },
+            },
+          ],
+          columnMappings: [
+            {
+              source: { columnId: 'values.company' },
+              destination: { kind: 'placeholderField', ref: 'fa_company' },
+            },
+          ],
+        },
+        {
+          ref: 'tm_comp',
+          source: { dataFolderId: 'dfd_comp_src' },
+          destination: { kind: 'existing', dataFolderId: 'dfd_comp_dst' },
+          columnMappings: [],
+        },
+      ];
+      const row = makeDraftRow({ tableMappings });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (dbService.client.syncDraft.update as jest.Mock).mockResolvedValue(row);
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_people_src', tableId: ['people'] },
+        { id: 'dfd_people_dst', tableId: ['public', 'people'] },
+        { id: 'dfd_comp_src', tableId: ['companies'] },
+        // The sibling Companies mapping's destination resolves to the SAME remote table the FK targets.
+        { id: 'dfd_comp_dst', tableId: ['public', 'companies'] },
+      ]);
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue({
+        connectorAccountId: 'coa_1',
+        tableId: ['public', 'people'],
+      });
+      schemaBuilderService.createFields.mockResolvedValue({
+        status: 'ok',
+        remoteTableId: ['public', 'people'],
+        fields: [{ name: 'Company', status: 'created', remoteFieldId: 'company' }],
+      } as never);
+      (dataFolderService.getStoredView as jest.Mock).mockResolvedValue({
+        name: 'Default',
+        cols: [
+          {
+            kind: 'col',
+            path: 'values.company',
+            name: 'Company',
+            displayTransformer: {
+              type: 'jsonpath',
+              options: { expression: '$[*].target_record_id', arrayHandling: 'join_comma' },
+            },
+          },
+        ],
+      });
+      (dataFolderService.fetchSchemaSpec as jest.Mock).mockResolvedValue({
+        schema: { type: 'object', properties: {} },
+      });
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      const peopleMapping = res.draft.tableMappings.find((tableMapping) => tableMapping.ref === 'tm_people');
+      const fkColumn = peopleMapping?.columnMappings.find(
+        (columnMapping) => columnMapping.source.columnId === 'values.company',
+      );
+      expect(fkColumn?.transformers).toEqual([
+        { type: 'jsonpath', options: { expression: '$[*].target_record_id', arrayHandling: 'array' } },
+        { type: 'source_fk_to_dest_fk', options: { referencedDataFolderId: 'dfd_comp_src', outputType: 'array' } },
+      ]);
+    });
+
     it('appends the destination pack after source_fk_to_dest_fk when the created FK field declares one (Notion relation)', async () => {
       // Same shape as the pipeline test above, but the destination schema's created FK field
       // carries an `x-scratch-suggested-in-transformer` pack (Notion relation: ids → [{id}] →
