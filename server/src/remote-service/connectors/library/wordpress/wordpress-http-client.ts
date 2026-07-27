@@ -5,6 +5,7 @@ import { createApiClient } from '../../create-api-client';
 import { ConnectorAuthError } from '../../error';
 import { Service } from '../../service-constants';
 import { WORDPRESS_ORG_V2_PATH, WORDPRESS_UPLOAD_TIMEOUT_MS } from './wordpress-constants';
+import { WordPressInvalidFirstPageError } from './wordpress-errors';
 import {
   WordPressBatchRequestItem,
   WordPressBatchResponse,
@@ -35,7 +36,8 @@ export function parseWordPressCountHeader(value: unknown): number | undefined {
  * (or a post-type/term variant matching `*_invalid_page_number`). Stock
  * WordPress raises this instead of returning an empty page on the
  * exact-multiple-of-`per_page` boundary, so `pollRecords` treats it as a clean
- * end-of-collection signal rather than a pull failure.
+ * end-of-collection signal rather than a pull failure — but only past page 1
+ * (see the page-1 guard in `pollRecords`, DEV-10912).
  */
 export function isWordPressInvalidPageNumberError(error: unknown): boolean {
   if (!axios.isAxiosError(error) || error.response?.status !== 400) {
@@ -230,9 +232,18 @@ export class WordPressHttpClient {
       response = await this.client.get<WordPressRecord[]>(url);
     } catch (error) {
       if (isWordPressInvalidPageNumberError(error)) {
-        // Past the last page: a clean end-of-collection signal, not a failure.
-        // Return an empty page so the connector's short-page check completes.
-        return { records: [], total: undefined, totalPages: undefined };
+        if (page > 1) {
+          // Past the last page: a clean end-of-collection signal, not a failure.
+          // Return an empty page so the connector's short-page check completes.
+          return { records: [], total: undefined, totalPages: undefined };
+        }
+        // Page 1 can't honestly 400 here: stock WordPress returns an empty page
+        // for an empty table and only 400s past the last page (which requires
+        // total > 0). A plugin is overriding pagination and reporting the whole
+        // collection as out of range; completing here would scan zero records and
+        // let the delete detector tombstone the table. Abort loudly instead
+        // (DEV-10912).
+        throw new WordPressInvalidFirstPageError(tableId);
       }
       throw error;
     }

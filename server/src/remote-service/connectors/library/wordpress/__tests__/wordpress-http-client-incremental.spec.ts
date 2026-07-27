@@ -1,4 +1,5 @@
 import { createApiClient } from '../../../create-api-client';
+import { WordPressInvalidFirstPageError } from '../wordpress-errors';
 import { WordPressHttpClient } from '../wordpress-http-client';
 
 jest.mock('../../../create-api-client');
@@ -167,6 +168,21 @@ describe('WordPressHttpClient.pollRecords past-the-last-page handling', () => {
       total: undefined,
       totalPages: undefined,
     });
+  });
+
+  it('aborts (throws WordPressInvalidFirstPageError) when page 1 returns *_invalid_page_number', async () => {
+    // Stock WordPress can't 400 on page 1 (empty table → empty page; the error
+    // only fires past the last page). A page-1 400 means a plugin is overriding
+    // pagination and reporting the whole table as out of range — completing here
+    // would scan zero records and let the delete detector tombstone the table
+    // (DEV-10912).
+    mockGet.mockRejectedValue(axiosError(400, 'rest_post_invalid_page_number'));
+    await expect(client.pollRecords('posts', 1, 100)).rejects.toThrow(WordPressInvalidFirstPageError);
+  });
+
+  it('aborts on a page-1 term-controller *_invalid_page_number variant too', async () => {
+    mockGet.mockRejectedValue(axiosError(400, 'rest_term_invalid_page_number'));
+    await expect(client.pollRecords('categories', 1, 100)).rejects.toThrow(WordPressInvalidFirstPageError);
   });
 
   it('rethrows a different 400 (e.g. rest_forbidden) rather than swallowing it', async () => {

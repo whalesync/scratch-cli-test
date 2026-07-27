@@ -1,7 +1,11 @@
 import { TSchema } from '@sinclair/typebox';
 import { WSLogger } from 'src/logger';
 import { BaseJsonTableSpec, ConnectorFile, dotPath, PullRecordFilesOptions } from '../../../types';
-import { WordPressMaxPagesReachedError, WordPressPageIgnoredError } from '../wordpress-errors';
+import {
+  WordPressInvalidFirstPageError,
+  WordPressMaxPagesReachedError,
+  WordPressPageIgnoredError,
+} from '../wordpress-errors';
 
 // Break the connector-registry circular import chain (same shape as the
 // incremental spec).
@@ -210,5 +214,22 @@ describe('WordPressConnector.pullRecordFiles pagination termination', () => {
     // Stops on the 5th fetch (backstop), having emitted pages 1–4.
     expect(mockPollRecords).toHaveBeenCalledTimes(5);
     expect(callback).toHaveBeenCalledTimes(4);
+  });
+
+  it('aborts the scan (never completes) when page 1 returns *_invalid_page_number', async () => {
+    // A plugin overriding pagination 400s on page 1 of a non-empty table; the http
+    // client surfaces this as WordPressInvalidFirstPageError (DEV-10912). The pull
+    // must propagate it and never complete — completing over zero records would let
+    // the delete detector tombstone the whole table.
+    mockPollRecords.mockRejectedValue(new WordPressInvalidFirstPageError('posts'));
+
+    await expect(connector.pullRecordFiles(postSpec(), callback, {}, FULL_PULL)).rejects.toThrow(
+      WordPressInvalidFirstPageError,
+    );
+
+    // Aborted on the first fetch, with no records emitted and no completion cursor
+    // cleared — so the scan never finishes over an empty set.
+    expect(mockPollRecords).toHaveBeenCalledTimes(1);
+    expect(callback).not.toHaveBeenCalled();
   });
 });
