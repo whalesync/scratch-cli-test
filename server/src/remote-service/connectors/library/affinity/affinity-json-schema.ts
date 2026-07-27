@@ -8,20 +8,15 @@ import {
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { AffinityApiClient } from './affinity-api-client';
 import {
+  COMPANIES_TABLE_WS_ID,
+  OPPORTUNITIES_TABLE_WS_ID,
+  PEOPLE_TABLE_WS_ID,
   X_SCRATCH_AFFINITY_FIELDS_BY_ID,
   buildAffinityFieldSchemasById,
   buildAffinityFieldsArrayKeyedByOptions,
   isReadOnlyAffinityField,
 } from './affinity-fields';
 import { AffinityEntityType, AffinityFieldMetadata, AffinityList, AffinityValueType } from './affinity-types';
-
-// wsIds of the tenant tables that FK fields point at. These mirror the
-// `TENANT_*_ID` sentinels in affinity-connector.ts (which sets each tenant
-// table's `id.wsId` to exactly these strings); kept as literals here to avoid a
-// circular import (the connector imports the build functions from this file).
-const PEOPLE_TABLE_WS_ID = 'persons';
-const COMPANIES_TABLE_WS_ID = 'companies';
-const OPPORTUNITIES_TABLE_WS_ID = 'opportunities';
 
 // Record "basics" (firstName/lastName/emailAddresses on persons; name/domain on
 // companies; name on opportunities) are **writable via the v1 API** (DEV-10298

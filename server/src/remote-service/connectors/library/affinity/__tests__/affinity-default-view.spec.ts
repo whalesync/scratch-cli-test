@@ -3,6 +3,7 @@ import {
   TableViewBannerGroup,
   TableViewCol,
   X_SCRATCH_ARRAY_KEYED_BY,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
 import { buildAffinityDefaultView } from '../affinity-default-view';
@@ -139,16 +140,25 @@ function makeNotesSchema() {
   );
 }
 
-/** Build an entity files schema. */
+/** Build an entity files schema (parent-entity FKs annotated as the real schema mounts them). */
 function makeEntityFilesSchema() {
   return Type.Object(
     {
       id: Type.Number({ [X_SCRATCH_READONLY]: true }),
       name: Type.String(),
       size: Type.Number({ [X_SCRATCH_READONLY]: true }),
-      person_id: Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-      organization_id: Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-      opportunity_id: Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      person_id: Type.Union([Type.Number(), Type.Null()], {
+        [X_SCRATCH_READONLY]: true,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'persons' },
+      }),
+      organization_id: Type.Union([Type.Number(), Type.Null()], {
+        [X_SCRATCH_READONLY]: true,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies' },
+      }),
+      opportunity_id: Type.Union([Type.Number(), Type.Null()], {
+        [X_SCRATCH_READONLY]: true,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'opportunities' },
+      }),
       uploader_id: Type.Number({ [X_SCRATCH_READONLY]: true }),
       created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
     },
@@ -275,8 +285,8 @@ describe('buildAffinityDefaultView — company list entry', () => {
   });
 
   describe('dynamic field subfields', () => {
-    it('should add subfields to dynamic fields', () => {
-      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
+    it('should add subfields to scalar (non-flattened) dynamic fields', () => {
+      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-2]') as TableViewCol;
       expect(col.subfields).toBeDefined();
       expect(col.subfields).toHaveLength(4);
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -289,8 +299,8 @@ describe('buildAffinityDefaultView — company list entry', () => {
       expect(col.subfields![3].relativePath).toBe('enrichmentSource');
     });
 
-    it('should default to showing the value subfield', () => {
-      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
+    it('should default to showing the value subfield on scalar fields', () => {
+      const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-2]') as TableViewCol;
       expect(col.selectedSubfield).toBe(0);
     });
 
@@ -299,15 +309,12 @@ describe('buildAffinityDefaultView — company list entry', () => {
       expect(col.name).toBe('Industry');
     });
 
-    it('should map connector data type for dynamic fields', () => {
+    it('should map connector data type for scalar dynamic fields', () => {
       const numCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-2]') as TableViewCol;
       expect(numCol.type).toBe('number');
 
       const dateCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-3]') as TableViewCol;
       expect(dateCol.type).toBe('date');
-
-      const dropCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
-      expect(dropCol.type).toBe('object');
     });
 
     it('should map data subfield type from connector data type', () => {
@@ -320,10 +327,33 @@ describe('buildAffinityDefaultView — company list entry', () => {
       const dateCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-3]') as TableViewCol;
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(dateCol.subfields![0].type).toBe('date');
+    });
+  });
 
-      const dropCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      expect(dropCol.subfields![0].type).toBe('object');
+  describe('dropdown field flattening (DEV-11064)', () => {
+    // field-1 "Industry" is a `dropdown` — flattened to its `.text` label.
+    const dropCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.[id=field-1]') as TableViewCol;
+
+    it('should type the dropdown column as string (not object)', () => {
+      expect(dropCol.type).toBe('string');
+    });
+
+    it('should not drill into subfields', () => {
+      expect(dropCol.subfields).toBeUndefined();
+      expect(dropCol.selectedSubfield).toBeUndefined();
+    });
+
+    it('should pluck the option label for display and export', () => {
+      expect(dropCol.displayTransformer).toEqual({
+        type: 'jsonpath',
+        options: { expression: '$.value.data.text', arrayHandling: 'first' },
+      });
+      expect(dropCol.codec?.toCore).toEqual({
+        type: 'jsonpath',
+        options: { expression: '$.value.data.text', arrayHandling: 'first' },
+      });
+      // Display + export only — no fromCore (the label can't be re-decorated).
+      expect(dropCol.codec?.fromCore).toBeUndefined();
     });
   });
 
@@ -375,6 +405,32 @@ describe('buildAffinityDefaultView — tenant persons', () => {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(col.subfields![0].relativePath).toBe('value.data');
     expect(col.selectedSubfield).toBe(0);
+  });
+
+  describe('company reference field → foreign key (DEV-11065)', () => {
+    // field-11 "Company" is a `company` reference → FK to the Companies table.
+    const fkCol = view.cols.find((c) => (c as TableViewCol).path === 'fields.[id=field-11]') as TableViewCol;
+
+    it('should declare a foreign key to the companies table', () => {
+      expect(fkCol.foreignKey).toEqual({ linkedTableId: 'companies' });
+    });
+
+    it('should type the column as string and drop the subfields drill-down', () => {
+      expect(fkCol.type).toBe('string');
+      expect(fkCol.subfields).toBeUndefined();
+      expect(fkCol.selectedSubfield).toBeUndefined();
+    });
+
+    it('should resolve the linked id at value.data.id (single-valued)', () => {
+      expect(fkCol.codec?.toCore).toEqual({
+        type: 'jsonpath',
+        options: { expression: '$.value.data.id', arrayHandling: 'first' },
+      });
+      expect(fkCol.displayTransformer).toEqual({
+        type: 'jsonpath',
+        options: { expression: '$.value.data.id', arrayHandling: 'first' },
+      });
+    });
   });
 });
 
@@ -495,15 +551,29 @@ describe('buildAffinityDefaultView — entity files', () => {
     expect(col.name).toBe('Created At');
   });
 
-  it('should hide internal ID fields', () => {
+  it('should show the parent-entity foreign keys and only hide uploader_id (DEV-11065)', () => {
     const personIdCol = view.cols.find((c) => (c as TableViewCol).path === 'person_id') as TableViewCol;
-    expect(personIdCol.hidden).toBe(true);
+    expect(personIdCol.hidden).toBeUndefined();
 
     const orgIdCol = view.cols.find((c) => (c as TableViewCol).path === 'organization_id') as TableViewCol;
-    expect(orgIdCol.hidden).toBe(true);
+    expect(orgIdCol.hidden).toBeUndefined();
+
+    const opportunityIdCol = view.cols.find((c) => (c as TableViewCol).path === 'opportunity_id') as TableViewCol;
+    expect(opportunityIdCol.hidden).toBeUndefined();
 
     const uploaderCol = view.cols.find((c) => (c as TableViewCol).path === 'uploader_id') as TableViewCol;
     expect(uploaderCol.hidden).toBe(true);
+  });
+
+  it('should mirror the schema-declared foreign keys onto the shown columns (DEV-11065)', () => {
+    const personIdCol = view.cols.find((c) => (c as TableViewCol).path === 'person_id') as TableViewCol;
+    expect(personIdCol.foreignKey).toEqual({ linkedTableId: 'persons' });
+
+    const orgIdCol = view.cols.find((c) => (c as TableViewCol).path === 'organization_id') as TableViewCol;
+    expect(orgIdCol.foreignKey).toEqual({ linkedTableId: 'companies' });
+
+    const opportunityIdCol = view.cols.find((c) => (c as TableViewCol).path === 'opportunity_id') as TableViewCol;
+    expect(opportunityIdCol.foreignKey).toEqual({ linkedTableId: 'opportunities' });
   });
 });
 
@@ -547,13 +617,13 @@ describe('buildAffinityDefaultView — location banner groups', () => {
   it('should disambiguate location names by enrichment source', () => {
     const groups = view.cols.filter((c): c is TableViewBannerGroup => c.kind === 'banner-group');
     const names = groups.map((g) => g.name);
-    expect(names).toContain('Location (Affinity Data)');
-    expect(names).toContain('Location (Dealroom)');
+    expect(names).toContain('Affinity Data Location');
+    expect(names).toContain('Dealroom Location');
   });
 
   it('should expand location fields into sub-columns', () => {
     const group = view.cols.find(
-      (c) => c.kind === 'banner-group' && c.name === 'Location (Dealroom)',
+      (c) => c.kind === 'banner-group' && c.name === 'Dealroom Location',
     ) as TableViewBannerGroup;
     expect(group.cols).toHaveLength(5);
     const paths = group.cols.map((c) => c.path);
@@ -564,16 +634,18 @@ describe('buildAffinityDefaultView — location banner groups', () => {
     expect(paths).toContain('fields.[id=dealroom-location].value.data.continent');
   });
 
-  it('should format sub-column names as Title Case', () => {
+  it('should type sub-columns as string and qualify their names with the parent field (DEV-11066)', () => {
     const group = view.cols.find(
-      (c) => c.kind === 'banner-group' && c.name === 'Location (Affinity Data)',
+      (c) => c.kind === 'banner-group' && c.name === 'Affinity Data Location',
     ) as TableViewBannerGroup;
     const names = group.cols.map((c) => c.name);
-    expect(names).toContain('Street Address');
-    expect(names).toContain('City');
-    expect(names).toContain('State');
-    expect(names).toContain('Country');
-    expect(names).toContain('Continent');
+    expect(names).toContain('Affinity Data Location · Street Address');
+    expect(names).toContain('Affinity Data Location · City');
+    expect(names).toContain('Affinity Data Location · State');
+    expect(names).toContain('Affinity Data Location · Country');
+    expect(names).toContain('Affinity Data Location · Continent');
+    // Every sub-column is a plain string (no longer reported as an unknown field).
+    expect(group.cols.every((c) => c.type === 'string')).toBe(true);
   });
 
   it('should not create a banner group for non-location fields', () => {
@@ -599,9 +671,72 @@ describe('buildAffinityDefaultView — location banner groups', () => {
     );
     const entityView = buildAffinityDefaultView(entitySchema, 'entity.name');
     const group = entityView.cols.find(
-      (c) => c.kind === 'banner-group' && c.name === 'Location (Dealroom)',
+      (c) => c.kind === 'banner-group' && c.name === 'Dealroom Location',
     ) as TableViewBannerGroup;
     expect(group).toBeDefined();
     expect(group.cols[0].path).toBe('entity.fields.[id=dealroom-location].value.data.streetAddress');
+  });
+});
+
+describe('buildAffinityDefaultView — multi-value flattening (DEV-11064 / DEV-11065)', () => {
+  const schema = Type.Object(
+    {
+      id: Type.Number({ [X_SCRATCH_READONLY]: true }),
+      name: Type.Union([Type.String(), Type.Null()]),
+      fields: fieldsArrayProperty([
+        fieldDef('field-p', 'Team', 'person-multi'),
+        fieldDef('field-c', 'Investors', 'company-multi'),
+        fieldDef('field-d', 'Tags', 'dropdown-multi'),
+        fieldDef('field-t', 'Technologies', 'filterable-text-multi'),
+        fieldDef('field-n', 'Scores', 'number-multi'),
+      ]),
+    },
+    { $id: 'affinity/companies', title: 'Companies' },
+  );
+  const view = buildAffinityDefaultView(schema, 'name');
+  const colAt = (path: string) => view.cols.find((c) => (c as TableViewCol).path === path) as TableViewCol;
+
+  it('should declare multi-value person/company references as foreign keys resolving on value.data[*].id', () => {
+    const personCol = colAt('fields.[id=field-p]');
+    expect(personCol.foreignKey).toEqual({ linkedTableId: 'persons' });
+    expect(personCol.codec?.toCore).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$.value.data[*].id', arrayHandling: 'array' },
+    });
+    expect(personCol.displayTransformer).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$.value.data[*].id', arrayHandling: 'join_comma' },
+    });
+
+    const companyCol = colAt('fields.[id=field-c]');
+    expect(companyCol.foreignKey).toEqual({ linkedTableId: 'companies' });
+    expect(companyCol.codec?.toCore).toMatchObject({ options: { expression: '$.value.data[*].id' } });
+  });
+
+  it('should pluck each dropdown-multi option label', () => {
+    const dropCol = colAt('fields.[id=field-d]');
+    expect(dropCol.type).toBe('string');
+    expect(dropCol.codec?.toCore).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$.value.data[*].text', arrayHandling: 'array' },
+    });
+    expect(dropCol.displayTransformer).toMatchObject({
+      options: { expression: '$.value.data[*].text', arrayHandling: 'join_comma' },
+    });
+  });
+
+  it('should take the elements themselves for homogeneous scalar arrays', () => {
+    const textCol = colAt('fields.[id=field-t]');
+    expect(textCol.codec?.toCore).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$.value.data[*]', arrayHandling: 'array' },
+    });
+    // filterable-text-multi is a string array — no logicalType override needed.
+    expect(textCol.logicalType).toBeUndefined();
+
+    const numberCol = colAt('fields.[id=field-n]');
+    expect(numberCol.codec?.toCore).toMatchObject({ options: { expression: '$.value.data[*]' } });
+    // number-multi carries a numeric logicalType so the destination column is a number.
+    expect(numberCol.logicalType).toBe('number');
   });
 });

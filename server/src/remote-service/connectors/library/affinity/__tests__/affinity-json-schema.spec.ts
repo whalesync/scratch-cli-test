@@ -203,7 +203,7 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
     const keyedBy = fields[X_SCRATCH_ARRAY_KEYED_BY] as ArrayKeyedByOptions;
     const stageColumn = keyedBy.columns.find((c) => c.key === 'field-stage');
     expect(stageColumn?.name).toBe('Stage');
-    expect(stageColumn?.type).toBe('object'); // dropdown → object column hint
+    expect(stageColumn?.type).toBe('string'); // dropdown → string column hint (flattened to its .text label, DEV-11064)
 
     // The exact Affinity valueType (needed by the write layer + location
     // detection) lives in the per-field-id write-meta map on the array property.

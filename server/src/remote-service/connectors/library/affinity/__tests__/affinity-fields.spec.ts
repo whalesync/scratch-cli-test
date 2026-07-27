@@ -56,10 +56,18 @@ describe('tablePropertyTypeForAffinityValueType', () => {
     expect(tablePropertyTypeForAffinityValueType('datetime')).toBe('date');
   });
 
+  it('maps the flattened dropdown / scalar-array families to their scalar type (DEV-11064)', () => {
+    expect(tablePropertyTypeForAffinityValueType('dropdown')).toBe('string');
+    expect(tablePropertyTypeForAffinityValueType('ranked-dropdown')).toBe('string');
+    expect(tablePropertyTypeForAffinityValueType('dropdown-multi')).toBe('string');
+    expect(tablePropertyTypeForAffinityValueType('filterable-text-multi')).toBe('string');
+    expect(tablePropertyTypeForAffinityValueType('number-multi')).toBe('number');
+  });
+
   it('falls back to object for structured / unknown / missing value types', () => {
-    expect(tablePropertyTypeForAffinityValueType('dropdown')).toBe('object');
     expect(tablePropertyTypeForAffinityValueType('location')).toBe('object');
     expect(tablePropertyTypeForAffinityValueType('person-multi')).toBe('object');
+    expect(tablePropertyTypeForAffinityValueType('interaction')).toBe('object');
     expect(tablePropertyTypeForAffinityValueType(undefined)).toBe('object');
   });
 });
@@ -83,7 +91,8 @@ describe('buildAffinityFieldsArrayKeyedByOptions', () => {
     // The whole element is the value — there is no valuePath.
     expect(options.valuePath).toBeUndefined();
     expect(options.columns).toEqual([
-      { key: 'field-1', name: 'Stage', type: 'object', readonly: undefined },
+      // dropdown → string column hint (flattened to its .text label, DEV-11064)
+      { key: 'field-1', name: 'Stage', type: 'string', readonly: undefined },
       // enriched → read-only
       { key: 'affinity-data-growth', name: 'Growth', type: 'number', readonly: true },
     ]);

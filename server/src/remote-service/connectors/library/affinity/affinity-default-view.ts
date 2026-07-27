@@ -2,18 +2,24 @@ import { Kind, TSchema } from '@sinclair/typebox';
 import {
   ArrayKeyedColumn,
   buildKeyedArrayColumnPath,
+  ClientSafeTransformer,
   getArrayKeyedByOptions,
+  JSONPathArrayHandling,
   TablePropertyType,
   TableView,
   TableViewBannerGroup,
   TableViewCol,
   TableViewSubfield,
+  TransformerTypes,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
 import {
   affinityFieldValueTypeFromSchemasById,
+  COMPANIES_TABLE_WS_ID,
   FIELD_KEY_FIELD,
   getAffinityFieldSchemasById,
+  PEOPLE_TABLE_WS_ID,
   tablePropertyTypeForAffinityValueType,
 } from './affinity-fields';
 
@@ -66,7 +72,12 @@ const HIDDEN_NOTES_FIELDS = new Set([
 
 // ── Entity Files-specific hidden fields ──
 
-const HIDDEN_ENTITY_FILES_FIELDS = new Set(['person_id', 'organization_id', 'opportunity_id', 'uploader_id']);
+// The parent-entity foreign keys (`person_id` / `organization_id` /
+// `opportunity_id`) are the connector's only clean scalar FK surface and are the
+// Entity Files table's only relations — so they are shown by default (DEV-11065),
+// their FK targets recovered from the schema's `x-scratch-foreign-key`. Only
+// `uploader_id` (a bare Users id with no declared FK) stays hidden as noise.
+const HIDDEN_ENTITY_FILES_FIELDS = new Set(['uploader_id']);
 
 // ── Notes content subfields ──
 
@@ -238,6 +249,15 @@ function buildTopLevelCol(
     hidden,
   };
 
+  // Mirror a schema-declared foreign key onto the view column so the grid renders
+  // it as a link and a sync/export links the record (Entity Files' parent-entity
+  // FKs — person_id / organization_id / opportunity_id). Purely additive: only
+  // fields carrying `x-scratch-foreign-key` get it.
+  const foreignKeyTarget = linkedTableIdFromSchema(fieldSchema);
+  if (foreignKeyTarget) {
+    col.foreignKey = { linkedTableId: foreignKeyTarget };
+  }
+
   // Notes: content field gets subfields for html
   if (isNotes && fieldId === 'content') {
     col.subfields = CONTENT_SUBFIELDS;
@@ -268,29 +288,175 @@ function buildEntityCol(fieldId: string, fieldSchema: TSchema): TableViewCol {
   };
 }
 
+// ── Dynamic-field value-type families the view editorializes ──
+//
+// Each family's stored value is a decorated object (or array of them) whose
+// USEFUL inner value the view plucks — the "pluck the useful inner value" job the
+// Connector Guide assigns the view layer — without reshaping the verbatim element
+// on disk (Connector Prime Directive intact). The pluck is a display transformer
+// (grid) + a `codec.toCore` (sync/export), both jsonpaths reaching into the whole
+// element at `value.data`.
+
+/** Reference value types → foreign key to the tenant People table (DEV-11065). */
+const PERSON_REFERENCE_VALUE_TYPES: ReadonlySet<string> = new Set(['person', 'person-multi']);
+/** Reference value types → foreign key to the tenant Companies table (DEV-11065). */
+const COMPANY_REFERENCE_VALUE_TYPES: ReadonlySet<string> = new Set(['company', 'company-multi']);
+/** Dropdown value types → pluck the option `.text` label (DEV-11064). */
+const DROPDOWN_VALUE_TYPES: ReadonlySet<string> = new Set(['dropdown', 'ranked-dropdown', 'dropdown-multi']);
+/** Homogeneous scalar-array value types → the joined/array of `value.data` elements (DEV-11064). */
+const SCALAR_MULTI_VALUE_TYPES: ReadonlySet<string> = new Set(['filterable-text-multi', 'number-multi']);
+
 /**
- * Build a column for one dynamic Affinity field. The column addresses the whole
- * verbatim array element by its filter path (`entity.fields.[id=field-1]` /
- * `fields.[id=field-1]`); subfields drill into `value.data` etc. relative to it.
- * `name` / `type` / `readonly` come from the `x-scratch-array-keyed-by` column.
+ * Build a column for one dynamic Affinity field, editorializing the reference,
+ * dropdown, and multi-value scalar families into typed / linked columns and
+ * leaving everything else as a drill-into-`value.data` column with subfields.
+ *
+ * The column always addresses the whole verbatim array element by its filter path
+ * (`entity.fields.[id=field-1]` / `fields.[id=field-1]`). `readonly` is preserved
+ * from the `x-scratch-array-keyed-by` column so publish never receives an edit to
+ * an enriched / relationship-intelligence / computed field it would reject.
  */
 function buildDynamicFieldCol(
   column: ArrayKeyedColumn,
   valueType: string | undefined,
   fieldColumnPath: string,
 ): TableViewCol {
+  const readonly = column.readonly || undefined;
+  const isMultiValue = typeof valueType === 'string' && valueType.endsWith('-multi');
+
+  // Reference fields (person / company, single or multi) → foreign keys. The
+  // referenced record's id lives at `value.data.id` (single) / `value.data[*].id`
+  // (multi) — the fully-hydrated object the export needs, unused until now.
+  if (valueType !== undefined && PERSON_REFERENCE_VALUE_TYPES.has(valueType)) {
+    return buildReferenceFieldCol(column, fieldColumnPath, PEOPLE_TABLE_WS_ID, isMultiValue, readonly);
+  }
+  if (valueType !== undefined && COMPANY_REFERENCE_VALUE_TYPES.has(valueType)) {
+    return buildReferenceFieldCol(column, fieldColumnPath, COMPANIES_TABLE_WS_ID, isMultiValue, readonly);
+  }
+
+  // Dropdown family → the option label (`value.data.text`), not the
+  // `{ dropdownOptionId, text }` envelope.
+  if (valueType !== undefined && DROPDOWN_VALUE_TYPES.has(valueType)) {
+    return buildFlattenedScalarFieldCol({
+      column,
+      fieldColumnPath,
+      pluckKey: 'text',
+      isMultiValue,
+      logicalType: 'string',
+      readonly,
+    });
+  }
+
+  // Homogeneous scalar arrays (filterable-text-multi / number-multi) → the joined
+  // (display) / array (export) of the `value.data` elements themselves.
+  if (valueType !== undefined && SCALAR_MULTI_VALUE_TYPES.has(valueType)) {
+    return buildFlattenedScalarFieldCol({
+      column,
+      fieldColumnPath,
+      pluckKey: undefined,
+      isMultiValue: true,
+      logicalType: valueType === 'number-multi' ? 'number' : 'string',
+      readonly,
+    });
+  }
+
+  // Everything else (scalar text/number/date, interaction, formula-number,
+  // unknown) keeps the drill-into-`value.data` column with subfields.
   return {
     kind: 'col',
     path: fieldColumnPath,
     name: column.name,
     type: (column.type as TablePropertyType | undefined) ?? tablePropertyTypeForAffinityValueType(valueType),
-    // enriched / relationship-intelligence / computed fields are read-only; the
-    // grid honors the column's own readonly, so publish never gets an edit it
-    // would reject.
-    readonly: column.readonly || undefined,
+    readonly,
     subfields: buildFieldSubfields(valueType),
     selectedSubfield: 0,
   };
+}
+
+/**
+ * Build a foreign-key column for a person/company reference field. Renders and
+ * exports the referenced record id (`value.data.id`, or the array of them for a
+ * multi field) so a sync links to the People / Companies table instead of copying
+ * the decorated reference object as JSON text. Display-and-export only: no
+ * `fromCore` (the id can't be re-decorated into the on-disk `{ id, name, … }`
+ * object), matching Pipedrive's single-select codec, and the verbatim element on
+ * disk is untouched.
+ */
+function buildReferenceFieldCol(
+  column: ArrayKeyedColumn,
+  fieldColumnPath: string,
+  linkedTableId: string,
+  isMultiValue: boolean,
+  readonly: true | undefined,
+): TableViewCol {
+  const idExpression = isMultiValue ? '$.value.data[*].id' : '$.value.data.id';
+  return {
+    kind: 'col',
+    path: fieldColumnPath,
+    name: column.name,
+    // Rendered as text (the id / joined ids); the FK target drives the relation.
+    type: 'string',
+    foreignKey: { linkedTableId },
+    displayTransformer: jsonPathDisplayTransformer(idExpression, isMultiValue),
+    codec: { toCore: jsonPathToCore(idExpression, isMultiValue) },
+    readonly,
+  };
+}
+
+/**
+ * Build a column that flattens the field's `value.data` to a scalar (or joined
+ * scalars) for display and export: a dropdown's `.text` label, or a homogeneous
+ * scalar array's own elements. The verbatim element on disk is untouched — this is
+ * display + `toCore` only.
+ */
+function buildFlattenedScalarFieldCol(params: {
+  column: ArrayKeyedColumn;
+  fieldColumnPath: string;
+  /** Object key to pluck from each `value.data` element (`text`), or undefined to take the element itself. */
+  pluckKey: string | undefined;
+  isMultiValue: boolean;
+  /** The SEMANTIC type the flattened value carries — the type the destination column is built for. */
+  logicalType: TablePropertyType;
+  readonly: true | undefined;
+}): TableViewCol {
+  const { column, fieldColumnPath, pluckKey, isMultiValue, logicalType, readonly } = params;
+  const dataExpression = isMultiValue ? '$.value.data[*]' : '$.value.data';
+  const expression = pluckKey ? `${dataExpression}.${pluckKey}` : dataExpression;
+  return {
+    kind: 'col',
+    path: fieldColumnPath,
+    name: column.name,
+    // Rendered through the text cell (the only cell that consults the display
+    // transformer); `logicalType` tells the export what the flattened value IS.
+    type: 'string',
+    ...(logicalType !== 'string' ? { logicalType } : {}),
+    displayTransformer: jsonPathDisplayTransformer(expression, isMultiValue),
+    codec: { toCore: jsonPathToCore(expression, isMultiValue) },
+    readonly,
+  };
+}
+
+/** A display (grid) jsonpath transformer: a single scalar, or the comma-joined scalars of a multi field. */
+function jsonPathDisplayTransformer(
+  expression: string,
+  isMultiValue: boolean,
+): NonNullable<TableViewCol['displayTransformer']> {
+  const arrayHandling: JSONPathArrayHandling = isMultiValue ? 'join_comma' : 'first';
+  return { type: 'jsonpath', options: { expression, arrayHandling } };
+}
+
+/** A `codec.toCore` jsonpath transformer: a single scalar, or the array of scalars of a multi field. */
+function jsonPathToCore(expression: string, isMultiValue: boolean): ClientSafeTransformer {
+  const arrayHandling: JSONPathArrayHandling = isMultiValue ? 'array' : 'first';
+  return { type: TransformerTypes.JSONPath, options: { expression, arrayHandling } };
+}
+
+/** Read a schema field's declared foreign-key target (`x-scratch-foreign-key.linkedTableId`), if any. */
+function linkedTableIdFromSchema(fieldSchema: TSchema | undefined): string | undefined {
+  const foreignKeyOptions = (fieldSchema as Record<string, unknown> | undefined)?.[X_SCRATCH_FOREIGN_KEY_OPTIONS] as
+    | { linkedTableId?: unknown }
+    | undefined;
+  return typeof foreignKeyOptions?.linkedTableId === 'string' ? foreignKeyOptions.linkedTableId : undefined;
 }
 
 /** Map a TypeBox schema to a TablePropertyType based on Kind and format annotations. */
@@ -341,38 +507,57 @@ const LOCATION_SUBFIELDS = ['streetAddress', 'city', 'state', 'country', 'contin
  * Build a banner group for a location-type field, expanding `value.data` into
  * separate columns hung off the field's verbatim-array filter path (e.g.
  * `entity.fields.[id=dealroom-location].value.data.city`).
+ *
+ * Each sub-column is typed `string` (its value is a plain string) so it is not
+ * reported as an unrecognized field, and its display name is qualified with the
+ * parent location field — "Dealroom Location · City" — so when the banner group is
+ * flattened for an export the names never collide across a table's several
+ * location fields (which would otherwise be auto-suffixed to "City 2" / "City 3",
+ * with no hint of which location they came from) (DEV-11066).
  */
 function buildLocationBannerGroup(
   fieldId: string,
   column: ArrayKeyedColumn,
   fieldColumnPath: string,
 ): TableViewBannerGroup {
-  // Derive a disambiguated group name from the field id.
-  // e.g. "dealroom-location" → "Location (Dealroom)", "affinity-data-location" → "Location (Affinity Data)"
-  const groupName = deriveLocationGroupName(fieldId, column.name);
+  // A distinct, human-readable label for this location field — the banner name
+  // and the per-sub-column qualifier. e.g. "affinity-data-location" → "Affinity
+  // Data Location", "dealroom-location" → "Dealroom Location", a user field →
+  // its own name ("QA Location").
+  const locationFieldLabel = deriveLocationFieldLabel(fieldId, column.name);
 
   const locationFieldIsReadonly = column.readonly || undefined;
   const cols: TableViewCol[] = LOCATION_SUBFIELDS.map((sub) => ({
     kind: 'col' as const,
     path: `${fieldColumnPath}.value.data.${sub}`,
-    name: formatCamelCaseName(sub),
+    name: `${locationFieldLabel} · ${formatCamelCaseName(sub)}`,
+    type: 'string' as const,
     readonly: locationFieldIsReadonly,
   }));
 
-  return { kind: 'banner-group', name: groupName, cols };
+  return { kind: 'banner-group', name: locationFieldLabel, cols };
 }
 
-/** Derive a display name for a location field, disambiguating by enrichment source in the field key. */
-function deriveLocationGroupName(fieldKey: string, description: string | undefined): string {
-  // Strip common location suffixes to get the source prefix
-  const source = fieldKey.replace(/-?location$/, '');
-  if (!source) return description ?? 'Location';
-
-  const sourceLabel = source
-    .split('-')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-  return `Location (${sourceLabel})`;
+/**
+ * Derive a distinct display label for a location field. Affinity's enrichment
+ * location fields share the generic name "Location", so they are disambiguated by
+ * the enrichment source encoded in their stable slug id
+ * (`affinity-data-location` → "Affinity Data Location", `dealroom-location` →
+ * "Dealroom Location"). A user-defined location field has a meaningful name and an
+ * opaque `field-<n>` id, so it uses its own name.
+ */
+function deriveLocationFieldLabel(fieldKey: string, fieldName: string | undefined): string {
+  const enrichmentSourceMatch = /^(.+?)-?location$/i.exec(fieldKey);
+  const enrichmentSource = enrichmentSourceMatch?.[1];
+  if (enrichmentSource) {
+    const sourceLabel = enrichmentSource
+      .split('-')
+      .filter((word) => word.length > 0)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+    return `${sourceLabel} Location`;
+  }
+  return fieldName ?? 'Location';
 }
 
 /** Format a snake_case field ID as Title Case (e.g. `created_at` → `Created At`). */

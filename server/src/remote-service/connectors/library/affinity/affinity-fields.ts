@@ -37,6 +37,17 @@ import {
 } from '@spinner/shared-types';
 import { AffinityFieldMetadata, AffinityValueType } from './affinity-types';
 
+/**
+ * wsIds of the tenant reference tables that Affinity foreign keys point at.
+ * These mirror the `TENANT_*_ID` sentinels in `affinity-connector.ts` (which set
+ * each tenant table's `id.wsId` to exactly these strings). Centralized here — the
+ * no-import-cycle leaf module — so the schema builder (entity-files FKs) and the
+ * default view (person/company reference-field FKs) share one source of truth.
+ */
+export const PEOPLE_TABLE_WS_ID = 'persons';
+export const COMPANIES_TABLE_WS_ID = 'companies';
+export const OPPORTUNITIES_TABLE_WS_ID = 'opportunities';
+
 /** The property that holds a record's field values on every Affinity record (top-level or under `entity`). */
 export const FIELDS_KEY = 'fields';
 
@@ -84,13 +95,30 @@ export function isReadOnlyAffinityField(fieldCategory: string | undefined, value
   return false;
 }
 
-/** Map an Affinity field `valueType` to a table-view column type hint. */
+/**
+ * Map an Affinity field `valueType` to a table-view column type hint.
+ *
+ * The dropdown family and the homogeneous multi-value scalar arrays map to their
+ * underlying scalar type because the default view flattens each to that scalar (a
+ * dropdown to its `.text` label, a `*-multi` array to its joined elements) via a
+ * display transformer + codec — so the value the destination receives is a real
+ * select / multi-value string / number, not the `{ dropdownOptionId, text }`
+ * envelope or a raw JSON array (DEV-11064). The reference types
+ * (`person`/`company` + their `-multi`) stay `object` here — they are surfaced as
+ * foreign keys by the default view, not scalars (DEV-11065) — and the remaining
+ * structured/unknown types keep the `object` fallback.
+ */
 const AFFINITY_VALUE_TYPE_TO_TABLE_PROPERTY_TYPE: Partial<Record<string, TablePropertyType>> = {
   text: 'string',
   'filterable-text': 'string',
+  'filterable-text-multi': 'string',
   number: 'number',
+  'number-multi': 'number',
   'formula-number': 'number',
   datetime: 'date',
+  dropdown: 'string',
+  'ranked-dropdown': 'string',
+  'dropdown-multi': 'string',
 };
 
 /** Map an Affinity field `valueType` to a `TablePropertyType` (structured/unknown types fall back to `object`). */
