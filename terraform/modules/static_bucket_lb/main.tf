@@ -86,10 +86,18 @@ resource "google_compute_url_map" "static" {
   default_service = google_compute_backend_bucket.static.id
 }
 
+# Enforce TLS 1.2+ (disable deprecated TLS 1.0/1.1) — DEV-11003 / pentest SCR-008
+resource "google_compute_ssl_policy" "static" {
+  name            = "${var.name}-ssl-policy"
+  profile         = "MODERN"
+  min_tls_version = "TLS_1_2"
+}
+
 resource "google_compute_target_https_proxy" "static" {
   name             = "${var.name}-https-proxy"
   url_map          = google_compute_url_map.static.id
   ssl_certificates = [google_compute_managed_ssl_certificate.static.id]
+  ssl_policy       = google_compute_ssl_policy.static.id
 }
 
 resource "google_compute_global_forwarding_rule" "https" {

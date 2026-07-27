@@ -77,11 +77,19 @@ resource "google_compute_url_map" "default" {
   default_service = google_compute_backend_service.default.id
 }
 
+# Enforce TLS 1.2+ (disable deprecated TLS 1.0/1.1) — DEV-11003 / pentest SCR-008
+resource "google_compute_ssl_policy" "default" {
+  name            = "${var.name}-ssl-policy"
+  profile         = "MODERN"
+  min_tls_version = "TLS_1_2"
+}
+
 # Create target HTTPS proxy
 resource "google_compute_target_https_proxy" "default" {
   name             = "${var.name}-https-proxy"
   url_map          = google_compute_url_map.default.id
   ssl_certificates = [google_compute_managed_ssl_certificate.default.id]
+  ssl_policy       = google_compute_ssl_policy.default.id
 }
 
 # Create global forwarding rule for HTTPS
