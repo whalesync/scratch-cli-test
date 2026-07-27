@@ -96,6 +96,13 @@ else
   yarn electron-builder --linux --x64 "${PRODUCT_NAME_OVERRIDE[@]}" --publish never
 fi
 
+# Hard gate on the packaged binary's Electron fuse wire (DEV-11000 / Oneleet SCR-005).
+# The vitest spec only proves electron-builder.yml *declares* the hardened fuses; this
+# proves the artifact we are about to publish actually has them. Runs before artifacts
+# are collected so an unhardened build never reaches dist-release/ or the GitHub release.
+echo "Verifying Electron fuses on the packaged binary..."
+node scripts/verify-fuses.cjs "$PLATFORM"
+
 # Collect release-ready files into dist-release/ so the downstream upload job
 # has a single, predictable directory to pull into its workspace.
 DIST_DIR="./dist-release"

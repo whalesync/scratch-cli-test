@@ -102,6 +102,23 @@ The lowest-level signed-build entry point. Runs `electron-vite build` + `electro
 
 `electron-vite build` + `electron-builder --linux`. Produces an AppImage and `.deb` under `dist/`. No CLI cross-compile is performed; supply the matching `scratchmd` binary if you need a working CLI in the package.
 
+## Electron fuses (packaged builds only)
+
+Every packaged build flips a set of [Electron fuses](https://www.electronjs.org/docs/latest/tutorial/fuses) — build-time on/off bits burned into the Electron Framework binary. The values live in the `electronFuses` block of [electron-builder.yml](electron-builder.yml) (each one commented with why it is set that way) and are asserted by `src/main/__tests__/electron-fuses.spec.ts`, so dropping or loosening one fails `yarn test`.
+
+The security-relevant ones: `runAsNode`, `enableNodeOptionsEnvironmentVariable`, and `enableNodeCliInspectArguments` are **off** (otherwise `ELECTRON_RUN_AS_NODE=1 Scratch.app/Contents/MacOS/Scratch -e '…'` runs arbitrary Node.js code under our Developer ID signature), and `enableEmbeddedAsarIntegrityValidation`, `onlyLoadAppFromAsar`, and `enableCookieEncryption` are **on**.
+
+Two things to know when working on packaging:
+
+- **Never modify `app.asar` from the `afterPack` hook.** electron-builder computes the `app.asar` header hash *before* `afterPack` runs and writes it into `Info.plist` (macOS) / the `.exe` resources (Windows); with the integrity fuse on, a post-hoc edit to the archive makes the packaged app refuse to start. Adding files elsewhere under `Resources/` (as [scripts/afterPack.cjs](scripts/afterPack.cjs) does for `bin/` and `git/`) is fine.
+- **Fuses do not apply to `yarn dev` or the Playwright `_electron` e2e specs.** Both run the unpackaged dev Electron from `node_modules` against `out/main/index.js`, which has its own unflipped fuse wire. Fuse regressions only show up in a packaged build.
+
+Read the real fuse wire out of an artifact:
+
+```bash
+npx @electron/fuses read --app dist/mac-arm64/Scratch.app
+```
+
 ## Choosing a build
 
 - **Iterating on UI / IPC**: `yarn dev`.

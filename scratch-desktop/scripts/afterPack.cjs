@@ -19,6 +19,14 @@
  * target; the loader only matches on the win32-x64 filename, not the compiler.
  * If a future platform/arch lacks a napi build, nativeFilenameFor() returns
  * null and the copy is skipped with a warning (cell-edit IPC then throws there).
+ *
+ * DO NOT modify app.asar from this hook. Packaged builds enable the
+ * `enableEmbeddedAsarIntegrityValidation` fuse (see electron-builder.yml), and
+ * electron-builder computes the app.asar header hash BEFORE this hook runs — it is
+ * already baked into Info.plist (macOS) / the .exe resources (Windows) by the time
+ * we get here. Editing the archive afterwards makes the packaged app refuse to
+ * start. Adding files elsewhere under Resources/ (as this hook does for bin/ and
+ * git/) is not covered by the hash and is fine.
  */
 
 const fs = require('fs');

@@ -1,0 +1,144 @@
+#!/usr/bin/env node
+/**
+ * Post-packaging gate: read the REAL Electron fuse wire out of a packaged binary and
+ * fail if it does not match scripts/expected-fuses.cjs (DEV-11000 / Oneleet SCR-005).
+ *
+ * Usage (from scratch-desktop/):
+ *   node scripts/verify-fuses.cjs <mac|linux|windows>
+ *
+ * The vitest spec asserts electron-builder.yml *declares* the right fuses; this asserts
+ * the shipped artifact actually *has* them. Both exist because the declaration and the
+ * artifact can diverge — an electron-builder upgrade that renames a config key, a build
+ * script passing `--config` with a different file, or a packager option that skips the
+ * fuse flip would all leave the config test green and the app unhardened.
+ *
+ * Called by scripts/package.sh for every release platform. To check an arbitrary bundle
+ * by hand: `npx @electron/fuses read --app <path to .app>`.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { getCurrentFuseWire, FuseV1Options } = require('@electron/fuses');
+const { ALL_EXPECTED_FUSES } = require('./expected-fuses.cjs');
+
+// getCurrentFuseWire returns each fuse as the raw byte in the wire: '0'/'1' as char codes.
+const FUSE_WIRE_BYTE_DISABLED = '0'.charCodeAt(0);
+const FUSE_WIRE_BYTE_ENABLED = '1'.charCodeAt(0);
+
+const desktopPackageDir = path.resolve(__dirname, '..');
+const distDir = path.join(desktopPackageDir, 'dist');
+
+/**
+ * electron-builder names the unpacked output dir per platform/arch, and the executable
+ * inside it after `productName` (which release builds override to "Scratch (Test)").
+ * Rather than re-deriving all of that, glob for the one plausible candidate.
+ */
+function findPackagedBinaryPath(platform) {
+  if (!fs.existsSync(distDir)) {
+    throw new Error(`verify-fuses: no dist/ directory at ${distDir} — run electron-builder first.`);
+  }
+  const distEntries = fs.readdirSync(distDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+
+  if (platform === 'mac') {
+    // dist/mac-arm64/Scratch.app (or mac/, mac-universal/, … depending on target arch).
+    const macOutputDirs = distEntries.filter((entry) => entry.name === 'mac' || entry.name.startsWith('mac-'));
+    for (const macOutputDir of macOutputDirs) {
+      const appBundles = fs.readdirSync(path.join(distDir, macOutputDir.name)).filter((name) => name.endsWith('.app'));
+      if (appBundles.length > 0) {
+        return path.join(distDir, macOutputDir.name, appBundles[0]);
+      }
+    }
+    throw new Error(`verify-fuses: no .app bundle found under ${distDir}/mac*/`);
+  }
+
+  if (platform === 'windows') {
+    // dist/win-unpacked/Scratch.exe
+    const winOutputDir = distEntries.find((entry) => entry.name.startsWith('win-unpacked'));
+    if (!winOutputDir) {
+      throw new Error(`verify-fuses: no win-unpacked/ directory under ${distDir}`);
+    }
+    const executables = fs.readdirSync(path.join(distDir, winOutputDir.name)).filter((name) => name.endsWith('.exe'));
+    if (executables.length === 0) {
+      throw new Error(`verify-fuses: no .exe found under ${distDir}/${winOutputDir.name}/`);
+    }
+    return path.join(distDir, winOutputDir.name, executables[0]);
+  }
+
+  // Linux: dist/linux-unpacked/scratch — the ELF next to resources/, identified by the
+  // sibling directory rather than by name (electron-builder lowercases executableName).
+  const linuxOutputDir = distEntries.find((entry) => entry.name.startsWith('linux-unpacked'));
+  if (!linuxOutputDir) {
+    throw new Error(`verify-fuses: no linux-unpacked/ directory under ${distDir}`);
+  }
+  const linuxOutputPath = path.join(distDir, linuxOutputDir.name);
+  const candidateExecutables = fs
+    .readdirSync(linuxOutputPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && !path.extname(entry.name))
+    .filter((entry) => (fs.statSync(path.join(linuxOutputPath, entry.name)).mode & 0o111) !== 0);
+  if (candidateExecutables.length === 0) {
+    throw new Error(`verify-fuses: no executable found under ${linuxOutputPath}`);
+  }
+  return path.join(linuxOutputPath, candidateExecutables[0].name);
+}
+
+function describeFuseWireByte(wireByte) {
+  if (wireByte === FUSE_WIRE_BYTE_ENABLED) return 'enabled';
+  if (wireByte === FUSE_WIRE_BYTE_DISABLED) return 'disabled';
+  return `unknown (raw byte ${String(wireByte)})`;
+}
+
+async function main() {
+  const platform = process.argv[2];
+  if (!['mac', 'linux', 'windows'].includes(platform)) {
+    console.error('Usage: node scripts/verify-fuses.cjs <mac|linux|windows>');
+    process.exit(1);
+  }
+
+  const packagedBinaryPath = findPackagedBinaryPath(platform);
+  console.log(`verify-fuses: reading fuse wire from ${packagedBinaryPath}`);
+  const actualFuseWire = await getCurrentFuseWire(packagedBinaryPath);
+
+  const failures = [];
+  for (const expectedFuse of ALL_EXPECTED_FUSES) {
+    const fuseWireIndex = FuseV1Options[expectedFuse.electronFuseName];
+    if (fuseWireIndex === undefined) {
+      failures.push(
+        `${expectedFuse.electronFuseName}: not a known FuseV1Options member — expected-fuses.cjs is out of date with @electron/fuses.`,
+      );
+      continue;
+    }
+    const actualWireByte = actualFuseWire[fuseWireIndex];
+    const expectedWireByte = expectedFuse.expectedValue ? FUSE_WIRE_BYTE_ENABLED : FUSE_WIRE_BYTE_DISABLED;
+    const status = actualWireByte === expectedWireByte ? 'OK  ' : 'FAIL';
+    console.log(
+      `  ${status} ${expectedFuse.electronFuseName.padEnd(38)} expected ${describeFuseWireByte(
+        expectedWireByte,
+      )}, got ${describeFuseWireByte(actualWireByte)}`,
+    );
+    if (actualWireByte !== expectedWireByte) {
+      failures.push(
+        `${expectedFuse.electronFuseName} is ${describeFuseWireByte(actualWireByte)} but must be ${describeFuseWireByte(
+          expectedWireByte,
+        )}. ${expectedFuse.whyItMatters}`,
+      );
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error(`\nverify-fuses: ${failures.length} fuse(s) wrong in ${packagedBinaryPath}:`);
+    for (const failure of failures) {
+      console.error(`  - ${failure}`);
+    }
+    console.error(
+      '\nCheck the `electronFuses` block in electron-builder.yml and that electron-builder is flipping fuses (it logs "executing @electron/fuses" during packaging).',
+    );
+    process.exit(1);
+  }
+
+  console.log(`verify-fuses: all ${ALL_EXPECTED_FUSES.length} fuses match the expected posture.`);
+}
+
+main().catch((error) => {
+  console.error(`verify-fuses: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+});

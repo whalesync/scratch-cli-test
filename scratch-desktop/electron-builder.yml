@@ -73,6 +73,54 @@ extraResources:
 
 afterPack: scripts/afterPack.cjs
 
+# Electron fuses — build-time hardening bits flipped into the Electron Framework
+# binary (DEV-11000 / Oneleet SCR-005). electron-builder flips these after the
+# afterPack hook and immediately BEFORE code signing, so the signature covers the
+# flipped binary and no re-sign is needed.
+#
+# Every fuse is listed explicitly — including the ones left at Electron's default
+# — so the packaged app's security posture is readable here instead of having to
+# be inferred from omissions. Verify a build with:
+#   npx @electron/fuses read --app dist/mac-arm64/Scratch.app
+electronFuses:
+  # Without this, ELECTRON_RUN_AS_NODE=1 turns the signed+notarized Scratch
+  # binary into a general-purpose node interpreter, letting local malware run
+  # arbitrary code under our code signature (and inherit our TCC grants /
+  # entitlements). Nothing in the app or the e2e suite launches itself as node —
+  # the Playwright `_electron` specs drive out/main/index.js with the unpackaged
+  # dev Electron, which has its own unflipped fuse wire.
+  runAsNode: false
+  # NODE_OPTIONS / NODE_EXTRA_CA_CERTS are never used by the app; leaving them
+  # honoured just hands an attacker another injection point.
+  enableNodeOptionsEnvironmentVariable: false
+  # --inspect / --inspect-brk / SIGUSR1 would expose a debugger port with full
+  # main-process privileges. Devtools for packaged builds go through
+  # OPEN_DEVTOOLS=1 (src/main/index.ts), which is unaffected by this fuse.
+  enableNodeCliInspectArguments: false
+  # Makes Electron verify app.asar against the ElectronAsarIntegrity hash that
+  # electron-builder already writes into Info.plist (macOS) / the .exe resources
+  # (Windows) on every build, so today's builds ship a correct-but-unenforced
+  # hash. Our afterPack hook only adds Resources/bin + Resources/git and never
+  # touches app.asar, so the hash stays valid; asarUnpack'd files live outside
+  # the archive and are not covered either way. No-op on Linux.
+  enableEmbeddedAsarIntegrityValidation: true
+  # Narrows Electron's app search from `app.asar` -> `app` -> `default_app.asar`
+  # down to `app.asar` alone. Without it, dropping an unsigned `app/` directory
+  # next to app.asar sidesteps the integrity check entirely.
+  onlyLoadAppFromAsar: true
+  # Encrypts the cookie store at rest with the OS keychain/keyring. Safe to turn
+  # on: auth tokens live in electron-store (src/main/auth-store.ts), not cookies,
+  # so there is no session for the one-time re-encryption to invalidate.
+  enableCookieEncryption: true
+  # Left at Electron's default (enabled). The packaged renderer is loaded with
+  # `mainWindow.loadFile(...)` — i.e. a file:// page — so revoking file://'s extra
+  # privileges risks breaking asset fetches and service workers. Tightening this
+  # means first serving the renderer from a custom protocol; tracked separately.
+  grantFileProtocolExtraPrivileges: true
+  # Left at Electron's default (disabled). Not a security fuse — it selects a
+  # browser-process-specific V8 snapshot and only matters for custom snapshots.
+  loadBrowserProcessSpecificV8Snapshot: false
+
 # Notarization is handled by this hook (NOT electron-builder's built-in
 # `mac.notarize`) so it can retry transient Apple-notary failures with a bounded
 # per-attempt timeout and staple the result. See scripts/notarize.cjs for the
