@@ -105,6 +105,56 @@ describe('buildZohoDefaultView', () => {
     expect(flatCol(view, 'Account_Name')?.type).toBe('object');
   });
 
+  // DEV-11097: bigint is stored as a string to preserve precision beyond 2^53, so the
+  // column must be a 'string' — not 'number', which drives a lossy numeric destination.
+  it('declares bigint fields as string columns, not number (precision beyond 2^53)', () => {
+    const view = viewFor([
+      makeField({ api_name: 'Big_Counter', data_type: 'bigint' }),
+      makeField({ api_name: 'Plain_Int', data_type: 'integer' }),
+    ]);
+    expect(flatCol(view, 'Big_Counter')?.type).toBe('string');
+    // integer stays a number — only bigint moves to string.
+    expect(flatCol(view, 'Plain_Int')?.type).toBe('number');
+    // The record id is bigint and already string-typed.
+    expect(flatCol(view, 'id')?.type).toBe('string');
+  });
+
+  // DEV-11096: a single lookup is stored verbatim as `{ id, name }` with an
+  // x-scratch-foreign-key annotation; the view must point the column at `$.id` and
+  // declare the foreign key so the shared FK id-extraction resolves the id array
+  // instead of leaking the raw object into the sync transform (which aborts the run).
+  it('declares a foreign key and an $.id displayTransformer for single lookups', () => {
+    const view = viewFor([
+      makeField({ api_name: 'Account_Name', data_type: 'lookup', lookup: { module: { api_name: 'Accounts' } } }),
+      makeField({ api_name: 'Owner', data_type: 'ownerlookup' }),
+      makeField({ api_name: 'Created_By', data_type: 'userlookup' }),
+    ]);
+
+    const accountCol = flatCol(view, 'Account_Name');
+    expect(accountCol?.foreignKey).toEqual({ linkedTableId: 'Accounts', isSingleValued: true });
+    expect(accountCol?.displayTransformer).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$.id', arrayHandling: 'array' },
+    });
+
+    // Owner/created-by lookups target the synthetic users table.
+    expect(flatCol(view, 'Owner')?.foreignKey).toEqual({ linkedTableId: 'users', isSingleValued: true });
+    expect(flatCol(view, 'Created_By')?.foreignKey).toEqual({ linkedTableId: 'users', isSingleValued: true });
+  });
+
+  it('leaves multi-valued and target-less lookups without a foreign key', () => {
+    const view = viewFor([
+      // Multi-valued lookup: stored verbatim with no FK annotation.
+      makeField({ api_name: 'Contacts', data_type: 'multiselectlookup' }),
+      // A single lookup whose target module is unknown gets no FK annotation either.
+      makeField({ api_name: 'Orphan_Lookup', data_type: 'lookup' }),
+    ]);
+    expect(flatCol(view, 'Contacts')?.foreignKey).toBeUndefined();
+    expect(flatCol(view, 'Contacts')?.displayTransformer).toBeUndefined();
+    expect(flatCol(view, 'Orphan_Lookup')?.foreignKey).toBeUndefined();
+    expect(flatCol(view, 'Orphan_Lookup')?.displayTransformer).toBeUndefined();
+  });
+
   it('only emits columns for fields that made it into the schema', () => {
     // The view is derived purely from the schema's properties, so a name that was
     // never a schema field simply has no column — no crash, no phantom column.
