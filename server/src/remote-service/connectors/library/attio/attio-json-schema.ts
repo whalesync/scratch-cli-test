@@ -98,7 +98,8 @@ function isAttributeReadonly(attr: AttioAttribute): boolean {
  * gets persisted as its `DataFolder.tableId` on import. `actor-reference` attributes
  * are foreign keys onto this table, and the create-plan generator resolves a foreign
  * key by matching its `linkedTableId` against each source folder's `tableId`
- * (`schema-builder.service.ts` sets `remoteTableIds: folder.tableId`). So the FK
+ * (`schema-builder.service.ts` sets `remoteTableIds` to that folder's
+ * `linkedTableIdCandidateTokensForRemoteTableId`). So the FK
  * target MUST be the members table's `remoteId`, NOT its `wsId`.
  *
  * These two diverge ONLY for the members table: `listTables` gives it

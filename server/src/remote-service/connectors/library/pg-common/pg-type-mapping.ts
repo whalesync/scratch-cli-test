@@ -38,7 +38,23 @@ export const PG_NUMERIC_TYPES = new Set([...PG_NUMBER_TYPES, ...PG_NUMBER_STRING
 
 export const PG_BOOLEAN_TYPES = new Set(['boolean', 'bool']);
 
-export const PG_TEXT_TYPES = new Set(['text', 'varchar', 'char', 'character varying', 'character', 'uuid', 'citext']);
+/**
+ * Text-family types, keyed by the names that can reach {@link mapScalarPgType} — both the
+ * `information_schema.columns` `data_type` spelling (`character`, `character varying`) and the
+ * `udt_name` spelling we actually map by. `bpchar` ("blank-padded char") is the `udt_name`
+ * Postgres reports for a `character(n)`/`char(n)` column; without it such a column fell through
+ * to `Type.Unknown()` and planning warned "Don't recognize … field type \"unknown\"" (DEV-11073).
+ */
+export const PG_TEXT_TYPES = new Set([
+  'text',
+  'varchar',
+  'char',
+  'bpchar',
+  'character varying',
+  'character',
+  'uuid',
+  'citext',
+]);
 
 /**
  * Column names that make a good record title, by convention. The first text-typed

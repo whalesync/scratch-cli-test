@@ -463,6 +463,94 @@ describe('SyncDraftService', () => {
       expect(dbService.client.syncDraft.updateMany).toHaveBeenCalled();
     });
 
+    it('allows the save when a schema-qualified "<schema>.<table>" token names a mapped table (DEV-11071)', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock)
+        .mockResolvedValueOnce(makeDraftRow({ version: 1 }))
+        .mockResolvedValueOnce(makeDraftRow({ version: 2 }));
+      (dbService.client.syncDraft.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      // Supabase folders carry a compound [projectRef, schema, table] remote id, and the pg
+      // connectors annotate a FK into a non-`public` schema as the dotted "<schema>.<table>".
+      // Neither table name is a bare segment match, so only the dot-joined suffix resolves it.
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_bios_src', tableId: ['projref', 'fable_qa', 'author_bios'] },
+        { id: 'dfd_authors_src', tableId: ['projref', 'fable_qa', 'authors'] },
+      ]);
+
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_bios',
+            source: { dataFolderId: 'dfd_bios_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_bios_dst' },
+            fieldAdditions: [
+              {
+                ref: 'fa_author',
+                createFieldSpec: {
+                  name: 'Author Id',
+                  fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'fable_qa.authors' } },
+                },
+              },
+            ],
+            columnMappings: [],
+          },
+          {
+            ref: 'tm_authors',
+            source: { dataFolderId: 'dfd_authors_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_authors_dst' },
+            columnMappings: [],
+          },
+        ],
+      };
+
+      await expect(service.patch(DRAFT_ID, dto as never, ACTOR)).resolves.toBeDefined();
+      expect(dbService.client.syncDraft.updateMany).toHaveBeenCalled();
+    });
+
+    it('still 422s a schema-qualified token whose table is absent from the draft (DEV-11071)', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ version: 1 }));
+      // Same schema is present, but no folder for `fable_qa.authors` — a bare-schema-segment
+      // match must NOT be enough to call the target satisfiable.
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_bios_src', tableId: ['projref', 'fable_qa', 'author_bios'] },
+      ]);
+
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_bios',
+            source: { dataFolderId: 'dfd_bios_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_bios_dst' },
+            fieldAdditions: [
+              {
+                ref: 'fa_author',
+                createFieldSpec: {
+                  name: 'Author Id',
+                  fieldType: { kind: 'foreignKey', target: { unresolvedLinkedTableId: 'fable_qa.authors' } },
+                },
+              },
+            ],
+            columnMappings: [],
+          },
+        ],
+      };
+
+      const error = await service.patch(DRAFT_ID, dto as never, ACTOR).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+        error: 'SYNC_DRAFT_FK_TARGET_MISSING',
+        missingTargets: [
+          {
+            tableMappingRef: 'tm_bios',
+            fieldName: 'Author Id',
+            target: { unresolvedLinkedTableId: 'fable_qa.authors' },
+          },
+        ],
+      });
+      expect(dbService.client.syncDraft.updateMany).not.toHaveBeenCalled();
+    });
+
     it('422s on a foreignKey { ref } that matches no placeholder table in the draft', async () => {
       (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ version: 1 }));
       (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([{ tableId: ['0-421'] }]);

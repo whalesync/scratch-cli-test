@@ -59,23 +59,18 @@ describe('inferLogicalFieldType', () => {
     );
   });
 
-  describe('multi-value → first-value truncation warning (DEV-10956)', () => {
-    const takeFirst = {
-      sourceIsMultiValued: true,
-      destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField: true,
-    };
-
-    it('warns that only the first value is exported for a multi-valued source into a take-first text field', () => {
-      // Postgres `text[]` / Airtable multi-select → a created Notion text field: the picker take-firsts, so
-      // the note must say only the first value survives — NOT the misleading "syncing as plain text".
-      const result = inferLogicalFieldType(field({ path: 'tags', type: 'array' }), undefined, 'Notion', takeFirst);
+  // DEV-11076: a multi-valued source into a created text field once earned an extra "only the first value
+  // will sync … dropped" warning (DEV-10956). It was false — the picker comma-joins every element into any
+  // destination slot that consumes a string, Notion `rich_text`/`title` included since DEV-10952 — so the
+  // note is gone and the accurate base wording stands for EVERY destination.
+  describe('multi-valued source into a created text field (DEV-11076)', () => {
+    it('keeps the base "syncing as plain text" wording for a native array source, whatever the destination', () => {
+      const result = inferLogicalFieldType(field({ path: 'tags', type: 'array' }), undefined, 'Notion');
       expect(result).toMatchObject({ status: 'downgraded', fieldType: { kind: 'text' } });
-      expect(result.message).toBe(
-        'only the first value will sync — this destination stores this field as a single value, not a list, so any additional values are dropped',
-      );
+      expect(result.message).toBe("Can't unpack this Notion array field, syncing as plain text");
     });
 
-    it('detects a multi-valued source declared by an array-emitting suggestedTransformer, not just a native array', () => {
+    it('keeps the base wording for a source declared multi-valued by an array-emitting suggestedTransformer', () => {
       const arraySource = field({
         path: 'people',
         type: 'object',
@@ -84,31 +79,13 @@ describe('inferLogicalFieldType', () => {
           options: { expression: '$[*]', arrayHandling: 'array' },
         },
       });
-      expect(inferLogicalFieldType(arraySource, undefined, 'Notion', takeFirst)).toMatchObject({
-        status: 'downgraded',
-      });
-      expect(inferLogicalFieldType(arraySource, undefined, 'Notion', takeFirst).message).toContain(
-        'only the first value will sync',
-      );
+      const result = inferLogicalFieldType(arraySource, undefined, 'Notion');
+      expect(result).toMatchObject({ status: 'downgraded' });
+      expect(result.message).not.toContain('only the first value will sync');
     });
 
-    it('keeps the base "syncing as plain text" wording when the destination comma-joins (flag absent/false)', () => {
-      // Airtable / Postgres text fields join every value losslessly — no truncation, so the base note stands.
-      expect(
-        inferLogicalFieldType(field({ path: 'tags', type: 'array' }), undefined, undefined, {
-          sourceIsMultiValued: true,
-        }).message,
-      ).toBe("Can't unpack this array field, syncing as plain text");
-    });
-
-    it('does not warn for a single-valued source even into a take-first destination', () => {
-      const singleValued = {
-        sourceIsMultiValued: false,
-        destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField: true,
-      };
-      expect(
-        inferLogicalFieldType(field({ path: 's', type: 'string' }), undefined, 'Notion', singleValued),
-      ).toMatchObject({
+    it('does not warn at all for a single-valued source', () => {
+      expect(inferLogicalFieldType(field({ path: 's', type: 'string' }), undefined, 'Notion')).toMatchObject({
         status: 'mapped',
         fieldType: { kind: 'text' },
       });
@@ -278,7 +255,7 @@ describe('generateCreatePlanFromSources', () => {
   });
 });
 
-describe('generateCreatePlanFromSources — multi-value → first-value truncation warning (DEV-10956)', () => {
+describe('generateCreatePlanFromSources — array source into a created text field (DEV-11076)', () => {
   const withArrayField: PlanGeneratorSource = {
     ref: 'items',
     dataFolderId: 'items',
@@ -288,25 +265,14 @@ describe('generateCreatePlanFromSources — multi-value → first-value truncati
     schemaFields: [field({ path: 'name', type: 'string' }), field({ path: 'tags', type: 'array' })],
   };
 
-  it('emits a downgraded truncation note when the destination keeps only the first value (Notion)', () => {
+  // Every destination comma-joins an array into a text field — Notion included, since its `rich_text`
+  // pack declares `fromCoreInputType: 'string'` (DEV-10952). So no destination gets the old
+  // "only the first value will sync … dropped" note; they all get the accurate base wording.
+  it.each([['Notion'], [undefined]])('keeps the base downgrade wording for destination %s', (displayName) => {
     const { notes } = generateCreatePlanFromSources({
       sources: [withArrayField],
       destinationConnectorAccountId: 'destConn',
-      destinationServiceDisplayName: 'Notion',
-      destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField: true,
-    });
-
-    const tagsNote = notes.find((n) => n.sourceFieldPath === 'tags');
-    expect(tagsNote).toMatchObject({ status: 'downgraded', mappedKind: 'text' });
-    expect(tagsNote?.message).toBe(
-      'only the first value will sync — this destination stores this field as a single value, not a list, so any additional values are dropped',
-    );
-  });
-
-  it('keeps the base downgrade wording for a comma-joining destination (flag absent)', () => {
-    const { notes } = generateCreatePlanFromSources({
-      sources: [withArrayField],
-      destinationConnectorAccountId: 'destConn',
+      ...(displayName ? { destinationServiceDisplayName: displayName } : {}),
     });
 
     const tagsNote = notes.find((n) => n.sourceFieldPath === 'tags');

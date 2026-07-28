@@ -48,6 +48,7 @@ import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
 import { buildSyncRoutineFile } from 'src/routine/routine-generator';
 import { RoutineService } from 'src/routine/routine.service';
+import { linkedTableIdCandidateTokensForRemoteTableId } from 'src/schema-builder/foreign-key-linked-table-id';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
 import {
   columnTransformInputFromSchemaField,
@@ -943,11 +944,11 @@ export class SyncDraftService {
       }
       if (!resolvedTarget) continue;
 
-      // A foreignKey's `unresolvedLinkedTableId` is a single source remote-id string;
-      // index every segment of the source table's remote id so either form resolves.
-      for (const remoteTableIdSegment of sourceRemoteTableId) {
-        if (!resolutionBySourceRemoteTableId.has(remoteTableIdSegment)) {
-          resolutionBySourceRemoteTableId.set(remoteTableIdSegment, resolvedTarget);
+      // A foreignKey's `unresolvedLinkedTableId` is a single source remote-id string; index every
+      // token the source table's compound remote id can be named by so either form resolves.
+      for (const candidateToken of linkedTableIdCandidateTokensForRemoteTableId(sourceRemoteTableId)) {
+        if (!resolutionBySourceRemoteTableId.has(candidateToken)) {
+          resolutionBySourceRemoteTableId.set(candidateToken, resolvedTarget);
         }
       }
     }
@@ -983,7 +984,9 @@ export class SyncDraftService {
     });
     const draftSourceRemoteTableIds = new Set<string>();
     for (const folder of folders) {
-      for (const remoteTableIdSegment of folder.tableId) draftSourceRemoteTableIds.add(remoteTableIdSegment);
+      for (const candidateToken of linkedTableIdCandidateTokensForRemoteTableId(folder.tableId)) {
+        draftSourceRemoteTableIds.add(candidateToken);
+      }
     }
 
     const missingTargets: SyncDraftMissingForeignKeyTarget[] = [];
@@ -1482,9 +1485,9 @@ export class SyncDraftService {
     });
     const sourceFolderIdByRemoteTableId = new Map<string, DataFolderId>();
     for (const folder of folders) {
-      for (const remoteTableIdSegment of folder.tableId) {
-        if (!sourceFolderIdByRemoteTableId.has(remoteTableIdSegment)) {
-          sourceFolderIdByRemoteTableId.set(remoteTableIdSegment, folder.id as DataFolderId);
+      for (const candidateToken of linkedTableIdCandidateTokensForRemoteTableId(folder.tableId)) {
+        if (!sourceFolderIdByRemoteTableId.has(candidateToken)) {
+          sourceFolderIdByRemoteTableId.set(candidateToken, folder.id as DataFolderId);
         }
       }
     }

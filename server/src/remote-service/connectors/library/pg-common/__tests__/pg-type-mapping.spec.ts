@@ -39,6 +39,17 @@ describe('mapScalarPgType', () => {
     }
   });
 
+  // DEV-11073: `information_schema.columns` reports `udt_name = 'bpchar'` for a character(n)/char(n)
+  // column, and the connectors map by udt_name — so without 'bpchar' the column fell through to
+  // Type.Unknown() and planning warned `Don't recognize … field type "unknown", syncing as plain text`.
+  it('maps every text-family spelling — including the char(n) udt `bpchar` — to a string with the TEXT connector type', () => {
+    for (const textType of ['text', 'varchar', 'character varying', 'char', 'character', 'bpchar', 'uuid', 'citext']) {
+      const { schema, pgType } = mapScalarPgType(textType);
+      expect((schema as { type?: string }).type).toBe('string');
+      expect(pgType).toBe(PostgresColumnType.TEXT);
+    }
+  });
+
   it('maps timestamp types to String(format: date-time)', () => {
     for (const timestampType of ['timestamp', 'timestamptz', 'timestamp with time zone']) {
       const { schema, pgType } = mapScalarPgType(timestampType);

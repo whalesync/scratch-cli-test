@@ -34,6 +34,7 @@ import { SchemaField, extractSchemaFields } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
+import { linkedTableIdCandidateTokensForRemoteTableId } from './foreign-key-linked-table-id';
 import { selectPlanFieldsFromTableView } from './schema-builder-field-selection';
 import { normalizeCreateSchema } from './schema-builder-normalizer';
 import {
@@ -359,7 +360,7 @@ export class SchemaBuilderService {
         schemaFields,
         primaryFieldPath: toDotPath(stored.titlePath),
         idFieldPath: typeof stored.idPath === 'string' ? stored.idPath : undefined,
-        remoteTableIds: folder.tableId,
+        remoteTableIds: linkedTableIdCandidateTokensForRemoteTableId(folder.tableId),
         ...(folder.connectorService
           ? {
               connectorService: folder.connectorService,
@@ -413,10 +414,6 @@ export class SchemaBuilderService {
       // Absent ⇒ true: only a destination that explicitly can't hold a two-way link (Postgres/Supabase)
       // drops both sides of a reciprocal N→N pair from a symmetric source (DEV-10753).
       destinationSupportsManyToManyForeignKeys: destinationCapabilities?.supportsManyToManyForeignKeys ?? true,
-      // Absent ⇒ false: only a destination whose text fields can't comma-join (Notion) truncates a
-      // multi-valued source to its first value, earning a downgrade note (DEV-10956).
-      destinationKeepsOnlyFirstValueWhenMultiValueMappedToTextField:
-        destinationCapabilities?.keepsOnlyFirstValueWhenMultiValueMappedToTextField ?? false,
     });
 
     // Sync transforms are NOT computed here: in a create plan every mapped
