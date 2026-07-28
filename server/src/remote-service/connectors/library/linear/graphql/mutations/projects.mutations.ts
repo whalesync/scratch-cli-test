@@ -82,6 +82,8 @@ export const PROJECTS_DELETE_MUTATION = `mutation ProjectDelete($id: String!) {
       slackIssueStatuses
       labelIds
       url
+      identifier
+      previousIdentifiers
       progress
       scope
       slackChannelId
@@ -118,6 +120,7 @@ export const PROJECTS_READ_ONLY_FIELDS = new Set([
   'healthUpdatedAt',
   'history',
   'id',
+  'identifier',
   'inProgressScopeHistory',
   'initiativeToProjects',
   'initiatives',
@@ -132,6 +135,7 @@ export const PROJECTS_READ_ONLY_FIELDS = new Set([
   'members',
   'microsoftTeamsChannelId',
   'needs',
+  'previousIdentifiers',
   'priorityLabel',
   'progress',
   'progressHistory',

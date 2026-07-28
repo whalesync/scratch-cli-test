@@ -28,52 +28,58 @@ function makeIssuesSchema() {
     trashed: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     branchName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     labelIds: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
-    state: Type.Optional(Type.Unknown()),
-    team: Type.Optional(
-      Type.Union([
-        Type.Object({
-          id: Type.Optional(Type.String()),
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+    // Every relation is read-only on Linear and — apart from `lead`/`delegate` — is pulled
+    // selecting only `{ id }`, which is what the generated schemas' annotations reflect.
+    state: markReadonly(Type.Optional(Type.Unknown())),
+    team: markReadonly(
+      Type.Optional(
+        Type.Union([
+          Type.Object({
+            id: Type.Optional(Type.String()),
+          }),
+          Type.Null(),
+        ]),
+      ),
     ),
-    project: Type.Optional(
-      Type.Union([
-        Type.Object({
-          id: Type.Optional(Type.String()),
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+    project: markReadonly(
+      Type.Optional(
+        Type.Union([
+          Type.Object({
+            id: Type.Optional(Type.String()),
+          }),
+          Type.Null(),
+        ]),
+      ),
     ),
-    cycle: Type.Optional(
-      Type.Union([
-        Type.Object({
-          id: Type.Optional(Type.String()),
-        }),
-        Type.Null(),
-      ]),
+    cycle: markReadonly(
+      Type.Optional(
+        Type.Union([
+          Type.Object({
+            id: Type.Optional(Type.String()),
+          }),
+          Type.Null(),
+        ]),
+      ),
     ),
-    assignee: Type.Optional(
-      Type.Union([
-        Type.Object({
-          id: Type.Optional(Type.String()),
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          email: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+    assignee: markReadonly(
+      Type.Optional(
+        Type.Union([
+          Type.Object({
+            id: Type.Optional(Type.String()),
+          }),
+          Type.Null(),
+        ]),
+      ),
     ),
-    creator: Type.Optional(
-      Type.Union([
-        Type.Object({
-          id: Type.Optional(Type.String()),
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+    creator: markReadonly(
+      Type.Optional(
+        Type.Union([
+          Type.Object({
+            id: Type.Optional(Type.String()),
+          }),
+          Type.Null(),
+        ]),
+      ),
     ),
     documentContent: Type.Optional(
       Type.Union([
@@ -134,32 +140,8 @@ describe('buildLinearDefaultView', () => {
       expect(reactCol.hidden).toBe(true);
     });
 
-    it('should add id subfields to team with selectedSubfield=0', () => {
-      const teamCol = view.cols.find((c) => c.kind === 'col' && c.path === 'team') as TableViewCol;
-      expect(teamCol.subfields).toBeDefined();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      expect(teamCol.subfields![0].relativePath).toBe('id');
-      expect(teamCol.selectedSubfield).toBe(0);
-    });
-
-    it('should add id subfields to project with selectedSubfield=0', () => {
-      const projectCol = view.cols.find((c) => c.kind === 'col' && c.path === 'project') as TableViewCol;
-      expect(projectCol.subfields).toBeDefined();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      expect(projectCol.subfields![0].relativePath).toBe('id');
-      expect(projectCol.selectedSubfield).toBe(0);
-    });
-
-    it('should add user subfields to assignee with name selected', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'assignee') as TableViewCol;
-      expect(col.subfields).toBeDefined();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      expect(col.subfields![0].relativePath).toBe('name');
-      expect(col.selectedSubfield).toBe(0);
-    });
-
-    it('should add user subfields to creator with name selected', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'creator') as TableViewCol;
+    it('should surface state as its human-readable name, not the raw object (DEV-11024)', () => {
+      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'state') as TableViewCol;
       expect(col.subfields).toBeDefined();
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('name');
@@ -213,7 +195,7 @@ describe('buildLinearDefaultView', () => {
     });
 
     it('should map array fields to object type', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'labelIds') as TableViewCol;
+      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'reactions') as TableViewCol;
       expect(col.type).toBe('object');
     });
 
@@ -250,6 +232,8 @@ describe('buildLinearDefaultView', () => {
       description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       slugId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       status: Type.Optional(Type.Unknown()),
+      // Unlike an Issue's `state`, a Project's is a plain enum string, not a reference object.
+      state: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       health: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       lead: Type.Optional(
         Type.Union([
@@ -271,11 +255,94 @@ describe('buildLinearDefaultView', () => {
       expect(col.hidden).toBe(true);
     });
 
-    it('should add user subfields to lead', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'lead') as TableViewCol;
+    it('should link lead to the Users table by its id', () => {
+      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'lead.id') as TableViewCol;
+      expect(col.foreignKey).toEqual({ linkedTableId: 'users', isSingleValued: true });
+      expect(col.name).toBe('Lead');
+      expect(col.subfields).toBeUndefined();
+    });
+
+    it('should pluck status.name instead of syncing the whole ProjectStatus object (DEV-11027)', () => {
+      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'status') as TableViewCol;
       expect(col.subfields).toBeDefined();
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      expect(col.subfields![0].relativePath).toBe('name');
+      expect(col.subfields![0]).toEqual({ relativePath: 'name', name: 'Name', type: 'string' });
+      expect(col.selectedSubfield).toBe(0);
+    });
+
+    it('should leave a Projects state alone — unlike an Issues state it is a plain enum string', () => {
+      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'state') as TableViewCol;
+      expect(col.subfields).toBeUndefined();
+      expect(col.selectedSubfield).toBeUndefined();
+    });
+  });
+
+  describe('relationship foreign keys (DEV-11023, DEV-11024)', () => {
+    const view = buildLinearDefaultView(makeIssuesSchema(), 'issues');
+    const colAt = (path: string) => view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol;
+
+    it.each([
+      ['team.id', 'Team', 'teams'],
+      ['project.id', 'Project', 'projects'],
+      ['cycle.id', 'Cycle', 'cycles'],
+      ['assignee.id', 'Assignee', 'users'],
+      ['creator.id', 'Creator', 'users'],
+    ])('should link %s to the %s table as a single-valued foreign key', (path, name, linkedTableId) => {
+      const col = colAt(path);
+      expect(col.foreignKey).toEqual({ linkedTableId, isSingleValued: true });
+      expect(col.name).toBe(name);
+      expect(col.type).toBe('string');
+    });
+
+    it('should link labelIds to Labels as a multi-valued foreign key on its own path', () => {
+      const col = colAt('labelIds');
+      expect(col.foreignKey).toEqual({ linkedTableId: 'labels', isSingleValued: false });
+    });
+
+    it('should not give a foreign-key column subfields, which would drop the declaration', () => {
+      for (const path of ['team.id', 'assignee.id', 'labelIds']) {
+        expect(colAt(path).subfields).toBeUndefined();
+        expect(colAt(path).selectedSubfield).toBeUndefined();
+      }
+    });
+
+    it('should carry the relation objects read-only flag onto the link column', () => {
+      expect(colAt('team.id').readonly).toBe(true);
+      // labelIds is writable on Linear, so its link column must not be marked read-only
+      expect(colAt('labelIds').readonly).toBeUndefined();
+    });
+
+    it('should no longer emit the raw relation object as its own column', () => {
+      for (const path of ['team', 'project', 'cycle', 'assignee', 'creator']) {
+        expect(colAt(path)).toBeUndefined();
+      }
+    });
+  });
+
+  describe('markdown bodies (DEV-11028)', () => {
+    it('should type a contentMediaType: text/markdown field as richtext', () => {
+      const schema = Type.Object({
+        title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      });
+      // Annotated the same way `linear-json-schema.ts` annotates the generated schemas.
+      (schema.properties.description as Record<string, unknown>).contentMediaType = 'text/markdown';
+      const view = buildLinearDefaultView(schema, 'issues');
+      const descriptionCol = view.cols.find((c) => c.kind === 'col' && c.path === 'description') as TableViewCol;
+      expect(descriptionCol.type).toBe('richtext');
+      const titleCol = view.cols.find((c) => c.kind === 'col' && c.path === 'title') as TableViewCol;
+      expect(titleCol.type).toBeUndefined();
+    });
+  });
+
+  describe('TimelessDate fields (DEV-11026)', () => {
+    it('should map a format: date string to the date type', () => {
+      const schema = Type.Object({
+        dueDate: Type.Optional(Type.Union([Type.String({ format: 'date' }), Type.Null()])),
+      });
+      const view = buildLinearDefaultView(schema, 'issues');
+      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'dueDate') as TableViewCol;
+      expect(col.type).toBe('date');
     });
   });
 

@@ -99,7 +99,14 @@ export type TableViewCol = {
   // HubSpot's "Associated X" columns, flattened from `associations.<type>.results[].id`.
   // (Per this type's contract above, the view deliberately carries schema-redundant
   // hints and is the source of truth for rendering decisions.)
-  foreignKey?: { linkedTableId: string };
+  //
+  // `isSingleValued` mirrors the schema annotation's field of the same name: true when
+  // the column links to at most ONE record (Linear's `team`/`assignee`), false/unset when
+  // it can link to many (HubSpot associations, Linear's `labelIds`). A relation left
+  // unset is treated as multi-valued, which makes a destination that stores a foreign key
+  // in a single scalar column (Postgres/Supabase) report the field as narrowed — so a
+  // genuinely single-valued link should say so.
+  foreignKey?: { linkedTableId: string; isSingleValued?: boolean };
 
   // When the field is an object, we may want to define a few subfields for the user to pick between, for
   // ergonomics. To the user, a complex object might only have one interesting field, which accurately represents it. For example,

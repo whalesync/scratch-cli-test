@@ -592,9 +592,13 @@ ${properties}
       return name;
     }
 
-    // Reference-only fields get { id } (only for object types — scalar check above handles the rest)
-    if (this.fieldFilters.referenceOnlyFields.has(name)) {
-      return `${name} { id }`;
+    // Reference fields select only the named leaves — usually just `id` — instead of expanding the
+    // whole linked type. Checked before skipExpansionTypes below, so a reference selection also
+    // reaches a type that is otherwise never expanded. (Object types only; the scalar check above
+    // has already handled the rest.)
+    const referenceSelection = this.fieldFilters.referenceFieldSelections[name];
+    if (referenceSelection) {
+      return `${name} { ${referenceSelection.join(" ")} }`;
     }
 
     // Nested object types

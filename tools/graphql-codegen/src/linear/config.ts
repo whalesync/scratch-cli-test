@@ -23,7 +23,13 @@ export const LINEAR_SCALAR_MAPPINGS: Record<string, ScalarMapping> = {
   Boolean: { typeboxType: "boolean", nullable: true },
   ID: { typeboxType: "string", nullable: false },
   DateTime: { typeboxType: "string", nullable: true, format: "date-time" },
-  TimelessDate: { typeboxType: "string", nullable: true },
+  // Calendar date with no time component (Issue `dueDate`, Project `startDate`/`targetDate`).
+  // Without `format` these generate as bare strings, and every date-detection path downstream —
+  // the default view's `mapType`, and through it the Live Export plan — types them as text
+  // rather than a real date column (DEV-11026). `linear-json-schema.ts` annotates the top-level
+  // fields at runtime so the fix holds until the schemas are next regenerated; regenerating makes
+  // that annotation redundant and additionally covers the nested copies.
+  TimelessDate: { typeboxType: "string", nullable: true, format: "date" },
   JSON: { typeboxType: "unknown", nullable: true },
   JSONObject: { typeboxType: "unknown", nullable: true },
   UUID: { typeboxType: "string", nullable: true },
@@ -78,18 +84,23 @@ export const LINEAR_FIELD_FILTERS: FieldFilterConfig = {
     "issueSearch",
   ]),
 
-  referenceOnlyFields: new Set([
-    // Fields that should only include { id } in queries
-    "creator",
-    "assignee",
-    "team",
-    "project",
-    "cycle",
-    "parent",
-    "state",
-    "snoozedBy",
-    "favorite",
-  ]),
+  referenceFieldSelections: {
+    // Each of these links to a Linear entity we expose as its own table, so the id — the remote id
+    // of the linked record — is all the default view's foreign key needs (DEV-11023).
+    creator: ["id"],
+    assignee: ["id"],
+    team: ["id"],
+    project: ["id"],
+    cycle: ["id"],
+    parent: ["id"],
+    snoozedBy: ["id"],
+    favorite: ["id"],
+    // `state` is the exception: `WorkflowState` is NOT one of the six entity types we expose, so
+    // there is no Workflow States table for a foreign key to resolve against and no other way for
+    // the human-readable status to reach a destination. Selecting only `{ id }` exported every
+    // issue's status as an opaque uuid (DEV-11024), so pull the displayable fields with it.
+    state: ["id", "name", "type", "color", "position", "description"],
+  },
 
   skipExpansionTypes: new Set([
     // Types that should not be expanded in schemas
@@ -184,7 +195,11 @@ export const LINEAR_ENTITIES: EntityConfig[] = [
     readOnly: true,
     columns: {
       slug: "number",
-      title: ["number"],
+      // `name`, not `number`: the title column also designates a table's PRIMARY field, and Notion
+      // only accepts a text primary — a number-typed one aborted the whole atomic create (DEV-11025).
+      // `number` stays the slug so record filenames still fall back to it. `linear-json-schema.ts`
+      // applies the same override at runtime until the schemas are next regenerated.
+      title: ["name"],
     },
   },
 ];

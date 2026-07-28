@@ -6,11 +6,11 @@
  */
 
 export const GENERATED_METADATA = {
-  generatedAt: '2026-07-22T00:41:34.819Z',
+  generatedAt: '2026-07-28T19:33:18.956Z',
   entities: ['issues', 'projects', 'teams', 'users', 'labels', 'cycles'],
 } as const;
 
-export const GENERATED_AT = '2026-07-22T00:41:34.819Z';
+export const GENERATED_AT = '2026-07-28T19:33:18.956Z';
 export const GENERATED_ENTITIES = ['issues', 'projects', 'teams', 'users', 'labels', 'cycles'] as const;
 
 export type GeneratedEntityType = (typeof GENERATED_ENTITIES)[number];

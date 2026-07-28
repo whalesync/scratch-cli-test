@@ -30,7 +30,7 @@ export const IssuesSchema = Type.Object(
     canceledAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     autoClosedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     autoArchivedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
-    dueDate: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    dueDate: Type.Optional(Type.Union([Type.String({ format: 'date' }), Type.Null()])),
     slaStartedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     slaMediumRiskAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
     slaHighRiskAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -218,9 +218,9 @@ export const IssuesSchema = Type.Object(
           projectUpdateRemindersPausedUntilAt: Type.Optional(
             Type.Union([Type.String({ format: 'date-time' }), Type.Null()]),
           ),
-          startDate: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          startDate: Type.Optional(Type.Union([Type.String({ format: 'date' }), Type.Null()])),
           startDateResolution: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          targetDate: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          targetDate: Type.Optional(Type.Union([Type.String({ format: 'date' }), Type.Null()])),
           targetDateResolution: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           startedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           completedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -248,6 +248,8 @@ export const IssuesSchema = Type.Object(
           labelIds: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
           favorite: Type.Optional(Type.Unknown()),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          identifier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          previousIdentifiers: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
           initiatives: Type.Optional(Type.Unknown()),
           initiativeToProjects: Type.Optional(Type.Unknown()),
           externalLinks: Type.Optional(Type.Unknown()),
@@ -274,7 +276,7 @@ export const IssuesSchema = Type.Object(
           archivedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           documentContent: Type.Optional(Type.Unknown()),
-          targetDate: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          targetDate: Type.Optional(Type.Union([Type.String({ format: 'date' }), Type.Null()])),
           project: Type.Optional(Type.Unknown()),
           progressHistory: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
           currentProgress: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
@@ -677,7 +679,7 @@ export const IssuesSchema = Type.Object(
           canceledAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           autoClosedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           autoArchivedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
-          dueDate: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          dueDate: Type.Optional(Type.Union([Type.String({ format: 'date' }), Type.Null()])),
           slaStartedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           slaMediumRiskAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           slaHighRiskAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -1014,7 +1016,7 @@ IssuesSchema.properties.url[X_SCRATCH_READONLY] = true;
 /**
  * GraphQL query field selection for Issues
  */
-export const ISSUES_QUERY_FIELDS = `id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary summary { id createdAt updatedAt archivedAt content evalLogId generationStatus generatedAt } labelIds team { id } cycle { id } project { id } projectMilestone { id createdAt updatedAt archivedAt name targetDate progressHistory currentProgress sortOrder description status progress } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } recurringIssueTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } previousIdentifiers creator { id } assignee { id } delegate { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } snoozedBy { id } state { id } subIssueSortOrder reactionData priorityLabel sourceComment { id createdAt updatedAt archivedAt body issueId documentContentId projectUpdateId initiativeUpdateId projectId initiativeId parentId resolvedAt resolvingCommentId editedAt bodyData quotedText reactionData threadSummary isArtificialAgentSessionRoot url hideInLinear } trusted inheritsSharedAccess favorite { id } identifier url branchName sharedAccess { isShared viewerHasOnlySharedAccess sharedWithCount disallowedIssueFields } customerTicketCount parent { id } description documentContent { id createdAt updatedAt archivedAt content restoredAt } reactions { id createdAt updatedAt archivedAt emoji } syncedWith { id service } asksRequester { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } asksExternalUserRequester { id createdAt updatedAt archivedAt name displayName email avatarUrl lastSeen }`;
+export const ISSUES_QUERY_FIELDS = `id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary summary { id createdAt updatedAt archivedAt content evalLogId generationStatus generatedAt } labelIds team { id } cycle { id } project { id } projectMilestone { id createdAt updatedAt archivedAt name targetDate progressHistory currentProgress sortOrder description status progress } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } recurringIssueTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } previousIdentifiers creator { id } assignee { id } delegate { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } snoozedBy { id } state { id name type color position description } subIssueSortOrder reactionData priorityLabel sourceComment { id createdAt updatedAt archivedAt body issueId documentContentId projectUpdateId initiativeUpdateId projectId initiativeId parentId resolvedAt resolvingCommentId editedAt bodyData quotedText reactionData threadSummary isArtificialAgentSessionRoot url hideInLinear } trusted inheritsSharedAccess favorite { id } identifier url branchName sharedAccess { isShared viewerHasOnlySharedAccess sharedWithCount disallowedIssueFields } customerTicketCount parent { id } description documentContent { id createdAt updatedAt archivedAt content restoredAt } reactions { id createdAt updatedAt archivedAt emoji } syncedWith { id service } asksRequester { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } asksExternalUserRequester { id createdAt updatedAt archivedAt name displayName email avatarUrl lastSeen }`;
 
 /**
  * Entity configuration for Issues

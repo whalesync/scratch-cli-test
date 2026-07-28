@@ -121,7 +121,10 @@ export function selectPlanFieldsFromTableView(args: {
     // can't reach it. Prefer the declaration; otherwise the FK (if any) came from the
     // joined backing schema field.
     if (col.foreignKey && !derivedField.foreignKey) {
-      derivedField.foreignKey = { linkedTableId: col.foreignKey.linkedTableId };
+      derivedField.foreignKey = {
+        linkedTableId: col.foreignKey.linkedTableId,
+        ...(col.foreignKey.isSingleValued !== undefined ? { isSingleValued: col.foreignKey.isSingleValued } : {}),
+      };
     }
 
     schemaFields.push(derivedField);

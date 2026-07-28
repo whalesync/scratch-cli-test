@@ -24,8 +24,14 @@ export interface FieldFilterConfig {
   skipConnections: Set<string>;
   /** Fields that require arguments and should be skipped */
   fieldsRequiringArgs: Set<string>;
-  /** Fields that should only include { id } in queries */
-  referenceOnlyFields: Set<string>;
+  /**
+   * Relation fields pulled as a narrow reference instead of a fully expanded nested object, keyed
+   * by field name → the scalar leaves to select. Almost always `["id"]`: the id is the remote id
+   * of the linked record, which is all a foreign key needs. Name a wider set only when the linked
+   * type is NOT exposed as a table of its own, so nothing else can supply its human-readable
+   * fields (Linear's `state` → `WorkflowState`).
+   */
+  referenceFieldSelections: Record<string, string[]>;
   /** Object types that should not be expanded */
   skipExpansionTypes: Set<string>;
 }

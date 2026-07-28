@@ -217,13 +217,15 @@ export const SHOPIFY_FIELD_FILTERS: FieldFilterConfig = {
     "localizedFields",
   ]),
 
-  referenceOnlyFields: new Set([
-    "customer",
-    "product",
-    "variant",
-    "featuredMedia",
-    "featuredImage",
-  ]),
+  // Each of these links to a type Shopify exposes as its own table, so the id — the remote id of
+  // the linked record — is all a foreign key needs.
+  referenceFieldSelections: {
+    customer: ["id"],
+    product: ["id"],
+    variant: ["id"],
+    featuredMedia: ["id"],
+    featuredImage: ["id"],
+  },
 
   skipExpansionTypes: new Set([
     "Publication",

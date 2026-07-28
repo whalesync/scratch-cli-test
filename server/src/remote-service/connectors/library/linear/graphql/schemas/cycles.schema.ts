@@ -244,6 +244,6 @@ export const CYCLES_CONFIG = {
   readOnly: true,
   columns: {
     slug: 'number',
-    title: ['number'],
+    title: ['name'],
   },
 } as const;
