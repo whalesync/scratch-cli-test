@@ -32,8 +32,16 @@ const autoConvert = (targetType: 'string' | 'number' | 'boolean'): TransformerCo
 });
 // The pre-pack coercion into a native-scalar pack (number/checkbox) carries `preserveNull`, so an empty
 // source stays null into the pack and its `emptyTemplate` clears the field instead of writing 0/false
-// (DEV-10953). Distinct from the pack-less coercion floor (`autoConvert`), which never preserves null.
+// (DEV-10953).
 const packCoerce = (targetType: 'number' | 'boolean'): TransformerConfig => ({
+  type: 'auto_convert',
+  options: { targetType, preserveNull: true },
+});
+// The pack-less coercion floor into a native-scalar destination column (Supabase/Postgres numeric,
+// Airtable Number/checkbox) ALSO carries `preserveNull`, so an empty/unset source stays null into the raw
+// column instead of coercing to a spurious `0` / `false` (DEV-11079). Only `number`/`integer`/`boolean`
+// floors preserve null; a `string`/`array` floor keeps its well-defined empty (`''` / `[]`).
+const floorCoerce = (targetType: 'number' | 'integer' | 'boolean'): TransformerConfig => ({
   type: 'auto_convert',
   options: { targetType, preserveNull: true },
 });
@@ -69,10 +77,10 @@ describe('getSuggestedTransform', () => {
       ]);
     });
 
-    it('single→single falls back to the auto_convert floor on a primitive mismatch', () => {
+    it('single→single falls back to the auto_convert floor on a primitive mismatch (preserving null, DEV-11079)', () => {
       expect(
         chainOf(getSuggestedTransform(col({ primitiveType: 'string' }), col({ primitiveType: 'number' }))),
-      ).toEqual([autoConvert('number')]);
+      ).toEqual([floorCoerce('number')]);
     });
 
     it('multi→multi with matching element strings is an empty (verbatim-copy) chain', () => {
@@ -115,7 +123,7 @@ describe('getSuggestedTransform', () => {
             col({ cardinality: 'single', primitiveType: 'number', logicalType: 'number' }),
           ),
         ),
-      ).toEqual([takeFirst, autoConvert('number')]);
+      ).toEqual([takeFirst, floorCoerce('number')]);
     });
 
     it('takes the first element into a strict single-select target, then floors it (element type unknown after first)', () => {
@@ -169,6 +177,49 @@ describe('getSuggestedTransform', () => {
     expect(chainOf(getSuggestedTransform(col({ primitiveType: 'string' }), col({ primitiveType: 'object' })))).toEqual(
       [],
     );
+  });
+
+  // DEV-11079: the pack-less coercion floor into a raw native-scalar destination column (Supabase/Postgres
+  // numeric, Airtable Number/checkbox) must carry `preserveNull`, so an unset/cleared source stays null and
+  // publishes as null/empty instead of a spurious `0` / `false`. `string`/`array` floors keep their empty.
+  describe('coercion floor preserves null into a native-scalar destination (DEV-11079)', () => {
+    // The exact Affinity → Supabase/Airtable shape: an Affinity number field extracts through a `toCore`
+    // jsonpath codec (so the floor always runs — `isSameShapeSameType` never fires with a codec present) and
+    // lands in a raw Number column with no `fromCore` pack. An unset Affinity number is null; the floor must
+    // not turn it into 0.
+    const affinityNumberUnpack: TransformerConfig = {
+      type: 'jsonpath',
+      options: { expression: '$.value.data', arrayHandling: 'first' },
+    };
+
+    it('floors an extracted Affinity number into a raw number column, preserving null', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ toCore: affinityNumberUnpack, logicalType: 'number' }),
+            col({ primitiveType: 'number', logicalType: 'number' }),
+          ),
+        ),
+      ).toEqual([affinityNumberUnpack, floorCoerce('number')]);
+    });
+
+    it('preserves null when flooring into an integer column', () => {
+      expect(
+        chainOf(getSuggestedTransform(col({ primitiveType: 'string' }), col({ primitiveType: 'integer' }))),
+      ).toEqual([floorCoerce('integer')]);
+    });
+
+    it('preserves null when flooring into a boolean column', () => {
+      expect(
+        chainOf(getSuggestedTransform(col({ primitiveType: 'string' }), col({ primitiveType: 'boolean' }))),
+      ).toEqual([floorCoerce('boolean')]);
+    });
+
+    it('does NOT preserve null when flooring into a string column (empty stays "")', () => {
+      expect(
+        chainOf(getSuggestedTransform(col({ primitiveType: 'number' }), col({ primitiveType: 'string' }))),
+      ).toEqual([autoConvert('string')]);
+    });
   });
 
   describe('non-scalar source → destination pack (DEV-10828)', () => {

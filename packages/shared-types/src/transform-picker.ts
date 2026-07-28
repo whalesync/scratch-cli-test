@@ -133,6 +133,21 @@ const AUTO_CONVERTIBLE_TARGET_TYPES: ReadonlySet<string> = new Set<AutoConvertOp
 const NON_SCALAR_SOURCE_PRIMITIVE_TYPES: ReadonlySet<string> = new Set(['object', 'array']);
 
 /**
+ * Coercion-floor target types whose `auto_convert` must carry `preserveNull` so a cleared/unset source
+ * value stays `null` through the floor instead of being coerced to a spurious concrete value — an empty
+ * number publishing as `0` or a cleared checkbox as `false` (DEV-11079). Mirrors {@link packInputCoercion}'s
+ * native-scalar preserveNull (DEV-10953) for the pack-less raw-scalar destinations (Supabase/Postgres
+ * numeric, Airtable Number) that go through the floor rather than a `fromCore` pack. `'string'` and
+ * `'array'` are excluded: `null → ''` / `null → []` is the well-defined empty for those and stays
+ * byte-identical to today's behaviour.
+ */
+const PRESERVE_NULL_FLOOR_TARGET_TYPES: ReadonlySet<string> = new Set<AutoConvertOptions['targetType']>([
+  'number',
+  'integer',
+  'boolean',
+]);
+
+/**
  * Whether a source field's declared type (from {@link FieldTransformHints.type}) gives NO guarantee
  * that the runtime value entering a destination pack is a string: the type is absent, the schema says
  * `'unknown'` (an un-modeled connector field, `Type.Unknown()`), or it is a nested `object`. A declared
@@ -326,9 +341,12 @@ function coercionFloorForDestination(
     source.primitiveType !== undefined &&
     source.primitiveType === targetType;
   if (isSameShapeSameType) return undefined;
+  // preserveNull for native-scalar floor targets (number/integer/boolean) so a cleared source stays
+  // `null` into the raw destination column instead of becoming a spurious `0` / `false` (DEV-11079).
+  const preserveNull = PRESERVE_NULL_FLOOR_TARGET_TYPES.has(targetType) ? { preserveNull: true } : undefined;
   return {
     type: TransformerTypes.AutoConvert,
-    options: { targetType: targetType as AutoConvertOptions['targetType'] },
+    options: { targetType: targetType as AutoConvertOptions['targetType'], ...preserveNull },
   };
 }
 
