@@ -4,7 +4,7 @@ import { RoutineParserService } from '../routine-parser.service';
 
 interface ParsedRoutineYaml {
   name: string;
-  steps: Array<Record<string, string>>;
+  steps: Array<Record<string, unknown>>;
 }
 
 const parser = new RoutineParserService();
@@ -32,8 +32,8 @@ describe('buildSyncRoutineFile', () => {
           name: 'Prepare workspace for sync',
           comment: 'Pre-flight: clear any leftover unpublished edits so the sync starts from a clean slate.',
         },
-        { action: 'pull', name: 'Pull Source', connection: 'coa_123' },
-        { action: 'pull', name: 'Pull Destination', connection: 'coa_456' },
+        { action: 'pull', name: 'Pull Source', connection: 'coa_123', options: { fullPull: true } },
+        { action: 'pull', name: 'Pull Destination', connection: 'coa_456', options: { fullPull: true } },
         { action: 'sync', name: 'Run Sync', sync: 'syn_111111' },
         { action: 'publish', name: 'Publish to Destination', connection: 'coa_456' },
       ],
@@ -144,5 +144,29 @@ describe('buildSyncRoutineFile', () => {
       'Run Sync',
       'Publish to Destination',
     ]);
+  });
+
+  it('marks every pull step — source and destination — as a full pull', () => {
+    // Incremental pulls skip stale-file reconciliation, so an upstream delete (or a destination page
+    // archived out of its list endpoint) would never reach the sync. Every generated pull says full.
+    const file = buildSyncRoutineFile({
+      syncDisplayName: 'Full Pulls',
+      syncId: 'syn_fulla12345',
+      sourceConnectorAccountIds: ['coa_src_a', 'coa_src_b'],
+      destinationConnectorAccountIds: ['coa_dest_a', 'coa_dest_b'],
+    });
+
+    const pullSteps = loadRoutine(file.content).steps.filter((step) => step.action === 'pull');
+    expect(pullSteps).toHaveLength(4);
+    for (const pullStep of pullSteps) {
+      expect(pullStep.options).toEqual({ fullPull: true });
+    }
+    // The shared options object must be emitted inline on every step, never as a YAML anchor/alias
+    // (`&ref_0` / `*ref_0`) — the parser's strict step schema would reject an alias-shaped value.
+    expect(file.content).not.toContain('*ref_');
+
+    // And the result still round-trips through the real parser, which rejects unknown option keys.
+    const parseResult = parser.parse(file.content);
+    expect('routine' in parseResult).toBe(true);
   });
 });

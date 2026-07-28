@@ -1,4 +1,4 @@
-import { RoutineAction } from '@spinner/shared-types';
+import { RoutineAction, RoutineStepOptions } from '@spinner/shared-types';
 import { dump as dumpYaml } from 'js-yaml';
 import { ROUTINES_DIRECTORY } from './routine-file-path';
 
@@ -31,7 +31,24 @@ interface GeneratedRoutineStep {
   connection?: string;
   sync?: string;
   comment?: string;
+  options?: RoutineStepOptions;
 }
+
+/**
+ * Every generated pull step is a FULL pull, on both the source and the destination side.
+ *
+ * A sync that mirrors deletions (`unmatchedDestinationPolicy.withMatchKey: 'delete'`) and a
+ * destination that self-heals out-of-band drift both depend on the pull having reconciled
+ * deletions — and only a full pull does that: `deleteStaleFiles` removes record files absent from
+ * the pull, which is what turns an upstream deletion into a planned destination delete, and a
+ * destination record that vanished (deleted, or archived out of Notion's `databases/query`) into a
+ * planned re-create. An incremental pull deliberately skips that reconciliation because "absent"
+ * is ambiguous there, and most services never surface a deletion in the incremental window at all.
+ *
+ * Routine pulls are incremental unless a step opts out, so a generated sync routine has to say so
+ * explicitly — and the YAML the user reads then states the mode the sync depends on.
+ */
+const FULL_PULL_STEP_OPTIONS: RoutineStepOptions = { fullPull: true };
 
 /**
  * Builds the routine that runs a sync end to end: clear any leftover working-set edits, pull every
@@ -46,7 +63,8 @@ interface GeneratedRoutineStep {
  * The file path is keyed on the SyncId (`routines/run-<syncId>.yaml`) so it is guaranteed valid
  * (a single file under `routines/`, no "..", no nested "/") and unique per sync.
  *
- * A connection-only pull step (no `folders`) means "pull all linked folders for that connection".
+ * A connection-only pull step (no `folders`) means "pull all linked folders for that connection", and
+ * every pull step is a full pull (see {@link FULL_PULL_STEP_OPTIONS}).
  * Step names must be unique within a routine (the parser enforces it): a bare "Pull Source" /
  * "Pull Destination" / "Publish to Destination" suffices when a side has a single connection; when
  * a side spans multiple connections we suffix the connector account id to keep names unique.
@@ -73,6 +91,7 @@ export function buildSyncRoutineFile(spec: SyncRoutineSpec): GeneratedRoutineFil
       action: RoutineAction.PULL,
       name: distinctSourceConnectorAccountIds.length > 1 ? `Pull Source (${connectorAccountId})` : 'Pull Source',
       connection: connectorAccountId,
+      options: FULL_PULL_STEP_OPTIONS,
     });
   }
 
@@ -84,6 +103,7 @@ export function buildSyncRoutineFile(spec: SyncRoutineSpec): GeneratedRoutineFil
           ? `Pull Destination (${connectorAccountId})`
           : 'Pull Destination',
       connection: connectorAccountId,
+      options: FULL_PULL_STEP_OPTIONS,
     });
   }
 

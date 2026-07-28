@@ -1730,7 +1730,7 @@ describe('SyncDraftService', () => {
       const [calledWorkbookId, file] = firstCreateRoutineCall();
       expect(calledWorkbookId).toBe(WORKBOOK_ID);
       expect(file.path).toBe('routines/run-syn_new.yaml');
-      const routine = loadYaml(file.content) as { name: string; steps: Array<Record<string, string>> };
+      const routine = loadYaml(file.content) as { name: string; steps: Array<Record<string, unknown>> };
       expect(routine.name).toBe('Run Sync Contacts Sync');
       expect(routine.steps).toEqual([
         {
@@ -1738,8 +1738,9 @@ describe('SyncDraftService', () => {
           name: 'Prepare workspace for sync',
           comment: 'Pre-flight: clear any leftover unpublished edits so the sync starts from a clean slate.',
         },
-        { action: 'pull', name: 'Pull Source', connection: 'coa_src' },
-        { action: 'pull', name: 'Pull Destination', connection: 'coa_dst' },
+        // Both pulls are full: only a full pull reconciles upstream deletions into the sync.
+        { action: 'pull', name: 'Pull Source', connection: 'coa_src', options: { fullPull: true } },
+        { action: 'pull', name: 'Pull Destination', connection: 'coa_dst', options: { fullPull: true } },
         { action: 'sync', name: 'Run Sync', sync: 'syn_new' },
         { action: 'publish', name: 'Publish to Destination', connection: 'coa_dst' },
       ]);
