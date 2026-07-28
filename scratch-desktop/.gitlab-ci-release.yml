@@ -35,6 +35,8 @@ include:
     - scratch-desktop/.gitlab-ci-release.yml
     - scratch-desktop/scripts/bootstrap_release.sh
     - scratch-desktop/scripts/package.sh
+    - scratch-desktop/scripts/verify-fuses.cjs
+    - scratch-desktop/scripts/expected-fuses.cjs
     - scratch-desktop/scripts/upload_assets.sh
     - scratch-desktop/scripts/finalize_release.sh
     - scratch-desktop/scripts/ensure_draft_release.sh

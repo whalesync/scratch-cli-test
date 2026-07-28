@@ -28,10 +28,43 @@ const FUSE_WIRE_BYTE_ENABLED = '1'.charCodeAt(0);
 const desktopPackageDir = path.resolve(__dirname, '..');
 const distDir = path.join(desktopPackageDir, 'dist');
 
+// electron-builder names the Linux executable after `executableName`, which defaults to
+// package.json `name` ("scratch-desktop"), lowercased. Crucially this is NOT `productName`, so
+// the release build's `-c.productName="Scratch (Test)"` override does not change it — making the
+// package name the reliable way to find the app binary in dist/linux-unpacked/.
+const expectedLinuxExecutableName = String(require(path.join(desktopPackageDir, 'package.json')).name).toLowerCase();
+
+// Chromium ships these extension-less executables next to the Electron app binary in
+// dist/linux-unpacked/. Only the app binary carries a fuse sentinel, so a helper must never be
+// mistaken for it (reading fuses from chrome-sandbox is what broke the Package test Linux job).
+const CHROMIUM_HELPER_EXECUTABLE_NAMES = new Set(['chrome-sandbox', 'chrome_crashpad_handler']);
+
 /**
- * electron-builder names the unpacked output dir per platform/arch, and the executable
- * inside it after `productName` (which release builds override to "Scratch (Test)").
- * Rather than re-deriving all of that, glob for the one plausible candidate.
+ * Pick the Electron app binary out of the extension-less executables in dist/linux-unpacked/.
+ * Prefer an exact match on the known executable name; if that is absent (e.g. a future
+ * executableName change), fall back to the single non-helper executable, erroring loudly when
+ * the choice is ambiguous rather than silently verifying the wrong file.
+ */
+function selectLinuxAppExecutableName(extensionlessExecutableNames, expectedExecutableName) {
+  if (extensionlessExecutableNames.includes(expectedExecutableName)) {
+    return expectedExecutableName;
+  }
+  const nonHelperExecutableNames = extensionlessExecutableNames.filter(
+    (name) => !CHROMIUM_HELPER_EXECUTABLE_NAMES.has(name),
+  );
+  if (nonHelperExecutableNames.length === 1) {
+    return nonHelperExecutableNames[0];
+  }
+  throw new Error(
+    `verify-fuses: could not identify the Linux app binary (expected '${expectedExecutableName}'). ` +
+      `Extension-less executables found: [${extensionlessExecutableNames.join(', ') || 'none'}].`,
+  );
+}
+
+/**
+ * electron-builder names the unpacked output dir per platform/arch. The executable inside it is
+ * named after `productName` (which release builds override to "Scratch (Test)") on mac/windows,
+ * or after `executableName` on linux. Locate the one binary to verify.
  */
 function findPackagedBinaryPath(platform) {
   if (!fs.existsSync(distDir)) {
@@ -64,21 +97,24 @@ function findPackagedBinaryPath(platform) {
     return path.join(distDir, winOutputDir.name, executables[0]);
   }
 
-  // Linux: dist/linux-unpacked/scratch — the ELF next to resources/, identified by the
-  // sibling directory rather than by name (electron-builder lowercases executableName).
+  // Linux: dist/linux-unpacked/scratch-desktop — the ELF next to resources/. The unpacked dir
+  // also holds Chromium's own extension-less executables (chrome-sandbox, chrome_crashpad_handler),
+  // so select the app binary by its known executableName rather than taking the first executable.
   const linuxOutputDir = distEntries.find((entry) => entry.name.startsWith('linux-unpacked'));
   if (!linuxOutputDir) {
     throw new Error(`verify-fuses: no linux-unpacked/ directory under ${distDir}`);
   }
   const linuxOutputPath = path.join(distDir, linuxOutputDir.name);
-  const candidateExecutables = fs
+  const extensionlessExecutableNames = fs
     .readdirSync(linuxOutputPath, { withFileTypes: true })
     .filter((entry) => entry.isFile() && !path.extname(entry.name))
-    .filter((entry) => (fs.statSync(path.join(linuxOutputPath, entry.name)).mode & 0o111) !== 0);
-  if (candidateExecutables.length === 0) {
-    throw new Error(`verify-fuses: no executable found under ${linuxOutputPath}`);
-  }
-  return path.join(linuxOutputPath, candidateExecutables[0].name);
+    .filter((entry) => (fs.statSync(path.join(linuxOutputPath, entry.name)).mode & 0o111) !== 0)
+    .map((entry) => entry.name);
+  const linuxAppExecutableName = selectLinuxAppExecutableName(
+    extensionlessExecutableNames,
+    expectedLinuxExecutableName,
+  );
+  return path.join(linuxOutputPath, linuxAppExecutableName);
 }
 
 function describeFuseWireByte(wireByte) {
@@ -138,7 +174,13 @@ async function main() {
   console.log(`verify-fuses: all ${ALL_EXPECTED_FUSES.length} fuses match the expected posture.`);
 }
 
-main().catch((error) => {
-  console.error(`verify-fuses: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
-});
+// Only auto-run when invoked directly (node scripts/verify-fuses.cjs …); when required by a unit
+// test we just want the exported helpers, not main()'s process.exit.
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`verify-fuses: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { selectLinuxAppExecutableName };
