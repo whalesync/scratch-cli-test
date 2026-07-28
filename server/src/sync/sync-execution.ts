@@ -22,7 +22,9 @@ import {
   SyncPhase,
   SyncRecord,
 } from 'src/sync/transformers';
+import { isValidWritableCalendarDateString } from 'src/utils/date-validity';
 import { readFieldValueAtPath, setFieldValueAtPath } from 'src/utils/field-path';
+import { getSchemaAtPath, schemaIsIsoDateStringColumn } from './schema-validator';
 
 export interface TransformRecordResult {
   fields: Record<string, unknown>;
@@ -197,6 +199,31 @@ export async function transformRecordAsync(
         });
         throw new Error(`Failed to transform field "${mapping.sourceColumnId}": ${result.error}`);
       }
+    }
+
+    // Shared date-fidelity guard (DEV-11044). A destination date/date-time column only
+    // accepts a real calendar instant, but a source service can store a nonexistent one
+    // verbatim (Pipedrive's v1 API accepts `"2026-02-29"` — 2026 is not a leap year).
+    // Left untouched it reaches every destination's date column and is rejected, losing
+    // the WHOLE record on every run (`new Date("2026-02-29")` even parses — it silently
+    // rolls to March 1 — so nothing upstream catches it). Warn-and-null just this field
+    // so the rest of the record still syncs. Connector-agnostic: runs for every flat
+    // date destination (Airtable, Postgres/Supabase, Webflow, …); Notion's wrapped date
+    // shape is guarded in its own write path.
+    if (
+      !skip &&
+      typeof transformedValue === 'string' &&
+      transformedValue.trim() !== '' &&
+      !isValidWritableCalendarDateString(transformedValue) &&
+      destinationSchema !== undefined &&
+      schemaIsIsoDateStringColumn(getSchemaAtPath(destinationSchema, mapping.destinationColumnId))
+    ) {
+      warnings.push(
+        `Skipped invalid date "${transformedValue}" for destination column "${mapping.destinationColumnId}": ` +
+          `it is not a real calendar date, which the destination would reject. Wrote an empty value so the ` +
+          `rest of the record still syncs.`,
+      );
+      transformedValue = null;
     }
 
     if (!skip) {

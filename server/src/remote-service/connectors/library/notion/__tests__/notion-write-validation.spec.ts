@@ -134,6 +134,14 @@ describe('isNotionWritableDateBoundary', () => {
     expect(isNotionWritableDateBoundary('not-a-date')).toBe(false);
     expect(isNotionWritableDateBoundary('')).toBe(false);
   });
+
+  it('rejects a nonexistent calendar date new Date() silently rolls over (DEV-11044)', () => {
+    // `new Date("2026-02-29")` === 2026-03-01 (2026 is not a leap year), so a bare
+    // parse check would wave it through and Notion rejects the value verbatim.
+    expect(isNotionWritableDateBoundary('2026-02-29')).toBe(false);
+    expect(isNotionWritableDateBoundary('2026-02-29T10:00:00.000Z')).toBe(false);
+    expect(isNotionWritableDateBoundary('2024-02-29')).toBe(true); // 2024 IS a leap year
+  });
 });
 
 describe('findUnwritableNotionDateBoundary', () => {

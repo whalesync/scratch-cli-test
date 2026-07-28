@@ -5,6 +5,8 @@
  * identifies the field rather than just echoing Notion's raw JSON path.
  */
 
+import { isValidWritableCalendarDateString } from 'src/utils/date-validity';
+
 /**
  * Notion caps a single rich-text (or title) span's `text.content` at 2000
  * characters. A property's `rich_text` / `title` array may hold many spans, and
@@ -131,17 +133,22 @@ export const NOTION_MAX_DATE_YEAR = 9999;
 
 /**
  * Whether a single Notion date boundary string (`date.start` / `date.end`) is
- * one Notion can store faithfully: it must parse to a real instant AND fall
- * within Notion's four-digit-year range. Rejects unparseable values and the
- * extended-year form (`+010000-…`, whose `getUTCFullYear()` is 10000).
+ * one Notion can store faithfully: it must name a real calendar instant AND fall
+ * within Notion's four-digit-year range. Rejects
+ *   - nonexistent calendar dates such as `"2026-02-29"` (2026 is not a leap year),
+ *     which `new Date(...)` silently rolls over to March 1 rather than flagging, so
+ *     Notion's API rejects the value verbatim and the whole record is lost (DEV-11044);
+ *   - unparseable values; and
+ *   - the extended-year form (`+010000-…`, whose `getUTCFullYear()` is 10000),
+ *     which Notion accepts but stores as its `"Invalid DateTime"` sentinel (DEV-10960).
+ * The calendar-validity check is the shared one used by the [core] sync boundary; the
+ * year-range check on top of it is Notion-specific.
  */
 export function isNotionWritableDateBoundary(value: string): boolean {
-  const parsed = new Date(value);
-  const epochMilliseconds = parsed.getTime();
-  if (Number.isNaN(epochMilliseconds)) {
+  if (!isValidWritableCalendarDateString(value)) {
     return false;
   }
-  const year = parsed.getUTCFullYear();
+  const year = new Date(value).getUTCFullYear();
   return year >= NOTION_MIN_DATE_YEAR && year <= NOTION_MAX_DATE_YEAR;
 }
 

@@ -92,7 +92,7 @@ Entities that can't be a standalone Scratch table, for either reason: **(i) scop
 | text | ⬜ | ⬜ | ⬜ | |
 | number | ⬜ | ⬜ | ⬜ | |
 | boolean | ⬜ | ⬜ | ⬜ | |
-| date / datetime | ⬜ | ⬜ | ⬜ | tz handling? Out-of-range years (outside 0001–9999, e.g. extended-year `+010000-…`) are skipped on write with a warning — Notion accepts them but stores `"Invalid DateTime"` (DEV-10960). |
+| date / datetime | ⬜ | ⬜ | ⬜ | tz handling? Out-of-range years (outside 0001–9999, e.g. extended-year `+010000-…`) are skipped on write with a warning — Notion accepts them but stores `"Invalid DateTime"` (DEV-10960). Nonexistent calendar dates (e.g. `"2026-02-29"` — `new Date()` silently rolls it to Mar 1) are likewise skipped-with-warning; the calendar-validity check is the shared [core] one (`isValidWritableCalendarDateString`) that also nulls invalid dates for flat destinations at the sync boundary (DEV-11044). |
 | single-select | ⬜ | ⬜ | ⬜ | id vs label? |
 | multi-select | ⬜ | ⬜ | ⬜ | |
 | relation / FK | ⬜ | ⬜ | ⬜ | linkedTableId? |

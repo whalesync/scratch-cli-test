@@ -163,6 +163,32 @@ export function unwrapNullableUnionSchema(schema: TSchema): TSchema {
   return schema;
 }
 
+/** The JSON-schema `format` values a connector puts on a date-typed string column. */
+const ISO_DATE_STRING_FORMATS: ReadonlySet<string> = new Set(['date', 'date-time']);
+
+/**
+ * Whether a leaf field schema describes an ISO-8601 date / date-time STRING column —
+ * a `Type.String({ format: 'date' | 'date-time' })`, including when wrapped in a
+ * nullable or formula-error `Type.Union([...])` (as Airtable/Postgres/Webflow/… all
+ * declare their date fields). Every connector types a real date column this way, so
+ * this is the connector-agnostic signal the shared sync transform boundary uses to
+ * know a destination will only accept a genuine calendar date — letting it null an
+ * invalid one with a per-field warning instead of losing the whole record (DEV-11044).
+ *
+ * Notion's date property is a wrapped OBJECT, not a bare date-format string, so it is
+ * deliberately NOT matched here; its invalid-date guard lives in the Notion write path.
+ */
+export function schemaIsIsoDateStringColumn(schema: TSchema | undefined): boolean {
+  if (!schema) {
+    return false;
+  }
+  const arms = (schema as { anyOf?: TSchema[] }).anyOf ?? [schema];
+  return arms.some((arm) => {
+    const format = (arm as { format?: unknown }).format;
+    return arm.type === 'string' && typeof format === 'string' && ISO_DATE_STRING_FORMATS.has(format);
+  });
+}
+
 /**
  * Unwraps schema from TypeBox Optional/Union wrappers to get the underlying type.
  * Returns the base type string (e.g. 'string', 'number', 'boolean', 'object').

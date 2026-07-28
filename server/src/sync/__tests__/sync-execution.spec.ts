@@ -978,6 +978,89 @@ describe('transformRecordAsync — coercion floor (useOriginal)', () => {
 });
 
 // ===========================================================================
+// transformRecordAsync — invalid-date guard (DEV-11044)
+//
+// A source service can store a nonexistent calendar date verbatim (Pipedrive's v1
+// API accepts "2026-02-29" — 2026 is not a leap year). Left untouched it reaches a
+// destination date column and is rejected, losing the whole record on every run.
+// The shared guard nulls JUST the bad date field (with a warning) when the
+// destination column is an ISO date/date-time string type.
+// ===========================================================================
+describe('transformRecordAsync — invalid-date guard', () => {
+  // A flat destination with a real date column (`format: 'date'`, nullable union) and
+  // a plain text sibling. Mirrors how Airtable/Postgres/Webflow type a date field.
+  const destinationSpec = {
+    schema: Type.Object({
+      name: Type.String(),
+      due: Type.Union([Type.String({ format: 'date' }), Type.Null()]),
+      created: Type.String({ format: 'date-time' }),
+    }),
+  } as unknown as BaseJsonTableSpec;
+
+  const mappings: ColumnMappingV1[] = [
+    { sourceColumnId: 'name', destinationColumnId: 'name' },
+    { sourceColumnId: 'due', destinationColumnId: 'due' },
+  ];
+
+  it('nulls a nonexistent date and warns, keeping the rest of the record', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { name: 'Widget', due: '2026-02-29' } };
+
+    const { fields, warnings } = await transformRecordAsync(
+      sourceRecord,
+      mappings,
+      null,
+      destinationSpec,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      undefined,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual({ name: 'Widget', due: null });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('2026-02-29');
+    expect(warnings[0]).toContain('due');
+  });
+
+  it('leaves a valid date untouched', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { name: 'Widget', due: '2024-02-29' } };
+
+    const { fields, warnings } = await transformRecordAsync(
+      sourceRecord,
+      mappings,
+      null,
+      destinationSpec,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      undefined,
+      SYNC_CONTEXT,
+    );
+
+    expect(fields).toEqual({ name: 'Widget', due: '2024-02-29' });
+    expect(warnings).toEqual([]);
+  });
+
+  it('does not touch an invalid-looking value bound for a non-date column', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { name: '2026-02-29', due: '2024-01-01' } };
+
+    const { fields, warnings } = await transformRecordAsync(
+      sourceRecord,
+      mappings,
+      null,
+      destinationSpec,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      undefined,
+      SYNC_CONTEXT,
+    );
+
+    // The text column keeps the string verbatim; only date columns are guarded.
+    expect(fields).toEqual({ name: '2026-02-29', due: '2024-01-01' });
+    expect(warnings).toEqual([]);
+  });
+});
+
+// ===========================================================================
 // classifyDestinationRecord
 // ===========================================================================
 describe('classifyDestinationRecord', () => {
