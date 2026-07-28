@@ -1013,9 +1013,20 @@ export interface ReconcilePublishedResult {
 export async function reconcilePublishedRecord(
   workspacePath: string,
   filePath: string,
+  pipelineId?: string,
 ): Promise<ReconcilePublishedResult> {
   return runScratchmdJson<ReconcilePublishedResult>(
-    ['--json', 'files', 'reconcile-published', '--file-path', filePath],
+    [
+      '--json',
+      'files',
+      'reconcile-published',
+      '--file-path',
+      filePath,
+      // Positive publish-success signal (DEV-10741): lets the reconcile drop this
+      // record's accepted patch on publish success even if the connector
+      // normalized the stored value. Absent for a `plan-no-diff` outcome.
+      ...(pipelineId ? ['--pipeline-id', pipelineId] : []),
+    ],
     workspacePath,
   );
 }

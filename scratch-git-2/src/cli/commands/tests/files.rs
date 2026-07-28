@@ -3769,7 +3769,14 @@ fn reconcile_keeps_patch_when_server_main_did_not_advance() {
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
 
     // Connector batch failed → server's main did NOT advance.
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     // Patch must still be there for the next publish attempt.
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
@@ -3824,7 +3831,14 @@ fn reconcile_drops_patch_when_server_published_the_change() {
         "publish lands user's edit",
     );
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert!(
@@ -3836,6 +3850,131 @@ fn reconcile_drops_patch_when_server_published_the_change() {
     let origin_main = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/main").unwrap();
     assert_eq!(local_main, origin_main);
     assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+#[test]
+fn reconcile_drops_patch_when_publish_succeeded_but_value_was_normalized() {
+    // DEV-10741: the connector normalized what it stored (e.g. Notion recomputes
+    // rich-text spans), so the post-publish `main` blob differs byte-for-byte from
+    // the approved value. Re-anchor's no-op detection therefore can't drop it — but
+    // the server marked the record `success`, and that positive signal must retire
+    // the accepted patch so it stops ghosting and re-publishing forever.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // `title` is stored as a rich-text-style array (the Notion shape). User accepted
+    // a new title value.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"title\": [\n    \"Tech\"\n  ]\n}\n",
+    );
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"title": ["SaaS"]}),
+            revert: false,
+        }],
+    };
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // The connector stored a NORMALIZED title (an extra span element) — byte-different
+    // from the user's `["SaaS"]`, so this is neither a re-anchor byte no-op nor a
+    // removed-key no-op. Only the publish-success signal can retire the patch.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"title\": [\n    \"SaaS\",\n    \"normalized\"\n  ]\n}\n",
+        "publish stores a normalized value",
+    );
+
+    let succeeded: std::collections::HashSet<String> =
+        ["posts/rec_acme.json".to_string()].into_iter().collect();
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[], &succeeded).unwrap();
+
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert!(
+        reloaded.patches.is_empty(),
+        "patch must drop on publish success even when the connector normalized the value"
+    );
+    // A success must not be misfiled as a failure.
+    let failed = crate::shared::failed_patches::load(&connection_dir).unwrap();
+    assert!(
+        failed.patches.is_empty(),
+        "a published-success record must not land in failed-patches.json"
+    );
+    let local_main = git_rev_parse(&ctx.bare_repo, "refs/heads/main").unwrap();
+    let origin_main = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/main").unwrap();
+    assert_eq!(local_main, origin_main);
+}
+
+#[test]
+fn reconcile_keeps_patch_when_normalized_and_not_in_succeeded_set() {
+    // DEV-10741 fail-safe: the same normalized-value scenario, but the success set
+    // is empty (e.g. the succeeded-operations fetch failed). We must NOT drop the
+    // patch — falling back to byte/no-op keeps it (the non-destructive direction),
+    // recoverable on the next publish. This is why we never infer "not failed ⇒
+    // shipped": an unconfirmed edit is kept, never silently discarded.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"title\": [\n    \"Tech\"\n  ]\n}\n",
+    );
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"title": ["SaaS"]}),
+            revert: false,
+        }],
+    };
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    advance_remote_main(
+        &fixture,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"title\": [\n    \"SaaS\",\n    \"normalized\"\n  ]\n}\n",
+        "publish stores a normalized value",
+    );
+
+    // Empty succeeded set → fall back to byte/no-op → the patch survives.
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
+
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(
+        reloaded.patches.len(),
+        1,
+        "without a confirmed success signal the patch must be kept, not dropped"
+    );
 }
 
 #[test]
@@ -3883,7 +4022,14 @@ fn reconcile_moves_failed_op_to_failed_patches() {
             .collect(),
         ),
     };
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[failed_op]).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[failed_op],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     // Moved OUT of accepted-patches.json...
     let accepted_after = crate::shared::accepted_patches::load(&connection_dir).unwrap();
@@ -3961,7 +4107,14 @@ fn reconcile_moves_all_failed_ops_when_more_than_twenty() {
     )
     .unwrap();
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &failed_ops).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &failed_ops,
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     let accepted_after = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert!(
@@ -4010,7 +4163,14 @@ fn reconcile_drops_removed_key_no_op_survivor() {
     };
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     let accepted_after = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert!(
@@ -4066,7 +4226,14 @@ fn reconcile_keeps_failed_record_when_partial_publish_succeeded() {
         "publish lands A",
     );
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(
@@ -4155,7 +4322,14 @@ fn reject_all_clears_failed_patches_so_edit_does_not_resurrect_on_next_reconcile
         error: Some("industry must be one of: Tech, Bio".into()),
         field_errors: None,
     };
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[failed_op]).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[failed_op],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
     assert_eq!(
         crate::shared::failed_patches::load(&connection_dir)
             .unwrap()
@@ -4183,7 +4357,14 @@ fn reject_all_clears_failed_patches_so_edit_does_not_resurrect_on_next_reconcile
 
     // A later, unrelated publish reconciles again with no failures. The reverted
     // edit must NOT come back.
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
     assert!(
         crate::shared::failed_patches::load(&connection_dir)
             .unwrap()
@@ -5720,7 +5901,14 @@ fn reconcile_rewrites_worktree_to_canonical_bytes_after_publish() {
         "publish lands user's edit",
     );
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     // Patch dropped, main advanced, AND worktree now matches main byte-for-byte.
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
@@ -5789,7 +5977,14 @@ fn reconcile_materializes_failed_publish_patch_value_to_worktree() {
         "publish lands A",
     );
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    reconcile_accepted_after_publish(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     // rec_a's patch was dropped; rec_b's survives.
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
@@ -6127,8 +6322,14 @@ fn reconcile_published_record_drops_patch_and_leaves_siblings_and_unreviewed_unt
         "publish lands X",
     );
 
-    let outcome =
-        reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+    let outcome = reconcile_published_record(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        "posts/rec_x.json",
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     assert!(outcome.patch_dropped, "X published → its patch must drop");
     assert_eq!(outcome.conflicts, 0);
@@ -6204,7 +6405,14 @@ fn reconcile_published_record_preserves_a_mid_flight_edit() {
         "publish lands X",
     );
 
-    reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+    reconcile_published_record(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        "posts/rec_x.json",
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     // The mid-flight edit is preserved on disk (NOT clobbered with the
     // published value) — it re-surfaces as a fresh unreviewed change.
@@ -6252,8 +6460,14 @@ fn reconcile_published_record_keeps_patch_and_logs_conflict_on_same_field_collis
         "server changes industry",
     );
 
-    let outcome =
-        reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+    let outcome = reconcile_published_record(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        "posts/rec_x.json",
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     // User-wins: the patch survives (not dropped) and the collision is logged.
     assert!(!outcome.patch_dropped, "collision → patch must survive");
@@ -6292,8 +6506,14 @@ fn reconcile_published_record_is_idempotent_when_record_already_reconciled() {
         "{\n  \"industry\": \"SaaS\"\n}\n",
     );
 
-    let outcome =
-        reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+    let outcome = reconcile_published_record(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        "posts/rec_x.json",
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
     assert!(
         outcome.patch_dropped,
         "no pending patch → reported as already published/cleaned up"
@@ -6353,8 +6573,14 @@ fn reconcile_published_record_drops_removed_key_no_op_survivor() {
     );
 
     // Publish is a no-op for the connector — `main` is NOT advanced server-side.
-    let outcome =
-        reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+    let outcome = reconcile_published_record(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        "posts/rec_x.json",
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
 
     assert!(
         outcome.patch_dropped,
@@ -6381,5 +6607,90 @@ fn reconcile_published_record_drops_removed_key_no_op_survivor() {
     assert_eq!(
         working_x["b"], 2,
         "main's removed key must be restored on disk"
+    );
+}
+
+#[test]
+fn reconcile_published_record_drops_patch_when_value_was_normalized() {
+    // DEV-10741 (single-record path): the connector normalized the stored value
+    // (title array rewritten), so re-anchor can't drop the patch by byte no-op.
+    // With the record in the publish-success set, the single-record reconcile must
+    // still drop it and converge the working file to the published `main`.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    let main_hash = seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_x.json",
+        "{\n  \"name\": \"Acme\",\n  \"title\": [\n    \"Tech\"\n  ]\n}\n",
+    );
+
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
+            path: "posts/rec_x.json".to_string(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"title": ["SaaS"]}),
+            revert: false,
+        }],
+    };
+    let connection_dir = accepted_patches_dir(&ctx);
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // Materialize the approved value (title=["SaaS"]) into a real worktree so the
+    // surgical-write branch fires.
+    setup_detached_worktree(&ctx, &main_hash);
+    let old_map = read_git_tree(&ctx.bare_repo, &main_hash).unwrap();
+    let approved_x = approved_bytes_for_path(&old_map, &accepted, "posts/rec_x.json")
+        .unwrap()
+        .unwrap();
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_x.json"),
+        std::str::from_utf8(&approved_x).unwrap(),
+    );
+
+    // The connector stored a NORMALIZED title — byte-different from the approved
+    // value, so re-anchor keeps the patch; only the success signal can drop it.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_x.json",
+        "{\n  \"name\": \"Acme\",\n  \"title\": [\n    \"SaaS\",\n    \"normalized\"\n  ]\n}\n",
+        "publish stores a normalized value",
+    );
+
+    let succeeded: std::collections::HashSet<String> =
+        ["posts/rec_x.json".to_string()].into_iter().collect();
+    let outcome = reconcile_published_record(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        "posts/rec_x.json",
+        &succeeded,
+    )
+    .unwrap();
+
+    assert!(
+        outcome.patch_dropped,
+        "published-success record must drop its patch even when the value was normalized"
+    );
+    let accepted_after = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert!(accepted_after.patches.is_empty());
+    let failed_after = crate::shared::failed_patches::load(&connection_dir).unwrap();
+    assert!(failed_after.patches.is_empty());
+
+    // The working file converges to the published (normalized) `main` value.
+    let working_x: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec_x.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        working_x["title"],
+        serde_json::json!(["SaaS", "normalized"])
     );
 }

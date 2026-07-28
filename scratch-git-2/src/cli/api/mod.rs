@@ -876,6 +876,54 @@ impl ApiClient {
         Ok(acc)
     }
 
+    /// The COMPLETE set of a plan's successfully-published record paths
+    /// (`success` operations), one entry per file path, fetched paginated
+    /// (DEV-10741). The post-publish reconcile drops each shipped record's
+    /// `accepted-patches.json` entry on membership in this set — publish success
+    /// is the connector-agnostic proof the approved delta landed, so a connector
+    /// that normalizes what it stored (Notion rich-text spans, date→UTC,
+    /// slugification, …) no longer strands the accepted patch as a byte mismatch
+    /// against the post-publish `main`.
+    ///
+    /// The server's `total` is the distinct succeeded-record count, so the loop
+    /// stops once the whole set has been accumulated. Returns the raw file paths;
+    /// the caller builds a `HashSet` for membership tests.
+    pub async fn list_succeeded_publish_plan_operations(
+        &self,
+        workbook_id: &str,
+        pipeline_id: &str,
+    ) -> ApiResult<Vec<String>> {
+        #[derive(serde::Deserialize)]
+        struct SucceededOperation {
+            #[serde(rename = "filePath")]
+            file_path: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct SucceededOperationsPage {
+            #[serde(default)]
+            data: Vec<SucceededOperation>,
+            #[serde(default)]
+            total: usize,
+        }
+        let endpoint =
+            format!("workbooks/{workbook_id}/publish-v2/{pipeline_id}/succeeded-operations");
+        let page_size: usize = 500;
+        let mut page: usize = 1;
+        let mut acc: Vec<String> = Vec::new();
+        loop {
+            let page_data: SucceededOperationsPage = self
+                .get_query(&endpoint, &format!("page={page}&pageSize={page_size}"))
+                .await?;
+            let fetched = page_data.data.len();
+            acc.extend(page_data.data.into_iter().map(|op| op.file_path));
+            if acc.len() >= page_data.total || fetched < page_size {
+                break;
+            }
+            page += 1;
+        }
+        Ok(acc)
+    }
+
     /// Step 1 of the upload-patch flow: request a presigned GCS PUT URL.
     /// Mirrors `packages/shared-types/src/dto/upload-patch/*`. The Rust CLI
     /// re-declares the wire types in serde rather than importing from TS.

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { PublishFailedOperationsResponse } from '@spinner/shared-types';
+import type { PublishFailedOperationsResponse, PublishSucceededOperationsResponse } from '@spinner/shared-types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { DbService } from '../db/db.service';
 import { collapseFailedOperationsByPath } from './failed-operations.util';
@@ -184,6 +184,47 @@ export class PublishPlanCrudService {
     return {
       data: collapsed.slice(skip, skip + pageSize),
       total: collapsed.length,
+      page,
+      pageSize,
+    };
+  }
+
+  /**
+   * The COMPLETE set of a plan's successfully-published records (`success`
+   * operations), one distinct entry per file path and paginated (DEV-10741).
+   *
+   * The desktop/CLI post-publish reconcile fetches this positive success signal
+   * to drop each shipped record's `accepted-patches.json` entry regardless of
+   * whether the connector normalized the stored value. Byte-matching the
+   * approved value against `main` strands edits for connectors that rewrite what
+   * they store (Notion rich-text spans, date→UTC, slugification, …); publish
+   * success is the only connector-agnostic proof the approved delta shipped.
+   *
+   * Sibling of `listFailedPublishPlanOperations`: the filter is `status:
+   * 'success'` (matching how the run's `successCount` is computed), and
+   * `distinct: ['filePath']` collapses a record with multiple success rows (e.g.
+   * an `edit` plus its `backfill`) to one entry, so `total` is the distinct
+   * succeeded-record count. `pageSize` defaults higher than the failed endpoint
+   * because a publish's success set is typically far larger than its failures.
+   */
+  async listSucceededPublishPlanOperations(
+    pipelineId: string,
+    options?: { page?: number; pageSize?: number },
+  ): Promise<PublishSucceededOperationsResponse> {
+    const page = options?.page ?? 1;
+    const pageSize = Math.min(options?.pageSize ?? 200, 500);
+    const skip = (page - 1) * pageSize;
+
+    const rows = await this.db.client.publishPlanOperation.findMany({
+      where: { planId: pipelineId, status: 'success' },
+      select: { filePath: true },
+      distinct: ['filePath'],
+      orderBy: { filePath: 'asc' },
+    });
+
+    return {
+      data: rows.slice(skip, skip + pageSize).map((row) => ({ filePath: row.filePath })),
+      total: rows.length,
       page,
       pageSize,
     };

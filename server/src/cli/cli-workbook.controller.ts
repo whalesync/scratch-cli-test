@@ -629,6 +629,30 @@ export class CliWorkbookController {
     });
   }
 
+  /**
+   * CLI shim — the COMPLETE, paginated set of a publish plan's successfully-published
+   * records (`success` operations), one entry per file path (DEV-10741). Used by
+   * `scratchmd files reconcile-after-publish` / `reconcile-published` (and the
+   * CLI-native `files publish` reconcile) to drop each shipped record's accepted
+   * patch on publish success rather than byte-matching a connector-normalized
+   * `main`. Read-only; no audit log entry.
+   */
+  @Get(':id/publish-v2/:planId/succeeded-operations')
+  async getPublishPlanSucceededOperations(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Param('planId') planId: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
+    return this.publishPlanCrudService.listSucceededPublishPlanOperations(planId, {
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+    });
+  }
+
   // ── Workbook repo endpoints ─────────────────────────────────────────────────
 
   /**

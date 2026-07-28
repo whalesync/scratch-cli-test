@@ -62,3 +62,33 @@ export interface PublishFailedOperationsResponse {
   page: number;
   pageSize: number;
 }
+
+/**
+ * One record whose publish operation(s) the server marked `success` during a
+ * run-job. This is the connector-agnostic proof that a record's approved delta
+ * shipped — the post-publish reconcile drops the matching `accepted-patches.json`
+ * entry on success membership rather than byte-matching the approved value
+ * against a connector-normalized `main` (DEV-10741). Publish is per-record
+ * atomic, so this is record-granular: `filePath` only, no per-field detail.
+ *
+ * Declared as an object (not a bare `string`) for symmetry with
+ * `PublishFailedOperation` and to leave room for future fields.
+ */
+export interface PublishSucceededOperation {
+  filePath: string;
+}
+
+/**
+ * Paginated response for `GET /cli/v1/workbooks/:id/publish-v2/:planId/succeeded-operations`
+ * (DEV-10741). The **complete** set of a plan's successfully-published records
+ * (`success` operations), collapsed to one entry per file path. The desktop/CLI
+ * post-publish reconcile fetches it so it can drop every shipped record's
+ * accepted patch regardless of connector value normalization. `total` is the
+ * distinct succeeded-record count. Mirrors `PublishFailedOperationsResponse`.
+ */
+export interface PublishSucceededOperationsResponse {
+  data: PublishSucceededOperation[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

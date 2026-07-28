@@ -1602,8 +1602,15 @@ export function PublishChangesModal({
       return;
     }
     // `completed` or `plan-no-diff` → converge local state via the scoped reconcile.
+    // Pass the pipeline id (present on `completed`, absent on `plan-no-diff`) so the
+    // reconcile can drop the accepted patch on publish success even when the
+    // connector normalized the stored value (DEV-10741).
     try {
-      const reconcile = await window.scratchDesktop.reconcilePublishedRecord(localPath, singleRecord.filePath);
+      const reconcile = await window.scratchDesktop.reconcilePublishedRecord(
+        localPath,
+        singleRecord.filePath,
+        conn?.pipelineId,
+      );
       invalidateWorkspaceLevelData();
       if (conn?.status === 'plan-no-diff') {
         setSingleRecordNotice(

@@ -276,6 +276,13 @@ pub enum FilesCommands {
         /// (e.g. `<connection-name>/Folder/rec.json`).
         #[arg(long = "file-path")]
         file_path: String,
+        /// The publish plan / pipeline id just run. When present, the reconcile
+        /// drops this record's accepted patch if the server marked it
+        /// published-`success` — even if the connector normalized the stored
+        /// value so it no longer byte-matches `main` (DEV-10741). Absent (e.g. a
+        /// `plan-no-diff` outcome) → falls back to byte/no-op reconciliation.
+        #[arg(long = "pipeline-id")]
+        pipeline_id: Option<String>,
     },
 
     /// Post-publish reconcile for one connection (publish redesign, DEV-10048).
@@ -730,8 +737,12 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             )
             .await
         }
-        FilesCommands::ReconcilePublished { file_path } => {
-            run_reconcile_published(&cwd, server_url, &file_path, json)
+        FilesCommands::ReconcilePublished {
+            file_path,
+            pipeline_id,
+        } => {
+            run_reconcile_published(&cwd, server_url, &file_path, pipeline_id.as_deref(), json)
+                .await
         }
         FilesCommands::ReconcileAfterPublish {
             connection,
@@ -1985,10 +1996,16 @@ async fn publish_single_connection(
         run_job_failed_operations,
     )
     .await;
+    // The positive publish-success signal (DEV-10741): records the server marked
+    // `success` get their accepted patch dropped even when the connector stored a
+    // normalized value that no longer byte-matches `main`. Empty on fetch failure
+    // → the reconcile falls back to byte/no-op logic.
+    let succeeded_paths =
+        resolve_succeeded_paths(client, workbook_id, Some(pipeline_id.as_str())).await;
 
     // After a successful run-job, fetch origin and reconcile the local patch
-    // file against the server's view of `main`. Patches whose outcome
-    // actually landed in `main` get dropped by re-anchor's no-op detection;
+    // file against the server's view of `main`. Patches the server marked
+    // published-success (or whose outcome actually landed in `main`) get dropped;
     // patches whose connector batch failed silently (DEV-10175) survive.
     //
     // Reconcile failure here does NOT fail the publish (F9): the user's
@@ -1997,9 +2014,13 @@ async fn publish_single_connection(
     // the local state. Surfacing this as a per-connection warning matches
     // the desktop's fire-and-forget `refreshLocal` policy documented in
     // `scratch-git-2/docs/PULL_AFTER_PUBLISH.md`.
-    if let Err(e) =
-        reconcile_accepted_after_publish(ctx, workspace_dir, token, &run_job_failed_operations)
-    {
+    if let Err(e) = reconcile_accepted_after_publish(
+        ctx,
+        workspace_dir,
+        token,
+        &run_job_failed_operations,
+        &succeeded_paths,
+    ) {
         return PublishConnectionOutcome::PublishedWithReconcileWarning {
             name,
             warning: format!("post-publish refresh failed: {e}. Run `scratchmd files download` to sync local state."),
@@ -5823,6 +5844,7 @@ fn reconcile_accepted_after_publish(
     workspace_dir: &Path,
     token: &str,
     failed_operations: &[crate::api::JobFailedOperation],
+    succeeded_paths: &HashSet<String>,
 ) -> anyhow::Result<()> {
     let connection_dir = accepted_patches_dir(ctx);
     let accepted = crate::shared::accepted_patches::load(&connection_dir)?;
@@ -5850,6 +5872,7 @@ fn reconcile_accepted_after_publish(
     let (surviving_accepted_patches, newly_failed_patches) = partition_reanchored_after_publish(
         re_anchored.patches,
         &failed_by_path,
+        succeeded_paths,
         &file_path_to_contents_map_in_main_branch_after_publish,
     )?;
 
@@ -5972,14 +5995,28 @@ fn failed_ops_by_path(failed_operations: &[crate::api::JobFailedOperation]) -> F
 }
 
 /// Partition the surviving (non-published) re-anchored patches after a publish
-/// (the publish redesign, DEV-10048):
+/// (the publish redesign, DEV-10048 / DEV-10741):
 ///   - connector-rejected paths → `failed-patches.json` entries (with error);
+///   - **published-success paths** (the server marked the record `success`) →
+///     dropped regardless of any byte diff, so a connector that normalized what
+///     it stored (Notion rich-text spans, date→UTC, slugification, `1.50`→`1.5`)
+///     stops re-showing as "accepted" and re-publishing forever (DEV-10741);
 ///   - publish-no-op survivors (e.g. a removed key main never advanced for) →
-///     dropped, so they stop showing as "accepted";
+///     dropped (the DEV-10048 fallback, and the safety net for when the success
+///     set is unavailable);
 ///   - everything else → a genuine still-pending edit, kept accepted.
+///
+/// `succeeded_paths` is the connector-agnostic proof of shipment. It is **empty**
+/// when the reconcile could not fetch it (network error / no pipeline id), in
+/// which case we fall back to the byte/no-op logic — the non-destructive
+/// direction (keep the ghost, recoverable on the next publish) rather than risk
+/// dropping an edit we can't confirm shipped. Failed-routing runs first so a
+/// record that both succeeded in one phase and failed in another (e.g. `edit`
+/// succeeded, `rename-files` failed) lands in `failed-patches.json`.
 fn partition_reanchored_after_publish(
     re_anchored_patches: Vec<crate::shared::re_anchor::AnchoredPatch>,
     failed_by_path: &FailedOpsByPath,
+    succeeded_paths: &HashSet<String>,
     new_main_map: &FileMap,
 ) -> anyhow::Result<(
     Vec<crate::shared::re_anchor::AnchoredPatch>,
@@ -5994,6 +6031,11 @@ fn partition_reanchored_after_publish(
                 error.clone(),
                 field_errors.clone(),
             ));
+            continue;
+        }
+        if succeeded_paths.contains(&entry.path) {
+            // Published successfully — drop even when the connector's stored value
+            // differs byte-for-byte from the approved value (DEV-10741).
             continue;
         }
         if is_publish_no_op_survivor(&entry, new_main_map)? {
@@ -6105,6 +6147,7 @@ fn reconcile_published_record(
     workspace_dir: &Path,
     token: &str,
     relpath: &str,
+    succeeded_paths: &HashSet<String>,
 ) -> anyhow::Result<ReconcilePublishedOutcome> {
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted = crate::shared::accepted_patches::load(&connection_dir)?;
@@ -6130,13 +6173,17 @@ fn reconcile_published_record(
     // At most one re-anchored entry (this record), and only if the publish
     // failed and the patch is still meaningful against the new `main`.
     //
-    // Drop a publish-no-op survivor (e.g. a removed key / connector-normalized
-    // value the server's `computeChangedFields` never advanced `main` for) the
+    // Drop it when the server marked this record published-`success` — even if
+    // the connector normalized the stored value so the re-anchored patch is not a
+    // byte no-op against `main` (DEV-10741). Also drop a publish-no-op survivor
+    // (e.g. a removed key `computeChangedFields` never advanced `main` for) the
     // same way the workspace-wide `partition_reanchored_after_publish` does
-    // (DEV-10572). Without this guard the accepted-patches entry — and thus the
+    // (DEV-10048/DEV-10572), which is also the fallback when the success set is
+    // unavailable. Without these guards the accepted-patches entry — and thus the
     // review dot derived from its presence — would persist forever after a
     // successful single-record publish, so the edit never converges.
     let surviving_patch = match re_anchored.patches.first().cloned() {
+        Some(patch) if succeeded_paths.contains(&patch.path) => None,
         Some(patch) if is_publish_no_op_survivor(&patch, &new_main_map)? => None,
         other => other,
     };
@@ -6223,13 +6270,14 @@ fn read_worktree_record_bytes(
 /// Resolves the owning connection from the path's first segment, then runs the
 /// single-record post-publish reconcile (DEV-10413). Emits the
 /// dropped-vs-pending outcome so the desktop can disambiguate a `plan-no-diff`.
-fn run_reconcile_published(
+async fn run_reconcile_published(
     cwd: &Path,
     server_url: &str,
     file_path: &str,
+    pipeline_id: Option<&str>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let (_marker, workspace_dir, contexts, workspace_server_url) =
+    let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url, json)?;
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
@@ -6238,7 +6286,17 @@ fn run_reconcile_published(
     let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
 
     let (ctx, relpath) = resolve_connection_and_relpath(&contexts, file_path)?;
-    let outcome = reconcile_published_record(ctx, &workspace_dir, &token, &relpath)?;
+
+    // The positive publish-success signal (DEV-10741): if the server marked this
+    // record `success`, drop its accepted patch even when the connector normalized
+    // the stored value. Empty when there's no `--pipeline-id` (e.g. a
+    // `plan-no-diff` outcome) or on fetch failure → falls back to byte/no-op logic.
+    let client = crate::api::ApiClient::new(workspace_server_url.as_str(), token.as_str());
+    let succeeded_paths =
+        resolve_succeeded_paths(&client, workspace_marker.workbook.id.as_str(), pipeline_id).await;
+
+    let outcome =
+        reconcile_published_record(ctx, &workspace_dir, &token, &relpath, &succeeded_paths)?;
 
     // Reindex only this record's folder so the grid reflects the published
     // state. reindex_folder_index_for_changes wants workspace-relative paths,
@@ -6318,6 +6376,50 @@ async fn resolve_complete_failed_ops(
     }
 }
 
+/// The publish-outcome signals the post-publish reconcile needs, bundled so a
+/// caller can't pass one without the other. A plain pull passes `None`; a
+/// post-publish reconcile passes `Some`.
+struct PostPublishReconcile<'a> {
+    /// Connector-rejected records (`failed-batch`) → routed to `failed-patches.json`.
+    failed_ops: &'a [crate::api::JobFailedOperation],
+    /// Records the server marked `success` → their accepted patches are dropped
+    /// on publish success regardless of connector value normalization (DEV-10741).
+    succeeded_paths: &'a HashSet<String>,
+}
+
+/// Resolve the set of successfully-published record paths for a just-run publish
+/// plan (DEV-10741) — the positive, connector-agnostic proof a record's approved
+/// delta shipped. The reconcile drops those records' accepted patches even when
+/// the connector stored a normalized value that no longer byte-matches `main`.
+///
+/// Returns an EMPTY set when there is no `pipeline_id` or the fetch fails: post-
+/// publish reconcile is best-effort, and an empty set is the non-destructive
+/// direction — we keep the accepted patch (falling back to the byte/no-op logic)
+/// rather than risk dropping an edit we can't confirm shipped.
+async fn resolve_succeeded_paths(
+    client: &crate::api::ApiClient,
+    workbook_id: &str,
+    pipeline_id: Option<&str>,
+) -> HashSet<String> {
+    let Some(pipeline_id) = pipeline_id else {
+        return HashSet::new();
+    };
+    match client
+        .list_succeeded_publish_plan_operations(workbook_id, pipeline_id)
+        .await
+    {
+        Ok(paths) => paths.into_iter().collect(),
+        Err(err) => {
+            eprintln!(
+                "Warning: could not fetch the publish-success set for pipeline {pipeline_id} ({err}); \
+                 falling back to byte/no-op reconciliation. Some just-published edits may keep showing \
+                 as accepted until the next publish."
+            );
+            HashSet::new()
+        }
+    }
+}
+
 async fn run_reconcile_after_publish(
     cwd: &Path,
     server_url: &str,
@@ -6355,8 +6457,22 @@ async fn run_reconcile_after_publish(
         fallback_capped_ops,
     )
     .await;
+    // The positive publish-success signal (DEV-10741): records the server marked
+    // `success` get their accepted patch dropped even if the connector normalized
+    // the stored value. Empty on fetch failure → falls back to byte/no-op logic.
+    let succeeded_paths =
+        resolve_succeeded_paths(&client, workspace_marker.workbook.id.as_str(), pipeline_id).await;
 
-    let result = download_single_repo(ctx, &workspace_dir, &token, &[], Some(&failed_ops))?;
+    let result = download_single_repo(
+        ctx,
+        &workspace_dir,
+        &token,
+        &[],
+        Some(PostPublishReconcile {
+            failed_ops: &failed_ops,
+            succeeded_paths: &succeeded_paths,
+        }),
+    )?;
 
     // Reindex changed records (paths come back connection-relative) so the grid
     // reflects the post-publish + failed-patches state.
@@ -6413,12 +6529,13 @@ fn download_single_repo(
     workspace_dir: &Path,
     token: &str,
     data_folders: &[DataFolder],
-    // Publish redesign (DEV-10048). `None` = a plain pull: re-anchor accepted
-    // patches and preserve unreviewed edits exactly as before. `Some(failed_ops)`
-    // = a post-publish reconcile: additionally route connector-rejected paths to
-    // `failed-patches.json`, drop publish-no-op survivors (e.g. removed keys), and
-    // re-surface the failed edits in the worktree as needs-approval.
-    post_publish_failed_ops: Option<&[crate::api::JobFailedOperation]>,
+    // Publish redesign (DEV-10048 / DEV-10741). `None` = a plain pull: re-anchor
+    // accepted patches and preserve unreviewed edits exactly as before. `Some(..)`
+    // = a post-publish reconcile: additionally drop each published-success path's
+    // accepted patch (`succeeded_paths`), route connector-rejected paths to
+    // `failed-patches.json` (`failed_ops`), drop publish-no-op survivors (e.g.
+    // removed keys), and re-surface the failed edits in the worktree as needs-approval.
+    post_publish: Option<PostPublishReconcile<'_>>,
 ) -> anyhow::Result<DownloadResult> {
     // The bare repo must exist before we can fetch into it. It's normally cloned
     // at `init` (and `sync_workspace_structure`'s self-heal re-clones a connection
@@ -6486,13 +6603,13 @@ fn download_single_repo(
     // `read_git_tree` via `cat-file --batch`, and a full worktree scan) — the
     // amplification that made a 59-record pull re-read a 128k-record connection.
     // The whole-tree reads are still used for:
-    //   - the post-publish reconcile (`post_publish_failed_ops.is_some()`),
+    //   - the post-publish reconcile (`post_publish.is_some()`),
     //     which partitions the FULL approved set into still-accepted vs
     //     connector-rejected and can't be safely narrowed here; and
     //   - the first-ever materialization (`old_main_hash.is_none()`), which has
     //     no prior commit to diff against — everything is genuinely new.
     let scoped_download_paths: Option<HashSet<String>> =
-        match (post_publish_failed_ops, old_main_hash.as_deref()) {
+        match (&post_publish, old_main_hash.as_deref()) {
             (None, Some(old_hash)) => Some(compute_download_scope_paths(
                 ctx,
                 old_hash,
@@ -6602,11 +6719,13 @@ fn download_single_repo(
 
     // Plain pull: every re-anchored patch stays accepted. Post-publish reconcile:
     // partition into still-accepted vs connector-rejected (→ failed-patches.json),
-    // dropping publish-no-op survivors (DEV-10048).
-    let (surviving_accepted_patches, newly_failed_patches) = match post_publish_failed_ops {
-        Some(failed_ops) => partition_reanchored_after_publish(
+    // dropping published-success paths (DEV-10741) and publish-no-op survivors
+    // (DEV-10048).
+    let (surviving_accepted_patches, newly_failed_patches) = match &post_publish {
+        Some(pp) => partition_reanchored_after_publish(
             re_anchored.patches,
-            &failed_ops_by_path(failed_ops),
+            &failed_ops_by_path(pp.failed_ops),
+            pp.succeeded_paths,
             &file_path_to_contents_map_in_main_branch_after_publish,
         )?,
         None => (re_anchored.patches, Vec::new()),
@@ -6618,7 +6737,7 @@ fn download_single_repo(
     // Post-publish only: merge `failed-patches.json` — drop prior entries for
     // paths we just re-published, then add this round's failures (paths outside
     // this publish keep their prior entry). A plain pull leaves the file alone.
-    let failed_file = if post_publish_failed_ops.is_some() {
+    let failed_file = if post_publish.is_some() {
         let reprocessed_paths: std::collections::HashSet<String> = accepted_file
             .patches
             .iter()

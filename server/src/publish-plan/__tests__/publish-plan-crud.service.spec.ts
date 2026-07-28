@@ -146,6 +146,62 @@ describe('PublishPlanCrudService.listFailedPublishPlanOperations', () => {
   });
 });
 
+describe('PublishPlanCrudService.listSucceededPublishPlanOperations', () => {
+  let findManyOperations: jest.Mock;
+
+  const makeService = (rows: unknown[]): PublishPlanCrudService => {
+    findManyOperations = jest.fn().mockResolvedValue(rows);
+    const db = { client: { publishPlanOperation: { findMany: findManyOperations } } } as unknown as DbService;
+    const bull = {} as unknown as BullEnqueuerService;
+    return new PublishPlanCrudService(db, bull);
+  };
+
+  // The query already collapses via `distinct: ['filePath']`, so the mock returns
+  // one row per distinct path (unlike the failed spec, which collapses in code).
+  const succeededRows = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      filePath: `Folder/rec-${String(i).padStart(2, '0')}.json`,
+    }));
+
+  it('queries only success operations for the plan, distinct by filePath, ordered by filePath', async () => {
+    const service = makeService([]);
+
+    await service.listSucceededPublishPlanOperations('plan-1');
+
+    expect(findManyOperations).toHaveBeenCalledWith({
+      where: { planId: 'plan-1', status: 'success' },
+      select: { filePath: true },
+      distinct: ['filePath'],
+      orderBy: { filePath: 'asc' },
+    });
+  });
+
+  it('returns every distinct succeeded record as { filePath } entries', async () => {
+    const service = makeService(succeededRows(250));
+
+    const result = await service.listSucceededPublishPlanOperations('plan-1', { pageSize: 500 });
+
+    expect(result.total).toBe(250);
+    expect(result.data).toHaveLength(250);
+    expect(result.data[0]).toEqual({ filePath: 'Folder/rec-00.json' });
+  });
+
+  it('paginates (default page size 200, cap 500)', async () => {
+    const service = makeService(succeededRows(250));
+
+    const page1 = await service.listSucceededPublishPlanOperations('plan-1');
+    expect(page1).toMatchObject({ total: 250, page: 1, pageSize: 200 });
+    expect(page1.data).toHaveLength(200);
+
+    const page2 = await service.listSucceededPublishPlanOperations('plan-1', { page: 2, pageSize: 200 });
+    expect(page2.data).toHaveLength(50);
+    expect(page2.data[0].filePath).toBe('Folder/rec-200.json');
+
+    const capped = await service.listSucceededPublishPlanOperations('plan-1', { pageSize: 5000 });
+    expect(capped.pageSize).toBe(500);
+  });
+});
+
 describe('collapseFailedOperationsByPath', () => {
   it('keeps one entry per path, preferring a non-rename phase regardless of row order', () => {
     const collapsed = collapseFailedOperationsByPath([

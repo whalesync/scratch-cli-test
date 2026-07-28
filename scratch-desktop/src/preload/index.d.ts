@@ -208,6 +208,7 @@ interface ScratchDesktopAPI {
   reconcilePublishedRecord: (
     workspacePath: string,
     filePath: string,
+    pipelineId?: string,
   ) => Promise<{ status: string; path: string; patchDropped: boolean; conflicts: number }>;
   /**
    * DEV-10048 (publish redesign): per-connection post-publish reconcile. Routes

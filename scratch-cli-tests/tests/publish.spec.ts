@@ -2809,3 +2809,251 @@ describeIfPostgres(
     }, 60_000);
   },
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEV-10741 — publish-success signal clears the accepted patch (no ghost).
+//
+// The desktop/CLI post-publish reconcile used to drop an accepted patch only when
+// re-applying it onto the new `main` was a byte no-op. A connector that NORMALIZES
+// what it stores (Notion rich-text spans, dates→UTC, slug/HTML rewrites, numeric
+// scale like `1.50`→`1.5`) leaves `main` byte-different from the approved value, so
+// the patch survived forever and re-published on every cycle. The fix drops a
+// record's accepted patch when the server reports it published (`status:'success'`),
+// fetched via the new `GET /cli/v1/workbooks/:id/publish-v2/:planId/succeeded-operations`
+// endpoint (Rust `resolve_succeeded_paths` → `partition_reanchored_after_publish`).
+//
+// The literal byte-different-`main` case needs a connector that commits the
+// normalized `RETURNING` row to `main` — gated by the `UPDATE_RECORDS_RETURNS_REMOTE_DATA`
+// flag, which is OFF in this harness (PostHog disabled), so Postgres commits the SENT
+// value and can't reproduce that exact ghost here. That drop is covered by the
+// hermetic Rust test `reconcile_drops_patch_when_publish_succeeded_but_value_was_normalized`.
+// This integration test proves the rest end-to-end against a real server + Postgres:
+// the new succeeded-operations endpoint is live and returns the published record, the
+// accepted patch is retired on publish success, and a re-publish does not re-send.
+
+const dev10741ServerUrl =
+  process.env.SCRATCH_API_URL || "http://localhost:3010";
+const dev10741ApiKey = process.env.SCRATCH_API_KEY;
+
+/** GET a Scratch server route with the test API token. */
+async function scratchApiGet<T>(urlPath: string): Promise<T> {
+  const res = await fetch(`${dev10741ServerUrl}${urlPath}`, {
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `API-Token ${dev10741ApiKey}`,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(
+      `API GET ${urlPath} failed (${res.status}): ${await res.text()}`,
+    );
+  }
+  return (await res.json()) as T;
+}
+
+describeIfPostgres(
+  "Publish-success signal (DEV-10741) — succeeded-operations endpoint retires the accepted patch, no ghost",
+  () => {
+    let workspaceId: string;
+    let workspaceDir: string;
+    let connDirName: string;
+    let targetAbsPath: string;
+    let targetWorkspacePath: string; // workspace-relative (for `files accept`)
+    let targetProductId: string;
+    const newCategory = "reclassified-via-publish";
+    let hasFailed = false;
+
+    beforeAll(async () => {
+      await setupProductsTable();
+
+      const ws = cli.json<{ id: string }>([
+        "workspaces",
+        "create",
+        uniqueName("publish-success-signal"),
+      ]);
+      workspaceId = ws.id;
+
+      const conn = cli.json<{ id: string }>([
+        "connections",
+        "--workspace",
+        workspaceId,
+        "add",
+        "--service",
+        TEST_CONNECTOR_SERVICE,
+        "--param",
+        `connectionString=${postgresUrl}`,
+      ]);
+      const connectionId = conn.id;
+
+      const parentDir = path.join(cli.home, "test-publish-success-signal");
+      fs.mkdirSync(parentDir, { recursive: true });
+      const initResult = cli.json<{ directory: string }>(
+        ["workspaces", "init", workspaceId],
+        { cwd: parentDir },
+      );
+      workspaceDir = path.join(parentDir, initResult.directory);
+
+      const tables = cli.json<Array<{ id: string; displayName: string }>>([
+        "linked",
+        "--workspace",
+        workspaceId,
+        "available",
+        connectionId,
+      ]);
+      const productsTable = tables.find(
+        (t) => t.displayName === "integration_products",
+      );
+      if (!productsTable) {
+        throw new Error("integration_products not found in available tables");
+      }
+      const tableIdParts = productsTable.id.split(",");
+      const linked = cli.json<{ id: string }>(
+        [
+          "linked",
+          "--workspace",
+          workspaceId,
+          "add",
+          "--connection-id",
+          connectionId,
+          ...tableIdParts.flatMap((p: string) => ["--table-id", p]),
+          "--name",
+          productsTable.displayName,
+        ],
+        { cwd: workspaceDir },
+      );
+      cli.run(["linked", "--workspace", workspaceId, "pull", linked.id], {
+        cwd: workspaceDir,
+      });
+      cli.run(["files", "download"], { cwd: workspaceDir });
+
+      const marker = readMarker(workspaceDir);
+      connDirName = marker.connections[0]!.dirName;
+
+      const target = findJsonFiles(workspaceDir)
+        .map((p) => ({
+          p,
+          data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<
+            string,
+            unknown
+          >,
+        }))
+        .find((r) => r.data.name === "Widget A");
+      if (!target) {
+        throw new Error("Expected product 'Widget A' not found after pull");
+      }
+      targetAbsPath = target.p;
+      targetWorkspacePath = path.relative(workspaceDir, target.p);
+      targetProductId = String(target.data.product_id);
+    }, 120_000);
+
+    afterAll(async () => {
+      const shouldPreserve = preserveOnFailure && hasFailed;
+      if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
+      if (workspaceDir && !shouldPreserve) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      await teardownProductsTable();
+    });
+
+    it("edit → accept → upload → publish retires the accepted patch and writes to Postgres", async () => {
+      try {
+        const data = JSON.parse(
+          fs.readFileSync(targetAbsPath, "utf-8"),
+        ) as Record<string, unknown>;
+        data.category = newCategory;
+        fs.writeFileSync(targetAbsPath, JSON.stringify(data, null, 2));
+
+        cli.run(["files", "accept", targetWorkspacePath], {
+          cwd: workspaceDir,
+        });
+        // Exactly one accepted patch for our record, before publish.
+        expect(
+          readAcceptedPatches(workspaceDir, connDirName).patches,
+        ).toHaveLength(1);
+
+        cli.run(["files", "upload"], { cwd: workspaceDir });
+
+        const publish = cli.json<{
+          status: string;
+          publishedConnections: string[];
+        }>(["files", "publish"], { cwd: workspaceDir });
+        expect(publish.status).toBe("published");
+        expect(publish.publishedConnections).toContain(connDirName);
+
+        // The change reached Postgres.
+        const client = new Client({ connectionString: postgresUrl });
+        await client.connect();
+        try {
+          const res = await client.query<{ category: string }>(
+            `SELECT category FROM integration_products WHERE product_id = $1`,
+            [targetProductId],
+          );
+          expect(res.rows[0]?.category).toBe(newCategory);
+        } finally {
+          await client.end();
+        }
+
+        // The publish-success signal retired the accepted patch — no ghost — and
+        // it was not misfiled as a failure.
+        expect(
+          readAcceptedPatches(workspaceDir, connDirName).patches,
+        ).toHaveLength(0);
+        expect(
+          readFailedPatches(workspaceDir, connDirName).patches,
+        ).toHaveLength(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 180_000);
+
+    it("the succeeded-operations endpoint reports the published record", async () => {
+      try {
+        // Publish plans are newest-first, so the plan we just published is data[0].
+        const plans = await scratchApiGet<{ data: Array<{ id: string }> }>(
+          `/workbook/${workspaceId}/publish-v2`,
+        );
+        const planId = plans.data[0]?.id;
+        expect(planId).toBeTruthy();
+
+        // The new endpoint the CLI reconcile consumes to drop on publish-success.
+        const succeeded = await scratchApiGet<{
+          data: Array<{ filePath: string }>;
+          total: number;
+        }>(
+          `/cli/v1/workbooks/${workspaceId}/publish-v2/${planId}/succeeded-operations`,
+        );
+
+        const fileName = path.basename(targetAbsPath);
+        expect(succeeded.total).toBeGreaterThanOrEqual(1);
+        expect(
+          succeeded.data.some((op) => op.filePath.endsWith(fileName)),
+        ).toBe(true);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    });
+
+    it("a re-publish is a no-op — the retired patch did not ghost or re-send", () => {
+      try {
+        const republish = cli.json<{
+          status: string;
+          publishedConnections: string[];
+        }>(["files", "publish"], { cwd: workspaceDir });
+        expect(["no_changes", "no_diff"]).toContain(republish.status);
+        expect(republish.publishedConnections).not.toContain(connDirName);
+        expect(
+          readAcceptedPatches(workspaceDir, connDirName).patches,
+        ).toHaveLength(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+  },
+);

@@ -187,8 +187,9 @@ const scratchDesktop = {
   reconcilePublishedRecord: (
     workspacePath: string,
     filePath: string,
+    pipelineId?: string,
   ): Promise<{ status: string; path: string; patchDropped: boolean; conflicts: number }> =>
-    invoke('scratch:reconcile-published-record', workspacePath, filePath),
+    invoke('scratch:reconcile-published-record', workspacePath, filePath, pipelineId),
   // Publish redesign (DEV-10048): per-connection post-publish reconcile. `failedOpsJson`
   // is the run-job's `failedOperations` array serialized to a JSON string. `pipelineId`
   // (DEV-10756) makes the CLI fetch the COMPLETE failure set so failures beyond the

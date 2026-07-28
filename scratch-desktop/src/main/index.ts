@@ -950,8 +950,10 @@ ipcMain.handle(
 // Single-record post-publish reconcile (DEV-10413). The scoped analogue of the
 // `files download` pull above — runs after a single-record publish lands so the
 // other unreviewed edits in the workspace don't block the refresh.
-ipcMain.handle('scratch:reconcile-published-record', async (_, workspacePath: string, filePath: string) =>
-  withWorkspaceInternalMutation(workspacePath, () => reconcilePublishedRecord(workspacePath, filePath)),
+ipcMain.handle(
+  'scratch:reconcile-published-record',
+  async (_, workspacePath: string, filePath: string, pipelineId?: string) =>
+    withWorkspaceInternalMutation(workspacePath, () => reconcilePublishedRecord(workspacePath, filePath, pipelineId)),
 );
 // Per-connection post-publish reconcile (publish redesign, DEV-10048). Run after a
 // connection's run-job: routes connector-rejected records into `failed-patches.json`,
