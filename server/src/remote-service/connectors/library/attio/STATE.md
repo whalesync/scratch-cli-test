@@ -48,6 +48,7 @@ Surfaced by the DEV-10303 code review. Coarser than the coverage matrix. **The s
 - [x] **Write-once / create-only field support** ✅ 2026-06-15 (**DEV-10408**). Added the `x-scratch-write-once` schema annotation (shared-types) + `TableViewCol.writeOnce`; the desktop renders such fields writable on a new (unpublished) record and read-only once it exists (combining the flag with the row's diff status), and the scratch-git `enforce_schema` validator warns when a write-once field changes on an existing record (silent on new ones). Applied to list-entry `parent_record_id`/`parent_object` and task `content_plaintext`. Copper set-on-create FKs can adopt the same flag next.
 - [x] **Workspace members** ✅ 2026-06-12 (P4). `GET /v2/workspace_members` (underscore — the `-members` guess 404s), read-only table at `/Workspace Members`. `actor-reference` FKs point at it via its remoteId `'members'` (DEV-11052).
 - [x] **Custom / extra objects + all lists** ✅ 2026-06-12 (P5). `listObjects()` now drives `listTables`; all lists exposed. Events/Products/Users/Workspaces light up; custom objects use the same path.
+- [x] **List parent-record hydration + custom-object ergonomics** ✅ 2026-07-27 (**DEV-11055**). List entries now embed the parent record verbatim under `parent_record` (hydrated per pulled page via batched `records/query` `$or` filters; also applied to create/update results and pull-by-id so files don't churn between publish and pull) — a list table shows the parent object's fields as read-only columns like Attio's own list UI, with the parent `name` as title column / `titlePath` / filename. Entry updates switched **PATCH → PUT** (Attio's PATCH *appends* multiselect values; PUT replaces, and our writes send the full authoritative array); object-record updates likewise moved to the PUT "overwrite" variant. Custom objects without a curated view config derive their title column (`name`, else first text-like attribute) for both the default view and `titlePath`. Multi-parent lists (theoretical in Attio's API) keep the thin pointer schema; per-entry hydration still applies on pull. Unit-tested; not yet live-verified.
 - [ ] **Planned entities (remaining):** Tasks (`/v2/tasks`, spec'd in PLAN P6 — deferred to post-GCS-reauth), Notes, Comments/Threads.
 - [ ] **Incremental polling not wired** — no `x-scratch-last-modified-field`; evaluate Attio's filter-based `since` pull; deletions not detected.
 - [ ] **`is_required` not surfaced** in the schema `required[]` — a create can 4xx on a missing required attribute.
@@ -73,9 +74,9 @@ Best-case future state; `Status` tracks built/planned.
 | Companies | `companies` object | ✅ | ✅ | ✅ | ✅ | ⬜ | 21 pulled (count+verbatim match); edit/create/delete all pushed & API-verified, incl. create→edit→delete cycle with NO re-pull; **Create-in-UI→Pull ✅** (ui-created-co-0611) |
 | People | `people` object | ✅ | ✅ | ✅ | ✅ | ⬜ | 65 pulled (count match); job_title edit (incl. envelope-less `[{value}]`), create (name+email), delete — all API-verified |
 | Deals | `deals` object | ✅ | ✅ | ✅ | ✅ | ⬜ | 5 pulled; name edit, create (status `stage` + actor-ref `owner` set on create), delete — all API-verified |
-| List entries (per standard-object list) | `list_<slug>` | ✅ | ✅ | ✅ | ✅ | ⬜ | 3 lists; `new_text` edit, create (parent_record_id+parent_object on raw file — works via CLI), delete — all API-verified |
+| List entries (per list, standard *or* custom parent object) | `list_<slug>` | ✅ | ✅ | ✅ | ✅ | ⬜ | 3 lists; `new_text` edit, create (parent_record_id+parent_object on raw file — works via CLI), delete — all API-verified. **DEV-11055:** entries hydrate the parent record under `parent_record` (read-only parent columns + parent-name title/filename); updates use PUT (multiselect replace). Hydration not yet live-verified |
 | Events / Products / Users / Workspaces (extra standard objects) | `<slug>` object | ✅ | ➖ | ➖ | ➖ | ⬜ | **built (P5)** — exposed via `listObjects()`; Products + Users pulled & verified; same object codepath as companies/people/deals (writes identical, not separately re-pushed) |
-| Custom objects (user-defined) | `<slug>` object | ➖ | ➖ | ➖ | ➖ | ⬜ | **built (P5)** — same codepath as above; none defined in the test workspace, so validated against the extra standard objects instead |
+| Custom objects (user-defined) | `<slug>` object | ➖ | ➖ | ➖ | ➖ | ⬜ | **built (P5)** — same codepath as above; none defined in the test workspace, so validated against the extra standard objects instead. **DEV-11055:** title column / `titlePath` now derived (`name`, else first text-like attribute) so a custom object's grid and filenames lead with record names |
 | Workspace members | `workspace_members` (`/Workspace Members`) | ✅ | ➖ | ➖ | ➖ | ➖ | **built (P4), read-only** — `GET /v2/workspace_members`; 1 member pulled verbatim; all writes disabled. Distinct from the `users` *object* |
 | Tasks | `tasks` (`/Tasks`) | ✅ | ✅ | ✅ | ✅ | ✅ | **built + full CRUD validated (P6)** — `/v2/tasks`; content write-once (immutable on update); create needs all 6 fields; assignees→members (FK, DEV-11052), linked_records→records; flat default view (DEV-11052) |
 | Notes | — | ⬜ | ⬜ | ⬜ | ⬜ | ➖ | planned (`/v2/notes` list, or per-record) |
@@ -120,7 +121,7 @@ Every Attio attribute `type`, with its on-disk read key, write key, and the disp
 |---|---|---|---|
 | Read (list) | 500 records/page | `POST …/query` with `{limit, offset}` | `PAGE_LIMIT = 500`; offset pagination |
 | Create | 1 record/request | `POST …/records` \| `…/entries` | no bulk API → `getBatchSize() = 1` |
-| Update | 1 record/request | `PATCH …/{id}` | partial (only sent keys touched) |
+| Update | 1 record/request | `PUT …/{id}` | partial across fields (only sent keys touched); PUT = multiselect *replace* (PATCH would append — DEV-11055) |
 | Delete | 1 id/request | `DELETE …/{id}` | 404 treated as already-gone |
 
 Org-wide rate limit: **100 req/s per workspace token** (`rateLimiterSpec { points: 50, duration: 1 }` leaves headroom). 429 → honors `Retry-After` (seconds) via `ATTIO_RETRY_OPTS`.
@@ -140,19 +141,21 @@ Org-wide rate limit: **100 req/s per workspace token** (`rateLimiterSpec { point
 | Entity / area | Op | Method + path | Note |
 |---|---|---|---|
 | self | identify | `GET /v2/self` | `testConnection`; 401/403 → friendly error |
-| objects | list | `GET /v2/objects` | **defined but unused** (`listTables` hardcodes the 3 objects) |
-| object attributes | discover | `GET /v2/objects/{slug}/attributes` | schema source (incl. custom fields) |
-| lists | list | `GET /v2/lists` | only lists whose `parent_object` is a standard object are exposed |
+| objects | list | `GET /v2/objects` | drives `listTables` (every object, standard + custom) and the object-id→slug FK map |
+| object attributes | discover | `GET /v2/objects/{slug}/attributes` | schema source (incl. custom fields); also the parent half of a list schema (DEV-11055) |
+| lists | list | `GET /v2/lists` | every list with a resolvable `parent_object` is exposed (custom-object lists included) |
+| lists | get | `GET /v2/lists/{slug}` | name + parent_object fallback when `listTables` hasn't primed the cache |
 | list attributes | discover | `GET /v2/lists/{slug}/attributes` | list-scoped schema |
 | records | list | `POST /v2/objects/{slug}/records/query` | `{limit:500, offset}` |
+| records | get-by-ids | `POST /v2/objects/{slug}/records/query` | `$or` of `record_id` `$eq` filters, chunks of 100 — hydrates list-entry parents (DEV-11055) |
 | records | get | `GET /v2/objects/{slug}/records/{id}` | 404 → null |
 | records | create | `POST /v2/objects/{slug}/records` | body `{data:{values}}` (write-shape) |
-| records | update | `PATCH /v2/objects/{slug}/records/{id}` | partial; pairs with `changedFields` |
+| records | update | `PUT /v2/objects/{slug}/records/{id}` | the "overwrite multiselect" variant (PATCH appends — DEV-11055); partial across fields; pairs with `changedFields` |
 | records | delete | `DELETE /v2/objects/{slug}/records/{id}` | |
 | entries | list | `POST /v2/lists/{slug}/entries/query` | `{limit:500, offset}` |
 | entries | get | `GET /v2/lists/{slug}/entries/{id}` | |
 | entries | create | `POST /v2/lists/{slug}/entries` | body `{data:{parent_record_id, parent_object, entry_values}}` |
-| entries | update | `PATCH /v2/lists/{slug}/entries/{id}` | body `{data:{entry_values}}` |
+| entries | update | `PUT /v2/lists/{slug}/entries/{id}` | body `{data:{entry_values}}`; PUT replaces multiselect values, PATCH would append (DEV-11055) |
 | entries | delete | `DELETE /v2/lists/{slug}/entries/{id}` | |
 
 Cross-cutting: base `https://api.attio.com`; `Authorization: Bearer <token>`, `Accept: application/json`; 60s timeout; envelope `{ data: <T> }` on every response.
@@ -176,7 +179,7 @@ Cross-cutting: base `https://api.attio.com`; `Authorization: Bearer <token>`, `A
 - **FOUND+FIXED: publish pipeline broke on nested id paths (`id.record_id`).** `publish-plan-run.service.ts` read/wrote the record id with plain property access (`returned[idField]`, `{[idField]: id}`, `delete obj[idField]`) although `idColumnRemoteId` is a lodash dot-path (Attio is the first connector with a nested one). Consequences before the fix: (1) **create wrote no FileIndex row** → a publish-created record could never be updated or deleted ("Could not resolve remote ID", while the CLI still printed "Published" — silent failure); (2) **delete filters were built flat** (`{"id.record_id": id}`) which the connector's `extractRecordId` can't read → deletes of even *pulled* records would throw; (3) a later pull saw the unindexed record as new and **re-materialized it under a different filename**. Fixed in `dispatchUpdateBatch`/`dispatchCreateBatch`/`dispatchDeleteBatch` with `readRecordId`/lodash `set`/`unset`; verified by a create→edit→delete cycle with no intermediate pull.
 - **Post-publish phantom local edit (every write).** Attio rotates the value envelope (`active_from`, `created_by_actor`) on every successful write, and publish-v2 writes the service's fresh copy to `main` — so the local worktree file (still holding the pre-publish envelope) shows as a phantom `files unpublished` "modified" forever; a re-pull does NOT clear it (non-destructive: pull won't clobber a locally-modified file). **Resolution: `files discard <path>` after a confirmed publish** — restores from main (which has both the user's edit and the fresh envelope). Always confirm the write in the service API first; the phantom makes `unpublished`-empty unusable as the publish proof for Attio.
 - **Envelope-less fresh values publish fine.** An empty value array hand-written as bare `[{value:"…"}]` (no `active_from`/`created_by_actor` envelope) passes the write-shape and lands (people.job_title, verified in API) — so grid-created values don't need the read envelope.
-- **List-entry filename = parent_record_id, entry_id inside.** `/Lists/<List>/<parent_record_id>.json`; the entry's own id is `id.entry_id` (needed for `GET /v2/lists/{slug}/entries/{entry_id}`).
+- **List-entry filename = parent record name (DEV-11055; falls back to parent_record_id), entry_id inside.** `/Lists/<List>/<parent name>.json` via the hydrated `parent_record.values.name`; the entry's own id is `id.entry_id` (needed for `GET /v2/lists/{slug}/entries/{entry_id}`). Pre-hydration pulls named files by the raw `parent_record_id` UUID.
 
 ## Edge cases from code review (verify live)
 - **Read shape ≠ write shape** — every value carries a metadata envelope (`attribute_type`, `active_from`, `active_until`, `created_by_actor`) stripped on write; `select`/`status` read a full option object but **write the terse string title**; `email-address` read carries derived keys (`email_domain`, `email_root_domain`, …) that **fail the write** and are dropped by the per-type allowlist. (`attio-write-shape.ts`, "empirically verified against Attio v2 on 2026-05-05".)
@@ -185,8 +188,8 @@ Cross-cutting: base `https://api.attio.com`; `Authorization: Bearer <token>`, `A
 - **Offset pagination hazard** — records created mid-pull can be skipped/duplicated (no stable sort on `…/query`); probe in Pass 2.
 
 ## Gotchas
-- List entries store a **pointer** (`parent_record_id`) to the parent record, not an embedded copy — the parent objects are first-class tables in the same workbook, so joins happen at read time.
-- `listNameCache` (api_slug → name) is populated by `listTables`; `fetchJsonTableSpec` falls back to `lookupListName` (re-lists) after a server restart.
+- The entries API returns only a **pointer** (`parent_record_id` / `parent_object`) to the parent record; the connector **hydrates** the parent record verbatim under `parent_record` on every pull page (and on create/update results + pull-by-id, so publish and pull produce the same file) — DEV-11055. The hydrated subtree is read-only; a stale-parent value in a list file simply refreshes on the next list pull.
+- `listInfoCache` (api_slug → name + parent object slugs) is populated by `listTables`; `fetchJsonTableSpec` falls back to `lookupListInfo` (`GET /v2/lists/{slug}`) after a server restart.
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).

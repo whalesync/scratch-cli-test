@@ -143,7 +143,11 @@ function foreignKeyOptionsForAttribute(
   return undefined;
 }
 
-function valueArraySchemaForAttribute(attr: AttioAttribute, objectIdToSlug: Map<string, string>): TSchema {
+function valueArraySchemaForAttribute(
+  attr: AttioAttribute,
+  objectIdToSlug: Map<string, string>,
+  opts?: { forceReadonly?: boolean },
+): TSchema {
   const valueSchema = Type.Object({}, { additionalProperties: true });
   const virtualFields = buildVirtualField(attr);
   const foreignKey = foreignKeyOptionsForAttribute(attr, objectIdToSlug);
@@ -152,18 +156,29 @@ function valueArraySchemaForAttribute(attr: AttioAttribute, objectIdToSlug: Map<
     description: attr.description ?? attr.title,
     [X_SCRATCH_REMOTE_FIELD_ID]: attr.api_slug,
     [X_SCRATCH_CONNECTOR_DATA_TYPE]: attr.type,
-    ...(isAttributeReadonly(attr) ? { [X_SCRATCH_READONLY]: true } : {}),
+    ...(opts?.forceReadonly || isAttributeReadonly(attr) ? { [X_SCRATCH_READONLY]: true } : {}),
     ...(virtualFields ? { [X_SCRATCH_VIRTUAL_FIELDS]: virtualFields } : {}),
     ...(foreignKey ? { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: foreignKey } : {}),
   });
 }
 
-/** Build the `values` object schema, keyed by attribute api_slug. */
-function buildValuesSchema(attributes: AttioAttribute[], objectIdToSlug: Map<string, string>): TSchema {
+/**
+ * Build the `values` object schema, keyed by attribute api_slug.
+ *
+ * `forceReadonly` marks every attribute read-only regardless of Attio's
+ * `is_writable` flag — used for the hydrated `parent_record.values` on list
+ * tables, where edits belong on the parent object's own table (a list-entry
+ * write only ever sends `entry_values`).
+ */
+function buildValuesSchema(
+  attributes: AttioAttribute[],
+  objectIdToSlug: Map<string, string>,
+  opts?: { forceReadonly?: boolean },
+): TSchema {
   const properties: Record<string, TSchema> = {};
   for (const attr of attributes) {
     if (attr.is_archived) continue;
-    properties[attr.api_slug] = valueArraySchemaForAttribute(attr, objectIdToSlug);
+    properties[attr.api_slug] = valueArraySchemaForAttribute(attr, objectIdToSlug, opts);
   }
   return Type.Object(properties, {
     description: 'Attio attribute values, keyed by api_slug',
@@ -220,34 +235,86 @@ export async function buildAttioObjectTableSpec(
     name: resolvedDisplay.plural,
     schema,
     idPath: dotPath('id.record_id'),
-    // All three v1 objects (companies, people, deals) expose a `name` attribute
-    // suitable for filenames — for people it's the `personal-name` type, for
-    // companies/deals it's plain text.
-    titlePath: dotPath('values.name'),
+    titlePath: dotPath(`values.${titleAttributeSlug(attributes)}`),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };
 }
 
 /**
- * Build the table spec for a list. The schema only describes list-scoped
- * attributes (from `GET /v2/lists/{slug}/attributes`) — e.g. a deal's stage in
- * *this* pipeline. The parent record's own attributes are *not* embedded; the
- * parent objects (companies/people/deals) are already first-class tables in
- * the workbook, so duplicating their data here would only churn diffs.
+ * Pick the attribute that best serves as an object's human title. Every
+ * standard object has a `name` attribute (plain text, or `personal-name` for
+ * people); custom objects usually do too, but aren't required to — for those,
+ * fall back to the first text-like attribute, and finally to `name` anyway
+ * (a missing title value just means the generic filename fallback kicks in).
+ */
+function titleAttributeSlug(attributes: AttioAttribute[]): string {
+  const activeAttributes = attributes.filter((attr) => !attr.is_archived);
+  const nameAttribute = activeAttributes.find((attr) => attr.api_slug === 'name');
+  if (nameAttribute) return nameAttribute.api_slug;
+  const firstTextLikeAttribute = activeAttributes.find((attr) => attr.type === 'text' || attr.type === 'personal-name');
+  return firstTextLikeAttribute?.api_slug ?? 'name';
+}
+
+/**
+ * Build the table spec for a list. Two attribute sets combine into one table:
  *
- * Joining a list entry back to its parent happens at read time via
- * `parent_record_id`. List entries are deliberately thin: stage + pointer.
+ *   - **List-scoped attributes** (from `GET /v2/lists/{slug}/attributes`) —
+ *     e.g. a deal's stage in *this* pipeline — live under `entry_values` and
+ *     are the entry's own writable fields.
+ *   - **The parent object's attributes** (from
+ *     `GET /v2/objects/{parent}/attributes`) — the fields Attio's own list UI
+ *     shows as columns — live under the hydrated, read-only `parent_record`
+ *     (see `AttioListEntry.parent_record`; the connector embeds the parent
+ *     record verbatim on pull). Declared only for single-parent lists: a
+ *     multi-parent list (theoretical in Attio's API) has no one attribute set
+ *     to describe, so its entries keep just the pointer fields.
+ *
+ * `parent_record` is optional — hydration can miss (parent deleted between
+ * the entries page and the hydrate query) — and fully read-only: edits to
+ * parent fields belong on the parent object's own table, and list-entry
+ * writes only ever send `entry_values` (+ the parent pointer on create).
  */
 export async function buildAttioListTableSpec(
   id: EntityId,
   listSlug: string,
   listName: string,
+  parentObjectSlugs: string[],
   client: AttioApiClient,
 ): Promise<BaseJsonTableSpec> {
   const listAttributes = await client.listListAttributes(listSlug);
   const objectIdToSlug = await buildObjectIdToSlugMap(client);
   const entryValuesSchema = buildValuesSchema(listAttributes, objectIdToSlug);
+
+  const singleParentObjectSlug = parentObjectSlugs.length === 1 ? parentObjectSlugs[0] : undefined;
+  const parentAttributes = singleParentObjectSlug ? await client.listObjectAttributes(singleParentObjectSlug) : [];
+  const parentRecordSchema =
+    singleParentObjectSlug === undefined
+      ? undefined
+      : Type.Optional(
+          Type.Object(
+            {
+              id: Type.Object(
+                {
+                  workspace_id: Type.String(),
+                  object_id: Type.String(),
+                  record_id: Type.String(),
+                },
+                { description: 'Attio record id triple of the parent record' },
+              ),
+              created_at: Type.Optional(Type.String({ format: 'date-time' })),
+              web_url: Type.Optional(Type.String()),
+              values: buildValuesSchema(parentAttributes, objectIdToSlug, { forceReadonly: true }),
+            },
+            {
+              [X_SCRATCH_READONLY]: true,
+              description:
+                `The parent ${singleParentObjectSlug} record this entry wraps, hydrated by the connector on pull ` +
+                '(the Attio entries API returns only the parent_record_id pointer). Read-only: edit these fields ' +
+                'on the parent object table.',
+            },
+          ),
+        );
 
   const schema = Type.Object(
     {
@@ -269,9 +336,17 @@ export async function buildAttioListTableSpec(
       parent_object: Type.String({ [X_SCRATCH_WRITE_ONCE]: true }),
       created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
       entry_values: entryValuesSchema,
+      ...(parentRecordSchema ? { parent_record: parentRecordSchema } : {}),
     },
     { $id: `attio/list-${listSlug}`, title: listName },
   );
+
+  // The parent record's `name` attribute is the natural human identifier for
+  // an entry (it's what Attio's own list UI leads with). Fall back to the
+  // parent_record_id pointer when the parent object has no `name` attribute
+  // (possible for custom objects) or the list is multi-parent.
+  const parentHasNameAttribute = parentAttributes.some((attr) => attr.api_slug === 'name' && !attr.is_archived);
+  const titlePath = parentHasNameAttribute ? dotPath('parent_record.values.name') : dotPath('parent_record_id');
 
   return {
     id,
@@ -279,9 +354,7 @@ export async function buildAttioListTableSpec(
     name: listName,
     schema,
     idPath: dotPath('id.entry_id'),
-    // List entries don't carry a name of their own; the parent_record_id is
-    // the closest stable identifier for filenames + display.
-    titlePath: dotPath('parent_record_id'),
+    titlePath,
     basePath: ['Lists'],
     generatedAt: new Date().toISOString(),
   };

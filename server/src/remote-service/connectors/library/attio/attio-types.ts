@@ -4,7 +4,9 @@
  * Attio is a CRM organized around three layers:
  *   - **Objects** — typed entity collections. Standard objects are `companies`,
  *     `people`, `deals`, `users`, `workspaces`, etc. Workspaces can also define
- *     custom objects, but custom objects are out of scope for v1.
+ *     custom objects; standard and custom objects share the
+ *     `/v2/objects/{slug}` endpoint family, so the connector exposes them all
+ *     through one codepath.
  *   - **Attributes** — typed fields on an object (`text`, `select`, `status`,
  *     `record-reference`, `personal-name`, etc.). Custom fields are added by
  *     the user and surface alongside built-ins through the same endpoint.
@@ -17,13 +19,15 @@
  * v2 API docs: https://docs.attio.com/rest-api/overview
  */
 
-/** A standard object slug we ship as a fixed table in v1. */
+/** A standard object slug with curated fallback display labels. */
 export type AttioStandardObject = 'companies' | 'people' | 'deals';
 
-/** The three standard objects exposed in v1. Custom objects are deferred to v2. */
-export const STANDARD_OBJECTS: readonly AttioStandardObject[] = ['companies', 'people', 'deals'];
-
-/** Display labels for the standard objects, in the order they appear in the picker. */
+/**
+ * Fallback display labels for the three core standard objects, used only when
+ * `listObjects` hasn't supplied the workspace's own nouns (e.g. building a
+ * table spec after a server restart). Table enumeration itself is dynamic —
+ * every object, standard or custom, comes from `GET /v2/objects`.
+ */
 export const STANDARD_OBJECT_DISPLAY: Record<AttioStandardObject, { singular: string; plural: string }> = {
   companies: { singular: 'Company', plural: 'Companies' },
   people: { singular: 'Person', plural: 'People' },
@@ -161,12 +165,20 @@ export interface AttioRecord {
 /**
  * One Attio list entry (`POST /v2/lists/{slug}/entries/query`).
  *
- * Entries point to a parent record under `parent_record_id` / `parent_object`
- * and carry list-scoped attribute values under `entry_values`. The parent's
- * own attribute values are intentionally *not* embedded — companies/people/
- * deals are first-class tables in the same workbook, so duplicating their
- * data inside every list entry would just churn diffs and confuse readers.
- * Joins happen at read time via `parent_record_id`.
+ * The API returns entries as pointers: `parent_record_id` / `parent_object`
+ * name the parent record, and only list-scoped attribute values ride along
+ * under `entry_values`. That raw shape makes a list table nearly empty — a
+ * stage column and a UUID — which is not what an Attio list *is* to a user
+ * (Attio's own list UI shows the parent record's fields as columns).
+ *
+ * So the connector **hydrates the parent-record stub**: after each entries
+ * page it fetches the referenced parent records and embeds each one verbatim
+ * under `parent_record` (the sanctioned "light list + heavy hydrate" pattern —
+ * CONNECTOR_GUIDE.md → Hydration). `parent_record` is absent when the parent
+ * could not be fetched (e.g. deleted between the entries page and the hydrate
+ * query). It is read-only: edits to parent fields belong on the parent
+ * object's own table, and writes to a list entry only ever send
+ * `entry_values` (+ the parent pointer on create).
  */
 export interface AttioListEntry {
   id: AttioListEntryId;
@@ -174,6 +186,8 @@ export interface AttioListEntry {
   parent_object: string;
   created_at: string;
   entry_values: Record<string, AttioFieldValue[]>;
+  /** Hydrated by the connector, not returned by the entries endpoints. */
+  parent_record?: AttioRecord;
 }
 
 /**

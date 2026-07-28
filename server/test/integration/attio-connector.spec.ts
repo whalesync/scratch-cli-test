@@ -138,7 +138,7 @@ describeIfKey('AttioConnector — live API', () => {
   // -------------------------------------------------------------------------
 
   describe('fetchJsonTableSpec (list)', () => {
-    it('builds a thin spec with entry_values (no embedded parent_record)', async () => {
+    it('builds a spec with entry_values plus the hydrated read-only parent_record subtree (DEV-11055)', async () => {
       if (listTables.length === 0) {
         console.warn('Attio workspace has no lists — list-spec assertions skipped.');
         return;
@@ -147,7 +147,6 @@ describeIfKey('AttioConnector — live API', () => {
       const spec = await connector.fetchJsonTableSpec(listTables[0].id);
       // List entries are addressed by their entry_id leaf inside the id triple.
       expect(spec.idPath).toBe('id.entry_id');
-      expect(spec.titlePath).toEqual('parent_record_id');
 
       const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
@@ -156,8 +155,17 @@ describeIfKey('AttioConnector — live API', () => {
       expect(props).toHaveProperty('created_at');
       expect(props).toHaveProperty('entry_values');
 
-      // We deliberately do NOT embed the parent record — confirm it's absent.
-      expect(props).not.toHaveProperty('parent_record');
+      // Single-parent lists embed the parent object's attributes as a
+      // read-only subtree (the connector hydrates parent_record on pull).
+      expect(props).toHaveProperty('parent_record');
+      const parentRecord = props.parent_record as {
+        'x-scratch-readonly'?: boolean;
+        properties: Record<string, unknown>;
+      };
+      expect(parentRecord['x-scratch-readonly']).toBe(true);
+      expect(parentRecord.properties).toHaveProperty('values');
+      // The parent's name attribute (standard objects always have one) titles the entry.
+      expect(spec.titlePath).toEqual('parent_record.values.name');
     });
   });
 
@@ -216,7 +224,7 @@ describeIfKey('AttioConnector — live API', () => {
   // -------------------------------------------------------------------------
 
   describe('pullRecordFiles (list)', () => {
-    it('streams entries that point at a parent record without embedding it', async () => {
+    it('streams entries with the parent record hydrated in place (DEV-11055)', async () => {
       if (listTables.length === 0) {
         console.warn('Attio workspace has no lists — list-pull assertions skipped.');
         return;
@@ -235,15 +243,22 @@ describeIfKey('AttioConnector — live API', () => {
         parent_record_id: string;
         parent_object: string;
         entry_values: Record<string, unknown[]>;
-        parent_record?: unknown;
+        parent_record?: {
+          id: { workspace_id: string; object_id: string; record_id: string };
+          values: Record<string, unknown[]>;
+        };
       };
 
       expect(typeof sample.id.entry_id).toBe('string');
       expect(typeof sample.parent_record_id).toBe('string');
       expect(typeof sample.parent_object).toBe('string');
       expect(typeof sample.entry_values).toBe('object');
-      // Confirm we are NOT expanding the parent record.
-      expect(sample.parent_record).toBeUndefined();
+
+      // The parent record is hydrated verbatim under `parent_record`, keyed to
+      // the pointer the entry carries.
+      expect(sample.parent_record).toBeDefined();
+      expect(sample.parent_record?.id.record_id).toBe(sample.parent_record_id);
+      expect(typeof sample.parent_record?.values).toBe('object');
     });
   });
 });

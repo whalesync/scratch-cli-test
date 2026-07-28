@@ -16,6 +16,9 @@ import {
 
 const BASE_URL = 'https://api.attio.com';
 const PAGE_LIMIT = 500; // Attio's POST `/records/query` and `/entries/query` cap
+// How many record_ids to pack into one `$or` filter when hydrating list-entry
+// parents. Well under the query limit; keeps the filter body reasonably small.
+const RECORDS_BY_IDS_CHUNK_SIZE = 100;
 
 /**
  * Custom error class for Attio API errors. Carries the HTTP status and the
@@ -178,6 +181,19 @@ export class AttioApiClient {
     return response.data.data;
   }
 
+  /** Fetch a single list's metadata (name, parent_object) by slug or id. Returns `null` on 404. */
+  async getList(listSlug: string): Promise<AttioList | null> {
+    try {
+      const response = await this.withRetry(async () =>
+        this.http.get<AttioEnvelope<AttioList>>(`/v2/lists/${listSlug}`),
+      );
+      return response.data.data;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) return null;
+      throw error;
+    }
+  }
+
   /** List every list-scoped attribute on a list. */
   async listListAttributes(listSlug: string): Promise<AttioAttribute[]> {
     const response = await this.withRetry(async () =>
@@ -214,10 +230,11 @@ export class AttioApiClient {
   /**
    * Stream every entry on a list via `POST /v2/lists/{slug}/entries/query`.
    *
-   * Entries are stored as pointers to their parent record (`parent_record_id`),
-   * not as embedded copies — the parent objects (companies/people/deals) are
-   * first-class tables in the same workbook, so duplicating their data inside
-   * every list entry would just churn diffs whenever a parent record is edited.
+   * The API returns entries as pointers to their parent record
+   * (`parent_record_id` / `parent_object`) plus list-scoped `entry_values`.
+   * The connector hydrates each page's parent records into the entries
+   * (`AttioListEntry.parent_record`) via {@link queryRecordsByIds} before
+   * storing them — see the hydration note on `AttioListEntry`.
    */
   async *queryListEntries(
     listSlug: string,
@@ -253,6 +270,33 @@ export class AttioApiClient {
     }
   }
 
+  /**
+   * Fetch a specific set of records on an object by their `record_id`s, via
+   * `POST /v2/objects/{slug}/records/query` with an `$or` equality filter.
+   * Used to hydrate the parent records of a page of list entries in one
+   * request per chunk instead of one `GET` per entry.
+   *
+   * Ids are deduplicated and queried in chunks of
+   * {@link RECORDS_BY_IDS_CHUNK_SIZE} to keep the filter body a sane size.
+   * Ids that don't resolve (e.g. the record was deleted between the entries
+   * page and this query) are simply absent from the result.
+   */
+  async queryRecordsByIds(objectSlug: string, recordIds: string[]): Promise<AttioRecord[]> {
+    const uniqueRecordIds = [...new Set(recordIds)];
+    const records: AttioRecord[] = [];
+    for (let start = 0; start < uniqueRecordIds.length; start += RECORDS_BY_IDS_CHUNK_SIZE) {
+      const chunk = uniqueRecordIds.slice(start, start + RECORDS_BY_IDS_CHUNK_SIZE);
+      const response = await this.withRetry(async () =>
+        this.http.post<AttioEnvelope<AttioRecord[]>>(`/v2/objects/${objectSlug}/records/query`, {
+          filter: { $or: chunk.map((recordId) => ({ record_id: { $eq: recordId } })) },
+          limit: chunk.length,
+        }),
+      );
+      records.push(...(response.data.data ?? []));
+    }
+    return records;
+  }
+
   /** Fetch a single list entry by id. Returns `null` on 404. */
   async getListEntry(listSlug: string, entryId: string): Promise<AttioListEntry | null> {
     try {
@@ -285,13 +329,18 @@ export class AttioApiClient {
   }
 
   /**
-   * Update a record via `PATCH /v2/objects/{slug}/records/{id}`. Attio accepts
-   * partial payloads — only the keys present in `values` are touched, all
-   * others left alone. Pairs naturally with `changedFields`.
+   * Update a record via **`PUT`** `/v2/objects/{slug}/records/{id}` — Attio's
+   * "overwrite multiselect values" variant — NOT `PATCH` (the "append" variant,
+   * which adds the sent values to multi-value attributes instead of replacing
+   * them). Our writes always send a field's full authoritative value array from
+   * the record file, so overwrite is the correct semantics; `PATCH` would
+   * silently accrete multiselect values on every publish. Both verbs are
+   * partial across *fields*: only the keys present in `values` are touched,
+   * all others left alone. Pairs naturally with `changedFields`.
    */
   async updateRecord(objectSlug: string, recordId: string, values: Record<string, unknown[]>): Promise<AttioRecord> {
     const response = await this.withRetry(async () =>
-      this.http.patch<AttioEnvelope<AttioRecord>>(`/v2/objects/${objectSlug}/records/${recordId}`, {
+      this.http.put<AttioEnvelope<AttioRecord>>(`/v2/objects/${objectSlug}/records/${recordId}`, {
         data: { values },
       }),
     );
@@ -331,14 +380,23 @@ export class AttioApiClient {
     return response.data.data;
   }
 
-  /** Update list-scoped attributes on a list entry. Same partial semantics as `updateRecord`. */
+  /**
+   * Update list-scoped attributes on a list entry, via **`PUT`** (Attio's
+   * "assert" semantics), NOT `PATCH`. The two differ only for multiselect
+   * attributes: `PATCH` *appends* the sent values to whatever is already
+   * there, while `PUT` *replaces* them. Our writes always send a field's full
+   * authoritative value array from the record file, so replace is the correct
+   * semantics — `PATCH` would silently duplicate/accrete multiselect values on
+   * every publish. Both verbs are partial across *fields*: only the keys
+   * present in `entry_values` are touched.
+   */
   async updateListEntry(
     listSlug: string,
     entryId: string,
     entryValues: Record<string, unknown[]>,
   ): Promise<AttioListEntry> {
     const response = await this.withRetry(async () =>
-      this.http.patch<AttioEnvelope<AttioListEntry>>(`/v2/lists/${listSlug}/entries/${entryId}`, {
+      this.http.put<AttioEnvelope<AttioListEntry>>(`/v2/lists/${listSlug}/entries/${entryId}`, {
         data: { entry_values: entryValues },
       }),
     );

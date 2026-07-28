@@ -77,6 +77,14 @@ export interface AttioObjectViewConfig {
   titleField?: string;
   /** Attribute api_slugs to show right after id. */
   priorityFields?: string[];
+  /**
+   * For list tables: the top-level key holding the hydrated parent record
+   * (`parent_record`). Its `values.*` attributes are exploded into read-only
+   * columns after the entry's own attributes — Attio's own list UI shows the
+   * parent record's fields as columns, so ours does too. The parent's `name`
+   * attribute (when present) becomes the table's title column.
+   */
+  parentRecordKey?: string;
 }
 
 /** View config for standard objects. */
@@ -98,10 +106,34 @@ export const OBJECT_VIEW_CONFIG: Record<string, AttioObjectViewConfig> = {
   },
 };
 
-/** Default view config for lists (entry_values). */
+/** Default view config for lists (entry_values + hydrated parent record columns). */
 export const LIST_VIEW_CONFIG: AttioObjectViewConfig = {
   valuesKey: 'entry_values',
+  parentRecordKey: 'parent_record',
 };
+
+/**
+ * Derive a view config for an object with no curated `OBJECT_VIEW_CONFIG`
+ * entry — custom objects and the extra standard objects (users, workspaces,
+ * …). The one thing worth deriving is the title column: use the `name`
+ * attribute when the object has one (custom objects usually do), so a custom
+ * object's grid leads with its records' names instead of raw ids.
+ */
+export function deriveAttioObjectViewConfig(schema: TSchema): AttioObjectViewConfig {
+  const topLevel: Record<string, TSchema> =
+    (schema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
+  const valueFields: Record<string, TSchema> =
+    (topLevel['values'] as TSchema & { properties?: Record<string, TSchema> })?.properties ?? {};
+  return { valuesKey: 'values', titleField: 'name' in valueFields ? 'name' : undefined };
+}
+
+/**
+ * Parent-record attribute slugs hidden by default on a list view, on top of
+ * {@link HIDDEN_VALUE_FIELDS}: the parent's own bookkeeping timestamps would
+ * read as the *entry's* (the entry has its own `created_at` fixed column), so
+ * they stay available but out of the default column set.
+ */
+const HIDDEN_PARENT_VALUE_FIELDS = new Set(['created_at', 'created_by']);
 
 /**
  * Per-table display config for Attio's FLAT tables (tasks, members) — the ones
@@ -133,10 +165,12 @@ export const MEMBERS_FLAT_VIEW_CONFIG: AttioFlatViewConfig = {
 };
 
 /**
- * Build a default TableView for an Attio object (companies, people, deals) or list.
+ * Build a default TableView for an Attio object (standard or custom) or list.
  *
  * Column order: title attribute -> id -> priority attributes -> remaining attributes
- * -> remaining fixed fields (created_at, web_url, ...).
+ * -> hydrated parent-record attributes (list tables) -> remaining fixed fields
+ * (created_at, web_url, ...). For a list without its own title field, the parent
+ * record's `name` column serves as the title.
  */
 export function buildAttioDefaultView(schema: TSchema, config: AttioObjectViewConfig): TableView {
   const topLevel: Record<string, TSchema> =
@@ -152,8 +186,30 @@ export function buildAttioDefaultView(schema: TSchema, config: AttioObjectViewCo
   // Order: title first, then priority fields, then the rest
   const orderedValues = orderValueFields(Object.entries(valueFields), config.titleField, config.priorityFields);
 
-  // Build fixed fields
-  const fixedFieldIds = Object.keys(topLevel).filter((k) => k !== config.valuesKey);
+  // Columns for the hydrated parent record's attributes (list tables only) —
+  // paths under `parent_record.values.*`. Read-only comes from the schema
+  // annotations (the whole parent subtree is forced read-only there).
+  const parentValueCols: { name: string; col: TableViewCol }[] = [];
+  if (config.parentRecordKey && config.parentRecordKey in topLevel) {
+    const parentRecordProps: Record<string, TSchema> =
+      (topLevel[config.parentRecordKey] as TSchema & { properties?: Record<string, TSchema> })?.properties ?? {};
+    const parentValueFields: Record<string, TSchema> =
+      (parentRecordProps['values'] as TSchema & { properties?: Record<string, TSchema> })?.properties ?? {};
+    const parentValuesKey = `${config.parentRecordKey}.values`;
+    for (const [attrSlug, attrSchema] of Object.entries(parentValueFields)) {
+      const col = buildValueCol(attrSlug, attrSchema, parentValuesKey);
+      // Hide the parent's bookkeeping fields, plus any parent attribute whose
+      // slug collides with an entry attribute — two visible "Stage" columns
+      // (the entry's and the parent deal's) would be indistinguishable in the
+      // grid. All stay selectable, just out of the default set.
+      if (HIDDEN_PARENT_VALUE_FIELDS.has(attrSlug) || attrSlug in valueFields) col.hidden = true;
+      parentValueCols.push({ name: attrSlug, col });
+    }
+  }
+
+  // Build fixed fields (the hydrated parent record is exploded into the
+  // per-attribute columns above, not shown as one raw-JSON column)
+  const fixedFieldIds = Object.keys(topLevel).filter((k) => k !== config.valuesKey && k !== config.parentRecordKey);
   const fixedCols = new Map<string, TableViewCol>();
   for (const fieldId of fixedFieldIds) {
     fixedCols.set(fieldId, buildFixedCol(fieldId, topLevel[fieldId]));
@@ -161,7 +217,9 @@ export function buildAttioDefaultView(schema: TSchema, config: AttioObjectViewCo
 
   // === Assemble final column order ===
 
-  // 1. Title attribute (if present)
+  // 1. Title attribute (if present). For a list table the title is the PARENT
+  //    record's `name` — the entry's own attributes are stage-like fields, and
+  //    Attio's own list UI leads with the parent record name.
   const valueCols: { name: string; col: TableViewCol }[] = [];
   for (const [attrSlug, attrSchema] of orderedValues) {
     valueCols.push({ name: attrSlug, col: buildValueCol(attrSlug, attrSchema, config.valuesKey) });
@@ -170,6 +228,12 @@ export function buildAttioDefaultView(schema: TSchema, config: AttioObjectViewCo
   if (config.titleField && valueCols.length > 0 && valueCols[0].name === config.titleField) {
     const titleEntry = valueCols.shift();
     if (titleEntry) cols.push(titleEntry.col);
+  } else if (parentValueCols.length > 0) {
+    const parentNameIndex = parentValueCols.findIndex((entry) => entry.name === 'name' && !entry.col.hidden);
+    if (parentNameIndex >= 0) {
+      cols.push(parentValueCols[parentNameIndex].col);
+      parentValueCols.splice(parentNameIndex, 1);
+    }
   }
 
   // 2. id fixed field right after title
@@ -191,7 +255,12 @@ export function buildAttioDefaultView(schema: TSchema, config: AttioObjectViewCo
     cols.push(col);
   }
 
-  // 5. Remaining fixed fields in priority order: created_at, then the rest
+  // 5. Parent-record attribute columns (list tables) after the entry's own
+  for (const { col } of parentValueCols) {
+    cols.push(col);
+  }
+
+  // 6. Remaining fixed fields in priority order: created_at, then the rest
   const remainingFixedOrder = ['created_at', 'web_url', 'parent_record_id', 'parent_object'];
   for (const fieldId of remainingFixedOrder) {
     const fixedCol = fixedCols.get(fieldId);

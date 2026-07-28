@@ -10,6 +10,7 @@ import {
   AttioObjectViewConfig,
   buildAttioDefaultView,
   buildAttioFlatView,
+  deriveAttioObjectViewConfig,
   LIST_VIEW_CONFIG,
   MEMBERS_FLAT_VIEW_CONFIG,
   OBJECT_VIEW_CONFIG,
@@ -432,6 +433,119 @@ describe('buildAttioDefaultView (list)', () => {
     // Write-once must NOT be read-only, or the grid would block creating a new entry.
     expect(parentRecordCol.readonly).toBeUndefined();
     expect(parentObjectCol.readonly).toBeUndefined();
+  });
+});
+
+describe('buildAttioDefaultView (list with hydrated parent record) — DEV-11055', () => {
+  /** Mirrors a single-parent list spec: entry attributes + the hydrated, read-only parent subtree. */
+  function makeListSchemaWithParent() {
+    return Type.Object({
+      id: Type.Object(
+        {
+          workspace_id: Type.String(),
+          list_id: Type.String(),
+          entry_id: Type.String(),
+        },
+        { [X_SCRATCH_READONLY]: true },
+      ),
+      parent_record_id: Type.String({ [X_SCRATCH_WRITE_ONCE]: true }),
+      parent_object: Type.String({ [X_SCRATCH_WRITE_ONCE]: true }),
+      created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
+      entry_values: Type.Object({
+        stage: attr('status'),
+      }),
+      parent_record: Type.Optional(
+        Type.Object(
+          {
+            id: Type.Object({ workspace_id: Type.String(), object_id: Type.String(), record_id: Type.String() }),
+            created_at: Type.Optional(Type.String({ format: 'date-time' })),
+            web_url: Type.Optional(Type.String()),
+            values: Type.Object({
+              name: attr('text', { readonly: true }),
+              domains: attr('domain', { readonly: true }),
+              estimated_arr: attr('currency', { readonly: true }),
+              // Collides with the entry's own `stage` attribute — hidden by default.
+              stage: attr('status', { readonly: true }),
+              // Parent bookkeeping — hidden by default.
+              created_at: attr('timestamp', { readonly: true }),
+              created_by: attr('actor-reference', { readonly: true }),
+            }),
+          },
+          { [X_SCRATCH_READONLY]: true },
+        ),
+      ),
+    });
+  }
+
+  const view = buildAttioDefaultView(makeListSchemaWithParent(), LIST_VIEW_CONFIG);
+
+  it('leads with the parent record name as the title column, then id', () => {
+    expect(flatCols(view)[0].path).toBe('parent_record.values.name');
+    expect(flatCols(view)[1].path).toBe('id');
+  });
+
+  it('places the entry-scoped attributes before the parent attributes', () => {
+    const entryStageIdx = view.cols.findIndex((c) => c.kind === 'col' && c.path === 'entry_values.stage');
+    const parentDomainsIdx = view.cols.findIndex((c) => c.kind === 'col' && c.path === 'parent_record.values.domains');
+    expect(entryStageIdx).toBeGreaterThan(-1);
+    expect(parentDomainsIdx).toBeGreaterThan(entryStageIdx);
+  });
+
+  it('does not emit a raw parent_record JSON column', () => {
+    expect(colAt(view, 'parent_record')).toBeUndefined();
+  });
+
+  it('marks parent attribute columns read-only (from the schema annotations)', () => {
+    expect(colAt(view, 'parent_record.values.name')?.readonly).toBe(true);
+    expect(colAt(view, 'parent_record.values.domains')?.readonly).toBe(true);
+  });
+
+  it('flattens parent attribute values with the same display transformers as object columns', () => {
+    const domains = colAt(view, 'parent_record.values.domains');
+    expect(domains?.displayTransformer).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$[0].domain', arrayHandling: 'first' },
+    });
+    // And carries the semantic type for export (DEV-11040 applies to parent columns too).
+    const arr = colAt(view, 'parent_record.values.estimated_arr');
+    expect(arr?.type).toBe('string');
+    expect(arr?.logicalType).toBe('number');
+  });
+
+  it('hides a parent attribute whose slug collides with an entry attribute', () => {
+    expect(colAt(view, 'parent_record.values.stage')?.hidden).toBe(true);
+    // The entry's own stage stays visible.
+    expect(colAt(view, 'entry_values.stage')?.hidden).toBeUndefined();
+  });
+
+  it('hides the parent bookkeeping fields by default', () => {
+    expect(colAt(view, 'parent_record.values.created_at')?.hidden).toBe(true);
+    expect(colAt(view, 'parent_record.values.created_by')?.hidden).toBe(true);
+  });
+
+  it('keeps the parent pointer columns for entry creation', () => {
+    expect(colAt(view, 'parent_record_id')?.writeOnce).toBe(true);
+    expect(colAt(view, 'parent_object')?.writeOnce).toBe(true);
+  });
+});
+
+describe('deriveAttioObjectViewConfig (custom objects) — DEV-11055', () => {
+  it('uses the name attribute as the title when the object has one', () => {
+    const schema = Type.Object({
+      id: Type.Object({ workspace_id: Type.String(), object_id: Type.String(), record_id: Type.String() }),
+      values: Type.Object({ name: attr('text'), sku: attr('text') }),
+    });
+    const view = buildAttioDefaultView(schema, deriveAttioObjectViewConfig(schema));
+    expect((view.cols[0] as TableViewCol).path).toBe('values.name');
+  });
+
+  it('falls back to id-first when the object has no name attribute', () => {
+    const schema = Type.Object({
+      id: Type.Object({ workspace_id: Type.String(), object_id: Type.String(), record_id: Type.String() }),
+      values: Type.Object({ sku: attr('text') }),
+    });
+    const view = buildAttioDefaultView(schema, deriveAttioObjectViewConfig(schema));
+    expect((view.cols[0] as TableViewCol).path).toBe('id');
   });
 });
 

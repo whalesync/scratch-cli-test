@@ -163,7 +163,7 @@ describe('attio-json-schema virtual fields', () => {
     mockClient.listListAttributes.mockResolvedValue([
       makeAttribute({ api_slug: 'stage', type: 'status', title: 'Stage' }),
     ]);
-    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', mockClient);
+    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', [], mockClient);
     const vf = spec.schema.properties.entry_values.properties.stage[X_SCRATCH_VIRTUAL_FIELDS] as VirtualFieldDef[];
     expect(vf).toBeDefined();
     expect(vf[0].suggestedTransformer).toEqual({
@@ -207,7 +207,7 @@ describe('attio-json-schema read-only propagation (is_writable)', () => {
       makeAttribute({ api_slug: 'computed_on_list', type: 'timestamp', is_writable: false }),
       makeAttribute({ api_slug: 'sector', type: 'select', is_writable: true }),
     ]);
-    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', mockClient);
+    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', [], mockClient);
     expect(spec.schema.properties.entry_values.properties.computed_on_list[X_SCRATCH_READONLY]).toBe(true);
     expect(spec.schema.properties.entry_values.properties.sector[X_SCRATCH_READONLY]).toBeUndefined();
   });
@@ -283,7 +283,7 @@ describe('attio-json-schema list-entry parent fields (write-once)', () => {
 
   it('marks parent_record_id / parent_object write-once, not read-only, so an entry can be created but not re-parented', async () => {
     mockClient.listListAttributes.mockResolvedValue([makeAttribute({ api_slug: 'stage', type: 'status' })]);
-    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', mockClient);
+    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', [], mockClient);
     expect(spec.schema.properties.parent_record_id[X_SCRATCH_WRITE_ONCE]).toBe(true);
     expect(spec.schema.properties.parent_object[X_SCRATCH_WRITE_ONCE]).toBe(true);
     // Write-once is distinct from read-only: these must stay editable on a new entry.
@@ -292,6 +292,101 @@ describe('attio-json-schema list-entry parent fields (write-once)', () => {
     // The id triple and created_at stay read-only.
     expect(spec.schema.properties.id[X_SCRATCH_READONLY]).toBe(true);
     expect(spec.schema.properties.created_at[X_SCRATCH_READONLY]).toBe(true);
+  });
+});
+
+describe('attio-json-schema list-entry hydrated parent record (DEV-11055)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockClient.listListAttributes.mockResolvedValue([makeAttribute({ api_slug: 'stage', type: 'status' })]);
+  });
+
+  it('embeds the parent object attributes as an optional, fully read-only parent_record subtree', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({ api_slug: 'name', type: 'text', is_writable: true }),
+      makeAttribute({ api_slug: 'domains', type: 'domain', is_writable: true }),
+    ]);
+    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', ['companies'], mockClient);
+    expect(mockClient.listObjectAttributes).toHaveBeenCalledWith('companies');
+
+    const parentRecord = spec.schema.properties.parent_record;
+    expect(parentRecord).toBeDefined();
+    // Whole subtree read-only: edits to parent fields belong on the parent object table.
+    expect(parentRecord[X_SCRATCH_READONLY]).toBe(true);
+    // Every parent attribute is forced read-only even when Attio says writable.
+    expect(parentRecord.properties.values.properties.name[X_SCRATCH_READONLY]).toBe(true);
+    expect(parentRecord.properties.values.properties.domains[X_SCRATCH_READONLY]).toBe(true);
+    // Optional — hydration can miss when the parent was deleted mid-pull.
+    expect(spec.schema.required).not.toContain('parent_record');
+    // Entry-scoped attributes are untouched.
+    expect(spec.schema.properties.entry_values.properties.stage).toBeDefined();
+  });
+
+  it('keeps virtual fields / connector data types on parent attributes so they flatten like object columns', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([makeAttribute({ api_slug: 'name', type: 'text' })]);
+    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', ['companies'], mockClient);
+    const nameSchema = spec.schema.properties.parent_record.properties.values.properties.name;
+    const vf = nameSchema[X_SCRATCH_VIRTUAL_FIELDS] as VirtualFieldDef[];
+    expect(vf[0].suggestedTransformer).toEqual({
+      type: TransformerTypes.JSONPath,
+      options: { expression: '$[0].value', arrayHandling: 'first' },
+    });
+  });
+
+  it('titles entries by the parent name attribute when the parent object has one', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([makeAttribute({ api_slug: 'name', type: 'personal-name' })]);
+    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', ['people'], mockClient);
+    expect(spec.titlePath).toBe('parent_record.values.name');
+  });
+
+  it('falls back to the parent_record_id title when the parent object has no name attribute', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([makeAttribute({ api_slug: 'sku', type: 'text' })]);
+    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', ['products'], mockClient);
+    expect(spec.titlePath).toBe('parent_record_id');
+  });
+
+  it('declares no parent_record subtree for a multi-parent list (no single attribute set to describe)', async () => {
+    const spec = await buildAttioListTableSpec(
+      mockEntityId,
+      'multi-list',
+      'Multi List',
+      ['companies', 'people'],
+      mockClient,
+    );
+    expect(mockClient.listObjectAttributes).not.toHaveBeenCalled();
+    expect(spec.schema.properties.parent_record).toBeUndefined();
+    expect(spec.titlePath).toBe('parent_record_id');
+  });
+});
+
+describe('attio-json-schema custom object title attribute (DEV-11055)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('uses the name attribute as titlePath when the object has one', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({ api_slug: 'sku', type: 'text' }),
+      makeAttribute({ api_slug: 'name', type: 'text' }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'products', mockClient);
+    expect(spec.titlePath).toBe('values.name');
+  });
+
+  it('falls back to the first text-like attribute for a custom object without a name attribute', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({ api_slug: 'priority', type: 'number' }),
+      makeAttribute({ api_slug: 'title', type: 'text' }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'tickets', mockClient);
+    expect(spec.titlePath).toBe('values.title');
+  });
+
+  it('ignores an archived name attribute when picking the title', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({ api_slug: 'name', type: 'text', is_archived: true }),
+      makeAttribute({ api_slug: 'label', type: 'text' }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'tickets', mockClient);
+    expect(spec.titlePath).toBe('values.label');
   });
 });
 

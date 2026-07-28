@@ -24,6 +24,7 @@ import { AttioApiClient, AttioError } from './attio-api-client';
 import {
   buildAttioDefaultView,
   buildAttioFlatView,
+  deriveAttioObjectViewConfig,
   LIST_VIEW_CONFIG,
   MEMBERS_FLAT_VIEW_CONFIG,
   OBJECT_VIEW_CONFIG,
@@ -51,13 +52,17 @@ import { toWriteValues } from './attio-write-shape';
 /**
  * Connector for the Attio v2 REST API.
  *
- * v1 scope (per the shaping doc at internal/projects/2026-05-05-attio-integration):
- *   - Standard objects: companies, people, deals (read-write)
- *   - Custom fields on those three (fall out for free from the attributes endpoint)
- *   - Lists, modeled as their own tables — entries wrap the parent record
- *     under `parent_record`, list-scoped fields under `entry_values`
+ * Scope (DEV-11055 — custom objects and lists are table stakes):
+ *   - Every object in the workspace, standard *and* custom — enumerated
+ *     dynamically from `GET /v2/objects`; one codepath serves them all
+ *   - Custom fields on any object (fall out for free from the attributes endpoint)
+ *   - Lists, modeled as their own tables — entries carry list-scoped fields
+ *     under `entry_values` and wrap the parent record under the hydrated
+ *     `parent_record` (fetched by the connector; the entries API returns only
+ *     a pointer), so a list table shows the parent's fields like Attio's own UI
+ *   - Workspace members (read-only directory) and tasks (own endpoint family)
  *
- * Out of v1 (deferred): custom *objects*, notes/tasks/comments.
+ * Deferred: notes, comments/threads.
  *
  * Auth: API-key (workspace token from Settings → Developers) for now. OAuth
  * lights up by adding `'oauth'` to `supportedAuthMethods` and registering an
@@ -93,8 +98,8 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
   });
 
   private readonly client: AttioApiClient;
-  /** Cache of (list api_slug → list name), populated by `listTables`. */
-  private readonly listNameCache = new Map<string, string>();
+  /** Cache of (list api_slug → name + parent object slugs), populated by `listTables`. */
+  private readonly listInfoCache = new Map<string, { name: string; parentObjectSlugs: string[] }>();
   /** Cache of (object api_slug → display nouns), populated by `listTables`. */
   private readonly objectDisplayCache = new Map<string, { singular: string; plural: string }>();
 
@@ -110,10 +115,11 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
   /**
    * Picker tree:
    *
-   *   Companies         ← /v2/objects/companies/records
-   *   People            ← /v2/objects/people/records
-   *   Deals             ← /v2/objects/deals/records
+   *   <Object plural>   ← /v2/objects/{slug}/records — one per object, standard
+   *                       (Companies, People, Deals, …) and custom alike
    *   Lists/<list name> ← /v2/lists/{slug}/entries
+   *   Workspace Members ← /v2/workspace_members (read-only)
+   *   Tasks             ← /v2/tasks
    */
   async listTables(): Promise<TablePreview[]> {
     // Every object the workspace exposes — standard (companies/people/deals)
@@ -138,7 +144,7 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
       // `parent_object` we couldn't create entries in it.
       .filter((list) => list.parent_object[0] !== undefined)
       .map((list) => {
-        this.listNameCache.set(list.api_slug, list.name);
+        this.listInfoCache.set(list.api_slug, { name: list.name, parentObjectSlugs: list.parent_object });
         return {
           id: { wsId: sanitizeForTableWsId(`list_${list.api_slug}`), remoteId: ['list', list.api_slug] },
           displayName: list.name,
@@ -184,7 +190,10 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
     const parsed = parseAttioTableId(spec.id);
     switch (parsed.kind) {
       case 'object': {
-        const viewConfig = OBJECT_VIEW_CONFIG[parsed.objectSlug] ?? { valuesKey: 'values' };
+        // Curated config for the core standard objects; everything else
+        // (custom objects, users, workspaces, …) derives its title column from
+        // the schema so a custom object's grid still leads with record names.
+        const viewConfig = OBJECT_VIEW_CONFIG[parsed.objectSlug] ?? deriveAttioObjectViewConfig(spec.schema);
         return buildAttioDefaultView(spec.schema, viewConfig);
       }
       case 'list':
@@ -207,8 +216,8 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
         return buildAttioObjectTableSpec(id, parsed.objectSlug, this.client, display);
       }
       case 'list': {
-        const name = this.listNameCache.get(parsed.listSlug) ?? (await this.lookupListName(parsed.listSlug));
-        return buildAttioListTableSpec(id, parsed.listSlug, name, this.client);
+        const listInfo = this.listInfoCache.get(parsed.listSlug) ?? (await this.lookupListInfo(parsed.listSlug));
+        return buildAttioListTableSpec(id, parsed.listSlug, listInfo.name, listInfo.parentObjectSlugs, this.client);
       }
       case 'members':
         return buildAttioMembersTableSpec(id);
@@ -241,6 +250,7 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
       }
       case 'list': {
         for await (const batch of this.client.queryListEntries(parsed.listSlug, resumeOffset)) {
+          await this.hydrateParentRecordsIntoListEntries(batch.data);
           await callback({
             files: batch.data as unknown as ConnectorFile[],
             connectorProgress: batch.nextOffset !== undefined ? { offset: batch.nextOffset } : {},
@@ -286,7 +296,10 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
         }
         case 'list': {
           const entry = await this.client.getListEntry(parsed.listSlug, recordId);
-          if (entry) buffer.push(entry as unknown as ConnectorFile);
+          if (entry) {
+            await this.hydrateParentRecordsIntoListEntries([entry]);
+            buffer.push(entry as unknown as ConnectorFile);
+          }
           break;
         }
         case 'members': {
@@ -309,6 +322,41 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
 
     if (buffer.length > 0) {
       await callback({ files: buffer });
+    }
+  }
+
+  /**
+   * Hydrate the parent-record stub on a page of list entries: the entries API
+   * returns only `parent_record_id` / `parent_object` pointers, so without
+   * this a list table is nearly empty (a stage column and a UUID) — nothing
+   * like the list the user sees in Attio, whose UI shows the parent record's
+   * fields as columns. Fetches each page's parent records in batched
+   * `records/query` calls (grouped by parent object — one group in practice,
+   * one per object for the theoretical multi-parent list) and embeds each
+   * verbatim under `entry.parent_record` (the sanctioned "light list + heavy
+   * hydrate" pattern — CONNECTOR_GUIDE.md → Hydration).
+   *
+   * An entry whose parent doesn't resolve (deleted between the entries page
+   * and this query) is left without `parent_record` — the schema declares the
+   * field optional.
+   */
+  private async hydrateParentRecordsIntoListEntries(entries: AttioListEntry[]): Promise<void> {
+    const parentRecordIdsByObjectSlug = new Map<string, string[]>();
+    for (const entry of entries) {
+      if (!entry.parent_object || !entry.parent_record_id) continue;
+      const ids = parentRecordIdsByObjectSlug.get(entry.parent_object) ?? [];
+      ids.push(entry.parent_record_id);
+      parentRecordIdsByObjectSlug.set(entry.parent_object, ids);
+    }
+
+    for (const [parentObjectSlug, parentRecordIds] of parentRecordIdsByObjectSlug) {
+      const parentRecords = await this.client.queryRecordsByIds(parentObjectSlug, parentRecordIds);
+      const parentRecordById = new Map(parentRecords.map((record) => [record.id.record_id, record]));
+      for (const entry of entries) {
+        if (entry.parent_object !== parentObjectSlug) continue;
+        const parentRecord = parentRecordById.get(entry.parent_record_id);
+        if (parentRecord) entry.parent_record = parentRecord;
+      }
     }
   }
 
@@ -341,6 +389,10 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
             );
           }
           const entry = await this.client.createListEntry(parsed.listSlug, parentObject, parentRecordId, entryValues);
+          // The create response carries only the parent pointer — hydrate the
+          // parent record so the stored file matches what a pull produces
+          // (otherwise every create/pull pair would churn the file).
+          await this.hydrateParentRecordsIntoListEntries([entry]);
           created.push(entry as unknown as ConnectorFile);
           break;
         }
@@ -389,6 +441,9 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
             continue;
           }
           const updated = await this.client.updateListEntry(parsed.listSlug, entryId, entryValues);
+          // Hydrate the parent record so the stored file matches what a pull
+          // produces (the update response carries only the parent pointer).
+          await this.hydrateParentRecordsIntoListEntries([updated]);
           results.push(updated as unknown as ConnectorFile);
           break;
         }
@@ -442,12 +497,14 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
       switch (parsed.kind) {
         case 'object':
           return suggestNameFromValues((record as unknown as AttioRecord).values);
-        case 'list':
-          // List entries don't carry their own name — fall back to the parent
-          // record id so the filename is at least stable and unique. The user
-          // can rename, and the parent record file (in companies/people/deals)
-          // already has a meaningful name.
-          return (record as unknown as AttioListEntry).parent_record_id;
+        case 'list': {
+          // List entries don't carry their own name — the human identifier is
+          // the hydrated parent record's name (what Attio's list UI shows).
+          // Fall back to the parent record id (stable and unique) when the
+          // parent wasn't hydrated or has no name value.
+          const entry = record as unknown as AttioListEntry;
+          return suggestNameFromValues(entry.parent_record?.values) ?? entry.parent_record_id;
+        }
         case 'members': {
           const member = record as unknown as AttioWorkspaceMember;
           const fullName = [member.first_name, member.last_name].filter(Boolean).join(' ').trim();
@@ -491,12 +548,12 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
    * Fallback when `fetchJsonTableSpec` is called for a list before
    * `listTables` populated the cache (e.g. after a server restart).
    */
-  private async lookupListName(listSlug: string): Promise<string> {
-    const lists = await this.client.listLists();
-    const found = lists.find((list) => list.api_slug === listSlug);
+  private async lookupListInfo(listSlug: string): Promise<{ name: string; parentObjectSlugs: string[] }> {
+    const found = await this.client.getList(listSlug);
     if (!found) throw new AttioError(`Attio list "${listSlug}" not found`, 404);
-    this.listNameCache.set(listSlug, found.name);
-    return found.name;
+    const listInfo = { name: found.name, parentObjectSlugs: found.parent_object };
+    this.listInfoCache.set(listSlug, listInfo);
+    return listInfo;
   }
 
   /**
