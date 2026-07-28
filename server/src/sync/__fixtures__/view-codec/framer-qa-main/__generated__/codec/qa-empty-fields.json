@@ -1,0 +1,35 @@
+{
+  "slug": {
+    "core": "qa-empty-fields"
+  },
+  "draft": {
+    "core": true
+  },
+  "fieldData.fTitle.value": {
+    "core": "Nothing Set"
+  },
+  "fieldData.fBody.value": {},
+  "fieldData.fScore.value": {},
+  "fieldData.fFeatured.value": {
+    "core": false
+  },
+  "fieldData.fPublishedAt.value": {},
+  "fieldData.fDateOnly.value": {},
+  "fieldData.fStatus.value": {},
+  "fieldData.fHeroImage.value": {},
+  "fieldData.fAttachment.value": {},
+  "fieldData.fGallery.value": {
+    "core": ""
+  },
+  "fieldData.fWebsite.value": {
+    "core": ""
+  },
+  "fieldData.fAccent.value": {},
+  "fieldData.PQ07ajZOZ.value": {},
+  "fieldData.fTags.value": {
+    "core": []
+  },
+  "id": {
+    "core": "Wm3nZ8kTb"
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "id": "Kx7pQ2mNv",
+  "nodeId": "Kx7pQ2mNv",
+  "slug": "qa-kitchen-sink",
+  "slugByLocale": {},
+  "draft": false,
+  "fieldData": {
+    "fTitle": { "type": "string", "value": "QA Kitchen Sink", "valueByLocale": {} },
+    "fBody": { "type": "formattedText", "value": "<p dir=\"auto\">Every field type at once.</p>", "valueByLocale": {} },
+    "fScore": { "type": "number", "value": 42 },
+    "fFeatured": { "type": "boolean", "value": true },
+    "fPublishedAt": { "type": "date", "value": "2026-03-14T15:09:26.535Z" },
+    "fDateOnly": { "type": "date", "value": "2026-03-14T00:00:00.000Z" },
+    "fStatus": { "type": "enum", "value": "Live" },
+    "fHeroImage": {
+      "type": "image",
+      "value": {
+        "id": "pIlMJFwrlGSJRbMAl1Kjklus3vY.jpg",
+        "url": "https://framerusercontent.com/images/pIlMJFwrlGSJRbMAl1Kjklus3vY.jpg",
+        "thumbnailUrl": "https://framerusercontent.com/images/pIlMJFwrlGSJRbMAl1Kjklus3vY.jpg?scale-down-to=512",
+        "altText": "",
+        "resolution": "auto"
+      }
+    },
+    "fAttachment": {
+      "type": "file",
+      "value": {
+        "id": "kPSNZAI2CKYgh0Wshd4xcOa7DY.pdf",
+        "url": "https://framerusercontent.com/assets/kPSNZAI2CKYgh0Wshd4xcOa7DY.pdf",
+        "extension": "pdf"
+      }
+    },
+    "fGallery": {
+      "type": "array",
+      "value": [
+        {
+          "id": "oraHwE0Qo",
+          "fieldData": {
+            "dafPhGolm": {
+              "type": "image",
+              "value": {
+                "id": "XzRRxCV7qxl0kN6DLkJSgXRwsaE.jpg",
+                "url": "https://framerusercontent.com/images/XzRRxCV7qxl0kN6DLkJSgXRwsaE.jpg",
+                "thumbnailUrl": "https://framerusercontent.com/images/XzRRxCV7qxl0kN6DLkJSgXRwsaE.jpg?scale-down-to=512",
+                "resolution": "auto"
+              }
+            }
+          }
+        },
+        {
+          "id": "bQ4tLmXeR",
+          "fieldData": {
+            "dafPhGolm": {
+              "type": "image",
+              "value": {
+                "id": "Yb2WqRt9LmNpZ4vKsE7DcXaHf.jpg",
+                "url": "https://framerusercontent.com/images/Yb2WqRt9LmNpZ4vKsE7DcXaHf.jpg",
+                "thumbnailUrl": "https://framerusercontent.com/images/Yb2WqRt9LmNpZ4vKsE7DcXaHf.jpg?scale-down-to=512",
+                "resolution": "auto"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "fWebsite": { "type": "link", "value": "https://example.com/kitchen-sink", "valueByLocale": {} },
+    "fAccent": { "type": "color", "value": "rgb(255, 0, 0)" },
+    "PQ07ajZOZ": { "type": "collectionReference", "value": "engineering" },
+    "fTags": { "type": "multiCollectionReference", "value": ["engineering", "design"] }
+  }
+}

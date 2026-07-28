@@ -1,0 +1,53 @@
+{
+  "slug": {
+    "core": "qa-kitchen-sink"
+  },
+  "draft": {
+    "core": false
+  },
+  "fieldData.fTitle.value": {
+    "core": "QA Kitchen Sink"
+  },
+  "fieldData.fBody.value": {
+    "core": "<p dir=\"auto\">Every field type at once.</p>"
+  },
+  "fieldData.fScore.value": {
+    "core": 42
+  },
+  "fieldData.fFeatured.value": {
+    "core": true
+  },
+  "fieldData.fPublishedAt.value": {
+    "core": "2026-03-14T15:09:26.535Z"
+  },
+  "fieldData.fDateOnly.value": {
+    "core": "2026-03-14T00:00:00.000Z"
+  },
+  "fieldData.fStatus.value": {
+    "core": "Live"
+  },
+  "fieldData.fHeroImage.value": {
+    "core": "https://framerusercontent.com/images/pIlMJFwrlGSJRbMAl1Kjklus3vY.jpg"
+  },
+  "fieldData.fAttachment.value": {
+    "core": "https://framerusercontent.com/assets/kPSNZAI2CKYgh0Wshd4xcOa7DY.pdf"
+  },
+  "fieldData.fGallery.value": {
+    "core": "https://framerusercontent.com/images/XzRRxCV7qxl0kN6DLkJSgXRwsaE.jpg, https://framerusercontent.com/images/Yb2WqRt9LmNpZ4vKsE7DcXaHf.jpg"
+  },
+  "fieldData.fWebsite.value": {
+    "core": "https://example.com/kitchen-sink"
+  },
+  "fieldData.fAccent.value": {
+    "core": "rgb(255, 0, 0)"
+  },
+  "fieldData.PQ07ajZOZ.value": {
+    "core": "engineering"
+  },
+  "fieldData.fTags.value": {
+    "core": ["engineering", "design"]
+  },
+  "id": {
+    "core": "Kx7pQ2mNv"
+  }
+}

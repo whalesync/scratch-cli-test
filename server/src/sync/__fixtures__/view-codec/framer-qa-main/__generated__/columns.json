@@ -1,0 +1,173 @@
+[
+  {
+    "column": "Slug",
+    "columnId": "slug",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Draft",
+    "columnId": "draft",
+    "cardinality": "single",
+    "logicalType": "checkbox",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Title",
+    "columnId": "fieldData.fTitle.value",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Body",
+    "columnId": "fieldData.fBody.value",
+    "cardinality": "single",
+    "logicalType": "richtext",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Score",
+    "columnId": "fieldData.fScore.value",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "number",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Featured",
+    "columnId": "fieldData.fFeatured.value",
+    "cardinality": "single",
+    "logicalType": "checkbox",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Published At",
+    "columnId": "fieldData.fPublishedAt.value",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Date Only",
+    "columnId": "fieldData.fDateOnly.value",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Status",
+    "columnId": "fieldData.fStatus.value",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Hero Image",
+    "columnId": "fieldData.fHeroImage.value",
+    "cardinality": "single",
+    "logicalType": "url",
+    "primitiveType": "object",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$.url",
+        "arrayHandling": "first"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Attachment",
+    "columnId": "fieldData.fAttachment.value",
+    "cardinality": "single",
+    "logicalType": "url",
+    "primitiveType": "object",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$.url",
+        "arrayHandling": "first"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Gallery",
+    "columnId": "fieldData.fGallery.value",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*].fieldData.*.value.url",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Website",
+    "columnId": "fieldData.fWebsite.value",
+    "cardinality": "single",
+    "logicalType": "url",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Accent",
+    "columnId": "fieldData.fAccent.value",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": null,
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Primary Tag",
+    "columnId": "fieldData.PQ07ajZOZ.value",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Tags",
+    "columnId": "fieldData.fTags.value",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Id",
+    "columnId": "id",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  }
+]

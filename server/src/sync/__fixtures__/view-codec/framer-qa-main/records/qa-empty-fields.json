@@ -1,0 +1,16 @@
+{
+  "id": "Wm3nZ8kTb",
+  "nodeId": "Wm3nZ8kTb",
+  "slug": "qa-empty-fields",
+  "slugByLocale": {},
+  "draft": true,
+  "fieldData": {
+    "fTitle": { "type": "string", "value": "Nothing Set", "valueByLocale": {} },
+    "fFeatured": { "type": "boolean", "value": false },
+    "fGallery": { "type": "array", "value": [] },
+    "fWebsite": { "type": "link", "value": "", "valueByLocale": {} },
+    "fHeroImage": { "type": "image" },
+    "fAttachment": { "type": "file" },
+    "fTags": { "type": "multiCollectionReference", "value": [] }
+  }
+}

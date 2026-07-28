@@ -36,8 +36,17 @@ function framerFieldValueSchema(field: FramerFieldMeta): TSchema {
       schema = Type.Boolean({ description });
       break;
     case FramerFieldType.Date:
-      // Framer dates read back as an ISO/`DD-MM-YYYY` string or undefined.
-      schema = Type.Union([Type.String(), Type.Null()], { description });
+      // Framer stores dates as UTC instants and reads every one back as a full ISO-8601
+      // timestamp, even a value entered as a bare calendar day (`2026-12-25` comes back as
+      // `2026-12-25T00:00:00.000Z`) — or omits `value` entirely when the field is empty.
+      // `format: 'date-time'` is the generic signal the export layer reads to create a real
+      // timestamp column on the destination instead of a date-only one that drops the
+      // time-of-day for the life of the export (DEV-11086, the Framer instance of DEV-10788).
+      //
+      // A field Framer itself reports as not displaying time is a genuine calendar date, so
+      // it keeps the date-only column. It still gets NO format: the value on the wire is an
+      // ISO instant regardless, and a `format: 'date'` assertion would flag every record.
+      schema = Type.Union([Type.String(dateValueFormatAnnotation(field)), Type.Null()], { description });
       break;
     case FramerFieldType.Link:
       // No `format: 'uri'` — Framer returns "" for a cleared link, which a strict
@@ -91,6 +100,15 @@ function framerFieldValueSchema(field: FramerFieldMeta): TSchema {
     schema[X_SCRATCH_READONLY] = true;
   }
   return schema;
+}
+
+/**
+ * The `format` annotation for a date field's value string — `date-time` unless Framer
+ * explicitly reports the field as not displaying a time-of-day, in which case the value is
+ * annotated with no format at all. See the `Date` case above for why.
+ */
+function dateValueFormatAnnotation(field: FramerFieldMeta): { format?: string } {
+  return field.displayTime === false ? {} : { format: 'date-time' };
 }
 
 /** The read-back shape of an image/file asset value. */

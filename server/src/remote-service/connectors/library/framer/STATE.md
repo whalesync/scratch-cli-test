@@ -39,7 +39,7 @@ Framer's **Server API** (beta) is a **stateful WebSocket** transport driven by t
 | 5 | **Full write CRUD** (create + edit + delete, push) | ✅ | Edit/New/Delete all verified live via CLI publish → confirmed in Framer (new id flows back; sample-two deleted) |
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ✅ | single ref re-parented design↔engineering via CLI; multi-ref array edited — both confirmed in Framer |
 | 7 | **Edge cases & quirks tested** | ✅ | enum name↔id, ref slug↔id, date/color/richtext normalization, unicode/emoji, empty-value omission, silent-batch-fail — see Edge cases |
-| 8 | **View(s) built** | ✅ | default view (slug, draft, one col per field `fieldData.<id>.value`, id readonly) generated + verified on disk |
+| 8 | **View(s) built** | ✅ | default view (slug, draft, one col per field `fieldData.<id>.value`, id readonly) generated + verified on disk. Asset/gallery columns carry a `displayTransformer` (see field-types table); locked by the `framer-qa-main` view-codec golden in `server/src/sync/__fixtures__/view-codec/` |
 | 9 | **OAuth** | ➖ | Framer Server API is **API-key only** — no OAuth flow offered (documented, nothing to build) |
 | 10 | **Integration test** | 🔄 | live spec written (`framer-connector.spec.ts`) + idempotent seed script; pure logic unit-tested. Live spec can't run in the CJS jest harness (framer-api is ESM+TLA) — validated via CLI instead. **Not CI-wired** |
 
@@ -93,16 +93,16 @@ Each item's `fieldData` is keyed by **field id**; each entry is `{ type, value, 
 | string | ✅ | ✅ | ✅ | plain value |
 | number | ✅ | ✅ | ✅ | |
 | boolean | ✅ | ✅ | ✅ | |
-| date | ✅ | ✅ | ✅ | **normalizes**: wrote `2026-12-25` → read `2026-12-25T00:00:00.000Z` (phantom diff until re-pull) |
+| date | ✅ | ✅ | ✅ | **normalizes**: wrote `2026-12-25` → read `2026-12-25T00:00:00.000Z` (phantom diff until re-pull). Because every value reads back as a full UTC instant, the value schema declares `format: 'date-time'` so an export creates a real timestamp column instead of silently dropping the time-of-day (DEV-11086). A field Framer reports as `displayTime: false` is a genuine calendar date and gets no format — deliberately not `format: 'date'`, which the ISO value it returns would fail |
 | color | ✅ | ✅ | ✅ | **normalizes**: wrote `#FF0000` → read `rgb(255, 0, 0)` |
 | link | ✅ | ✅ | ✅ | URL string |
 | enum (single-select) | ✅ | ✅ | ✅ | **read = case NAME, write = case ID** → connector translates name→id on write (`getWriteTranslationMaps`) |
-| image (asset) | ✅ | ✅ | ✅ | read = asset object; write = URL string (connector extracts `.url`). External URL is re-hosted to `framerusercontent.com` (read-back URL differs from sent — expected). CLI edit→push confirmed |
-| file (asset) | ✅ | 🔶 | 🔶 | same asset model as image (write = URL); empty file reads `{type:"file"}` (no value). Image proves the asset path; file not separately CLI-pushed |
+| image (asset) | ✅ | ✅ | ✅ | read = asset object; write = URL string (connector extracts `.url`). External URL is re-hosted to `framerusercontent.com` (read-back URL differs from sent — expected). CLI edit→push confirmed. The default View flattens the object to its `.url` (`displayTransformer` `$.url`, `logicalType: 'url'`) so the grid and an export show a usable link, not the raw blob (DEV-11087) |
+| file (asset) | ✅ | 🔶 | 🔶 | same asset model as image (write = URL); empty file reads `{type:"file"}` (no value). Image proves the asset path; file not separately CLI-pushed. Same `.url` View flattening as image |
 | formattedText (rich text/HTML) | ✅ | ✅ | ✅ | **normalizes**: Framer injects `dir="auto"` into block tags. Emoji/unicode preserved (utf8mb4) |
 | collectionReference (FK single) | ✅ | ✅ | ✅ | **read = target SLUG, write = target item ID** → connector translates slug→id. FK move design↔engineering verified |
 | multiCollectionReference (FK multi) | ✅ | ✅ | ✅ | array of target slugs (read) → array of ids (write). Edited array down to 1 — verified |
-| array (array of image) | ✅ | ⬜ | ⬜ | stored verbatim on read; write not exercised (image-only sub-field) |
+| array (array of image) | ✅ | ⬜ | ⬜ | stored verbatim on read; write not exercised (image-only sub-field). The default View flattens the nested sub-items to a comma-joined list of asset URLs (`displayTransformer` `$[*].fieldData.*.value.url`, `join_comma`) — joined rather than kept as a list so a single-valued destination slot can't drop everything after the first image (DEV-11088) |
 | divider | ➖ | ➖ | ➖ | layout-only — excluded from `fieldData` schema |
 | unsupported | ➖ | ➖ | ➖ | returned for field types the SDK doesn't model yet |
 

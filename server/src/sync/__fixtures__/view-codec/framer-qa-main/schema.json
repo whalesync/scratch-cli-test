@@ -1,0 +1,482 @@
+{
+  "id": {
+    "wsId": "eh9eeoEkw",
+    "remoteId": ["eh9eeoEkw"]
+  },
+  "slug": "eh9eeoEkw",
+  "name": "fable_qa_main",
+  "schema": {
+    "$id": "eh9eeoEkw",
+    "title": "fable_qa_main",
+    "type": "object",
+    "required": ["id", "slug", "fieldData"],
+    "properties": {
+      "id": {
+        "description": "Unique item id (read-only)",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "nodeId": {
+        "description": "Node id (read-only)",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "slug": {
+        "description": "Unique slug within the collection",
+        "type": "string"
+      },
+      "slugByLocale": {
+        "description": "Localized slugs (read-only)",
+        "x-scratch-readonly": true
+      },
+      "draft": {
+        "description": "Whether the item is a draft (excluded from publishing)",
+        "type": "boolean"
+      },
+      "fieldData": {
+        "description": "Field values keyed by field id",
+        "type": "object",
+        "properties": {
+          "fTitle": {
+            "title": "Title",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Title",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "string",
+                "x-scratch-remote-field-id": "fTitle"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fBody": {
+            "title": "Body",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Body",
+                "contentMediaType": "text/html",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "formattedText",
+                "x-scratch-remote-field-id": "fBody"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fScore": {
+            "title": "Score",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Score",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "number",
+                "x-scratch-remote-field-id": "fScore"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fFeatured": {
+            "title": "Featured",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Featured",
+                "type": "boolean",
+                "x-scratch-connector-data-type": "boolean",
+                "x-scratch-remote-field-id": "fFeatured"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fPublishedAt": {
+            "title": "Published At",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Published At",
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "date",
+                "x-scratch-remote-field-id": "fPublishedAt"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fDateOnly": {
+            "title": "Date Only",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Date Only",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "date",
+                "x-scratch-remote-field-id": "fDateOnly"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fStatus": {
+            "title": "Status",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Status",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "enum",
+                "x-scratch-remote-field-id": "fStatus"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fHeroImage": {
+            "title": "Hero Image",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Hero Image",
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      },
+                      "alt": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "image",
+                "x-scratch-remote-field-id": "fHeroImage"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fAttachment": {
+            "title": "Attachment",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Attachment",
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      },
+                      "alt": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "file",
+                "x-scratch-remote-field-id": "fAttachment"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fGallery": {
+            "title": "Gallery",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Gallery",
+                "type": "array",
+                "items": {},
+                "x-scratch-connector-data-type": "array",
+                "x-scratch-remote-field-id": "fGallery"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fWebsite": {
+            "title": "Website",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Website",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "link",
+                "x-scratch-remote-field-id": "fWebsite"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fAccent": {
+            "title": "Accent",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Accent",
+                "x-scratch-connector-data-type": "color",
+                "x-scratch-remote-field-id": "fAccent"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "PQ07ajZOZ": {
+            "title": "Primary Tag",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Primary Tag",
+                "x-scratch-foreign-key": {
+                  "linkedTableId": "eh9eeoEkx"
+                },
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-scratch-connector-data-type": "collectionReference",
+                "x-scratch-remote-field-id": "PQ07ajZOZ"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          },
+          "fTags": {
+            "title": "Tags",
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "description": "Framer field type discriminant",
+                "x-scratch-readonly": true,
+                "type": "string"
+              },
+              "value": {
+                "description": "Tags",
+                "x-scratch-foreign-key": {
+                  "linkedTableId": "eh9eeoEkx"
+                },
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "x-scratch-connector-data-type": "multiCollectionReference",
+                "x-scratch-remote-field-id": "fTags"
+              },
+              "valueByLocale": {
+                "description": "Localized values",
+                "x-scratch-readonly": true
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "idPath": "id",
+  "titlePath": "fieldData.fTitle.value",
+  "mainContentPath": "fieldData.fBody.value",
+  "slugPath": "slug",
+  "basePath": []
+}

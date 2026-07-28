@@ -62,6 +62,13 @@ export interface FramerFieldMeta {
   collectionId?: string;
   /** Enum cases (`{ id, name }`), for `enum` fields. */
   cases?: { id: string; name: string }[];
+  /**
+   * Whether a `date` field displays a time-of-day as well as the calendar day —
+   * Framer's own per-field flag. Undefined when the SDK doesn't report it, in
+   * which case the field is treated as carrying a time (the values Framer returns
+   * always do, so assuming otherwise would drop it).
+   */
+  displayTime?: boolean;
 }
 
 /**

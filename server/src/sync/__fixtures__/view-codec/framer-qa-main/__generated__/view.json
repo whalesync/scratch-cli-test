@@ -1,0 +1,131 @@
+{
+  "name": "Default",
+  "cols": [
+    {
+      "kind": "col",
+      "path": "slug",
+      "name": "Slug",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "draft",
+      "name": "Draft",
+      "type": "checkbox"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fTitle.value",
+      "name": "Title",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fBody.value",
+      "name": "Body",
+      "type": "richtext"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fScore.value",
+      "name": "Score",
+      "type": "number"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fFeatured.value",
+      "name": "Featured",
+      "type": "checkbox"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fPublishedAt.value",
+      "name": "Published At",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fDateOnly.value",
+      "name": "Date Only",
+      "type": "date"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fStatus.value",
+      "name": "Status",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fHeroImage.value",
+      "name": "Hero Image",
+      "type": "string",
+      "displayTransformer": {
+        "type": "jsonpath",
+        "options": {
+          "expression": "$.url",
+          "arrayHandling": "first"
+        }
+      },
+      "logicalType": "url"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fAttachment.value",
+      "name": "Attachment",
+      "type": "string",
+      "displayTransformer": {
+        "type": "jsonpath",
+        "options": {
+          "expression": "$.url",
+          "arrayHandling": "first"
+        }
+      },
+      "logicalType": "url"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fGallery.value",
+      "name": "Gallery",
+      "type": "string",
+      "displayTransformer": {
+        "type": "jsonpath",
+        "options": {
+          "expression": "$[*].fieldData.*.value.url",
+          "arrayHandling": "join_comma"
+        }
+      }
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fWebsite.value",
+      "name": "Website",
+      "type": "url"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fAccent.value",
+      "name": "Accent",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.PQ07ajZOZ.value",
+      "name": "Primary Tag",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "fieldData.fTags.value",
+      "name": "Tags",
+      "type": "object"
+    },
+    {
+      "kind": "col",
+      "path": "id",
+      "name": "Id",
+      "type": "string",
+      "readonly": true
+    }
+  ]
+}

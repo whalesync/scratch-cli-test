@@ -208,6 +208,9 @@ function projectFieldMeta(field: Field): FramerFieldMeta {
   if (field.type === FramerFieldType.CollectionReference || field.type === FramerFieldType.MultiCollectionReference) {
     meta.collectionId = field.collectionId;
   }
+  if (field.type === FramerFieldType.Date && field.displayTime !== undefined) {
+    meta.displayTime = field.displayTime;
+  }
   return meta;
 }
 

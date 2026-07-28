@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { get } from 'lodash';
 import * as path from 'path';
 import { AirtableConnector } from 'src/remote-service/connectors/library/airtable/airtable-connector';
+import { FramerConnector } from 'src/remote-service/connectors/library/framer/framer-connector';
 import { HubspotConnector } from 'src/remote-service/connectors/library/hubspot/hubspot-connector';
 import { NotionConnector } from 'src/remote-service/connectors/library/notion/notion-connector';
 import { PipedriveConnector } from 'src/remote-service/connectors/library/pipedrive/pipedrive-connector';
@@ -129,6 +130,10 @@ function loadSpec(file: string): BaseJsonTableSpec {
  */
 const DEFAULT_VIEW_BUILDERS_BY_CONNECTOR: Record<string, (spec: BaseJsonTableSpec) => TableView | undefined> = {
   airtable: (spec) => new AirtableConnector('test-key').buildDefaultView(spec),
+  framer: (spec) =>
+    new FramerConnector({ projectUrl: 'https://framer.com/projects/Test--test', apiKey: 'fr_test' }).buildDefaultView(
+      spec,
+    ),
   webflow: (spec) => new WebflowConnector('test-token').buildDefaultView(spec),
   hubspot: (spec) => new HubspotConnector('test-token').buildDefaultView(spec),
   stripe: (spec) => new StripeConnector({ apiKey: 'test-key' }).buildDefaultView(spec),

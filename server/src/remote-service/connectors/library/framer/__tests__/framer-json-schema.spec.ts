@@ -1,3 +1,4 @@
+import { FormatRegistry } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { EntityId } from '../../../types';
@@ -33,6 +34,16 @@ const COLLECTION: FramerCollectionMeta = {
 };
 
 const ID: EntityId = { wsId: 'col_blog', remoteId: ['col_blog'] };
+
+// The real record validator (the Rust `jsonschema` crate, built with `should_validate_formats(true)`)
+// asserts `format: 'date-time'` as strict RFC 3339. TypeBox registers no format validators by default
+// and treats an unknown one as a failure, so register an RFC-3339 check here — the verbatim-item test
+// below is meant to prove a pulled record really does conform, not to wave the format through.
+if (!FormatRegistry.Has('date-time')) {
+  FormatRegistry.Set('date-time', (value) =>
+    /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/.test(value),
+  );
+}
 
 describe('buildFramerJsonTableSpec', () => {
   const spec = buildFramerJsonTableSpec(ID, COLLECTION);
@@ -115,7 +126,8 @@ describe('buildFramerJsonTableSpec', () => {
         fBody: { type: 'formattedText', value: '<p>Hi</p>', valueByLocale: {} },
         fViews: { type: 'number', value: 42 },
         fFeatured: { type: 'boolean', value: true },
-        fDate: { type: 'date', value: '2026-06-18' },
+        // Framer returns dates as full UTC instants, even one entered as a bare calendar day.
+        fDate: { type: 'date', value: '2026-06-18T00:00:00.000Z' },
         fStatus: { type: 'enum', value: 'c2' },
         fHero: { type: 'image', value: { url: 'https://x/y.png', alt: null } },
         // An empty/cleared link must validate (Framer returns "" — no strict uri format).
