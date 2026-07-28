@@ -160,6 +160,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **State model:** n/a — no live suite.
 - **Notes:** No live integration spec yet (has unit tests). DB-style connector — could reuse the Postgres harness pattern.
 - [x] **CS implemented** (DEV-10737, Live Export) — `createTable` / `createFields` / `listCreateDestinations` are implemented. DDL runs over the same Knex data role that does DML (its setup grants `ALL ON SCHEMA`, i.e. CREATE, on every user schema), so no Management-API superuser call is needed and both connection-string and OAuth modes work. Create destinations are `"<projectRef>/<schema>"` (existing non-system schemas only; the connector never creates a schema). Covered by unit tests in `__tests__/supabase-connector.spec.ts`. IP is settled (implemented).
+- [x] DEV-11063 [transport, shared with Postgres]: a destination column whose name contains a `.` (e.g. Affinity's "Dealroom.co URL") was split by knex's identifier formatter into `"Dealroom"."co URL"`, so `createTable` emitted invalid DDL (and INSERT/SELECT/UPDATE mis-quoted it). Fixed in `pg-common`: the DDL builder + `KnexPGClient` sentinel-encode a `.` in a *column* identifier, and `applyVerbatimIdentifierQuoting` installs a `wrapIdentifier` hook that decodes it back so the column is quoted as one identifier; `schema.table` references keep their real dot. See `knex-column-identifier-dot-encoding.ts` — landed 2026-07-27.
 
 ## Open issues
 - (link Linear issues for ❌ cells)

@@ -1,5 +1,6 @@
 import { type CreateFieldSpec, type CreateFieldType } from '@spinner/shared-types';
 import knex, { type Knex } from 'knex';
+import { encodeColumnIdentifierDotsForKnex } from '../knex-column-identifier-dot-encoding';
 import { applyVerbatimIdentifierQuoting } from '../knex-pg-client';
 import {
   buildAddColumnsQuery,
@@ -274,6 +275,78 @@ describe('applyVerbatimIdentifierQuoting — column names containing " as "', ()
   it('leaves ordinary identifiers (including schema-qualified names) unchanged', () => {
     expect(quotingKnex('pipedrive.Activities').select('Subject').toQuery()).toBe(
       'select "Subject" from "pipedrive"."Activities"',
+    );
+  });
+});
+
+/**
+ * Regression tests for DEV-11063: a Postgres column whose real name contains a `.` (e.g. Affinity's
+ * "Dealroom.co URL") must be quoted as ONE identifier, not split by knex's identifier formatter into
+ * `"Dealroom"."co URL"` (which is invalid DDL and breaks INSERT/SELECT/UPDATE). The DDL builder
+ * encodes the dot itself; {@link applyVerbatimIdentifierQuoting} installs the `wrapIdentifier` hook
+ * that decodes it back before quoting. Schema/table qualification keeps its real dot.
+ */
+describe('dotted column names (DEV-11063)', () => {
+  const quotingKnex: Knex = knex({ client: 'pg' });
+  applyVerbatimIdentifierQuoting(quotingKnex);
+
+  afterAll(async () => {
+    await quotingKnex.destroy();
+  });
+
+  it('quotes a CREATE TABLE column name containing a dot as a single identifier', () => {
+    const sql = buildCreateTableQuery(
+      quotingKnex,
+      'public',
+      'Organizations',
+      [field('Dealroom.co URL', { kind: 'url' })],
+      new Map(),
+    ).toString();
+
+    expect(sql).toContain('create table "public"."Organizations"');
+    expect(sql).toContain('"Dealroom.co URL" text');
+    expect(sql).not.toContain('"Dealroom"."co URL"');
+  });
+
+  it('quotes a dotted foreign-key column while keeping the target table qualified', () => {
+    const resolvedFk: ForeignKeyResolutions = new Map([
+      [
+        'company.id',
+        { kind: 'resolved', targetTableQualified: 'crm.companies', targetPkColumn: 'id', targetPkType: 'uuid' },
+      ],
+    ]);
+    const sql = buildCreateTableQuery(
+      quotingKnex,
+      'public',
+      'people',
+      [field('company.id', { kind: 'foreignKey', target: { existingRemoteTableId: ['crm', 'companies'] } })],
+      resolvedFk,
+    ).toString();
+
+    expect(sql).toContain('"company.id" uuid');
+    expect(sql).toContain('foreign key ("company.id")');
+    expect(sql).toContain('references "crm"."companies"');
+    expect(sql).not.toContain('"company"."id"');
+  });
+
+  it('encodes a dotted column so INSERT / SELECT / UPDATE quote it verbatim', () => {
+    const encoded = encodeColumnIdentifierDotsForKnex('Dealroom.co URL');
+    expect(
+      quotingKnex('public.Organizations')
+        .insert({ [encoded]: 'x' })
+        .toQuery(),
+    ).toContain('("Dealroom.co URL")');
+    expect(quotingKnex('public.Organizations').select(encoded).toQuery()).toContain('select "Dealroom.co URL"');
+    expect(
+      quotingKnex('public.Organizations')
+        .update({ [encoded]: 'x' })
+        .toQuery(),
+    ).toContain('set "Dealroom.co URL" =');
+  });
+
+  it('leaves schema-qualified table references splitting on the dot', () => {
+    expect(quotingKnex('public.Organizations').select('Subject').toQuery()).toBe(
+      'select "Subject" from "public"."Organizations"',
     );
   });
 });

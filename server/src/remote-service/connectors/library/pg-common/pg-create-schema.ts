@@ -17,6 +17,7 @@ import { CREATE_FIELD_KINDS, type SchemaCreationCapabilities } from '@spinner/sh
 import { type Knex } from 'knex';
 import { assertUnreachable } from 'src/utils/asserts';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
+import { encodeColumnIdentifierDotsForKnex } from './knex-column-identifier-dot-encoding';
 
 /**
  * Name of the auto-generated primary-key column injected into every created
@@ -158,11 +159,15 @@ function applyForeignKeyColumn(
   if (resolution.kind === 'unresolvable') {
     return resolution.reason;
   }
-  // Nullable so ON DELETE SET NULL is valid; type matches the referenced PK column.
-  table.specificType(field.name, resolution.targetPkType).nullable();
+  // Nullable so ON DELETE SET NULL is valid; type matches the referenced PK column. The FK column
+  // and the referenced PK column are column identifiers (dot-encoded so a dotted name survives —
+  // DEV-11063); the target table is a `schema.table` reference and keeps its real dot so knex splits
+  // it into the correct qualified reference.
+  const knexColumnName = encodeColumnIdentifierDotsForKnex(field.name);
+  table.specificType(knexColumnName, resolution.targetPkType).nullable();
   table
-    .foreign(field.name)
-    .references(resolution.targetPkColumn)
+    .foreign(knexColumnName)
+    .references(encodeColumnIdentifierDotsForKnex(resolution.targetPkColumn))
     .inTable(resolution.targetTableQualified)
     .onDelete('SET NULL');
   return undefined;
@@ -183,6 +188,10 @@ function applyCreateFieldColumn(
   }
 
   const fieldType = field.fieldType;
+  // A `.` in the column name is knex's qualification separator; encode it so the column is emitted
+  // as one identifier (`"Dealroom.co URL"`) rather than being split into `"Dealroom"."co URL"`
+  // (DEV-11063). Every name handed to a knex column method below goes through this.
+  const knexColumnName = encodeColumnIdentifierDotsForKnex(field.name);
   // `description` is intentionally not mapped to COMMENT ON COLUMN in v1: the read side
   // reads information_schema (not pg_description), so it would not round-trip. select /
   // multiSelect option lists are likewise not enforced (no enum/CHECK) — stored as text / text[].
@@ -193,26 +202,26 @@ function applyCreateFieldColumn(
     case 'email':
     case 'phone':
     case 'select':
-      applyRequired(table.text(field.name), field);
+      applyRequired(table.text(knexColumnName), field);
       return undefined;
     case 'multiSelect':
-      applyRequired(table.specificType(field.name, 'text[]'), field);
+      applyRequired(table.specificType(knexColumnName, 'text[]'), field);
       return undefined;
     case 'boolean':
-      applyRequired(table.boolean(field.name), field);
+      applyRequired(table.boolean(knexColumnName), field);
       return undefined;
     case 'number':
-      applyRequired(applyNumberColumn(table, field.name, fieldType), field);
+      applyRequired(applyNumberColumn(table, knexColumnName, fieldType), field);
       return undefined;
     case 'currency': {
       // currencyCode is metadata only — stored as a scaled numeric.
       const scale = fieldType.precision ?? DEFAULT_CURRENCY_SCALE;
-      applyRequired(table.decimal(field.name, scale + NUMERIC_PRECISION_HEADROOM, scale), field);
+      applyRequired(table.decimal(knexColumnName, scale + NUMERIC_PRECISION_HEADROOM, scale), field);
       return undefined;
     }
     case 'date':
       applyRequired(
-        fieldType.includesTime ? table.timestamp(field.name, { useTz: true }) : table.date(field.name),
+        fieldType.includesTime ? table.timestamp(knexColumnName, { useTz: true }) : table.date(knexColumnName),
         field,
       );
       return undefined;

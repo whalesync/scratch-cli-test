@@ -411,7 +411,10 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     });
 
     actor = { userId, organizationId: orgId };
-  });
+    // Real Prisma/Postgres setup can exceed Jest's default 5s hook budget on a
+    // cold connection or a contended CI runner, so give it the same generous
+    // window the test bodies use rather than flaking in beforeEach.
+  }, 30_000);
 
   afterEach(async () => {
     // Clean up in reverse dependency order
@@ -1533,7 +1536,10 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     });
 
     actor = { userId, organizationId: orgId };
-  });
+    // Real Prisma/Postgres setup can exceed Jest's default 5s hook budget on a
+    // cold connection or a contended CI runner, so give it the same generous
+    // window the test bodies use rather than flaking in beforeEach.
+  }, 30_000);
 
   afterEach(async () => {
     await prisma.publishPlanOperation.deleteMany({ where: { plan: { workbookId } } });
