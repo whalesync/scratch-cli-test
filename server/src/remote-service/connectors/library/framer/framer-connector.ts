@@ -85,9 +85,10 @@ import {
  * FOREIGN KEYS
  *  Q13. FK annotation sits on the value leaf; generic FK discovery follows the nested
  *       fieldData.<id>.value path. The CLI move-parent→parent (write) test passes for
- *       single + multi reference. Caveat: references store slugs while the target's
- *       remote id is the item id, so cross-record FK *resolution* (picker/sync) is a
- *       known follow-up (see STATE.md → Foreign keys).
+ *       single + multi reference. References store slugs while the target's remote id is
+ *       the item id, so the annotation declares `targetKeyPath: 'slug'` — the generic
+ *       contract that makes cross-record FK resolution (sync / Live Export) match on the
+ *       target's slug rather than its id (DEV-11085; see STATE.md → Foreign keys).
  *
  * IDENTITY / LIFECYCLE
  *  Q14. Collection id = the Scratch table wsId & remoteId. Item slug = filename

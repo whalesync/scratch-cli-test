@@ -16,6 +16,10 @@ function createLookupTools(
   > = {},
 ): LookupTools {
   return {
+    // Identity: these fixtures reference targets by remote id, the default contract.
+    resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
+      Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
+    ),
     getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<FkMappingResult | null> => {
       const entry = mapping[fk];
       if (!entry) return Promise.resolve(null);
@@ -430,6 +434,136 @@ describe('sourceFkToDestFkTransformer', () => {
       const result = await sourceFkToDestFkTransformer.transform(
         createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', 'stale-id-123'),
       );
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
+    });
+  });
+  /**
+   * Non-id foreign keys (DEV-11085): a reference whose value names its target by a declared field
+   * rather than the target's remote id — Framer's references carry the target item's slug.
+   */
+  describe('targetKeyPath — a value that names its target by a non-id field', () => {
+    /** Lookup tools whose key index maps slugs to remote ids, then remote ids to destinations. */
+    function createSlugKeyedLookupTools(
+      slugToRemoteId: Record<string, string | { ambiguousMatchCount: number }>,
+      remoteIdToDestinationPath: Record<string, string>,
+    ): LookupTools {
+      const base = createSimpleLookupTools(remoteIdToDestinationPath);
+      return {
+        ...base,
+        resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) => {
+          const entry = slugToRemoteId[value];
+          if (entry === undefined) return Promise.resolve({ kind: 'no_match' } as const);
+          if (typeof entry === 'object') {
+            return Promise.resolve({ kind: 'ambiguous', matchCount: entry.ambiguousMatchCount } as const);
+          }
+          return Promise.resolve({ kind: 'resolved', targetSourceRemoteId: entry } as const);
+        }),
+      };
+    }
+
+    const OPTIONS_WITH_SLUG_KEY: SourceFkToDestFkOptions = {
+      referencedDataFolderId: REFERENCED_FOLDER,
+      targetKeyPath: 'slug',
+    };
+
+    it('resolves a slug through to the destination record', async () => {
+      const lookup = createSlugKeyedLookupTools(
+        { engineering: 'item_aaa' },
+        { item_aaa: 'dest-tags/engineering.json' },
+      );
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('engineering', lookup, OPTIONS_WITH_SLUG_KEY),
+      );
+      expect(result).toEqual({ success: true, value: '@/DestConn/dest-tags/engineering.json' });
+    });
+
+    it('passes the declared key path to the resolver', async () => {
+      const resolveSpy = jest.fn(() =>
+        Promise.resolve({ kind: 'resolved', targetSourceRemoteId: 'item_aaa' } as const),
+      );
+      const lookup: LookupTools = {
+        ...createSimpleLookupTools({ item_aaa: 'dest-tags/e.json' }),
+        resolveForeignKeyValueToTargetRemoteId: resolveSpy,
+      };
+      await sourceFkToDestFkTransformer.transform(createContext('engineering', lookup, OPTIONS_WITH_SLUG_KEY));
+      expect(resolveSpy).toHaveBeenCalledWith('engineering', REFERENCED_FOLDER, 'slug');
+    });
+
+    it('resolves every element of a multi-reference array', async () => {
+      const lookup = createSlugKeyedLookupTools(
+        { engineering: 'item_aaa', design: 'item_bbb' },
+        { item_aaa: 'dest-tags/engineering.json', item_bbb: 'dest-tags/design.json' },
+      );
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['engineering', 'design'], lookup, OPTIONS_WITH_SLUG_KEY),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: ['@/DestConn/dest-tags/engineering.json', '@/DestConn/dest-tags/design.json'],
+      });
+    });
+
+    it('names the key path and the value when nothing claims it', async () => {
+      const lookup = createSlugKeyedLookupTools({}, {});
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('marketing', lookup, OPTIONS_WITH_SLUG_KEY),
+      );
+      expect(result.success).toBe(false);
+      expect((result as { error: string }).error).toContain('no record in DataFolder');
+      expect((result as { error: string }).error).toContain('"slug"');
+      expect((result as { error: string }).error).toContain('"marketing"');
+    });
+
+    it('distinguishes "found the target but it has no destination row" from "no such key"', async () => {
+      const lookup = createSlugKeyedLookupTools({ engineering: 'item_aaa' }, {});
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('engineering', lookup, OPTIONS_WITH_SLUG_KEY),
+      );
+      expect(result.success).toBe(false);
+      expect((result as { error: string }).error).toContain('no destination record');
+    });
+
+    it('fails on an ambiguous key rather than linking one of the claimants', async () => {
+      const lookup = createSlugKeyedLookupTools({ engineering: { ambiguousMatchCount: 2 } }, {});
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('engineering', lookup, OPTIONS_WITH_SLUG_KEY),
+      );
+      expect(result.success).toBe(false);
+      expect((result as { error: string }).error).toContain('ambiguous');
+      expect((result as { error: string }).error).toContain('2 records');
+    });
+
+    it('fails on an ambiguous key EVEN under onUnresolved: ignore', async () => {
+      // Tolerating a record you could not find is a choice; silently linking the wrong record
+      // of two that claim the same key is not the same thing, and is worse than no link.
+      const lookup = createSlugKeyedLookupTools({ engineering: { ambiguousMatchCount: 3 } }, {});
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('engineering', lookup, { ...OPTIONS_WITH_SLUG_KEY, onUnresolved: 'ignore' }),
+      );
+      expect(result.success).toBe(false);
+      expect((result as { error: string }).error).toContain('ambiguous');
+    });
+
+    it('still honours onUnresolved: ignore for a key nothing claims', async () => {
+      const lookup = createSlugKeyedLookupTools({}, {});
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['marketing'], lookup, { ...OPTIONS_WITH_SLUG_KEY, onUnresolved: 'ignore' }),
+      );
+      expect(result.success).toBe(true);
+      expect((result as { value: unknown }).value).toEqual([]);
+    });
+
+    it('leaves the id path untouched when no key path is declared', async () => {
+      const resolveSpy = jest.fn((value: string) =>
+        Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
+      );
+      const lookup: LookupTools = {
+        ...createSimpleLookupTools({ src_1: 'dest-authors/alice.json' }),
+        resolveForeignKeyValueToTargetRemoteId: resolveSpy,
+      };
+      const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
+      // The declared-key argument is `undefined`, so the resolver stays on its identity path.
+      expect(resolveSpy).toHaveBeenCalledWith('src_1', REFERENCED_FOLDER, undefined);
       expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
     });
   });

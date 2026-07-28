@@ -175,7 +175,7 @@ describe('selectPlanFieldsFromTableView', () => {
       const schema = Type.Object({
         rel: Type.Object(
           { id: Type.String(), type: Type.String(), relation: Type.Array(Type.Object({ id: Type.String() })) },
-          { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'tbl_target', map: 'id' } },
+          { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'tbl_target' } },
         ),
         plain: Type.String(),
       });
@@ -200,7 +200,7 @@ describe('selectPlanFieldsFromTableView', () => {
       const schema = Type.Object({
         rel: Type.Object(
           { id: Type.String(), relation: Type.Array(Type.Object({ id: Type.String() })) },
-          { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'tbl_target', map: 'id' } },
+          { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'tbl_target' } },
         ),
       });
       const view: TableView = {

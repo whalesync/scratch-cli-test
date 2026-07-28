@@ -9,7 +9,20 @@ import {
 import { DbService } from 'src/db/db.service';
 import { readFieldValueAtPath } from 'src/utils/field-path';
 import { sanitizeConnectionFolderName } from 'src/workbook/connector-folder-path.util';
-import { AssetMappingResult, FkMappingResult, LookupTools } from './transformer.types';
+import {
+  buildForeignKeyTargetKeyIndex,
+  resolveForeignKeyValueAgainstTargetKeyIndex,
+  type ForeignKeyTargetKeyIndex,
+  type TargetRecordForKeyIndex,
+} from './foreign-key-target-key-index';
+import { AssetMappingResult, FkMappingResult, ForeignKeyTargetResolution, LookupTools } from './transformer.types';
+
+/**
+ * Read every source record of a referenced folder, so a foreign key whose value names its target by
+ * a non-id field can be resolved. Injected rather than imported so this module keeps no dependency
+ * on the folder/git services and stays unit-testable.
+ */
+export type ReadReferencedFolderRecords = (referencedDataFolderId: DataFolderId) => Promise<TargetRecordForKeyIndex[]>;
 
 /**
  * Creates a no-op LookupTools where every method returns null / rejects.
@@ -17,6 +30,13 @@ import { AssetMappingResult, FkMappingResult, LookupTools } from './transformer.
  */
 export function createNullLookupTools(): LookupTools {
   return {
+    // No folder reader, so only the identity (remote-id) resolution is meaningful here.
+    resolveForeignKeyValueToTargetRemoteId: (foreignKeyValue, _folderId, targetKeyPath) =>
+      Promise.resolve(
+        targetKeyPath === undefined
+          ? ({ kind: 'resolved', targetSourceRemoteId: foreignKeyValue } as const)
+          : ({ kind: 'no_match' } as const),
+      ),
     getDestinationMappingForSourceFk: () => Promise.resolve(null),
     lookupFieldFromFkRecord: () => Promise.resolve(undefined),
     getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
@@ -32,6 +52,8 @@ export function createNullLookupTools(): LookupTools {
  * @param workbookId - The workbook ID for asset lookups
  * @param sourceService - The Service of the source connector
  * @param destinationService - The Service of the destination connector
+ * @param readReferencedFolderRecords - Reads a referenced folder's source records, for resolving a
+ *   foreign key whose value names its target by a field other than the target's remote id
  */
 export function createLookupTools(
   db: DbService,
@@ -39,6 +61,7 @@ export function createLookupTools(
   workbookId: WorkbookId,
   sourceService: Service,
   destinationService: Service,
+  readReferencedFolderRecords: ReadReferencedFolderRecords,
 ): LookupTools {
   // ── FK mapping cache ──────────────────────────────────────────────────────
   //
@@ -67,7 +90,50 @@ export function createLookupTools(
     { sourceHashByRemoteId: Map<string, string>; destRemoteIdsByHash: Map<string, string[]> }
   >();
 
+  // ── Non-id foreign-key target index ───────────────────────────────────────
+  //
+  // Only built when a connector declares `targetKeyPath` on a foreign key, so every connector
+  // whose references carry ids pays nothing. Keyed by folder AND key path — two fields could
+  // name the same target table by different keys, and serving an id-keyed index to a
+  // slug-keyed lookup would silently resolve nothing.
+  //
+  // One bulk folder read per (folder, key path) — the same read `populateForeignKeyRecordCache`
+  // already performs to index a referenced folder for `lookup_field`.
+  // ──────────────────────────────────────────────────────────────────────────
+  const targetKeyIndexCache = new Map<string, Promise<ForeignKeyTargetKeyIndex>>();
+
+  function getTargetKeyIndex(
+    referencedDataFolderId: DataFolderId,
+    targetKeyPath: string,
+  ): Promise<ForeignKeyTargetKeyIndex> {
+    // A NUL byte can't appear in a folder id or a dot path, so it's an unambiguous separator.
+    const cacheKey = `${referencedDataFolderId}\0${targetKeyPath}`;
+    let index = targetKeyIndexCache.get(cacheKey);
+    if (!index) {
+      // Cache the PROMISE, not the result, so concurrent FK elements share one folder read.
+      index = readReferencedFolderRecords(referencedDataFolderId).then((targetRecords) =>
+        buildForeignKeyTargetKeyIndex(targetRecords, targetKeyPath),
+      );
+      targetKeyIndexCache.set(cacheKey, index);
+    }
+    return index;
+  }
+
   return {
+    async resolveForeignKeyValueToTargetRemoteId(
+      foreignKeyValue: string,
+      referencedDataFolderId: DataFolderId,
+      targetKeyPath?: string,
+    ): Promise<ForeignKeyTargetResolution> {
+      // No declared key ⇒ the value already IS the target's remote id. Identity, no I/O — the
+      // path every connector but Framer takes.
+      if (targetKeyPath === undefined) {
+        return { kind: 'resolved', targetSourceRemoteId: foreignKeyValue };
+      }
+      const index = await getTargetKeyIndex(referencedDataFolderId, targetKeyPath);
+      return resolveForeignKeyValueAgainstTargetKeyIndex(index, foreignKeyValue);
+    },
+
     async getDestinationMappingForSourceFk(
       sourceFkValue: string,
       referencedDataFolderId: DataFolderId,

@@ -73,7 +73,13 @@ describe('FileReferenceService.extractReferences', () => {
     ]);
   });
 
-  it('still honors `map` for an object-shaped FK node (the generic contract)', () => {
+  it('yields nothing for an FK annotated on an object node rather than on its id leaf', () => {
+    // The retired `map` key used to pluck a member out of such a node. Its only ever emitter
+    // (Notion, until 2026-07-22) annotated the relation ENVELOPE, so `map: 'id'` read the
+    // property's OWN id and produced one bogus reference row per relation property while missing
+    // every real link. Connectors now annotate the id LEAF, so an object node here is a
+    // mis-annotation and must contribute nothing rather than a wrong id. A stale stored schema
+    // that still carries `map` lands on this same path.
     const schema = Type.Object({
       id: Type.Number(),
       companyRef: Type.Object(
@@ -85,8 +91,6 @@ describe('FileReferenceService.extractReferences', () => {
 
     const refs = buildService().extractReferences('/deals/d.json', content, schema);
 
-    expect(refs).toEqual([
-      { sourceFilePath: '/deals/d.json', targetRemoteId: 'com_9', targetRemoteTableId: 'companies' },
-    ]);
+    expect(refs).toEqual([]);
   });
 });

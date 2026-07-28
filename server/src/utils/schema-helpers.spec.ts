@@ -203,6 +203,20 @@ describe('schema-helpers', () => {
         expect(fkField?.foreignKey).toEqual({ linkedTableId: 'table_authors' });
       });
 
+      it('should carry targetKeyPath through the foreignKey whitelist copy (DEV-11085)', () => {
+        // The copy is a whitelist, so an option missing from it is silently dropped and the FK
+        // resolver never learns the value names its target by something other than the id.
+        const schema = Type.Object({
+          tag: Type.String({
+            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'col_tags', targetKeyPath: 'slug' },
+          }),
+        });
+
+        const fkField = extractSchemaFields(schema).find((f) => f.path === 'tag');
+
+        expect(fkField?.foreignKey).toEqual({ linkedTableId: 'col_tags', targetKeyPath: 'slug' });
+      });
+
       it('should extract suggestedTransformer', () => {
         const transformer = { type: TransformerTypes.Slugify };
         const schema = Type.Object({

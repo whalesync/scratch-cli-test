@@ -98,10 +98,46 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
         };
       }
       const fkStr = String(element);
-      const mapping = await lookupTools.getDestinationMappingForSourceFk(fkStr, typedOptions.referencedDataFolderId);
+
+      // Step 1 — the VALUE names a target record. With no `targetKeyPath` it already is that
+      // record's remote id; with one, it is matched against that field of the referenced
+      // folder's records (Framer names its targets by slug).
+      const target = await lookupTools.resolveForeignKeyValueToTargetRemoteId(
+        fkStr,
+        typedOptions.referencedDataFolderId,
+        typedOptions.targetKeyPath,
+      );
+      // An AMBIGUOUS key is always a hard error, even under `onUnresolved: 'ignore'`. "Ignore a
+      // record I couldn't find" is a tolerance the user opted into; "silently pick one of two
+      // records that claim this key" is a wrong link, and linking the wrong record is worse
+      // than not linking at all.
+      if (target.kind === 'ambiguous') {
+        return {
+          success: false,
+          error:
+            `Foreign key "${fkStr}" is ambiguous: ${target.matchCount} records in DataFolder ` +
+            `${typedOptions.referencedDataFolderId} have ${describeTargetKey(typedOptions.targetKeyPath)} ` +
+            `"${fkStr}". Make the value unique in the source, or reference the records by id.`,
+        };
+      }
+
+      // Step 2 — the target's remote id names a destination record.
+      const mapping =
+        target.kind === 'resolved'
+          ? await lookupTools.getDestinationMappingForSourceFk(
+              target.targetSourceRemoteId,
+              typedOptions.referencedDataFolderId,
+            )
+          : null;
       if (mapping === null) {
+        // Distinguish "nothing has that key" from "found the record, but it has no destination
+        // row yet" — they have completely different causes and fixes.
+        const reason =
+          target.kind === 'no_match'
+            ? `no record in DataFolder ${typedOptions.referencedDataFolderId} has ${describeTargetKey(typedOptions.targetKeyPath)} "${fkStr}"`
+            : `it has no destination record in DataFolder ${typedOptions.referencedDataFolderId}`;
         if (ignoreUnresolved) {
-          const msg = `Skipped unresolved foreign key "${fkStr}" in DataFolder ${typedOptions.referencedDataFolderId}`;
+          const msg = `Skipped unresolved foreign key "${fkStr}": ${reason}`;
           warnings.push(msg);
           WSLogger.warn({
             source: 'sourceFkToDestFkTransformer',
@@ -113,7 +149,7 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
         }
         return {
           success: false,
-          error: `Could not resolve foreign key "${fkStr}" to a destination path in DataFolder ${typedOptions.referencedDataFolderId}`,
+          error: `Could not resolve foreign key "${fkStr}" to a destination path: ${reason}`,
         };
       }
       // Use the real destination remote ID if it exists already, otherwise a
@@ -158,6 +194,14 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
     return warnings.length > 0 ? { success: true, value, warnings } : { success: true, value };
   },
 };
+
+/**
+ * Name the field a foreign key's value was matched against, for an error message: the declared
+ * target key path, or "remote id" when the value is matched against the target's own id.
+ */
+function describeTargetKey(targetKeyPath: string | undefined): string {
+  return targetKeyPath === undefined ? 'remote id' : `"${targetKeyPath}"`;
+}
 
 /**
  * Build a workspace-absolute pseudo-reference (`@/<connection>/<folder>/<file>.json`)

@@ -28,7 +28,9 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
       },
     } as unknown as DbService;
 
-    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW);
+    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
+      Promise.resolve([]),
+    );
 
     return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((mapping) => {
       expect(mapping).toEqual({
@@ -58,10 +60,108 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
       },
     } as unknown as DbService;
 
-    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW);
+    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
+      Promise.resolve([]),
+    );
 
     return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((mapping) => {
       expect(mapping?.destinationConnectionFolder).toBeNull();
     });
+  });
+});
+
+/**
+ * Non-id foreign-key resolution (DEV-11085) — `resolveForeignKeyValueToTargetRemoteId` maps a
+ * reference VALUE to the target's source remote id before the destination lookup runs.
+ */
+describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)', () => {
+  const EMPTY_DB = { client: {} } as unknown as DbService;
+
+  const FRAMER_TAGS = [
+    { id: 'item_aaa', fields: { id: 'item_aaa', slug: 'engineering' } },
+    { id: 'item_bbb', fields: { id: 'item_bbb', slug: 'design' } },
+  ];
+
+  it('is the identity function — and reads NO records — when no key path is declared', async () => {
+    const readReferencedFolderRecords = jest.fn();
+    const lookupTools = createLookupTools(
+      EMPTY_DB,
+      SYNC_ID,
+      WORKBOOK_ID,
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      readReferencedFolderRecords,
+    );
+
+    await expect(
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('rec_1', SOURCE_REFERENCED_FOLDER),
+    ).resolves.toEqual({ kind: 'resolved', targetSourceRemoteId: 'rec_1' });
+    // Every connector whose references carry ids must pay nothing for this feature.
+    expect(readReferencedFolderRecords).not.toHaveBeenCalled();
+  });
+
+  it("resolves a declared key against the referenced folder's records", async () => {
+    const lookupTools = createLookupTools(EMPTY_DB, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
+      Promise.resolve(FRAMER_TAGS),
+    );
+
+    await expect(
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('design', SOURCE_REFERENCED_FOLDER, 'slug'),
+    ).resolves.toEqual({ kind: 'resolved', targetSourceRemoteId: 'item_bbb' });
+  });
+
+  it('reads the referenced folder ONCE however many values are resolved', async () => {
+    const readReferencedFolderRecords = jest.fn().mockResolvedValue(FRAMER_TAGS);
+    const lookupTools = createLookupTools(
+      EMPTY_DB,
+      SYNC_ID,
+      WORKBOOK_ID,
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      readReferencedFolderRecords,
+    );
+
+    // Concurrent, so this also pins that the PROMISE is cached, not just the settled result.
+    await Promise.all([
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('engineering', SOURCE_REFERENCED_FOLDER, 'slug'),
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('design', SOURCE_REFERENCED_FOLDER, 'slug'),
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('engineering', SOURCE_REFERENCED_FOLDER, 'slug'),
+    ]);
+    expect(readReferencedFolderRecords).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a separate index per key path, so one does not answer for another', async () => {
+    const records = [{ id: 'r1', fields: { slug: 'a', code: 'b' } }];
+    const readReferencedFolderRecords = jest.fn().mockResolvedValue(records);
+    const lookupTools = createLookupTools(
+      EMPTY_DB,
+      SYNC_ID,
+      WORKBOOK_ID,
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      readReferencedFolderRecords,
+    );
+
+    await expect(
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('a', SOURCE_REFERENCED_FOLDER, 'slug'),
+    ).resolves.toEqual({ kind: 'resolved', targetSourceRemoteId: 'r1' });
+    // Same folder, different key: must NOT be served the slug index.
+    await expect(
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('a', SOURCE_REFERENCED_FOLDER, 'code'),
+    ).resolves.toEqual({ kind: 'no_match' });
+    expect(readReferencedFolderRecords).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces an ambiguous key instead of picking a claimant', async () => {
+    const lookupTools = createLookupTools(EMPTY_DB, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
+      Promise.resolve([
+        { id: 'r1', fields: { slug: 'dup' } },
+        { id: 'r2', fields: { slug: 'dup' } },
+      ]),
+    );
+
+    await expect(
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('dup', SOURCE_REFERENCED_FOLDER, 'slug'),
+    ).resolves.toEqual({ kind: 'ambiguous', matchCount: 2 });
   });
 });

@@ -37,6 +37,10 @@ function makeContext(
     destinationTableSpec: null,
     destinationService: Service.WEBFLOW,
     lookupTools: {
+      // Identity: these fixtures reference targets by remote id, the default contract.
+      resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
+        Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
+      ),
       getDestinationMappingForSourceFk: () => Promise.resolve(null),
       lookupFieldFromFkRecord: () => Promise.resolve(undefined),
       getOrCreateDestinationAssetMapping:

@@ -106,7 +106,11 @@ export type TableViewCol = {
   // unset is treated as multi-valued, which makes a destination that stores a foreign key
   // in a single scalar column (Postgres/Supabase) report the field as narrowed — so a
   // genuinely single-valued link should say so.
-  foreignKey?: { linkedTableId: string; isSingleValued?: boolean };
+  //
+  // `targetKeyPath` mirrors the schema annotation's field of the same name: the dot path in
+  // the TARGET record that this column's values match, when they are not the target's remote
+  // id. See ForeignKeyOptionSchema.targetKeyPath for the full contract.
+  foreignKey?: { linkedTableId: string; isSingleValued?: boolean; targetKeyPath?: string };
 
   // When the field is an object, we may want to define a few subfields for the user to pick between, for
   // ergonomics. To the user, a complex object might only have one interesting field, which accurately represents it. For example,

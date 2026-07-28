@@ -72,13 +72,17 @@ function framerFieldValueSchema(field: FramerFieldMeta): TSchema {
     case FramerFieldType.CollectionReference:
       schema = Type.Union([Type.String(), Type.Null()], {
         description,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: field.collectionId ? { linkedTableId: field.collectionId } : undefined,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: field.collectionId
+          ? framerReferenceForeignKeyOptions(field.collectionId)
+          : undefined,
       });
       break;
     case FramerFieldType.MultiCollectionReference:
       schema = Type.Array(Type.String(), {
         description,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: field.collectionId ? { linkedTableId: field.collectionId } : undefined,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: field.collectionId
+          ? framerReferenceForeignKeyOptions(field.collectionId)
+          : undefined,
       });
       break;
     case FramerFieldType.Array:
@@ -100,6 +104,20 @@ function framerFieldValueSchema(field: FramerFieldMeta): TSchema {
     schema[X_SCRATCH_READONLY] = true;
   }
   return schema;
+}
+
+/**
+ * The foreign-key annotation for a Framer reference field.
+ *
+ * Framer's Server API reads a reference back as the target item's **slug**, never its id — the
+ * connector stores that verbatim per the Prime Directive, and the write path translates slug→id
+ * (`getWriteTranslationMaps`). `targetKeyPath: 'slug'` tells the generic FK resolver the same
+ * thing, so it matches the value against the target's `slug` instead of its remote id, which it
+ * would otherwise assume and never find (DEV-11085). Slugs are unique within a Framer collection,
+ * which is what the key contract requires.
+ */
+function framerReferenceForeignKeyOptions(collectionId: string): ForeignKeyOptionSchema {
+  return { linkedTableId: collectionId, targetKeyPath: 'slug' };
 }
 
 /**

@@ -645,6 +645,35 @@ fieldSchema[FOREIGN_KEY_OPTIONS] = {
 };
 ```
 
+**Annotate the id LEAF, not the envelope.** The resolver reads the value at the annotated path and
+expects the referenced record's id (or a list of them). If the service wraps the reference —
+Notion's `relation: [{ id }]`, Attio's `[{ target_record_id }]` — annotate the inner id and let the
+column's view codec / `displayTransformer` extract it. Annotating the wrapper makes the resolver
+read the wrapper.
+
+**When the value is NOT the target's remote id, say so with `targetKeyPath`.** Some services name a
+reference's target by another field: Framer's Server API reads a reference back as the target
+item's **slug**, and a Postgres foreign key may be declared onto a non-primary-key unique column.
+Store the value verbatim (Prime Directive) and declare how it names its target:
+
+```typescript
+fieldSchema[FOREIGN_KEY_OPTIONS] = {
+  linkedTableId: 'other_collection_id',
+  targetKeyPath: 'slug', // dot path IN THE TARGET RECORD that this value matches
+};
+```
+
+The sync's FK phase then indexes the referenced folder by that path before resolving. Contract:
+
+- **Absent ⇒ the value is the target's remote id** (the value at the target spec's `idPath`). That
+  is the default and what most connectors want — omit it.
+- **The path must be unique across the target's records.** Two targets sharing a value is a data
+  error: the reference fails with the collision named, rather than linking one of them at random.
+- **Exact match, and no fallback.** No case folding or trimming, and a declared key never falls
+  back to id matching — so resolution stays predictable.
+- This is about the value's *semantics*, not its *shape*. A wrapped id is the leaf-annotation case
+  above; do not use `targetKeyPath` for it.
+
 ### `x-scratch-suggested-transformer`
 
 Hint that the system should auto-apply a transformation when this field is selected as a **source** in the sync editor.

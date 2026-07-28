@@ -97,11 +97,23 @@ describe('buildFramerJsonTableSpec', () => {
 
   it('annotates single + multi reference fields as foreign keys at the value leaf', () => {
     expect(isFramerForeignKey('fAuthor', spec)).toBe(true);
-    expect(getFramerForeignKeyOptions('fAuthor', spec)).toEqual({ linkedTableId: 'col_authors' });
     expect(isFramerForeignKey('fTags', spec)).toBe(true);
-    expect(getFramerForeignKeyOptions('fTags', spec)).toEqual({ linkedTableId: 'col_tags' });
     // A non-reference field is not a foreign key.
     expect(isFramerForeignKey('fTitle', spec)).toBe(false);
+  });
+
+  it('declares that reference values name their target by SLUG, not by remote id (DEV-11085)', () => {
+    // Framer's Server API reads a reference back as the target item's slug; without this the
+    // generic resolver looks the slug up as a remote id, misses every time, and the export
+    // publishes nothing.
+    expect(getFramerForeignKeyOptions('fAuthor', spec)).toEqual({
+      linkedTableId: 'col_authors',
+      targetKeyPath: 'slug',
+    });
+    expect(getFramerForeignKeyOptions('fTags', spec)).toEqual({
+      linkedTableId: 'col_tags',
+      targetKeyPath: 'slug',
+    });
   });
 
   it('stamps the connector data type onto each field value', () => {

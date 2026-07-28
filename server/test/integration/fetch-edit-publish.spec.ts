@@ -118,6 +118,15 @@ const POSTS_TABLE = `${TABLE_PREFIX}posts`;
 const AUTHORS_REMOTE_TABLE_ID = AUTHORS_TABLE;
 const POSTS_REMOTE_TABLE_ID = POSTS_TABLE;
 
+/**
+ * The `x-scratch-foreign-key` annotation for a column, in the shape the real Postgres connector
+ * emits (`postgres-connector.ts` → `{ linkedTableId }`) — which is what this suite simulates.
+ * It previously wrote the bare table id as a STRING; that shape was honoured only by the
+ * publish-side ref walker and was ignored by `schema-helpers`, the schema builder, and the Rust
+ * indexer, so it never matched any connector's real output.
+ */
+const foreignKeyTo = (remoteTableId: string) => ({ 'x-scratch-foreign-key': { linkedTableId: remoteTableId } });
+
 // Folder paths (no leading slash for FileIndex / git; leading slash for DataFolder.path)
 const AUTHORS_FOLDER = 'authors';
 const POSTS_FOLDER = 'posts';
@@ -313,10 +322,10 @@ describe('Fetch → Edit → Publish Integration', () => {
         id: Type.Integer(),
         name: Type.String(),
         best_friend_id: Type.Optional(
-          Type.Union([Type.Integer({ 'x-scratch-foreign-key': AUTHORS_REMOTE_TABLE_ID } as object), Type.Null()]),
+          Type.Union([Type.Integer(foreignKeyTo(AUTHORS_REMOTE_TABLE_ID) as object), Type.Null()]),
         ),
         favorite_post_id: Type.Optional(
-          Type.Union([Type.Integer({ 'x-scratch-foreign-key': POSTS_REMOTE_TABLE_ID } as object), Type.Null()]),
+          Type.Union([Type.Integer(foreignKeyTo(POSTS_REMOTE_TABLE_ID) as object), Type.Null()]),
         ),
       },
       { $id: `postgres/${AUTHORS_TABLE}`, title: AUTHORS_TABLE },
@@ -327,7 +336,7 @@ describe('Fetch → Edit → Publish Integration', () => {
         id: Type.Integer(),
         title: Type.String(),
         author_id: Type.Optional(
-          Type.Union([Type.Integer({ 'x-scratch-foreign-key': AUTHORS_REMOTE_TABLE_ID } as object), Type.Null()]),
+          Type.Union([Type.Integer(foreignKeyTo(AUTHORS_REMOTE_TABLE_ID) as object), Type.Null()]),
         ),
       },
       { $id: `postgres/${POSTS_TABLE}`, title: POSTS_TABLE },

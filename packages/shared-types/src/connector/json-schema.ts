@@ -207,6 +207,26 @@ export interface ForeignKeyOptionSchema {
    * relation).
    */
   isSingleValued?: boolean;
+  /**
+   * Dot path — **in the TARGET record** — of the field this foreign key's value matches.
+   *
+   * Absent (the default, and what every connector but Framer emits) means the value IS the
+   * target's remote id, i.e. the value at the target table spec's `idPath`. Set it when a
+   * service's reference field names its target by something else: Framer's reference fields
+   * read back the target item's `slug`, so they declare `'slug'`; a Postgres foreign key
+   * declared onto a non-primary-key unique column would declare that column.
+   *
+   * This is about the value's SEMANTICS, not its shape. A reference whose value merely
+   * *contains* the id (Notion's `relation[].id`, Attio's `target_record_id`) is already
+   * handled by the column's view codec / `displayTransformer`, which extracts the id before
+   * resolution — such a field must NOT set this.
+   *
+   * The path must identify a target record UNIQUELY. Two target records sharing a value is a
+   * data error, not a tiebreak: the reference resolves to nothing and the collision is named
+   * in the error. Matching is exact — no case folding, no trimming — and there is deliberately
+   * no fallback to id matching, so resolution stays predictable and testable.
+   */
+  targetKeyPath?: string;
 }
 
 /**

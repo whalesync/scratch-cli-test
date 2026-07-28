@@ -109,7 +109,7 @@ export interface SchemaField {
   /** The CoreValue primitive `suggestedInTransformer` consumes (`'string'`/`'number'`/`'boolean'`), when declared. */
   suggestedInTransformerInputType?: PackInputPrimitive;
   readonly?: boolean;
-  foreignKey?: { linkedTableId: string; inverseFieldId?: string; isSingleValued?: boolean };
+  foreignKey?: { linkedTableId: string; inverseFieldId?: string; isSingleValued?: boolean; targetKeyPath?: string };
 }
 
 /**
@@ -222,6 +222,7 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
         linkedTableId: fk.linkedTableId,
         ...(fk.inverseFieldId !== undefined ? { inverseFieldId: fk.inverseFieldId } : {}),
         ...(fk.isSingleValued !== undefined ? { isSingleValued: fk.isSingleValued } : {}),
+        ...(fk.targetKeyPath !== undefined ? { targetKeyPath: fk.targetKeyPath } : {}),
       };
     }
 

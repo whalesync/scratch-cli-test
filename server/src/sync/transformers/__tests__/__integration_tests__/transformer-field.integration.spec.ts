@@ -17,6 +17,10 @@ import '../../implementations/auto-convert.transformer';
 import '../../implementations/jsonpath.transformer';
 
 const mockLookupTools: LookupTools = {
+  // Identity: these fixtures reference targets by remote id, the default contract.
+  resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
+    Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
+  ),
   getDestinationMappingForSourceFk: jest.fn(),
   lookupFieldFromFkRecord: jest.fn(),
   getOrCreateDestinationAssetMapping: jest

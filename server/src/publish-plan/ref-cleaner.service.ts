@@ -172,21 +172,23 @@ export class RefCleanerService {
   // per plan build (SchemaHelperService per-build caches), so identity keying
   // keeps the walk O(folders) per build while a fresh git read of an updated
   // schema always recomputes.
-  private fkPathsCacheBySchemaObject = new WeakMap<
-    Schema,
-    Array<{ path: string[]; targetRemoteTableId: string; map?: string }>
-  >();
+  private fkPathsCacheBySchemaObject = new WeakMap<Schema, Array<{ path: string[]; targetRemoteTableId: string }>>();
 
   /**
    * Traverses the schema to find all paths that are marked as foreign keys.
+   *
+   * Reads `linkedTableId` and nothing else, matching every other consumer of the annotation
+   * (`schema-helpers.ts`'s whitelist copy into `SchemaField`, `scratch-git-2`'s Rust indexer).
+   * A schema stored before 2026-07-22 may still carry the retired Notion-only `map` key; it is
+   * ignored here, which is exactly the state a re-pull converges to.
    */
-  extractForeignKeyPaths(schema: Schema): Array<{ path: string[]; targetRemoteTableId: string; map?: string }> {
+  extractForeignKeyPaths(schema: Schema): Array<{ path: string[]; targetRemoteTableId: string }> {
     const cached = this.fkPathsCacheBySchemaObject.get(schema);
     if (cached) {
       return cached;
     }
 
-    const results: Array<{ path: string[]; targetRemoteTableId: string; map?: string }> = [];
+    const results: Array<{ path: string[]; targetRemoteTableId: string }> = [];
 
     const walk = (schemaNode: Record<string, unknown>, currentPath: string[]) => {
       if (!schemaNode || typeof schemaNode !== 'object') return;
@@ -194,28 +196,10 @@ export class RefCleanerService {
       // Check for x-scratch-foreign-key
       const foreignKey = schemaNode[X_SCRATCH_FOREIGN_KEY_OPTIONS];
 
-      if (foreignKey) {
-        let linkedTableId: string | undefined;
-        let map: string | undefined;
-
-        if (typeof foreignKey === 'string') {
-          linkedTableId = foreignKey;
-        } else if (typeof foreignKey === 'object' && foreignKey !== null && !Array.isArray(foreignKey)) {
-          const fkObj = foreignKey as Record<string, unknown>;
-          if (typeof fkObj.linkedTableId === 'string') {
-            linkedTableId = fkObj.linkedTableId;
-          }
-          if (typeof fkObj.map === 'string') {
-            map = fkObj.map;
-          }
-        }
-
-        if (linkedTableId) {
-          results.push({
-            path: currentPath,
-            targetRemoteTableId: linkedTableId,
-            map: map,
-          });
+      if (foreignKey && typeof foreignKey === 'object' && !Array.isArray(foreignKey)) {
+        const linkedTableId = (foreignKey as Record<string, unknown>).linkedTableId;
+        if (typeof linkedTableId === 'string') {
+          results.push({ path: currentPath, targetRemoteTableId: linkedTableId });
         }
       }
 

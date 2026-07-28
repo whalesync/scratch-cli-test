@@ -37,6 +37,18 @@ export interface FkMappingResult {
 }
 
 /**
+ * Result of resolving a foreign-key VALUE to the referenced record's SOURCE remote id — the
+ * identity every other piece of the FK machinery is keyed on.
+ *
+ * `ambiguous` is deliberately distinct from `no_match`: a target key that names two records is a
+ * data error the user needs to see and fix, not a coin flip between them.
+ */
+export type ForeignKeyTargetResolution =
+  | { kind: 'resolved'; targetSourceRemoteId: string }
+  | { kind: 'no_match' }
+  | { kind: 'ambiguous'; matchCount: number };
+
+/**
  * Result of resolving a source asset to a destination asset mapping.
  */
 export interface AssetMappingResult {
@@ -53,6 +65,26 @@ export interface AssetMappingResult {
  * These are used by FK-based transformers to resolve relationships.
  */
 export interface LookupTools {
+  /**
+   * Resolves a foreign-key VALUE to the SOURCE remote id of the record it points at — the
+   * step that runs BEFORE {@link getDestinationMappingForSourceFk}, which is keyed on that id.
+   *
+   * With no `targetKeyPath` this is the identity function: the value already IS the remote id,
+   * which is true for every connector whose reference fields carry ids. With one, the
+   * referenced folder's source records are indexed by that path and the value is matched
+   * against it — exactly, with no fallback to id matching, so a declared key means that key
+   * only. See `ForeignKeyOptionSchema.targetKeyPath` for the full contract.
+   *
+   * @param foreignKeyValue - The foreign key value read off the source record
+   * @param referencedDataFolderId - The (source) DataFolder holding the referenced records
+   * @param targetKeyPath - Dot path in the referenced record the value matches; omit for remote id
+   */
+  resolveForeignKeyValueToTargetRemoteId(
+    foreignKeyValue: string,
+    referencedDataFolderId: DataFolderId,
+    targetKeyPath?: string,
+  ): Promise<ForeignKeyTargetResolution>;
+
   /**
    * Gets the destination file path and remote ID for a source foreign key value.
    * Uses SyncRemoteIdMapping to find the corresponding destination record.

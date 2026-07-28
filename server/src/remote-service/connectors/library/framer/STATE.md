@@ -148,6 +148,8 @@ Cross-cutting: connect host is Framer's API WS endpoint (SDK default). Auth = AP
 ## Foreign keys / associations
 **Read = target SLUG; write = target item ID.** The connector stores the verbatim slug and translates slug→id on write (`getWriteTranslationMaps` fetches the target collection's items). FK annotation sits on the value leaf (`/properties/fieldData/properties/<fieldId>/properties/value/x-scratch-foreign-key`); generic FK machinery follows that nested path. `linkedTableId` = the target collection id (= our wsId).
 
+**Cross-record FK resolution (sync / Live Export) — resolved, DEV-11085.** The annotation also declares `targetKeyPath: 'slug'`, the generic contract for "this reference names its target by a field other than the target's remote id". The FK phase indexes the referenced folder by that path before the destination lookup, so a slug resolves to the target item's id and on to the destination record. Without it the resolver assumed the slug WAS a remote id, missed every reference, failed the table sync, and the whole export published zero records. Nothing connector-side translates on read — the stored slug stays verbatim.
+
 | FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
 |---|:--:|:--:|---|
 | `Field Types.Primary Tag` (collectionReference) → Tags | ✅ | ✅ | edited slug `engineering`→`design` (and back), re-parented in Framer |

@@ -158,6 +158,14 @@ export async function transformRecordAsync(
         destinationTableSpec,
         destinationService: syncContext.destinationService,
         lookupTools: lookupTools ?? {
+          // Without a folder reader only the identity (remote-id) resolution is meaningful; a
+          // declared target key resolves to nothing rather than silently falling back to the id.
+          resolveForeignKeyValueToTargetRemoteId: (foreignKeyValue, _folderId, targetKeyPath) =>
+            Promise.resolve(
+              targetKeyPath === undefined
+                ? ({ kind: 'resolved', targetSourceRemoteId: foreignKeyValue } as const)
+                : ({ kind: 'no_match' } as const),
+            ),
           getDestinationMappingForSourceFk: () => Promise.resolve(null),
           lookupFieldFromFkRecord: () => Promise.resolve(null),
           getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),

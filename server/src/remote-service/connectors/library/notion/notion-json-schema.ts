@@ -437,13 +437,12 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
       // (DEV-10753). A `single_property` relation is one-way and has no reciprocal to
       // deduplicate. Notion relations are always multi-valued, so `isSingleValued` is never set.
       //
-      // No `map` in these options (an earlier shape carried `map: 'id'`, a Notion-only
-      // extension outside {@link ForeignKeyOptionSchema}): the only `map` consumer is
-      // file-reference extraction (FileReferenceService.extractIds), which reads `node[map]`
-      // at the annotated path — and on the ENVELOPE that read `properties.X.id`, the
-      // property's OWN id, emitting one bogus file-reference row per relation and never the
-      // real links. The real linked-page ids now come from the map-less `relation[].id` leaf
-      // annotation below (DEV-10942).
+      // An earlier shape carried a Notion-only `map: 'id'` here, outside
+      // {@link ForeignKeyOptionSchema}. On the ENVELOPE its one consumer read `properties.X.id`
+      // — the property's OWN id — emitting a bogus file-reference row per relation and never the
+      // real links. The linked-page ids come from the `relation[].id` LEAF annotation below
+      // (DEV-10942); `map` itself has since been removed from the codebase (DEV-11085), so a
+      // stale stored schema that still carries it is simply ignored.
       foreignKeyOptions = property.relation.database_id
         ? {
             linkedTableId: property.relation.database_id,

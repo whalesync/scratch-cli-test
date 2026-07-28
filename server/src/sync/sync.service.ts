@@ -1286,6 +1286,7 @@ export class SyncService {
       workbookId,
       sourceFolder.connectorService as Service,
       destinationFolder.connectorService as Service,
+      (referencedDataFolderId) => this.readSourceRecordsForReferencedFolder(workbookId, referencedDataFolderId, actor),
     );
 
     // Track new records so we can backfill SyncRemoteIdMapping with their file paths and record IDs
@@ -1934,6 +1935,35 @@ export class SyncService {
   }
 
   /**
+   * Read and parse every source record of a REFERENCED folder — the folder on the far end of a
+   * foreign key. Shared by the `lookup_field` record cache (which indexes them by remote id) and
+   * the FK phase's non-id target-key index (which indexes them by a declared field), so both
+   * agree on how a referenced record is read and what its remote id is.
+   *
+   * The folder's own schema supplies the `idPath`, so each record's `id` is its source remote id.
+   * Returns an empty list for a folder with no records; throws (via `parseFileToRecord`) if a
+   * record has no id at that path, which is a genuinely broken record rather than an empty table.
+   */
+  private async readSourceRecordsForReferencedFolder(
+    workbookId: WorkbookId,
+    referencedFolderId: DataFolderId,
+    actor: Actor,
+  ): Promise<SyncRecord[]> {
+    const folder = await this.db.client.dataFolder.findUnique({ where: { id: referencedFolderId } });
+    if (!folder) {
+      WSLogger.warn({
+        source: 'SyncService.readSourceRecordsForReferencedFolder',
+        message: `Referenced DataFolder ${referencedFolderId} not found`,
+      });
+      return [];
+    }
+    const referencedSchema = await this.readSchemaFromGit(workbookId, folder.connectorAccountId, folder.path);
+    const idColumn = this.getIdColumnFromSchema(referencedSchema);
+    const files = await this.dataFolderService.getAllFileContentsByFolderId(workbookId, referencedFolderId, actor);
+    return files.map((file) => parseFileToRecord(file, idColumn));
+  }
+
+  /**
    * Populates the SyncForeignKeyRecord cache for lookup_field transformers.
    * Uses pre-collected FK values (from collectForeignKeyValues) to fetch and
    * cache the referenced record data.
@@ -1966,11 +1996,7 @@ export class SyncService {
         continue;
       }
 
-      // Fetch and parse records from the referenced DataFolder
-      const referencedSchema = await this.readSchemaFromGit(workbookId, folder.connectorAccountId, folder.path);
-      const idColumn = this.getIdColumnFromSchema(referencedSchema);
-      const files = await this.dataFolderService.getAllFileContentsByFolderId(workbookId, referencedFolderId, actor);
-      const records = files.map((f) => parseFileToRecord(f, idColumn));
+      const records = await this.readSourceRecordsForReferencedFolder(workbookId, referencedFolderId, actor);
       const recordsById = new Map(records.map((r) => [r.id, r.fields]));
 
       // Create one cache entry per unique (dataFolderId, foreignKeyValue)
@@ -2292,6 +2318,7 @@ export class SyncService {
     // Stub lookup tools — FK/asset lookups are not available in preview
     const notAvailableInPreviewError = new Error('Lookup is not available in preview');
     const previewLookupTools: LookupTools = {
+      resolveForeignKeyValueToTargetRemoteId: () => Promise.reject(notAvailableInPreviewError),
       getDestinationMappingForSourceFk: () => Promise.reject(notAvailableInPreviewError),
       lookupFieldFromFkRecord: () => Promise.reject(notAvailableInPreviewError),
       getOrCreateDestinationAssetMapping: () => Promise.reject(notAvailableInPreviewError),

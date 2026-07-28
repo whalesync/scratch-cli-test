@@ -18,6 +18,7 @@ import {
 } from '@spinner/shared-types';
 import get from 'lodash/get';
 import { TestTransformerDto } from './dto/test-transformer.dto';
+import { createNullLookupTools } from './lookup-tools';
 
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
@@ -82,12 +83,7 @@ export class TransformerController {
         destinationFieldPath: dto.path,
         destinationTableSpec: null,
         destinationService: '' as Service,
-        lookupTools: {
-          getDestinationMappingForSourceFk: () => Promise.resolve(null),
-          lookupFieldFromFkRecord: () => Promise.resolve(undefined),
-          getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Not available in preview')),
-          matchDestinationAssetByHash: () => Promise.resolve([]),
-        },
+        lookupTools: createNullLookupTools(),
         options: transformerConfig.options ?? {},
         phase: 'DATA',
       };

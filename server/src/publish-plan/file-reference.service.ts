@@ -35,7 +35,7 @@ export class FileReferenceService {
         const nodes = this.getNodesByPath(content, fk.path);
 
         for (const node of nodes) {
-          const ids = this.extractIds(node, fk.map);
+          const ids = this.extractIds(node);
           for (const id of ids) {
             refs.push({
               sourceFilePath,
@@ -92,29 +92,20 @@ export class FileReferenceService {
   }
 
   /**
-   * Extracts IDs from a value.
-   * - If value is array, process each item.
-   * - If map is provided, looks for property `map` in object/item.
-   * - Else uses value directly.
+   * Extracts the referenced record ids out of a foreign-key node: the scalar itself, or every
+   * scalar in an array of them. A structured node yields nothing — connectors whose link value is
+   * an envelope annotate the id LEAF (Notion's `relation[].id`), so the annotated path is always
+   * the scalar by the time the walk reaches it.
    */
-  private extractIds(value: unknown, map?: string): string[] {
+  private extractIds(value: unknown): string[] {
     if (!value) return [];
 
     const items = Array.isArray(value) ? value : [value];
     const ids: string[] = [];
 
     for (const item of items) {
-      if (!item) continue;
-
-      if (map) {
-        if (typeof item === 'object' && item !== null) {
-          const val = (item as Record<string, unknown>)[map];
-          if (typeof val === 'string' || typeof val === 'number') ids.push(String(val));
-        }
-      } else {
-        if (typeof item === 'string' || typeof item === 'number') {
-          ids.push(String(item));
-        }
+      if (typeof item === 'string' || typeof item === 'number') {
+        ids.push(String(item));
       }
     }
     return ids;

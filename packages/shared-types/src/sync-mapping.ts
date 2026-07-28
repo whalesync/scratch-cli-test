@@ -421,6 +421,13 @@ export interface SourceFkToDestFkOptions {
   onUnresolved?: 'fail' | 'ignore';
   /** Output shape: 'array' (default) preserves arrays, 'single' unwraps to the first element or null */
   outputType?: 'array' | 'single';
+  /**
+   * Dot path in the REFERENCED record that this foreign key's values match, when they are not
+   * the referenced record's remote id (Framer's references name their target by `slug`).
+   * Absent ⇒ the value is already the remote id. Mirrors the connector schema's
+   * `x-scratch-foreign-key.targetKeyPath`, which is where it originates.
+   */
+  targetKeyPath?: string;
 }
 
 /** Options for the lookup_field transformer */

@@ -18,6 +18,10 @@ function nextAssetDbId(): string {
 
 function createLookupTools(assetMapping: AssetMappingSpec = {}): LookupTools {
   return {
+    // Identity: these fixtures reference targets by remote id, the default contract.
+    resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
+      Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
+    ),
     getDestinationMappingForSourceFk: jest.fn(),
     lookupFieldFromFkRecord: jest.fn(),
     getOrCreateDestinationAssetMapping: jest.fn((sourceAssetRemoteId: string): Promise<AssetMappingResult> => {

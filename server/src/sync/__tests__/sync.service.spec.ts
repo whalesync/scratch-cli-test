@@ -1068,6 +1068,10 @@ describe('transformRecordAsync', () => {
     };
 
     const lookupTools: LookupTools = {
+      // Identity: these fixtures reference targets by remote id, the default contract.
+      resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
+        Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
+      ),
       getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<FkMappingResult | null> => {
         const map: Record<string, FkMappingResult> = {
           src_author_1: {

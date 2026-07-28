@@ -153,6 +153,25 @@ function foreignKeyIdExtractionTransformer(
 }
 
 /**
+ * The dot path in the TARGET record that a foreignKey column's values match, when the connector
+ * declares one — i.e. when the value is NOT the target's remote id (Framer's references name their
+ * target by `slug`). Undefined for every connector whose references carry ids, which leaves the FK
+ * phase on its identity path.
+ *
+ * Read View-first for symmetry with `selectPlanFieldsFromTableView`: a SYNTHESIZED link column
+ * declares its foreign key on the View because the schema annotation sits below the column's own
+ * path, so the join back to the schema can't reach it.
+ */
+export function foreignKeyTargetKeyPath(sourceContext: SourceContext, sourceColumnId: string): string | undefined {
+  const viewColumn = sourceContext.view?.cols
+    .flatMap((entry) => (entry.kind === 'banner-group' ? entry.cols : [entry]))
+    .find((col) => col.path === sourceColumnId);
+  return (
+    viewColumn?.foreignKey?.targetKeyPath ?? sourceContext.fieldsByPath.get(sourceColumnId)?.foreignKey?.targetKeyPath
+  );
+}
+
+/**
  * Stable string key for a connector remote table id (an ordered id-segment array,
  * e.g. `['base1', 'tblComp']` or `['public', 'companies']`). Used to match a
  * foreignKey `{ existingRemoteTableId }` target against a sibling table mapping's
@@ -1355,11 +1374,18 @@ export class SyncDraftService {
         actor,
       );
       const outputType = destinationSupportsManyToMany ? 'array' : 'single';
+      // How this column's values NAME their target. Absent for every connector whose references
+      // carry remote ids; `'slug'` for Framer, whose Server API reads a reference back as the
+      // target item's slug. The View's declaration wins for a SYNTHESIZED link column (whose FK
+      // annotation sits below the column's own path), mirroring `selectPlanFieldsFromTableView`.
+      const targetKeyPath = sourceContext
+        ? foreignKeyTargetKeyPath(sourceContext, columnMapping.source.columnId)
+        : undefined;
       const transformers: TransformerConfig[] = [];
       if (extraction) transformers.push(extraction);
       transformers.push({
         type: TransformerTypes.SourceFkToDestFk,
-        options: { referencedDataFolderId, outputType },
+        options: { referencedDataFolderId, outputType, ...(targetKeyPath ? { targetKeyPath } : {}) },
       });
       // `source_fk_to_dest_fk` emits a RAW id array (ids and/or `@/…` pseudo-refs) — the
       // native link shape for a service like Airtable, but not for one whose link field is
