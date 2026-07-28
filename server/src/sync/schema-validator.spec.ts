@@ -1,5 +1,10 @@
 import { Type } from '@sinclair/typebox';
-import { ColumnMapping, ColumnMappingV2 } from '@spinner/shared-types';
+import {
+  ColumnMapping,
+  ColumnMappingV2,
+  X_SCRATCH_ARRAY_KEYED_BY,
+  type ArrayKeyedByOptions,
+} from '@spinner/shared-types';
 import { extractSchemaPaths } from 'src/utils/schema-helpers';
 import {
   findConstantTypeMismatches,
@@ -187,6 +192,55 @@ describe('validateSchemaMapping', () => {
     for (const expandedPath of extractSchemaPaths(pipedrivePersonLikeSource)) {
       expect(getSchemaAtPath(pipedrivePersonLikeSource, expandedPath)).toBeDefined();
     }
+  });
+
+  it('resolves keyed-array columns addressed by a filter segment (DEV-11062 Affinity fields.[id=…])', () => {
+    // Affinity stores custom fields as the verbatim `entity.fields` array annotated
+    // with `x-scratch-array-keyed-by`; the default view maps one column per element
+    // via `entity.fields.[id=<fieldId>].value.data`. Save-time validation previously
+    // treated `[id=…]` as an ordinary property of the array (which has none) and
+    // rejected every keyed column with "Source field '…' not found in schema".
+    const affinityFieldsKeyedBy: ArrayKeyedByOptions = {
+      keyField: 'id',
+      columns: [
+        { key: 'field-5840703', name: 'Text field', type: 'text' },
+        { key: 'field-5840706', name: 'Location field', type: 'text' },
+      ],
+    };
+    const affinityListSource = Type.Object({
+      entity: Type.Object({
+        name: Type.Union([Type.String(), Type.Null()]),
+        fields: Type.Array(
+          Type.Object(
+            {
+              id: Type.String(),
+              value: Type.Union([
+                Type.Object({ type: Type.Literal('text'), data: Type.Union([Type.String(), Type.Null()]) }),
+                Type.Object({
+                  type: Type.Literal('location'),
+                  data: Type.Union([Type.Object({}, { additionalProperties: true }), Type.Null()]),
+                }),
+                Type.Null(),
+              ]),
+            },
+            { additionalProperties: true },
+          ),
+          { [X_SCRATCH_ARRAY_KEYED_BY]: affinityFieldsKeyedBy },
+        ),
+      }),
+    });
+    const plainTextDest = Type.Object({
+      text_col: Type.Union([Type.String(), Type.Null()]),
+      street_col: Type.Union([Type.String(), Type.Null()]),
+    });
+    const columnMappings: ColumnMapping[] = [
+      { sourceColumnId: 'entity.fields.[id=field-5840703].value.data', destinationColumnId: 'text_col' },
+      {
+        sourceColumnId: 'entity.fields.[id=field-5840706].value.data.streetAddress',
+        destinationColumnId: 'street_col',
+      },
+    ];
+    expect(validateSchemaMapping(affinityListSource, plainTextDest, columnMappings)).toHaveLength(0);
   });
 });
 

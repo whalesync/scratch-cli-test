@@ -1,11 +1,12 @@
-import type { TSchema } from '@sinclair/typebox';
+import { Type, type TSchema } from '@sinclair/typebox';
 import {
   getSuggestedTransform,
-  type TableView,
-  type TransformerConfig,
+  X_SCRATCH_ARRAY_KEYED_BY,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
+  type TableView,
+  type TransformerConfig,
 } from '@spinner/shared-types';
 import { extractSchemaFields, resolveSchemaTypeAtPath, type SchemaField } from '../utils/schema-helpers';
 import { columnTransformInputFromSchemaField, resolveColumnTransformInput } from './resolve-column-transform-input';
@@ -106,6 +107,27 @@ describe('resolveSchemaTypeAtPath', () => {
 
   it('returns unknown for a missing path', () => {
     expect(resolveSchemaTypeAtPath(schema, 'properties.Nope.gone')).toBe('unknown');
+  });
+
+  it('resolves the type at a keyed-array element path (`[keyField=key]`), mirroring the save-time resolver (DEV-11062)', () => {
+    // A Copper-shaped keyed array: `custom_fields` is annotated with
+    // `x-scratch-array-keyed-by`, and a column is addressed via a filter segment.
+    // `propertySchemaAt` must descend into the element schema for `[…=…]`, not look
+    // for a property literally named `[…]`.
+    const keyedSchema = Type.Object({
+      custom_fields: Type.Array(
+        Type.Object({ custom_field_definition_id: Type.Number(), value: Type.Union([Type.String(), Type.Null()]) }),
+        {
+          [X_SCRATCH_ARRAY_KEYED_BY]: {
+            keyField: 'custom_field_definition_id',
+            columns: [{ key: 700123, name: 'Tier' }],
+          },
+        },
+      ),
+    });
+    expect(resolveSchemaTypeAtPath(keyedSchema, 'custom_fields.[custom_field_definition_id=700123].value')).toBe(
+      'string',
+    );
   });
 });
 

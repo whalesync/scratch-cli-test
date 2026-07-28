@@ -1,6 +1,7 @@
 import { TSchema } from '@sinclair/typebox';
 import type { ForeignKeyOptionSchema, VirtualFieldDef } from '@spinner/shared-types';
 import {
+  parseFilterSegment,
   TransformerConfig,
   X_SCRATCH_AIRTABLE_FIELD_ORDER,
   X_SCRATCH_ASSET_TABLE,
@@ -14,7 +15,7 @@ import {
   X_SCRATCH_VIRTUAL_FIELDS,
   type PackInputPrimitive,
 } from '@spinner/shared-types';
-import { segmentFieldPathAgainstSchema } from 'src/utils/field-path';
+import { keyedArrayItemSchema, segmentFieldPathAgainstSchema } from 'src/utils/field-path';
 
 /**
  * `x-scratch-*` keys that annotate a CONTAINER node — an object whose properties
@@ -149,6 +150,11 @@ function resolveSchemaFormat(schema: TSchema): string | undefined {
 /** The child schema at `key` under an object node, unwrapping nullable anyOf/oneOf unions to find `.properties`. */
 function propertySchemaAt(schema: TSchema | undefined, key: string): TSchema | undefined {
   if (!schema) return undefined;
+  // A keyed-array filter segment `[<keyField>=<key>]` descends into the array's
+  // shared element schema, not a property named `[…]` (mirrors
+  // getSchemaAtFieldPath so plan-side type resolution and save-side validation
+  // agree — the DEV-11030 symmetry lesson, now for keyed arrays / DEV-11062).
+  if (parseFilterSegment(key)) return keyedArrayItemSchema(schema);
   const properties = schema.properties as Record<string, TSchema> | undefined;
   if (properties?.[key]) return properties[key];
   const variants = (schema.anyOf || schema.oneOf) as TSchema[] | undefined;

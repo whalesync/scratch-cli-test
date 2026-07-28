@@ -1,4 +1,5 @@
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_ARRAY_KEYED_BY, type ArrayKeyedByOptions } from '@spinner/shared-types';
 import {
   getSchemaAtFieldPath,
   readFieldValueAtPath,
@@ -149,6 +150,129 @@ describe('readFieldValueAtPath', () => {
 
   it('reads genuinely nested values unchanged', () => {
     expect(readFieldValueAtPath({ a: { b: 2 } }, 'a.b')).toBe(2);
+  });
+});
+
+// An Affinity-shaped source schema (DEV-11062): custom fields are stored as the
+// verbatim `entity.fields` array annotated with `x-scratch-array-keyed-by`, so each
+// field is addressed by a filter segment `entity.fields.[id=<fieldId>]` and drills
+// into `.value.data`. A `location` field's `data` is an OPEN object (its
+// `.streetAddress` / `.city` subfields are not named in the schema).
+const affinityFieldsKeyedBy: ArrayKeyedByOptions = {
+  keyField: 'id',
+  columns: [
+    { key: 'field-text', name: 'Text field', type: 'text' },
+    { key: 'field-number', name: 'Number field', type: 'number' },
+    { key: 'field-location', name: 'Location field', type: 'text' },
+  ],
+};
+const affinityLikeSourceSchema = Type.Object({
+  id: Type.Number(),
+  entity: Type.Object({
+    name: Type.Union([Type.String(), Type.Null()]),
+    fields: Type.Array(
+      Type.Object(
+        {
+          id: Type.String(),
+          value: Type.Union([
+            Type.Object({ type: Type.Literal('text'), data: Type.Union([Type.String(), Type.Null()]) }),
+            Type.Object({ type: Type.Literal('number'), data: Type.Union([Type.Number(), Type.Null()]) }),
+            Type.Object({
+              type: Type.Literal('location'),
+              data: Type.Union([Type.Object({}, { additionalProperties: true }), Type.Null()]),
+            }),
+            Type.Null(),
+          ]),
+        },
+        { additionalProperties: true },
+      ),
+      { [X_SCRATCH_ARRAY_KEYED_BY]: affinityFieldsKeyedBy },
+    ),
+  }),
+});
+
+describe('keyed arrays (x-scratch-array-keyed-by) — DEV-11062', () => {
+  it('segments a filter segment as its own token amid a nested path', () => {
+    expect(segmentFieldPathAgainstSchema(affinityLikeSourceSchema, 'entity.fields.[id=field-text].value.data')).toEqual(
+      ['entity', 'fields', '[id=field-text]', 'value', 'data'],
+    );
+  });
+
+  it('resolves the typed leaf of a keyed-array element (the save error that blocked every Affinity export)', () => {
+    // `getSchemaAtFieldPath` must descend into the array element for `[id=…]` instead
+    // of looking for a property literally named `[id=field-text]` and rejecting it.
+    const textData = getSchemaAtFieldPath(affinityLikeSourceSchema, 'entity.fields.[id=field-text].value.data');
+    expect(textData).toBeDefined();
+    const numberData = getSchemaAtFieldPath(affinityLikeSourceSchema, 'entity.fields.[id=field-number].value.data');
+    expect(numberData).toBeDefined();
+    // The `value` union mixes every field's `{ type, data }` shape, so `.data`
+    // resolves to a union of all branches' data types (the number one included).
+    const dataAsJson = JSON.stringify(numberData);
+    expect(dataAsJson).toContain('"number"');
+    expect(dataAsJson).toContain('"string"');
+  });
+
+  it('resolves a subfield of an OPEN object value (Affinity location: `…value.data.streetAddress`)', () => {
+    const streetAddress = getSchemaAtFieldPath(
+      affinityLikeSourceSchema,
+      'entity.fields.[id=field-location].value.data.streetAddress',
+    );
+    // The exact path from the DEV-11062 error list — must resolve (present), not
+    // be rejected as "not found in schema".
+    expect(streetAddress).toBeDefined();
+  });
+
+  it('returns undefined for a filter segment against a non-keyed array', () => {
+    const plainArraySchema = Type.Object({ tags: Type.Array(Type.Object({ id: Type.String() })) });
+    expect(getSchemaAtFieldPath(plainArraySchema, 'tags.[id=x].id')).toBeUndefined();
+  });
+
+  it('reads the value of a keyed-array element by its key field', () => {
+    const record = {
+      id: 1,
+      entity: {
+        name: 'Acme',
+        fields: [
+          { id: 'field-text', value: { type: 'text', data: 'hello' } },
+          { id: 'field-number', value: { type: 'number', data: 42 } },
+        ],
+      },
+    };
+    expect(readFieldValueAtPath(record, 'entity.fields.[id=field-text].value.data')).toBe('hello');
+    expect(readFieldValueAtPath(record, 'entity.fields.[id=field-number].value.data')).toBe(42);
+  });
+
+  it('returns undefined when the keyed element is absent', () => {
+    const record = { entity: { fields: [{ id: 'field-text', value: { type: 'text', data: 'hi' } }] } };
+    expect(readFieldValueAtPath(record, 'entity.fields.[id=missing].value.data')).toBeUndefined();
+  });
+
+  it('writes into an existing keyed-array element without disturbing its siblings', () => {
+    const target: Record<string, unknown> = {
+      custom_fields: [
+        { custom_field_definition_id: 700123, value: 'old' },
+        { custom_field_definition_id: 700124, value: 'keep' },
+      ],
+    };
+    setFieldValueAtPath(target, 'custom_fields.[custom_field_definition_id=700123].value', 'new');
+    expect(target).toEqual({
+      custom_fields: [
+        { custom_field_definition_id: 700123, value: 'new' },
+        { custom_field_definition_id: 700124, value: 'keep' },
+      ],
+    });
+  });
+
+  it('creates a missing keyed-array element (seeded with its coerced key field) on write', () => {
+    const target: Record<string, unknown> = { custom_fields: [] };
+    setFieldValueAtPath(target, 'custom_fields.[custom_field_definition_id=700123].value', 'v');
+    expect(target).toEqual({ custom_fields: [{ custom_field_definition_id: 700123, value: 'v' }] });
+  });
+
+  it('materializes the array container when the keyed path is written into a fresh record', () => {
+    const target: Record<string, unknown> = {};
+    setFieldValueAtPath(target, 'customFields.[shortKey=contact_source].field_value', 'web');
+    expect(target).toEqual({ customFields: [{ shortKey: 'contact_source', field_value: 'web' }] });
   });
 });
 
