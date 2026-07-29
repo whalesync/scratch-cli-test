@@ -1020,7 +1020,16 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       // property becomes `{ start: "Invalid DateTime" }` — garbage that breaks
       // Notion-side filters/sorts (DEV-10960). Skip the property with a per-field
       // warning so the field is left unchanged rather than corrupted.
-      if (propType === 'date') {
+      //
+      // Key the check off the value-bearing `date` key, not off `prop.type`, for
+      // exactly the reason the rich-text split above does: the update path feeds a
+      // sparse changed-fields diff (`computeChangedFields` → `pickByShape`) that
+      // drops the unchanged `type` envelope key, so `propType` is undefined for an
+      // edited date field. Reading `prop.type` here skipped the check on every
+      // edit, shipping the corrupt value on the update path while catching it only
+      // on create (DEV-11082). The `date` key is present on both the create path
+      // (full read-format record) and the update path (the diff).
+      if ('date' in rest) {
         const unwritableDateBoundary = findUnwritableNotionDateBoundary(rest.date);
         if (unwritableDateBoundary !== undefined) {
           WSLogger.warn({

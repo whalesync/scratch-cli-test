@@ -118,10 +118,17 @@ describe('NotionConnector.updateRecords', () => {
     expect(callArg.properties.Notes).toEqual({ rich_text: [] });
   });
 
-  // DEV-10960: an out-of-range date (extended-year "+010000-…" from a Postgres
-  // 9999-12-31 timestamp) is accepted by Notion but stored as "Invalid DateTime".
-  // The write path must skip that property (leaving the field unchanged) while
-  // still writing the other changed properties.
+  // DEV-10960 / DEV-11082: an out-of-range date (extended-year "+010000-…" from a
+  // Postgres 9999-12-31 timestamp) is accepted by Notion but stored as "Invalid
+  // DateTime". The write path must skip that property (leaving the field
+  // unchanged) while still writing the other changed properties.
+  //
+  // `changedFields` here carries NO per-property `type` wrapper — that mirrors the
+  // real sparse diff `computeChangedFields` produces (the unchanged `type` key is
+  // dropped; see the DEV-10125 note above). The earlier form of this test hand-fed
+  // `type: 'date'`, a shape the diff never emits, which masked DEV-11082: the skip
+  // was keyed off `prop.type` and so fired only on create, shipping the corrupt
+  // value on every edit. Keep `type` out so this test exercises the update path.
   it('skips an out-of-range date property, still writing the other changed properties', async () => {
     const files: ConnectorFile[] = [
       {
@@ -135,8 +142,8 @@ describe('NotionConnector.updateRecords', () => {
     const changedFields: Record<string, unknown>[] = [
       {
         properties: {
-          Due: { type: 'date', date: { start: '+010000-01-01T07:59:59.000Z' } },
-          Title: { type: 'title', title: [{ type: 'text', text: { content: 'New' }, plain_text: 'New' }] },
+          Due: { date: { start: '+010000-01-01T07:59:59.000Z' } },
+          Title: { title: [{ type: 'text', text: { content: 'New' }, plain_text: 'New' }] },
         },
       },
     ];
@@ -146,6 +153,39 @@ describe('NotionConnector.updateRecords', () => {
     expect(mockUpdatePage).toHaveBeenCalledTimes(1);
     const [callArg] = mockUpdatePage.mock.calls[0] as [{ page_id: string; properties: Record<string, unknown> }];
     // The corrupt date is omitted (Notion leaves the field unchanged) but the title still ships.
+    expect(callArg.properties.Due).toBeUndefined();
+    expect(callArg.properties.Title).toEqual({
+      title: [{ type: 'text', text: { content: 'New' }, plain_text: 'New' }],
+    });
+  });
+
+  // DEV-11044 / DEV-11082: the same update-path skip must also catch a nonexistent
+  // calendar date (e.g. "2026-02-29" — 2026 is not a leap year), which Notion
+  // rejects verbatim, failing the whole record write. Like the extended-year case,
+  // the sparse diff carries no `type` wrapper, so the skip must not depend on it.
+  it('skips a nonexistent calendar date on the update path (no type wrapper)', async () => {
+    const files: ConnectorFile[] = [
+      {
+        id: 'page_1',
+        properties: {
+          Due: { id: 'pid_a', type: 'date', date: { start: '2026-01-01' } },
+          Title: { id: 'pid_b', type: 'title', title: [{ plain_text: 'Old' }] },
+        },
+      },
+    ];
+    const changedFields: Record<string, unknown>[] = [
+      {
+        properties: {
+          Due: { date: { start: '2026-02-29' } },
+          Title: { title: [{ type: 'text', text: { content: 'New' }, plain_text: 'New' }] },
+        },
+      },
+    ];
+
+    await connector.updateRecords(buildTableSpec(), files, changedFields);
+
+    expect(mockUpdatePage).toHaveBeenCalledTimes(1);
+    const [callArg] = mockUpdatePage.mock.calls[0] as [{ page_id: string; properties: Record<string, unknown> }];
     expect(callArg.properties.Due).toBeUndefined();
     expect(callArg.properties.Title).toEqual({
       title: [{ type: 'text', text: { content: 'New' }, plain_text: 'New' }],
