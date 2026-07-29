@@ -10,6 +10,7 @@ import type {
   TableMappingNote,
   TablePropertyType,
 } from '@spinner/shared-types';
+import { TIME_BEARING_DATE_FORMATS } from '@spinner/shared-types';
 import type { SchemaField } from 'src/utils/schema-helpers';
 import { allocateUniqueName, elideNameToMaxLength, normalizeNameForUniqueness } from './schema-builder-unique-names';
 
@@ -900,9 +901,17 @@ export function inferLogicalFieldType(
  * `timestamptz`) instead of dropping the time-of-day for the life of the export
  * (DEV-10788). A `format: 'date'` (or no format) value is a plain calendar date and
  * stays date-only.
+ *
+ * `'date-time-local'` counts too (DEV-11091): a service that serializes a wall-clock
+ * timestamp WITHOUT a UTC offset (WordPress's `"2026-07-28T20:20:00"`) can't honestly
+ * claim RFC 3339 `'date-time'` — the validator would warn on every record — but the
+ * value is every bit as time-bearing, and under-typing it as a date-only column drops
+ * the time permanently. See `JSON_SCHEMA_LOCAL_DATE_TIME_FORMAT`.
  */
 function dateCreateFieldType(field: SchemaField): CreateFieldType {
-  return field.format === 'date-time' ? { kind: 'date', includesTime: true } : { kind: 'date' };
+  return field.format !== undefined && TIME_BEARING_DATE_FORMATS.has(field.format)
+    ? { kind: 'date', includesTime: true }
+    : { kind: 'date' };
 }
 
 /** Resolve a source foreignKey's linked table to a create-side target, or null if unresolvable. */

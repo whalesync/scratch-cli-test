@@ -29,6 +29,11 @@ const sourceFkToDestFkOptionsSchema = z
     referencedDataFolderId: z.string().min(1),
     onUnresolved: z.enum(['fail', 'ignore']).optional(),
     outputType: z.enum(['array', 'single']).optional(),
+    // NB: this object is `.strict()` and `parseStoredMappings` THROWS, so every option the
+    // sync-draft materializer can emit must be listed here or reading the persisted sync
+    // blows up. `targetKeyPath` was added to the materializer without being added here.
+    targetKeyPath: z.string().optional(),
+    valuesMeaningNoLink: z.array(z.string()).optional(),
   })
   .strict();
 

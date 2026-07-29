@@ -1,5 +1,6 @@
 import { FormatRegistry, TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { JSON_SCHEMA_LOCAL_DATE_TIME_FORMAT } from '@spinner/shared-types';
 import postsSchemaResponse from '../__fixtures__/posts-schema-response.json';
 import { buildWordPressDefaultView } from '../wordpress-default-view';
 import { buildWordPressJsonTableSpec } from '../wordpress-json-schema';
@@ -14,11 +15,14 @@ import { WordPressEndpointOptionsResponse } from '../wordpress-types';
  * Caveats vs. the Rust validator: TypeBox `Value` treats an unregistered `format`
  * as a failure ("Unknown format"), so we register the formats WordPress uses as
  * permissive (always-pass) — real RFC-3339/URI semantics are enforced by the Rust
- * crate, not here. The Rust validator also skips `required` and empty strings,
- * whereas `Value` enforces `required`; the passing records below therefore supply
- * every nested-required field.
+ * crate, not here. That list includes `date-time-local`, which the schema now puts on
+ * WordPress's offset-less datetimes: always-pass is exactly how the Rust crate treats
+ * a `format` it doesn't recognize, which is the whole point of the token and is locked
+ * by `local_date_time_format_asserts_nothing` in `scratch-git-2`'s `builtin.rs`.
+ * The Rust validator also skips `required` and empty strings, whereas `Value` enforces
+ * `required`; the passing records below therefore supply every nested-required field.
  */
-for (const format of ['date-time', 'uri', 'email']) {
+for (const format of ['date-time', 'uri', 'email', JSON_SCHEMA_LOCAL_DATE_TIME_FORMAT]) {
   if (!FormatRegistry.Has(format)) {
     FormatRegistry.Set(format, () => true);
   }

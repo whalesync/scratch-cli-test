@@ -58,6 +58,10 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
     const { sourceValue, lookupTools, options, destinationValue } = ctx;
     const typedOptions = options as SourceFkToDestFkOptions;
     const ignoreUnresolved = typedOptions.onUnresolved === 'ignore';
+    // Sentinels the SOURCE service writes to mean "not linked" (WordPress `featured_media: 0`).
+    // Declared by the connector on the field's foreign-key annotation, so they can be dropped
+    // as deliberately-empty rather than hunted for as ids that will never be found.
+    const valuesMeaningNoLink = new Set(typedOptions.valuesMeaningNoLink ?? []);
 
     // Handle null/undefined
     if (sourceValue === null || sourceValue === undefined) {
@@ -98,6 +102,12 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
         };
       }
       const fkStr = String(element);
+      // A declared "no link" sentinel is an empty value, not a dangling reference — drop it
+      // exactly as `null` is dropped above, and never fail the record over it. Checked BEFORE
+      // step 1: the sentinel names no target, so there is nothing to look up by id or by key.
+      if (valuesMeaningNoLink.has(fkStr)) {
+        continue;
+      }
 
       // Step 1 — the VALUE names a target record. With no `targetKeyPath` it already is that
       // record's remote id; with one, it is matched against that field of the referenced

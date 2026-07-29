@@ -52,21 +52,11 @@ export const WORDPRESS_CREATE_UNSUPPORTED_TABLE_IDS = ['media', 'users'];
 // individual per-record requests for these tables.
 export const WORDPRESS_BATCH_UNSUPPORTED_TABLE_IDS = ['media'];
 
-// Columns to hide from the schema
-export const WORDPRESS_HIDDEN_COLUMN_IDS = [
-  'id',
-  'meta',
-  'parent',
-  'post',
-  'guid',
-  'type',
-  'class_list',
-  'comment_status',
-  'generated_slug',
-];
-
-// Column ID substrings to exclude
-export const WORDPRESS_EXCLUDE_COLUMN_ID_SUBSTRINGS = ['gmt', 'template', 'capabilities'];
+// (Removed: WORDPRESS_HIDDEN_COLUMN_IDS / WORDPRESS_EXCLUDE_COLUMN_ID_SUBSTRINGS. They fed
+// the legacy column-list path deleted in a4403b29b and had no remaining reader, so they
+// described nothing — while actively misleading: they listed `parent` and every `*_gmt`
+// column as hidden, which is now the opposite of what this connector does. Column hiding
+// lives in `HIDDEN_FIELDS` in wordpress-default-view.ts, on the VIEW, not the schema.)
 
 // Taxonomy slugs to exclude from discovery (internal WordPress taxonomies)
 export const WORDPRESS_EXCLUDE_TAXONOMY_SLUGS = [
@@ -79,7 +69,24 @@ export const WORDPRESS_EXCLUDE_TAXONOMY_SLUGS = [
   'wp_pattern_category',
 ];
 
-// Static foreign key relationships (taxonomy FKs are discovered dynamically)
+// The `rest_base` — and therefore the Scratch table id — of the attachment post type.
+export const WORDPRESS_MEDIA_TABLE_ID = 'media';
+
+// The self-referential parent column exposed by HIERARCHICAL post types (Pages) and
+// hierarchical taxonomies (Categories).
+export const WORDPRESS_PARENT_COLUMN_ID = 'parent';
+
+// WordPress's sentinel for "this link is empty": it writes `0` rather than null on a post
+// with no featured image (`featured_media`) or a top-level page/category (`parent`). Real
+// WordPress ids start at 1, so `0` is never a resolvable reference.
+export const WORDPRESS_NO_LINK_FOREIGN_KEY_VALUE = 0;
+
+// Static foreign key relationships (taxonomy FKs, and the self-referential `parent` on
+// hierarchical collections, are discovered dynamically)
 export const WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS: { remoteColumnId: string; foreignKeyRemoteTableId: string }[] = [
   { remoteColumnId: 'author', foreignKeyRemoteTableId: 'users' },
+  // A post's featured image is the id of a record in the Media table — a relation, not a
+  // number. Left undeclared it exported as a bare integer and the link to the image was
+  // lost on every destination (DEV-11093).
+  { remoteColumnId: 'featured_media', foreignKeyRemoteTableId: WORDPRESS_MEDIA_TABLE_ID },
 ];

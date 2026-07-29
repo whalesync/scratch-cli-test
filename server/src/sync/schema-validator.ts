@@ -1,5 +1,5 @@
 import { TSchema } from '@sinclair/typebox';
-import { ColumnMapping, ColumnMappingV2 } from '@spinner/shared-types';
+import { ColumnMapping, ColumnMappingV2, JSON_SCHEMA_LOCAL_DATE_TIME_FORMAT } from '@spinner/shared-types';
 import { getSchemaAtFieldPath } from 'src/utils/field-path';
 
 /**
@@ -163,8 +163,13 @@ export function unwrapNullableUnionSchema(schema: TSchema): TSchema {
   return schema;
 }
 
-/** The JSON-schema `format` values a connector puts on a date-typed string column. */
-const ISO_DATE_STRING_FORMATS: ReadonlySet<string> = new Set(['date', 'date-time']);
+/**
+ * The JSON-schema `format` values a connector puts on a date-typed string column.
+ * Includes `'date-time-local'`, the token for a wall-clock timestamp serialized without a
+ * UTC offset (WordPress) — such a column is just as much a real date column as an RFC 3339
+ * one, so it gets the same invalid-date guard.
+ */
+const ISO_DATE_STRING_FORMATS: ReadonlySet<string> = new Set(['date', 'date-time', JSON_SCHEMA_LOCAL_DATE_TIME_FORMAT]);
 
 /**
  * Whether a leaf field schema describes an ISO-8601 date / date-time STRING column —

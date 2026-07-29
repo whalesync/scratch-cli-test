@@ -151,15 +151,25 @@ Max records (or fields) per API request, **per operation** — services often di
 
 One row per FK. **Tested = set via the CLI**: edit the FK field to point at a _different_ parent (move the record parent→parent) → `files accept` → `upload` → `publish` → confirm it re-parented in the service. **Read** = a service-side link pulls back as the correct id/value.
 
-| FK field → target table        | Read (pull) | Write via CLI (move parent→parent) | Notes |
-| ------------------------------ | :---------: | :--------------------------------: | ----- |
-| `<Entity>.<field>` → `<table>` |     ⬜      |                 ⬜                 |       |
+Every FK is a plain id (or array of ids) inside the record — WordPress has no link envelope — so the connector declares them via `x-scratch-foreign-key` in `wordpress-json-schema.ts` and needs no id-extraction transformer. The declaration list is `WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS` + `buildTaxonomyForeignKeys` + `buildHierarchicalParentForeignKey`.
 
-- Association endpoint (if any): <describe> — ⬜
+| FK field → target table                                          | Read (pull) | Write via CLI (move parent→parent) | Notes                                                                                                      |
+| ---------------------------------------------------------------- | :---------: | :--------------------------------: | ---------------------------------------------------------------------------------------------------------- |
+| `<post type>.author` → `users`                                     |     ⬜      |                 ⬜                 | single-valued. Target table is in `WORDPRESS_EXCLUDE_TABLE_SLUGS`, so it only resolves if Users is exported |
+| `<post type>.categories` / `.tags` → `categories` / `tags`         |     ⬜      |                 ⬜                 | array of term ids — multi-valued. Discovered dynamically, one per non-internal taxonomy                     |
+| `<post type>.featured_media` → `media`                             |     ⬜      |                 ⬜                 | single-valued (DEV-11093)                                                                                   |
+| `<hierarchical collection>.parent` → itself                        |     ⬜      |                 ⬜                 | SELF-referential; declared only when the types/taxonomies metadata says `hierarchical: true` (DEV-11094)    |
+
+- Association endpoint (if any): none — every link is an id field on the record itself.
+- **Cardinality is derived, not listed:** the FK annotation sets `isSingleValued` from the shape WordPress declares (an `array` type ⇒ multi, anything else ⇒ single), so a scalar link isn't reported as narrowed on a single-column destination like Supabase.
 
 ## Edge cases discovered
 
 - **ACF uses `""` (empty string), not `null`, as its unset sentinel.** An empty ACF number field (e.g. `price`, `rating`) comes back as `""`, which a `number`-typed schema rejects. The failure surfaces against the whole `acf` object (anyOf-wrapped for the `acf: []` PHP quirk), so the validator's top-level empty-string skip can't see the nested blank — ACF fields therefore also accept `""` in the schema. Found via prod `enforce_schema` noise; fixed in `wordpress-json-schema.ts` (`wordpressFieldToJsonSchema`, `isAcf` branch).
+
+- **`0`, not `null`, is WordPress's "no link" sentinel.** A post with no featured image has `featured_media: 0`; a top-level page or category has `parent: 0`. Real ids start at 1, so `0` never resolves — and an unresolved FK fails the record, which fails its whole table and skips publish-after-sync. Declared as `valuesMeaningNoLink: [0]` on the FK annotation so the shared `source_fk_to_dest_fk` step drops it as empty; a genuinely dangling id still fails loudly (DEV-11093, DEV-11094).
+- **Every datetime is a zoneless wall-clock string.** `date`/`modified` come back in the site's timezone and `date_gmt`/`modified_gmt` in UTC — but NONE carries an offset (`"2026-07-28T20:20:00"`), so none is valid RFC 3339. The schema therefore annotates them `format: 'date-time-local'`, not `'date-time'`: the standard keyword would make the validator warn on every date of every record, while no format at all made destinations build date-ONLY columns that dropped the time-of-day permanently (DEV-11091). See `localDateTimeFormatAnnotation`.
+- **A rendered field's `raw` half holds markup too.** `content.raw`/`excerpt.raw` are HTML annotated with Gutenberg block comments, and `raw` is the half the default View exports — so both halves now declare `contentMediaType: 'text/html'`. The value is still shipped **verbatim**; nothing converts it, and nothing in the export path reads the media type yet. Choosing a representation per field (html vs markdown vs raw) is DEV-11046; converting WordPress's Gutenberg block markup would be lossy and one-way, so it deliberately waits for that design.
 
 ## Gotchas
 

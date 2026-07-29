@@ -419,6 +419,13 @@ export interface SourceFkToDestFkOptions {
   referencedDataFolderId: DataFolderId;
   /** What to do when a referenced record cannot be found. Default: 'fail' */
   onUnresolved?: 'fail' | 'ignore';
+  /**
+   * Stringified source values that mean "not linked" and must be dropped BEFORE resolution,
+   * for a service that writes a sentinel instead of null (WordPress `featured_media: 0`).
+   * Treated exactly like `null`; a value outside this list that resolves to nothing still
+   * fails. See `ForeignKeyOptionSchema.valuesMeaningNoLink`, which is where it comes from.
+   */
+  valuesMeaningNoLink?: string[];
   /** Output shape: 'array' (default) preserves arrays, 'single' unwraps to the first element or null */
   outputType?: 'array' | 'single';
   /**

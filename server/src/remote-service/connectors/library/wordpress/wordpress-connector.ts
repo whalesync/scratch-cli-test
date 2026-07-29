@@ -40,6 +40,7 @@ import { WordPressHttpClient } from './wordpress-http-client';
 import { formatWordPressModifiedAfter } from './wordpress-incremental';
 import { buildWordPressJsonTableSpec } from './wordpress-json-schema';
 import {
+  buildHierarchicalParentForeignKey,
   buildTaxonomyForeignKeys,
   parseTableInfoFromTaxonomies,
   parseTableInfoFromTypes,
@@ -170,13 +171,22 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const [tableId] = id.remoteId;
-    const [optionsResponse, taxonomiesResponse] = await Promise.all([
+    // Types are fetched alongside the OPTIONS/taxonomy metadata purely to learn whether
+    // THIS collection is hierarchical, which is what makes `parent` a self-referential
+    // foreign key rather than a bare integer (DEV-11094).
+    const [optionsResponse, typesResponse, taxonomiesResponse] = await Promise.all([
       this.client.getEndpointOptions(tableId),
+      this.client.getTypes(),
       this.client.getTaxonomies(),
     ]);
 
     const taxonomyForeignKeys = buildTaxonomyForeignKeys(taxonomiesResponse);
-    const foreignKeyColumnIds = [...WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS, ...taxonomyForeignKeys];
+    const hierarchicalParentForeignKey = buildHierarchicalParentForeignKey(tableId, typesResponse, taxonomiesResponse);
+    const foreignKeyColumnIds = [
+      ...WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS,
+      ...taxonomyForeignKeys,
+      ...hierarchicalParentForeignKey,
+    ];
     return buildWordPressJsonTableSpec(id, optionsResponse, foreignKeyColumnIds);
   }
 

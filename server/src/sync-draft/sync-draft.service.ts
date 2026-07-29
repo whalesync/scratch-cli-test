@@ -172,6 +172,23 @@ export function foreignKeyTargetKeyPath(sourceContext: SourceContext, sourceColu
 }
 
 /**
+ * The values this foreignKey column uses as a "not linked" sentinel, stringified for the
+ * resolve step's `String(element)` comparison — read off the source schema's
+ * `x-scratch-foreign-key` annotation (`ForeignKeyOptionSchema.valuesMeaningNoLink`).
+ *
+ * A service that writes a placeholder instead of null (WordPress: `featured_media: 0` on a
+ * post with no featured image, `parent: 0` on a top-level page) would otherwise have that
+ * placeholder resolved as a real id, find nothing, and fail the record — marking the whole
+ * table failed and skipping publish-after-sync. Undefined when the column declares none, so
+ * the option is omitted entirely and every existing mapping is byte-identical.
+ */
+function foreignKeyValuesMeaningNoLink(sourceContext: SourceContext, sourceColumnId: string): string[] | undefined {
+  const declaredValues = sourceContext.fieldsByPath.get(sourceColumnId)?.foreignKey?.valuesMeaningNoLink;
+  if (declaredValues === undefined || declaredValues.length === 0) return undefined;
+  return declaredValues.map((value) => String(value));
+}
+
+/**
  * Stable string key for a connector remote table id (an ordered id-segment array,
  * e.g. `['base1', 'tblComp']` or `['public', 'companies']`). Used to match a
  * foreignKey `{ existingRemoteTableId }` target against a sibling table mapping's
@@ -1381,11 +1398,22 @@ export class SyncDraftService {
       const targetKeyPath = sourceContext
         ? foreignKeyTargetKeyPath(sourceContext, columnMapping.source.columnId)
         : undefined;
+      // Sentinels the SOURCE declares for "not linked" (WordPress writes `featured_media: 0`
+      // rather than null). Passed through so the resolve step drops them as empty instead of
+      // failing the record — and with it the whole table — on an id that was never a link.
+      const valuesMeaningNoLink = sourceContext
+        ? foreignKeyValuesMeaningNoLink(sourceContext, columnMapping.source.columnId)
+        : undefined;
       const transformers: TransformerConfig[] = [];
       if (extraction) transformers.push(extraction);
       transformers.push({
         type: TransformerTypes.SourceFkToDestFk,
-        options: { referencedDataFolderId, outputType, ...(targetKeyPath ? { targetKeyPath } : {}) },
+        options: {
+          referencedDataFolderId,
+          outputType,
+          ...(targetKeyPath ? { targetKeyPath } : {}),
+          ...(valuesMeaningNoLink ? { valuesMeaningNoLink } : {}),
+        },
       });
       // `source_fk_to_dest_fk` emits a RAW id array (ids and/or `@/…` pseudo-refs) — the
       // native link shape for a service like Airtable, but not for one whose link field is

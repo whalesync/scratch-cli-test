@@ -1596,6 +1596,52 @@ mod tests {
     }
 
     #[test]
+    fn local_date_time_format_asserts_nothing() {
+        // `date-time-local` is Scratch's token for a wall-clock timestamp serialized
+        // WITHOUT a UTC offset — what WordPress returns for `date`/`modified`
+        // ("2026-07-28T20:20:00"). It exists so the export layer can tell that such a
+        // value is time-bearing (and build a real timestamp column on the destination)
+        // WITHOUT the validator asserting RFC 3339, which the value would fail on every
+        // record. That only works because the crate ignores a `format` it doesn't know,
+        // even under should_validate_formats(true) — lock it (DEV-11091).
+        let schema = json!({ "schema": { "properties": {
+            "date": { "anyOf": [
+                { "type": "string", "format": "date-time-local" },
+                { "type": "null" }
+            ]}
+        }}});
+
+        for value in [
+            json!("2026-07-28T20:20:00"), // WordPress's zoneless local time
+            json!("2026-07-28T20:20:00Z"),
+            json!(null),
+            json!("not-a-date-at-all"), // asserts NOTHING — deliberately, see above
+        ] {
+            let ctx = record_ctx(json!({ "date": value.clone() }), None, schema.clone());
+            let results = enforce_schema(&ctx);
+            assert!(
+                results.is_empty(),
+                "date-time-local must not assert on {value:?}, got {} error(s)",
+                results.len()
+            );
+        }
+
+        // Contrast: the standard RFC 3339 keyword DOES flag the same zoneless value —
+        // which is exactly why the WordPress schema can't use it.
+        let rfc3339_schema = json!({ "schema": { "properties": {
+            "date": { "type": "string", "format": "date-time" }
+        }}});
+        let ctx = record_ctx(
+            json!({ "date": "2026-07-28T20:20:00" }),
+            None,
+            rfc3339_schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1, "expected exactly one date-time complaint");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+    }
+
+    #[test]
     fn non_date_string_warns_against_notion_date_union() {
         // The union still asserts formats — a non-empty, non-date string is flagged,
         // proving the date-only fix did not silently disable date validation. It surfaces

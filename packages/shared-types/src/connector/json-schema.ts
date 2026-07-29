@@ -93,6 +93,27 @@ export const X_SCRATCH_CUSTOM_FIELD = 'x-scratch-custom-field';
 // or object. Not surfaced in any human-facing UI.
 export const X_SCRATCH_AGENT_INSTRUCTIONS = 'x-scratch-agent-instructions';
 
+// The JSON-Schema `format` a connector puts on a date-typed string whose value carries a
+// wall-clock time but is serialized WITHOUT a UTC offset — a "local" date-time such as
+// WordPress's `"2026-07-28T20:20:00"`. It is deliberately NOT the standard `'date-time'`:
+// that keyword asserts RFC 3339, which requires an offset, so annotating a zoneless value
+// with it makes the enforce-schema validator warn on every record holding legitimate,
+// verbatim data. This token is unknown to JSON-Schema validators (both the Rust
+// `jsonschema` crate and Ajv ignore an unrecognized `format`), so it asserts nothing —
+// its whole job is to tell OUR export/sync layer that the value is time-bearing, so a
+// destination gets a real timestamp column instead of silently dropping the time-of-day.
+// Treated as time-bearing everywhere `'date-time'` is (see `dateCreateFieldType` and
+// `schemaIsIsoDateStringColumn`).
+export const JSON_SCHEMA_LOCAL_DATE_TIME_FORMAT = 'date-time-local';
+
+// The `format` values that mark a string column as carrying a wall-clock TIME of day (as
+// opposed to a bare calendar date). A destination field built for one of these must keep
+// the time-of-day.
+export const TIME_BEARING_DATE_FORMATS: ReadonlySet<string> = new Set([
+  'date-time',
+  JSON_SCHEMA_LOCAL_DATE_TIME_FORMAT,
+]);
+
 // Marks an array property whose elements should each become an individually
 // editable, individually diffable column — WITHOUT reshaping the array on disk.
 // The array is stored verbatim (as the external service returned it); this
@@ -227,6 +248,19 @@ export interface ForeignKeyOptionSchema {
    * no fallback to id matching, so resolution stays predictable and testable.
    */
   targetKeyPath?: string;
+  /**
+   * Values this field uses as a SENTINEL for "not linked", for a service that writes a
+   * placeholder instead of null — WordPress stores `featured_media: 0` on a post with no
+   * featured image and `parent: 0` on a top-level page or category.
+   *
+   * Without this, the sentinel is indistinguishable from a real id: FK resolution looks for
+   * a linked record whose id is `0`, finds none, and fails the record — which marks the
+   * whole table failed and skips publish-after-sync, so a single unlinked post takes down
+   * the entire export. Declaring the sentinel lets the shared `source_fk_to_dest_fk` step
+   * treat it as "no link" (exactly like `null`) while a genuinely dangling id still fails
+   * loudly. Compared by string, so `0` and `"0"` are equivalent.
+   */
+  valuesMeaningNoLink?: (string | number)[];
 }
 
 /**

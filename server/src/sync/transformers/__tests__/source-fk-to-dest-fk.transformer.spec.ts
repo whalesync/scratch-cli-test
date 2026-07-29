@@ -175,6 +175,60 @@ describe('sourceFkToDestFkTransformer', () => {
     });
   });
 
+  describe('valuesMeaningNoLink — a source sentinel for "not linked" (DEV-11093, DEV-11094)', () => {
+    // WordPress writes `featured_media: 0` on a post with no featured image and `parent: 0`
+    // on a top-level page, rather than null. Without the declaration those look like ids that
+    // simply don't resolve, which fails the record — and a failed record fails its whole
+    // table and skips publish-after-sync, so one unlinked post takes the export down.
+    const SENTINEL_ZERO: SourceFkToDestFkOptions = {
+      referencedDataFolderId: REFERENCED_FOLDER,
+      valuesMeaningNoLink: ['0'],
+    };
+
+    it.each([
+      ['the number WordPress actually stores', 0],
+      ['the same value as a string', '0'],
+    ])('treats %s as empty rather than failing the record', async (_label, sentinelValue) => {
+      // A lookup that THROWS from either step: the sentinel names no target, so neither the
+      // key/id resolution nor the destination-mapping lookup should ever be reached.
+      const lookup: LookupTools = {
+        ...createSimpleLookupTools(),
+        resolveForeignKeyValueToTargetRemoteId: () => {
+          throw new Error('should not resolve a declared no-link sentinel to a target');
+        },
+        getDestinationMappingForSourceFk: () => {
+          throw new Error('should not look up a declared no-link sentinel');
+        },
+      };
+      const result = await sourceFkToDestFkTransformer.transform(createContext(sentinelValue, lookup, SENTINEL_ZERO));
+      expect(result).toEqual({ success: true, value: null });
+    });
+
+    it('drops the sentinel from an array while resolving its real siblings', async () => {
+      const lookup = createSimpleLookupTools({ '7': 'dest-authors/alice.json' });
+      const result = await sourceFkToDestFkTransformer.transform(createContext([0, 7], lookup, SENTINEL_ZERO));
+      expect(result).toEqual({ success: true, value: [`@/${DEST_CONN}/dest-authors/alice.json`] });
+    });
+
+    it('still fails a genuinely dangling id — only the DECLARED sentinel is forgiven', async () => {
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(404, createSimpleLookupTools(), SENTINEL_ZERO),
+      );
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain('Could not resolve foreign key "404"');
+      }
+    });
+
+    it('leaves the sentinel alone when the column declares none (unchanged behavior)', async () => {
+      const result = await sourceFkToDestFkTransformer.transform(createContext(0, createSimpleLookupTools()));
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain('Could not resolve foreign key "0"');
+      }
+    });
+  });
+
   describe('skip when destination value is unchanged', () => {
     it('should skip when destination already has the @/path reference (scalar)', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'dest-authors/alice.json' });

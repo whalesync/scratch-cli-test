@@ -3,6 +3,7 @@ import { ValuePointer } from '@sinclair/typebox/value';
 import {
   AssetTableOptions,
   ForeignKeyOptionSchema,
+  JSON_SCHEMA_LOCAL_DATE_TIME_FORMAT,
   X_SCRATCH_ASSET_TABLE,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
@@ -12,7 +13,12 @@ import {
 import { isArray } from 'lodash';
 import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
-import { WORDPRESS_MODIFIED_COLUMN_ID, WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
+import {
+  WORDPRESS_MEDIA_TABLE_ID,
+  WORDPRESS_MODIFIED_COLUMN_ID,
+  WORDPRESS_NO_LINK_FOREIGN_KEY_VALUE,
+  WORDPRESS_STATUS_COLUMN_ID,
+} from './wordpress-constants';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
 
 /**
@@ -131,15 +137,19 @@ function buildSingleWordPressTypeSchema(
       return Type.Boolean({ description });
 
     case 'string':
-      // We never assert a string `format`. WordPress's string serialization isn't
-      // guaranteed to satisfy the strict RFC checks the validator runs with formats
-      // on: date-times come back in the site's local timezone with no UTC offset
-      // (e.g. "2026-05-07T04:49:29", not valid RFC 3339), and URLs can contain
-      // unencoded Unicode in the filename (e.g. an emoji/CJK media `source_url`,
-      // not a valid RFC 3986 URI). Asserting `format` would reject those verbatim
-      // values. Columns still render correctly via the x-scratch-connector-data-type
-      // annotation (date/url/email), so dropping the format keyword is display-safe.
-      return Type.String({ description });
+      // We never assert a string `format` that a validator would CHECK. WordPress's
+      // string serialization isn't guaranteed to satisfy the strict RFC checks the
+      // validator runs with formats on: date-times come back in the site's local
+      // timezone with no UTC offset (e.g. "2026-05-07T04:49:29", not valid RFC 3339),
+      // and URLs can contain unencoded Unicode in the filename (e.g. an emoji/CJK media
+      // `source_url`, not a valid RFC 3986 URI). Asserting `format` would flag those
+      // verbatim values on every record. Columns still render correctly via the
+      // x-scratch-connector-data-type annotation (date/url/email), so dropping the
+      // format keyword is display-safe.
+      //
+      // The ONE exception is a datetime, which gets the non-asserting
+      // `'date-time-local'` token — see `localDateTimeFormatAnnotation`.
+      return Type.String({ description, ...localDateTimeFormatAnnotation(field) });
 
     case 'array':
       return Type.Array(Type.Unknown(), { description });
@@ -159,6 +169,29 @@ function buildSingleWordPressTypeSchema(
     default:
       return Type.Unknown({ description });
   }
+}
+
+/**
+ * The `format` annotation for a WordPress string value: `'date-time-local'` for a field
+ * WordPress's own OPTIONS metadata declares `format: 'date-time'`, nothing otherwise.
+ *
+ * WordPress serializes every timestamp as a ZONELESS wall-clock string —
+ * `"2026-07-28T20:20:00"`, in the site's timezone (and `date_gmt`/`modified_gmt` are UTC
+ * but equally offset-less). That is not valid RFC 3339, so the standard `'date-time'`
+ * keyword would make the enforce-schema validator warn on every date of every record for
+ * data that is perfectly legitimate — which is why this connector dropped string formats
+ * wholesale in the first place. But dropping it entirely cost real data: `format` is the
+ * generic, connector-agnostic signal the export layer reads to decide "real timestamp
+ * column" vs "calendar date", so `date`/`date_gmt`/`modified`/`modified_gmt` were landing
+ * in date-ONLY columns on Airtable and Supabase with the time-of-day silently dropped —
+ * permanently, on every run (DEV-11091).
+ *
+ * `'date-time-local'` says exactly what is true — a wall-clock timestamp with no offset —
+ * and asserts nothing: JSON-Schema validators ignore a `format` they don't recognize, so
+ * the leniency the wholesale drop bought is preserved, warning-for-warning.
+ */
+function localDateTimeFormatAnnotation(field: WordPressArgument): { format?: string } {
+  return field.format === 'date-time' ? { format: JSON_SCHEMA_LOCAL_DATE_TIME_FORMAT } : {};
 }
 
 /**
@@ -194,6 +227,19 @@ export function wordpressFieldToJsonSchema(
         raw: Type.String({
           title: fieldId,
           // description: `${fieldId} (raw)`,
+          // The BLOCK-level rendered fields (`content`, `excerpt`, `guid`) hold markup in
+          // their editable half too — WordPress's `content.raw` is HTML, annotated with
+          // Gutenberg block comments. `raw` is the half the default View selects and
+          // therefore the half that gets exported, yet only `rendered` declared a media
+          // type, so nothing downstream could tell that the exported value was markup.
+          // Declare it on both halves of the same field so they agree.
+          // `title` is excluded: its raw half is a plain inline string, not a document.
+          //
+          // Groundwork only — nothing reads this in the export path yet, and the value
+          // still travels as verbatim HTML. Picking a representation per field is
+          // DEV-11046; this makes WordPress honest about what it holds so that design
+          // has a correct leaf to key off (the exported one, not the envelope).
+          ...(dataType === WordPressDataType.RENDERED ? { contentMediaType: 'text/html' } : {}),
           [X_SCRATCH_READONLY]: field.readonly === true ? true : undefined,
         }),
         rendered: Type.String({
@@ -278,7 +324,22 @@ export function wordpressFieldToJsonSchema(
   if (!isAcf) {
     const fkDef = foreignKeyColumnIds.find((fk) => fk.remoteColumnId === fieldId);
     if (fkDef) {
-      schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId: fkDef.foreignKeyRemoteTableId };
+      // Cardinality comes straight from the shape WordPress declares: `categories`/`tags`
+      // are arrays of term ids (many links), while `author`/`featured_media`/`parent` are
+      // scalar ids (at most one). A relation left unset is treated as multi-valued, which
+      // makes a destination that stores a foreign key in a single scalar column
+      // (Postgres/Supabase) report the field as narrowed — so say so when it isn't.
+      schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] = {
+        linkedTableId: fkDef.foreignKeyRemoteTableId,
+        isSingleValued: !nonNullJsonTypes.includes('array'),
+        // WordPress writes `0`, not null, for "no link": a post with no featured image has
+        // `featured_media: 0`, a top-level page or category has `parent: 0`. Left undeclared,
+        // FK resolution hunts for a record with id 0, finds none, and fails the record — which
+        // fails the table and skips publish-after-sync, so one unlinked post takes the whole
+        // export down. `0` is never a real WordPress id (ids start at 1), so this is safe for
+        // every FK column: `author` and the taxonomy lists simply never carry it.
+        valuesMeaningNoLink: [WORDPRESS_NO_LINK_FOREIGN_KEY_VALUE],
+      } satisfies ForeignKeyOptionSchema;
     }
   }
 
@@ -370,7 +431,7 @@ export function buildWordPressJsonTableSpec(
   };
 
   // Media tables are standalone asset tables — each record IS an asset
-  if (tableId === 'media') {
+  if (tableId === WORDPRESS_MEDIA_TABLE_ID) {
     schemaOptions[X_SCRATCH_ASSET_TABLE] = {
       urlPath: 'source_url',
       filenamePath: 'title.raw',

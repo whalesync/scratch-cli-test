@@ -21,6 +21,9 @@ const PRIORITY_FIELDS = [
   'status',
   'content',
   'featured_media',
+  // Only hierarchical collections (Pages, Categories) have a parent; on those it is a
+  // self-referential relation worth surfacing, not tail-end noise.
+  'parent',
   'link',
   'date_gmt',
   'modified',

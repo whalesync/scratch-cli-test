@@ -109,7 +109,14 @@ export interface SchemaField {
   /** The CoreValue primitive `suggestedInTransformer` consumes (`'string'`/`'number'`/`'boolean'`), when declared. */
   suggestedInTransformerInputType?: PackInputPrimitive;
   readonly?: boolean;
-  foreignKey?: { linkedTableId: string; inverseFieldId?: string; isSingleValued?: boolean; targetKeyPath?: string };
+  foreignKey?: {
+    linkedTableId: string;
+    inverseFieldId?: string;
+    isSingleValued?: boolean;
+    targetKeyPath?: string;
+    /** Source values that mean "not linked" (WordPress `0`); see `ForeignKeyOptionSchema`. */
+    valuesMeaningNoLink?: (string | number)[];
+  };
 }
 
 /**
@@ -223,6 +230,7 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
         ...(fk.inverseFieldId !== undefined ? { inverseFieldId: fk.inverseFieldId } : {}),
         ...(fk.isSingleValued !== undefined ? { isSingleValued: fk.isSingleValued } : {}),
         ...(fk.targetKeyPath !== undefined ? { targetKeyPath: fk.targetKeyPath } : {}),
+        ...(fk.valuesMeaningNoLink !== undefined ? { valuesMeaningNoLink: fk.valuesMeaningNoLink } : {}),
       };
     }
 
