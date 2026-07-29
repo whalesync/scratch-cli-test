@@ -155,6 +155,27 @@ describe('buildZohoDefaultView', () => {
     expect(flatCol(view, 'Orphan_Lookup')?.displayTransformer).toBeUndefined();
   });
 
+  // DEV-11100: Zoho's `Tag` field is always an array of `{ name, id }` objects (its
+  // metadata mislabels it `text`). The view must render it as an object column with a
+  // displayTransformer that flattens to a comma-joined list of tag NAMES, so
+  // string-typed destinations (Notion, Airtable) receive text instead of the raw
+  // array they reject.
+  it('gives Tag an object column with a $[*].name join_comma displayTransformer', () => {
+    const view = viewFor([
+      makeField({ api_name: 'Last_Name', data_type: 'text' }),
+      makeField({ api_name: 'Tag', data_type: 'text' }),
+    ]);
+    const tagCol = flatCol(view, 'Tag');
+    expect(tagCol?.type).toBe('object');
+    expect(tagCol?.displayTransformer).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$[*].name', arrayHandling: 'join_comma' },
+    });
+    // A plain text field stays a string with no transformer.
+    expect(flatCol(view, 'Last_Name')?.type).toBe('string');
+    expect(flatCol(view, 'Last_Name')?.displayTransformer).toBeUndefined();
+  });
+
   it('only emits columns for fields that made it into the schema', () => {
     // The view is derived purely from the schema's properties, so a name that was
     // never a schema field simply has no column — no crash, no phantom column.

@@ -37,7 +37,8 @@ const ASSET_DATA_TYPES = new Set(['fileupload', 'imageupload', 'profileimage']);
  * (creating tags as needed), then remove it from this set. See PLAN.md → "Make the
  * Zoho `Tag` field writable".
  */
-const READONLY_FIELD_API_NAMES = new Set(['Tag']);
+export const ZOHO_TAG_FIELD_API_NAME = 'Tag';
+const READONLY_FIELD_API_NAMES = new Set([ZOHO_TAG_FIELD_API_NAME]);
 
 /** The system last-modified field Zoho exposes on every record module. */
 export const ZOHO_MODIFIED_TIME_FIELD = 'Modified_Time';
@@ -69,6 +70,15 @@ const NUMBER_OR_NULL = (extra?: Record<string, unknown>): TSchema => Type.Union(
  * a type we haven't enumerated.
  */
 export function zohoFieldToJsonSchema(field: ZohoFieldMetadata): TSchema {
+  // Zoho's `Tag` field is a metadata liar: `/settings/fields` reports it as
+  // `data_type: 'text'`, but the value Zoho returns on EVERY record is always an
+  // array — `[]` untagged, `[{ name, id }, …]` tagged — never a string. Declaring
+  // it `string` (trusting the metadata) makes the transform picker skip its
+  // array/object→text coercion, so the raw array reaches string-typed destinations
+  // (Notion, Airtable) and rejects every record (DEV-11100). Declare it per its
+  // real array shape so the schema matches the on-disk value and the picker joins
+  // it for string slots. The default view flattens it to tag names for display.
+  if (field.api_name === ZOHO_TAG_FIELD_API_NAME) return zohoTagArraySchema();
   switch (field.data_type) {
     case 'text':
     case 'textarea':
@@ -156,6 +166,20 @@ export function zohoFieldToJsonSchema(field: ZohoFieldMetadata): TSchema {
       });
       return Type.Union([Type.Unknown(), Type.Null()]);
   }
+}
+
+/**
+ * A Zoho `Tag` value is stored verbatim as an array of `{ name, id }` objects
+ * (`[]` when untagged). Kept permissive (`additionalProperties`) so any extra keys
+ * Zoho attaches to a tag are preserved on disk per the Connector Prime Directive.
+ */
+function zohoTagArraySchema(): TSchema {
+  return Type.Array(
+    Type.Object(
+      { name: Type.Optional(Type.String()), id: Type.Optional(Type.String()) },
+      { additionalProperties: true },
+    ),
+  );
 }
 
 /** A lookup value is stored verbatim as `{ id, name, ... }` (or null). */

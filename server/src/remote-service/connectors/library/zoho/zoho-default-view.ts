@@ -10,6 +10,7 @@ import {
   type TableViewCol,
 } from '@spinner/shared-types';
 import type { BaseJsonTableSpec } from '../../types';
+import { ZOHO_TAG_FIELD_API_NAME } from './zoho-json-schema';
 
 /**
  * Default view for a Zoho CRM module — a PURE function of the spec.
@@ -69,6 +70,18 @@ export function buildZohoDefaultView(spec: BaseJsonTableSpec): TableView {
       // Zoho single lookups reference at most one record, so mark the FK single-valued.
       col.foreignKey = { linkedTableId, isSingleValued: true };
       col.displayTransformer = { type: 'jsonpath', options: { expression: '$.id', arrayHandling: 'array' } };
+    }
+
+    // Zoho's `Tag` field is always an array of `{ name, id }` objects (its field
+    // metadata mislabels it `text`; the schema declares the real array shape — see
+    // ZOHO_TAG_FIELD_API_NAME in zoho-json-schema.ts). Render it as an object column
+    // whose displayTransformer flattens the array to a comma-joined list of tag
+    // NAMES, so string-typed destinations (Notion, Airtable) receive text instead of
+    // the raw array they reject (DEV-11100). Display-only: the on-disk array is
+    // untouched, preserving round-trip fidelity per the Connector Prime Directive.
+    if (apiName === ZOHO_TAG_FIELD_API_NAME) {
+      col.type = 'object';
+      col.displayTransformer = { type: 'jsonpath', options: { expression: '$[*].name', arrayHandling: 'join_comma' } };
     }
 
     (propertySchema[X_SCRATCH_CUSTOM_FIELD] === true ? customFieldCols : cols).push(col);

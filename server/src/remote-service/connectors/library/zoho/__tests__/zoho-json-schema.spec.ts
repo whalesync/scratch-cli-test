@@ -117,6 +117,20 @@ describe('zohoFieldToJsonSchema — data_type mapping', () => {
     const schema = zohoFieldToJsonSchema(makeField({ api_name: 'weird', data_type: 'some_future_type' }));
     expect(schema).toBeDefined();
   });
+
+  // DEV-11100: Zoho's field metadata reports `Tag` as `data_type: 'text'`, but the
+  // value is always an array. Declare it as an array of `{ name, id }` objects, NOT
+  // a string, so the schema matches the on-disk value and the transform picker
+  // coerces the array to text for string-typed destinations.
+  it('declares Tag as an array of { name, id } objects even though Zoho reports it as text', () => {
+    const schema = zohoFieldToJsonSchema(makeField({ api_name: 'Tag', data_type: 'text' }));
+    const json = JSON.stringify(schema);
+    expect(json).toContain('"type":"array"');
+    // The declared type must NOT be a bare string — that is the bug this fixes.
+    expect((schema as Record<string, unknown>).type).toBe('array');
+    // Tag object keys are preserved verbatim (permissive), never null.
+    expect(json).not.toContain('"type":"null"');
+  });
 });
 
 describe('isReadonlyZohoField', () => {
