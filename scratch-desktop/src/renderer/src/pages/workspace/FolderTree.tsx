@@ -146,7 +146,7 @@ function buildTablePullMenuItems(support: IncrementalPullSupport): Array<{
 
 const INDENT_PX = 16;
 
-const isMac = window.electron?.process?.platform === 'darwin';
+const isMac = window.scratchDesktop.platform === 'darwin';
 
 interface FolderInfoRequest {
   folder: DataFolder;

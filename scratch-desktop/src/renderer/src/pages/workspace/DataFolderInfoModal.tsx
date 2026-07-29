@@ -6,7 +6,7 @@ import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { getConnectorLogoUrl, useConnectorsMetadata } from '../../hooks/use-connectors-metadata';
 import { relativeTime } from '../../lib/date-format';
 
-const isMac = window.electron?.process?.platform === 'darwin';
+const isMac = window.scratchDesktop.platform === 'darwin';
 
 interface DataFolderInfoModalProps {
   opened: boolean;

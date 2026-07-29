@@ -1,4 +1,3 @@
-import { ElectronAPI } from '@electron-toolkit/preload';
 import type { TableView } from '@spinner/shared-types';
 import type { AutoDownloadCompletedEvent } from '../shared/auto-download-events';
 import type { CliInstallEvent } from '../shared/cli-install-events';
@@ -87,6 +86,8 @@ interface ScratchPreferencesAPI {
 }
 
 interface ScratchDesktopAPI {
+  /** OS platform, for Mac-vs-Windows UI hints (replaces the removed generic `window.electron`, DEV-10996). */
+  platform: NodeJS.Platform;
   getWorkspacesRegistry: () => Promise<
     Array<{ id: string; path: string; fileCount: number; cloudSyncWarning: CloudSyncWarning | null }>
   >;
@@ -609,7 +610,6 @@ interface ScratchFilesAPI {
 
 declare global {
   interface Window {
-    electron: ElectronAPI;
     scratchDeepLink?: ScratchDeepLinkAPI;
     scratchAuth: ScratchAuthAPI;
     scratchPreferences: ScratchPreferencesAPI;

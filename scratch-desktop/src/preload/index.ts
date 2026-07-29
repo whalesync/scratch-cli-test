@@ -1,4 +1,3 @@
-import { electronAPI } from '@electron-toolkit/preload';
 import type { TableView } from '@spinner/shared-types';
 import { contextBridge, ipcRenderer } from 'electron';
 import { AUTO_DOWNLOAD_COMPLETED_CHANNEL, type AutoDownloadCompletedEvent } from '../shared/auto-download-events';
@@ -111,6 +110,12 @@ const scratchPreferences = {
 };
 
 const scratchDesktop = {
+  /**
+   * OS platform, for Mac-vs-Windows UI hints. Replaces the removed generic `window.electron`
+   * bridge (DEV-10996): the renderer only ever read `window.electron.process.platform`, so we
+   * re-home that single value onto the curated surface instead of exposing all of `electronAPI`.
+   */
+  platform: process.platform,
   getWorkspacesRegistry: (): Promise<
     Array<{ id: string; path: string; fileCount: number; cloudSyncWarning: CloudSyncWarning | null }>
   > => invoke('scratch:get-workspaces-registry'),
@@ -647,7 +652,6 @@ const scratchFiles = {
 
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI);
     contextBridge.exposeInMainWorld('scratchDeepLink', scratchDeepLink);
     contextBridge.exposeInMainWorld('scratchAuth', scratchAuth);
     contextBridge.exposeInMainWorld('scratchPreferences', scratchPreferences);
@@ -657,8 +661,6 @@ if (process.contextIsolated) {
     console.error(error);
   }
 } else {
-  // @ts-expect-error -- fallback for non-isolated contexts
-  window.electron = electronAPI;
   // @ts-expect-error -- fallback for non-isolated contexts
   window.scratchDeepLink = scratchDeepLink;
   // @ts-expect-error -- fallback for non-isolated contexts

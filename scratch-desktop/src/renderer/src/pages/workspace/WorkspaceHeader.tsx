@@ -65,7 +65,7 @@ interface WorkspaceHeaderProps {
   onToggleWatching?: () => void;
 }
 
-const isMac = window.electron?.process?.platform === 'darwin';
+const isMac = window.scratchDesktop.platform === 'darwin';
 
 const RE_DOWNLOAD_TOOLTIP = 'Re-download latest file updates from Scratch Web';
 const PULL_ALL_TOOLTIP = 'Pull data from all connected services';

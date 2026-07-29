@@ -859,7 +859,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     const fn = typeof row.__filename === 'string' ? row.__filename : null;
                     if (!fn) return;
                     const filePath = `${folderPath.replace(/\/$/, '')}/${fn.replace(/^\//, '')}`;
-                    const isMac = window.electron?.process?.platform === 'darwin';
+                    const isMac = window.scratchDesktop.platform === 'darwin';
                     window.scratchDesktop.showNativeContextMenu(
                       [{ id: 'reveal', label: isMac ? 'Reveal in Finder' : 'Reveal in File Explorer' }],
                       (id) => {

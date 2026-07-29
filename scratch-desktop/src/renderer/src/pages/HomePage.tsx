@@ -27,12 +27,12 @@ import {
 } from '../lib/posthog';
 
 function getLocalSectionLabel(): string {
-  const platform = window.electron?.process?.platform;
+  const platform = window.scratchDesktop.platform;
   return platform === 'darwin' ? 'On my Mac' : 'On this PC';
 }
 
 function getTrashName(): string {
-  return window.electron?.process?.platform === 'win32' ? 'Recycle Bin' : 'Trash';
+  return window.scratchDesktop.platform === 'win32' ? 'Recycle Bin' : 'Trash';
 }
 
 function getEnvironmentLabel(): string | null {

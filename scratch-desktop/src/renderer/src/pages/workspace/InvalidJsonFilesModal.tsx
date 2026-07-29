@@ -34,7 +34,7 @@ function formatErrorForDisplay(error: string): string {
     .join('; ');
 }
 
-const isMac = window.electron?.process?.platform === 'darwin';
+const isMac = window.scratchDesktop.platform === 'darwin';
 
 export const InvalidJsonFilesModal = memo(function InvalidJsonFilesModal({
   opened,
