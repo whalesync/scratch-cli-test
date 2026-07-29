@@ -129,7 +129,7 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
     2: {
       clientIdEnvVar: 'WIX_CLIENT_ID_V2',
       clientSecretEnvVar: 'WIX_CLIENT_SECRET_V2',
-      redirectUri: (config) => whalesyncRedirectUri(config, 'wix'),
+      redirectUri: (config) => whalesyncRedirectUri(config, 'wix-blog'),
     },
   },
   [Service.YOUTUBE]: {
