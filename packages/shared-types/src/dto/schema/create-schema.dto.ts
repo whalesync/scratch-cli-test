@@ -64,13 +64,22 @@ export type CreateChoiceOption = z.infer<typeof createChoiceOptionSchema>;
  *     (`ref`). This variant is produced by plan generation so an unresolvable FK is
  *     surfaced as "available, needs a target" rather than silently dropped; it must
  *     be resolved before create — `/schema/tables` and `/schema/fields` REJECT it.
+ *     It may additionally carry `unresolvedLinkedTableRemoteId`, the SOURCE linked
+ *     table's FULL remote id as an array — deep-equal to that table's
+ *     `DataFolder.tableId` — so a consumer can find the source folder by array
+ *     equality instead of parsing the connector-specific `unresolvedLinkedTableId`
+ *     string. It is optional: only connectors that emit the array on their foreign-key
+ *     annotation produce it, and consumers fall back to the string when it is absent.
  *
  * Strict objects make "more than one branch" or an empty target fail validation.
  */
 export const foreignKeyTargetSchema = z.union([
   z.strictObject({ existingRemoteTableId: z.array(z.string()).min(1) }),
   z.strictObject({ ref: z.string().min(1) }),
-  z.strictObject({ unresolvedLinkedTableId: z.string().min(1) }),
+  z.strictObject({
+    unresolvedLinkedTableId: z.string().min(1),
+    unresolvedLinkedTableRemoteId: z.array(z.string()).min(1).optional(),
+  }),
 ]);
 export type ForeignKeyTarget = z.infer<typeof foreignKeyTargetSchema>;
 

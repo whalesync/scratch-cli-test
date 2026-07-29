@@ -204,7 +204,7 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
   });
 
   describe('relation — modeled with has_more and FK on the outer envelope', () => {
-    const s = prop('relation', { relation: { database_id: 'db_linked' } });
+    const s = prop('relation', { relation: { database_id: 'db_linked', data_source_id: 'ds_linked' } });
 
     it('models the relation array and the has_more sibling', () => {
       expect(literalConst(props(s).type)).toBe('relation');
@@ -224,7 +224,13 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
       // `map: 'id'` used to ride here, but its only consumer (file-reference extraction)
       // read `envelope.id` — the property's OWN id — producing a bogus reference row per
       // relation. The linked-page ids are extracted from the id leaf instead.
-      expect(s[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'db_linked' });
+      // `linkedTableRemoteId` is the linked table's FULL folder remoteId — `[database_id,
+      // data_source_id]` — which deep-equals `parseDataSourceTablePreview`'s
+      // `[parentDatabaseId, dataSourceId]`.
+      expect(s[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'db_linked',
+        linkedTableRemoteId: ['db_linked', 'ds_linked'],
+      });
     });
 
     it('ALSO puts the foreign-key options on the inner relation[].id leaf (DEV-10942)', () => {
@@ -235,6 +241,7 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
       const relationItems = props(s).relation.items as Record<string, Record<string, Record<string, unknown>>>;
       expect(relationItems.properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
         linkedTableId: 'db_linked',
+        linkedTableRemoteId: ['db_linked', 'ds_linked'],
       });
     });
 
@@ -242,6 +249,7 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
       const dual = prop('relation', {
         relation: {
           database_id: 'db_linked',
+          data_source_id: 'ds_linked',
           type: 'dual_property',
           dual_property: { synced_property_id: 'prop_back', synced_property_name: 'Back' },
         },
@@ -249,6 +257,7 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
       const relationItems = props(dual).relation.items as Record<string, Record<string, Record<string, unknown>>>;
       expect(relationItems.properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
         linkedTableId: 'db_linked',
+        linkedTableRemoteId: ['db_linked', 'ds_linked'],
         inverseFieldId: 'prop_back',
       });
     });
@@ -266,21 +275,38 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
       const dual = prop('relation', {
         relation: {
           database_id: 'db_linked',
+          data_source_id: 'ds_linked',
           type: 'dual_property',
           dual_property: { synced_property_id: 'prop_back', synced_property_name: 'Back' },
         },
       });
       expect(dual[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
         linkedTableId: 'db_linked',
+        linkedTableRemoteId: ['db_linked', 'ds_linked'],
         inverseFieldId: 'prop_back',
       });
     });
 
     it('omits inverseFieldId for a single_property (one-way) relation', () => {
       const single = prop('relation', {
-        relation: { database_id: 'db_linked', type: 'single_property', single_property: {} },
+        relation: {
+          database_id: 'db_linked',
+          data_source_id: 'ds_linked',
+          type: 'single_property',
+          single_property: {},
+        },
       });
-      expect(single[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'db_linked' });
+      expect(single[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'db_linked',
+        linkedTableRemoteId: ['db_linked', 'ds_linked'],
+      });
+    });
+
+    it('omits linkedTableRemoteId when the relation carries no data_source_id', () => {
+      // Without the data-source segment we can't reconstruct the full 2-element folder
+      // remoteId, so we emit only `linkedTableId` rather than a partial/wrong array.
+      const noDataSource = prop('relation', { relation: { database_id: 'db_linked' } });
+      expect(noDataSource[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'db_linked' });
     });
   });
 

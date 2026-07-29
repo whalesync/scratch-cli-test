@@ -109,8 +109,15 @@ export interface SchemaField {
   /** The CoreValue primitive `suggestedInTransformer` consumes (`'string'`/`'number'`/`'boolean'`), when declared. */
   suggestedInTransformerInputType?: PackInputPrimitive;
   readonly?: boolean;
+  /**
+   * `linkedTableRemoteId` is the linked table's FULL remote id (deep-equal to that table's
+   * `DataFolder.tableId`), carried through verbatim from the schema annotation so a consumer
+   * can bind the link by array equality instead of parsing `linkedTableId`. Absent unless the
+   * connector emits it.
+   */
   foreignKey?: {
     linkedTableId: string;
+    linkedTableRemoteId?: string[];
     inverseFieldId?: string;
     isSingleValued?: boolean;
     targetKeyPath?: string;
@@ -227,6 +234,7 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     if (fk?.linkedTableId) {
       field.foreignKey = {
         linkedTableId: fk.linkedTableId,
+        ...(fk.linkedTableRemoteId !== undefined ? { linkedTableRemoteId: fk.linkedTableRemoteId } : {}),
         ...(fk.inverseFieldId !== undefined ? { inverseFieldId: fk.inverseFieldId } : {}),
         ...(fk.isSingleValued !== undefined ? { isSingleValued: fk.isSingleValued } : {}),
         ...(fk.targetKeyPath !== undefined ? { targetKeyPath: fk.targetKeyPath } : {}),

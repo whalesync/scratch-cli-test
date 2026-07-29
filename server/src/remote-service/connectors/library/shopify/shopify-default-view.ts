@@ -417,6 +417,10 @@ function buildForeignKeyCol(path: string, name: string, linkedTableId: string): 
     name,
     type: 'string',
     readonly: true,
-    foreignKey: { linkedTableId },
+    // `linkedTableRemoteId` is the target table's full remote id array — for Shopify that's
+    // `[entityType]` (see `ShopifyConnector.listTables`, `remoteId: [entityType]`), and every
+    // `linkedTableId` here (nested-object targets and injected parent `entityType`s) IS that entity
+    // type, so the array is the single-element `[linkedTableId]`.
+    foreignKey: { linkedTableId, linkedTableRemoteId: [linkedTableId] },
   };
 }

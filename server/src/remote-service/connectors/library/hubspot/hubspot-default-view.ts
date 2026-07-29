@@ -417,7 +417,10 @@ function buildAssociationForeignKeyCol(assocType: string): TableViewCol {
     // The flattened ids are foreign keys into the related object's table (its wsId is
     // the association type). Declared on the column because the FK annotation lives on
     // `results[].id` — below this column's path — so a schema-join can't recover it.
-    foreignKey: { linkedTableId: assocType },
+    // `linkedTableRemoteId` is the target table's full `remoteId`: every association
+    // type is a STANDARD object whose `remoteId` is the single-segment `[objectType]`
+    // (= the association type), so `[assocType]` deep-equals it (see buildAssociationsSchema).
+    foreignKey: { linkedTableId: assocType, linkedTableRemoteId: [assocType] },
     // Flatten the [{ id, type }, …] array to its comma-joined ids for display; the
     // ids resolve to the related records via the schema's foreign-key annotation.
     displayTransformer: { type: 'jsonpath', options: { expression: '$[*].id', arrayHandling: 'join_comma' } },

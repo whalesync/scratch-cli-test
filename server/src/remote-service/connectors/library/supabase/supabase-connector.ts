@@ -19,6 +19,7 @@ import {
   X_SCRATCH_READONLY,
   type CreateFieldResult,
   type CreateTableResult,
+  type ForeignKeyOptionSchema,
   type SchemaCreationCapabilities,
   type TableView,
 } from '@spinner/shared-types';
@@ -395,15 +396,27 @@ export class SupabaseConnector extends Connector {
 
       const primaryKey = this.pickPrimaryKey(pkCandidates, columns, singleColumnUniqueIndexColumns);
 
-      // Build a map from column name → linked table display name
-      const fkMap = new Map<string, string>();
+      // Build a map from column name → the linked table's identity: the display-oriented
+      // `linkedTableId` string (schema-qualified only when it isn't `public`) plus the linked
+      // table's FULL remote id. The array deliberately keeps `public` — it must deep-equal the
+      // linked table's `DataFolder.tableId` (`[projectRef, schema, table]`, as emitted by
+      // listTables) so a consumer can bind the foreign key by array equality.
+      const projectRef = id.remoteId[0];
+      const foreignKeyTargetByColumnName = new Map<string, ForeignKeyOptionSchema>();
       for (const fk of foreignKeys) {
         if (fk.foreign_table_name) {
           const linkedTableId =
             fk.foreign_table_schema === 'public'
               ? fk.foreign_table_name
               : `${fk.foreign_table_schema}.${fk.foreign_table_name}`;
-          fkMap.set(fk.column_name, linkedTableId);
+          foreignKeyTargetByColumnName.set(fk.column_name, {
+            linkedTableId,
+            // Omitted rather than guessed when the catalog didn't report a schema — an array
+            // that doesn't match the target folder's tableId would mis-resolve the link.
+            ...(fk.foreign_table_schema
+              ? { linkedTableRemoteId: [projectRef, fk.foreign_table_schema, fk.foreign_table_name] }
+              : {}),
+          });
         }
       }
 
@@ -427,9 +440,9 @@ export class SupabaseConnector extends Connector {
         }
 
         // Annotate foreign key columns
-        const linkedTableId = fkMap.get(col.column_name);
-        if (linkedTableId) {
-          (annotated as Record<string, unknown>)[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId };
+        const foreignKeyOptions = foreignKeyTargetByColumnName.get(col.column_name);
+        if (foreignKeyOptions) {
+          (annotated as Record<string, unknown>)[X_SCRATCH_FOREIGN_KEY_OPTIONS] = foreignKeyOptions;
         }
 
         schemaProperties[col.column_name] = isNullable || hasDefault ? Type.Optional(annotated) : annotated;

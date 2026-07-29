@@ -236,7 +236,7 @@ describe('buildPipedriveDefaultView', () => {
     // Rendered through the text cell so the display transformer runs, but declared as an FK so a
     // plan links it to persons — never a raw object/JSON blob.
     expect(participantsColumn?.type).toBe('string');
-    expect(participantsColumn?.foreignKey).toEqual({ linkedTableId: 'persons' });
+    expect(participantsColumn?.foreignKey).toEqual({ linkedTableId: 'persons', linkedTableRemoteId: ['persons'] });
     expect(participantsColumn?.displayTransformer).toEqual({
       type: 'jsonpath',
       options: { expression: '$[*].person_id', arrayHandling: 'join_comma' },

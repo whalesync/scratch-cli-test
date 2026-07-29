@@ -149,15 +149,15 @@ function makeEntityFilesSchema() {
       size: Type.Number({ [X_SCRATCH_READONLY]: true }),
       person_id: Type.Union([Type.Number(), Type.Null()], {
         [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'persons' },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'persons', linkedTableRemoteId: ['persons'] },
       }),
       organization_id: Type.Union([Type.Number(), Type.Null()], {
         [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies' },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies', linkedTableRemoteId: ['companies'] },
       }),
       opportunity_id: Type.Union([Type.Number(), Type.Null()], {
         [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'opportunities' },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'opportunities', linkedTableRemoteId: ['opportunities'] },
       }),
       uploader_id: Type.Number({ [X_SCRATCH_READONLY]: true }),
       created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
@@ -412,7 +412,7 @@ describe('buildAffinityDefaultView — tenant persons', () => {
     const fkCol = view.cols.find((c) => (c as TableViewCol).path === 'fields.[id=field-11]') as TableViewCol;
 
     it('should declare a foreign key to the companies table', () => {
-      expect(fkCol.foreignKey).toEqual({ linkedTableId: 'companies' });
+      expect(fkCol.foreignKey).toEqual({ linkedTableId: 'companies', linkedTableRemoteId: ['companies'] });
     });
 
     it('should type the column as string and drop the subfields drill-down', () => {
@@ -567,13 +567,16 @@ describe('buildAffinityDefaultView — entity files', () => {
 
   it('should mirror the schema-declared foreign keys onto the shown columns (DEV-11065)', () => {
     const personIdCol = view.cols.find((c) => (c as TableViewCol).path === 'person_id') as TableViewCol;
-    expect(personIdCol.foreignKey).toEqual({ linkedTableId: 'persons' });
+    expect(personIdCol.foreignKey).toEqual({ linkedTableId: 'persons', linkedTableRemoteId: ['persons'] });
 
     const orgIdCol = view.cols.find((c) => (c as TableViewCol).path === 'organization_id') as TableViewCol;
-    expect(orgIdCol.foreignKey).toEqual({ linkedTableId: 'companies' });
+    expect(orgIdCol.foreignKey).toEqual({ linkedTableId: 'companies', linkedTableRemoteId: ['companies'] });
 
     const opportunityIdCol = view.cols.find((c) => (c as TableViewCol).path === 'opportunity_id') as TableViewCol;
-    expect(opportunityIdCol.foreignKey).toEqual({ linkedTableId: 'opportunities' });
+    expect(opportunityIdCol.foreignKey).toEqual({
+      linkedTableId: 'opportunities',
+      linkedTableRemoteId: ['opportunities'],
+    });
   });
 });
 
@@ -698,7 +701,7 @@ describe('buildAffinityDefaultView — multi-value flattening (DEV-11064 / DEV-1
 
   it('should declare multi-value person/company references as foreign keys resolving on value.data[*].id', () => {
     const personCol = colAt('fields.[id=field-p]');
-    expect(personCol.foreignKey).toEqual({ linkedTableId: 'persons' });
+    expect(personCol.foreignKey).toEqual({ linkedTableId: 'persons', linkedTableRemoteId: ['persons'] });
     expect(personCol.codec?.toCore).toEqual({
       type: 'jsonpath',
       options: { expression: '$.value.data[*].id', arrayHandling: 'array' },
@@ -709,7 +712,7 @@ describe('buildAffinityDefaultView — multi-value flattening (DEV-11064 / DEV-1
     });
 
     const companyCol = colAt('fields.[id=field-c]');
-    expect(companyCol.foreignKey).toEqual({ linkedTableId: 'companies' });
+    expect(companyCol.foreignKey).toEqual({ linkedTableId: 'companies', linkedTableRemoteId: ['companies'] });
     expect(companyCol.codec?.toCore).toMatchObject({ options: { expression: '$.value.data[*].id' } });
   });
 

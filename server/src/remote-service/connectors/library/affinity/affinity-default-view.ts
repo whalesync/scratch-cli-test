@@ -253,9 +253,9 @@ function buildTopLevelCol(
   // it as a link and a sync/export links the record (Entity Files' parent-entity
   // FKs — person_id / organization_id / opportunity_id). Purely additive: only
   // fields carrying `x-scratch-foreign-key` get it.
-  const foreignKeyTarget = linkedTableIdFromSchema(fieldSchema);
+  const foreignKeyTarget = foreignKeyFromSchema(fieldSchema);
   if (foreignKeyTarget) {
-    col.foreignKey = { linkedTableId: foreignKeyTarget };
+    col.foreignKey = foreignKeyTarget;
   }
 
   // Notes: content field gets subfields for html
@@ -396,7 +396,9 @@ function buildReferenceFieldCol(
     name: column.name,
     // Rendered as text (the id / joined ids); the FK target drives the relation.
     type: 'string',
-    foreignKey: { linkedTableId },
+    // The linked People/Companies tenant table has a single-segment
+    // `remoteId: [<sentinel>]` equal to `linkedTableId`, so the array is `[linkedTableId]`.
+    foreignKey: { linkedTableId, linkedTableRemoteId: [linkedTableId] },
     displayTransformer: jsonPathDisplayTransformer(idExpression, isMultiValue),
     codec: { toCore: jsonPathToCore(idExpression, isMultiValue) },
     readonly,
@@ -451,12 +453,27 @@ function jsonPathToCore(expression: string, isMultiValue: boolean): ClientSafeTr
   return { type: TransformerTypes.JSONPath, options: { expression, arrayHandling } };
 }
 
-/** Read a schema field's declared foreign-key target (`x-scratch-foreign-key.linkedTableId`), if any. */
-function linkedTableIdFromSchema(fieldSchema: TSchema | undefined): string | undefined {
+/**
+ * Read a schema field's declared foreign-key options (`x-scratch-foreign-key`), if
+ * any — carrying both `linkedTableId` and the target table's full `linkedTableRemoteId`
+ * array verbatim, so the view column mirrors exactly what the schema annotation set.
+ */
+function foreignKeyFromSchema(fieldSchema: TSchema | undefined): TableViewCol['foreignKey'] | undefined {
   const foreignKeyOptions = (fieldSchema as Record<string, unknown> | undefined)?.[X_SCRATCH_FOREIGN_KEY_OPTIONS] as
-    | { linkedTableId?: unknown }
+    | { linkedTableId?: unknown; linkedTableRemoteId?: unknown }
     | undefined;
-  return typeof foreignKeyOptions?.linkedTableId === 'string' ? foreignKeyOptions.linkedTableId : undefined;
+  if (typeof foreignKeyOptions?.linkedTableId !== 'string') {
+    return undefined;
+  }
+  const linkedTableRemoteId =
+    Array.isArray(foreignKeyOptions.linkedTableRemoteId) &&
+    foreignKeyOptions.linkedTableRemoteId.every((segment): segment is string => typeof segment === 'string')
+      ? foreignKeyOptions.linkedTableRemoteId
+      : undefined;
+  return {
+    linkedTableId: foreignKeyOptions.linkedTableId,
+    ...(linkedTableRemoteId ? { linkedTableRemoteId } : {}),
+  };
 }
 
 /** Map a TypeBox schema to a TablePropertyType based on Kind and format annotations. */

@@ -144,7 +144,7 @@ describeIfCreds('ZohoConnector — live API (read-only)', () => {
 
     it('annotates the Owner ownerlookup as a foreign key to users', () => {
       const owner = schemaProps(leadsSpec).Owner as Record<string, unknown>;
-      expect(owner[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'users' });
+      expect(owner[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'users', linkedTableRemoteId: ['users'] });
     });
 
     it('builds a non-empty schema with an id for every core entity', async () => {
@@ -303,7 +303,7 @@ describeCreate('ZohoConnector — lookup FK + date round-trip', () => {
 
   it('declares Account_Name as a foreign key to Accounts', () => {
     const fk = schemaProps(contactsSpec).Account_Name as Record<string, unknown>;
-    expect(fk[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'Accounts' });
+    expect(fk[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'Accounts', linkedTableRemoteId: ['Accounts'] });
   });
 
   it('writes Contact.Account_Name={id} (name dropped) and reads back the {id,name} lookup + date', async () => {

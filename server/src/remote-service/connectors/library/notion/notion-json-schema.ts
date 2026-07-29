@@ -446,6 +446,15 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
       foreignKeyOptions = property.relation.database_id
         ? {
             linkedTableId: property.relation.database_id,
+            // The linked table's folder `remoteId` is `[parentDatabaseId, dataSourceId]` (see
+            // parseDataSourceTablePreview). The relation config carries BOTH segments directly —
+            // `database_id` (the linked database, = remoteId[0]) and `data_source_id` (the linked
+            // data source, = remoteId[1]) — so the full array deep-equals the target folder's
+            // tableId. Only emit it when the data-source id is present so we never write a
+            // partial/wrong array.
+            ...(property.relation.data_source_id
+              ? { linkedTableRemoteId: [property.relation.database_id, property.relation.data_source_id] }
+              : {}),
             ...(property.relation.type === 'dual_property' && property.relation.dual_property?.synced_property_id
               ? { inverseFieldId: property.relation.dual_property.synced_property_id }
               : {}),

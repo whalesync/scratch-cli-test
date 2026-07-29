@@ -48,7 +48,7 @@ export function buildAirtableJsonTableSpec(
   let mainContentPath: DotPath | undefined;
 
   for (const field of table.fields) {
-    const fieldSchema = airtableFieldToJsonSchema(field);
+    const fieldSchema = airtableFieldToJsonSchema(field, baseId);
     // All Airtable fields are optional in the response (can be missing if empty)
     fieldProperties[field.name] = Type.Optional(fieldSchema);
 
@@ -102,7 +102,13 @@ export function buildAirtableJsonTableSpec(
  */
 // FIXTURE NOTE: edits here change the generated schema.json checked in under
 // `__fixtures__/view-codec/airtable-*` — see `buildAirtableJsonTableSpec` for how to refresh them.
-export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
+/**
+ * @param baseId The Airtable base id of the table this field belongs to. Airtable links can only
+ *   target a table in the SAME base, so the linked table's full remote id is `[baseId, linkedTableId]`
+ *   — deep-equal to the target table's `DataFolder.tableId` (see AirtableSchemaParser: `[base.id, table.id]`).
+ *   Omitted (so `linkedTableRemoteId` is omitted) when the caller has no base context.
+ */
+export function airtableFieldToJsonSchema(field: AirtableFieldsV2, baseId?: string): TSchema {
   const description = field.description || field.name;
   let schema: TSchema;
 
@@ -200,6 +206,7 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
         [X_SCRATCH_FOREIGN_KEY_OPTIONS]: field.options?.linkedTableId
           ? {
               linkedTableId: field.options.linkedTableId,
+              ...(baseId ? { linkedTableRemoteId: [baseId, field.options.linkedTableId] } : {}),
               ...(field.options.inverseLinkFieldId ? { inverseFieldId: field.options.inverseLinkFieldId } : {}),
               ...(field.options.prefersSingleRecordLink ? { isSingleValued: true } : {}),
             }

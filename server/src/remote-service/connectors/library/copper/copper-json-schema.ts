@@ -49,7 +49,9 @@ function readonly(schema: TSchema): TSchema {
 /** A numeric foreign key pointing at another Copper table (by wsId). */
 function foreignKey(linkedTableId: CopperEntityType | CopperReferenceEntityType): TSchema {
   return Type.Union([Type.Number(), Type.Null()], {
-    [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId },
+    // listTables builds remoteId: [entityType]/[refType], so the target table's full
+    // remote id is the single-element [linkedTableId].
+    [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId, linkedTableRemoteId: [linkedTableId] },
   });
 }
 

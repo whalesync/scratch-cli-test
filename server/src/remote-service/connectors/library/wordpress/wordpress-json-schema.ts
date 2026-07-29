@@ -331,6 +331,10 @@ export function wordpressFieldToJsonSchema(
       // (Postgres/Supabase) report the field as narrowed — so say so when it isn't.
       schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] = {
         linkedTableId: fkDef.foreignKeyRemoteTableId,
+        // listTables builds each table's remoteId as the single-segment [rest_base], and
+        // foreignKeyRemoteTableId is the target taxonomy's rest_base, so the target table's
+        // full remote id array is [foreignKeyRemoteTableId].
+        linkedTableRemoteId: [fkDef.foreignKeyRemoteTableId],
         isSingleValued: !nonNullJsonTypes.includes('array'),
         // WordPress writes `0`, not null, for "no link": a post with no featured image has
         // `featured_media: 0`, a top-level page or category has `parent: 0`. Left undeclared,

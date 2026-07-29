@@ -508,9 +508,18 @@ describe('buildAffinityEntityFilesTableSpec', () => {
     const spec = buildAffinityEntityFilesTableSpec(entityId);
     const props = (spec.schema as any).properties;
 
-    expect(props.person_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'persons' });
-    expect(props.organization_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'companies' });
-    expect(props.opportunity_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'opportunities' });
+    expect(props.person_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'persons',
+      linkedTableRemoteId: ['persons'],
+    });
+    expect(props.organization_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'companies',
+      linkedTableRemoteId: ['companies'],
+    });
+    expect(props.opportunity_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'opportunities',
+      linkedTableRemoteId: ['opportunities'],
+    });
     // FK fields remain read-only (entity files have no v1 metadata-update endpoint).
     expect(props.person_id[X_SCRATCH_READONLY]).toBe(true);
     expect(props.organization_id[X_SCRATCH_READONLY]).toBe(true);

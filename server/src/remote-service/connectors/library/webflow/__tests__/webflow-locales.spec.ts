@@ -1,4 +1,5 @@
 import { TObject } from '@sinclair/typebox';
+import { X_SCRATCH_FOREIGN_KEY_OPTIONS } from '@spinner/shared-types';
 import {
   findWebflowSecondaryLocaleByCmsLocaleId,
   webflowSecondaryLocaleBasePath,
@@ -6,7 +7,7 @@ import {
 } from '../webflow-folder-paths';
 import { buildWebflowJsonTableSpec } from '../webflow-json-schema';
 import { WebflowSchemaParser } from '../webflow-schema-parser';
-import { Collection, Locale, Site } from '../webflow-types';
+import { Collection, FieldType, Locale, Site } from '../webflow-types';
 
 // DEV-10529 — secondary Webflow locales surfaced as nested per-locale tables.
 
@@ -112,6 +113,34 @@ describe('buildWebflowJsonTableSpec — secondary-locale tables', () => {
     expect(spec.name).toBe('Blog Posts');
     expect(spec.basePath).toEqual(['My Site', 'Collections']);
     expect((spec.schema as TObject).title).toBe('Blog Posts');
+  });
+
+  it('carries the source locale segment in a reference FK linkedTableRemoteId', () => {
+    // The linked collection's secondary-locale table has remoteId [siteId, refCollectionId, cmsLocaleId]
+    // (parseSecondaryLocaleTablePreview), so a FK on a secondary-locale source table must include the
+    // same locale segment to deep-equal it.
+    const collectionWithRef = {
+      id: 'col-1',
+      displayName: 'Blog Posts',
+      slug: 'blog-posts',
+      fields: [
+        {
+          id: 'f-author',
+          type: FieldType.Reference,
+          slug: 'author',
+          displayName: 'Author',
+          isRequired: true,
+          validations: { collectionId: 'col-authors' },
+        },
+      ],
+    } as unknown as Collection;
+    const spec = buildWebflowJsonTableSpec(localeTableId('cms-es'), site, collectionWithRef, 2);
+    const fieldData = (spec.schema as TObject).properties.fieldData as TObject;
+    const author = (fieldData.properties as Record<string, Record<string, unknown>>).author;
+    expect(author[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'col-authors',
+      linkedTableRemoteId: ['site-1', 'col-authors', 'cms-es'],
+    });
   });
 });
 

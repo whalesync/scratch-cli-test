@@ -181,6 +181,36 @@ describe('createSchemaTablesSchema (zod contract)', () => {
       }),
     ).toContain('FK_TARGET_UNRESOLVED');
   });
+
+  it('parses a pending target that also carries the linked table full remote id', () => {
+    // The unbound branch is a strictObject, so the optional array has to be declared for a
+    // plan-generated target to survive the plan → draft → create roundtrip. It parses as the
+    // pending branch (hence FK_TARGET_UNRESOLVED) rather than failing the union outright.
+    expect(
+      issueCodes({
+        ...validRequest,
+        tables: [
+          {
+            ref: 't1',
+            name: 'Posts',
+            fields: [
+              { name: 'Title', fieldType: { kind: 'text' }, isPrimary: true },
+              {
+                name: 'Author',
+                fieldType: {
+                  kind: 'foreignKey',
+                  target: {
+                    unresolvedLinkedTableId: 'contacts',
+                    unresolvedLinkedTableRemoteId: ['projectRef', 'public', 'contacts'],
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual(['FK_TARGET_UNRESOLVED']);
+  });
 });
 
 describe('validateForeignKeyTargetsResolved', () => {

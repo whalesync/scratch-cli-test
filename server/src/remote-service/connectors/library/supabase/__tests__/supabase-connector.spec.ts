@@ -185,7 +185,7 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     expect(properties.name[X_SCRATCH_READONLY]).toBeUndefined();
   });
 
-  it('annotates foreign keys with the linked table id', async () => {
+  it('annotates foreign keys with the linked table id and the linked table full remote id', async () => {
     const spec = await fetchSchema(
       [
         buildColumn({ column_name: 'id', data_type: 'integer', udt_name: 'int4' }),
@@ -215,8 +215,16 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     );
 
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
-    expect(properties.author_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'authors' });
-    expect(properties.category_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'taxonomy.categories' });
+    // `linkedTableId` shortens a `public` target to a bare table name, but the remote-id array
+    // keeps the schema so it deep-equals the linked table's `DataFolder.tableId`.
+    expect(properties.author_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'authors',
+      linkedTableRemoteId: [PROJECT_REF, 'public', 'authors'],
+    });
+    expect(properties.category_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'taxonomy.categories',
+      linkedTableRemoteId: [PROJECT_REF, 'taxonomy', 'categories'],
+    });
     expect(properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
   });
 

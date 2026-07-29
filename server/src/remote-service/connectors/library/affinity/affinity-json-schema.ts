@@ -544,17 +544,29 @@ export function buildAffinityEntityFilesTableSpec(id: EntityId): BaseJsonTableSp
       // decorated object nested inside a field value). Read-only/navigation FKs:
       // entity files have no v1 metadata-update endpoint, so the link can be
       // followed but not re-parented from Scratch.
+      // The tenant People/Companies/Opportunities tables use a single-segment
+      // `remoteId: [<sentinel>]` (see `listTables`), where the sentinel string IS
+      // the `*_TABLE_WS_ID` constant — so `linkedTableRemoteId` is `[linkedTableId]`.
       person_id: Type.Union([Type.Number(), Type.Null()], {
         [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: PEOPLE_TABLE_WS_ID },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
+          linkedTableId: PEOPLE_TABLE_WS_ID,
+          linkedTableRemoteId: [PEOPLE_TABLE_WS_ID],
+        },
       }),
       organization_id: Type.Union([Type.Number(), Type.Null()], {
         [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: COMPANIES_TABLE_WS_ID },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
+          linkedTableId: COMPANIES_TABLE_WS_ID,
+          linkedTableRemoteId: [COMPANIES_TABLE_WS_ID],
+        },
       }),
       opportunity_id: Type.Union([Type.Number(), Type.Null()], {
         [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: OPPORTUNITIES_TABLE_WS_ID },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
+          linkedTableId: OPPORTUNITIES_TABLE_WS_ID,
+          linkedTableRemoteId: [OPPORTUNITIES_TABLE_WS_ID],
+        },
       }),
       uploader_id: Type.Number({ [X_SCRATCH_READONLY]: true }),
       created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),

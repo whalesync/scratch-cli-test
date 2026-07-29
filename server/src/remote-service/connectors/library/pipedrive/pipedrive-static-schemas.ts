@@ -83,7 +83,9 @@ function readonly(schema: TSchema): TSchema {
 
 /** A nullable foreign-key column pointing at another Pipedrive table. */
 function foreignKey(valueSchema: TSchema, linkedTableId: PipedriveEntityType): TSchema {
-  return { ...valueSchema, [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId } };
+  // A Pipedrive entity's table has `remoteId: [entityType]` (see PipedriveConnector.listTables),
+  // so the linked table's full remote id is the single-element `[linkedTableId]`.
+  return { ...valueSchema, [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId, linkedTableRemoteId: [linkedTableId] } };
 }
 
 /**

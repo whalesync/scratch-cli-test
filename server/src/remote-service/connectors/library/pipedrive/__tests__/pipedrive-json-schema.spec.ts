@@ -394,28 +394,37 @@ describe('pipedriveFieldToJsonSchema', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'org' }));
     expect(schema).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'organizations' });
+    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'organizations',
+      linkedTableRemoteId: ['organizations'],
+    });
   });
 
   it('maps people to Number | Null with FOREIGN_KEY_OPTIONS', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'people' }));
     expect(schema).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'persons' });
+    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'persons',
+      linkedTableRemoteId: ['persons'],
+    });
   });
 
   it('maps deal to Number | Null with FOREIGN_KEY_OPTIONS', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'deal' }));
     expect(schema).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'deals' });
+    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'deals', linkedTableRemoteId: ['deals'] });
   });
 
   it('maps stage to Number | Null with FOREIGN_KEY_OPTIONS to stages', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'stage' }));
     expect(schema).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'stages' });
+    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'stages',
+      linkedTableRemoteId: ['stages'],
+    });
   });
 
   it('maps user to Number | Null with READONLY_FLAG', () => {
@@ -602,8 +611,14 @@ describe('buildPipedriveJsonTableSpec', () => {
         mockClient as unknown as PipedriveApiClient,
       );
 
-      expect(spec.schema.properties.pipeline_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'pipelines' });
-      expect(spec.schema.properties.stage_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'stages' });
+      expect(spec.schema.properties.pipeline_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'pipelines',
+        linkedTableRemoteId: ['pipelines'],
+      });
+      expect(spec.schema.properties.stage_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'stages',
+        linkedTableRemoteId: ['stages'],
+      });
     });
   });
 
@@ -634,7 +649,10 @@ describe('buildPipedriveJsonTableSpec', () => {
       );
 
       expect(spec.name).toBe('Stages');
-      expect(spec.schema.properties.pipeline_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'pipelines' });
+      expect(spec.schema.properties.pipeline_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'pipelines',
+        linkedTableRemoteId: ['pipelines'],
+      });
       expect(spec.schema.properties.update_time['x-scratch-last-modified-field']).toBeUndefined();
     });
   });

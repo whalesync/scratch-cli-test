@@ -65,7 +65,10 @@ describe('buildMocoJsonTableSpec — schema matches verbatim data', () => {
   it('keeps description + x-scratch annotations on a swept read-only foreign-key field', () => {
     const company = propsFor('contacts').company;
     expect(allowsNull(company)).toBe(true);
-    expect(company[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'companies' });
+    expect(company[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'companies',
+      linkedTableRemoteId: ['companies'],
+    });
     expect(company[X_SCRATCH_READONLY]).toBe(true);
   });
 

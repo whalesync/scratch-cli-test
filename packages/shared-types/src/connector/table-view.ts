@@ -110,7 +110,17 @@ export type TableViewCol = {
   // `targetKeyPath` mirrors the schema annotation's field of the same name: the dot path in
   // the TARGET record that this column's values match, when they are not the target's remote
   // id. See ForeignKeyOptionSchema.targetKeyPath for the full contract.
-  foreignKey?: { linkedTableId: string; isSingleValued?: boolean; targetKeyPath?: string };
+  //
+  // `linkedTableRemoteId` mirrors the schema annotation's field of the same name: the linked
+  // table's FULL remote id as an array, deep-equal to that table's `DataFolder.tableId`, so a
+  // consumer can bind the link to a destination folder by array equality rather than parsing
+  // the connector-specific `linkedTableId` string. Absent unless the connector emits it.
+  foreignKey?: {
+    linkedTableId: string;
+    linkedTableRemoteId?: string[];
+    isSingleValued?: boolean;
+    targetKeyPath?: string;
+  };
 
   // When the field is an object, we may want to define a few subfields for the user to pick between, for
   // ergonomics. To the user, a complex object might only have one interesting field, which accurately represents it. For example,

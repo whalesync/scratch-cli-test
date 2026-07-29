@@ -117,7 +117,9 @@ function framerFieldValueSchema(field: FramerFieldMeta): TSchema {
  * which is what the key contract requires.
  */
 function framerReferenceForeignKeyOptions(collectionId: string): ForeignKeyOptionSchema {
-  return { linkedTableId: collectionId, targetKeyPath: 'slug' };
+  // `listTables` builds each collection's `remoteId` as `[collection.id]`, so the target table's
+  // full remote id array is just `[collectionId]`.
+  return { linkedTableId: collectionId, linkedTableRemoteId: [collectionId], targetKeyPath: 'slug' };
 }
 
 /**

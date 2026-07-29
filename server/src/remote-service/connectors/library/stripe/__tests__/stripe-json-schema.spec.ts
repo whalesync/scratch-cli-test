@@ -198,7 +198,10 @@ describe('buildStripeJsonTableSpec', () => {
     });
 
     it('links product to products table', () => {
-      expect(props.product[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'products' });
+      expect(props.product[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'products',
+        linkedTableRemoteId: ['products'],
+      });
     });
   });
 
@@ -220,7 +223,10 @@ describe('buildStripeJsonTableSpec', () => {
     });
 
     it('links customer to customers table', () => {
-      expect(props.customer[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'customers' });
+      expect(props.customer[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+        linkedTableId: 'customers',
+        linkedTableRemoteId: ['customers'],
+      });
     });
   });
 

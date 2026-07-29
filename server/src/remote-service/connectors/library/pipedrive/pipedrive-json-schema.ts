@@ -365,17 +365,17 @@ export function pipedriveFieldToJsonSchema(
 
     case 'org':
       return Type.Union([Type.Number(), Type.Null()], {
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'organizations' },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'organizations', linkedTableRemoteId: ['organizations'] },
       });
 
     case 'people':
       return Type.Union([Type.Number(), Type.Null()], {
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'persons' },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'persons', linkedTableRemoteId: ['persons'] },
       });
 
     case 'deal':
       return Type.Union([Type.Number(), Type.Null()], {
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'deals' },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'deals', linkedTableRemoteId: ['deals'] },
       });
 
     case 'user':
@@ -383,7 +383,7 @@ export function pipedriveFieldToJsonSchema(
 
     case 'stage':
       return Type.Union([Type.Number(), Type.Null()], {
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'stages' },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'stages', linkedTableRemoteId: ['stages'] },
       });
 
     case 'status':
@@ -491,7 +491,7 @@ export async function buildPipedriveJsonTableSpec(
       // (field_type `double`, so there's no type-based hook like `stage`); wire
       // it as a foreign key to the pipelines table.
       if (field.field_code === 'pipeline_id') {
-        annotations[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId: 'pipelines' };
+        annotations[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId: 'pipelines', linkedTableRemoteId: ['pipelines'] };
       }
 
       // Merge annotations into the schema

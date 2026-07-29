@@ -171,7 +171,10 @@ describe('YouTubeConnector', () => {
       expect(spec.name).toBe('Videos');
       expect(spec.basePath).toEqual([OWN_CHANNEL_TITLE]);
       // snippet.channelId is a read-only FK into the single top-level Channels table.
-      expect(getForeignKeyOptions('snippet.channelId', spec)).toEqual({ linkedTableId: 'channels' });
+      expect(getForeignKeyOptions('snippet.channelId', spec)).toEqual({
+        linkedTableId: 'channels',
+        linkedTableRemoteId: ['channels'],
+      });
       expect(isReadonlyField('snippet.channelId', spec)).toBe(true);
     });
 
@@ -180,9 +183,11 @@ describe('YouTubeConnector', () => {
       expect(spec.name).toBe('PlaylistItems');
       expect(getForeignKeyOptions('snippet.playlistId', spec)).toEqual({
         linkedTableId: `playlists_${OWN_CHANNEL_ID}`,
+        linkedTableRemoteId: ['playlists', OWN_CHANNEL_ID],
       });
       expect(getForeignKeyOptions('contentDetails.videoId', spec)).toEqual({
         linkedTableId: `videos_${OWN_CHANNEL_ID}`,
+        linkedTableRemoteId: ['videos', OWN_CHANNEL_ID],
       });
       // The re-parent FKs are EDITABLE.
       expect(isReadonlyField('snippet.playlistId', spec)).toBe(false);

@@ -59,7 +59,9 @@ export function buildWixBlogJsonTableSpec(id: EntityId): BaseJsonTableSpec {
       relatedPostIds: Type.Optional(
         Type.Array(Type.String(), {
           description: 'Related post IDs',
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: id.wsId },
+          // Self-reference to this same Blog Posts table, so the target's remoteId is
+          // this table's own id.remoteId (listTables builds `remoteId: ['wix-blog']`).
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: id.wsId, linkedTableRemoteId: id.remoteId },
         }),
       ),
       pricingPlanIds: Type.Optional(

@@ -211,6 +211,16 @@ export interface AssetTableOptions {
 export interface ForeignKeyOptionSchema {
   linkedTableId: string;
   /**
+   * The linked table's FULL remote id, as an array — the same shape as the target table's
+   * `DataFolder.tableId`, so a consumer can bind the foreign key to a destination folder by
+   * plain array equality instead of parsing `linkedTableId`'s connector-specific string form.
+   * MUST deep-equal the linked table's `DataFolder.tableId` when present (e.g. Supabase's
+   * `[projectRef, schema, table]`, Postgres's `[schema, table]` — schema included even when it
+   * is `public`, unlike the shortened `linkedTableId` string). Absent for connectors that have
+   * not adopted it; consumers fall back to matching on `linkedTableId`.
+   */
+  linkedTableRemoteId?: string[];
+  /**
    * Remote field id of the RECIPROCAL foreign key on the linked table, for services whose
    * link fields are symmetric (Airtable auto-creates a mirror link on the other table;
    * Notion's `dual_property` relations carry a `synced_property_id`). The two sides of one

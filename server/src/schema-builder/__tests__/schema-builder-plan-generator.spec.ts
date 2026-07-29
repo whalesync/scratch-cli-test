@@ -234,6 +234,37 @@ describe('generateCreatePlanFromSources', () => {
     });
   });
 
+  it("carries the source foreignKey's linkedTableRemoteId onto the pending target when the connector emits it", () => {
+    const orphan: PlanGeneratorSource = {
+      ref: 'posts',
+      dataFolderId: 'posts',
+      tableName: 'Posts',
+      remoteTableIds: ['projectRef', 'public', 'posts'],
+      idFieldPath: 'id',
+      schemaFields: [
+        field({
+          path: 'author_id',
+          type: 'string',
+          foreignKey: { linkedTableId: 'authors', linkedTableRemoteId: ['projectRef', 'public', 'authors'] },
+        }),
+      ],
+    };
+    const { tables } = generateCreatePlanFromSources({
+      sources: [orphan],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    // The array rides alongside the string token so a consumer can bind the pending target
+    // by comparing it to the source folder's `DataFolder.tableId` directly.
+    expect(tables[0].fields.find((f) => f.name === 'author_id')?.fieldType).toEqual({
+      kind: 'foreignKey',
+      target: {
+        unresolvedLinkedTableId: 'authors',
+        unresolvedLinkedTableRemoteId: ['projectRef', 'public', 'authors'],
+      },
+    });
+  });
+
   it('resolves a foreignKey via linkedTableMappings to an existing remote table', () => {
     const orphan: PlanGeneratorSource = {
       ref: 'posts',

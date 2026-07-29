@@ -687,7 +687,18 @@ function mapSchemaFieldToCreateFieldSpec(
     if (targetIsUsable) {
       foreignKeyType = { kind: 'foreignKey', target: resolution };
     } else {
-      foreignKeyType = { kind: 'foreignKey', target: { unresolvedLinkedTableId: linkedTableId } };
+      // Carry the source linked table's FULL remote id alongside the string token when the
+      // connector emits one: it deep-equals the target folder's `DataFolder.tableId`, so a
+      // consumer can bind the pending target by array equality instead of parsing the token.
+      foreignKeyType = {
+        kind: 'foreignKey',
+        target: {
+          unresolvedLinkedTableId: linkedTableId,
+          ...(schemaField.foreignKey.linkedTableRemoteId
+            ? { unresolvedLinkedTableRemoteId: schemaField.foreignKey.linkedTableRemoteId }
+            : {}),
+        },
+      };
       foreignKeyNeedsTargetLinkedTableId = linkedTableId;
     }
   }

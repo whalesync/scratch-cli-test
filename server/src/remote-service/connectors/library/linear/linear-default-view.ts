@@ -492,7 +492,14 @@ function buildForeignKeyCol(
     // A reference object is read-only on Linear (`x-scratch-readonly` on the field itself); a flat
     // id list like `labelIds` is writable, so take the answer from the schema rather than assuming.
     readonly: fieldSchema?.[X_SCRATCH_READONLY] === true || undefined,
-    foreignKey: { linkedTableId: relation.linkedTableId, isSingleValued: relation.isSingleValued },
+    // `linkedTableRemoteId` is the target table's full remote id array — for Linear that's
+    // `[entityType]` (see `LinearConnector.listTables`, `remoteId: [entityType]`), and the FK's
+    // `linkedTableId` IS that entity type, so the array is the single-element `[linkedTableId]`.
+    foreignKey: {
+      linkedTableId: relation.linkedTableId,
+      linkedTableRemoteId: [relation.linkedTableId],
+      isSingleValued: relation.isSingleValued,
+    },
   };
 }
 

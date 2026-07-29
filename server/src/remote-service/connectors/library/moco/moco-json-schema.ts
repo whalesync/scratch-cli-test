@@ -224,7 +224,7 @@ function buildContactSchema(): TSchema {
           {
             description: 'Associated company (read-only, use company_id for create/update)',
             [X_SCRATCH_READONLY]: true,
-            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies' },
+            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies', linkedTableRemoteId: ['companies'] },
           },
         ),
       ),
@@ -373,7 +373,7 @@ function buildProjectSchema(): TSchema {
           {
             description: 'Customer company (read-only, use customer_id for create/update)',
             [X_SCRATCH_READONLY]: true,
-            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies' },
+            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies', linkedTableRemoteId: ['companies'] },
           },
         ),
       ),
@@ -393,21 +393,21 @@ function buildProjectSchema(): TSchema {
         Type.Union([contactRefSchema, Type.Null()], {
           description: 'Primary contact (read-only, use contact_id for create/update)',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts', linkedTableRemoteId: ['contacts'] },
         }),
       ),
       secondary_contact: Type.Optional(
         Type.Union([contactRefSchema, Type.Null()], {
           description: 'Secondary contact (read-only, use secondary_contact_id for create/update)',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts', linkedTableRemoteId: ['contacts'] },
         }),
       ),
       billing_contact: Type.Optional(
         Type.Union([contactRefSchema, Type.Null()], {
           description: 'Billing contact (read-only, use billing_contact_id for create/update)',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts', linkedTableRemoteId: ['contacts'] },
         }),
       ),
       // Nested arrays (read-only)

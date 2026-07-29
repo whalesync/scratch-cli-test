@@ -797,7 +797,10 @@
           "path": "associations.notes.results",
           "name": "Associated Notes",
           "foreignKey": {
-            "linkedTableId": "notes"
+            "linkedTableId": "notes",
+            "linkedTableRemoteId": [
+              "notes"
+            ]
           },
           "displayTransformer": {
             "type": "jsonpath",
@@ -834,7 +837,10 @@
           "path": "associations.tasks.results",
           "name": "Associated Tasks",
           "foreignKey": {
-            "linkedTableId": "tasks"
+            "linkedTableId": "tasks",
+            "linkedTableRemoteId": [
+              "tasks"
+            ]
           },
           "displayTransformer": {
             "type": "jsonpath",
@@ -871,7 +877,10 @@
           "path": "associations.tickets.results",
           "name": "Associated Tickets",
           "foreignKey": {
-            "linkedTableId": "tickets"
+            "linkedTableId": "tickets",
+            "linkedTableRemoteId": [
+              "tickets"
+            ]
           },
           "displayTransformer": {
             "type": "jsonpath",
@@ -908,7 +917,10 @@
           "path": "associations.contacts.results",
           "name": "Associated Contacts",
           "foreignKey": {
-            "linkedTableId": "contacts"
+            "linkedTableId": "contacts",
+            "linkedTableRemoteId": [
+              "contacts"
+            ]
           },
           "displayTransformer": {
             "type": "jsonpath",
@@ -945,7 +957,10 @@
           "path": "associations.companies.results",
           "name": "Associated Companies",
           "foreignKey": {
-            "linkedTableId": "companies"
+            "linkedTableId": "companies",
+            "linkedTableRemoteId": [
+              "companies"
+            ]
           },
           "displayTransformer": {
             "type": "jsonpath",
@@ -982,7 +997,10 @@
           "path": "associations.deals.results",
           "name": "Associated Deals",
           "foreignKey": {
-            "linkedTableId": "deals"
+            "linkedTableId": "deals",
+            "linkedTableRemoteId": [
+              "deals"
+            ]
           },
           "displayTransformer": {
             "type": "jsonpath",

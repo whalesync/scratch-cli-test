@@ -143,6 +143,7 @@ describe('featured_media links to the Media table (DEV-11093)', () => {
   it('is a foreign key to media, not a number', () => {
     expect(foreignKeyAnnotationAt(POSTS_SPEC, 'featured_media')).toEqual({
       linkedTableId: 'media',
+      linkedTableRemoteId: ['media'],
       isSingleValued: true,
       valuesMeaningNoLink: [WORDPRESS_NO_LINK_FOREIGN_KEY_VALUE],
     });
@@ -158,6 +159,7 @@ describe('parent is a self-referential link on hierarchical collections (DEV-110
   it('points a hierarchical post type back at its own table', () => {
     expect(foreignKeyAnnotationAt(PAGES_SPEC, 'parent')).toEqual({
       linkedTableId: 'pages',
+      linkedTableRemoteId: ['pages'],
       isSingleValued: true,
       valuesMeaningNoLink: [WORDPRESS_NO_LINK_FOREIGN_KEY_VALUE],
     });

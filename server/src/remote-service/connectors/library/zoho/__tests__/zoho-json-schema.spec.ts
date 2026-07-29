@@ -77,13 +77,19 @@ describe('zohoFieldToJsonSchema — data_type mapping', () => {
     const schema = zohoFieldToJsonSchema(
       makeField({ api_name: 'Account_Name', data_type: 'lookup', lookup: { module: { api_name: 'Accounts' } } }),
     );
-    expect(ann(schema, X_SCRATCH_FOREIGN_KEY_OPTIONS)).toEqual({ linkedTableId: 'Accounts' });
+    expect(ann(schema, X_SCRATCH_FOREIGN_KEY_OPTIONS)).toEqual({
+      linkedTableId: 'Accounts',
+      linkedTableRemoteId: ['Accounts'],
+    });
   });
 
   it('annotates owner/user lookups with a foreign key to users', () => {
     for (const dt of ['ownerlookup', 'userlookup']) {
       const schema = zohoFieldToJsonSchema(makeField({ api_name: 'Owner', data_type: dt }));
-      expect(ann(schema, X_SCRATCH_FOREIGN_KEY_OPTIONS)).toEqual({ linkedTableId: 'users' });
+      expect(ann(schema, X_SCRATCH_FOREIGN_KEY_OPTIONS)).toEqual({
+        linkedTableId: 'users',
+        linkedTableRemoteId: ['users'],
+      });
     }
   });
 

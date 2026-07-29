@@ -149,6 +149,7 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 
 ## Gotchas
 - (connector-specific operational notes)
+- The FK annotation carries two forms of the target: `linkedTableId`, a display string that drops a `public.` prefix (`authors`, `taxonomy.categories`), and `linkedTableRemoteId`, the linked table's full remote id `[schema, table]` — which keeps `public` so it deep-equals that table's `DataFolder.tableId` and can be matched by array equality.
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).

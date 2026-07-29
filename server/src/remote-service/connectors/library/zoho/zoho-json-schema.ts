@@ -115,12 +115,19 @@ export function zohoFieldToJsonSchema(field: ZohoFieldMetadata): TSchema {
 
     case 'lookup': {
       const linkedTableId = field.lookup?.module?.api_name;
-      const annotations = linkedTableId ? { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId } } : undefined;
+      // Zoho `listTables` builds `remoteId: [apiName]`, so the target table's full remote
+      // id is the single-element `[linkedTableId]` (the linked module's api_name).
+      const annotations = linkedTableId
+        ? { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId, linkedTableRemoteId: [linkedTableId] } }
+        : undefined;
       return lookupObjectSchema(annotations);
     }
     case 'ownerlookup':
     case 'userlookup':
-      return lookupObjectSchema({ [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'users' } });
+      // The users table's remoteId is `[ZOHO_USERS_TABLE_ID]` (= 'users'), matching linkedTableId.
+      return lookupObjectSchema({
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'users', linkedTableRemoteId: ['users'] },
+      });
 
     // Multi-valued and polymorphic references are stored verbatim with NO foreign
     // key (Scratch FKs are single-target; see Decision #2 in the plan). They are

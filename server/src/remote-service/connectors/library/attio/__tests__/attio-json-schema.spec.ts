@@ -238,6 +238,8 @@ describe('attio-json-schema foreign keys', () => {
     const spec = await buildAttioObjectTableSpec(mockEntityId, 'people', mockClient);
     expect(spec.schema.properties.values.properties.company[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
       linkedTableId: 'companies',
+      // Matches the companies object's remoteId `[api_slug]` from listTables (raw slug).
+      linkedTableRemoteId: ['companies'],
     });
   });
 
@@ -250,6 +252,8 @@ describe('attio-json-schema foreign keys', () => {
     // (DEV-11052).
     expect(spec.schema.properties.values.properties.owner[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
       linkedTableId: 'members',
+      // The Members table's full remoteId (`['members']`) from listTables.
+      linkedTableRemoteId: ['members'],
     });
   });
 
@@ -407,6 +411,7 @@ describe('attio-json-schema tasks assignees foreign key (DEV-11052)', () => {
     // Points at the Members remoteId ('members'), same target as object actor-references.
     expect(spec.schema.properties.assignees[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
       linkedTableId: 'members',
+      linkedTableRemoteId: ['members'],
       isSingleValued: false,
     });
   });

@@ -228,7 +228,7 @@ describe('buildHubspotDefaultView', () => {
       // an edited id list back into the native `results` array on write.
       expect(col.readonly).toBeUndefined();
       expect(col.hidden).toBeUndefined();
-      expect(col.foreignKey).toEqual({ linkedTableId: 'contacts' });
+      expect(col.foreignKey).toEqual({ linkedTableId: 'contacts', linkedTableRemoteId: ['contacts'] });
       expect(col.displayTransformer).toEqual({
         type: 'jsonpath',
         options: { expression: '$[*].id', arrayHandling: 'join_comma' },
@@ -255,7 +255,7 @@ describe('buildHubspotDefaultView', () => {
       for (const col of group.cols) {
         expect(col.readonly).toBeUndefined();
         const associationType = col.path.split('.')[1];
-        expect(col.foreignKey).toEqual({ linkedTableId: associationType });
+        expect(col.foreignKey).toEqual({ linkedTableId: associationType, linkedTableRemoteId: [associationType] });
         expect(col.displayTransformer).toEqual({
           type: 'jsonpath',
           options: { expression: '$[*].id', arrayHandling: 'join_comma' },

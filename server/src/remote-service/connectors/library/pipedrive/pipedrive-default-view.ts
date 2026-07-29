@@ -154,7 +154,7 @@ function buildColumnsForField(
         path,
         name,
         type: 'string',
-        foreignKey: { linkedTableId: 'persons' },
+        foreignKey: { linkedTableId: 'persons', linkedTableRemoteId: ['persons'] },
         displayTransformer: {
           type: 'jsonpath',
           options: { expression: '$[*].person_id', arrayHandling: 'join_comma' },

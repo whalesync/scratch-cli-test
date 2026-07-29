@@ -19,12 +19,24 @@ const readonlyString = (description: string): TSchema =>
 /** An editable optional string. */
 const editableString = (description: string): TSchema => Type.Optional(Type.String({ description }));
 
-/** A foreign-key string column pointing at another table's `wsId`. */
-const foreignKeyString = (description: string, linkedTableId: string, readonly = false): TSchema =>
+/**
+ * A foreign-key string column pointing at another table's `wsId`.
+ *
+ * `linkedTableRemoteId` is the TARGET table's full `remoteId` array — exactly what
+ * `listTables` builds for that table. For the Channels table it is `['channels']`;
+ * for a channel-scoped table (Videos/Playlists) it is `[kind, channelId]` (NOT the
+ * `<kind>_<channelId>` wsId string that `linkedTableId` holds).
+ */
+const foreignKeyString = (
+  description: string,
+  linkedTableId: string,
+  linkedTableRemoteId: string[],
+  readonly = false,
+): TSchema =>
   Type.Optional(
     Type.String({
       description,
-      [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId },
+      [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId, linkedTableRemoteId },
       ...(readonly ? { [X_SCRATCH_READONLY]: true } : {}),
     }),
   );
@@ -78,7 +90,7 @@ export function buildYouTubeJsonTableSpec(id: EntityId, channelId: string, chann
             publishedAt: Type.Optional(
               Type.String({ description: 'Video publish date', format: 'date-time', [X_SCRATCH_READONLY]: true }),
             ),
-            channelId: foreignKeyString('Channel ID', channelsTableLinkId(), true),
+            channelId: foreignKeyString('Channel ID', channelsTableLinkId(), [channelsTableLinkId()], true),
             title: editableString('Video title'),
             description: editableString('Video description'),
             thumbnails: readonlyThumbnails(),
@@ -166,7 +178,7 @@ export function buildPlaylistsJsonTableSpec(id: EntityId, channelId: string, cha
             publishedAt: Type.Optional(
               Type.String({ description: 'Playlist creation date', format: 'date-time', [X_SCRATCH_READONLY]: true }),
             ),
-            channelId: foreignKeyString('Owning channel ID', channelsTableLinkId(), true),
+            channelId: foreignKeyString('Owning channel ID', channelsTableLinkId(), [channelsTableLinkId()], true),
             title: editableString('Playlist title'),
             description: editableString('Playlist description'),
             thumbnails: readonlyThumbnails(),
@@ -231,7 +243,12 @@ export function buildPlaylistItemsJsonTableSpec(
             publishedAt: Type.Optional(
               Type.String({ description: 'When the item was added', format: 'date-time', [X_SCRATCH_READONLY]: true }),
             ),
-            channelId: foreignKeyString('Channel that owns the playlist', channelsTableLinkId(), true),
+            channelId: foreignKeyString(
+              'Channel that owns the playlist',
+              channelsTableLinkId(),
+              [channelsTableLinkId()],
+              true,
+            ),
             title: readonlyString('Title of the referenced video'),
             description: readonlyString('Description of the referenced video'),
             thumbnails: readonlyThumbnails(),
@@ -239,6 +256,8 @@ export function buildPlaylistItemsJsonTableSpec(
             playlistId: foreignKeyString(
               'Playlist this item belongs to (editable to re-parent)',
               channelTableWsId('playlists', channelId),
+              // Channel-scoped target: `listTables` builds its remoteId as `[kind, channelId]`.
+              ['playlists', channelId],
             ),
             position: Type.Optional(
               Type.Number({ description: 'Zero-based position of the item in the playlist (editable)' }),
@@ -257,7 +276,11 @@ export function buildPlaylistItemsJsonTableSpec(
         Type.Object(
           {
             // Editable FK — which video this item points at.
-            videoId: foreignKeyString('Video this item references (editable)', channelTableWsId('videos', channelId)),
+            // Channel-scoped target: `listTables` builds its remoteId as `[kind, channelId]`.
+            videoId: foreignKeyString('Video this item references (editable)', channelTableWsId('videos', channelId), [
+              'videos',
+              channelId,
+            ]),
             note: editableString('A user-supplied note about the item'),
             videoPublishedAt: readonlyString('When the referenced video was published'),
           },
@@ -288,7 +311,7 @@ export function buildChannelSectionsJsonTableSpec(
         Type.Object(
           {
             type: editableString('Section type (e.g. singlePlaylist, multiplePlaylists, recentUploads)'),
-            channelId: foreignKeyString('Owning channel ID', channelsTableLinkId(), true),
+            channelId: foreignKeyString('Owning channel ID', channelsTableLinkId(), [channelsTableLinkId()], true),
             title: editableString('Section title (for the *Playlists section types)'),
             position: Type.Optional(
               Type.Number({ description: 'Zero-based position of the section on the channel page' }),
@@ -439,7 +462,7 @@ export function buildSubscriptionsJsonTableSpec(
             ),
             title: readonlyString('Title of the subscribed-to resource'),
             description: readonlyString('Description of the subscribed-to resource'),
-            channelId: foreignKeyString('Subscriber channel ID', channelsTableLinkId(), true),
+            channelId: foreignKeyString('Subscriber channel ID', channelsTableLinkId(), [channelsTableLinkId()], true),
             resourceId: Type.Optional(
               Type.Record(Type.String(), Type.Unknown(), {
                 description: 'The channel this subscription points at (set on create)',
@@ -514,7 +537,12 @@ export function buildMembershipsLevelsJsonTableSpec(
       snippet: Type.Optional(
         Type.Object(
           {
-            creatorChannelId: foreignKeyString('Channel that offers this level', channelsTableLinkId(), true),
+            creatorChannelId: foreignKeyString(
+              'Channel that offers this level',
+              channelsTableLinkId(),
+              [channelsTableLinkId()],
+              true,
+            ),
             levelDetails: Type.Optional(
               Type.Record(Type.String(), Type.Unknown(), {
                 description: 'Level display name + pricing',

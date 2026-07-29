@@ -159,10 +159,17 @@ describe('buildHubspotJsonTableSpec association foreign keys', () => {
     );
 
     // Deals associate with companies, contacts, deals (self), notes, tasks, tickets.
-    expect(associationForeignKey(spec, 'companies')).toEqual({ linkedTableId: 'companies' });
-    expect(associationForeignKey(spec, 'contacts')).toEqual({ linkedTableId: 'contacts' });
-    expect(associationForeignKey(spec, 'deals')).toEqual({ linkedTableId: 'deals' });
-    expect(associationForeignKey(spec, 'notes')).toEqual({ linkedTableId: 'notes' });
+    // linkedTableRemoteId is the target standard object's single-segment remoteId.
+    expect(associationForeignKey(spec, 'companies')).toEqual({
+      linkedTableId: 'companies',
+      linkedTableRemoteId: ['companies'],
+    });
+    expect(associationForeignKey(spec, 'contacts')).toEqual({
+      linkedTableId: 'contacts',
+      linkedTableRemoteId: ['contacts'],
+    });
+    expect(associationForeignKey(spec, 'deals')).toEqual({ linkedTableId: 'deals', linkedTableRemoteId: ['deals'] });
+    expect(associationForeignKey(spec, 'notes')).toEqual({ linkedTableId: 'notes', linkedTableRemoteId: ['notes'] });
   });
 
   it('uses the raw HubSpot object-type code as linkedTableId (appointments → 0-421)', async () => {
@@ -173,7 +180,8 @@ describe('buildHubspotJsonTableSpec association foreign keys', () => {
     );
 
     // Meetings associate with 0-421 (Appointments), whose table wsId is the code itself.
-    expect(associationForeignKey(spec, '0-421')).toEqual({ linkedTableId: '0-421' });
+    // 0-421 is a standard object with remoteId ['0-421'], so the array is that code too.
+    expect(associationForeignKey(spec, '0-421')).toEqual({ linkedTableId: '0-421', linkedTableRemoteId: ['0-421'] });
   });
 
   it('annotates every association declared for an object type', async () => {
@@ -184,7 +192,10 @@ describe('buildHubspotJsonTableSpec association foreign keys', () => {
     );
 
     for (const assocType of ASSOCIATIONS_BY_OBJECT_TYPE['contacts']) {
-      expect(associationForeignKey(spec, assocType)).toEqual({ linkedTableId: assocType });
+      expect(associationForeignKey(spec, assocType)).toEqual({
+        linkedTableId: assocType,
+        linkedTableRemoteId: [assocType],
+      });
     }
   });
 

@@ -28,12 +28,42 @@ import {
 import { Collection, Field, FieldType, isWebflowEcommerceCollectionSlug, Site } from './webflow-types';
 
 /**
+ * Build the `linkedTableRemoteId` for a Reference / MultiReference foreign key: the FULL remote-id
+ * array of the LINKED collection's table, which must deep-equal that table's `EntityId.remoteId` as
+ * `listTables` (via `webflow-schema-parser`) builds it.
+ *
+ * A Webflow reference only ever targets a collection in the SAME site, so the leading `siteId`
+ * segment is the source table's own (`id.remoteId[0]`). When the SOURCE table is a secondary-locale
+ * table (its `id.remoteId` has a third `cmsLocaleId` segment — possibly `''`, mirroring
+ * `webflow-schema-parser`'s `locale.cmsLocaleId ?? ''`), the linked collection's table is likewise
+ * the locale-scoped variant, so carry the same locale segment: `[siteId, refCollectionId, cmsLocaleId]`.
+ * A primary table has no third segment, so its links target primary tables: `[siteId, refCollectionId]`.
+ *
+ * `cmsLocaleId === undefined` (no third segment destructured) distinguishes a primary source table
+ * from a secondary-locale one, so an empty-string locale segment is preserved verbatim. When `siteId`
+ * context isn't supplied, `linkedTableRemoteId` is omitted.
+ */
+function webflowLinkedTableRemoteId(
+  siteId: string | undefined,
+  refCollectionId: string,
+  cmsLocaleId: string | undefined,
+): { linkedTableRemoteId?: string[] } {
+  if (siteId === undefined) return {};
+  return {
+    linkedTableRemoteId: cmsLocaleId === undefined ? [siteId, refCollectionId] : [siteId, refCollectionId, cmsLocaleId],
+  };
+}
+
+/**
  * Convert a Webflow field to a TypeBox JSON Schema.
  * Annotates the schema with x-scratch metadata (readonly, foreign key, connector data type).
+ *
+ * `siteId` / `cmsLocaleId` (the source table's `id.remoteId[0]` and `[2]`) let Reference /
+ * MultiReference FKs emit the linked collection's full `linkedTableRemoteId`.
  */
 // FIXTURE NOTE: edits here change the generated schema.json checked in under
 // `__fixtures__/view-codec/webflow-*` — see `buildWebflowJsonTableSpec` for how to refresh them.
-export function webflowFieldToJsonSchema(field: Field): TSchema {
+export function webflowFieldToJsonSchema(field: Field, siteId?: string, cmsLocaleId?: string): TSchema {
   const description = field.displayName;
   let schema: TSchema;
 
@@ -46,7 +76,9 @@ export function webflowFieldToJsonSchema(field: Field): TSchema {
       const refCollectionId = _.get(field.validations, 'collectionId') as string | undefined;
       schema = Type.String({
         description,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: refCollectionId ? { linkedTableId: refCollectionId } : undefined,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: refCollectionId
+          ? { linkedTableId: refCollectionId, ...webflowLinkedTableRemoteId(siteId, refCollectionId, cmsLocaleId) }
+          : undefined,
       });
       break;
     }
@@ -162,7 +194,12 @@ export function webflowFieldToJsonSchema(field: Field): TSchema {
       const multiRefCollectionId = _.get(field.validations, 'collectionId') as string | undefined;
       schema = Type.Array(Type.String(), {
         description,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: multiRefCollectionId ? { linkedTableId: multiRefCollectionId } : undefined,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: multiRefCollectionId
+          ? {
+              linkedTableId: multiRefCollectionId,
+              ...webflowLinkedTableRemoteId(siteId, multiRefCollectionId, cmsLocaleId),
+            }
+          : undefined,
       });
       break;
     }
@@ -231,7 +268,7 @@ export function buildWebflowJsonTableSpec(
   collection: Collection,
   structureVersion = 1,
 ): BaseJsonTableSpec {
-  const [, collectionId, cmsLocaleId] = id.remoteId;
+  const [siteId, collectionId, cmsLocaleId] = id.remoteId;
   const isSecondaryLocale = Boolean(cmsLocaleId);
   const isEcommerce = isWebflowEcommerceCollectionSlug(collection.slug);
   const secondaryLocale = cmsLocaleId ? findWebflowSecondaryLocaleByCmsLocaleId(site, cmsLocaleId) : undefined;
@@ -291,7 +328,10 @@ export function buildWebflowJsonTableSpec(
       continue;
     }
 
-    const fieldSchema = webflowFieldToJsonSchema(field);
+    // Thread the source table's site + locale so Reference / MultiReference FKs can emit the linked
+    // collection's full remoteId ([siteId, refCollectionId] or, for a secondary-locale table,
+    // [siteId, refCollectionId, cmsLocaleId]) matching how listTables builds it.
+    const fieldSchema = webflowFieldToJsonSchema(field, siteId, cmsLocaleId);
 
     // Check if field is required using Webflow's isRequired property
     // slug and name fields are always required for Webflow

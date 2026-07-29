@@ -108,10 +108,12 @@ describe('buildFramerJsonTableSpec', () => {
     // publishes nothing.
     expect(getFramerForeignKeyOptions('fAuthor', spec)).toEqual({
       linkedTableId: 'col_authors',
+      linkedTableRemoteId: ['col_authors'],
       targetKeyPath: 'slug',
     });
     expect(getFramerForeignKeyOptions('fTags', spec)).toEqual({
       linkedTableId: 'col_tags',
+      linkedTableRemoteId: ['col_tags'],
       targetKeyPath: 'slug',
     });
   });

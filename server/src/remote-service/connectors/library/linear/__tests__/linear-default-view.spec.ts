@@ -257,7 +257,7 @@ describe('buildLinearDefaultView', () => {
 
     it('should link lead to the Users table by its id', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'lead.id') as TableViewCol;
-      expect(col.foreignKey).toEqual({ linkedTableId: 'users', isSingleValued: true });
+      expect(col.foreignKey).toEqual({ linkedTableId: 'users', linkedTableRemoteId: ['users'], isSingleValued: true });
       expect(col.name).toBe('Lead');
       expect(col.subfields).toBeUndefined();
     });
@@ -289,14 +289,18 @@ describe('buildLinearDefaultView', () => {
       ['creator.id', 'Creator', 'users'],
     ])('should link %s to the %s table as a single-valued foreign key', (path, name, linkedTableId) => {
       const col = colAt(path);
-      expect(col.foreignKey).toEqual({ linkedTableId, isSingleValued: true });
+      expect(col.foreignKey).toEqual({ linkedTableId, linkedTableRemoteId: [linkedTableId], isSingleValued: true });
       expect(col.name).toBe(name);
       expect(col.type).toBe('string');
     });
 
     it('should link labelIds to Labels as a multi-valued foreign key on its own path', () => {
       const col = colAt('labelIds');
-      expect(col.foreignKey).toEqual({ linkedTableId: 'labels', isSingleValued: false });
+      expect(col.foreignKey).toEqual({
+        linkedTableId: 'labels',
+        linkedTableRemoteId: ['labels'],
+        isSingleValued: false,
+      });
     });
 
     it('should not give a foreign-key column subfields, which would drop the declaration', () => {

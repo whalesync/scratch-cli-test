@@ -89,9 +89,17 @@ describe('buildWebflowJsonTableSpec — optional fields accept null (DEV-10453)'
     expect(arrayBranch?.items?.type).toBe('string');
     expect(branches.some((m) => m.type === 'null')).toBe(true);
     expect(fields.category[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('MultiReference');
-    expect(fields.category[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'col-cats' });
+    // The linked collection lives in the same site, so its full remoteId is [siteId, refCollectionId]
+    // (matching how listTables builds a primary collection's remoteId).
+    expect(fields.category[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'col-cats',
+      linkedTableRemoteId: ['site-1', 'col-cats'],
+    });
     // The pointer-based lookup the frontends use still resolves the FK.
-    expect(getForeignKeyOptions('category', spec)).toEqual({ linkedTableId: 'col-cats' });
+    expect(getForeignKeyOptions('category', spec)).toEqual({
+      linkedTableId: 'col-cats',
+      linkedTableRemoteId: ['site-1', 'col-cats'],
+    });
   });
 
   it('makes an Image field nullable while keeping its asset annotation', () => {

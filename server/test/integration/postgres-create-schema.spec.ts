@@ -130,7 +130,10 @@ describe('Postgres create-schema — real DDL round-trip', () => {
     const spec = await connector.fetchJsonTableSpec({ wsId: 'posts', remoteId: [SCHEMA, 'posts'] });
     expect(spec.idPath).toBe('id');
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
-    expect(properties.author_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: `${SCHEMA}.users` });
+    expect(properties.author_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: `${SCHEMA}.users`,
+      linkedTableRemoteId: [SCHEMA, 'users'],
+    });
   });
 
   it('inserts a record and returns the auto-generated id', async () => {

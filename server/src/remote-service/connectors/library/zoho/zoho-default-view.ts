@@ -65,10 +65,10 @@ export function buildZohoDefaultView(spec: BaseJsonTableSpec): TableView {
     // `source_fk_to_dest_fk` — resolves `$.id` instead of returning null and leaking
     // the raw object into the sync transform, which aborts the whole run (DEV-11096).
     // Purely a view/display change: the on-disk `{id,name}` object is untouched.
-    const linkedTableId = foreignKeyLinkedTableId(propertySchema);
-    if (linkedTableId) {
+    const foreignKey = foreignKeyFromSchema(propertySchema);
+    if (foreignKey) {
       // Zoho single lookups reference at most one record, so mark the FK single-valued.
-      col.foreignKey = { linkedTableId, isSingleValued: true };
+      col.foreignKey = { ...foreignKey, isSingleValued: true };
       col.displayTransformer = { type: 'jsonpath', options: { expression: '$.id', arrayHandling: 'array' } };
     }
 
@@ -95,17 +95,30 @@ export function buildZohoDefaultView(spec: BaseJsonTableSpec): TableView {
 }
 
 /**
- * Read the foreign-key target table id off a schema property's `x-scratch-foreign-key`
+ * Read the foreign-key target off a schema property's `x-scratch-foreign-key`
  * annotation, if present. Only single-lookup fields (lookup/ownerlookup/userlookup)
  * carry it — the connector attaches it in `zoho-json-schema.ts`; multi-valued and
  * polymorphic references deliberately have no FK. Returns `undefined` when absent so
- * the caller leaves the column as a plain object.
+ * the caller leaves the column as a plain object. Carries `linkedTableRemoteId` (the
+ * target table's full remote id array) straight through from the schema annotation.
  */
-function foreignKeyLinkedTableId(propertySchema: Record<string, unknown>): string | undefined {
+function foreignKeyFromSchema(
+  propertySchema: Record<string, unknown>,
+): { linkedTableId: string; linkedTableRemoteId?: string[] } | undefined {
   const foreignKeyOptions = propertySchema[X_SCRATCH_FOREIGN_KEY_OPTIONS];
   if (foreignKeyOptions && typeof foreignKeyOptions === 'object') {
-    const linkedTableId = (foreignKeyOptions as { linkedTableId?: unknown }).linkedTableId;
-    if (typeof linkedTableId === 'string' && linkedTableId.length > 0) return linkedTableId;
+    const { linkedTableId, linkedTableRemoteId } = foreignKeyOptions as {
+      linkedTableId?: unknown;
+      linkedTableRemoteId?: unknown;
+    };
+    if (typeof linkedTableId === 'string' && linkedTableId.length > 0) {
+      const remoteId =
+        Array.isArray(linkedTableRemoteId) &&
+        linkedTableRemoteId.every((segment): segment is string => typeof segment === 'string')
+          ? linkedTableRemoteId
+          : undefined;
+      return remoteId ? { linkedTableId, linkedTableRemoteId: remoteId } : { linkedTableId };
+    }
   }
   return undefined;
 }

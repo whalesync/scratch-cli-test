@@ -302,7 +302,7 @@ describe('buildShopifyDefaultView', () => {
       const variantsView = buildShopifyDefaultView(variantsSchema, 'product_variants');
       const col = variantsView.cols.find((c) => c.kind === 'col' && c.path === 'productId') as TableViewCol;
       expect(col).toBeDefined();
-      expect(col.foreignKey).toEqual({ linkedTableId: 'products' });
+      expect(col.foreignKey).toEqual({ linkedTableId: 'products', linkedTableRemoteId: ['products'] });
       expect(col.readonly).toBe(true);
     });
 
@@ -313,7 +313,7 @@ describe('buildShopifyDefaultView', () => {
       });
       const mediaView = buildShopifyDefaultView(mediaSchema, 'product_media');
       const col = mediaView.cols.find((c) => c.kind === 'col' && c.path === 'productId') as TableViewCol;
-      expect(col.foreignKey).toEqual({ linkedTableId: 'products' });
+      expect(col.foreignKey).toEqual({ linkedTableId: 'products', linkedTableRemoteId: ['products'] });
     });
 
     it('plucks articles.blog to blog.id and links it to Blogs (no raw blog object column)', () => {
@@ -335,7 +335,7 @@ describe('buildShopifyDefaultView', () => {
       const blogCol = articlesView.cols.find((c) => c.kind === 'col' && c.path === 'blog.id') as TableViewCol;
       expect(blogCol).toBeDefined();
       expect(blogCol.name).toBe('Blog');
-      expect(blogCol.foreignKey).toEqual({ linkedTableId: 'blogs' });
+      expect(blogCol.foreignKey).toEqual({ linkedTableId: 'blogs', linkedTableRemoteId: ['blogs'] });
       expect(blogCol.readonly).toBe(true);
       // The raw blog object column is NOT emitted (that was the JSON blob).
       const rawBlogCol = articlesView.cols.find((c) => c.kind === 'col' && c.path === 'blog');
@@ -370,7 +370,7 @@ describe('buildShopifyDefaultView', () => {
       const productCol = variantsView.cols.find((c) => c.kind === 'col' && c.path === 'product.id') as TableViewCol;
       expect(productCol).toBeDefined();
       expect(productCol.name).toBe('Product');
-      expect(productCol.foreignKey).toEqual({ linkedTableId: 'products' });
+      expect(productCol.foreignKey).toEqual({ linkedTableId: 'products', linkedTableRemoteId: ['products'] });
       expect(productCol.readonly).toBe(true);
       // The raw `product` object column is NOT emitted (that was the JSON blob).
       const rawProductCol = variantsView.cols.find((c) => c.kind === 'col' && c.path === 'product');
@@ -396,15 +396,18 @@ describe('buildShopifyDefaultView', () => {
       const lineItemsView = buildShopifyDefaultView(lineItemsSchema, 'order_line_items');
 
       const productCol = lineItemsView.cols.find((c) => c.kind === 'col' && c.path === 'product.id') as TableViewCol;
-      expect(productCol.foreignKey).toEqual({ linkedTableId: 'products' });
+      expect(productCol.foreignKey).toEqual({ linkedTableId: 'products', linkedTableRemoteId: ['products'] });
 
       const variantCol = lineItemsView.cols.find((c) => c.kind === 'col' && c.path === 'variant.id') as TableViewCol;
       expect(variantCol.name).toBe('Variant');
-      expect(variantCol.foreignKey).toEqual({ linkedTableId: 'product_variants' });
+      expect(variantCol.foreignKey).toEqual({
+        linkedTableId: 'product_variants',
+        linkedTableRemoteId: ['product_variants'],
+      });
 
       // orderId targets Orders — not covered by a nested FK — so it stays a visible FK column.
       const orderIdCol = lineItemsView.cols.find((c) => c.kind === 'col' && c.path === 'orderId') as TableViewCol;
-      expect(orderIdCol.foreignKey).toEqual({ linkedTableId: 'orders' });
+      expect(orderIdCol.foreignKey).toEqual({ linkedTableId: 'orders', linkedTableRemoteId: ['orders'] });
       expect(orderIdCol.hidden).toBeUndefined();
     });
   });

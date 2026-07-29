@@ -253,14 +253,18 @@ export function buildOpportunitiesJsonTableSpec(
     pipelineId: Type.Optional(
       Type.String({
         description: 'Pipeline this opportunity belongs to',
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'pipelines' },
+        // Pipelines' listTables id is `{ wsId: 'pipelines', remoteId: ['pipelines'] }`
+        // — single-segment equal to the wsId — so the target's remoteId is [linkedTableId].
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'pipelines', linkedTableRemoteId: ['pipelines'] },
       }),
     ),
     pipelineStageId: optionalString('Stage within the pipeline'),
     contactId: Type.Optional(
       Type.String({
         description: 'Associated contact',
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
+        // Contacts' listTables id is `{ wsId: 'contacts', remoteId: ['contacts'] }`
+        // — single-segment equal to the wsId — so the target's remoteId is [linkedTableId].
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts', linkedTableRemoteId: ['contacts'] },
       }),
     ),
     assignedTo: optionalString('User ID this opportunity is assigned to'),
@@ -585,7 +589,16 @@ function genericFieldTypeToSchema(
 ): TSchema {
   const annotations: Record<string, unknown> = { description: key };
   if (readonly) annotations[X_SCRATCH_READONLY] = true;
-  if (foreignKeyTableId) annotations[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId: foreignKeyTableId };
+  if (foreignKeyTableId) {
+    // `foreignKeyTableId` is the target entity's wsId, and every FK target here
+    // (a location-list entity like `forms`/`calendar_groups`, or a built-in table)
+    // has a single-segment listTables remoteId equal to its wsId — so the target's
+    // remoteId array is [foreignKeyTableId].
+    annotations[X_SCRATCH_FOREIGN_KEY_OPTIONS] = {
+      linkedTableId: foreignKeyTableId,
+      linkedTableRemoteId: [foreignKeyTableId],
+    };
+  }
   switch (type) {
     case 'string':
       return Type.Optional(Type.Union([Type.String(), Type.Null()], annotations));

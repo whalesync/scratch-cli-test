@@ -129,16 +129,25 @@ const MEMBERS_FOREIGN_KEY_LINKED_TABLE_ID = ATTIO_MEMBERS_TABLE_REMOTE_ID[0];
 function foreignKeyOptionsForAttribute(
   attr: AttioAttribute,
   objectIdToSlug: Map<string, string>,
-): { linkedTableId: string } | undefined {
+): { linkedTableId: string; linkedTableRemoteId?: string[] } | undefined {
   if (attr.type === 'actor-reference') {
-    return { linkedTableId: MEMBERS_FOREIGN_KEY_LINKED_TABLE_ID };
+    // The Members table's remoteId is `['members']` (ATTIO_MEMBERS_TABLE_REMOTE_ID) —
+    // its wsId ('workspace_members') diverges, but linkedTableId already uses the
+    // remoteId segment, so linkedTableRemoteId is that same single-element array.
+    return {
+      linkedTableId: MEMBERS_FOREIGN_KEY_LINKED_TABLE_ID,
+      linkedTableRemoteId: [...ATTIO_MEMBERS_TABLE_REMOTE_ID],
+    };
   }
   if (attr.type === 'record-reference') {
     const config = attr.config as { record_reference?: { allowed_object_ids?: unknown } } | null;
     const allowed = config?.record_reference?.allowed_object_ids;
     if (Array.isArray(allowed) && allowed.length === 1 && typeof allowed[0] === 'string') {
       const slug = objectIdToSlug.get(allowed[0]);
-      if (slug) return { linkedTableId: sanitizeForTableWsId(slug) };
+      // `listTables` gives an object table `remoteId: [api_slug]` (the RAW slug),
+      // while its wsId — and this FK's linkedTableId — is the SANITIZED slug. So
+      // linkedTableRemoteId must carry the raw slug, not the sanitized token.
+      if (slug) return { linkedTableId: sanitizeForTableWsId(slug), linkedTableRemoteId: [slug] };
     }
   }
   return undefined;
@@ -442,6 +451,8 @@ export function buildAttioTasksTableSpec(id: EntityId): BaseJsonTableSpec {
           // Multi-valued (a task can have several assignees).
           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
             linkedTableId: MEMBERS_FOREIGN_KEY_LINKED_TABLE_ID,
+            // Members table's full remoteId (`['members']`), matching listTables.
+            linkedTableRemoteId: [...ATTIO_MEMBERS_TABLE_REMOTE_ID],
             isSingleValued: false,
           },
         },

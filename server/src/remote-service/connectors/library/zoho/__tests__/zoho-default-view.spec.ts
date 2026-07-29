@@ -131,15 +131,27 @@ describe('buildZohoDefaultView', () => {
     ]);
 
     const accountCol = flatCol(view, 'Account_Name');
-    expect(accountCol?.foreignKey).toEqual({ linkedTableId: 'Accounts', isSingleValued: true });
+    expect(accountCol?.foreignKey).toEqual({
+      linkedTableId: 'Accounts',
+      linkedTableRemoteId: ['Accounts'],
+      isSingleValued: true,
+    });
     expect(accountCol?.displayTransformer).toEqual({
       type: 'jsonpath',
       options: { expression: '$.id', arrayHandling: 'array' },
     });
 
     // Owner/created-by lookups target the synthetic users table.
-    expect(flatCol(view, 'Owner')?.foreignKey).toEqual({ linkedTableId: 'users', isSingleValued: true });
-    expect(flatCol(view, 'Created_By')?.foreignKey).toEqual({ linkedTableId: 'users', isSingleValued: true });
+    expect(flatCol(view, 'Owner')?.foreignKey).toEqual({
+      linkedTableId: 'users',
+      linkedTableRemoteId: ['users'],
+      isSingleValued: true,
+    });
+    expect(flatCol(view, 'Created_By')?.foreignKey).toEqual({
+      linkedTableId: 'users',
+      linkedTableRemoteId: ['users'],
+      isSingleValued: true,
+    });
   });
 
   it('leaves multi-valued and target-less lookups without a foreign key', () => {

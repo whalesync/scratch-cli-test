@@ -297,9 +297,11 @@ describe('multipleRecordLinks — reciprocal foreign-key annotation', () => {
         inverseLinkFieldId: 'fldBack',
         prefersSingleRecordLink: true,
       }),
+      'appBase',
     );
     expect(schema[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
       linkedTableId: 'tblTasks',
+      linkedTableRemoteId: ['appBase', 'tblTasks'],
       inverseFieldId: 'fldBack',
       isSingleValued: true,
     });
@@ -308,11 +310,24 @@ describe('multipleRecordLinks — reciprocal foreign-key annotation', () => {
   it('omits isSingleValued for a multi-record (many-to-many) link', () => {
     const schema = airtableFieldToJsonSchema(
       linkField({ isReversed: false, linkedTableId: 'tblTasks', inverseLinkFieldId: 'fldBack' }),
+      'appBase',
     );
-    expect(schema[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'tblTasks', inverseFieldId: 'fldBack' });
+    expect(schema[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'tblTasks',
+      linkedTableRemoteId: ['appBase', 'tblTasks'],
+      inverseFieldId: 'fldBack',
+    });
   });
 
   it('omits inverseFieldId when Airtable reports no reciprocal field', () => {
+    const schema = airtableFieldToJsonSchema(linkField({ isReversed: false, linkedTableId: 'tblTasks' }), 'appBase');
+    expect(schema[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'tblTasks',
+      linkedTableRemoteId: ['appBase', 'tblTasks'],
+    });
+  });
+
+  it('omits linkedTableRemoteId when no base context is supplied', () => {
     const schema = airtableFieldToJsonSchema(linkField({ isReversed: false, linkedTableId: 'tblTasks' }));
     expect(schema[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'tblTasks' });
   });

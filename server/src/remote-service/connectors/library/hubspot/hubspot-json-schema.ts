@@ -104,6 +104,14 @@ function resolveConnectorDataType(property: HubspotProperty): string {
  * that table has the matching `id`; if the user hasn't synced that table into the
  * workbook, the FK simply doesn't resolve (no table change needed here).
  *
+ * `linkedTableRemoteId` is the TARGET table's full `remoteId` array. Every
+ * association type in `ASSOCIATIONS_BY_OBJECT_TYPE` is a STANDARD object type
+ * (`companies`, `notes`, the numeric `0-421`, …), and `listTables` builds a
+ * standard object's `remoteId` as the single-segment `[objectType]`. The
+ * association type IS that object type, so `[assocType]` deep-equals the target
+ * folder's `remoteId`. (No association targets a custom object — those use a
+ * `fullyQualifiedName` remoteId — so there is no custom-object case here.)
+ *
  * `type` is Optional because a user-added link (created locally in the grid) only
  * carries the `id` — HubSpot assigns the association `type` label, which arrives on
  * the next pull. The verbatim shape a pull stores still includes `type`; making it
@@ -119,7 +127,9 @@ function buildAssociationsSchema(objectType: string): TSchema | null {
       Type.Object({
         results: Type.Array(
           Type.Object({
-            id: Type.String({ [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: assocType } }),
+            id: Type.String({
+              [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: assocType, linkedTableRemoteId: [assocType] },
+            }),
             type: Type.Optional(Type.String()),
           }),
         ),

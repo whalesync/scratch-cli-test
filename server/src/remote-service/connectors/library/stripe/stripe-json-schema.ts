@@ -193,7 +193,7 @@ function buildProductSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Default price ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'prices' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'prices', linkedTableRemoteId: ['prices'] },
         }),
       ),
       images: Type.Optional(
@@ -218,7 +218,7 @@ function buildPriceSchema(): TSchema {
       product: Type.String({
         description: 'Product ID',
         [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'products' },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'products', linkedTableRemoteId: ['products'] },
       }),
       active: Type.Boolean({ description: 'Whether the price is active' }),
       currency: Type.String({ description: 'Three-letter ISO currency code' }),
@@ -266,7 +266,7 @@ function buildSubscriptionSchema(): TSchema {
       customer: Type.String({
         description: 'Customer ID',
         [X_SCRATCH_READONLY]: true,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers', linkedTableRemoteId: ['customers'] },
       }),
       status: Type.String({
         description:
@@ -314,7 +314,7 @@ function buildSubscriptionSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Latest invoice ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices', linkedTableRemoteId: ['invoices'] },
         }),
       ),
       collection_method: Type.Optional(Type.String({ description: 'Collection method', [X_SCRATCH_READONLY]: true })),
@@ -372,14 +372,14 @@ function buildInvoiceSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Customer ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers', linkedTableRemoteId: ['customers'] },
         }),
       ),
       subscription: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Subscription ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'subscriptions' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'subscriptions', linkedTableRemoteId: ['subscriptions'] },
         }),
       ),
       status: Type.Optional(
@@ -434,7 +434,7 @@ function buildPaymentIntentSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Customer ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers', linkedTableRemoteId: ['customers'] },
         }),
       ),
       amount: Type.Number({ description: 'Amount in cents', [X_SCRATCH_READONLY]: true }),
@@ -455,7 +455,7 @@ function buildPaymentIntentSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Invoice ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices', linkedTableRemoteId: ['invoices'] },
         }),
       ),
       capture_method: Type.Optional(Type.String({ description: 'Capture method', [X_SCRATCH_READONLY]: true })),
@@ -467,7 +467,7 @@ function buildPaymentIntentSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Latest charge ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'charges' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'charges', linkedTableRemoteId: ['charges'] },
         }),
       ),
       created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
@@ -486,7 +486,7 @@ function buildChargeSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Customer ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers', linkedTableRemoteId: ['customers'] },
         }),
       ),
       amount: Type.Number({ description: 'Amount in cents', [X_SCRATCH_READONLY]: true }),
@@ -503,7 +503,10 @@ function buildChargeSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Payment intent ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'payment_intents' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
+            linkedTableId: 'payment_intents',
+            linkedTableRemoteId: ['payment_intents'],
+          },
         }),
       ),
       payment_method: Type.Optional(
@@ -516,7 +519,7 @@ function buildChargeSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Invoice ID',
           [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices', linkedTableRemoteId: ['invoices'] },
         }),
       ),
       receipt_email: Type.Optional(

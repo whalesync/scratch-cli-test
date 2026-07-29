@@ -49,13 +49,22 @@ describe('buildCopperJsonTableSpec', () => {
   it('marks People company_id read-only (set via Related Items — R8)', () => {
     const { properties } = specProperties('people');
     expect(properties.company_id?.[X_SCRATCH_READONLY]).toBe(true);
-    expect(properties.company_id?.[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'companies' });
+    expect(properties.company_id?.[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'companies',
+      linkedTableRemoteId: ['companies'],
+    });
   });
 
   it('annotates cross-entity foreign keys on opportunities', () => {
     const { properties } = specProperties('opportunities');
-    expect(properties.company_id?.[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'companies' });
-    expect(properties.primary_contact_id?.[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'people' });
+    expect(properties.company_id?.[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'companies',
+      linkedTableRemoteId: ['companies'],
+    });
+    expect(properties.primary_contact_id?.[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'people',
+      linkedTableRemoteId: ['people'],
+    });
   });
 
   it('exposes custom_fields as a verbatim array with an x-scratch-array-keyed-by column per definition', () => {

@@ -153,7 +153,11 @@ describeIfKey('FramerConnector — live API', () => {
       const refFieldId = fieldId.get('Primary Tag')!;
       const refValueSchema = (tableSpec.schema as any).properties.fieldData.properties[refFieldId].properties.value;
       expect(refValueSchema['x-scratch-foreign-key']).toBeDefined();
-      expect(refValueSchema['x-scratch-foreign-key'].linkedTableId).toBeTruthy();
+      const fkLinkedTableId = refValueSchema['x-scratch-foreign-key'].linkedTableId;
+      expect(fkLinkedTableId).toBeTruthy();
+      // The full remote id array of the linked collection is `[collection.id]` (see `listTables`),
+      // so it deep-equals `[linkedTableId]`.
+      expect(refValueSchema['x-scratch-foreign-key'].linkedTableRemoteId).toEqual([fkLinkedTableId]);
     });
   });
 
