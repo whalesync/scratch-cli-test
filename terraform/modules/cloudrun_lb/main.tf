@@ -27,6 +27,9 @@ resource "google_compute_backend_service" "default" {
   port_name             = "http"
   session_affinity      = var.session_affinity
 
+  # Security headers added to every response
+  custom_response_headers = var.custom_response_headers
+
   backend {
     group = google_compute_region_network_endpoint_group.cloudrun_neg.id
   }

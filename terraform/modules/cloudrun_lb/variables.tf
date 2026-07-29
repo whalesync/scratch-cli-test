@@ -42,3 +42,9 @@ variable "session_affinity" {
   default     = "NONE"
   description = "Session affinity setting for the backend service. Use 'GENERATED_COOKIE' or 'CLIENT_IP' for websocket connections."
 }
+
+variable "custom_response_headers" {
+  type        = list(string)
+  default     = []
+  description = "Response headers the load balancer adds to every response, each in 'Header-Name: value' format (e.g. security headers)."
+}

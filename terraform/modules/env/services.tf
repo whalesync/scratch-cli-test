@@ -1,6 +1,16 @@
 locals {
   # Generate a random UUID when force_reload_services is true to trigger service redeployment
   force_reload_uuid = var.force_reload_services ? uuid() : null
+
+  # HTTP security headers added at the load balancer to every response — DEV-11008 / pentest SCR-013.
+  # HSTS starts at a shorter max-age (30d) so we can catch HTTPS issues before ramping to a year.
+  security_response_headers = [
+    "Strict-Transport-Security: max-age=2592000; includeSubDomains",
+    "X-Frame-Options: DENY",
+    "X-Content-Type-Options: nosniff",
+    "Referrer-Policy: strict-origin-when-cross-origin",
+    "Permissions-Policy: camera=(), microphone=(), geolocation=(), browsing-topics=()",
+  ]
 }
 
 #region client_service
@@ -125,13 +135,14 @@ module "client_lb" {
   count  = var.enable_client_load_balancer ? 1 : 0
   source = "../../modules/cloudrun_lb"
 
-  name                   = "${var.env_name}-client"
-  region                 = var.gcp_region
-  cloud_run_service_name = google_cloud_run_v2_service.client_service.name
-  domains                = [var.client_domain]
-  enable_cdn             = var.enable_client_cdn
-  enable_http_redirect   = true
-  log_sample_rate        = 1.0
+  name                    = "${var.env_name}-client"
+  region                  = var.gcp_region
+  cloud_run_service_name  = google_cloud_run_v2_service.client_service.name
+  domains                 = [var.client_domain]
+  enable_cdn              = var.enable_client_cdn
+  enable_http_redirect    = true
+  log_sample_rate         = 1.0
+  custom_response_headers = local.security_response_headers
 
   depends_on = [google_cloud_run_v2_service.client_service]
 }
@@ -417,13 +428,14 @@ resource "google_cloud_run_service_iam_member" "api_service_public" {
 module "api_lb" {
   source = "../../modules/cloudrun_lb"
 
-  name                   = "${var.env_name}-api"
-  region                 = var.gcp_region
-  cloud_run_service_name = google_cloud_run_v2_service.api_service.name
-  domains                = [var.api_domain]
-  enable_cdn             = false
-  enable_http_redirect   = true
-  log_sample_rate        = 1.0
+  name                    = "${var.env_name}-api"
+  region                  = var.gcp_region
+  cloud_run_service_name  = google_cloud_run_v2_service.api_service.name
+  domains                 = [var.api_domain]
+  enable_cdn              = false
+  enable_http_redirect    = true
+  log_sample_rate         = 1.0
+  custom_response_headers = local.security_response_headers
 }
 
 #endregion
