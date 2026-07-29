@@ -815,6 +815,10 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
                       "x-scratch-foreign-key": {
                         "inverseFieldId": "hVNF",
                         "linkedTableId": "36b81e58-1794-808e-ad29-d981a07c2ab3",
+                        "linkedTableRemoteId": [
+                          "36b81e58-1794-808e-ad29-d981a07c2ab3",
+                          "36b81e58-1794-8014-b4ac-000b8da2d174",
+                        ],
                       },
                     },
                   },
@@ -840,6 +844,10 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "x-scratch-foreign-key": {
               "inverseFieldId": "hVNF",
               "linkedTableId": "36b81e58-1794-808e-ad29-d981a07c2ab3",
+              "linkedTableRemoteId": [
+                "36b81e58-1794-808e-ad29-d981a07c2ab3",
+                "36b81e58-1794-8014-b4ac-000b8da2d174",
+              ],
             },
             "x-scratch-remote-field-id": "%7DeDv",
             "x-scratch-suggested-in-transformer": {
