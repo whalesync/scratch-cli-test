@@ -7,8 +7,18 @@ function makeConnector(): ZohoConnector {
 }
 
 const MODULES: ZohoModuleMetadata[] = [
-  { api_name: 'Leads', plural_label: 'Leads', api_supported: true, creatable: true, editable: true, deletable: true },
-  // Read-only system module (creatable=false) — listed but create-disabled.
+  {
+    api_name: 'Leads',
+    plural_label: 'Leads',
+    api_supported: true,
+    viewable: true,
+    creatable: true,
+    editable: true,
+    deletable: true,
+  },
+  // Read-only system module (creatable=false, `viewable` intentionally omitted) —
+  // listed but create-disabled. Also guards that an absent `viewable` flag keeps
+  // the module (the filter drops only on an explicit `viewable === false`).
   {
     api_name: 'DealHistory',
     plural_label: 'Deal History',
@@ -22,6 +32,10 @@ const MODULES: ZohoModuleMetadata[] = [
   { api_name: 'Home', plural_label: 'Home', api_supported: false },
   // Subform sub-module — excluded.
   { api_name: 'Quoted_Items', plural_label: 'Quoted Items', api_supported: true, subform: true },
+  // Advertises `api_supported: true` but `viewable: false` — a reporting/system
+  // aggregate whose records endpoint returns "the given module is not supported
+  // in api" (DEV-11111). Must be excluded.
+  { api_name: 'Email_Analytics', plural_label: 'Email Analytics', api_supported: true, viewable: false },
 ];
 
 describe('ZohoConnector.listTables — eligibility policy', () => {
@@ -33,7 +47,10 @@ describe('ZohoConnector.listTables — eligibility policy', () => {
 
     const byId = new Map(tables.map((t) => [t.id.wsId, t]));
     // The two eligible modules plus the always-appended read-only `users` table.
+    // Email_Analytics (viewable:false) is excluded; DealHistory (viewable absent)
+    // is kept — the filter drops only on an explicit `viewable === false`.
     expect([...byId.keys()].sort()).toEqual(['DealHistory', 'Leads', 'users']);
+    expect(byId.has('Email_Analytics')).toBe(false);
 
     const leads = byId.get('Leads');
     expect(leads?.disabledCreates).toBeUndefined();

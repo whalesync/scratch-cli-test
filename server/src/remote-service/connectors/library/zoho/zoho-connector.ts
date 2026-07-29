@@ -125,6 +125,16 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
       // Skip modules the records API can't serve, and subform sub-modules.
       if (module.api_supported !== true) continue;
       if (module.subform === true) continue;
+      // Some modules advertise `api_supported: true` yet their records endpoint
+      // rejects every fetch with "the given module is not supported in api"
+      // (e.g. Email_Analytics, Email_Template_Analytics, Email_Sentiment,
+      // Locking_Information__s). These are reporting/system aggregates, not record
+      // collections; empirically they are exactly the modules Zoho marks
+      // `viewable: false`, while every genuine record module (including read-only
+      // ones like Stage History / My Jobs) is `viewable: true` (DEV-11111). Use an
+      // explicit `=== false` so a legitimate module that ever omits the flag is
+      // never silently dropped.
+      if (module.viewable === false) continue;
 
       const apiName = module.api_name;
       const displayName = module.plural_label ?? module.module_name ?? apiName;
