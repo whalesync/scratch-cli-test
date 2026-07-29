@@ -90,6 +90,10 @@ export const LINEAR_FIELD_FILTERS: FieldFilterConfig = {
     creator: ["id"],
     assignee: ["id"],
     team: ["id"],
+    // Project's owning team, which Linear added to its API in July 2026. Same treatment as
+    // `team`: without it the regen pulls (and stores) a fully expanded ~100-field Team object
+    // on every Project.
+    leadTeam: ["id"],
     project: ["id"],
     cycle: ["id"],
     parent: ["id"],

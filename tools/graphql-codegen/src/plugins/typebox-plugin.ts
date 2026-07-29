@@ -417,7 +417,11 @@ ${properties}
         continue;
       }
 
-      const fieldType = this.generateFieldType(field.type, depth);
+      const fieldType = this.generateFieldTypeForNamedField(
+        name,
+        field.type,
+        depth,
+      );
 
       if (name === "id") {
         lines.push(`${indent}${name}: ${fieldType},`);
@@ -471,27 +475,14 @@ ${properties}
     type: GraphQLObjectType | GraphQLInterfaceType | GraphQLUnionType,
     depth: number,
   ): string {
-    // For interfaces/unions, merge fields from implementations
-    if (isInterfaceType(type) || isUnionType(type)) {
-      const impls = this.interfaceImpls[type.name] || [];
-      if (impls.length === 0) {
-        return "Type.Unknown()";
-      }
-
-      const allFields: Record<string, GraphQLField<unknown, unknown>> = {};
-      for (const implName of impls) {
-        const implType = this.schema.getType(implName);
-        if (implType && isObjectType(implType)) {
-          Object.assign(allFields, implType.getFields());
-        }
-      }
-
-      const props = this.generateNestedProperties(allFields, depth);
-      return `Type.Object({ ${props} })`;
+    // An object type contributes its own fields; an interface/union the merged fields of its
+    // implementations, or nothing at all when none are registered.
+    const fields = this.collectFieldsForType(type);
+    if (!fields) {
+      return "Type.Unknown()";
     }
 
-    // Regular object type
-    const props = this.generateNestedProperties(type.getFields(), depth);
+    const props = this.generateNestedProperties(fields, depth);
     return `Type.Object({ ${props} })`;
   }
 
@@ -506,11 +497,127 @@ ${properties}
         continue;
       }
 
+      // Deliberately NOT `generateFieldTypeForNamedField`: reference selections apply to an
+      // entity's own fields only, mirroring the query side, where `buildFieldSelectionForField`
+      // honors them at the root and `buildObjectFieldSelection` never does. A nested reference
+      // is not pulled at all, so declaring the selection here would advertise subfield columns
+      // no record ever carries.
       const fieldType = this.generateFieldType(field.type, depth);
       props.push(`${name}: Type.Optional(${fieldType})`);
     }
 
     return props.join(", ");
+  }
+
+  /**
+   * The schema for one named property, honoring the field's reference selection when the
+   * linked type is one the schema does NOT expand.
+   *
+   * A reference selection (`referenceFieldSelections`) names the leaves the generated QUERY
+   * pulls for that field. When the linked type is additionally on the never-expand list (or
+   * sits at the depth cap), {@link generateFieldType} declares it `Type.Unknown()` — so the
+   * pulled leaves exist in every stored record but are absent from the schema, and every
+   * consumer that resolves a field PATH against the schema rejects them. Linear's `state`
+   * (a never-expanded `WorkflowState`, pulled as `{ id name type color position description }`)
+   * hit exactly that: the default view's `state.name` column was unresolvable, so saving the
+   * untouched default Linear → Airtable sync draft failed with `Source field 'state.name' not
+   * found in schema` (DEV-11112).
+   *
+   * Deliberately narrow: a reference field whose linked type IS expanded keeps its full
+   * expansion, which is a superset of the selection and so already addressable. Narrowing
+   * those to the selection would break a connector that widens the generated query at
+   * runtime — Shopify pulls `featuredImage { id altText url }` over the generated
+   * `featuredImage { id }` and its default view plucks `featuredImage.url`.
+   */
+  private generateFieldTypeForNamedField(
+    name: string,
+    type: GraphQLOutputType,
+    depth: number,
+  ): string {
+    const referenceSelection = this.fieldFilters.referenceFieldSelections[name];
+    // A list of references is left to `generateFieldType`, which wraps the array; the
+    // selection shape only describes a single linked object.
+    const namedType = isNonNullType(type) ? type.ofType : type;
+    if (
+      referenceSelection &&
+      (isObjectType(namedType) ||
+        isInterfaceType(namedType) ||
+        isUnionType(namedType)) &&
+      (depth >= this.maxDepth ||
+        this.fieldFilters.skipExpansionTypes.has(namedType.name))
+    ) {
+      const selectionType = this.generateReferenceSelectionObjectType(
+        namedType,
+        referenceSelection,
+        depth,
+      );
+      if (selectionType) {
+        return `Type.Union([${selectionType}, Type.Null()])`;
+      }
+    }
+
+    return this.generateFieldType(type, depth);
+  }
+
+  /**
+   * `Type.Object({...})` code for exactly the leaves a reference selection names, or `null`
+   * when none of them resolve against the linked type (a stale config entry — warned about,
+   * and left to fall back to the default field type rather than emitting an empty object).
+   */
+  private generateReferenceSelectionObjectType(
+    type: GraphQLObjectType | GraphQLInterfaceType | GraphQLUnionType,
+    referenceSelection: string[],
+    depth: number,
+  ): string | null {
+    const fields = this.collectFieldsForType(type);
+    if (!fields) {
+      return null;
+    }
+
+    const props: string[] = [];
+    for (const leafName of referenceSelection) {
+      const leafField = fields[leafName];
+      if (!leafField) {
+        console.warn(
+          `Reference selection field '${leafName}' not found on type ${type.name} — omitted from schema`,
+        );
+        continue;
+      }
+      // Every leaf is optional, matching how nested objects declare their properties: the
+      // selection travels as a reference, not as a record of its own.
+      props.push(
+        `${leafName}: Type.Optional(${this.generateFieldType(leafField.type, depth + 1)})`,
+      );
+    }
+
+    return props.length > 0 ? `Type.Object({ ${props.join(", ")} })` : null;
+  }
+
+  /**
+   * The fields of a named output type — an object type's own fields, or the merged fields of
+   * every implementation of an interface/union. `undefined` when an interface/union has no
+   * registered implementations, since there is then nothing to generate from.
+   */
+  private collectFieldsForType(
+    type: GraphQLObjectType | GraphQLInterfaceType | GraphQLUnionType,
+  ): Record<string, GraphQLField<unknown, unknown>> | undefined {
+    if (isObjectType(type)) {
+      return type.getFields();
+    }
+
+    const implNames = this.interfaceImpls[type.name] || [];
+    if (implNames.length === 0) {
+      return undefined;
+    }
+
+    const mergedFields: Record<string, GraphQLField<unknown, unknown>> = {};
+    for (const implName of implNames) {
+      const implType = this.schema.getType(implName);
+      if (implType && isObjectType(implType)) {
+        Object.assign(mergedFields, implType.getFields());
+      }
+    }
+    return mergedFields;
   }
 
   private generateScalarType(type: GraphQLScalarType): string {

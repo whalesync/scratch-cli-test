@@ -144,6 +144,105 @@ export const ProjectsSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    leadTeam: Type.Optional(
+      Type.Union([
+        Type.Object({
+          id: Type.Optional(Type.String()),
+          createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          archivedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          key: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          icon: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          color: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          retiredAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          organization: Type.Optional(Type.Unknown()),
+          parent: Type.Optional(Type.Unknown()),
+          restrictedBy: Type.Optional(Type.Unknown()),
+          resourceSections: Type.Optional(Type.Array(Type.Unknown())),
+          pinnedResources: Type.Optional(Type.Array(Type.Unknown())),
+          cyclesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          cycleStartDay: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          cycleDuration: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          cycleCooldownTime: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          cycleIssueAutoAssignStarted: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          cycleIssueAutoAssignCompleted: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          cycleLockToActive: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          upcomingCycleCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          timezone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          inheritWorkflowStatuses: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          inheritIssueEstimation: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          issueEstimationType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          issueOrderingNoPriorityFirst: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          issueEstimationAllowZero: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          setIssueSortOrderOnStateChange: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          issueEstimationExtended: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          defaultIssueEstimate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          triageEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          requirePriorityToLeaveTriage: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          defaultIssueState: Type.Optional(Type.Unknown()),
+          defaultTemplateForMembers: Type.Optional(Type.Unknown()),
+          defaultTemplateForMembersId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          defaultTemplateForNonMembers: Type.Optional(Type.Unknown()),
+          defaultTemplateForNonMembersId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          defaultProjectTemplate: Type.Optional(Type.Unknown()),
+          triageIssueState: Type.Optional(Type.Unknown()),
+          private: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          allMembersCanJoin: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          securitySettings: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
+          facets: Type.Optional(Type.Array(Type.Unknown())),
+          posts: Type.Optional(Type.Array(Type.Unknown())),
+          scimManaged: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          scimGroupName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          progressHistory: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
+          currentProgress: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
+          draftWorkflowState: Type.Optional(Type.Unknown()),
+          startWorkflowState: Type.Optional(Type.Unknown()),
+          reviewWorkflowState: Type.Optional(Type.Unknown()),
+          mergeableWorkflowState: Type.Optional(Type.Unknown()),
+          mergeWorkflowState: Type.Optional(Type.Unknown()),
+          groupIssueHistory: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          aiThreadSummariesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          aiDiscussionSummariesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          slackNewIssue: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          slackIssueComments: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          slackIssueStatuses: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          autoClosePeriod: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          autoCloseStateId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          autoArchivePeriod: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          autoCloseParentIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          autoCloseChildIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          joinByDefault: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          inheritSlackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          slackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          cycleCalenderUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          visibility: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
+          displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          ancestors: Type.Optional(Type.Array(Type.Unknown())),
+          restrictedById: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          protectedBy: Type.Optional(Type.Unknown()),
+          protectedById: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          issueCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          ledInitiativeCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          cycles: Type.Optional(Type.Unknown()),
+          activeCycle: Type.Optional(Type.Unknown()),
+          triageResponsibility: Type.Optional(Type.Unknown()),
+          memberships: Type.Optional(Type.Unknown()),
+          projects: Type.Optional(Type.Unknown()),
+          releasePipelines: Type.Optional(Type.Unknown()),
+          states: Type.Optional(Type.Unknown()),
+          gitAutomationStates: Type.Optional(Type.Unknown()),
+          templates: Type.Optional(Type.Unknown()),
+          webhooks: Type.Optional(Type.Unknown()),
+          initiativesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          issueSortOrderDefaultToBottom: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
     facets: Type.Optional(
       Type.Array(
         Type.Union([
@@ -483,6 +582,7 @@ ProjectsSchema.properties.issueCountHistory[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.lastAppliedTemplate[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.lastUpdate[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.lead[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.leadTeam[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.microsoftTeamsChannelId[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.needs[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.previousIdentifiers[X_SCRATCH_READONLY] = true;
@@ -503,7 +603,7 @@ ProjectsSchema.properties.url[X_SCRATCH_READONLY] = true;
 /**
  * GraphQL query field selection for Projects
  */
-export const PROJECTS_QUERY_FIELDS = `id createdAt updatedAt archivedAt updateReminderFrequencyInWeeks updateReminderFrequency frequencyResolution updateRemindersDay updateRemindersHour name description slugId icon color status { id createdAt updatedAt archivedAt name color description position type indefinite } creator { id } lead { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } facets { id createdAt updatedAt archivedAt sortOrder sourcePage } projectUpdateRemindersPausedUntilAt startDate startDateResolution targetDate targetDateResolution startedAt completedAt canceledAt autoArchivedAt trashed sortOrder prioritySortOrder convertedFromIssue { id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary labelIds previousIdentifiers subIssueSortOrder reactionData priorityLabel trusted inheritsSharedAccess identifier url branchName customerTicketCount description } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } priority lastUpdate { id createdAt updatedAt archivedAt body editedAt reactionData bodyData slugId health infoSnapshot isDiffHidden url isStale diff diffMarkdown commentCount } health healthUpdatedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress slackNewIssue slackIssueComments slackIssueStatuses labelIds favorite { id } url identifier previousIdentifiers progress scope slackChannelId microsoftTeamsChannelId content documentContent { id createdAt updatedAt archivedAt content restoredAt } state priorityLabel syncedWith { id service }`;
+export const PROJECTS_QUERY_FIELDS = `id createdAt updatedAt archivedAt updateReminderFrequencyInWeeks updateReminderFrequency frequencyResolution updateRemindersDay updateRemindersHour name description slugId icon color status { id createdAt updatedAt archivedAt name color description position type indefinite } creator { id } lead { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } leadTeam { id } facets { id createdAt updatedAt archivedAt sortOrder sourcePage } projectUpdateRemindersPausedUntilAt startDate startDateResolution targetDate targetDateResolution startedAt completedAt canceledAt autoArchivedAt trashed sortOrder prioritySortOrder convertedFromIssue { id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary labelIds previousIdentifiers subIssueSortOrder reactionData priorityLabel trusted inheritsSharedAccess identifier url branchName customerTicketCount description } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } priority lastUpdate { id createdAt updatedAt archivedAt body editedAt reactionData bodyData slugId health infoSnapshot isDiffHidden url isStale diff diffMarkdown commentCount } health healthUpdatedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress slackNewIssue slackIssueComments slackIssueStatuses labelIds favorite { id } url identifier previousIdentifiers progress scope slackChannelId microsoftTeamsChannelId content documentContent { id createdAt updatedAt archivedAt content restoredAt } state priorityLabel syncedWith { id service }`;
 
 /**
  * Entity configuration for Projects

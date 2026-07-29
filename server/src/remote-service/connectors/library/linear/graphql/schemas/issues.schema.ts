@@ -214,6 +214,7 @@ export const IssuesSchema = Type.Object(
           status: Type.Optional(Type.Unknown()),
           creator: Type.Optional(Type.Unknown()),
           lead: Type.Optional(Type.Unknown()),
+          leadTeam: Type.Optional(Type.Unknown()),
           facets: Type.Optional(Type.Array(Type.Unknown())),
           projectUpdateRemindersPausedUntilAt: Type.Optional(
             Type.Union([Type.String({ format: 'date-time' }), Type.Null()]),
@@ -541,7 +542,19 @@ export const IssuesSchema = Type.Object(
         Type.Null(),
       ]),
     ),
-    state: Type.Optional(Type.Unknown()),
+    state: Type.Optional(
+      Type.Union([
+        Type.Object({
+          id: Type.Optional(Type.String()),
+          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          type: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          color: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          position: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
     subIssueSortOrder: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     reactionData: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
     priorityLabel: Type.Optional(Type.Union([Type.String(), Type.Null()])),

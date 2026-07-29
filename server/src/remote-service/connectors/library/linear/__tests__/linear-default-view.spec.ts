@@ -1,6 +1,9 @@
 import { Type } from '@sinclair/typebox';
-import { TableViewCol, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { TableView, TableViewCol, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { getSchemaAtFieldPath } from 'src/utils/field-path';
+import { ALL_ENTITY_TYPES } from '../graphql';
 import { buildLinearDefaultView } from '../linear-default-view';
+import { buildLinearJsonTableSpec } from '../linear-json-schema';
 
 function markReadonly<T>(schema: T): T {
   (schema as Record<string, unknown>)[X_SCRATCH_READONLY] = true;
@@ -28,9 +31,23 @@ function makeIssuesSchema() {
     trashed: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     branchName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     labelIds: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
-    // Every relation is read-only on Linear and — apart from `lead`/`delegate` — is pulled
-    // selecting only `{ id }`, which is what the generated schemas' annotations reflect.
-    state: markReadonly(Type.Optional(Type.Unknown())),
+    // Every relation is read-only on Linear and — apart from `lead`/`delegate` and `state` — is
+    // pulled selecting only `{ id }`, which is what the generated schemas' annotations reflect.
+    // `state` declares the displayable leaves the pull selects with it, so the view's `state.name`
+    // subfield resolves against the schema (DEV-11112).
+    state: markReadonly(
+      Type.Optional(
+        Type.Union([
+          Type.Object({
+            id: Type.Optional(Type.String()),
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            type: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            color: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ]),
+      ),
+    ),
     team: markReadonly(
       Type.Optional(
         Type.Union([
@@ -361,5 +378,41 @@ describe('buildLinearDefaultView', () => {
     const view = buildLinearDefaultView(schema, 'issues');
     const groups = view.cols.filter((c) => c.kind === 'banner-group');
     expect(groups).toHaveLength(0);
+  });
+});
+
+/**
+ * Every path the default view addresses must resolve against the entity's schema, because that is
+ * exactly what saving a Live Export sync draft validates (`validateSchemaMapping` →
+ * `getSchemaAtFieldPath`): a column pointing at a path the schema does not declare fails the whole
+ * draft with `Source field '<path>' not found in schema`. Linear's `state.name` did — the pull
+ * selected `state { id name … }` but the generated schema still declared `state` as an opaque
+ * `Type.Unknown()`, so the untouched default Linear → Airtable draft could not be saved (DEV-11112).
+ *
+ * Deliberately runs against the REAL generated schemas rather than the fixtures above: the defect
+ * lived in the generated shape, and a fixture that mirrors it would reproduce the blind spot.
+ */
+describe('default view column paths resolve against the generated schemas (DEV-11112)', () => {
+  function everyPathAddressedByView(view: TableView): string[] {
+    const addressedPaths: string[] = [];
+    for (const colOrGroup of view.cols) {
+      const cols = colOrGroup.kind === 'banner-group' ? colOrGroup.cols : [colOrGroup];
+      for (const col of cols) {
+        addressedPaths.push(col.path);
+        for (const subfield of col.subfields ?? []) {
+          addressedPaths.push(`${col.path}.${subfield.relativePath}`);
+        }
+      }
+    }
+    return addressedPaths;
+  }
+
+  it.each([...ALL_ENTITY_TYPES])('resolves every column path of the %s default view', (entityType) => {
+    const generatedSchema = buildLinearJsonTableSpec({ wsId: entityType, remoteId: [entityType] }).schema;
+    const view = buildLinearDefaultView(generatedSchema, entityType);
+    const pathsAbsentFromSchema = everyPathAddressedByView(view).filter(
+      (path) => getSchemaAtFieldPath(generatedSchema, path) === undefined,
+    );
+    expect(pathsAbsentFromSchema).toEqual([]);
   });
 });

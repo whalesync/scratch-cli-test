@@ -304,6 +304,7 @@ const RELATION_FOREIGN_KEYS: Record<string, { linkedTableId: EntityType; isSingl
   'issues.labelIds': { linkedTableId: 'labels', isSingleValued: false },
   'projects.creator': { linkedTableId: 'users', isSingleValued: true },
   'projects.lead': { linkedTableId: 'users', isSingleValued: true },
+  'projects.leadTeam': { linkedTableId: 'teams', isSingleValued: true },
   'projects.labelIds': { linkedTableId: 'labels', isSingleValued: false },
   'labels.team': { linkedTableId: 'teams', isSingleValued: true },
   'labels.creator': { linkedTableId: 'users', isSingleValued: true },

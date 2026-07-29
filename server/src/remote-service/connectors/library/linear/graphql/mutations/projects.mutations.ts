@@ -132,6 +132,7 @@ export const PROJECTS_READ_ONLY_FIELDS = new Set([
   'lastAppliedTemplate',
   'lastUpdate',
   'lead',
+  'leadTeam',
   'members',
   'microsoftTeamsChannelId',
   'needs',
