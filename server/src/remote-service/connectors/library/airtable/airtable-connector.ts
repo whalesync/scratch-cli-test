@@ -386,9 +386,16 @@ export class AirtableConnector extends Connector {
     }
 
     // Order built fields with the primary first, preserving request order otherwise.
+    // Record links beyond the first to any one target table are held back — see
+    // `selectLinkFieldNamesToAddAfterTableCreation`.
+    const linkFieldNamesToAddAfterCreation = this.selectLinkFieldNamesToAddAfterTableCreation(
+      plan.fields,
+      builtFieldsByName,
+      primaryField.name,
+    );
     const orderedFields: AirtableApiCreateField[] = [primaryBuiltField];
     for (const field of plan.fields) {
-      if (field.name === primaryField.name) {
+      if (field.name === primaryField.name || linkFieldNamesToAddAfterCreation.has(field.name)) {
         continue;
       }
       const built = builtFieldsByName.get(field.name);
@@ -402,12 +409,25 @@ export class AirtableConnector extends Connector {
       const remoteFieldIdByName = new Map<string, string>(
         response.fields.map((field): [string, string] => [field.name, field.id]),
       );
+      const failedFieldReasons = new Map<string, string>();
+      for (const fieldName of linkFieldNamesToAddAfterCreation) {
+        const built = builtFieldsByName.get(fieldName);
+        if (!built) {
+          continue;
+        }
+        try {
+          const addedField = await this.client.createField(baseId, response.id, built);
+          remoteFieldIdByName.set(fieldName, addedField.id);
+        } catch (error) {
+          failedFieldReasons.set(fieldName, this.extractConnectorErrorDetails(error).userFriendlyMessage);
+        }
+      }
       return {
         ref: plan.ref,
         name: plan.name,
-        status: skippedFieldReasons.size > 0 ? 'partial' : 'created',
+        status: skippedFieldReasons.size > 0 || failedFieldReasons.size > 0 ? 'partial' : 'created',
         remoteTableId: [baseId, response.id],
-        fields: this.buildFieldResults(plan.fields, skippedFieldReasons, remoteFieldIdByName),
+        fields: this.buildFieldResults(plan.fields, skippedFieldReasons, remoteFieldIdByName, failedFieldReasons),
       };
     } catch (error) {
       return {
@@ -458,6 +478,51 @@ export class AirtableConnector extends Connector {
   }
 
   /**
+   * Names of the record-link fields that must be added AFTER the table exists,
+   * one create-field call each, rather than batched into `createTable`.
+   *
+   * Airtable auto-creates a reciprocal ("mirror") link field on the target table
+   * for every link field pointing at it, named after the table the mirror points
+   * back at. Created ONE AT A TIME, Airtable de-duplicates that name — the second
+   * mirror becomes `"People 2"`. Created in a SINGLE `createTable` call, that
+   * de-duplication does not happen: N links to the same target leave N mirrors on
+   * the target ALL named `"People"`. Airtable then rejects every record write to
+   * the target keyed by that name with `Ambiguous field name: "People"`, and the
+   * duplicate columns cannot be repaired through the API (there is no delete-field
+   * endpoint, and renaming to a name already in use is refused) — DEV-11101.
+   *
+   * So the first link to a given target rides along in `createTable` and each
+   * additional link to that SAME target is held back, letting Airtable's own
+   * de-duplication run. Links to distinct targets never collide, so they stay
+   * batched. Skipped fields (e.g. a cross-base link) are ignored here.
+   */
+  private selectLinkFieldNamesToAddAfterTableCreation(
+    fields: ResolvedCreateFieldSpec[],
+    builtFieldsByName: Map<string, AirtableApiCreateField>,
+    primaryFieldName: string,
+  ): Set<string> {
+    const namesToAddAfterCreation = new Set<string>();
+    const targetTableIdsAlreadyLinkedInBatch = new Set<string>();
+    for (const field of fields) {
+      const built = builtFieldsByName.get(field.name);
+      if (!built || built.type !== 'multipleRecordLinks') {
+        continue;
+      }
+      const linkedTableId = built.options.linkedTableId;
+      if (!targetTableIdsAlreadyLinkedInBatch.has(linkedTableId)) {
+        targetTableIdsAlreadyLinkedInBatch.add(linkedTableId);
+        continue;
+      }
+      // Airtable requires the primary field in the batched create, and a record
+      // link can never be the primary — but guard rather than silently drop it.
+      if (field.name !== primaryFieldName) {
+        namesToAddAfterCreation.add(field.name);
+      }
+    }
+    return namesToAddAfterCreation;
+  }
+
+  /**
    * Choose the field Airtable will treat as the primary (`fields[0]`): the
    * `isPrimary`-designated field when it maps to a primary-eligible type, otherwise
    * (defensively) the first primary-eligible, non-skipped field. Returns `undefined`
@@ -479,18 +544,26 @@ export class AirtableConnector extends Connector {
 
   /**
    * Build the per-field result list: each requested field is `created` (with its
-   * Airtable field id when the response returned one) unless it was skipped, in
-   * which case the reason is surfaced.
+   * Airtable field id when the response returned one) unless it was skipped or
+   * failed, in which case the reason is surfaced. `failedFieldReasons` covers the
+   * held-back record links added after the table was created (see
+   * {@link selectLinkFieldNamesToAddAfterTableCreation}), which can fail on their
+   * own without failing the table.
    */
   private buildFieldResults(
     fields: ResolvedCreateFieldSpec[],
     skippedFieldReasons: Map<string, string>,
     remoteFieldIdByName: Map<string, string>,
+    failedFieldReasons: Map<string, string> = new Map(),
   ): CreateFieldResult[] {
     return fields.map((field) => {
       const skipReason = skippedFieldReasons.get(field.name);
       if (skipReason !== undefined) {
         return { name: field.name, status: 'skipped', error: skipReason };
+      }
+      const failureReason = failedFieldReasons.get(field.name);
+      if (failureReason !== undefined) {
+        return { name: field.name, status: 'failed', error: failureReason };
       }
       const remoteFieldId = remoteFieldIdByName.get(field.name);
       return remoteFieldId !== undefined

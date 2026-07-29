@@ -167,6 +167,25 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
   array of the element type (`formulaOrRollupResultSchema`), and `multipleLookupValues` also
   accepts a top-level error object (a whole-lookup error is `{ error }`, not an array). Element
   types are still validated. Schema-only, takes effect on re-pull.
+- **Batched record links to the SAME target table create duplicate mirror columns** (DEV-11101).
+  Airtable auto-creates a reciprocal ("mirror") link field on the target table for every link
+  field pointing at it, named after the table the mirror points back at. Created **one at a
+  time** Airtable de-duplicates that name (`"People"`, `"People 2"`, …); created in a **single
+  `createTable` call it does not** — N links to one target leave N mirrors on the target ALL
+  named `"People"`. Every record write to that target then fails with
+  `Ambiguous field name: "People"` (272 records in the Affinity→Airtable run), and the damage is
+  **unrepairable through the API**: there is no delete-field endpoint, and renaming onto a taken
+  name is refused. `createTable` therefore batches only the FIRST link per target table and adds
+  each additional link to that same target via its own `createField` call
+  (`selectLinkFieldNamesToAddAfterTableCreation` in `airtable-connector.ts`). Links to *distinct*
+  targets never collide, so they stay batched.
+  - Verified live: 3 links batched ⇒ 3 columns all named `zz_dev11101_batch` ⇒
+    `AMBIGUOUS_FIELD_NAMES`. The same 3 through the connector ⇒ `X`, `X 2`, `X 3`, write OK.
+  - Airtable otherwise enforces field-name uniqueness case-insensitively (`createField` and
+    rename both return `DUPLICATE_OR_EMPTY_FIELD_NAME`); whitespace variants (`"Name "`, NBSP,
+    ZWSP) ARE distinct fields, but name lookup is exact — a non-matching key yields
+    `UNKNOWN_FIELD_NAME`, not ambiguity. So the batched-mirror path is the only known way to
+    produce two identically-named columns.
 
 ## Gotchas
 - (connector-specific operational notes)
@@ -174,7 +193,7 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
 
-- **Live spec:** `server/test/integration/airtable-connector.spec.ts` (record CRUD, 14/14) **+ `airtable-create-schema.spec.ts`** (createTable → read back → createFields, 3/3) — 📄 ✅. Both **live-verified green 2026-06-18**.
+- **Live spec:** `server/test/integration/airtable-connector.spec.ts` (record CRUD, 14/14) **+ `airtable-create-schema.spec.ts`** (createTable → read back → createFields → duplicate-mirror regression, 4/4) — 📄 ✅. Both **live-verified green 2026-06-18**.
 - **Runs in CI pipeline:** ✅ **wired** — `AIRTABLE_API_KEY` ← `INTEGRATION_TEST_AIRTABLE_API_KEY` + `AIRTABLE_TEST_BASE_ID` ← `INTEGRATION_TEST_AIRTABLE_TEST_BASE_ID` (post-deploy job). Both the core spec **and** create-schema run. ⚠️ **create-schema is TEMPORARY here** — see Notes; move it to a deeper/scheduled pass.
 - **Credentials / env vars:** `AIRTABLE_API_KEY` (PAT for the dedicated `test+scratch.integrations@whalesync.com` account) + `AIRTABLE_TEST_BASE_ID` = "Untitled Base" `appd8IpxdZzR2hQQH` (throwaway). Local in `server/.env.integration`.
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅ · **create-schema ✅** (table + fields). `getSchemaCreationCapabilities()` declares `maxFieldsPerTable: 500` (DEV-10818), so a too-wide source (e.g. a HubSpot object with 400–600+ props) is rejected up front with a `TOO_MANY_FIELDS` validation issue instead of failing opaquely at the remote `createTable`. It also declares `supportsManyToManyForeignKeys: true` (record-link fields hold a list).

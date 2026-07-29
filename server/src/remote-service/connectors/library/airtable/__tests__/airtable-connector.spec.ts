@@ -468,6 +468,114 @@ describe('AirtableConnector schema creation', () => {
       expect(linkedResult?.error).toContain('different base');
     });
 
+    // DEV-11101. Airtable auto-creates a reciprocal "mirror" link field on the
+    // target table, named after the table it points back at. Batched into ONE
+    // createTable call it does NOT de-duplicate that name, so N links to the same
+    // target leave N mirrors on the target ALL named the same — after which every
+    // record write to the target fails with `Ambiguous field name: "…"`, and the
+    // damage is unrepairable (no delete-field API). Creating them one at a time
+    // lets Airtable's own de-duplication run ("People", "People 2", …).
+    describe('multiple record links to the same target table (DEV-11101)', () => {
+      const linkTo = (tableId: string) => ({
+        fieldType: { kind: 'foreignKey' as const, target: { existingRemoteTableId: ['appBASE', tableId] } },
+      });
+
+      function planWithLinks(): NormalizedCreateTablePlan {
+        return {
+          remoteParentId: ['appBASE'],
+          ref: 't1',
+          name: 'People',
+          fields: [
+            schemaField('Name', { isPrimary: true }),
+            schemaField('Organizations', linkTo('tblCompanies')),
+            schemaField('Current Organization', linkTo('tblCompanies')),
+            schemaField('Deals', linkTo('tblDeals')),
+          ],
+          deferredFkFields: [],
+        };
+      }
+
+      it('batches only the first link per target and adds the rest one at a time', async () => {
+        mockCreateTable.mockResolvedValue({
+          id: 'tblNEW',
+          name: 'People',
+          fields: [
+            { id: 'fld1', name: 'Name' },
+            { id: 'fld2', name: 'Organizations' },
+            { id: 'fld4', name: 'Deals' },
+          ],
+        });
+        mockCreateField.mockResolvedValue({ id: 'fld3', name: 'Current Organization' });
+
+        const result = await connector.createTable(planWithLinks());
+
+        // Only ONE link to tblCompanies rides along in the batched create; the
+        // link to the *different* target stays batched (it can't collide).
+        const [, request] = mockCreateTable.mock.calls[0] as [string, CreateTableRequest];
+        expect(request.fields.map((field) => field.name)).toEqual(['Name', 'Organizations', 'Deals']);
+
+        expect(mockCreateField).toHaveBeenCalledTimes(1);
+        const [baseId, tableId, field] = mockCreateField.mock.calls[0] as [string, string, { name: string }];
+        expect([baseId, tableId]).toEqual(['appBASE', 'tblNEW']);
+        expect(field.name).toBe('Current Organization');
+
+        expect(result.status).toBe('created');
+        expect(result.fields).toEqual([
+          { name: 'Name', status: 'created', remoteFieldId: 'fld1' },
+          { name: 'Organizations', status: 'created', remoteFieldId: 'fld2' },
+          { name: 'Current Organization', status: 'created', remoteFieldId: 'fld3' },
+          { name: 'Deals', status: 'created', remoteFieldId: 'fld4' },
+        ]);
+      });
+
+      it('marks the table partial when a held-back link fails, without failing the table', async () => {
+        mockCreateTable.mockResolvedValue({
+          id: 'tblNEW',
+          name: 'People',
+          fields: [{ id: 'fld1', name: 'Name' }],
+        });
+        mockCreateField.mockRejectedValue(new Error('boom'));
+
+        const result = await connector.createTable(planWithLinks());
+
+        expect(result.status).toBe('partial');
+        expect(result.remoteTableId).toEqual(['appBASE', 'tblNEW']);
+        expect(result.fields).toContainEqual(
+          expect.objectContaining({ name: 'Current Organization', status: 'failed' }),
+        );
+      });
+
+      it('keeps a single link per target fully batched (no extra create-field call)', async () => {
+        mockCreateTable.mockResolvedValue({
+          id: 'tblNEW',
+          name: 'T',
+          fields: [
+            { id: 'fld1', name: 'Name' },
+            { id: 'fld2', name: 'Companies' },
+            { id: 'fld3', name: 'Deals' },
+          ],
+        });
+        const plan: NormalizedCreateTablePlan = {
+          remoteParentId: ['appBASE'],
+          ref: 't1',
+          name: 'T',
+          fields: [
+            schemaField('Name', { isPrimary: true }),
+            schemaField('Companies', linkTo('tblCompanies')),
+            schemaField('Deals', linkTo('tblDeals')),
+          ],
+          deferredFkFields: [],
+        };
+
+        const result = await connector.createTable(plan);
+
+        expect(mockCreateField).not.toHaveBeenCalled();
+        const [, request] = mockCreateTable.mock.calls[0] as [string, CreateTableRequest];
+        expect(request.fields.map((field) => field.name)).toEqual(['Name', 'Companies', 'Deals']);
+        expect(result.status).toBe('created');
+      });
+    });
+
     it('returns a failed result (no throw) when the API rejects', async () => {
       mockCreateTable.mockRejectedValue(new Error('boom'));
       const plan: NormalizedCreateTablePlan = {

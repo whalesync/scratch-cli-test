@@ -96,4 +96,58 @@ describeIfConfigured('AirtableConnector create-schema — live API', () => {
     expect(results[0].status).toBe('created');
     expect(results[0].remoteFieldId).toBeDefined();
   });
+
+  // DEV-11101. Airtable auto-creates a reciprocal "mirror" link field on the target
+  // table, named after the table pointing at it. Batched into ONE createTable call
+  // Airtable does NOT de-duplicate that name, so three links to the same target used
+  // to leave three columns on the target ALL identically named — after which every
+  // record write to the target failed with `Ambiguous field name: "…"`, unrepairable
+  // via the API (no delete-field endpoint, and renaming onto a taken name is refused).
+  // The connector now batches only the first link per target and adds the rest one at
+  // a time, letting Airtable's own de-duplication produce "X", "X 2", "X 3".
+  //
+  // This is the case the suite previously had NO coverage for: before this test, the
+  // live create-schema suite created no foreign keys at all.
+  it('gives every mirror a unique name when several links target one table', async () => {
+    const linkFieldType = { kind: 'foreignKey' as const, target: { existingRemoteTableId: createdRemoteTableId } };
+    const linkingTableName = `${tableName}_links`;
+    const plan: NormalizedCreateTablePlan = {
+      remoteParentId: [baseId],
+      ref: 'links',
+      name: linkingTableName,
+      fields: [
+        { name: 'Title', fieldType: { kind: 'text' }, isPrimary: true },
+        { name: 'Link One', fieldType: linkFieldType },
+        { name: 'Link Two', fieldType: linkFieldType },
+        { name: 'Link Three', fieldType: linkFieldType },
+      ],
+      deferredFkFields: [],
+    };
+
+    const result = await connector.createTable(plan);
+
+    expect(result.status).toBe('created');
+    for (const field of result.fields) {
+      expect(field.status).toBe('created');
+      expect(field.remoteFieldId).toBeDefined();
+    }
+
+    // Read the TARGET table back: it must carry three distinctly-named mirrors.
+    const targetSpec = await connector.fetchJsonTableSpec({ wsId: tableName, remoteId: createdRemoteTableId });
+    const targetFieldNames = Object.keys(
+      (targetSpec.schema as unknown as { properties: { fields: { properties: Record<string, unknown> } } }).properties
+        .fields.properties,
+    );
+    const mirrorNames = targetFieldNames.filter((name) => name.startsWith(linkingTableName));
+    expect(mirrorNames).toHaveLength(3);
+    expect(new Set(mirrorNames).size).toBe(3);
+
+    // And the payoff: a name-keyed write to the target is no longer ambiguous.
+    const [firstMirrorName] = mirrorNames;
+    const created = await connector.createRecords(targetSpec, [
+      { fields: { Title: 'DEV-11101 ambiguity check', [firstMirrorName]: [] } },
+    ] as never);
+    expect(created).toHaveLength(1);
+    await connector.deleteRecords(targetSpec, created);
+  });
 });
