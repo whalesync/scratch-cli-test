@@ -25,14 +25,14 @@ import { TemporarySyncWithPullJobDefinition } from '../worker/jobs/job-definitio
 
 @Injectable()
 export class BullEnqueuerService implements OnModuleDestroy {
-  private redis?: IORedis;
-  private queue?: Queue;
+  private redis: IORedis;
+  private queue: Queue;
   // QueueEvents blocks on a Redis stream, so it gets its OWN connection (sharing the Queue's is
   // discouraged by BullMQ). Lets a caller (the routine executor) await a job across instances via
   // `job.waitUntilFinished(getQueueEvents(), ttl)` — the Worker's local `on('completed')` only fires
   // on the instance that ran the job, which is never the one driving a routine.
-  private queueEventsRedis?: IORedis;
-  private queueEvents?: QueueEvents;
+  private queueEventsRedis: IORedis;
+  private queueEvents: QueueEvents;
 
   constructor(
     private readonly configService: ScratchConfigService,
@@ -40,54 +40,48 @@ export class BullEnqueuerService implements OnModuleDestroy {
     private readonly dbService: DbService,
     private readonly migrationLockService: MigrationLockService,
   ) {
-    if (configService.getUseJobs()) {
-      this.redis = new IORedis({
-        host: this.configService.getRedisHost(),
-        port: this.configService.getRedisPort(),
-        password: this.configService.getRedisPassword(),
-        maxRetriesPerRequest: null,
-      });
+    this.redis = new IORedis({
+      host: this.configService.getRedisHost(),
+      port: this.configService.getRedisPort(),
+      password: this.configService.getRedisPassword(),
+      maxRetriesPerRequest: null,
+    });
 
-      this.queue = new Queue(WORKER_QUEUE_NAME, {
-        connection: this.redis,
-        streams: WORKER_QUEUE_STREAM_OPTIONS,
-        defaultJobOptions: {
-          removeOnComplete: 100,
-          removeOnFail: 100,
-          attempts: 1,
-        },
-      });
+    this.queue = new Queue(WORKER_QUEUE_NAME, {
+      connection: this.redis,
+      streams: WORKER_QUEUE_STREAM_OPTIONS,
+      defaultJobOptions: {
+        removeOnComplete: 100,
+        removeOnFail: 100,
+        attempts: 1,
+      },
+    });
 
-      this.queueEventsRedis = new IORedis({
-        host: this.configService.getRedisHost(),
-        port: this.configService.getRedisPort(),
-        password: this.configService.getRedisPassword(),
-        maxRetriesPerRequest: null,
-      });
-      this.queueEvents = new QueueEvents(WORKER_QUEUE_NAME, { connection: this.queueEventsRedis });
-    }
+    this.queueEventsRedis = new IORedis({
+      host: this.configService.getRedisHost(),
+      port: this.configService.getRedisPort(),
+      password: this.configService.getRedisPassword(),
+      maxRetriesPerRequest: null,
+    });
+    this.queueEvents = new QueueEvents(WORKER_QUEUE_NAME, { connection: this.queueEventsRedis });
   }
 
   async onModuleDestroy() {
-    await this.queue?.close();
-    await this.queueEvents?.close();
-    await this.redis?.quit();
-    await this.queueEventsRedis?.quit();
+    await this.queue.close();
+    await this.queueEvents.close();
+    await this.redis.quit();
+    await this.queueEventsRedis.quit();
   }
 
   /**
    * The shared QueueEvents for 'worker-queue'. Pass to `job.waitUntilFinished(queueEvents, ttlMs)`
-   * to await a job's terminal state from any instance. Throws if jobs are disabled (no Redis).
+   * to await a job's terminal state from any instance.
    */
   getQueueEvents(): QueueEvents {
-    if (!this.queueEvents) {
-      throw new Error('Expected queueEvents to not be undefined');
-    }
     return this.queueEvents;
   }
 
   async getJob(jobId: string): Promise<Job | undefined> {
-    if (!this.queue) return undefined;
     return await this.queue.getJob(jobId);
   }
 
@@ -602,9 +596,6 @@ export class BullEnqueuerService implements OnModuleDestroy {
   }
 
   private getQueue(): Queue {
-    if (!this.queue) {
-      throw new Error('Expected queue to not be undefined');
-    }
     return this.queue;
   }
 }

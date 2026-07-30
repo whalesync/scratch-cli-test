@@ -188,7 +188,6 @@ services:
       SCRATCH_GIT_BACKEND_URL: http://scratch-git-2:3101
       API_URL_OVERRIDES: "https://api.airtable.com=http://fake-airtable:4646,https://admin.memberstack.com=http://fake-memberstack:4652,https://api.hubapi.com=http://fake-hubspot:4653,https://api.affinity.co=http://fake-affinity:4654"
       ENCRYPTION_MASTER_KEY: "12345678901234567890123456789012"
-      USE_JOBS: "true"
       # /upload-patch GCS wiring (smoke-only fake — see fake-gcs service above).
       # GCS_API_ENDPOINT (NOT STORAGE_EMULATOR_HOST): the SDK's emulator mode
       # strips `/storage/v1` from the read baseUrl, hitting a route fake-gcs

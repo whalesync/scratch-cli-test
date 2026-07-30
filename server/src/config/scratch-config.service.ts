@@ -140,10 +140,6 @@ export class ScratchConfigService {
     return this.getOptionalNumberVariable('WORKER_LOCK_TIMEOUT_MS', 120_000);
   }
 
-  getUseJobs(): boolean {
-    return this.getOptionalFlagVariable('USE_JOBS', false);
-  }
-
   /**
    * When true, API token requests bypass rate limiting as if every token had the `rate-limit:unlimited` scope.
    *
