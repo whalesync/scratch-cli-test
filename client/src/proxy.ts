@@ -2,10 +2,10 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextFetchEvent, NextMiddleware, NextRequest, NextResponse } from 'next/server';
 import { RouteUrls } from './utils/route-urls';
 
-// DEV-11008 / pentest SCR-013 — start the Content-Security-Policy in Report-Only so violations can
-// be reviewed in the test env's DevTools console, then flip to false to enforce. A nonce-based
+// DEV-11008 / pentest SCR-013 — CSP now ENFORCED (blocking). Report-Only bake on test+prod is
+// complete; the one violation found ('unsafe-eval' from gtag.js) is allowed below. A nonce-based
 // `strict: true` policy is the planned follow-up hardening (this Phase 1 leaves script-src permissive).
-const CSP_REPORT_ONLY = true;
+const CSP_REPORT_ONLY = false;
 
 function createMiddleware(): NextMiddleware {
   const isPublicRoute = createRouteMatcher(RouteUrls.publicRoutePatterns);
@@ -29,6 +29,11 @@ function createMiddleware(): NextMiddleware {
       contentSecurityPolicy: {
         reportOnly: CSP_REPORT_ONLY,
         directives: {
+          // Google Analytics' gtag.js (and PostHog add-on scripts) evaluate strings at runtime, which
+          // the non-strict Phase 1 policy must allow. Clerk unions this onto its default script-src
+          // (self, unsafe-inline, https:, http:, Stripe, maps). Removed by the planned strict-dynamic
+          // nonce hardening (DEV-11125 §3), where strict-dynamic replaces the host allowlist entirely.
+          'script-src': ['unsafe-eval'],
           // XHR / fetch / WebSocket targets. Clerk auto-adds its own frontend API + telemetry.
           'connect-src': [
             'self',
