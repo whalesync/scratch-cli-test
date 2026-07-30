@@ -13,9 +13,14 @@ export class WixBlogSchemaParser {
    * All three are read-only. Wix does support creating categories and tags, but this connector has
    * never exercised those write paths, and marking them writable would let a publish silently attempt
    * an untested call. Better to say "read-only" than to accept a write we can't stand behind.
+   *
+   * Members is conditional: it comes from the Wix Members Area, a separate App Market app that a blog
+   * need not have installed. The caller probes for it — see `WixBlogConnector.isMembersAreaInstalled`.
    */
-  parseTablePreviews(): TablePreview[] {
-    const referenceTables: WixBlogTableKey[] = ['categories', 'tags', 'members'];
+  parseTablePreviews({ membersAreaInstalled }: { membersAreaInstalled: boolean }): TablePreview[] {
+    const referenceTables: WixBlogTableKey[] = membersAreaInstalled
+      ? ['categories', 'tags', 'members']
+      : ['categories', 'tags'];
     return [
       { id: wixBlogEntityId('posts'), displayName: WIX_BLOG_TABLE_DISPLAY_NAMES.posts },
       ...referenceTables.map((table) => ({

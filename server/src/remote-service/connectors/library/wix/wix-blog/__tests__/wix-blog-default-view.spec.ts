@@ -78,9 +78,31 @@ describe('buildWixBlogDefaultView — Blog Posts', () => {
   });
 
   it('marks Wix-computed fields readonly', () => {
-    for (const path of ['status', 'minutesToRead', 'memberId', 'editedDate', '_createdDate']) {
+    for (const path of ['status', 'minutesToRead', 'editedDate', '_createdDate']) {
       expect(byPath(cols, path)).toMatchObject({ readonly: true });
     }
+  });
+
+  // DEV-11128: read-only made a create impossible — Wix rejects a post with no author, but the
+  // annotation blocked the only field that supplies one. Write-once is the honest description:
+  // settable while the post is still local, owned by Wix from then on.
+  it('makes the author write-once rather than read-only', () => {
+    expect(byPath(cols, 'memberId')).toMatchObject({ writeOnce: true });
+    expect(byPath(cols, 'memberId')?.readonly).toBeUndefined();
+    // The contributor field really is always Wix's to set.
+    expect(byPath(cols, 'mostRecentContributorId')).toMatchObject({ readonly: true });
+  });
+
+  // DEV-11114: without a codec the body reached every destination as a multi-thousand-character
+  // Ricos JSON blob. `toCore` runs on the export path only, so the record on disk stays verbatim.
+  it('renders the post body to HTML on the way out', () => {
+    expect(byPath(cols, 'richContent')).toMatchObject({
+      name: 'Content',
+      type: 'richtext',
+      codec: { toCore: { type: 'ricos_to_html' } },
+    });
+    // No `fromCore`: HTML→Ricos on publish is the connector's job, not the sync engine's.
+    expect(byPath(cols, 'richContent')?.codec?.fromCore).toBeUndefined();
   });
 });
 

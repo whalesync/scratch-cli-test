@@ -34,20 +34,20 @@ Run by `/test-live-export WIX_BLOG notion,supabase,airtable` against the **local
 
 ## Gates
 
-| # | Gate | Status | Evidence |
-|---|---|---|---|
-| 1 | Preflight (server, token, creds) | ✅ | `preflight OK` in all three run logs; cloned connections `coa_qaWixNot3`/`coa_qaWixSup1`/`coa_qaWixAir1` each returned `{"health":"ok"}` |
-| 2 | Recon: connector + View read, tables chosen | ✅ | `wix-blog-connector.ts`, `wix-blog-json-schema.ts`, `wix-blog-schema-parser.ts`, `rich-content/*`. **There is no `wix-blog-default-view.ts` and `WixBlogConnector` does not override `buildDefaultView`** — root cause of most findings below. Only one table exists, so it was selected. |
-| 3 | Torture data seeded + read back via service API | ✅ | `seed.mjs` → 213 draft posts; every record re-read through `GET /blog/v3/draft-posts/{id}` |
-| 4 | Plan audit: every downgraded field judged | ✅ | `/tmp/audit-wix_blog-{notion,supabase,airtable}.json` — 15 non-`mapped` notes, identical on all three destinations. See [Findings](#findings) and [Accepted downgrades](#accepted-downgrades). Round 2 brought this to **0**. |
-| 5 | FKs identified as foreignKey; links resolve on destination | ❌ → ✅ | Round 1: **all 5 FKs unresolvable → dropped on all three destinations** (DEV-11115, DEV-11116). Round 2: `droppedForeignKeys: 0`, all 4 bound to sibling tables, real Airtable record links — see [Round 2](#round-2--fixes-implemented-and-re-verified) |
-| 6 | First run: publish failures = 0 | ✅ | Notion `rrn_UD8W1EA094`, Supabase `rrn_QTgXD9pD1j`, Airtable `rrn_sN794wzm7N` — 213 creates executed, `failedCount: 0`, `failedOperations: []` on each |
-| 7 | Destination-side spot check (≥3 records/table, dest service API) | ✅ | Notion `GET /v1/databases/7729dd66…` + query (213 pages), Supabase `psql` on `public."Blog Posts"` (213 rows), Airtable `GET /v0/meta/bases/appGoopxI4Px4dyuv/tables` + records (213). Field-by-field on the all-empty, unicode, long-text, rich-text and flags records. |
-| 8 | CRUD pass: edit / create / delete mirrored | ⚠ | All 4 change classes mirrored on all three destinations, but **Notion created the new record twice** (existing DEV-11016, reproduced from a second source). See [CRUD pass](#crud-pass-phase-4) |
-| 9 | Pagination: 200+ record table fully synced | ✅ | 213 seeded → 213 pulled → 213 published → 213 read back on **each** destination. Caveat filed as DEV-11123 (unstable page ordering). |
-| 10 | Second run is a no-op | ❌ | Notion **and** Airtable republished all 213 records unchanged; Supabase was a clean no-op. 2+ destinations ⇒ upstream, not a dest-pack bug ⇒ evidence added to the generic **DEV-10556**, not filed per-source. |
-| 11 | Destination drift: out-of-band delete restored | ✅ | see [Destination drift](#destination-drift-gate-11) |
-| 12 | Findings filed under DEV-10932 with `live-export-qa` | ✅ | DEV-11114 … DEV-11124 |
+| #   | Gate                                                             | Status  | Evidence                                                                                                                                                                                                                                                                                  |
+| --- | ---------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Preflight (server, token, creds)                                 | ✅      | `preflight OK` in all three run logs; cloned connections `coa_qaWixNot3`/`coa_qaWixSup1`/`coa_qaWixAir1` each returned `{"health":"ok"}`                                                                                                                                                  |
+| 2   | Recon: connector + View read, tables chosen                      | ✅      | `wix-blog-connector.ts`, `wix-blog-json-schema.ts`, `wix-blog-schema-parser.ts`, `rich-content/*`. **There is no `wix-blog-default-view.ts` and `WixBlogConnector` does not override `buildDefaultView`** — root cause of most findings below. Only one table exists, so it was selected. |
+| 3   | Torture data seeded + read back via service API                  | ✅      | `seed.mjs` → 213 draft posts; every record re-read through `GET /blog/v3/draft-posts/{id}`                                                                                                                                                                                                |
+| 4   | Plan audit: every downgraded field judged                        | ✅      | `/tmp/audit-wix_blog-{notion,supabase,airtable}.json` — 15 non-`mapped` notes, identical on all three destinations. See [Findings](#findings) and [Accepted downgrades](#accepted-downgrades). Round 2 brought this to **0**.                                                             |
+| 5   | FKs identified as foreignKey; links resolve on destination       | ❌ → ✅ | Round 1: **all 5 FKs unresolvable → dropped on all three destinations** (DEV-11115, DEV-11116). Round 2: `droppedForeignKeys: 0`, all 4 bound to sibling tables, real Airtable record links — see [Round 2](#round-2--fixes-implemented-and-re-verified)                                  |
+| 6   | First run: publish failures = 0                                  | ✅      | Notion `rrn_UD8W1EA094`, Supabase `rrn_QTgXD9pD1j`, Airtable `rrn_sN794wzm7N` — 213 creates executed, `failedCount: 0`, `failedOperations: []` on each                                                                                                                                    |
+| 7   | Destination-side spot check (≥3 records/table, dest service API) | ✅      | Notion `GET /v1/databases/7729dd66…` + query (213 pages), Supabase `psql` on `public."Blog Posts"` (213 rows), Airtable `GET /v0/meta/bases/appGoopxI4Px4dyuv/tables` + records (213). Field-by-field on the all-empty, unicode, long-text, rich-text and flags records.                  |
+| 8   | CRUD pass: edit / create / delete mirrored                       | ⚠      | All 4 change classes mirrored on all three destinations, but **Notion created the new record twice** (existing DEV-11016, reproduced from a second source). See [CRUD pass](#crud-pass-phase-4)                                                                                           |
+| 9   | Pagination: 200+ record table fully synced                       | ✅      | 213 seeded → 213 pulled → 213 published → 213 read back on **each** destination. Caveat filed as DEV-11123 (unstable page ordering).                                                                                                                                                      |
+| 10  | Second run is a no-op                                            | ❌      | Notion **and** Airtable republished all 213 records unchanged; Supabase was a clean no-op. 2+ destinations ⇒ upstream, not a dest-pack bug ⇒ evidence added to the generic **DEV-10556**, not filed per-source.                                                                           |
+| 11  | Destination drift: out-of-band delete restored                   | ✅      | see [Destination drift](#destination-drift-gate-11)                                                                                                                                                                                                                                       |
+| 12  | Findings filed under DEV-10932 with `live-export-qa`             | ✅      | DEV-11114 … DEV-11124                                                                                                                                                                                                                                                                     |
 
 ## What the plan produces (destination-independent — judged once)
 
@@ -119,18 +119,18 @@ One round of source-side changes through Wix's own API via
 [`crud-pass.mjs`](/tools/live-export-audit/seeds/wix_blog/crud-pass.mjs), then one `--rerun` per
 destination workbook. Site total stayed at 213 (1 created, 1 deleted).
 
-| Change | Wix id | What was changed |
-|---|---|---|
-| edit (long text) | `f2842f0a-1df7-4883-be83-54400c25eeab` (`fable_qa 03 longtext`) | body rewritten to a 4 312-char paragraph; excerpt → `CRUD-EDITED excerpt — 🥺 日本語 "quoted" line1\nline2` |
-| edit (scalars) | `a733bd6a-6014-41bb-a479-8f6294c0d841` (`fable_qa 09 flags`) | excerpt, `featured: true → false`, `commentingEnabled: false → true` |
-| create | `9c3e699b-f7cf-4d08-bff9-a42356a70cce` (`fable_qa 13 crud created`) | new draft post |
-| delete | `329959ba-ee14-4245-88bb-5c0afe449d31` (`fable_qa 11 dangling fk`) | hard-deleted (`permanent: true`) |
+| Change           | Wix id                                                              | What was changed                                                                                            |
+| ---------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| edit (long text) | `f2842f0a-1df7-4883-be83-54400c25eeab` (`fable_qa 03 longtext`)     | body rewritten to a 4 312-char paragraph; excerpt → `CRUD-EDITED excerpt — 🥺 日本語 "quoted" line1\nline2` |
+| edit (scalars)   | `a733bd6a-6014-41bb-a479-8f6294c0d841` (`fable_qa 09 flags`)        | excerpt, `featured: true → false`, `commentingEnabled: false → true`                                        |
+| create           | `9c3e699b-f7cf-4d08-bff9-a42356a70cce` (`fable_qa 13 crud created`) | new draft post                                                                                              |
+| delete           | `329959ba-ee14-4245-88bb-5c0afe449d31` (`fable_qa 11 dangling fk`)  | hard-deleted (`permanent: true`)                                                                            |
 
-| Destination | Run | Publish counts | Verified on the destination's own API |
-|---|---|---|---|
-| Supabase | `rrn_nGeKPTwu4P` | **1 create / 2 edits / 1 delete** — exactly the change set | 213 rows; `fable_qa 13 crud created` present; `fable_qa 11 dangling fk` gone; `richContent` length 4 486; edited excerpt intact **including the embedded newline** |
-| Airtable | `rrn_Qu1GT8EZ86` | 1 create / **212** edits / 1 delete (2 real edits + 210 records of DEV-10556 churn) | 213 records; create present; delete gone; `richContent` length 4 486; edited excerpts applied |
-| Notion | `rrn_Q25ij2hpDh` | counters unreliable — see below | **214** pages (should be 213); create present (**twice**); delete gone; edits applied (`richContent` length 4 486, newline preserved) |
+| Destination | Run              | Publish counts                                                                      | Verified on the destination's own API                                                                                                                              |
+| ----------- | ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Supabase    | `rrn_nGeKPTwu4P` | **1 create / 2 edits / 1 delete** — exactly the change set                          | 213 rows; `fable_qa 13 crud created` present; `fable_qa 11 dangling fk` gone; `richContent` length 4 486; edited excerpt intact **including the embedded newline** |
+| Airtable    | `rrn_Qu1GT8EZ86` | 1 create / **212** edits / 1 delete (2 real edits + 210 records of DEV-10556 churn) | 213 records; create present; delete gone; `richContent` length 4 486; edited excerpts applied                                                                      |
+| Notion      | `rrn_Q25ij2hpDh` | counters unreliable — see below                                                     | **214** pages (should be 213); create present (**twice**); delete gone; edits applied (`richContent` length 4 486, newline preserved)                              |
 
 **Notion duplicated the created record.** The single source-side create
 (`9c3e699b-f7cf-4d08-bff9-a42356a70cce`) produced **two** Notion pages,
@@ -161,7 +161,7 @@ time while its twin keeps receiving the churn edits. Commented on DEV-11016 with
 
 **Source-side change detection is correct.** Even with no incremental pull and no tombstone endpoint,
 the full-scan pull classified the round exactly right — `createdCount: 1, deletedCount: 1, updatedCount: 2`
-on folder `dfd_RCbjeebyaa` — so Wix source deletes *are* detected (via the full scan) and edits are not
+on folder `dfd_RCbjeebyaa` — so Wix source deletes _are_ detected (via the full scan) and edits are not
 over-reported.
 
 Two things this pass established that are **not** bugs and should not be re-filed:
@@ -181,11 +181,11 @@ Deleted/archived `fable_qa bulk 0100` out-of-band on each destination through th
 then re-ran the routine. **The engine restored the record on all three** — no silent divergence, and
 no loud failure needed.
 
-| Destination | Out-of-band action | Restore run | Result |
-|---|---|---|---|
-| Supabase | `DELETE FROM "Blog Posts" WHERE title = 'fable_qa bulk 0100'` (212 rows left) | `rrn_g09vm7JLHY` | **1 create / 0 edits / 0 deletes** → row back, new `id` `da4a1032-47e7-4c3b-b8fe-c027e44c5c3f`, total 213 ✅ |
-| Airtable | `DELETE /v0/appGoopxI4Px4dyuv/tbl9ywCw4yA6KlJdo/recR1TkhZmQbUClme` | `rrn_nofjKwKoxQ` | **1 create** (+212 churn edits) → record back, total 213 ✅ |
-| Notion | `PATCH /v1/pages/3aca9426-7a71-8119-9b88-f1a9b2903c82 {archived: true}` | `rrn_4IWvhW0JPl` | **1 create / 212 edits / 0 deletes**, `failedCount: 0` → page back ✅ |
+| Destination | Out-of-band action                                                            | Restore run      | Result                                                                                                       |
+| ----------- | ----------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| Supabase    | `DELETE FROM "Blog Posts" WHERE title = 'fable_qa bulk 0100'` (212 rows left) | `rrn_g09vm7JLHY` | **1 create / 0 edits / 0 deletes** → row back, new `id` `da4a1032-47e7-4c3b-b8fe-c027e44c5c3f`, total 213 ✅ |
+| Airtable    | `DELETE /v0/appGoopxI4Px4dyuv/tbl9ywCw4yA6KlJdo/recR1TkhZmQbUClme`            | `rrn_nofjKwKoxQ` | **1 create** (+212 churn edits) → record back, total 213 ✅                                                  |
+| Notion      | `PATCH /v1/pages/3aca9426-7a71-8119-9b88-f1a9b2903c82 {archived: true}`       | `rrn_4IWvhW0JPl` | **1 create / 212 edits / 0 deletes**, `failedCount: 0` → page back ✅                                        |
 
 Worth noting: because the source record still exists, "restore" here means **re-create with a new
 destination id**, not un-archive. That is the correct non-destructive outcome, but it does mean a
@@ -196,20 +196,20 @@ destination-side delete silently loses any destination-only state on that row.
 All filed as children of DEV-10932, project `[MAJOR] Live Export`, label `live-export-qa`.
 **Most are now fixed — see [Round 2](#round-2--fixes-implemented-and-re-verified).**
 
-| Issue | Layer | Summary | Priority |
-|---|---|---|---|
-| [DEV-11114](https://linear.app/whalesync/issue/DEV-11114) | view | `richContent` (the post body) exports as raw Ricos JSON on every destination; the tested Ricos→HTML/Markdown converters are instantiated and never called | Urgent |
-| [DEV-11115](https://linear.app/whalesync/issue/DEV-11115) | transport | 4 of 5 FK targets name tables the connector never exposes → categories, tags, author and pricing plans are silently dropped from every export | High |
-| [DEV-11116](https://linear.app/whalesync/issue/DEV-11116) | transport | the `relatedPostIds` self-FK never resolves: `linkedTableId: 'wix_blog'` can't match the folder's `remoteId` token `wix-blog`, and `unresolvedLinkedTableRemoteId` is plumbed but never consulted | High |
-| [DEV-11117](https://linear.app/whalesync/issue/DEV-11117) | transport | 6 schema fields the DraftPost API never returns (`wordCount`, `lastPublishedDate`, `slug`, `url`, `heroImage`, `translationId`) → permanently empty columns, and hero-image asset extraction can never fire | Medium |
-| [DEV-11118](https://linear.app/whalesync/issue/DEV-11118) | transport | real DraftPost fields absent from the schema (`editedDate`, `_createdDate`, `slugs`, `hasUnpublishedChanges`, `contentId`, `changeOrigin`, `mostRecentContributorId`, `previewTextParagraph`, `translations`) land on disk but can't be exported | Medium |
-| [DEV-11119](https://linear.app/whalesync/issue/DEV-11119) | view | `firstPublishedDate`/`lastPublishedDate` export as text, not date columns, despite `format: 'date-time'` | Medium |
-| [DEV-11120](https://linear.app/whalesync/issue/DEV-11120) | view | `hashtags` downgrades to a `", "`-joined string — ambiguous for elements that contain commas | Medium |
-| [DEV-11121](https://linear.app/whalesync/issue/DEV-11121) | view | 32 plan columns: nested objects duplicated as parent **and** children, with meaningless leaf names (`nodes`, `metadata`, `tags`, `settings`, `wixMedia`, `displayed`, `custom`) | Medium |
-| [DEV-11122](https://linear.app/whalesync/issue/DEV-11122) | view | the featured image exports as an unusable `wix:image://v1/…` URI instead of an `https://static.wixstatic.com/media/…` URL | Medium |
-| [DEV-11123](https://linear.app/whalesync/issue/DEV-11123) | transport | offset pagination passes no `sort`, so Wix's default `EDITING_DATE_DESC` can skip or duplicate records when posts change during a multi-page pull | Medium |
-| [DEV-11124](https://linear.app/whalesync/issue/DEV-11124) | transformer | `html-to-ricos` emits `link.target: '_blank'`; Wix's API rejects it (`enum must be in [SELF, BLANK, PARENT, TOP]`) | Low |
-| [DEV-10556](https://linear.app/whalesync/issue/DEV-10556) | core | (existing) second run republishes all 213 records on Notion + Airtable, clean no-op on Supabase — evidence commented, **not** filed per-source | — |
+| Issue                                                     | Layer       | Summary                                                                                                                                                                                                                                          | Priority |
+| --------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| [DEV-11114](https://linear.app/whalesync/issue/DEV-11114) | view        | `richContent` (the post body) exports as raw Ricos JSON on every destination; the tested Ricos→HTML/Markdown converters are instantiated and never called                                                                                        | Urgent   |
+| [DEV-11115](https://linear.app/whalesync/issue/DEV-11115) | transport   | 4 of 5 FK targets name tables the connector never exposes → categories, tags, author and pricing plans are silently dropped from every export                                                                                                    | High     |
+| [DEV-11116](https://linear.app/whalesync/issue/DEV-11116) | transport   | the `relatedPostIds` self-FK never resolves: `linkedTableId: 'wix_blog'` can't match the folder's `remoteId` token `wix-blog`, and `unresolvedLinkedTableRemoteId` is plumbed but never consulted                                                | High     |
+| [DEV-11117](https://linear.app/whalesync/issue/DEV-11117) | transport   | 6 schema fields the DraftPost API never returns (`wordCount`, `lastPublishedDate`, `slug`, `url`, `heroImage`, `translationId`) → permanently empty columns, and hero-image asset extraction can never fire                                      | Medium   |
+| [DEV-11118](https://linear.app/whalesync/issue/DEV-11118) | transport   | real DraftPost fields absent from the schema (`editedDate`, `_createdDate`, `slugs`, `hasUnpublishedChanges`, `contentId`, `changeOrigin`, `mostRecentContributorId`, `previewTextParagraph`, `translations`) land on disk but can't be exported | Medium   |
+| [DEV-11119](https://linear.app/whalesync/issue/DEV-11119) | view        | `firstPublishedDate`/`lastPublishedDate` export as text, not date columns, despite `format: 'date-time'`                                                                                                                                         | Medium   |
+| [DEV-11120](https://linear.app/whalesync/issue/DEV-11120) | view        | `hashtags` downgrades to a `", "`-joined string — ambiguous for elements that contain commas                                                                                                                                                     | Medium   |
+| [DEV-11121](https://linear.app/whalesync/issue/DEV-11121) | view        | 32 plan columns: nested objects duplicated as parent **and** children, with meaningless leaf names (`nodes`, `metadata`, `tags`, `settings`, `wixMedia`, `displayed`, `custom`)                                                                  | Medium   |
+| [DEV-11122](https://linear.app/whalesync/issue/DEV-11122) | view        | the featured image exports as an unusable `wix:image://v1/…` URI instead of an `https://static.wixstatic.com/media/…` URL                                                                                                                        | Medium   |
+| [DEV-11123](https://linear.app/whalesync/issue/DEV-11123) | transport   | offset pagination passes no `sort`, so Wix's default `EDITING_DATE_DESC` can skip or duplicate records when posts change during a multi-page pull                                                                                                | Medium   |
+| [DEV-11124](https://linear.app/whalesync/issue/DEV-11124) | transformer | `html-to-ricos` emits `link.target: '_blank'`; Wix's API rejects it (`enum must be in [SELF, BLANK, PARENT, TOP]`)                                                                                                                               | Low      |
+| [DEV-10556](https://linear.app/whalesync/issue/DEV-10556) | core        | (existing) second run republishes all 213 records on Notion + Airtable, clean no-op on Supabase — evidence commented, **not** filed per-source                                                                                                   | —        |
 
 Five of these (DEV-11114, 11119, 11120, 11121, 11122) are the same root cause — **Wix Blog has no
 default view** — and all land in one new `wix-blog-default-view.ts`.
@@ -218,15 +218,15 @@ default view** — and all land in one new `wix-blog-default-view.ts`.
 
 Not bugs — plain text is the honest representation, and no plausible inner value exists to pluck.
 
-| Field | Type | Why accepted |
-|---|---|---|
-| `seoData`, `seoData.tags`, `seoData.settings` | object / array / unknown | Wix's SEO tag array is an arbitrary head-tag AST (`{type, children, props}`); there is no single scalar worth plucking and no destination type that fits. Text is honest. Its *duplication* across three columns is the real defect (DEV-11106). |
-| `media`, `media.wixMedia` | object / unknown | The container itself is genuinely opaque; the actionable part is the image URI inside it, filed as DEV-11108. |
-| `richContent.metadata` | unknown | Wix-internal document metadata (`version`, `createdTimestamp`, an all-zero `id`). Nothing a user wants; should simply be hidden. |
-| `status` | string | A closed enum (`DRAFT`/`UNPUBLISHED`/`PUBLISHED`/`SCHEDULED`) that *could* be a select, but `TablePropertyType` has no select member, so text is the best currently-expressible mapping. |
-| `language` | string | BCP-47 tag; text is correct. (Wix silently ignored a `language: 'fr'` write on a single-language site — a Wix behaviour, not ours.) |
+| Field                                         | Type                     | Why accepted                                                                                                                                                                                                                                     |
+| --------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `seoData`, `seoData.tags`, `seoData.settings` | object / array / unknown | Wix's SEO tag array is an arbitrary head-tag AST (`{type, children, props}`); there is no single scalar worth plucking and no destination type that fits. Text is honest. Its _duplication_ across three columns is the real defect (DEV-11106). |
+| `media`, `media.wixMedia`                     | object / unknown         | The container itself is genuinely opaque; the actionable part is the image URI inside it, filed as DEV-11108.                                                                                                                                    |
+| `richContent.metadata`                        | unknown                  | Wix-internal document metadata (`version`, `createdTimestamp`, an all-zero `id`). Nothing a user wants; should simply be hidden.                                                                                                                 |
+| `status`                                      | string                   | A closed enum (`DRAFT`/`UNPUBLISHED`/`PUBLISHED`/`SCHEDULED`) that _could_ be a select, but `TablePropertyType` has no select member, so text is the best currently-expressible mapping.                                                         |
+| `language`                                    | string                   | BCP-47 tag; text is correct. (Wix silently ignored a `language: 'fr'` write on a single-language site — a Wix behaviour, not ours.)                                                                                                              |
 
-## Out-of-scope observations (Wix as a *destination* / general connector, not Live Export source)
+## Out-of-scope observations (Wix as a _destination_ / general connector, not Live Export source)
 
 Found while seeding through Wix's own API; recorded here and in `STATE.md` rather than filed under
 this Live Export umbrella, because Live Export never writes back into Wix.
@@ -247,19 +247,19 @@ Same day, same torture site. Two changes: **Categories/Tags/Members exposed as r
 **default view the connector never had**. Rich content is passed through exactly as Wix provides it
 (raw Ricos) — no HTML/Markdown conversion, deferring to the planned system-wide rich-text feature.
 
-| | Round 1 (audit) | Round 2 |
-|---|---|---|
-| Tables exposed | 1 | **4** |
-| Plan columns on Blog Posts | 32 | **19** |
-| Non-`mapped` plan notes | **15** | **0** |
-| Dropped foreign keys | **5** | **0** |
-| Categories / Tags / Author on the destination | absent | real Airtable `multipleRecordLinks` |
-| Related posts (self-relation) | absent | self-referential links |
-| Cover image | `wix:image://v1/9a4116_…` | `https://static.wixstatic.com/media/9a4116_…` (`url`) |
-| Timestamps | `singleLineText`, mostly empty | `dateTime` with real values |
-| Post body | `singleLineText`, stored twice per record | `multilineText`, once |
-| Publish failures | 0 | 0 (221 records) |
-| Connector unit tests | 86 | **130** |
+|                                               | Round 1 (audit)                           | Round 2                                               |
+| --------------------------------------------- | ----------------------------------------- | ----------------------------------------------------- |
+| Tables exposed                                | 1                                         | **4**                                                 |
+| Plan columns on Blog Posts                    | 32                                        | **19**                                                |
+| Non-`mapped` plan notes                       | **15**                                    | **0**                                                 |
+| Dropped foreign keys                          | **5**                                     | **0**                                                 |
+| Categories / Tags / Author on the destination | absent                                    | real Airtable `multipleRecordLinks`                   |
+| Related posts (self-relation)                 | absent                                    | self-referential links                                |
+| Cover image                                   | `wix:image://v1/9a4116_…`                 | `https://static.wixstatic.com/media/9a4116_…` (`url`) |
+| Timestamps                                    | `singleLineText`, mostly empty            | `dateTime` with real values                           |
+| Post body                                     | `singleLineText`, stored twice per record | `multilineText`, once                                 |
+| Publish failures                              | 0                                         | 0 (221 records)                                       |
+| Connector unit tests                          | 86                                        | **130**                                               |
 
 **Verified on a server running this branch, not the shared dev stack.** The dev server on `:3010` is
 another worktree's code, so the fixes were exercised on an isolated parallel session
@@ -289,14 +289,37 @@ tag + 1 author link; `fable_qa 12 related posts` carries 3 self-links; `fable_qa
 - **DEV-11123** is mitigated (`EDITING_DATE_ASC` turns a skipped record into a harmless re-read), not
   solved. Real fix is cursor paging via `queryDraftPosts`, folded into DEV-11126.
 
+> **Superseded by Round 3** — all three of the connector-owned items above are now fixed. Only
+> DEV-10556 (core) remains.
+
 ### New follow-ups
 
-| Issue | Summary |
-|---|---|
+| Issue                                                     | Summary                                                                                                                      |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | [DEV-11126](https://linear.app/whalesync/issue/DEV-11126) | Implement incremental pull — `editedDate` is now declared + annotated, and the same endpoint switch fixes DEV-11123 properly |
-| [DEV-11127](https://linear.app/whalesync/issue/DEV-11127) | Make Categories/Tags writable (all three reference tables are read-only for now) |
-| [DEV-11128](https://linear.app/whalesync/issue/DEV-11128) | Creating a post is impossible — Wix requires `memberId` on create, our schema marks it readonly |
-| [DEV-11129](https://linear.app/whalesync/issue/DEV-11129) | `getBatchSize()` is 1 and the comments wrongly claim Wix has no bulk endpoints |
+| [DEV-11127](https://linear.app/whalesync/issue/DEV-11127) | Make Categories/Tags writable (all three reference tables are read-only for now)                                             |
+| [DEV-11128](https://linear.app/whalesync/issue/DEV-11128) | Creating a post is impossible — Wix requires `memberId` on create, our schema marks it readonly                              |
+| [DEV-11129](https://linear.app/whalesync/issue/DEV-11129) | `getBatchSize()` is 1 and the comments wrongly claim Wix has no bulk endpoints                                               |
+
+## Round 3 — launch laundry list
+
+Cleared the remaining connector-owned launch blockers under DEV-10932. **Code + unit coverage only —
+not re-run against live services**, so the gate table above still reflects Round 2's live evidence.
+
+| Issue     | What changed                                                                                                                                                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DEV-11114 | New `ricos_to_html` transformer wired as the `Content` column's `codec.toCore`. The body leaves as HTML (`<h1>…</h1><p>…<strong>bold</strong>…`) instead of a 6 647-char Ricos JSON blob. The record on disk is unchanged — still verbatim Ricos. |
+| DEV-11128 | `memberId` is `x-scratch-write-once` rather than `x-scratch-readonly`, so a post can be created from Scratch at all. The Author column carries the same flag, and its FK gives a real member picker instead of a pasted GUID.                     |
+| DEV-11129 | `getBatchSize` is per-operation: update **20**, delete **100**, through the SDK's bulk endpoints with per-item `itemMetadata` checked. **Creates stay at 1** — bulk create is non-atomic and the publish retry would duplicate posts (DEV-11016). |
+| DEV-11123 | **Actually fixed, not mitigated:** Blog Posts page by cursor via `queryDraftPosts`, `ascending('_id')`. This is the switch Round 2 deferred into DEV-11126; the incremental-pull half of that issue remains.                                      |
+| DEV-11130 | Stays **cancelled** — we mirror, we don't filter. But re-checking it found a different real bug, now fixed: `listTables` offered Members unconditionally though the Wix Members Area is a separate App Market app a blog need not have installed (filed as DEV-11143). |
+
+**Coverage:** connector unit tests 130 → 146, plus a new `ricos_to_html` transformer spec and a
+`wix-blog-posts` fixture in the view-codec goldens (`src/sync/__fixtures__/view-codec/`) — the
+guardrail that proves the body renders to HTML through the real default view on real record shapes.
+
+**Still open, unchanged:** gate 10 / DEV-10556 (core republish churn), DEV-11126 (incremental pull),
+DEV-11127 (Categories/Tags writable), `pullRecordFilesByIds`, and the live integration spec.
 
 ## Human remainder (not automatable — do before launch)
 
@@ -339,3 +362,12 @@ tag + 1 author link; `fable_qa 12 related posts` carries 3 self-links; `fable_qa
   tests 86 → 130. Gates 5 and 8 now pass; **gate 10 still fails** (DEV-10556). Filed DEV-11126–11129.
   Round 2's Airtable tables (`tblgycvicSNF49mqW` and the three reference tables in
   `appGoopxI4Px4dyuv`) are also QA debris worth deleting once reviewed.
+- 2026-07-30 — Round 3, "launch laundry list" (Claude) — cleared the remaining connector-owned
+  blockers under DEV-10932: DEV-11114 (Ricos→HTML on export), DEV-11128 (`memberId` write-once),
+  DEV-11129 (per-operation batch sizes + bulk update/delete), DEV-11123 (real cursor paging via
+  `queryDraftPosts`), and a Members-table capability probe found while re-checking the cancelled
+  DEV-11130. See [Round 3](#round-3--launch-laundry-list). Connector unit tests 130 → 146; added a
+  `ricos_to_html` transformer spec and a `wix-blog-posts` view-codec golden fixture.
+  **Not re-run against live services** — this round is code + unit coverage. A live re-verification
+  (especially the create path, which nobody has exercised since `memberId` became writable, and the
+  bulk update/delete paths) is the remaining gate before flipping the LaunchDarkly flag.

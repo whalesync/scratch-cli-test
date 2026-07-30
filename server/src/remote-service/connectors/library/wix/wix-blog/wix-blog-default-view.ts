@@ -25,10 +25,11 @@ import { WixBlogTableKey, wixBlogForeignKeyTo, wixBlogTableKeyFromEntityId } fro
  *   exported, which is exactly how the duplicate parent/child columns are suppressed. Hidden columns
  *   remain available for a user to switch on in the grid.
  *
- * Rich content is passed through as Wix natively provides it — the raw Ricos document — under a
- * single `Content` column typed `richtext` (so destinations create a long-text field rather than a
- * single-line one). Converting Ricos to HTML/Markdown is deliberately NOT done here; that belongs to
- * the planned system-wide rich-text feature, not to one connector's view.
+ * Rich content is *stored* as Wix natively provides it — the raw Ricos document — and *rendered* to
+ * HTML on the way out by the `Content` column's `ricos_to_html` codec. The distinction matters: the
+ * Directive governs the bytes on disk, and a codec is the view layer adapting to the data rather
+ * than the other way round. `toCore` runs on the export path only, so the grid still edits the
+ * record's real shape.
  */
 export function buildWixBlogDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
   const table: WixBlogTableKey = wixBlogTableKeyFromEntityId(spec.id) ?? 'posts';
@@ -95,9 +96,17 @@ const WIX_MEDIA_URI_TO_HTTPS_URL = {
 function buildPostCols(): TableViewCol[] {
   return [
     { kind: 'col', path: 'title', name: 'Title', type: 'string' },
-    // The post body, exactly as Wix stores it (a Ricos document). `richtext` maps to a long-text
-    // destination column so a multi-thousand-character body isn't crammed into a single-line field.
-    { kind: 'col', path: 'richContent', name: 'Content', type: 'richtext' },
+    // The post body. Stored verbatim as the Ricos document Wix returns, and rendered to HTML on the
+    // way out by the `ricos_to_html` codec — without it the body reached every destination as a
+    // multi-thousand-character JSON blob (DEV-11114). `richtext` maps to a long-text destination
+    // column so the rendered HTML isn't crammed into a single-line field.
+    {
+      kind: 'col',
+      path: 'richContent',
+      name: 'Content',
+      type: 'richtext',
+      codec: { toCore: { type: TransformerTypes.RicosToHtml } },
+    },
     { kind: 'col', path: 'excerpt', name: 'Excerpt', type: 'string' },
     {
       kind: 'col',
@@ -108,12 +117,15 @@ function buildPostCols(): TableViewCol[] {
     },
     { kind: 'col', path: 'status', name: 'Status', type: 'string', readonly: true },
     { kind: 'col', path: 'featured', name: 'Featured', type: 'checkbox' },
+    // Write-once, not read-only: Wix rejects a create with no author ("Missing post owner
+    // information") but assigns the author itself thereafter, so the only moment this is settable is
+    // while the post is still local (DEV-11128).
     {
       kind: 'col',
       path: 'memberId',
       name: 'Author',
       type: 'string',
-      readonly: true,
+      writeOnce: true,
       foreignKey: wixBlogForeignKeyTo('members', { isSingleValued: true }),
     },
     {

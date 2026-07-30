@@ -26,7 +26,7 @@ function collectForeignKeys(spec: BaseJsonTableSpec): { path: string; options: F
 
 describe('Wix Blog tables', () => {
   it('exposes Blog Posts plus the three reference tables its foreign keys point at', () => {
-    const previews = parser.parseTablePreviews();
+    const previews = parser.parseTablePreviews({ membersAreaInstalled: true });
     expect(previews.map((p) => p.displayName)).toEqual(['Blog Posts', 'Categories', 'Tags', 'Members']);
     expect(previews.map((p) => p.id.remoteId)).toEqual([
       ['wix-blog'],
@@ -37,7 +37,7 @@ describe('Wix Blog tables', () => {
   });
 
   it('marks the reference tables read-only and Blog Posts writable', () => {
-    const previews = parser.parseTablePreviews();
+    const previews = parser.parseTablePreviews({ membersAreaInstalled: true });
     const [posts, ...referenceTables] = previews;
 
     expect(posts.disabledCreates).toBeUndefined();
@@ -66,7 +66,7 @@ describe('Wix Blog tables', () => {
    * export.
    */
   it('declares every foreign key so it resolves against a listed table', () => {
-    const listedTables = parser.parseTablePreviews();
+    const listedTables = parser.parseTablePreviews({ membersAreaInstalled: true });
     const foreignKeys = listedTables.flatMap((preview) =>
       collectForeignKeys(buildWixBlogJsonTableSpec(preview.id)).map((fk) => ({ ...fk, from: preview.displayName })),
     );
@@ -139,6 +139,17 @@ describe('Wix Blog schemas', () => {
     expect(properties['slugs']).toBeDefined();
     expect(properties['hasUnpublishedChanges']).toBeDefined();
     expect(properties['editedDate']).toMatchObject({ format: 'date-time', 'x-scratch-last-modified-field': true });
+  });
+
+  // DEV-11128: `createDraftPost` 400s with "Missing post owner information" when `memberId` is
+  // absent, so read-only left no combination of edits that produced a creatable post. The two
+  // annotations are mutually exclusive — write-once replaces read-only rather than joining it.
+  it('marks memberId write-once so a post can actually be created', () => {
+    const properties = schemaProperties('posts');
+
+    expect(properties['memberId']).toMatchObject({ 'x-scratch-write-once': true });
+    expect(properties['memberId']['x-scratch-readonly']).toBeUndefined();
+    expect(properties['mostRecentContributorId']).toMatchObject({ 'x-scratch-readonly': true });
   });
 
   it('builds a distinct spec per reference table', () => {

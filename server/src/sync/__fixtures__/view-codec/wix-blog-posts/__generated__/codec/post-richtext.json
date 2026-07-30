@@ -1,0 +1,56 @@
+{
+  "title": {
+    "core": "fable_qa 05 richtext"
+  },
+  "richContent": {
+    "core": "<h1>Heading level 1</h1><p>Plain, then <strong>bold</strong> and <em>italic</em>.</p><p><a href=\"https://example.com\" target=\"_blank\">a link</a></p><ul><li>First bullet</li></ul><h…«398 chars»"
+  },
+  "excerpt": {
+    "core": "Every Ricos node type in one post."
+  },
+  "media.wixMedia.image": {
+    "core": "https://static.wixstatic.com/media/9a4116_2161bd3b120046b7bc653b638305c2cc~mv2.jpg"
+  },
+  "status": {
+    "core": "PUBLISHED"
+  },
+  "featured": {
+    "core": true
+  },
+  "memberId": {
+    "core": "9a4116c1-2d3e-4f50-8617-2b3c4d5e6f70"
+  },
+  "categoryIds": {
+    "core": ["cat-announcements", "cat-engineering"]
+  },
+  "tagIds": {
+    "core": ["tag-release", "tag-deep-dive"]
+  },
+  "hashtags": {
+    "core": "ricos, torture, qa"
+  },
+  "relatedPostIds": {
+    "core": ["1111aaaa-2222-3333-4444-555566667777"]
+  },
+  "editedDate": {
+    "core": "2026-07-29T18:22:41.000Z"
+  },
+  "_createdDate": {
+    "core": "2026-07-21T09:04:12.000Z"
+  },
+  "firstPublishedDate": {
+    "core": "2026-07-22T15:30:00.000Z"
+  },
+  "seoSlug": {
+    "core": "fable-qa-05-richtext"
+  },
+  "minutesToRead": {
+    "core": 3
+  },
+  "commentingEnabled": {
+    "core": true
+  },
+  "language": {
+    "core": "en"
+  }
+}

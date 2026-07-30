@@ -1,0 +1,164 @@
+{
+  "_id": "8f2a1c94-5b6d-4e77-9a10-3c4d5e6f7a8b",
+  "title": "fable_qa 05 richtext",
+  "excerpt": "Every Ricos node type in one post.",
+  "status": "PUBLISHED",
+  "featured": true,
+  "commentingEnabled": true,
+  "language": "en",
+  "minutesToRead": 3,
+  "memberId": "9a4116c1-2d3e-4f50-8617-2b3c4d5e6f70",
+  "mostRecentContributorId": "9a4116c1-2d3e-4f50-8617-2b3c4d5e6f70",
+  "hashtags": ["ricos", "torture", "qa"],
+  "categoryIds": ["cat-announcements", "cat-engineering"],
+  "tagIds": ["tag-release", "tag-deep-dive"],
+  "relatedPostIds": ["1111aaaa-2222-3333-4444-555566667777"],
+  "pricingPlanIds": [],
+  "slugs": ["fable-qa-05-richtext"],
+  "seoSlug": "fable-qa-05-richtext",
+  "previewTextParagraph": "Every Ricos node type in one post.",
+  "hasUnpublishedChanges": false,
+  "editedDate": "2026-07-29T18:22:41.000Z",
+  "_createdDate": "2026-07-21T09:04:12.000Z",
+  "firstPublishedDate": "2026-07-22T15:30:00.000Z",
+  "media": {
+    "wixMedia": {
+      "image": "wix:image://v1/9a4116_2161bd3b120046b7bc653b638305c2cc~mv2.jpg/cover.jpg#originWidth=1920&originHeight=1080"
+    },
+    "displayed": true,
+    "custom": false
+  },
+  "richContent": {
+    "nodes": [
+      {
+        "type": "HEADING",
+        "id": "qa_node_1",
+        "headingData": { "level": 1 },
+        "nodes": [
+          {
+            "type": "TEXT",
+            "id": "qa_text_1",
+            "nodes": [],
+            "textData": { "text": "Heading level 1", "decorations": [] }
+          }
+        ]
+      },
+      {
+        "type": "PARAGRAPH",
+        "id": "qa_node_2",
+        "nodes": [
+          { "type": "TEXT", "id": "qa_text_2", "nodes": [], "textData": { "text": "Plain, then ", "decorations": [] } },
+          {
+            "type": "TEXT",
+            "id": "qa_text_3",
+            "nodes": [],
+            "textData": { "text": "bold", "decorations": [{ "type": "BOLD", "fontWeightValue": 700 }] }
+          },
+          { "type": "TEXT", "id": "qa_text_4", "nodes": [], "textData": { "text": " and ", "decorations": [] } },
+          {
+            "type": "TEXT",
+            "id": "qa_text_5",
+            "nodes": [],
+            "textData": { "text": "italic", "decorations": [{ "type": "ITALIC", "italicData": true }] }
+          },
+          { "type": "TEXT", "id": "qa_text_6", "nodes": [], "textData": { "text": ".", "decorations": [] } }
+        ]
+      },
+      {
+        "type": "PARAGRAPH",
+        "id": "qa_node_3",
+        "nodes": [
+          {
+            "type": "TEXT",
+            "id": "qa_text_7",
+            "nodes": [],
+            "textData": {
+              "text": "a link",
+              "decorations": [
+                { "type": "LINK", "linkData": { "link": { "url": "https://example.com", "target": "BLANK" } } }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "BULLETED_LIST",
+        "id": "qa_node_4",
+        "nodes": [
+          {
+            "type": "LIST_ITEM",
+            "id": "qa_node_4_1",
+            "nodes": [
+              {
+                "type": "PARAGRAPH",
+                "id": "qa_node_4_1_p",
+                "nodes": [
+                  {
+                    "type": "TEXT",
+                    "id": "qa_text_8",
+                    "nodes": [],
+                    "textData": { "text": "First bullet", "decorations": [] }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      { "type": "DIVIDER", "id": "qa_node_5", "dividerData": { "lineStyle": "SINGLE", "width": "LARGE" } },
+      {
+        "type": "CODE_BLOCK",
+        "id": "qa_node_6",
+        "codeBlockData": {},
+        "nodes": [
+          {
+            "type": "TEXT",
+            "id": "qa_text_9",
+            "nodes": [],
+            "textData": { "text": "const answer = 42;", "decorations": [] }
+          }
+        ]
+      },
+      {
+        "type": "BLOCKQUOTE",
+        "id": "qa_node_7",
+        "quoteData": { "indentation": 1 },
+        "nodes": [
+          {
+            "type": "PARAGRAPH",
+            "id": "qa_node_7_p",
+            "nodes": [
+              {
+                "type": "TEXT",
+                "id": "qa_text_10",
+                "nodes": [],
+                "textData": { "text": "A quotation.", "decorations": [] }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "IMAGE",
+        "id": "qa_node_8",
+        "imageData": {
+          "altText": "An embedded image",
+          "image": {
+            "src": {
+              "id": "9a4116_7d8e9f0a1b2c3d4e5f60718293a4b5c6~mv2.png",
+              "url": "https://static.wixstatic.com/media/9a4116_7d8e9f0a1b2c3d4e5f60718293a4b5c6~mv2.png"
+            },
+            "width": 800,
+            "height": 600
+          }
+        }
+      }
+    ],
+    "metadata": { "version": 1, "createdTimestamp": "2026-07-21T09:04:12.000Z" },
+    "documentStyle": {}
+  },
+  "seoData": {
+    "tags": [{ "type": "title", "children": "fable_qa 05 richtext", "props": {} }],
+    "settings": { "preventAutoRedirect": false }
+  }
+}

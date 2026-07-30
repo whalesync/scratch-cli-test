@@ -1,0 +1,244 @@
+{
+  "name": "Default",
+  "cols": [
+    {
+      "kind": "col",
+      "path": "title",
+      "name": "Title",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "richContent",
+      "name": "Content",
+      "type": "richtext",
+      "codec": {
+        "toCore": {
+          "type": "ricos_to_html"
+        }
+      }
+    },
+    {
+      "kind": "col",
+      "path": "excerpt",
+      "name": "Excerpt",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "media.wixMedia.image",
+      "name": "Cover image",
+      "type": "url",
+      "codec": {
+        "toCore": {
+          "type": "replace_regex",
+          "options": {
+            "pattern": "^wix:image://v1/([^/#]+).*$",
+            "replacement": "https://static.wixstatic.com/media/$1"
+          }
+        }
+      }
+    },
+    {
+      "kind": "col",
+      "path": "status",
+      "name": "Status",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "featured",
+      "name": "Featured",
+      "type": "checkbox"
+    },
+    {
+      "kind": "col",
+      "path": "memberId",
+      "name": "Author",
+      "type": "string",
+      "writeOnce": true,
+      "foreignKey": {
+        "linkedTableId": "wix-members",
+        "linkedTableRemoteId": ["wix-members"],
+        "isSingleValued": true
+      }
+    },
+    {
+      "kind": "col",
+      "path": "categoryIds",
+      "name": "Categories",
+      "type": "string",
+      "foreignKey": {
+        "linkedTableId": "wix-blog-categories",
+        "linkedTableRemoteId": ["wix-blog-categories"]
+      }
+    },
+    {
+      "kind": "col",
+      "path": "tagIds",
+      "name": "Tags",
+      "type": "string",
+      "foreignKey": {
+        "linkedTableId": "wix-blog-tags",
+        "linkedTableRemoteId": ["wix-blog-tags"]
+      }
+    },
+    {
+      "kind": "col",
+      "path": "hashtags",
+      "name": "Hashtags",
+      "type": "string",
+      "displayTransformer": {
+        "type": "jsonpath",
+        "options": {
+          "expression": "$[*]",
+          "arrayHandling": "join_comma"
+        }
+      }
+    },
+    {
+      "kind": "col",
+      "path": "relatedPostIds",
+      "name": "Related posts",
+      "type": "string",
+      "foreignKey": {
+        "linkedTableId": "wix-blog",
+        "linkedTableRemoteId": ["wix-blog"]
+      }
+    },
+    {
+      "kind": "col",
+      "path": "editedDate",
+      "name": "Last edited",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "_createdDate",
+      "name": "Created",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "firstPublishedDate",
+      "name": "First published",
+      "type": "date",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "seoSlug",
+      "name": "Slug",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "minutesToRead",
+      "name": "Minutes to read",
+      "type": "number",
+      "readonly": true
+    },
+    {
+      "kind": "col",
+      "path": "commentingEnabled",
+      "name": "Comments enabled",
+      "type": "checkbox"
+    },
+    {
+      "kind": "col",
+      "path": "language",
+      "name": "Language",
+      "type": "string"
+    },
+    {
+      "kind": "col",
+      "path": "_id",
+      "name": "Post ID",
+      "type": "string",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "slugs",
+      "name": "Assigned slugs",
+      "type": "string",
+      "displayTransformer": {
+        "type": "jsonpath",
+        "options": {
+          "expression": "$[*]",
+          "arrayHandling": "join_comma"
+        }
+      },
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "previewTextParagraph",
+      "name": "Preview text",
+      "type": "string",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "hasUnpublishedChanges",
+      "name": "Has unpublished changes",
+      "type": "checkbox",
+      "readonly": true,
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "mostRecentContributorId",
+      "name": "Last edited by",
+      "type": "string",
+      "readonly": true,
+      "hidden": true,
+      "foreignKey": {
+        "linkedTableId": "wix-members",
+        "linkedTableRemoteId": ["wix-members"],
+        "isSingleValued": true
+      }
+    },
+    {
+      "kind": "col",
+      "path": "pricingPlanIds",
+      "name": "Pricing plan IDs",
+      "type": "string",
+      "displayTransformer": {
+        "type": "jsonpath",
+        "options": {
+          "expression": "$[*]",
+          "arrayHandling": "join_comma"
+        }
+      },
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "media.displayed",
+      "name": "Cover image shown",
+      "type": "checkbox",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "media.custom",
+      "name": "Custom cover image",
+      "type": "checkbox",
+      "hidden": true
+    },
+    {
+      "kind": "col",
+      "path": "seoData",
+      "name": "SEO data",
+      "type": "object",
+      "hidden": true
+    }
+  ]
+}

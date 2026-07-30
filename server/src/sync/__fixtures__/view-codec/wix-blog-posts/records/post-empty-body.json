@@ -1,0 +1,17 @@
+{
+  "_id": "0d1e2f30-4152-4637-8495-a6b7c8d9e0f1",
+  "title": "fable_qa 01 minimal",
+  "status": "DRAFT",
+  "featured": false,
+  "commentingEnabled": true,
+  "language": "en",
+  "hashtags": [],
+  "categoryIds": [],
+  "tagIds": [],
+  "relatedPostIds": [],
+  "slugs": [],
+  "hasUnpublishedChanges": true,
+  "editedDate": "2026-07-30T08:15:00.000Z",
+  "_createdDate": "2026-07-30T08:15:00.000Z",
+  "media": { "displayed": false, "custom": false }
+}

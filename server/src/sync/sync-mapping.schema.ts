@@ -81,6 +81,7 @@ const transformerConfigSchema: z.ZodType = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.SourceFkToDestFk), options: sourceFkToDestFkOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.LookupField), options: lookupFieldOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.NotionToHtml), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal(TransformerTypes.RicosToHtml), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.AirmarkToHtml), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.HtmlToAirmark), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.ArrayAutoConvert), options: arrayAutoConvertOptionsSchema }),

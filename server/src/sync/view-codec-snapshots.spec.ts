@@ -9,6 +9,7 @@ import { NotionConnector } from 'src/remote-service/connectors/library/notion/no
 import { PipedriveConnector } from 'src/remote-service/connectors/library/pipedrive/pipedrive-connector';
 import { StripeConnector } from 'src/remote-service/connectors/library/stripe/stripe-connector';
 import { WebflowConnector } from 'src/remote-service/connectors/library/webflow/webflow-connector';
+import { WixBlogConnector } from 'src/remote-service/connectors/library/wix/wix-blog/wix-blog-connector';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import type { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 // Importing the transformers barrel registers every transformer implementation as a side effect,
@@ -139,6 +140,7 @@ const DEFAULT_VIEW_BUILDERS_BY_CONNECTOR: Record<string, (spec: BaseJsonTableSpe
   stripe: (spec) => new StripeConnector({ apiKey: 'test-key' }).buildDefaultView(spec),
   notion: (spec) => new NotionConnector('test-key').buildDefaultView(spec),
   pipedrive: (spec) => new PipedriveConnector('test-token').buildDefaultView(spec),
+  wix: (spec) => new WixBlogConnector('test-token').buildDefaultView(spec),
 };
 
 function buildDefaultViewForFixture(fixtureName: string, spec: BaseJsonTableSpec): TableView {

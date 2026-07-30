@@ -5,6 +5,7 @@ import {
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
+  X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../../types';
 import { escapePointerToken } from '../../../utils/json-pointer';
@@ -90,10 +91,15 @@ function buildPostsTableSpec(id: EntityId): BaseJsonTableSpec {
       previewTextParagraph: Type.Optional(
         Type.String({ description: 'Wix-generated preview text', [X_SCRATCH_READONLY]: true }),
       ),
+      // Write-once rather than read-only. `createDraftPost` rejects a post with no author
+      // ("Missing post owner information"), so marking this read-only made a create impossible from
+      // Scratch: leave it empty and Wix 400s, set it and the annotation blocks the write. Wix owns
+      // the value once the post exists, so it is settable exactly while the record is still local
+      // (DEV-11128). `mostRecentContributorId` below stays read-only — Wix always owns that one.
       memberId: Type.Optional(
         Type.String({
-          description: 'Author member ID',
-          [X_SCRATCH_READONLY]: true,
+          description: 'Author member ID (write-once: settable on create, owned by Wix after)',
+          [X_SCRATCH_WRITE_ONCE]: true,
           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: wixBlogForeignKeyTo('members', { isSingleValued: true }),
         }),
       ),

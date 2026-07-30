@@ -1,0 +1,42 @@
+{
+  "title": {
+    "core": "fable_qa 01 minimal"
+  },
+  "richContent": {},
+  "excerpt": {},
+  "media.wixMedia.image": {},
+  "status": {
+    "core": "DRAFT"
+  },
+  "featured": {
+    "core": false
+  },
+  "memberId": {},
+  "categoryIds": {
+    "core": []
+  },
+  "tagIds": {
+    "core": []
+  },
+  "hashtags": {
+    "core": ""
+  },
+  "relatedPostIds": {
+    "core": []
+  },
+  "editedDate": {
+    "core": "2026-07-30T08:15:00.000Z"
+  },
+  "_createdDate": {
+    "core": "2026-07-30T08:15:00.000Z"
+  },
+  "firstPublishedDate": {},
+  "seoSlug": {},
+  "minutesToRead": {},
+  "commentingEnabled": {
+    "core": true
+  },
+  "language": {
+    "core": "en"
+  }
+}

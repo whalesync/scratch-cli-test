@@ -35,6 +35,7 @@ import './implementations/notion-file-url.transformer';
 import './implementations/notion-to-html.transformer';
 import './implementations/replace-newlines.transformer';
 import './implementations/replace-regex.transformer';
+import './implementations/ricos-to-html.transformer';
 import './implementations/skip-if-dest-array-matches.transformer';
 import './implementations/skip-if-dest-matches.transformer';
 import './implementations/slugify.transformer';

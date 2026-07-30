@@ -1,0 +1,178 @@
+[
+  {
+    "column": "Title",
+    "columnId": "title",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Content",
+    "columnId": "richContent",
+    "cardinality": "single",
+    "logicalType": "richtext",
+    "primitiveType": "object",
+    "toCore": {
+      "type": "ricos_to_html"
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Excerpt",
+    "columnId": "excerpt",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Cover image",
+    "columnId": "media.wixMedia.image",
+    "cardinality": "single",
+    "logicalType": "url",
+    "primitiveType": "string",
+    "toCore": {
+      "type": "replace_regex",
+      "options": {
+        "pattern": "^wix:image://v1/([^/#]+).*$",
+        "replacement": "https://static.wixstatic.com/media/$1"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Status",
+    "columnId": "status",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Featured",
+    "columnId": "featured",
+    "cardinality": "single",
+    "logicalType": "checkbox",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Author",
+    "columnId": "memberId",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Categories",
+    "columnId": "categoryIds",
+    "cardinality": "multi",
+    "logicalType": "string",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Tags",
+    "columnId": "tagIds",
+    "cardinality": "multi",
+    "logicalType": "string",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Hashtags",
+    "columnId": "hashtags",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "array",
+    "toCore": {
+      "type": "jsonpath",
+      "options": {
+        "expression": "$[*]",
+        "arrayHandling": "join_comma"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Related posts",
+    "columnId": "relatedPostIds",
+    "cardinality": "multi",
+    "logicalType": "string",
+    "primitiveType": "array",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Last edited",
+    "columnId": "editedDate",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Created",
+    "columnId": "_createdDate",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "First published",
+    "columnId": "firstPublishedDate",
+    "cardinality": "single",
+    "logicalType": "date",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Slug",
+    "columnId": "seoSlug",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Minutes to read",
+    "columnId": "minutesToRead",
+    "cardinality": "single",
+    "logicalType": "number",
+    "primitiveType": "integer",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Comments enabled",
+    "columnId": "commentingEnabled",
+    "cardinality": "single",
+    "logicalType": "checkbox",
+    "primitiveType": "boolean",
+    "toCore": null,
+    "fromCore": null
+  },
+  {
+    "column": "Language",
+    "columnId": "language",
+    "cardinality": "single",
+    "logicalType": "string",
+    "primitiveType": "string",
+    "toCore": null,
+    "fromCore": null
+  }
+]

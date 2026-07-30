@@ -1,4 +1,3 @@
-
 <!-- ⛔ DO NOT DELETE THIS FILE. It is generated and maintained by the `/connector-build-execute`
      skill as the resumable record of this connector's test coverage. The connector
      work itself may need it to extend/finish the connector. Update it in place. -->
@@ -13,15 +12,17 @@
 > This file remains the record for the connector's own CRUD coverage; that one is Live-Export-specific.
 
 ## Test account (used to run this coverage)
+
 - **Service:** Wix site owned by `testing@whalesync.com`. The app `instanceId` is **not recorded here** — it is one of the three inputs that mint an access token, so treat it as a credential; read it from the connection's decrypted `oauthWorkspaceId` (see the next bullet). Site owner / blog member id `39807ab3-0190-41ee-8ac0-7237cfe8a381` (a public blog-author id, not a secret).
 - **Trial:** Free tier — no card, no expiry.
-- **API key / credentials:** *omitted here.* There is **no API key** — Wix Blog is OAuth-only. The stored blob is just the app `instanceId` + a 4-hour access token: decrypt `ConnectorAccount.encryptedCredentials` for `coa_OFBt3xqMf0` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in `server/.env`, AAD `connector-account`); the `oauthWorkspaceId` field IS the `instanceId`. Client id/secret are `WIX_CLIENT_ID_V2`/`WIX_CLIENT_SECRET_V2` in `server/.env` (this connection is `oauthAppVersion: 2`).
+- **API key / credentials:** _omitted here._ There is **no API key** — Wix Blog is OAuth-only. The stored blob is just the app `instanceId` + a 4-hour access token: decrypt `ConnectorAccount.encryptedCredentials` for `coa_OFBt3xqMf0` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in `server/.env`, AAD `connector-account`); the `oauthWorkspaceId` field IS the `instanceId`. Client id/secret are `WIX_CLIENT_ID_V2`/`WIX_CLIENT_SECRET_V2` in `server/.env` (this connection is `oauthAppVersion: 2`).
 - **Scratch side:** local workbook `wkb_kbxXKqnzF7` ("Sample oauth creds") / connection `coa_OFBt3xqMf0`. Live Export audit workbooks: `wkb_KLUmASQPlQ` (Notion), `wkb_bPZ8yk0W1T` (Supabase), `wkb_uz7VSbtGqO` (Airtable), `wkb_2ZC0zysfOd` (Round 2, Airtable, 4 tables).
 - **Auth method:** `oauth` — client-credentials, so it canNOT be connected from the CLI. To provision extra workbooks, clone the connector-account row: [`tools/live-export-audit/seeds/wix_blog/provision-workbook.sh`](/tools/live-export-audit/seeds/wix_blog/provision-workbook.sh).
 - **OAuth account:** `testing@whalesync.com` owns the site; the Whalesync Wix app owns the client credentials.
 - **Provenance:** connection provisioned by a human through the Live Export UI before this audit; reused (and row-cloned) since.
 
 ## Metadata
+
 - **Type:** **STATIC** — a Wix post has a fixed field set; there are no user-defined custom fields.
 - **Template version:** 2026-06-16 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
 - **Last run:** 2026-07-29 · Live Export audit + fixes (`/test-live-export`), not `/connector-build-execute` · Tester: Claude
@@ -29,25 +30,27 @@
 Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 
 ## Milestones — where this connector is in the build
+
 At-a-glance progress through the build journey, so anyone can see where this connector is at a glance. Status: ✅ done · 🔄 in progress · ⬜ not started.
 
 Filled in from the Live Export audit + Round 2 fixes (2026-07-29). `/connector-build-execute` has never
 run for this connector, so anything it would have proven via the **CLI** stays ⬜ — the evidence below
 comes from the Live Export path and the connectors' own APIs instead.
 
-| # | Milestone | Status | Notes |
-|---|---|:--:|---|
-| 1 | **Account ready** (registered / logged into the service web app) | ✅ | Burner Wix site on `testing@whalesync.com` |
-| 2 | **Connected** (connection created, health OK) | ✅ | OAuth-only (client-credentials). `{"health":"ok"}`. Connect flow itself still has DEV-10938 open |
-| 3 | **First fetch** (pulled ≥1 record) | ✅ | |
-| 4 | **All entities seeded & fetched** (every main entity has a record, pulled in) | ✅ | 213 posts / 3 categories / 4 tags / 1 member, all pulled and exported |
-| 5 | **Full write CRUD** (create + edit + delete exercised, push) | ❌ | Blocked: creating a post is impossible today (DEV-11128). Edits/deletes exercised through Wix's API during the audit, but **not** pushed via the CLI |
-| 6 | **Foreign keys tested** (CLI move parent→parent) | 🔄 | All 5 FKs now **read** correctly and land as real destination relations; none re-parented via the CLI yet |
-| 7 | **Edge cases & quirks tested** (Pass 2 tricky parts) | ✅ | Unicode/RTL/ZWSP/emoji, >4 200-char bodies, cap boundaries, 0/1/5-element arrays, every Ricos node kind, pagination past 3 pages — see `LIVE_EXPORT_AUDIT.md` |
-| 8 | **View(s) built** (default view) | ✅ | `wix-blog-default-view.ts` — all four tables. Fields grouped by real service mechanics (post vs cover media vs SEO; member profile vs CRM contact) |
-| 9 | **OAuth** (final / pre-release) | ✅ | Already OAuth-only — there is no API-key path. Client-credentials via `WixOAuthProvider`; see `server/src/oauth/CLIENT_CREDENTIALS_OAUTH.md` |
+| #   | Milestone                                                                     | Status | Notes                                                                                                                                                                                                                                                                       |
+| --- | ----------------------------------------------------------------------------- | :----: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Account ready** (registered / logged into the service web app)              |   ✅   | Burner Wix site on `testing@whalesync.com`                                                                                                                                                                                                                                  |
+| 2   | **Connected** (connection created, health OK)                                 |   ✅   | OAuth-only (client-credentials). `{"health":"ok"}`. Connect flow itself still has DEV-10938 open                                                                                                                                                                            |
+| 3   | **First fetch** (pulled ≥1 record)                                            |   ✅   |                                                                                                                                                                                                                                                                             |
+| 4   | **All entities seeded & fetched** (every main entity has a record, pulled in) |   ✅   | 213 posts / 3 categories / 4 tags / 1 member, all pulled and exported                                                                                                                                                                                                       |
+| 5   | **Full write CRUD** (create + edit + delete exercised, push)                  |   🔄   | Create is **unblocked** — `memberId` is now write-once (DEV-11128) — but nobody has created a post through Scratch yet. Edits/deletes exercised through Wix's API during the audit, and now routed through the bulk endpoints (DEV-11129), still **not** pushed via the CLI |
+| 6   | **Foreign keys tested** (CLI move parent→parent)                              |   🔄   | All 5 FKs now **read** correctly and land as real destination relations; none re-parented via the CLI yet                                                                                                                                                                   |
+| 7   | **Edge cases & quirks tested** (Pass 2 tricky parts)                          |   ✅   | Unicode/RTL/ZWSP/emoji, >4 200-char bodies, cap boundaries, 0/1/5-element arrays, every Ricos node kind, pagination past 3 pages — see `LIVE_EXPORT_AUDIT.md`                                                                                                               |
+| 8   | **View(s) built** (default view)                                              |   ✅   | `wix-blog-default-view.ts` — all four tables. Fields grouped by real service mechanics (post vs cover media vs SEO; member profile vs CRM contact)                                                                                                                          |
+| 9   | **OAuth** (final / pre-release)                                               |   ✅   | Already OAuth-only — there is no API-key path. Client-credentials via `WixOAuthProvider`; see `server/src/oauth/CLIENT_CREDENTIALS_OAUTH.md`                                                                                                                                |
 
 ## TODOs — known pending tasks
+
 Living checklist of what's left: gaps found while adopting human-built code, unfinished entities/fields, deferred edge cases, and follow-up issues. Check items off as they land. Coarser than the coverage matrix; broader than **Open issues** (which is only for broken ❌ cells with Linear links).
 
 Raised by the Live Export audit (2026-07-29) — see [`LIVE_EXPORT_AUDIT.md`](./LIVE_EXPORT_AUDIT.md).
@@ -69,141 +72,161 @@ Most were fixed the same day; the audit doc's "Round 2" section has the before/a
       `'_blank'` is now a compile error (DEV-11124).
 - [x] **Fix `extractFromWixNode`** — reads the real `imageData.image.src` nesting, and phase 1 now
       extracts the actual cover image from `media.wixMedia.image` instead of the phantom `heroImage`.
-- [~] **Stabilise pagination** — mitigated with `sort: 'EDITING_DATE_ASC'` (a mid-scan edit now causes
-      an idempotent re-read instead of a skipped record). Proper cursor paging is DEV-11126.
-- [ ] **Rich content conversion** — the body is a clean single `multilineText` column but still raw
-      Ricos JSON. Deliberate: passing through what the service natively provides until the system-wide
-      rich-text feature lands. `WixToHtmlConverter` / `createTurndownService` remain uncalled
-      (DEV-11114's remaining half).
-- [ ] **Incremental pull** (DEV-11126) — now unblocked; `editedDate` is declared and annotated with
-      `x-scratch-last-modified-field`. Same change should switch to `queryDraftPosts` cursor paging.
+- [x] **Stabilise pagination** — Blog Posts now page by CURSOR through `queryDraftPosts`, sorted
+      `ascending('_id')`. Wix tracks the position and the ordering is immutable, so a mid-scan edit
+      can no longer shift rows under the cursor. This is DEV-11123's real fix, replacing the
+      `EDITING_DATE_ASC` mitigation. The three reference tables stay offset-paged.
+- [x] **Rich content conversion** (DEV-11114) — the body renders to HTML on the export path via the
+      `ricos_to_html` transformer, wired as the `Content` column's `codec.toCore`. The record on disk
+      is still the verbatim Ricos document; only the value handed to a destination is converted.
+- [x] **Creating a post is impossible** (DEV-11128) — `memberId` is now `x-scratch-write-once` instead
+      of `x-scratch-readonly`: settable while the post is still local, owned by Wix afterwards.
+- [x] **`getBatchSize()` returns 1** (DEV-11129) — now per-operation: update 20, delete 100 (the SDK's
+      own `@maxSize` caps), routed through `bulkUpdateDraftPosts` / `bulkDeleteDraftPosts` with
+      per-item `itemMetadata` checked so a partial failure is surfaced rather than swallowed.
+      **Creates stay at 1 deliberately** — the bulk endpoints are non-atomic and the publish layer
+      retries a failed batch record-by-record, so bulking creates would turn one rejected post into N
+      duplicates (the DEV-11016 mechanism).
+- [ ] **Incremental pull** (DEV-11126) — the cursor-paging half is done; what remains is filtering on
+      `editedDate` (`queryDraftPosts` supports `gt`/`ge` on it) plus a deletion story. Delete detection
+      currently works _only_ because every pull is a full scan, so whoever adds incremental must poll
+      `listDeletedDraftPosts` or keep a periodic full scan, or deletes silently stop propagating.
 - [ ] **Make Categories / Tags writable** (DEV-11127) — all three reference tables are currently
       `disabledCreates`/`disabledUpdates`/`disabledDeletes` and the connector throws on a write,
       because those paths are untested. Members should stay read-only.
-- [ ] **Creating a post is impossible** (DEV-11128) — `createDraftPost` requires `memberId`
-      ("Missing post owner information") yet the schema marks it `x-scratch-readonly`. `writeOnce` is
-      probably the right annotation.
-- [ ] **`getBatchSize()` returns 1** (DEV-11129) and the code comments wrongly claim Wix has no bulk
-      endpoints — `bulkCreateDraftPosts` / `bulkUpdateDraftPosts` / `bulkDeleteDraftPosts` all exist in
-      the pinned SDK. Also revisit `deleteRecords` passing `permanent: true`, which bypasses the trash
-      bin and makes `restoreFromTrashBin` unusable.
+- [ ] **`deleteRecords` passes `permanent: true`**, bypassing Wix's trash bin and making
+      `restoreFromTrashBin` unusable. Left as-is for now: switching to the trash bin is only safe once
+      we know whether a trashed post still comes back from `queryDraftPosts` (if it does, a delete
+      would resurrect itself on the next pull). Needs a live check before changing.
 - [ ] **`pullRecordFilesByIds` throws `not implemented`** — no single-record refresh / post-publish re-read.
 - [ ] Add a live integration spec (`server/test/integration/wix-connector.spec.ts`) and wire it into the
       post-deploy CI job.
 
-## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
-These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
+## Objects / entity types — what the connector exposes (REQUIRED for every connector — three tables)
+
+These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom _objects_ in table 2; custom _fields_ are columns (field-types section), not entities.
 
 ### 1. Structural entities — define the record path in Scratch
+
 **Record path:** `/{table}/{record}.json` — flat. There is no site/space hierarchy to model: the OAuth
 app instance IS the site, so a connection is scoped to exactly one Wix site and `basePath` is `[]` on
 every table.
 
-| Structural entity | Role | Path segment or `parentPath` grouping? |
-|---|---|---|
-| Wix site (app instance) | implied by the connection — one instance = one site | discovery-only (not a path segment) |
-| Table (`wix-blog`, `wix-blog-categories`, `wix-blog-tags`, `wix-members`) | the table (its records are files) | path segment |
+| Structural entity                                                         | Role                                                | Path segment or `parentPath` grouping? |
+| ------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------- |
+| Wix site (app instance)                                                   | implied by the connection — one instance = one site | discovery-only (not a path segment)    |
+| Table (`wix-blog`, `wix-blog-categories`, `wix-blog-tags`, `wix-members`) | the table (its records are files)                   | path segment                           |
 
 ### 2. Main entities — independent top-level record types → each its own Scratch table
+
 Every entity that is (or could be) fetched as a standalone top-level list. Include custom **objects**; maximize this table (list planned ones too). Structurally-different-but-top-level entities go here with their own codepath.
 
 Pull is ✅ for all four (verified live: 213 posts / 3 categories / 4 tags / 1 member pulled and
 exported with zero failures). The push columns stay ⬜ because nothing has pushed through the CLI —
-and note that pushing a *new* post is currently impossible at all (DEV-11128).
+and note that pushing a _new_ post is currently impossible at all (DEV-11128).
 
-| Entity | Scratch table | Pull | Create→Push | Edit→Push | Delete | FK | Status |
-|---|---|:--:|:--:|:--:|:--:|:--:|---|
-| Draft post | `wix_blog` "Blog Posts" | ✅ | ❌ DEV-11128 | ⬜ | ⬜ | ✅ | built |
-| Category | `wix_blog_categories` "Categories" | ✅ | ➖ read-only | ➖ read-only | ➖ read-only | ✅ | built (writes: DEV-11127) |
-| Tag | `wix_blog_tags` "Tags" | ✅ | ➖ read-only | ➖ read-only | ➖ read-only | ✅ | built (writes: DEV-11127) |
-| Member | `wix_members` "Members" | ✅ | ➖ read-only | ➖ read-only | ➖ read-only | ✅ | built (stays read-only) |
+| Entity     | Scratch table                      | Pull | Create→Push  |  Edit→Push   |    Delete    | FK  | Status                    |
+| ---------- | ---------------------------------- | :--: | :----------: | :----------: | :----------: | :-: | ------------------------- |
+| Draft post | `wix_blog` "Blog Posts"            |  ✅  | ❌ DEV-11128 |      ⬜      |      ⬜      | ✅  | built                     |
+| Category   | `wix_blog_categories` "Categories" |  ✅  | ➖ read-only | ➖ read-only | ➖ read-only | ✅  | built (writes: DEV-11127) |
+| Tag        | `wix_blog_tags` "Tags"             |  ✅  | ➖ read-only | ➖ read-only | ➖ read-only | ✅  | built (writes: DEV-11127) |
+| Member     | `wix_members` "Members"            |  ✅  | ➖ read-only | ➖ read-only | ➖ read-only | ✅  | built (stays read-only)   |
 
 ### 3. Scoped / non-top-level entities — not directly fetchable as a top-level entity
+
 Entities that can't be a standalone Scratch table, for either reason: **(i) scoped to a parent** — reached only through it, so embed into the parent's deep fetch; or **(ii) weird in another way** that blocks top-level treatment — no list endpoint, export/search-only, returned only as a side-effect, requires an unsupported scope. Still data we want — never drop it.
 
-| Entity | Why not top-level | How we reach it | Status |
-|---|---|---|---|
-| Post comments | **scoped** — listed per post, and they're reader-generated conversation rather than content a CMS user edits | not planned; out of scope for a content connector | not planned |
+| Entity           | Why not top-level                                                                                                                                                                              | How we reach it                                                                                                                                                                                                                                                     | Status      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Post comments    | **scoped** — listed per post, and they're reader-generated conversation rather than content a CMS user edits                                                                                   | not planned; out of scope for a content connector                                                                                                                                                                                                                   | not planned |
 | Published `Post` | **weird** — the published projection of a draft. Not independently editable: you edit the draft and publish it. Carries a few fields the draft lacks (`url`, `wordCount`, `lastPublishedDate`) | reachable via `/blog/v3/posts`, but syncing both projections of the same content would double every record and create two conflicting sources of truth. Deliberately not exposed — and the reason those three fields were removed from the draft schema (DEV-11117) | not planned |
-| Pricing plans | **weird** — a separate Wix app, not part of Blog; may not even be installed on a site | referenced only as opaque ids in `pricingPlanIds` | not planned |
+| Pricing plans    | **weird** — a separate Wix app, not part of Blog; may not even be installed on a site                                                                                                          | referenced only as opaque ids in `pricingPlanIds`                                                                                                                                                                                                                   | not planned |
 
 <!-- A green ✅ in any *push* column (Edit→Push / New→Push / Delete / FK-write) means you
      MANUALLY edited the record file on disk and pushed it through the CLI (files accept →
      upload → publish), then confirmed in the service. Direct API calls or integration-spec
      coverage are evidence only — they do NOT earn the ✅. -->
 
-## Entities × Operations  (STATIC / mixed)
+## Entities × Operations (STATIC / mixed)
 
-| Entity | Pull | Create→Pull | Edit→Push | New→Push | Delete | FK | Service-UI create path |
-|--------|:----:|:-----------:|:---------:|:--------:|:------:|----|------------------------|
-| Draft post | ✅ | ⬜ | ⬜ | ❌ DEV-11128 | ⬜ | ✅ | Site dashboard → Blog → Create Post |
-| Category | ✅ | ➖ | ➖ | ➖ | ➖ | ✅ | Site dashboard → Blog → Categories |
-| Tag | ✅ | ➖ | ➖ | ➖ | ➖ | ✅ | Created inline by typing `#tag` in a post, or Blog → Tags |
-| Member | ✅ | ➖ | ➖ | ➖ | ➖ | ✅ | Site dashboard → Members (or a visitor signing up) |
+| Entity     | Pull | Create→Pull | Edit→Push |   New→Push   | Delete | FK  | Service-UI create path                                    |
+| ---------- | :--: | :---------: | :-------: | :----------: | :----: | --- | --------------------------------------------------------- |
+| Draft post |  ✅  |     ⬜      |    ⬜     | ❌ DEV-11128 |   ⬜   | ✅  | Site dashboard → Blog → Create Post                       |
+| Category   |  ✅  |     ➖      |    ➖     |      ➖      |   ➖   | ✅  | Site dashboard → Blog → Categories                        |
+| Tag        |  ✅  |     ➖      |    ➖     |      ➖      |   ➖   | ✅  | Created inline by typing `#tag` in a post, or Blog → Tags |
+| Member     |  ✅  |     ➖      |    ➖     |      ➖      |   ➖   | ✅  | Site dashboard → Members (or a visitor signing up)        |
 
-## Field-types × Operations  (DYNAMIC / mixed — one all-types table)
+## Field-types × Operations (DYNAMIC / mixed — one all-types table)
 
 Wix Blog is a **STATIC**-schema service — a post has a fixed field set, there are no user-defined
 custom fields — so this table is really "which value classes exist and how they behave". Push columns
 are ⬜ because nothing has been pushed via the CLI (and creates are blocked, DEV-11128); the Pull column
 is evidence from the Live Export audit's torture set.
 
-| Field type | Pull | Edit→Push | New→Push | Notes |
-|------------|:----:|:---------:|:--------:|-------|
-| text | ✅ | ⬜ | ⬜ | `title` (cap 200), `excerpt` (cap 500), `seoSlug` (cap 100). Unicode/emoji/RTL/ZWSP/newlines all round-trip |
-| number | ➖ | ➖ | ➖ | No writable number field exists — `minutesToRead` is Wix-computed and readonly |
-| boolean | ✅ | ⬜ | ⬜ | `featured`, `commentingEnabled` |
-| date / datetime | ✅ | ➖ | ➖ | All readonly and Wix-assigned. `editedDate`/`_createdDate` always present; `firstPublishedDate` only once published. All UTC with `Z`; no writable date field exists (`scheduledPublishDate` isn't modelled) |
-| single-select | ➖ | ➖ | ➖ | `status` is a closed enum (DRAFT/UNPUBLISHED/PUBLISHED/SCHEDULED) but readonly, and `TablePropertyType` has no select member — exported as text |
-| multi-select | ➖ | ➖ | ➖ | Not expressible: no `select`/`multiSelect` in `TablePropertyType`. Scalar arrays (`hashtags`, `slugs`) are comma-joined text instead |
-| relation / FK | ✅ | ⬜ | ⬜ | 5 FKs, all resolving — `linkedTableId` must be the **remote** token (`wix-blog`), not the sanitized `wsId`; see `wix-blog-tables.ts` and DEV-11116 |
-| attachment / asset | ✅ | ⬜ | ⬜ | Cover image at `media.wixMedia.image` as a `wix:image://` URI, resolved to `https://static.wixstatic.com/media/<id>`; inline Ricos IMAGE nodes extracted from `imageData.image.src` |
-| formula / computed | ➖ | ➖ | ➖ | read-only: `minutesToRead`, `status`, `slugs`, `previewTextParagraph`, `hasUnpublishedChanges` |
-| rich text / html | ✅ | ⬜ | ⬜ | Ricos document at `richContent`, stored and exported **verbatim** (single `richtext`/longText column). Converters exist but are intentionally unwired pending the system-wide rich-text feature — DEV-11114 |
+| Field type         | Pull | Edit→Push | New→Push | Notes                                                                                                                                                                                                        |
+| ------------------ | :--: | :-------: | :------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| text               |  ✅  |    ⬜     |    ⬜    | `title` (cap 200), `excerpt` (cap 500), `seoSlug` (cap 100). Unicode/emoji/RTL/ZWSP/newlines all round-trip                                                                                                  |
+| number             |  ➖  |    ➖     |    ➖    | No writable number field exists — `minutesToRead` is Wix-computed and readonly                                                                                                                               |
+| boolean            |  ✅  |    ⬜     |    ⬜    | `featured`, `commentingEnabled`                                                                                                                                                                              |
+| date / datetime    |  ✅  |    ➖     |    ➖    | All readonly and Wix-assigned. `editedDate`/`_createdDate` always present; `firstPublishedDate` only once published. All UTC with `Z`; no writable date field exists (`scheduledPublishDate` isn't modelled) |
+| single-select      |  ➖  |    ➖     |    ➖    | `status` is a closed enum (DRAFT/UNPUBLISHED/PUBLISHED/SCHEDULED) but readonly, and `TablePropertyType` has no select member — exported as text                                                              |
+| multi-select       |  ➖  |    ➖     |    ➖    | Not expressible: no `select`/`multiSelect` in `TablePropertyType`. Scalar arrays (`hashtags`, `slugs`) are comma-joined text instead                                                                         |
+| relation / FK      |  ✅  |    ⬜     |    ⬜    | 5 FKs, all resolving — `linkedTableId` must be the **remote** token (`wix-blog`), not the sanitized `wsId`; see `wix-blog-tables.ts` and DEV-11116                                                           |
+| attachment / asset |  ✅  |    ⬜     |    ⬜    | Cover image at `media.wixMedia.image` as a `wix:image://` URI, resolved to `https://static.wixstatic.com/media/<id>`; inline Ricos IMAGE nodes extracted from `imageData.image.src`                          |
+| formula / computed |  ➖  |    ➖     |    ➖    | read-only: `minutesToRead`, `status`, `slugs`, `previewTextParagraph`, `hasUnpublishedChanges`                                                                                                               |
+| rich text / html   |  ✅  |    ⬜     |    ⬜    | Ricos document at `richContent`, stored and exported **verbatim** (single `richtext`/longText column). Converters exist but are intentionally unwired pending the system-wide rich-text feature — DEV-11114  |
 
 ## Bulk operation limits / pagination
+
 Max records (or fields) per API request, **per operation** — services often differ between read/create/update/delete. If the service has **per-entity** limits (rare), note them here AND in that entity's row in the entity table.
 
-| Operation | Max per request | Mechanism (endpoint / cursor) | Notes |
-|---|---|---|---|
-| Read (list) | 100 records/page | offset (`paging: {limit, offset}`); Tags uses query-builder skip/limit | `WIX_DEFAULT_BATCH_SIZE = 100`. Offset checkpointed in `connectorProgress` so a crashed pull resumes. Empty page always terminates (DEV-10702 guard) |
-| Create | **1 today** (`bulkCreateDraftPosts` exists) | `createDraftPost` | `getBatchSize()` returns 1 and the code comments wrongly claim no bulk endpoint exists — DEV-11129 |
-| Update | **1 today** (`bulkUpdateDraftPosts` exists) | `updateDraftPost` | as above |
-| Delete | **1 today** (`bulkDeleteDraftPosts` exists) | `deleteDraftPost` | as above; also passes `permanent: true` |
+| Operation               | Max per request     | Mechanism (endpoint / cursor)                                                      | Notes                                                                                                                                                                                           |
+| ----------------------- | ------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read (posts)            | 100 records/page    | **cursor** (`queryDraftPosts().ascending('_id').limit(100)`, then `skipTo`/`next`) | `WIX_DEFAULT_BATCH_SIZE = 100`. Cursor checkpointed in `connectorProgress` so a crashed pull resumes. Empty page always terminates (DEV-10702 guard). No `total` in cursor mode                 |
+| Read (reference tables) | 100 records/page    | offset (`paging: {limit, offset}`); Tags uses query-builder skip/limit             | Offset checkpointed in `connectorProgress`. Same empty-page guard                                                                                                                               |
+| Create                  | **1, deliberately** | `createDraftPost`                                                                  | `bulkCreateDraftPosts` exists (`@maxSize 20`) but is non-atomic, and the publish layer retries a failed batch record-by-record — bulking creates would duplicate posts (DEV-11016 mechanism)    |
+| Update                  | **20**              | `bulkUpdateDraftPosts` (`@maxSize 20`)                                             | `returnFullEntity: true` + `fieldsets: ['RICH_CONTENT']`; results re-paired to the request by `itemMetadata.originalIndex`. Any item with `success: false` throws so the retry can attribute it |
+| Delete                  | **100**             | `bulkDeleteDraftPosts` (`@maxSize 100`)                                            | passes `permanent: true` (bypasses the trash bin — see the open item above). Same per-item failure check                                                                                        |
 
 Per-field caps Wix documents (none enforced by the connector — it sends the value and lets Wix reject,
 per "surface failures"): `title` 200 · `excerpt` 500 · `seoSlug` 100 · `categoryIds` 10 · `tagIds` 30 ·
 `relatedPostIds` **3** · `hashtags` 100 (100 chars each) · `pricingPlanIds` 100.
 
-**Batch-breaking fields** — fields whose edit needs its **own dedicated API call** (a separate add/remove or sub-resource endpoint), so they **cannot** be combined into the main (batched) update; a publish that touches one splits into ≥2 calls. Per field ask: *"if I change only this, does it go through the normal update, or a different endpoint?"*
+**Batch-breaking fields** — fields whose edit needs its **own dedicated API call** (a separate add/remove or sub-resource endpoint), so they **cannot** be combined into the main (batched) update; a publish that touches one splits into ≥2 calls. Per field ask: _"if I change only this, does it go through the normal update, or a different endpoint?"_
 
-| Field | Entity | Why it can't batch (separate endpoint) |
-|---|---|---|
-| — | — | **None.** Every writable field, including the `categoryIds`/`tagIds`/`relatedPostIds` link arrays, goes through the normal `updateDraftPost` call. Nothing splits a publish into extra requests. |
+| Field | Entity | Why it can't batch (separate endpoint)                                                                                                                                                           |
+| ----- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| —     | —      | **None.** Every writable field, including the `categoryIds`/`tagIds`/`relatedPostIds` link arrays, goes through the normal `updateDraftPost` call. Nothing splits a publish into extra requests. |
 
 Org-wide limits: ~200 req/min per app instance (limiter configured at `{ points: 180, duration: 60 }`), 429s retried honouring `retry-after`. Access tokens are valid 4 hours and re-minted by the host on demand, so the token endpoint is hit roughly once per 4h per connection — not a per-request cost.
 
 ## Incremental polling
+
 - **Supported:** **NO — but no longer blocked.** `incrementalPullSupport` is not overridden, so it
   inherits `NOT_SUPPORTED` and every pull is a full scan. The prerequisite now exists: the driver field
   `editedDate` is declared and annotated `x-scratch-last-modified-field` on Blog Posts (and
   `_updatedDate` on Categories / Tags / Members). Tracked in DEV-11126.
-- **Mechanism (when implemented):** `queryDraftPosts` + Wix Query Language, which accepts `$gt`/`$gte`
-  on `editedDate` and gives real cursor paging — the same switch also properly fixes the offset-paging
-  instability that DEV-11123 only mitigates. Capture the watermark **before** the first API call so
-  anything edited mid-run is simply re-pulled next time.
+- **Mechanism (when implemented):** the connector is already ON `queryDraftPosts` — the cursor-paging
+  half of this switch shipped with DEV-11123's fix. What remains is the filter: the query builder
+  accepts `gt`/`ge` on `editedDate` (and `_id`, `title`, `excerpt`, `minutesToRead`,
+  `scheduledPublishDate`; **not** `firstPublishedDate`, `categoryIds`, `tagIds` or `memberId`).
+  Capture the watermark **before** the first API call so anything edited mid-run is re-pulled next
+  time. Note Wix's wire semantics: once a cursor is in play, `filter` and `sort` are ignored, so the
+  filter must be set on the first page only.
 - **Deletions:** detected today **only via the full scan** — and it works: a source-side delete during
   the audit's CRUD pass produced `deletedCount: 1`. Wix exposes `listDeletedDraftPosts` /
   `getDeletedDraftPost` (unused) for tombstones. Whoever implements incremental pull must either poll
   those or keep a periodic full scan, or delete detection silently stops working.
-- **Pagination today:** offset-based, 100 per page (`WIX_DEFAULT_BATCH_SIZE`), with the running offset
-  checkpointed in `connectorProgress` so a crashed pull resumes mid-scan. `sort: 'EDITING_DATE_ASC'` is
-  sent deliberately — see DEV-11123 for why the direction matters.
+- **Pagination today:** Blog Posts page by cursor (`queryDraftPosts`, 100 per page, `ascending('_id')`)
+  with the cursor checkpointed in `connectorProgress` so a crashed pull resumes mid-scan. The three
+  reference tables remain offset-paged. See DEV-11123 for why the switch mattered.
 
 ## Endpoints (what the connector calls)
+
 **Super-concise** — distil only the endpoints THIS connector actually hits; do NOT paste the vendor's full API reference / OpenAPI dump. One row per (entity/area × op); add a note only where a quirk matters.
 
 **API version & client:**
+
 - **API version:** Blog `v3`, Members `v1` — the current generation Wix documents. No version header.
 - **Client / SDK:** official Wix SDK — `@wix/sdk` 1.17.1 + `@wix/blog` 1.0.500, modules `draftPosts`,
   `categories`, `tags`, `members`. **The SDK renames and reshapes fields versus REST**, and since we
@@ -212,15 +235,16 @@ Org-wide limits: ~200 req/min per app instance (limiter configured at `{ points:
   `wix:image://` URI string where REST returns an object with a real URL.
 - **Currency verdict:** up to date.
 
-| Entity / area | Op | Method + path | Note (only if it matters) |
-|---|---|---|---|
-| Draft posts | list | `draftPosts.listDraftPosts` (`GET /blog/v3/draft-posts`) | offset paging, 100/page cap. Always sent with `fieldsets: ['RICH_CONTENT']` and `sort: 'EDITING_DATE_ASC'` (DEV-11123). No `status` filter, so drafts of all statuses come back — a published post keeps its editable draft |
-| Draft posts | create / update / delete | `createDraftPost` / `updateDraftPost` / `deleteDraftPost` | one at a time (`getBatchSize() === 1`, see DEV-11129). Create **requires `memberId`** (DEV-11128). Delete passes `permanent: true`, bypassing the trash bin |
-| Draft posts | get by id | — | **not implemented**; `pullRecordFilesByIds` throws |
-| Categories | list | `categories.listCategories` (`GET /blog/v3/categories`) | offset paging + `metaData.total` |
-| Tags | list | `tags.queryTags().skip(n).limit(n).find()` | **no `listTags`** — query-builder only, so paging is skip/limit and the result is `{items, totalCount}` |
-| Members | list | `members.listMembers` (`GET /members/v1/members`) | `fieldsets: ['FULL']` to get the linked CRM contact + profile photo. `metadata.total` can be `null` |
-| schema discovery | — | none | Wix Blog has no introspection endpoint; all four schemas are hardcoded (the sanctioned fallback) |
+| Entity / area    | Op              | Method + path                                                    | Note (only if it matters)                                                                                                                                                                                                       |
+| ---------------- | --------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Draft posts      | query (list)    | `draftPosts.queryDraftPosts` (`POST /blog/v3/draft-posts/query`) | cursor paging, 100/page cap, `ascending('_id')`, `fieldsets: ['RICH_CONTENT']` (DEV-11123). No `status` filter, so drafts of all statuses come back — a published post keeps its editable draft. Cursor mode returns no `total` |
+| Draft posts      | create          | `createDraftPost`                                                | one at a time, deliberately (see the bulk table above). **Requires `memberId`** — now `writeOnce` so a user can supply one (DEV-11128)                                                                                          |
+| Draft posts      | update / delete | `bulkUpdateDraftPosts` / `bulkDeleteDraftPosts`                  | 20 / 100 per call (DEV-11129). Non-atomic: per-item `itemMetadata.success` is checked and any failure throws. Delete passes `permanent: true`, bypassing the trash bin                                                          |
+| Draft posts      | get by id       | —                                                                | **not implemented**; `pullRecordFilesByIds` throws                                                                                                                                                                              |
+| Categories       | list            | `categories.listCategories` (`GET /blog/v3/categories`)          | offset paging + `metaData.total`                                                                                                                                                                                                |
+| Tags             | list            | `tags.queryTags().skip(n).limit(n).find()`                       | **no `listTags`** — query-builder only, so paging is skip/limit and the result is `{items, totalCount}`                                                                                                                         |
+| Members          | list            | `members.listMembers` (`GET /members/v1/members`)                | `fieldsets: ['FULL']` to get the linked CRM contact + profile photo. `metadata.total` can be `null`. Also called with `limit: 1` from `listTables` as a **capability probe** — see the Members Area note below                  |
+| schema discovery | —               | none                                                             | Wix Blog has no introspection endpoint; all four schemas are hardcoded (the sanctioned fallback)                                                                                                                                |
 
 Cross-cutting: base host `https://www.wixapis.com`; auth is **OAuth client-credentials only** — a
 per-site `instanceId` mints a 4-hour app access token, and the host re-mints (the SDK can't refresh,
@@ -231,25 +255,28 @@ with 429 retry honouring `retry-after`. Creating a **tag** takes a FLAT `{ label
 from `#tags` in the body rather than accepting them on update.
 
 ## Foreign keys / associations
-One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *different* parent (move the record parent→parent) → `files accept` → `upload` → `publish` → confirm it re-parented in the service. **Read** = a service-side link pulls back as the correct id/value.
+
+One row per FK. **Tested = set via the CLI**: edit the FK field to point at a _different_ parent (move the record parent→parent) → `files accept` → `upload` → `publish` → confirm it re-parented in the service. **Read** = a service-side link pulls back as the correct id/value.
 
 All five FK fields now **resolve** and land as real relations on the destination (verified on Airtable:
-`multipleRecordLinks` with actual links). None has been *written* via the CLI yet, so the write column
+`multipleRecordLinks` with actual links). None has been _written_ via the CLI yet, so the write column
 stays ⬜ — and `memberId`/`mostRecentContributorId` are readonly by design.
 
-| FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
-|---|:--:|:--:|---|
-| `Blog Posts.memberId` → `wix-members` | ✅ | ➖ | readonly (Wix assigns the author). Required on create though — DEV-11128 |
-| `Blog Posts.categoryIds` → `wix-blog-categories` | ✅ | ⬜ | max 10 per post |
-| `Blog Posts.tagIds` → `wix-blog-tags` | ✅ | ⬜ | max 30 per post |
-| `Blog Posts.relatedPostIds` → `wix-blog` (self) | ✅ | ⬜ | max 3. Airtable auto-creates the reciprocal side |
-| `Blog Posts.mostRecentContributorId` → `wix-members` | ✅ | ➖ | readonly; hidden in the default view |
+| FK field → target table                              | Read (pull) | Write via CLI (move parent→parent) | Notes                                                                    |
+| ---------------------------------------------------- | :---------: | :--------------------------------: | ------------------------------------------------------------------------ |
+| `Blog Posts.memberId` → `wix-members`                |     ✅      |                 ➖                 | readonly (Wix assigns the author). Required on create though — DEV-11128 |
+| `Blog Posts.categoryIds` → `wix-blog-categories`     |     ✅      |                 ⬜                 | max 10 per post                                                          |
+| `Blog Posts.tagIds` → `wix-blog-tags`                |     ✅      |                 ⬜                 | max 30 per post                                                          |
+| `Blog Posts.relatedPostIds` → `wix-blog` (self)      |     ✅      |                 ⬜                 | max 3. Airtable auto-creates the reciprocal side                         |
+| `Blog Posts.mostRecentContributorId` → `wix-members` |     ✅      |                 ➖                 | readonly; hidden in the default view                                     |
+
 - Association endpoint (if any): none — links are plain id arrays on the post itself, set through the
   normal update call, so no separate add/remove endpoint and nothing that breaks batching.
 - `pricingPlanIds` is deliberately **not** an FK: pricing plans live in a separate Wix app this
   connector doesn't read, so it's a plain joined-id column.
 
 ## Edge cases discovered
+
 Found during the Live Export audit (all verified live against Wix's API):
 
 - **The SDK is not the REST API.** `@wix/blog` renames `id`/`createdDate`/`updatedDate` to
@@ -277,6 +304,7 @@ Found during the Live Export audit (all verified live against Wix's API):
   never be fully stable; ASC is the least-bad direction (DEV-11123).
 
 ## Gotchas
+
 - **All four table ids come from `wix-blog-tables.ts`.** Never hand-write a `linkedTableId` — foreign-key
   resolution matches the **remote** token (`wix-blog`), not the sanitized `wsId` (`wix_blog`), and
   hand-writing the wrong one silently drops the column from every export (DEV-11116). Use
@@ -293,6 +321,7 @@ Found during the Live Export audit (all verified live against Wix's API):
   editable draft and does **not** make a post live on the blog.
 
 ## Integration tests
+
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
 
 - **Live spec:** none yet — 📄 ❌ (no `server/test/integration/wix-connector.spec.ts`).
@@ -314,26 +343,26 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
   - **IP (incremental polling): 🟠** — correct as recorded. The service supports it (Wix Query Language
     `$gt`/`$gte` on `editedDate`) and the connector doesn't yet; the annotation is now in place, so it's
     ready to implement (DEV-11126).
-  No change needed to `connector-build/existing-connectors.md` — both cells already read that way.
+    No change needed to `connector-build/existing-connectors.md` — both cells already read that way.
 
 ## Open issues
 
 Filed under [DEV-10932](https://linear.app/whalesync/issue/DEV-10932) (Live Export: Launch Wix Blog) by
 `/test-live-export WIX_BLOG notion,supabase,airtable` on 2026-07-29. Layer in brackets.
 
-| Issue | Layer | Summary | Priority |
-|---|---|---|---|
-| [DEV-11114](https://linear.app/whalesync/issue/DEV-11114) | view | `richContent` (post body) exports as raw Ricos JSON; the tested Ricos→HTML/Markdown converters are instantiated and never called | Urgent |
-| [DEV-11115](https://linear.app/whalesync/issue/DEV-11115) | transport | 4 of 5 FK targets name tables the connector never exposes → categories, tags, author, pricing plans silently dropped | High |
-| [DEV-11116](https://linear.app/whalesync/issue/DEV-11116) | transport | `relatedPostIds` self-FK never resolves (`linkedTableId: 'wix_blog'` vs folder remote id `wix-blog`) | High |
-| [DEV-11117](https://linear.app/whalesync/issue/DEV-11117) | transport | 6 declared fields the API never returns → permanently empty columns; hero-image asset extraction can't fire | Medium |
-| [DEV-11118](https://linear.app/whalesync/issue/DEV-11118) | transport | real `DraftPost` fields absent from the schema (`editedDate`, `_createdDate`, `slugs`, …) can't be exported | Medium |
-| [DEV-11119](https://linear.app/whalesync/issue/DEV-11119) | view | date fields export as text despite `format: 'date-time'` | Medium |
-| [DEV-11120](https://linear.app/whalesync/issue/DEV-11120) | view | `hashtags` → ambiguous `", "`-joined string | Medium |
-| [DEV-11121](https://linear.app/whalesync/issue/DEV-11121) | view | 32-column plan: nested objects duplicated as parent + children, meaningless leaf names | Medium |
-| [DEV-11122](https://linear.app/whalesync/issue/DEV-11122) | view | featured image exports as an unusable `wix:image://` URI | Medium |
-| [DEV-11123](https://linear.app/whalesync/issue/DEV-11123) | transport | offset pagination passes no `sort` → can skip/duplicate posts mid-pull | Medium |
-| [DEV-11124](https://linear.app/whalesync/issue/DEV-11124) | transformer | `html-to-ricos` emits `link.target: '_blank'`; Wix's enum wants `BLANK` | Low |
+| Issue                                                     | Layer       | Summary                                                                                                                          | Priority |
+| --------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| [DEV-11114](https://linear.app/whalesync/issue/DEV-11114) | view        | `richContent` (post body) exports as raw Ricos JSON; the tested Ricos→HTML/Markdown converters are instantiated and never called | Urgent   |
+| [DEV-11115](https://linear.app/whalesync/issue/DEV-11115) | transport   | 4 of 5 FK targets name tables the connector never exposes → categories, tags, author, pricing plans silently dropped             | High     |
+| [DEV-11116](https://linear.app/whalesync/issue/DEV-11116) | transport   | `relatedPostIds` self-FK never resolves (`linkedTableId: 'wix_blog'` vs folder remote id `wix-blog`)                             | High     |
+| [DEV-11117](https://linear.app/whalesync/issue/DEV-11117) | transport   | 6 declared fields the API never returns → permanently empty columns; hero-image asset extraction can't fire                      | Medium   |
+| [DEV-11118](https://linear.app/whalesync/issue/DEV-11118) | transport   | real `DraftPost` fields absent from the schema (`editedDate`, `_createdDate`, `slugs`, …) can't be exported                      | Medium   |
+| [DEV-11119](https://linear.app/whalesync/issue/DEV-11119) | view        | date fields export as text despite `format: 'date-time'`                                                                         | Medium   |
+| [DEV-11120](https://linear.app/whalesync/issue/DEV-11120) | view        | `hashtags` → ambiguous `", "`-joined string                                                                                      | Medium   |
+| [DEV-11121](https://linear.app/whalesync/issue/DEV-11121) | view        | 32-column plan: nested objects duplicated as parent + children, meaningless leaf names                                           | Medium   |
+| [DEV-11122](https://linear.app/whalesync/issue/DEV-11122) | view        | featured image exports as an unusable `wix:image://` URI                                                                         | Medium   |
+| [DEV-11123](https://linear.app/whalesync/issue/DEV-11123) | transport   | offset pagination passes no `sort` → can skip/duplicate posts mid-pull                                                           | Medium   |
+| [DEV-11124](https://linear.app/whalesync/issue/DEV-11124) | transformer | `html-to-ricos` emits `link.target: '_blank'`; Wix's enum wants `BLANK`                                                          | Low      |
 
 Pre-existing, still open:
 
@@ -342,24 +371,37 @@ Pre-existing, still open:
   Wix→Airtable reproduce it (Wix→Supabase is a clean no-op). Evidence commented there, not re-filed.
 
 ## OAuth (final milestone — create the client with the user, or document what it takes)
-API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-release nicety done *with* the user. Fill this in when you reach Milestone 9.
+
+API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-release nicety done _with_ the user. Fill this in when you reach Milestone 9.
+
 - **Requires:** a Wix app registered in the Wix developer console, with the Blog and Members permission scopes. No review/approval needed for an unlisted app — it installs via a share link (`WIX_SHARE_URL_ID`).
+- **Members Area is a per-SITE prerequisite, not a Blog feature.** `listMembers` requires the scope
+  `SCOPE.DC-MEMBERS.READ-MEMBERS` **and** requires that the site has installed the Wix Members Area,
+  a separate App Market app ([Members API — "Before you begin"](https://dev.wix.com/docs/rest/crm/members-contacts/members/members/introduction):
+  _"A site must have the Wix Members Area installed from the App Market."_). Wix Blog only _offers_
+  to install it ([Wix Blog setup](https://support.wix.com/en/article/wix-blog-adding-and-setting-up-your-blog)),
+  so a single-author blog that declined is a normal, supported site with no Members table. That is why
+  `listTables` probes rather than assuming (DEV-11143). Two caveats worth remembering: Wix scopes live entirely in
+  the app dashboard — **nothing in this repo asserts or verifies them**, so a scope regression would
+  ship silently and surface only as customer 403s; and because we call with the **APP** identity,
+  `listMembers` returns `PRIVATE` members too (visitor/member identities would not see them).
 - **Endpoints:** installer `https://www.wix.com/app-installer?appId=…&postInstallationUrl=…` (our OAuth `state` rides on the `postInstallationUrl`) · token `https://www.wixapis.com/oauth2/token` (`grant_type=client_credentials`) · redirect URI = the Scratch callback, which Wix returns to with `?state=&appId=&tenantId=&instanceId=` and **no `code`**
 - **App / client:** registered in the Wix developer console under the Whalesync account. Credentials in `server/.env` as `WIX_CLIENT_ID_V2` / `WIX_CLIENT_SECRET_V2` (generation 2; `oauthAppVersion` on the connection selects which pair is used), plus `WIX_SHARE_URL_ID` for the unlisted install link.
 - **Status:** provider wired — `WixOAuthProvider` (`server/src/oauth/providers/wix-oauth.provider.ts`), `strategyKind: 'client_credentials'`. There is no authorization code and no refresh token: the durable credential is the per-site `instanceId`, captured from Wix's External Install Flow redirect, and each access token is re-minted from `client_id` + `client_secret` + `instance_id`. See `server/src/oauth/CLIENT_CREDENTIALS_OAUTH.md`.
 - **Blockers:** none for the token flow itself, but **DEV-10938 ("Wix Couldn't finish connecting") is still open** — clear it before launch. The Live Export audit reused an already-connected account rather than re-walking the install flow.
 
 ## UI quick-links (time-savers for the gstack browser)
+
 Direct URLs to common screens so the agent jumps straight there instead of clicking through the UI. Fill these in as you discover them during a browser pass (e.g. you find the clients table is at `x.com/ui/clients` → record it here).
 
-| Where | URL |
-|-------|-----|
-| Service login | `https://users.wix.com/signin` |
-| API key / token settings | n/a — OAuth-only; app credentials live in the developer console |
-| OAuth app / developer console | `https://dev.wix.com/apps` |
-| Billing / cancel trial | n/a — free tier |
-| Site dashboard | `https://manage.wix.com/dashboard/<metaSiteId>` (metaSiteId is in the access token's claims) |
-| Blog posts list | `https://manage.wix.com/dashboard/<metaSiteId>/blog/posts` |
-| Blog post create | `https://manage.wix.com/dashboard/<metaSiteId>/blog/created-post` |
-| Categories | `https://manage.wix.com/dashboard/<metaSiteId>/blog/categories` |
-| Members | `https://manage.wix.com/dashboard/<metaSiteId>/members` |
+| Where                         | URL                                                                                          |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
+| Service login                 | `https://users.wix.com/signin`                                                               |
+| API key / token settings      | n/a — OAuth-only; app credentials live in the developer console                              |
+| OAuth app / developer console | `https://dev.wix.com/apps`                                                                   |
+| Billing / cancel trial        | n/a — free tier                                                                              |
+| Site dashboard                | `https://manage.wix.com/dashboard/<metaSiteId>` (metaSiteId is in the access token's claims) |
+| Blog posts list               | `https://manage.wix.com/dashboard/<metaSiteId>/blog/posts`                                   |
+| Blog post create              | `https://manage.wix.com/dashboard/<metaSiteId>/blog/created-post`                            |
+| Categories                    | `https://manage.wix.com/dashboard/<metaSiteId>/blog/categories`                              |
+| Members                       | `https://manage.wix.com/dashboard/<metaSiteId>/members`                                      |

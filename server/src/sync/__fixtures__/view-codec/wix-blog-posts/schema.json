@@ -1,0 +1,218 @@
+{
+  "id": {
+    "wsId": "wix_blog",
+    "remoteId": ["wix-blog"]
+  },
+  "slug": "wix_blog",
+  "name": "Blog Posts",
+  "schema": {
+    "$id": "wix-blog/draft-posts",
+    "title": "Blog Posts",
+    "type": "object",
+    "properties": {
+      "_id": {
+        "description": "Unique post identifier",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "title": {
+        "description": "Post title (max 200 characters)",
+        "type": "string"
+      },
+      "excerpt": {
+        "description": "Post excerpt/summary (max 500 characters)",
+        "type": "string"
+      },
+      "featured": {
+        "description": "Featured post flag",
+        "type": "boolean"
+      },
+      "commentingEnabled": {
+        "description": "Comments enabled flag",
+        "type": "boolean"
+      },
+      "minutesToRead": {
+        "description": "Estimated reading time",
+        "x-scratch-readonly": true,
+        "type": "integer"
+      },
+      "status": {
+        "description": "Post status: DRAFT, UNPUBLISHED, PUBLISHED, SCHEDULED",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "firstPublishedDate": {
+        "description": "First publish date",
+        "format": "date-time",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "editedDate": {
+        "description": "Last edit date",
+        "format": "date-time",
+        "x-scratch-readonly": true,
+        "x-scratch-last-modified-field": true,
+        "type": "string"
+      },
+      "_createdDate": {
+        "description": "Creation date",
+        "format": "date-time",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "hasUnpublishedChanges": {
+        "description": "Draft has edits not yet published",
+        "x-scratch-readonly": true,
+        "type": "boolean"
+      },
+      "seoSlug": {
+        "description": "SEO slug (max 100 characters)",
+        "type": "string"
+      },
+      "slugs": {
+        "description": "Assigned URL slugs",
+        "x-scratch-readonly": true,
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "previewTextParagraph": {
+        "description": "Wix-generated preview text",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "memberId": {
+        "description": "Author member ID (write-once: settable on create, owned by Wix after)",
+        "x-scratch-write-once": true,
+        "x-scratch-foreign-key": {
+          "linkedTableId": "wix-members",
+          "linkedTableRemoteId": ["wix-members"],
+          "isSingleValued": true
+        },
+        "type": "string"
+      },
+      "mostRecentContributorId": {
+        "description": "Member who last edited the post",
+        "x-scratch-readonly": true,
+        "x-scratch-foreign-key": {
+          "linkedTableId": "wix-members",
+          "linkedTableRemoteId": ["wix-members"],
+          "isSingleValued": true
+        },
+        "type": "string"
+      },
+      "hashtags": {
+        "description": "Post hashtags, derived by Wix from #tags in the content",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "categoryIds": {
+        "description": "Category IDs (max 10)",
+        "x-scratch-foreign-key": {
+          "linkedTableId": "wix-blog-categories",
+          "linkedTableRemoteId": ["wix-blog-categories"]
+        },
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "tagIds": {
+        "description": "Tag IDs (max 30)",
+        "x-scratch-foreign-key": {
+          "linkedTableId": "wix-blog-tags",
+          "linkedTableRemoteId": ["wix-blog-tags"]
+        },
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "relatedPostIds": {
+        "description": "Related post IDs (max 3)",
+        "x-scratch-foreign-key": {
+          "linkedTableId": "wix-blog",
+          "linkedTableRemoteId": ["wix-blog"]
+        },
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "pricingPlanIds": {
+        "description": "Pricing plan IDs",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "language": {
+        "description": "Post language code (BCP-47)",
+        "type": "string"
+      },
+      "richContent": {
+        "description": "Wix Rich Content (Ricos) document — the post body",
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "description": "Ricos content nodes",
+            "type": "array",
+            "items": {}
+          },
+          "documentStyle": {
+            "description": "Ricos document style"
+          },
+          "metadata": {
+            "description": "Ricos document metadata"
+          }
+        }
+      },
+      "media": {
+        "description": "Post cover media",
+        "type": "object",
+        "properties": {
+          "wixMedia": {
+            "description": "Wix media reference",
+            "type": "object",
+            "properties": {
+              "image": {
+                "description": "Wix media image URI",
+                "type": "string"
+              }
+            }
+          },
+          "displayed": {
+            "description": "Is media displayed",
+            "type": "boolean"
+          },
+          "custom": {
+            "description": "Is custom media",
+            "type": "boolean"
+          }
+        }
+      },
+      "seoData": {
+        "description": "SEO data",
+        "type": "object",
+        "properties": {
+          "tags": {
+            "description": "SEO meta tags",
+            "type": "array",
+            "items": {}
+          },
+          "settings": {
+            "description": "SEO settings"
+          }
+        }
+      }
+    }
+  },
+  "idPath": "_id",
+  "titlePath": "title",
+  "mainContentPath": "richContent",
+  "basePath": [],
+  "generatedAt": "2026-07-30T00:00:00.000Z"
+}
