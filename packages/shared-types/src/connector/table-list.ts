@@ -26,6 +26,17 @@ export interface TablePreview {
    * the table is fully usable.
    */
   infoNote?: string;
+  /**
+   * The connector could not determine a column that uniquely identifies this
+   * table's rows (e.g. a Postgres/Supabase VIEW with no provably-unique output
+   * column, DEV-11136). The table is selectable, but creating a data folder
+   * for it REQUIRES the user to choose an ID column: pickers must collect a
+   * field choice and send it as `CreateDataFolderDto.idFieldOverride` — the
+   * server rejects folder creation for a flagged table without it. Fetch the
+   * candidate columns from `GET .../tables/schema` (`TableSchemaPreview.schema`
+   * properties); its `idPathRequiresUserSelection` carries the same signal.
+   */
+  requiresIdFieldSelection?: boolean;
   metadata?: Record<string, unknown>;
 }
 
@@ -93,6 +104,15 @@ export interface TableSchemaPreview {
   schema: Record<string, unknown>;
   /** Lodash dot path to the record's remote id (e.g. `'id'`, `'id.record_id'`). */
   idPath: string;
+  /**
+   * True when `idPath` is NOT trustworthy: the connector could not determine a
+   * uniquely-identifying column for this table (see
+   * `TablePreview.requiresIdFieldSelection`) and `idPath` is only a legacy
+   * fallback. Consumers must have the user pick an ID column from `schema`'s
+   * properties and pass it as `idFieldOverride` when creating the data folder;
+   * the override resolves the condition.
+   */
+  idPathRequiresUserSelection?: boolean;
   /** Lodash dot path to the title/header field (e.g. `'fields.Name'`). */
   titlePath?: string;
   /** Lodash dot path to the main content/body field. */

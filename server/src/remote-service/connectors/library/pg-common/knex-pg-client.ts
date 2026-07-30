@@ -220,24 +220,40 @@ export class KnexPGClient {
   }
 
   /**
-   * List all tables excluding specified schemas and LIKE patterns.
-   * Used by the Supabase connector to discover tables across all user schemas.
+   * List all tables and views excluding specified schemas and LIKE patterns.
+   * Used by the Supabase and Postgres connectors to discover tables across all
+   * user schemas. Materialized views are absent from `information_schema.tables`
+   * entirely, so they're unioned in from `pg_class` (relkind 'm') with the
+   * synthetic table_type 'MATERIALIZED VIEW' — mirroring how information_schema
+   * labels the other relation kinds ('BASE TABLE', 'VIEW', 'FOREIGN').
    */
   async findAllTablesExcludingSchemas(excludedSchemas: string[], excludePatterns?: string[]): Promise<TableName[]> {
-    let query = this.knex('information_schema.tables')
-      .select('table_name', 'table_schema', 'table_type')
-      .whereNotIn('table_schema', excludedSchemas);
-
-    if (excludePatterns) {
-      for (const pattern of excludePatterns) {
-        query = query.andWhereNot('table_schema', 'like', pattern);
-      }
-    }
-
-    return query;
+    const patterns = excludePatterns ?? [];
+    const schemaPlaceholders = excludedSchemas.map(() => '?').join(', ');
+    const informationSchemaPatternClauses = patterns.map(() => 'AND table_schema NOT LIKE ?').join('\n         ');
+    const matviewPatternClauses = patterns.map(() => 'AND n.nspname NOT LIKE ?').join('\n         ');
+    const result = await this.knex.raw<{ rows: TableName[] }>(
+      `SELECT table_name, table_schema, table_type
+       FROM information_schema.tables
+       WHERE table_schema NOT IN (${schemaPlaceholders})
+         ${informationSchemaPatternClauses}
+       UNION ALL
+       SELECT c.relname AS table_name, n.nspname AS table_schema, 'MATERIALIZED VIEW' AS table_type
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE c.relkind = 'm'
+         AND n.nspname NOT IN (${schemaPlaceholders})
+         ${matviewPatternClauses}`,
+      [...excludedSchemas, ...patterns, ...excludedSchemas, ...patterns],
+    );
+    return result.rows;
   }
 
-  /** Get column metadata for a table. */
+  /**
+   * Get column metadata for a table or view. Materialized views have no
+   * `information_schema.columns` rows at all, so an empty result falls back to
+   * an equivalent `pg_attribute`-based query for them.
+   */
   async findAllColumnsInTable(schema: string, tableName: string): Promise<InformationSchemaColumn[]> {
     const result = await this.knex.raw<{ rows: InformationSchemaColumn[] }>(
       `SELECT column_name, data_type, column_default, is_updatable, is_nullable,
@@ -246,6 +262,57 @@ export class KnexPGClient {
        FROM information_schema.columns
        WHERE table_schema = ? AND table_name = ?
        ORDER BY ordinal_position`,
+      [schema, tableName],
+    );
+    if (result.rows.length > 0) {
+      return result.rows;
+    }
+    return this.findAllColumnsInMaterializedView(schema, tableName);
+  }
+
+  /**
+   * Column metadata for a MATERIALIZED VIEW, synthesized from `pg_attribute`
+   * into the {@link InformationSchemaColumn} shape (information_schema skips
+   * matviews entirely). The `data_type` CASE mirrors how information_schema
+   * derives its value ('ARRAY' for arrays, the formatted name for pg_catalog
+   * types, 'USER-DEFINED' otherwise — domain-typed columns land in
+   * 'USER-DEFINED' rather than resolving the base type, a fidelity loss
+   * accepted for this rare combination). Matview columns are never updatable
+   * and carry no defaults or identity, so those fields are constants.
+   * Returns [] for anything that isn't a materialized view.
+   */
+  private async findAllColumnsInMaterializedView(
+    schema: string,
+    tableName: string,
+  ): Promise<InformationSchemaColumn[]> {
+    const result = await this.knex.raw<{ rows: InformationSchemaColumn[] }>(
+      `SELECT
+         a.attname AS column_name,
+         CASE
+           WHEN t.typelem <> 0 AND t.typlen = -1 THEN 'ARRAY'
+           WHEN tn.nspname = 'pg_catalog' THEN format_type(a.atttypid, NULL)
+           ELSE 'USER-DEFINED'
+         END AS data_type,
+         NULL AS column_default,
+         'NO' AS is_updatable,
+         CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable,
+         NULL AS domain_name,
+         t.typname AS udt_name,
+         CASE
+           WHEN a.atttypid IN (1042, 1043) AND a.atttypmod >= 4 THEN a.atttypmod - 4
+           ELSE NULL
+         END AS character_maximum_length,
+         'NO' AS is_identity,
+         NULL AS identity_increment,
+         'NO' AS identity_cycle
+       FROM pg_attribute a
+       JOIN pg_class c ON c.oid = a.attrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_type t ON t.oid = a.atttypid
+       JOIN pg_namespace tn ON tn.oid = t.typnamespace
+       WHERE n.nspname = ? AND c.relname = ? AND c.relkind = 'm'
+         AND a.attnum > 0 AND NOT a.attisdropped
+       ORDER BY a.attnum`,
       [schema, tableName],
     );
     return result.rows;
@@ -367,6 +434,307 @@ export class KnexPGClient {
       [tableName, schema],
     );
     return result.rows;
+  }
+
+  // ---------------------------------------------------------------------------
+  // View addressability (DEV-11136)
+  //
+  // A view has no indexes of its own, so its addressability comes from PROVENANCE:
+  // which base-table column each output column is a plain reference to. Postgres
+  // computes this mapping itself — every query's result-row descriptor (the wire
+  // protocol's RowDescription, `result.fields` in the pg driver) carries the origin
+  // relation OID + attnum (`resorigtbl`/`resorigcol`) per output column. Probing
+  // `SELECT * FROM <relation> LIMIT 0` reports the relation itself, so instead we
+  // probe the view's DEFINING QUERY (`pg_get_viewdef`) wrapped as a zero-row
+  // derived table, which resolves one level of expansion; stacked views are
+  // followed by iterating. This is exact where it matters: an output column
+  // aliased from a different column, or computed by an expression, is never
+  // mis-attributed the way name-matching against view_column_usage would.
+  //
+  // What provenance still can't prove is row-level uniqueness of the VIEW: a
+  // fan-out join can repeat a genuinely PK-backed column's values (a cardinality
+  // property of the data, invisible to any static analysis).
+  // ---------------------------------------------------------------------------
+
+  /** How many levels of views-defined-over-views to follow before giving up. */
+  private static readonly MAX_VIEW_STACK_RESOLUTION_DEPTH = 8;
+
+  /**
+   * Probe one view's defining query with a zero-row SELECT and return, per
+   * output column, its name and the origin (relation OID + attnum) Postgres
+   * reports in the result-row descriptor — `null` origin for computed columns.
+   * The origin of a column referencing another view is that VIEW's column;
+   * {@link resolveViewOutputColumnBaseOrigins} iterates those down to base
+   * relations.
+   */
+  private async probeViewDefinitionOutputOrigins(
+    viewRelationOid: number,
+  ): Promise<{ name: string; origin: { relationOid: number; columnAttnum: number } | null }[]> {
+    const definitionResult = await this.knex.raw<{ rows: { view_definition_sql: string }[] }>(
+      'SELECT pg_get_viewdef(?::oid) AS view_definition_sql',
+      [viewRelationOid],
+    );
+    const viewDefinitionSql = definitionResult.rows[0]?.view_definition_sql;
+    if (!viewDefinitionSql) {
+      return [];
+    }
+    // pg_get_viewdef emits a single canonical SELECT with a trailing semicolon;
+    // strip it so the statement can be embedded as a derived table. LIMIT 0
+    // plans but reads no rows — we only want the result-row descriptor.
+    const embeddableDefinitionSql = viewDefinitionSql.replace(/;\s*$/, '');
+    const probeResult = await this.knex.raw<{ fields: { name: string; tableID: number; columnID: number }[] }>(
+      `SELECT * FROM (${embeddableDefinitionSql}) view_provenance_probe LIMIT 0`,
+    );
+    return probeResult.fields.map((field) => ({
+      name: field.name,
+      origin:
+        field.tableID !== 0 && field.columnID !== 0
+          ? { relationOid: field.tableID, columnAttnum: field.columnID }
+          : null,
+    }));
+  }
+
+  /** relkind per pg_class OID ('r' table, 'v' view, 'm' matview, 'p' partitioned, 'f' foreign). */
+  private async findRelationKindsByOid(relationOids: number[]): Promise<Map<number, string>> {
+    if (relationOids.length === 0) {
+      return new Map();
+    }
+    const result = await this.knex.raw<{ rows: { oid: number; relkind: string }[] }>(
+      'SELECT oid::int AS oid, relkind FROM pg_class WHERE oid = ANY(?)',
+      [relationOids],
+    );
+    return new Map(result.rows.map((row) => [row.oid, row.relkind]));
+  }
+
+  /**
+   * One view's output columns with their origins resolved all the way down to
+   * non-view relations (iterating through stacked views up to
+   * {@link MAX_VIEW_STACK_RESOLUTION_DEPTH} levels; columns still pointing at a
+   * view after that, or computed by an expression, resolve to a `null` origin).
+   * Probe results are memoized by relation OID so a bulk caller resolving many
+   * views (or a stack sharing an inner view) probes each view once.
+   */
+  private async resolveViewOutputColumnBaseOrigins(
+    viewRelationOid: number,
+    probeResultByRelationOidMemo: Map<
+      number,
+      { name: string; origin: { relationOid: number; columnAttnum: number } | null }[]
+    >,
+    relationKindByOidMemo: Map<number, string>,
+  ): Promise<{ name: string; origin: { relationOid: number; columnAttnum: number } | null }[]> {
+    const probeMemoized = async (relationOid: number) => {
+      const memoized = probeResultByRelationOidMemo.get(relationOid);
+      if (memoized) {
+        return memoized;
+      }
+      const probed = await this.probeViewDefinitionOutputOrigins(relationOid);
+      probeResultByRelationOidMemo.set(relationOid, probed);
+      return probed;
+    };
+
+    const outputColumns = (await probeMemoized(viewRelationOid)).map((column) => ({ ...column }));
+    for (let depth = 0; depth < KnexPGClient.MAX_VIEW_STACK_RESOLUTION_DEPTH; depth++) {
+      const originOidsMissingKind = [
+        ...new Set(
+          outputColumns
+            .map((column) => column.origin?.relationOid)
+            .filter((oid): oid is number => oid !== undefined && !relationKindByOidMemo.has(oid)),
+        ),
+      ];
+      for (const [oid, relkind] of await this.findRelationKindsByOid(originOidsMissingKind)) {
+        relationKindByOidMemo.set(oid, relkind);
+      }
+
+      const viewOriginOids = new Set(
+        outputColumns
+          .map((column) => column.origin?.relationOid)
+          .filter((oid): oid is number => oid !== undefined && relationKindByOidMemo.get(oid) === 'v'),
+      );
+      if (viewOriginOids.size === 0) {
+        return outputColumns;
+      }
+      for (const innerViewOid of viewOriginOids) {
+        // A view's attnums are dense and 1-based (view columns can't be
+        // dropped), so origin attnum N is the inner view's Nth output column.
+        const innerViewOutputColumns = await probeMemoized(innerViewOid);
+        for (const column of outputColumns) {
+          if (column.origin?.relationOid === innerViewOid) {
+            column.origin = innerViewOutputColumns[column.origin.columnAttnum - 1]?.origin ?? null;
+          }
+        }
+      }
+    }
+    // Still view-backed after the depth cap — treat those columns as unresolved.
+    return outputColumns.map((column) => ({
+      ...column,
+      origin:
+        column.origin !== null && relationKindByOidMemo.get(column.origin.relationOid) === 'v' ? null : column.origin,
+    }));
+  }
+
+  /**
+   * For a set of base relations, the (relation OID, attnum) pairs carrying a
+   * single-column, non-partial, non-expression, non-deferrable unique index —
+   * the same predicate as {@link findSingleColumnUniqueIndexColumns}, keyed by
+   * `"<oid>:<attnum>"` for lookup against resolved view-column origins.
+   */
+  private async findSingleColumnUniqueIndexInfoByRelationColumn(
+    relationOids: number[],
+  ): Promise<Map<string, { native_type: string; is_primary_key: boolean }>> {
+    if (relationOids.length === 0) {
+      return new Map();
+    }
+    const result = await this.knex.raw<{
+      rows: { relation_oid: number; column_attnum: number; native_type: string; is_primary_key: boolean }[];
+    }>(
+      `SELECT i.indrelid::int AS relation_oid,
+              a.attnum::int AS column_attnum,
+              format_type(a.atttypid, a.atttypmod) AS native_type,
+              bool_or(i.indisprimary) AS is_primary_key
+       FROM pg_index i
+       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+       WHERE i.indisunique
+         AND array_length(i.indkey, 1) = 1
+         AND i.indkey[0] <> 0
+         AND i.indpred IS NULL
+         AND i.indimmediate
+         AND i.indrelid = ANY(?)
+       GROUP BY i.indrelid, a.attnum, format_type(a.atttypid, a.atttypmod)`,
+      [relationOids],
+    );
+    return new Map(
+      result.rows.map((row) => [
+        `${row.relation_oid}:${row.column_attnum}`,
+        { native_type: row.native_type, is_primary_key: row.is_primary_key },
+      ]),
+    );
+  }
+
+  /** Resolve a view's pg_class OID, or null when no such view exists. */
+  async findViewRelationOid(schema: string, viewName: string): Promise<number | null> {
+    const result = await this.knex.raw<{ rows: { oid: number }[] }>(
+      `SELECT c.oid::int AS oid
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = ? AND c.relname = ? AND c.relkind = 'v'`,
+      [schema, viewName],
+    );
+    return result.rows[0]?.oid ?? null;
+  }
+
+  /**
+   * The views (as "schema.view" strings) that expose at least one output column
+   * a record can be addressed by: a column whose resolved base origin (see the
+   * provenance notes above) carries a single-column unique index. Views whose
+   * probe fails (e.g. the data role lacks SELECT on a base table of a
+   * security-definer view) are treated as not addressable rather than failing
+   * the whole listing. Note the caveat above: a unique origin column still
+   * doesn't prove the VIEW's rows are unique (fan-out joins).
+   */
+  async findViewsWithUniquelyAddressableColumns(
+    excludedSchemas: string[],
+    excludePatterns?: string[],
+  ): Promise<Set<string>> {
+    let viewListQuery = this.knex('information_schema.tables')
+      .select<{ table_schema: string; table_name: string }[]>('table_schema', 'table_name')
+      .where('table_type', 'VIEW')
+      .whereNotIn('table_schema', excludedSchemas);
+    for (const pattern of excludePatterns ?? []) {
+      viewListQuery = viewListQuery.andWhereNot('table_schema', 'like', pattern);
+    }
+    const views = await viewListQuery;
+
+    const probeResultByRelationOidMemo = new Map<
+      number,
+      { name: string; origin: { relationOid: number; columnAttnum: number } | null }[]
+    >();
+    const relationKindByOidMemo = new Map<number, string>();
+    const resolvedOriginsByViewKey = new Map<string, { relationOid: number; columnAttnum: number }[]>();
+    for (const view of views) {
+      const viewKey = `${view.table_schema}.${view.table_name}`;
+      try {
+        const viewRelationOid = await this.findViewRelationOid(view.table_schema, view.table_name);
+        if (viewRelationOid === null) {
+          continue;
+        }
+        const outputColumns = await this.resolveViewOutputColumnBaseOrigins(
+          viewRelationOid,
+          probeResultByRelationOidMemo,
+          relationKindByOidMemo,
+        );
+        resolvedOriginsByViewKey.set(
+          viewKey,
+          outputColumns.flatMap((column) => (column.origin ? [column.origin] : [])),
+        );
+      } catch {
+        // An unprobeable view is simply not addressable; don't fail the listing.
+      }
+    }
+
+    const allOriginRelationOids = [
+      ...new Set([...resolvedOriginsByViewKey.values()].flat().map((origin) => origin.relationOid)),
+    ];
+    const uniqueIndexInfoByRelationColumn =
+      await this.findSingleColumnUniqueIndexInfoByRelationColumn(allOriginRelationOids);
+
+    const addressableViews = new Set<string>();
+    for (const [viewKey, origins] of resolvedOriginsByViewKey) {
+      const hasUniquelyAddressableColumn = origins.some((origin) =>
+        uniqueIndexInfoByRelationColumn.has(`${origin.relationOid}:${origin.columnAttnum}`),
+      );
+      if (hasUniquelyAddressableColumn) {
+        addressableViews.add(viewKey);
+      }
+    }
+    return addressableViews;
+  }
+
+  /**
+   * The uniquely-addressable column candidates of one VIEW: its output columns
+   * whose resolved base origin (see the provenance notes above) carries a
+   * single-column unique index — the per-view companion of
+   * {@link findViewsWithUniquelyAddressableColumns} (same mechanism), shaped
+   * like {@link findSingleColumnUniqueIndexColumns} so callers can feed the
+   * result through the same `chooseUniquelyAddressableColumn` path. Ordered
+   * primary-key-backed first, then by the view's own column order, so the pick
+   * is deterministic. `column_name` is the VIEW's output column name;
+   * `is_primary_key`/`native_type` describe the BASE column backing it.
+   * Returns [] for anything that isn't a view.
+   */
+  async findViewUniquelyAddressableColumnCandidates(
+    schema: string,
+    viewName: string,
+  ): Promise<SingleColumnUniqueIndexColumn[]> {
+    const viewRelationOid = await this.findViewRelationOid(schema, viewName);
+    if (viewRelationOid === null) {
+      return [];
+    }
+    const outputColumns = await this.resolveViewOutputColumnBaseOrigins(viewRelationOid, new Map(), new Map());
+    const originRelationOids = [
+      ...new Set(outputColumns.flatMap((column) => (column.origin ? [column.origin.relationOid] : []))),
+    ];
+    const uniqueIndexInfoByRelationColumn =
+      await this.findSingleColumnUniqueIndexInfoByRelationColumn(originRelationOids);
+
+    const candidates: SingleColumnUniqueIndexColumn[] = [];
+    for (const column of outputColumns) {
+      if (!column.origin) {
+        continue;
+      }
+      const uniqueIndexInfo = uniqueIndexInfoByRelationColumn.get(
+        `${column.origin.relationOid}:${column.origin.columnAttnum}`,
+      );
+      if (uniqueIndexInfo) {
+        candidates.push({
+          column_name: column.name,
+          native_type: uniqueIndexInfo.native_type,
+          is_primary_key: uniqueIndexInfo.is_primary_key,
+        });
+      }
+    }
+    // Primary-key-backed first, otherwise keep the view's own column order
+    // (Array.prototype.sort is stable).
+    return candidates.sort((a, b) => Number(b.is_primary_key) - Number(a.is_primary_key));
   }
 
   /** Find all foreign key constraints for a table. */

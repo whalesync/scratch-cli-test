@@ -651,6 +651,20 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       tableSpec.titlePath = dotPath(nameOverride);
     }
 
+    // The user's idFieldOverride resolves a spec whose own idPath is
+    // untrustworthy (see BaseJsonTableSpec.idPathRequiresUserSelection). Marker
+    // with NO override — e.g. the source view was redefined and lost its unique
+    // column after the folder was created — fails the pull loudly rather than
+    // addressing records by the legacy fallback.
+    if (tableSpec.idPathRequiresUserSelection) {
+      if (typeof idOverride !== 'string') {
+        throw new Error(
+          `The table backing folder "${dataFolder.path}" has no automatically-detectable unique ID column and no ID field override is configured. Re-add the folder choosing an ID field, or restore a unique column on the source.`,
+        );
+      }
+      delete tableSpec.idPathRequiresUserSelection;
+    }
+
     // Write refreshed schema to git
     if (dataFolder.path) {
       await this.scratchGitService.writeSchemaToGit(repoId, dataFolder.path, tableSpec);

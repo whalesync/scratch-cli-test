@@ -31,6 +31,15 @@ export type TablePreview = {
    * before being added; unlike `disabledReason`, the table is fully usable.
    */
   infoNote?: string;
+  /**
+   * The connector could not determine a column that uniquely identifies this
+   * table's rows (e.g. a Postgres/Supabase VIEW with no provably-unique output
+   * column, DEV-11136). The table stays selectable, but creating a data folder
+   * for it requires `CreateDataFolderDto.idFieldOverride` — enforced in
+   * `DataFolderService.createFolder` against the spec's matching
+   * `idPathRequiresUserSelection` marker.
+   */
+  requiresIdFieldSelection?: true;
   metadata?: Record<string, unknown>;
 };
 
@@ -239,6 +248,17 @@ export type BaseJsonTableSpec = {
    * Read with `lodash/get`, never bracket access.
    */
   idPath: DotPath;
+  /**
+   * True when `idPath` is NOT trustworthy: the connector could not determine a
+   * uniquely-identifying column (e.g. a Supabase VIEW with no provenance-backed
+   * unique output column, DEV-11136) and `idPath` holds only the legacy `'id'`
+   * fallback. A user-chosen `idFieldOverride` resolves the condition — every
+   * site that applies the override (folder create, pull-time and
+   * connection-wide schema refreshes) clears this marker; a site that finds the
+   * marker with NO override present must fail loudly rather than address
+   * records by the untrustworthy fallback.
+   */
+  idPathRequiresUserSelection?: boolean;
   // Dot path into a record locating the value used as the title/header column
   // when visualizing records (e.g. `dotPath('fields.Name')`).
   //

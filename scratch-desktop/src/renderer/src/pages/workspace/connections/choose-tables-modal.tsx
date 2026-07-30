@@ -406,8 +406,14 @@ export function ChooseTablesModal({
             const detectedTitlePath =
               result.titlePath ?? (result.titleColumnRemoteId ? result.titleColumnRemoteId.join('.') : undefined);
             const detectedNameField = detectedTitlePath ? detectedTitlePath.split('.') : null;
+            // A spec flagged idPathRequiresUserSelection has no trustworthy id —
+            // leave the ID field empty so the user must choose one (the server
+            // rejects folder creation for such tables without an override).
+            const detectedIdField = result.idPathRequiresUserSelection
+              ? ''
+              : (result.idPath ?? result.idColumnRemoteId ?? '');
             next.set(tableKey, {
-              idField: result.idPath ?? result.idColumnRemoteId ?? '',
+              idField: detectedIdField,
               nameField: detectedNameField,
             });
             return next;

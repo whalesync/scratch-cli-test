@@ -266,6 +266,20 @@ export class SchemaHelperService {
           tableSpec.titlePath = dotPath(nameOverride.join('.'));
         }
 
+        // The user's idFieldOverride resolves a spec whose own idPath is
+        // untrustworthy (see BaseJsonTableSpec.idPathRequiresUserSelection).
+        // Marker with no override means the source lost its unique column since
+        // the folder was created — throw (caught below, logged per folder)
+        // instead of writing a schema addressed by the legacy fallback.
+        if (tableSpec.idPathRequiresUserSelection) {
+          if (typeof idOverride !== 'string') {
+            throw new Error(
+              `Folder "${folder.path}" requires an ID field override but none is configured; skipping schema refresh.`,
+            );
+          }
+          delete tableSpec.idPathRequiresUserSelection;
+        }
+
         // Write refreshed schema and default view to git. The view is rebuilt from
         // the (override-adjusted) spec via the connector — a pure spec→view stage.
         await this.scratchGitService.writeSchemaToGit(repoId, folder.path, tableSpec);

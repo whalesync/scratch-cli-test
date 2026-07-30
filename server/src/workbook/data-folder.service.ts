@@ -460,6 +460,20 @@ export class DataFolderService {
       }
     }
 
+    // A spec carrying `idPathRequiresUserSelection` has no trustworthy idPath of
+    // its own (e.g. a Supabase VIEW with no provenance-backed unique column,
+    // DEV-11136) — a user-chosen ID column is REQUIRED, and providing one
+    // resolves the condition (the pull-time duplicate-id guard backstops the
+    // choice at runtime).
+    if (tableSpec.idPathRequiresUserSelection) {
+      if (!idFieldOverride) {
+        throw new BadRequestException(
+          `This table has no automatically-detectable unique ID column. Choose an ID field (idFieldOverride) whose values uniquely identify each row.`,
+        );
+      }
+      delete tableSpec.idPathRequiresUserSelection;
+    }
+
     // Build path from connector display name, base path, and table name
     let folderPath = this.buildConnectorFolderPath(
       connectorAccount.displayName,
