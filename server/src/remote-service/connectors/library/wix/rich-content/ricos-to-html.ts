@@ -12,6 +12,7 @@ import type {
   WixTextDecoration,
   WixTextNode,
 } from './types';
+import { RICOS_LINK_TARGET_TO_HTML_TARGET } from './types';
 
 class WixToHtmlConverter {
   private indentLevel = 0;
@@ -268,8 +269,14 @@ class WixToHtmlConverter {
 
       case 'LINK': {
         const href = decoration.linkData.link.url;
-        const target = decoration.linkData.link.target;
-        const targetAttr = target ? ` target="${target}"` : '';
+        // Ricos stores the target as an enum (BLANK/SELF/…); HTML wants the attribute form
+        // (_blank/_self/…). Tolerate a value that is already in attribute form so a hand-written or
+        // legacy document still round-trips.
+        const ricosTarget = decoration.linkData.link.target;
+        const htmlTarget = ricosTarget
+          ? (RICOS_LINK_TARGET_TO_HTML_TARGET[ricosTarget] ?? (ricosTarget.startsWith('_') ? ricosTarget : undefined))
+          : undefined;
+        const targetAttr = htmlTarget ? ` target="${this.escapeAttribute(htmlTarget)}"` : '';
         return `<a href="${this.escapeAttribute(href)}"${targetAttr}>${content}</a>`;
       }
 

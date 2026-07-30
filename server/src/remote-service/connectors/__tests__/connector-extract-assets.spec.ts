@@ -550,38 +550,62 @@ describe('Connector.extractAssets', () => {
   });
 
   describe('WixBlogConnector', () => {
-    it('should extract heroImage', () => {
+    // These fixtures use the shapes the `@wix/blog` SDK ACTUALLY returns. The previous versions used
+    // a synthetic `heroImage` object and a flattened `imageData.src`, neither of which Wix ever
+    // emits, so both phases of extractAssets passed their tests while extracting nothing from live
+    // data (DEV-11117 / DEV-11122).
+    it('should extract the cover image from the Wix media URI', () => {
       const result = wixBlog.extractAssets({
         recordContent: {
           _id: 'post_1',
-          heroImage: {
-            url: 'https://static.wixstatic.com/media/hero.jpg',
-            width: 1200,
-            height: 630,
-            altText: 'Hero alt',
+          media: {
+            wixMedia: {
+              image:
+                'wix:image://v1/9a4116_2161bd3b120046b7bc653b638305c2cc~mv2.jpg/Whales.jpg#originWidth=1024&originHeight=1024',
+            },
+            displayed: true,
+            custom: true,
           },
         },
         schema: {
           properties: {
             _id: { type: 'string' },
-            heroImage: {
-              type: 'object',
-              properties: { url: { type: 'string' } },
-              'x-scratch-asset-field': { idPath: null, urlExpires: false },
-            },
+            media: { type: 'object', properties: { wixMedia: { type: 'object' } } },
           },
         },
       });
 
-      const hero = result.find((e) => e.url === 'https://static.wixstatic.com/media/hero.jpg');
-      expect(hero).toBeDefined();
-      expect(hero).toMatchObject({
-        url: 'https://static.wixstatic.com/media/hero.jpg',
-        width: 1200,
-        height: 630,
-        altText: 'Hero alt',
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        remoteAssetId: '9a4116_2161bd3b120046b7bc653b638305c2cc~mv2.jpg',
+        url: 'https://static.wixstatic.com/media/9a4116_2161bd3b120046b7bc653b638305c2cc~mv2.jpg',
         mediaType: 'image',
       });
+    });
+
+    it('should extract a cover image whose URI has no filename segment', () => {
+      const result = wixBlog.extractAssets({
+        recordContent: {
+          _id: 'post_1',
+          media: { wixMedia: { image: 'wix:image://v1/abc_123~mv2.jpg#originWidth=1200&originHeight=800' } },
+        },
+        schema: { properties: { _id: { type: 'string' }, media: { type: 'object' } } },
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        remoteAssetId: 'abc_123~mv2.jpg',
+        url: 'https://static.wixstatic.com/media/abc_123~mv2.jpg',
+      });
+    });
+
+    it('should extract nothing when the post has no cover media', () => {
+      const result = wixBlog.extractAssets({
+        recordContent: { _id: 'post_1', media: { displayed: true, custom: false } },
+        schema: { properties: { _id: { type: 'string' }, media: { type: 'object' } } },
+      });
+
+      expect(result).toHaveLength(0);
     });
 
     it('should extract images from richContent nodes', () => {
@@ -594,10 +618,14 @@ describe('Connector.extractAssets', () => {
               {
                 type: 'IMAGE',
                 imageData: {
-                  src: { id: 'wix_media_123', url: 'https://static.wixstatic.com/media/inline.jpg' },
+                  // The real Wix nesting: src/width/height live under `imageData.image`, matching
+                  // rich-content/types.ts and the HTML converter.
+                  image: {
+                    src: { id: 'wix_media_123', url: 'https://static.wixstatic.com/media/inline.jpg' },
+                    width: 800,
+                    height: 600,
+                  },
                   altText: 'Inline image',
-                  width: 800,
-                  height: 600,
                 },
               },
             ],
@@ -623,6 +651,24 @@ describe('Connector.extractAssets', () => {
         width: 800,
         height: 600,
         mediaType: 'image',
+      });
+    });
+
+    it('should fall back to the media id when a Ricos image carries no URL', () => {
+      const result = wixBlog.extractAssets({
+        recordContent: {
+          _id: 'post_1',
+          richContent: {
+            nodes: [{ type: 'IMAGE', imageData: { image: { src: { id: 'only_id~mv2.png' } } } }],
+          },
+        },
+        schema: { properties: { _id: { type: 'string' }, richContent: { type: 'object' } } },
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        remoteAssetId: 'only_id~mv2.png',
+        url: 'https://static.wixstatic.com/media/only_id~mv2.png',
       });
     });
   });

@@ -178,14 +178,39 @@ export type WixFontFamilyDecoration = {
   };
 };
 
+/**
+ * Wix validates `target` against a protobuf enum, NOT the HTML attribute values: sending `'_blank'`
+ * makes the API reject the whole document with
+ * `target enum must be in [SELF(0), BLANK(1), PARENT(2), TOP(3)]` (DEV-11124). Use
+ * {@link HTML_TARGET_TO_RICOS_LINK_TARGET} / {@link RICOS_LINK_TARGET_TO_HTML_TARGET} to cross the
+ * boundary in either direction.
+ */
+export type WixLinkTarget = 'SELF' | 'BLANK' | 'PARENT' | 'TOP';
+
 export type WixLinkDecoration = {
   type: 'LINK';
   linkData: {
     link: {
       url: string;
-      target?: '_blank' | '_self';
+      target?: WixLinkTarget;
     };
   };
+};
+
+/** HTML `target` attribute → Wix's Ricos link-target enum. */
+export const HTML_TARGET_TO_RICOS_LINK_TARGET: Record<string, WixLinkTarget> = {
+  _self: 'SELF',
+  _blank: 'BLANK',
+  _parent: 'PARENT',
+  _top: 'TOP',
+};
+
+/** Wix's Ricos link-target enum → HTML `target` attribute. */
+export const RICOS_LINK_TARGET_TO_HTML_TARGET: Record<WixLinkTarget, string> = {
+  SELF: '_self',
+  BLANK: '_blank',
+  PARENT: '_parent',
+  TOP: '_top',
 };
 
 export type WixParagraphData = {

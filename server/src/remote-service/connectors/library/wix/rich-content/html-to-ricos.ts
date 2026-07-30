@@ -19,6 +19,7 @@ import type {
   WixTextDecoration,
   WixTextNode,
 } from './types';
+import { HTML_TARGET_TO_RICOS_LINK_TARGET } from './types';
 
 class HtmlToWixConverter {
   private idCounter = 0;
@@ -326,7 +327,10 @@ class HtmlToWixConverter {
 
   private parseLink($element: Cheerio<Element>, $: CheerioAPI, context: ParseContext): WixNode[] {
     const href = $element.attr('href') || '';
-    const target = $element.attr('target') as '_blank' | '_self' | undefined;
+    // Wix's link target is a protobuf enum (SELF/BLANK/PARENT/TOP), not the HTML attribute value —
+    // passing '_blank' straight through makes Wix reject the whole document (DEV-11124).
+    const htmlTarget = $element.attr('target');
+    const target = htmlTarget ? HTML_TARGET_TO_RICOS_LINK_TARGET[htmlTarget.toLowerCase()] : undefined;
 
     const linkDecoration: WixLinkDecoration = {
       type: 'LINK',
@@ -731,7 +735,10 @@ class HtmlToWixConverter {
 
   private parseInlineLink($element: Cheerio<Element>, $: CheerioAPI, context: ParseContext): WixTextNode[] {
     const href = $element.attr('href') || '';
-    const target = $element.attr('target') as '_blank' | '_self' | undefined;
+    // Wix's link target is a protobuf enum (SELF/BLANK/PARENT/TOP), not the HTML attribute value —
+    // passing '_blank' straight through makes Wix reject the whole document (DEV-11124).
+    const htmlTarget = $element.attr('target');
+    const target = htmlTarget ? HTML_TARGET_TO_RICOS_LINK_TARGET[htmlTarget.toLowerCase()] : undefined;
 
     const linkDecoration: WixLinkDecoration = {
       type: 'LINK',

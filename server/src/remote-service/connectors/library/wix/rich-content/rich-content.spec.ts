@@ -588,8 +588,17 @@ describe('HtmlToWixConverter', () => {
       });
     });
 
-    it('should convert links with target', () => {
-      const html = '<p><a href="https://example.com" target="_blank">External link</a></p>';
+    // Wix validates `target` against a protobuf enum, so the HTML attribute value has to be mapped:
+    // sending '_blank' makes the API reject the entire document with
+    // "target enum must be in [SELF(0), BLANK(1), PARENT(2), TOP(3)]" (DEV-11124).
+    it.each([
+      ['_blank', 'BLANK'],
+      ['_self', 'SELF'],
+      ['_parent', 'PARENT'],
+      ['_top', 'TOP'],
+      ['_BLANK', 'BLANK'],
+    ])('should map the HTML target %s to the Ricos enum %s', (htmlTarget, ricosTarget) => {
+      const html = `<p><a href="https://example.com" target="${htmlTarget}">External link</a></p>`;
       const result = converter.convert(html);
 
       const paragraph = result.nodes[0] as WixParagraphNode;
@@ -598,9 +607,20 @@ describe('HtmlToWixConverter', () => {
         linkData: {
           link: {
             url: 'https://example.com',
-            target: '_blank',
+            target: ricosTarget,
           },
         },
+      });
+    });
+
+    it('should omit an unrecognized target rather than send a value Wix would reject', () => {
+      const html = '<p><a href="https://example.com" target="framename">Named frame</a></p>';
+      const result = converter.convert(html);
+
+      const paragraph = result.nodes[0] as WixParagraphNode;
+      expect(paragraph.nodes[0].textData.decorations[0]).toEqual({
+        type: 'LINK',
+        linkData: { link: { url: 'https://example.com' } },
       });
     });
   });
@@ -1177,7 +1197,9 @@ describe('WixToHtmlConverter', () => {
                       linkData: {
                         link: {
                           url: 'https://example.com',
-                          target: '_blank',
+                          // Wix stores the link target as a protobuf enum (BLANK), not the HTML
+                          // attribute value (_blank) — see WixLinkTarget.
+                          target: 'BLANK',
                         },
                       },
                     },
