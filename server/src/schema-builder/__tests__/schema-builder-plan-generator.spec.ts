@@ -134,6 +134,17 @@ describe('inferLogicalFieldType', () => {
       kind: 'boolean',
     });
   });
+
+  it('honors the semantic email / phone view hints a connector unwraps to', () => {
+    expect(inferLogicalFieldType(field({ path: 'e', type: 'string' }), 'email')).toEqual({
+      status: 'mapped',
+      fieldType: { kind: 'email' },
+    });
+    expect(inferLogicalFieldType(field({ path: 'p', type: 'string' }), 'phone')).toEqual({
+      status: 'mapped',
+      fieldType: { kind: 'phone' },
+    });
+  });
 });
 
 describe('generateCreatePlanFromSources', () => {

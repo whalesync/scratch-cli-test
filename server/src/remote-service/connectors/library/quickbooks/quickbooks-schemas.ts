@@ -70,7 +70,7 @@ const AccountSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     SubAccount: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -92,7 +92,7 @@ const BillSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     Balance: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -139,7 +139,7 @@ const BillSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'account',
+                            linkedTableId: 'Account',
                             linkedTableRemoteId: ['Account'],
                           },
                         },
@@ -166,7 +166,7 @@ const BillSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'customer',
+                            linkedTableId: 'Customer',
                             linkedTableRemoteId: ['Customer'],
                           },
                         },
@@ -182,7 +182,7 @@ const BillSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -209,7 +209,7 @@ const BillSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item', linkedTableRemoteId: ['Item'] } },
+                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Item', linkedTableRemoteId: ['Item'] } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -223,7 +223,7 @@ const BillSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -285,7 +285,7 @@ const BillSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term', linkedTableRemoteId: ['Term'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Term', linkedTableRemoteId: ['Term'] } },
       ),
     ),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -302,7 +302,7 @@ const BillSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor', linkedTableRemoteId: ['Vendor'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Vendor', linkedTableRemoteId: ['Vendor'] } },
       ),
     ),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -323,7 +323,7 @@ const BillPaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     CheckPayment: Type.Optional(
@@ -338,7 +338,7 @@ const BillPaymentSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
             ),
           ),
           PrintStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -358,7 +358,7 @@ const BillPaymentSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
             ),
           ),
         }),
@@ -447,7 +447,7 @@ const BillPaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor', linkedTableRemoteId: ['Vendor'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Vendor', linkedTableRemoteId: ['Vendor'] } },
       ),
     ),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -484,17 +484,21 @@ const CompanyInfoSchema = Type.Object(
     CompanyAddr: Type.Optional(Type.Object({})),
     CustomerCommunicationAddr: Type.Optional(Type.Object({})),
     LegalAddr: Type.Optional(Type.Object({})),
-    PrimaryPhone: Type.Optional(Type.Object({})),
+    PrimaryPhone: Type.Optional(
+      Type.Object({ FreeFormNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])) }),
+    ),
     CompanyStartDate: Type.Optional(
       Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
     ),
     FiscalYearStartMonth: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     Country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    Email: Type.Optional(Type.Object({})),
-    WebAddr: Type.Optional(Type.Object({})),
+    Email: Type.Optional(Type.Object({ Address: Type.Optional(Type.Union([Type.String(), Type.Null()])) })),
+    WebAddr: Type.Optional(Type.Object({ URI: Type.Optional(Type.Union([Type.String(), Type.Null()])) })),
     SupportedLanguages: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     NameValue: Type.Optional(Type.Array(Type.Object({}))),
-    CustomerCommunicationEmailAddr: Type.Optional(Type.Object({})),
+    CustomerCommunicationEmailAddr: Type.Optional(
+      Type.Object({ Address: Type.Optional(Type.Union([Type.String(), Type.Null()])) }),
+    ),
     DefaultTimeZone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   },
   { $id: 'quickbooks/CompanyInfo', additionalProperties: true },
@@ -576,7 +580,7 @@ const CreditMemoSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer', linkedTableRemoteId: ['Customer'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Customer', linkedTableRemoteId: ['Customer'] } },
       ),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -606,7 +610,7 @@ const CreditMemoSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item', linkedTableRemoteId: ['Item'] } },
+                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Item', linkedTableRemoteId: ['Item'] } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -620,7 +624,7 @@ const CreditMemoSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -669,7 +673,7 @@ const CreditMemoSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term', linkedTableRemoteId: ['Term'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Term', linkedTableRemoteId: ['Term'] } },
       ),
     ),
     ShipAddr: Type.Optional(
@@ -746,7 +750,7 @@ const CustomerSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode', linkedTableRemoteId: ['TaxCode'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'TaxCode', linkedTableRemoteId: ['TaxCode'] } },
       ),
     ),
     DisplayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -792,6 +796,7 @@ const CustomerSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    Notes: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ParentRef: Type.Optional(
       Type.Union(
         [
@@ -800,7 +805,7 @@ const CustomerSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer', linkedTableRemoteId: ['Customer'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Customer', linkedTableRemoteId: ['Customer'] } },
       ),
     ),
     PaymentMethodRef: Type.Optional(
@@ -812,7 +817,7 @@ const CustomerSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod', linkedTableRemoteId: ['PaymentMethod'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'PaymentMethod', linkedTableRemoteId: ['PaymentMethod'] } },
       ),
     ),
     PreferredDeliveryMethod: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -843,7 +848,7 @@ const CustomerSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term', linkedTableRemoteId: ['Term'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Term', linkedTableRemoteId: ['Term'] } },
       ),
     ),
     ShipAddr: Type.Optional(
@@ -861,8 +866,10 @@ const CustomerSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    Suffix: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     Taxable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    Title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     WebAddr: Type.Optional(
       Type.Union([
         Type.Object({
@@ -894,7 +901,7 @@ const DepositSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
             ),
           ),
           Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -930,7 +937,7 @@ const DepositSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -955,7 +962,7 @@ const DepositSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'account',
+                            linkedTableId: 'Account',
                             linkedTableRemoteId: ['Account'],
                           },
                         },
@@ -982,7 +989,7 @@ const DepositSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'paymentmethod',
+                            linkedTableId: 'PaymentMethod',
                             linkedTableRemoteId: ['PaymentMethod'],
                           },
                         },
@@ -1086,10 +1093,24 @@ const EmployeeSchema = Type.Object(
       ]),
     ),
     MiddleName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    Mobile: Type.Optional(Type.Union([Type.Object({}), Type.Null()])),
+    Mobile: Type.Optional(
+      Type.Union([
+        Type.Object({
+          FreeFormNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
     Organization: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     PrimaryAddr: Type.Optional(Type.Union([Type.Object({}), Type.Null()])),
-    PrimaryEmailAddr: Type.Optional(Type.Union([Type.Object({}), Type.Null()])),
+    PrimaryEmailAddr: Type.Optional(
+      Type.Union([
+        Type.Object({
+          Address: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
     PrimaryPhone: Type.Optional(
       Type.Union([
         Type.Object({
@@ -1178,7 +1199,7 @@ const EstimateSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer', linkedTableRemoteId: ['Customer'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Customer', linkedTableRemoteId: ['Customer'] } },
       ),
     ),
     DeliveryInfo: Type.Optional(
@@ -1216,7 +1237,7 @@ const EstimateSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item', linkedTableRemoteId: ['Item'] } },
+                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Item', linkedTableRemoteId: ['Item'] } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -1230,7 +1251,7 @@ const EstimateSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -1329,7 +1350,7 @@ const EstimateSchema = Type.Object(
                               ],
                               {
                                 [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                                  linkedTableId: 'taxrate',
+                                  linkedTableId: 'TaxRate',
                                   linkedTableRemoteId: ['TaxRate'],
                                 },
                               },
@@ -1355,7 +1376,7 @@ const EstimateSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode', linkedTableRemoteId: ['TaxCode'] } },
+              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'TaxCode', linkedTableRemoteId: ['TaxCode'] } },
             ),
           ),
         }),
@@ -1373,7 +1394,9 @@ const InvoiceSchema = Type.Object(
   {
     AllowIPNPayment: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     AllowOnlineACHPayment: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    AllowOnlineAffirmPayment: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     AllowOnlineCreditCardPayment: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    AllowOnlinePayPalPayment: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     AllowOnlinePayment: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     ApplyTaxAfterDiscount: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     Balance: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -1444,7 +1467,7 @@ const InvoiceSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer', linkedTableRemoteId: ['Customer'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Customer', linkedTableRemoteId: ['Customer'] } },
       ),
     ),
     DeliveryInfo: Type.Optional(
@@ -1485,7 +1508,7 @@ const InvoiceSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'account',
+                            linkedTableId: 'Account',
                             linkedTableRemoteId: ['Account'],
                           },
                         },
@@ -1534,7 +1557,7 @@ const InvoiceSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item', linkedTableRemoteId: ['Item'] } },
+                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Item', linkedTableRemoteId: ['Item'] } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -1554,7 +1577,7 @@ const InvoiceSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -1617,7 +1640,7 @@ const InvoiceSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term', linkedTableRemoteId: ['Term'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Term', linkedTableRemoteId: ['Term'] } },
       ),
     ),
     ShipAddr: Type.Optional(
@@ -1665,7 +1688,7 @@ const InvoiceSchema = Type.Object(
                               ],
                               {
                                 [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                                  linkedTableId: 'taxrate',
+                                  linkedTableId: 'TaxRate',
                                   linkedTableRemoteId: ['TaxRate'],
                                 },
                               },
@@ -1691,7 +1714,7 @@ const InvoiceSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode', linkedTableRemoteId: ['TaxCode'] } },
+              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'TaxCode', linkedTableRemoteId: ['TaxCode'] } },
             ),
           ),
         }),
@@ -1718,7 +1741,7 @@ const ItemSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -1731,7 +1754,7 @@ const ItemSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     FullyQualifiedName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -1745,7 +1768,7 @@ const ItemSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     InvStartDate: Type.Optional(
@@ -1823,7 +1846,7 @@ const JournalEntrySchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'account',
+                            linkedTableId: 'Account',
                             linkedTableRemoteId: ['Account'],
                           },
                         },
@@ -1897,7 +1920,7 @@ const JournalEntrySchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate', linkedTableRemoteId: ['TaxRate'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'TaxRate', linkedTableRemoteId: ['TaxRate'] } },
       ),
     ),
     TxnDate: Type.Optional(
@@ -1932,7 +1955,7 @@ const JournalEntrySchema = Type.Object(
                               ],
                               {
                                 [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                                  linkedTableId: 'taxrate',
+                                  linkedTableId: 'TaxRate',
                                   linkedTableRemoteId: ['TaxRate'],
                                 },
                               },
@@ -1959,7 +1982,7 @@ const JournalEntrySchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode', linkedTableRemoteId: ['TaxCode'] } },
+              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'TaxCode', linkedTableRemoteId: ['TaxCode'] } },
             ),
           ),
         }),
@@ -2002,7 +2025,7 @@ const PaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer', linkedTableRemoteId: ['Customer'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Customer', linkedTableRemoteId: ['Customer'] } },
       ),
     ),
     DepositToAccountRef: Type.Optional(
@@ -2013,7 +2036,7 @@ const PaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -2120,7 +2143,7 @@ const PaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod', linkedTableRemoteId: ['PaymentMethod'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'PaymentMethod', linkedTableRemoteId: ['PaymentMethod'] } },
       ),
     ),
     PaymentRefNum: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2181,7 +2204,7 @@ const PurchaseSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     Credit: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -2226,7 +2249,7 @@ const PurchaseSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'account',
+                            linkedTableId: 'Account',
                             linkedTableRemoteId: ['Account'],
                           },
                         },
@@ -2253,7 +2276,7 @@ const PurchaseSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'customer',
+                            linkedTableId: 'Customer',
                             linkedTableRemoteId: ['Customer'],
                           },
                         },
@@ -2269,7 +2292,7 @@ const PurchaseSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -2296,7 +2319,7 @@ const PurchaseSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item', linkedTableRemoteId: ['Item'] } },
+                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Item', linkedTableRemoteId: ['Item'] } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -2310,7 +2333,7 @@ const PurchaseSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -2420,7 +2443,7 @@ const PurchaseOrderSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     ClassRef: Type.Optional(
@@ -2505,7 +2528,7 @@ const PurchaseOrderSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'customer',
+                            linkedTableId: 'Customer',
                             linkedTableRemoteId: ['Customer'],
                           },
                         },
@@ -2520,7 +2543,7 @@ const PurchaseOrderSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item', linkedTableRemoteId: ['Item'] } },
+                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Item', linkedTableRemoteId: ['Item'] } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -2534,7 +2557,7 @@ const PurchaseOrderSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -2598,7 +2621,7 @@ const PurchaseOrderSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term', linkedTableRemoteId: ['Term'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Term', linkedTableRemoteId: ['Term'] } },
       ),
     ),
     ShipAddr: Type.Optional(
@@ -2654,7 +2677,7 @@ const PurchaseOrderSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor', linkedTableRemoteId: ['Vendor'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Vendor', linkedTableRemoteId: ['Vendor'] } },
       ),
     ),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2730,7 +2753,7 @@ const RefundReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer', linkedTableRemoteId: ['Customer'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Customer', linkedTableRemoteId: ['Customer'] } },
       ),
     ),
     DepositToAccountRef: Type.Optional(
@@ -2742,7 +2765,7 @@ const RefundReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2771,7 +2794,7 @@ const RefundReceiptSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item', linkedTableRemoteId: ['Item'] } },
+                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Item', linkedTableRemoteId: ['Item'] } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -2785,7 +2808,7 @@ const RefundReceiptSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -2832,7 +2855,7 @@ const RefundReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod', linkedTableRemoteId: ['PaymentMethod'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'PaymentMethod', linkedTableRemoteId: ['PaymentMethod'] } },
       ),
     ),
     PrintStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2923,7 +2946,7 @@ const SalesReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer', linkedTableRemoteId: ['Customer'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Customer', linkedTableRemoteId: ['Customer'] } },
       ),
     ),
     DepositToAccountRef: Type.Optional(
@@ -2935,7 +2958,7 @@ const SalesReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account', linkedTableRemoteId: ['Account'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Account', linkedTableRemoteId: ['Account'] } },
       ),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2965,7 +2988,7 @@ const SalesReceiptSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'account',
+                            linkedTableId: 'Account',
                             linkedTableRemoteId: ['Account'],
                           },
                         },
@@ -2991,7 +3014,7 @@ const SalesReceiptSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item', linkedTableRemoteId: ['Item'] } },
+                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Item', linkedTableRemoteId: ['Item'] } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -3005,7 +3028,7 @@ const SalesReceiptSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxcode',
+                            linkedTableId: 'TaxCode',
                             linkedTableRemoteId: ['TaxCode'],
                           },
                         },
@@ -3066,7 +3089,7 @@ const SalesReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod', linkedTableRemoteId: ['PaymentMethod'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'PaymentMethod', linkedTableRemoteId: ['PaymentMethod'] } },
       ),
     ),
     PaymentRefNum: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -3154,7 +3177,7 @@ const TaxCodeSchema = Type.Object(
                         ],
                         {
                           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
-                            linkedTableId: 'taxrate',
+                            linkedTableId: 'TaxRate',
                             linkedTableRemoteId: ['TaxRate'],
                           },
                         },
@@ -3276,7 +3299,7 @@ const TimeActivitySchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer', linkedTableRemoteId: ['Customer'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Customer', linkedTableRemoteId: ['Customer'] } },
       ),
     ),
     Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -3289,7 +3312,7 @@ const TimeActivitySchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'employee', linkedTableRemoteId: ['Employee'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Employee', linkedTableRemoteId: ['Employee'] } },
       ),
     ),
     HourlyRate: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -3304,7 +3327,7 @@ const TimeActivitySchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item', linkedTableRemoteId: ['Item'] } },
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Item', linkedTableRemoteId: ['Item'] } },
       ),
     ),
     MetaData: Type.Optional(
@@ -3433,12 +3456,15 @@ const VendorSchema = Type.Object(
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TaxIdentifier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TermRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'Term', linkedTableRemoteId: ['Term'] } },
+      ),
     ),
     Title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     Vendor1099: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),

@@ -1,5 +1,6 @@
 import { TSchema } from '@sinclair/typebox';
 import { AxiosError } from 'axios';
+import { WSLogger } from 'src/logger';
 import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import { QuickBooksConnector } from '../quickbooks-connector';
@@ -15,13 +16,14 @@ const mockCreateEntity = jest.fn();
 const mockUpdateEntity = jest.fn();
 const mockDeleteTransaction = jest.fn();
 const mockGetEntity = jest.fn();
+const mockQuery = jest.fn();
 const mockIsStaleObjectError = jest.fn();
 
 jest.mock('../quickbooks-api-client', () => {
   const MockClient = Object.assign(
     jest.fn().mockImplementation(() => ({
       testConnection: jest.fn(),
-      query: jest.fn(),
+      query: mockQuery,
       getEntity: mockGetEntity,
       createEntity: mockCreateEntity,
       updateEntity: mockUpdateEntity,
@@ -322,6 +324,52 @@ describe('QuickBooksConnector (write)', () => {
       await expect(connector.deleteRecords(buildTableSpec('CompanyInfo'), [{ Id: '1' }])).rejects.toThrow(
         /not supported/i,
       );
+    });
+  });
+
+  /**
+   * A field QBO returns but the hand-maintained schema doesn't declare lands on disk
+   * (the schemas are `additionalProperties: true`) but gets no view column, so it
+   * syncs to no destination with nothing anywhere to say so (DEV-11134).
+   */
+  describe('pullRecordFiles — undeclared-field warning', () => {
+    const customerSpec: BaseJsonTableSpec = {
+      ...buildTableSpec('Customer'),
+      schema: { properties: { Id: {}, DisplayName: {} } } as unknown as TSchema,
+    };
+    let warnSpy: jest.SpyInstance<void, [{ message: string }]>;
+
+    beforeEach(() => {
+      warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined) as typeof warnSpy;
+    });
+
+    afterEach(() => warnSpy.mockRestore());
+
+    async function pull(entities: Record<string, unknown>[]): Promise<void> {
+      mockQuery.mockResolvedValueOnce({ entities, hasMore: false });
+      await connector.pullRecordFiles(customerSpec, () => Promise.resolve(), {}, {});
+    }
+
+    it('names every undeclared field QBO returned', async () => {
+      await pull([{ Id: '1', DisplayName: 'Acme', Notes: 'hi', Suffix: 'Jr' }]);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0].message).toContain('Notes, Suffix');
+    });
+
+    it('stays quiet when every field is declared', async () => {
+      await pull([{ Id: '1', DisplayName: 'Acme' }]);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('reports each field once, not once per record', async () => {
+      await pull([
+        { Id: '1', Notes: 'a' },
+        { Id: '2', Notes: 'b' },
+      ]);
+      await pull([{ Id: '3', Notes: 'c' }]);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -97,6 +97,9 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
 
   private readonly client: QuickBooksApiClient;
 
+  /** `<EntityType>.<fieldName>` pairs already reported by {@link warnAboutFieldsMissingFromStaticSchema}. */
+  private readonly fieldNamesReportedAsMissingFromStaticSchema = new Set<string>();
+
   constructor(credentials: QuickBooksCredentials, opts?: { rateLimiter?: RateLimiter; sandbox?: boolean }) {
     super();
     this.client = new QuickBooksApiClient(credentials, { rateLimiter: opts?.rateLimiter, sandbox: opts?.sandbox });
@@ -195,6 +198,7 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
       startPosition += result.entities.length;
 
       if (result.entities.length > 0) {
+        this.warnAboutFieldsMissingFromStaticSchema(tableSpec, entityType, result.entities);
         await callback({
           files: result.entities as ConnectorFile[],
           connectorProgress: { nextStartPosition: startPosition },
@@ -202,6 +206,57 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
       }
     }
     return {};
+  }
+
+  /**
+   * Warn when QBO returns a top-level field the static schema doesn't declare.
+   *
+   * QBO has no schema-discovery API, so {@link buildQuickBooksJsonTableSpec}'s
+   * schemas are hand-maintained — and three properties combine to make a gap
+   * invisible: the schemas are `additionalProperties: true` (so an undeclared
+   * field lands correctly on disk and looks fine when debugging), the default
+   * View is built by iterating `schema.properties` (so no column is generated),
+   * and a field with no column reaches no destination. The result is a field that
+   * syncs nowhere with nothing anywhere to say so — `Customer.Notes`, a
+   * first-class 2000-char field in the QuickBooks UI, was lost exactly this way
+   * (DEV-11134).
+   *
+   * Warning here doesn't repair the pull — the value is on disk either way — but
+   * it turns a silent omission into a signal, so the fix is to add the reported
+   * field to the codegen's supplementary-field list. Each (entity, field) pair is
+   * reported once per connector instance so a 1000-record page logs once, not
+   * 1000 times.
+   */
+  private warnAboutFieldsMissingFromStaticSchema(
+    tableSpec: BaseJsonTableSpec,
+    entityType: string,
+    entities: Record<string, unknown>[],
+  ): void {
+    const declaredFieldNames = Object.keys(
+      (tableSpec.schema as { properties?: Record<string, unknown> }).properties ?? {},
+    );
+    if (declaredFieldNames.length === 0) return;
+    const declaredFieldNameSet = new Set(declaredFieldNames);
+
+    const newlyUndeclaredFieldNames: string[] = [];
+    for (const entity of entities) {
+      for (const fieldName of Object.keys(entity)) {
+        if (declaredFieldNameSet.has(fieldName)) continue;
+        const alreadyReportedKey = `${entityType}.${fieldName}`;
+        if (this.fieldNamesReportedAsMissingFromStaticSchema.has(alreadyReportedKey)) continue;
+        this.fieldNamesReportedAsMissingFromStaticSchema.add(alreadyReportedKey);
+        newlyUndeclaredFieldNames.push(fieldName);
+      }
+    }
+
+    if (newlyUndeclaredFieldNames.length === 0) return;
+    WSLogger.warn({
+      source: 'QuickBooksConnector',
+      message:
+        `QuickBooks returned ${entityType} field(s) the static schema doesn't declare: ` +
+        `${newlyUndeclaredFieldNames.join(', ')}. They are stored verbatim but get no view column, ` +
+        `so they sync to no destination — declare them in the codegen's SUPPLEMENTARY_FIELDS.`,
+    });
   }
 
   /**

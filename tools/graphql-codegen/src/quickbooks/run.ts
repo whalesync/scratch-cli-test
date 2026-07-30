@@ -61,9 +61,36 @@ const ENTITY_MAP: Record<string, string> = {
 };
 
 /**
+ * QBO's shared one-key wrapper types, as declared in Intuit's API reference. Named
+ * so a supplementary field reads as the QBO type it is.
+ */
+const EMAIL_ADDRESS: JsonSchemaProperty = {
+  type: ["null", "object"],
+  properties: { Address: { type: ["null", "string"] } },
+};
+const TELEPHONE_NUMBER: JsonSchemaProperty = {
+  type: ["null", "object"],
+  properties: { FreeFormNumber: { type: ["null", "string"] } },
+};
+
+/**
  * Fields that exist in actual QBO API responses but are missing from Airbyte's schema.
  * Discovered by comparing static schemas against live sandbox data.
  * These get merged into the Airbyte-sourced schema during codegen.
+ *
+ * QBO has no schema-discovery API, so this list IS the export surface: the entity
+ * schemas are `additionalProperties: true`, which means an undeclared field lands
+ * correctly on disk and looks fine when debugging — but the default View is built by
+ * iterating `schema.properties`, so no column is generated and the value reaches no
+ * destination (DEV-11134). `QuickBooksConnector.pullRecordFiles` warns when a pulled
+ * record carries a key that isn't declared here, so the next gap gets noticed instead
+ * of silently disappearing; add what it reports.
+ *
+ * The same applies to the one-key wrapper objects (`{ Address }`, `{ FreeFormNumber }`,
+ * `{ URI }`): Airbyte declares several of them as bare `object`s with no properties, and
+ * the default View can only unwrap a wrapper whose inner property is declared — so those
+ * are spelled out here with the shape QBO's shared `EmailAddress` / `TelephoneNumber` /
+ * `WebSiteAddress` types define.
  */
 const SUPPLEMENTARY_FIELDS: Record<
   string,
@@ -73,10 +100,7 @@ const SUPPLEMENTARY_FIELDS: Record<
     VendorAddr: { type: ["null", "object"], properties: {} },
   },
   CompanyInfo: {
-    CustomerCommunicationEmailAddr: {
-      type: ["null", "object"],
-      properties: {},
-    },
+    CustomerCommunicationEmailAddr: EMAIL_ADDRESS,
     DefaultTimeZone: { type: ["null", "string"] },
   },
   CreditMemo: {
@@ -86,12 +110,19 @@ const SUPPLEMENTARY_FIELDS: Record<
     IsProject: { type: ["null", "boolean"] },
     ClientEntityId: { type: ["null", "string"] },
     V4IDPseudonym: { type: ["null", "string"] },
+    // Free-text user content (up to 2000 chars) and the two name parts Airbyte
+    // omits — all first-class fields in the QuickBooks UI.
+    Notes: { type: ["null", "string"] },
+    Title: { type: ["null", "string"] },
+    Suffix: { type: ["null", "string"] },
   },
   Deposit: {
     TxnTaxDetail: { type: ["null", "object"], properties: {} },
   },
   Employee: {
     V4IDPseudonym: { type: ["null", "string"] },
+    Mobile: TELEPHONE_NUMBER,
+    PrimaryEmailAddr: EMAIL_ADDRESS,
   },
   Estimate: {
     FreeFormAddress: { type: ["null", "boolean"] },
@@ -99,6 +130,8 @@ const SUPPLEMENTARY_FIELDS: Record<
   Invoice: {
     FreeFormAddress: { type: ["null", "boolean"] },
     ShipFromAddr: { type: ["null", "object"], properties: {} },
+    AllowOnlinePayPalPayment: { type: ["null", "boolean"] },
+    AllowOnlineAffirmPayment: { type: ["null", "boolean"] },
   },
   JournalEntry: {
     TotalAmt: { type: ["null", "number"] },
@@ -127,34 +160,41 @@ const SUPPLEMENTARY_FIELDS: Record<
 // ============= Foreign Key Resolution =============
 
 /**
- * Maps QuickBooks *Ref field names to their target table slugs.
+ * Maps QuickBooks *Ref field names to their target ENTITY names.
  * Only includes Refs that point to entities we support in our connector.
  * Fields referencing unsupported entities (Currency, Department, Class) are omitted.
+ *
+ * These are raw-cased (`Customer`, not `customer`) deliberately: the emitted
+ * `linkedTableId` has to match a token of the linked table's `remoteId` — which
+ * `QuickBooksConnector.listTables` emits as `[<rawEntityType>]` — or the plan
+ * generator's exact `Map.get()` misses and the foreign key is dropped from every
+ * export as "links to X, which isn't in this plan" (DEV-11133).
  */
 const REF_FIELD_TO_TABLE: Record<string, string> = {
   // Direct entity refs
-  VendorRef: "vendor",
-  CustomerRef: "customer",
-  ItemRef: "item",
-  PaymentMethodRef: "paymentmethod",
-  TaxCodeRef: "taxcode",
-  TaxRateRef: "taxrate",
-  EmployeeRef: "employee",
+  VendorRef: "Vendor",
+  CustomerRef: "Customer",
+  ItemRef: "Item",
+  PaymentMethodRef: "PaymentMethod",
+  TaxCodeRef: "TaxCode",
+  TaxRateRef: "TaxRate",
+  EmployeeRef: "Employee",
   // Account-type refs (all point to Account entity)
-  AccountRef: "account",
-  APAccountRef: "account",
-  BankAccountRef: "account",
-  CCAccountRef: "account",
-  AssetAccountRef: "account",
-  ExpenseAccountRef: "account",
-  IncomeAccountRef: "account",
-  DiscountAccountRef: "account",
-  DepositToAccountRef: "account",
-  // Term refs
-  SalesTermRef: "term",
+  AccountRef: "Account",
+  APAccountRef: "Account",
+  BankAccountRef: "Account",
+  CCAccountRef: "Account",
+  AssetAccountRef: "Account",
+  ExpenseAccountRef: "Account",
+  IncomeAccountRef: "Account",
+  DiscountAccountRef: "Account",
+  DepositToAccountRef: "Account",
+  // Term refs — `SalesTermRef` on transactions, `TermRef` on a Vendor.
+  SalesTermRef: "Term",
+  TermRef: "Term",
   // Tax code variants
-  DefaultTaxCodeRef: "taxcode",
-  TxnTaxCodeRef: "taxcode",
+  DefaultTaxCodeRef: "TaxCode",
+  TxnTaxCodeRef: "TaxCode",
 };
 
 /**
@@ -163,27 +203,31 @@ const REF_FIELD_TO_TABLE: Record<string, string> = {
 const SELF_REF_ENTITIES = new Set(["Account", "Customer", "Item"]);
 
 /**
- * Resolve the FK target table slug for a Ref field, or null if not a known FK.
+ * Resolve the FK target entity name for a Ref field, or null if not a known FK.
  */
 function resolveRefTarget(
   fieldName: string,
   entityName: string,
 ): string | null {
   if (fieldName === "ParentRef" && SELF_REF_ENTITIES.has(entityName)) {
-    return entityName.toLowerCase();
+    return entityName;
   }
   return REF_FIELD_TO_TABLE[fieldName] ?? null;
 }
 
 /**
- * Inject FOREIGN_KEY_OPTIONS into a nullable TypeBox expression.
+ * Inject X_SCRATCH_FOREIGN_KEY_OPTIONS into a nullable TypeBox expression.
  * Expects the expression to end with `])` from a Type.Union([..., Type.Null()]) wrapper.
+ *
+ * `linkedTableRemoteId` is the linked table's FULL remote id array, deep-equal to
+ * that table's `DataFolder.tableId` — for QuickBooks that is the single-segment
+ * `[<entityName>]` (`QuickBooksConnector.listTables` emits `remoteId: [entityType]`).
  */
 function addForeignKeyAnnotation(
   typeExpr: string,
   linkedTableId: string,
 ): string {
-  const fkOpts = `{ [FOREIGN_KEY_OPTIONS]: { linkedTableId: '${linkedTableId}' } }`;
+  const fkOpts = `{ [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: '${linkedTableId}', linkedTableRemoteId: ['${linkedTableId}'] } }`;
   const closingIdx = typeExpr.lastIndexOf("])");
   if (closingIdx !== -1) {
     return `${typeExpr.slice(0, closingIdx + 1)}, ${fkOpts})`;
@@ -300,9 +344,9 @@ function jsonSchemaToTypebox(
   switch (scalarType) {
     case "string":
       if (prop.format === "date-time") {
-        expr = `Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' })`;
+        expr = `Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' })`;
       } else if (prop.format === "date") {
-        expr = `Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' })`;
+        expr = `Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' })`;
       } else {
         expr = "Type.String()";
       }
@@ -349,7 +393,7 @@ function objectPropertiesToTypebox(
 
       // All fields except Id are Optional + readonly
       if (key === "Id") {
-        return `\n${"  ".repeat(depth + 2)}${key}: Type.String({ [READONLY_FLAG]: true }),`;
+        return `\n${"  ".repeat(depth + 2)}${key}: Type.String({ [X_SCRATCH_READONLY]: true }),`;
       }
       return `\n${"  ".repeat(depth + 2)}${key}: Type.Optional(${typeExpr}),`;
     });
@@ -369,26 +413,26 @@ function generateEntitySchema(entityName: string, schema: JsonSchema): string {
 function generateCompanyInfoSchema(): string {
   return `const CompanyInfoSchema = Type.Object(
   {
-    Id: Type.String({ [READONLY_FLAG]: true }),
+    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     MetaData: Type.Optional(Type.Union([Type.Object({
-      CreateTime: Type.Optional(Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()])),
-      LastUpdatedTime: Type.Optional(Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()])),
+      CreateTime: Type.Optional(Type.Union([Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()])),
+      LastUpdatedTime: Type.Optional(Type.Union([Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()])),
     }), Type.Null()])),
     CompanyName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     LegalName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     CompanyAddr: Type.Optional(Type.Object({})),
     CustomerCommunicationAddr: Type.Optional(Type.Object({})),
     LegalAddr: Type.Optional(Type.Object({})),
-    PrimaryPhone: Type.Optional(Type.Object({})),
-    CompanyStartDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
+    PrimaryPhone: Type.Optional(Type.Object({ FreeFormNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])) })),
+    CompanyStartDate: Type.Optional(Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     FiscalYearStartMonth: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     Country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    Email: Type.Optional(Type.Object({})),
-    WebAddr: Type.Optional(Type.Object({})),
+    Email: Type.Optional(Type.Object({ Address: Type.Optional(Type.Union([Type.String(), Type.Null()])) })),
+    WebAddr: Type.Optional(Type.Object({ URI: Type.Optional(Type.Union([Type.String(), Type.Null()])) })),
     SupportedLanguages: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     NameValue: Type.Optional(Type.Array(Type.Object({}))),
-    CustomerCommunicationEmailAddr: Type.Optional(Type.Object({})),
+    CustomerCommunicationEmailAddr: Type.Optional(Type.Object({ Address: Type.Optional(Type.Union([Type.String(), Type.Null()])) })),
     DefaultTimeZone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   },
   { $id: 'quickbooks/CompanyInfo', additionalProperties: true },
@@ -420,7 +464,11 @@ function generateOutputFile(
  * All schemas have additionalProperties: true to handle undocumented fields.
  */
 import { type TSchema, Type } from '@sinclair/typebox';
-import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '@spinner/shared-types';
+import {
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import { QuickBooksEntityType } from './quickbooks-types';
 `;
 

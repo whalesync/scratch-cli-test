@@ -858,6 +858,15 @@ export function inferLogicalFieldType(
         return { status: 'mapped', fieldType: dateCreateFieldType(field) };
       case 'url':
         return { status: 'mapped', fieldType: { kind: 'url' } };
+      // A connector that knows a flattened string is an address / number says so
+      // (QuickBooks unwraps `PrimaryEmailAddr` → `{ Address }`, `PrimaryPhone` →
+      // `{ FreeFormNumber }`); `email` and `phone` are already in the create-field
+      // vocabulary and every destination pack maps them, so honor the hint rather
+      // than falling through to plain text.
+      case 'email':
+        return { status: 'mapped', fieldType: { kind: 'email' } };
+      case 'phone':
+        return { status: 'mapped', fieldType: { kind: 'phone' } };
       case 'richtext':
         return { status: 'mapped', fieldType: { kind: 'longText' } };
       case 'string':
