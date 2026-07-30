@@ -8,16 +8,9 @@ const PRIORITY_FIELDS: Record<StripeEntityType, string[]> = {
   customers: ['name', 'id', 'email', 'phone', 'description', 'currency', 'balance', 'delinquent', 'created'],
   products: ['name', 'id', 'description', 'active', 'type', 'default_price', 'url', 'created'],
   prices: ['nickname', 'id', 'product', 'active', 'currency', 'unit_amount', 'type', 'recurring', 'created'],
-  subscriptions: [
-    'id',
-    'customer',
-    'status',
-    'currency',
-    'current_period_start',
-    'current_period_end',
-    'cancel_at_period_end',
-    'created',
-  ],
+  // No current period columns: Stripe reports the billing period per line item
+  // (`items.data[].current_period_start|end`), which this flat view can't address.
+  subscriptions: ['id', 'customer', 'status', 'currency', 'start_date', 'cancel_at_period_end', 'created'],
   invoices: [
     'number',
     'id',
@@ -27,7 +20,6 @@ const PRIORITY_FIELDS: Record<StripeEntityType, string[]> = {
     'amount_due',
     'amount_paid',
     'total',
-    'paid',
     'due_date',
     'created',
   ],
@@ -48,6 +40,8 @@ const HIDDEN_FIELDS = new Set([
   'address',
   'items',
   'images',
+  'status_transitions',
+  'total_taxes',
 ]);
 
 /**

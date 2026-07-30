@@ -273,14 +273,6 @@ function buildSubscriptionSchema(): TSchema {
           'Subscription status (active, past_due, unpaid, canceled, incomplete, incomplete_expired, trialing, paused)',
         [X_SCRATCH_READONLY]: true,
       }),
-      current_period_start: Type.Number({
-        description: 'Current period start (Unix)',
-        [X_SCRATCH_READONLY]: true,
-      }),
-      current_period_end: Type.Number({
-        description: 'Current period end (Unix)',
-        [X_SCRATCH_READONLY]: true,
-      }),
       cancel_at_period_end: Type.Boolean({
         description: 'Will cancel at end of period',
         [X_SCRATCH_READONLY]: true,
@@ -348,6 +340,16 @@ function buildSubscriptionSchema(): TSchema {
                 quantity: Type.Optional(Type.Number()),
                 metadata: Type.Optional(Type.Record(Type.String(), Type.String())),
                 created: Type.Optional(Type.Number()),
+                // The billing period lives on the line item, not the subscription: an item's period
+                // is what Stripe removed from the subscription top level. Declared optional because
+                // items spliced in by `hydrateTruncatedSubscriptionItems` come from a different
+                // endpoint, so we never assume the field is there.
+                current_period_start: Type.Optional(
+                  Type.Number({ description: "Start of this item's current billing period (Unix)" }),
+                ),
+                current_period_end: Type.Optional(
+                  Type.Number({ description: "End of this item's current billing period (Unix)" }),
+                ),
               }),
             ),
             has_more: Type.Optional(Type.Boolean()),
@@ -363,6 +365,14 @@ function buildSubscriptionSchema(): TSchema {
   );
 }
 
+/**
+ * Invoices no longer carry a `charge` or `payment_intent` link, and the reverse links (`charge.invoice`,
+ * `payment_intent.invoice`) were removed with them — an invoice can now be settled by several partial
+ * payments, so the relation moved to the invoice's `payments` list. That list is `expand`-only and its
+ * links sit inside an array (`payments.data[].payment.payment_intent`), which the foreign-key extractor
+ * does not walk, so it is deliberately not modelled here. Invoice ↔ payment relations are therefore
+ * unavailable until both the expand and array-nested foreign keys are supported (DEV-11144).
+ */
 function buildInvoiceSchema(): TSchema {
   return Type.Object(
     {
@@ -375,12 +385,42 @@ function buildInvoiceSchema(): TSchema {
           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers', linkedTableRemoteId: ['customers'] },
         }),
       ),
-      subscription: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Subscription ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'subscriptions', linkedTableRemoteId: ['subscriptions'] },
-        }),
+      // Replaces the removed top-level `subscription`: Stripe now reports what generated an invoice
+      // through `parent`, whose shape is selected by `parent.type`. The link to the subscription is
+      // annotated where it actually lives rather than hoisted back to the top level.
+      parent: Type.Optional(
+        Type.Union(
+          [
+            Type.Object({
+              type: Type.String({
+                description: 'Which detail hash is populated (subscription_details, quote_details)',
+              }),
+              subscription_details: Type.Optional(
+                Type.Union([
+                  Type.Object({
+                    subscription: Type.Optional(
+                      Type.Union([Type.String(), Type.Null()], {
+                        description: 'Subscription ID',
+                        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
+                          linkedTableId: 'subscriptions',
+                          linkedTableRemoteId: ['subscriptions'],
+                        },
+                      }),
+                    ),
+                    subscription_proration_date: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+                    metadata: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Null()])),
+                  }),
+                  Type.Null(),
+                ]),
+              ),
+              quote_details: Type.Optional(
+                Type.Union([Type.Object({ quote: Type.Optional(Type.String()) }), Type.Null()]),
+              ),
+            }),
+            Type.Null(),
+          ],
+          { description: 'What generated this invoice (subscription or quote)', [X_SCRATCH_READONLY]: true },
+        ),
       ),
       status: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
@@ -394,8 +434,26 @@ function buildInvoiceSchema(): TSchema {
       amount_remaining: Type.Number({ description: 'Amount remaining in cents', [X_SCRATCH_READONLY]: true }),
       subtotal: Type.Number({ description: 'Subtotal in cents', [X_SCRATCH_READONLY]: true }),
       total: Type.Number({ description: 'Total in cents', [X_SCRATCH_READONLY]: true }),
-      tax: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Tax amount in cents', [X_SCRATCH_READONLY]: true }),
+      // Replaces the removed top-level `tax`, which Stripe unified into per-tax-object aggregates.
+      total_taxes: Type.Optional(
+        Type.Union(
+          [
+            Type.Array(
+              Type.Object({
+                amount: Type.Number(),
+                tax_behavior: Type.Optional(Type.String()),
+                taxability_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                taxable_amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+                type: Type.Optional(Type.String()),
+                tax_rate_details: Type.Optional(
+                  Type.Union([Type.Object({ tax_rate: Type.Optional(Type.String()) }), Type.Null()]),
+                ),
+              }),
+            ),
+            Type.Null(),
+          ],
+          { description: 'Aggregate tax amounts across all line items', [X_SCRATCH_READONLY]: true },
+        ),
       ),
       number: Type.Optional(
         Type.Union([Type.String(), Type.Null()], { description: 'Invoice number', [X_SCRATCH_READONLY]: true }),
@@ -404,7 +462,22 @@ function buildInvoiceSchema(): TSchema {
       due_date: Type.Optional(
         Type.Union([Type.Number(), Type.Null()], { description: 'Due date (Unix)', [X_SCRATCH_READONLY]: true }),
       ),
-      paid: Type.Boolean({ description: 'Whether the invoice is paid', [X_SCRATCH_READONLY]: true }),
+      // Replaces the removed top-level `paid` — whether an invoice is paid is now read from `status`,
+      // and when it was paid from `status_transitions.paid_at`.
+      status_transitions: Type.Optional(
+        Type.Union(
+          [
+            Type.Object({
+              finalized_at: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+              marked_uncollectible_at: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+              paid_at: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+              voided_at: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            }),
+            Type.Null(),
+          ],
+          { description: 'Timestamps for each status the invoice has moved through', [X_SCRATCH_READONLY]: true },
+        ),
+      ),
       period_start: Type.Number({ description: 'Period start (Unix)', [X_SCRATCH_READONLY]: true }),
       period_end: Type.Number({ description: 'Period end (Unix)', [X_SCRATCH_READONLY]: true }),
       hosted_invoice_url: Type.Optional(
@@ -449,13 +522,6 @@ function buildPaymentIntentSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Payment method ID',
           [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      invoice: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Invoice ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices', linkedTableRemoteId: ['invoices'] },
         }),
       ),
       capture_method: Type.Optional(Type.String({ description: 'Capture method', [X_SCRATCH_READONLY]: true })),
@@ -513,13 +579,6 @@ function buildChargeSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], {
           description: 'Payment method ID',
           [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      invoice: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], {
-          description: 'Invoice ID',
-          [X_SCRATCH_READONLY]: true,
-          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices', linkedTableRemoteId: ['invoices'] },
         }),
       ),
       receipt_email: Type.Optional(

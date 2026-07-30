@@ -110,8 +110,6 @@ export interface StripeSubscription {
   object: 'subscription';
   customer: string;
   status: string;
-  current_period_start: number;
-  current_period_end: number;
   cancel_at_period_end: boolean;
   canceled_at: number | null;
   ended_at: number | null;
@@ -138,6 +136,9 @@ export interface StripeSubscriptionItem {
   quantity: number;
   metadata: Record<string, string>;
   created: number;
+  /** The billing period lives here, not on the parent subscription. */
+  current_period_start?: number;
+  current_period_end?: number;
 }
 
 /**
@@ -147,7 +148,7 @@ export interface StripeInvoice {
   id: string;
   object: 'invoice';
   customer: string | null;
-  subscription: string | null;
+  parent: StripeInvoiceParent | null;
   status: string | null;
   currency: string;
   amount_due: number;
@@ -155,11 +156,11 @@ export interface StripeInvoice {
   amount_remaining: number;
   subtotal: number;
   total: number;
-  tax: number | null;
+  total_taxes: StripeInvoiceTotalTax[] | null;
   number: string | null;
   description: string | null;
   due_date: number | null;
-  paid: boolean;
+  status_transitions: StripeInvoiceStatusTransitions | null;
   period_start: number;
   period_end: number;
   hosted_invoice_url: string | null;
@@ -183,7 +184,6 @@ export interface StripePaymentIntent {
   status: string;
   description: string | null;
   payment_method: string | null;
-  invoice: string | null;
   capture_method: string;
   confirmation_method: string;
   metadata: Record<string, string>;
@@ -211,7 +211,6 @@ export interface StripeCharge {
   description: string | null;
   payment_intent: string | null;
   payment_method: string | null;
-  invoice: string | null;
   receipt_email: string | null;
   receipt_url: string | null;
   failure_code: string | null;
@@ -242,6 +241,35 @@ export interface StripeShipping {
 export interface StripeInvoiceSettings {
   default_payment_method: string | null;
   footer: string | null;
+}
+
+/** What generated an invoice — replaces the removed top-level `Invoice.subscription`. */
+export interface StripeInvoiceParent {
+  type: 'subscription_details' | 'quote_details';
+  subscription_details: {
+    subscription: string | null;
+    subscription_proration_date: number | null;
+    metadata: Record<string, string> | null;
+  } | null;
+  quote_details: { quote: string } | null;
+}
+
+/** Aggregate tax on an invoice — replaces the removed top-level `Invoice.tax`. */
+export interface StripeInvoiceTotalTax {
+  amount: number;
+  tax_behavior: 'exclusive' | 'inclusive';
+  taxability_reason: string | null;
+  taxable_amount: number | null;
+  type: string;
+  tax_rate_details: { tax_rate: string } | null;
+}
+
+/** When an invoice moved through each status — `paid_at` replaces the removed `Invoice.paid`. */
+export interface StripeInvoiceStatusTransitions {
+  finalized_at: number | null;
+  marked_uncollectible_at: number | null;
+  paid_at: number | null;
+  voided_at: number | null;
 }
 
 export interface StripeRecurring {

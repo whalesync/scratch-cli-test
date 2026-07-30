@@ -312,9 +312,11 @@ describeIfKey('StripeConnector — live API', () => {
       const props = subscriptionsSpec.schema.properties;
       expect(props).toHaveProperty('customer');
       expect(props).toHaveProperty('status');
-      expect(props).toHaveProperty('current_period_start');
-      expect(props).toHaveProperty('current_period_end');
       expect(props).toHaveProperty('items');
+      // The billing period moved onto the line items; declaring it at the top level produced a
+      // column that was null on every record (DEV-11144).
+      expect(props).not.toHaveProperty('current_period_start');
+      expect(props).not.toHaveProperty('current_period_end');
     });
 
     it('pulls subscriptions from the live API', async () => {
@@ -326,6 +328,23 @@ describeIfKey('StripeConnector — live API', () => {
         expect(first.id).toMatch(/^sub_/);
         expect(first.object).toBe('subscription');
         expect(first.status).toBeDefined();
+      }
+    });
+
+    // Guards the pinned API version: on a stale pin the period would come back at the top level
+    // instead, silently reintroducing the always-null columns this schema was fixed to avoid.
+    it('receives the billing period on line items, matching the pinned API version', async () => {
+      const files = await collectPulledFiles(connector, subscriptionsSpec);
+
+      if (files.length > 0) {
+        const first = files[0] as unknown as {
+          current_period_start?: number;
+          items: { data: { current_period_start?: number; current_period_end?: number }[] };
+        };
+        expect(first.current_period_start).toBeUndefined();
+        expect(first.items.data.length).toBeGreaterThan(0);
+        expect(typeof first.items.data[0].current_period_start).toBe('number');
+        expect(typeof first.items.data[0].current_period_end).toBe('number');
       }
     });
   });
@@ -352,6 +371,11 @@ describeIfKey('StripeConnector — live API', () => {
       expect(props).toHaveProperty('total');
       expect(props).toHaveProperty('status');
       expect(props).toHaveProperty('hosted_invoice_url');
+      // Replaced by `parent`, `status_transitions` and `total_taxes` (DEV-11144).
+      expect(props).not.toHaveProperty('subscription');
+      expect(props).not.toHaveProperty('paid');
+      expect(props).not.toHaveProperty('tax');
+      expect(props).toHaveProperty('parent');
     });
 
     it('pulls invoices from the live API', async () => {
@@ -362,6 +386,20 @@ describeIfKey('StripeConnector — live API', () => {
         const first = files[0] as unknown as { id: string; object: string };
         expect(first.id).toMatch(/^in_/);
         expect(first.object).toBe('invoice');
+      }
+    });
+
+    // Guards the pinned API version the same way the subscriptions period check does: these fields
+    // must stay gone, and the subscription link must arrive under `parent`.
+    it('receives invoices in the shape the pinned API version declares', async () => {
+      const files = await collectPulledFiles(connector, invoicesSpec);
+
+      if (files.length > 0) {
+        const first = files[0] as unknown as Record<string, unknown>;
+        expect(first).not.toHaveProperty('subscription');
+        expect(first).not.toHaveProperty('paid');
+        expect(first).not.toHaveProperty('tax');
+        expect(first).toHaveProperty('parent');
       }
     });
   });

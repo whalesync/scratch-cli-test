@@ -33,6 +33,27 @@ export class StripeError extends Error {
 }
 
 /**
+ * The Stripe API version this connector is pinned to, sent as `Stripe-Version` on every request.
+ *
+ * Without an explicit pin Stripe serves whatever version the *connected account* happens to default
+ * to, so the payload shape — and therefore every field declared in `stripe-json-schema.ts` — would
+ * differ from account to account and change under us whenever an account upgrades. Pinning makes the
+ * connector's contract deterministic: the schema is verified against exactly this version.
+ *
+ * Bump this and `stripe-json-schema.ts` / `stripe-types.ts` together, re-verifying each declared
+ * field against the API reference for the new version. Major releases remove fields — the Basil
+ * release (2025-03-31) alone moved `subscription.current_period_start|end` onto `items.data[]` and
+ * removed `invoice.subscription|charge|payment_intent|paid|tax` plus `charge.invoice` and
+ * `payment_intent.invoice`.
+ *
+ * Deliberately independent of `STRIPE_API_VERSION` in `server/src/payment/stripe-payment.service.ts`,
+ * which pins Whalesync's own billing integration to the version its `stripe` SDK ships types for.
+ *
+ * https://docs.stripe.com/api/versioning
+ */
+export const STRIPE_CONNECTOR_API_VERSION = '2026-07-29.dahlia';
+
+/**
  * Endpoint configuration for each entity type.
  */
 const ENTITY_ENDPOINTS: Record<StripeEntityType, string> = {
@@ -61,6 +82,7 @@ export class StripeApiClient {
       Authorization: `Bearer ${credentials.apiKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept: 'application/json',
+      'Stripe-Version': STRIPE_CONNECTOR_API_VERSION,
     };
 
     this.client = createApiClient({

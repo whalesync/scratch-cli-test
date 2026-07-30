@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { extractSchemaFields } from '../../../../../utils/schema-helpers';
 import { buildStripeJsonTableSpec } from '../stripe-json-schema';
 import { StripeEntityType } from '../stripe-types';
 
@@ -216,10 +217,17 @@ describe('buildStripeJsonTableSpec', () => {
     it('includes subscription-specific fields', () => {
       expect(props).toHaveProperty('customer');
       expect(props).toHaveProperty('status');
-      expect(props).toHaveProperty('current_period_start');
-      expect(props).toHaveProperty('current_period_end');
       expect(props).toHaveProperty('cancel_at_period_end');
       expect(props).toHaveProperty('items');
+    });
+
+    it('declares the billing period on line items, not on the subscription', () => {
+      expect(props).not.toHaveProperty('current_period_start');
+      expect(props).not.toHaveProperty('current_period_end');
+
+      const itemProps = props.items.properties.data.items.properties;
+      expect(itemProps).toHaveProperty('current_period_start');
+      expect(itemProps).toHaveProperty('current_period_end');
     });
 
     it('links customer to customers table', () => {
@@ -240,7 +248,7 @@ describe('buildStripeJsonTableSpec', () => {
 
     it('includes invoice-specific fields', () => {
       expect(props).toHaveProperty('customer');
-      expect(props).toHaveProperty('subscription');
+      expect(props).toHaveProperty('parent');
       expect(props).toHaveProperty('status');
       expect(props).toHaveProperty('amount_due');
       expect(props).toHaveProperty('amount_paid');
@@ -250,11 +258,33 @@ describe('buildStripeJsonTableSpec', () => {
       expect(props).toHaveProperty('invoice_pdf');
     });
 
-    it('links to customers and subscriptions tables', () => {
+    it('drops the fields Stripe removed from the invoice object', () => {
+      expect(props).not.toHaveProperty('subscription');
+      expect(props).not.toHaveProperty('paid');
+      expect(props).not.toHaveProperty('tax');
+    });
+
+    it('carries their replacements', () => {
+      expect(props).toHaveProperty('status_transitions');
+      expect(props).toHaveProperty('total_taxes');
+    });
+
+    it('links to customers, and to subscriptions via parent', () => {
       const customerJson = JSON.stringify(props.customer);
-      const subscriptionJson = JSON.stringify(props.subscription);
       expect(customerJson).toContain('customers');
-      expect(subscriptionJson).toContain('subscriptions');
+
+      const subscriptionFk =
+        props.parent.anyOf[0].properties.subscription_details.anyOf[0].properties.subscription[
+          X_SCRATCH_FOREIGN_KEY_OPTIONS
+        ];
+      expect(subscriptionFk).toEqual({ linkedTableId: 'subscriptions', linkedTableRemoteId: ['subscriptions'] });
+    });
+
+    it('exposes the nested subscription link as an extractable foreign key', () => {
+      const subscriptionField = extractSchemaFields(spec.schema).find(
+        (field) => field.path === 'parent.subscription_details.subscription',
+      );
+      expect(subscriptionField?.foreignKey?.linkedTableId).toBe('subscriptions');
     });
   });
 
@@ -276,6 +306,11 @@ describe('buildStripeJsonTableSpec', () => {
       expect(props).toHaveProperty('status');
       expect(props).toHaveProperty('payment_method');
       expect(props).toHaveProperty('latest_charge');
+    });
+
+    // Same removal as `charge.invoice` — see the charges suite.
+    it('does not declare an invoice link', () => {
+      expect(props).not.toHaveProperty('invoice');
     });
 
     it('has name Payment Intents', () => {
@@ -305,11 +340,15 @@ describe('buildStripeJsonTableSpec', () => {
       expect(props).toHaveProperty('failure_code');
     });
 
-    it('links to payment_intents and invoices tables', () => {
+    it('links to the payment_intents table', () => {
       const piJson = JSON.stringify(props.payment_intent);
-      const invoiceJson = JSON.stringify(props.invoice);
       expect(piJson).toContain('payment_intents');
-      expect(invoiceJson).toContain('invoices');
+    });
+
+    // Stripe removed `charge.invoice` when invoices gained multiple partial payments; declaring it
+    // would only produce a column that is null on every record and a relation that never resolves.
+    it('does not declare an invoice link', () => {
+      expect(props).not.toHaveProperty('invoice');
     });
   });
 });

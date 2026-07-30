@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { StripeApiClient, StripeError } from '../stripe-api-client';
+import { createApiClient } from '../../../create-api-client';
+import { STRIPE_CONNECTOR_API_VERSION, StripeApiClient, StripeError } from '../stripe-api-client';
 
 // Mock create-api-client to return a mock axios instance
 const mockGet = jest.fn();
@@ -16,6 +17,19 @@ describe('StripeApiClient', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     client = new StripeApiClient({ apiKey: 'sk_test_123' });
+  });
+
+  // ---------------------------------------------------------------------------
+  // API version pinning
+  // ---------------------------------------------------------------------------
+
+  // Without this header Stripe serves whatever version the connected account defaults to, so the
+  // payload shape — and therefore the schema in stripe-json-schema.ts — would vary per account.
+  it('pins the API version on every request', () => {
+    const [config] = jest.mocked(createApiClient).mock.calls[0];
+    // toMatchObject rather than indexing: axios types `headers` as a union of AxiosHeaders and a
+    // partial of its own known header names, so an arbitrary key like Stripe-Version can't index it.
+    expect(config?.headers).toMatchObject({ 'Stripe-Version': STRIPE_CONNECTOR_API_VERSION });
   });
 
   // ---------------------------------------------------------------------------
