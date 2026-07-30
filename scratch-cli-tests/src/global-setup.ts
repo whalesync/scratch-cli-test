@@ -3,8 +3,8 @@ import dotenv from "dotenv";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-const STATE_FILE = path.join(os.tmpdir(), "scratch-cli-tests-state.json");
+import { probeStackHealth } from "./stack-health";
+import { writeTestState } from "./test-state";
 
 export default async function globalSetup() {
   // Load .env.integration (does not override existing env vars)
@@ -55,27 +55,45 @@ export default async function globalSetup() {
     mode: 0o600,
   });
 
-  // 3. Health check the target server
-  const healthUrl = `${serverUrl}/health`;
-  const maxAttempts = 30;
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const res = await fetch(healthUrl);
-      if (res.ok) break;
-    } catch {
-      // not ready
-    }
-    if (i === maxAttempts - 1) {
-      throw new Error(
-        `Server at ${serverUrl} did not become healthy within 15s`,
-      );
+  // 3. Health check the target server, and record the build it is serving.
+  //    The build version is the harness's deploy fingerprint: the settle gate
+  //    in ScratchCli compares against it before dispatching async jobs, and
+  //    global-teardown reports if it changed during the run.
+  //    Deadline-based rather than a fixed attempt count, because each probe has
+  //    its own timeout. The window is generous so a run that starts while the
+  //    test-env is mid-rollout waits for it instead of failing at setup.
+  const healthWaitBudgetMs = 120_000;
+  const healthWaitDeadline = Date.now() + healthWaitBudgetMs;
+  let buildVersionObservedAtGlobalSetup: string | null = null;
+  let serverBecameHealthy = false;
+  do {
+    const probe = await probeStackHealth(serverUrl);
+    if (probe.reachable) {
+      buildVersionObservedAtGlobalSetup = probe.buildVersion;
+      serverBecameHealthy = true;
+      break;
     }
     await new Promise((r) => setTimeout(r, 500));
+  } while (Date.now() < healthWaitDeadline);
+  if (!serverBecameHealthy) {
+    throw new Error(
+      `Server at ${serverUrl} did not become healthy within ${healthWaitBudgetMs / 1000}s`,
+    );
   }
 
-  // Save state for test helpers and teardown
-  fs.writeFileSync(
-    STATE_FILE,
-    JSON.stringify({ binaryPath, serverUrl, tempHome }),
+  console.log(
+    `[stack-health] ${serverUrl} is healthy, serving build ${buildVersionObservedAtGlobalSetup ?? "unknown"}.` +
+      (buildVersionObservedAtGlobalSetup === null
+        ? " No build version reported — deploy-collision detection is disabled for this run."
+        : ""),
   );
+
+  // Save state for test helpers and teardown
+  writeTestState({
+    binaryPath,
+    serverUrl,
+    tempHome,
+    buildVersionObservedAtGlobalSetup,
+    mostRecentlySettledBuildVersion: buildVersionObservedAtGlobalSetup,
+  });
 }

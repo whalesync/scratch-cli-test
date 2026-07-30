@@ -109,10 +109,24 @@ The first run builds the `scratchmd` release binary from `scratch-git-2/` (takes
 
 ## How It Works
 
-1. **Global setup** (`src/global-setup.ts`) builds the `scratchmd` binary via `cargo build --release`, writes a temporary credentials file to an isolated `HOME` directory, and health-checks the target server.
+1. **Global setup** (`src/global-setup.ts`) builds the `scratchmd` binary via `cargo build --release`, writes a temporary credentials file to an isolated `HOME` directory, and health-checks the target server — recording the `build_version` it reports.
 2. **Each test suite** that needs a database connection creates test tables, runs tests against them via the CLI, and drops the tables in teardown.
 3. **Each test** uses the `ScratchCli` wrapper (`src/cli.ts`) that shells out to the binary with `--json` and `--scratch-url` flags, using the temp `HOME` for credential isolation.
-4. **Global teardown** (`src/global-teardown.ts`) removes the temporary credentials directory.
+4. **Global teardown** (`src/global-teardown.ts`) removes the temporary credentials directory, and warns loudly if the stack's `build_version` changed during the run.
+
+### Deploy Collisions
+
+These suites run on a schedule against a **shared remote stack**, so a merge to `master` can redeploy it mid-run. When the worker service restarts, an already-enqueued publish/pull job simply stops being drained — the command stalls rather than failing. Historically this was the single most common cause of a red CLI pipeline, and it surfaced only as an inscrutable `CLI command failed (exit null)`.
+
+Three things in the harness address it:
+
+- **Longer timeouts for job-backed commands.** `files publish`, `files upload`, `linked pull`, `linked publish` and `syncs run` dispatch a server-side job and poll it, so they get `ASYNC_JOB_POLLING_CLI_COMMAND_TIMEOUT_MS` (300s) instead of the 60s default. The CLI itself polls for up to 30 minutes (`poll_job` in `scratch-git-2/src/cli/api/mod.rs`), so the old blanket 60s cap gave up long before the tool under test would have. Override per call with `{ timeoutMs }`.
+- **A deploy-settle gate.** Before one of those commands runs, the harness probes `/health`; if the build version differs from the last settled one (or the stack is unreachable), it waits up to 3 minutes for the rollout to stabilize rather than dispatching a job nothing will drain. It waits once per rollout, not once per command, and is skipped entirely when the server reports no build version (so local dev runs are never gated). Bypass with `{ skipDeploySettleGate: true }`.
+- **Timeouts that explain themselves.** A harness kill now throws `CLI command TIMED OUT after Ns` naming the likely cause, instead of `exit null`. It throws even under `expectError`, since a timeout is never the error a test meant to assert.
+
+If a run does collide with a deploy, look for `[stack-health]` lines in the output — teardown prints a banner naming the build at the start and end of the run.
+
+`jest.config.js`'s `testTimeout` must stay above the async command timeout plus the gate's wait budget, or Jest cuts a stalled command short and you lose the explanatory message.
 
 ### Test Isolation
 

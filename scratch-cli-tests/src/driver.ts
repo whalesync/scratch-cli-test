@@ -2,19 +2,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readTestState } from "./test-state";
 
-const STATE_FILE = path.join(os.tmpdir(), "scratch-cli-tests-state.json");
 const DRIVER_SCRIPT = path.resolve(__dirname, "../scripts/driver-run.js");
-
-interface TestState {
-  binaryPath: string;
-  serverUrl: string;
-  tempHome: string;
-}
-
-function loadState(): TestState {
-  return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
-}
 
 export interface DriverOptions {
   /** Number of records to seed (default: 1) */
@@ -39,7 +29,7 @@ export interface DriverOptions {
  * Throws if the driver exits non-zero.
  */
 export function runDriver(options: DriverOptions = {}): void {
-  const state = loadState();
+  const state = readTestState();
 
   const workspaceRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "scratch-driver-test-"),
