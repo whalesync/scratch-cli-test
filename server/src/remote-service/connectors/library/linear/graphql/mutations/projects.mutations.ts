@@ -82,8 +82,7 @@ export const PROJECTS_DELETE_MUTATION = `mutation ProjectDelete($id: String!) {
       slackIssueStatuses
       labelIds
       url
-      identifier
-      previousIdentifiers
+      resourceCount
       progress
       scope
       slackChannelId
@@ -143,6 +142,7 @@ export const PROJECTS_READ_ONLY_FIELDS = new Set([
   'projectMilestones',
   'projectUpdates',
   'relations',
+  'resourceCount',
   'scope',
   'scopeHistory',
   'slackChannelId',

@@ -21,7 +21,7 @@ import {
   isScalarType,
   isEnumType,
 } from "graphql";
-import { EntityConfig, MutationOutput } from "../types";
+import { EntityConfig, FieldFilterConfig, MutationOutput } from "../types";
 
 /**
  * Generate mutations for all writable entities
@@ -29,8 +29,9 @@ import { EntityConfig, MutationOutput } from "../types";
 export function generateMutations(
   schema: GraphQLSchema,
   entities: EntityConfig[],
+  fieldFilters: FieldFilterConfig,
 ): MutationOutput[] {
-  const generator = new MutationsGenerator(schema);
+  const generator = new MutationsGenerator(schema, fieldFilters);
   const outputs: MutationOutput[] = [];
 
   for (const entity of entities) {
@@ -145,8 +146,27 @@ ${exports.join("\n")}
 class MutationsGenerator {
   private mutationType: GraphQLObjectType | null;
 
-  constructor(private schema: GraphQLSchema) {
+  constructor(
+    private schema: GraphQLSchema,
+    private fieldFilters: FieldFilterConfig,
+  ) {
     this.mutationType = schema.getMutationType() || null;
+  }
+
+  /**
+   * Whether a field on the named GraphQL type should be dropped from a mutation's response
+   * selection because it is type-scoped-skipped in the codegen config (e.g. Linear's
+   * feature-gated `Project.identifier`). Mirrors the typebox plugin's `skipFieldsByType` so the
+   * response body a delete mutation requests back can't select a field the query fields exclude.
+   */
+  private isTypeScopedSkippedField(
+    parentTypeName: string,
+    fieldName: string,
+  ): boolean {
+    return (
+      this.fieldFilters.skipFieldsByType?.[parentTypeName]?.has(fieldName) ??
+      false
+    );
   }
 
   /**
@@ -487,7 +507,8 @@ class MutationsGenerator {
       } else if (isObjectType(fieldType)) {
         // Expand one level of scalar subfields (e.g., userErrors { field message })
         const subFields = Object.entries(fieldType.getFields())
-          .filter(([, f]) => {
+          .filter(([n, f]) => {
+            if (this.isTypeScopedSkippedField(fieldType.name, n)) return false;
             const t = this.unwrapOutputType(f.type);
             return isScalarType(t) || isEnumType(t);
           })
@@ -754,7 +775,8 @@ ${responseBody}
         lines.push(`    ${name}`);
       } else if (isObjectType(fieldType)) {
         const subFields = Object.entries(fieldType.getFields())
-          .filter(([, f]) => {
+          .filter(([n, f]) => {
+            if (this.isTypeScopedSkippedField(fieldType.name, n)) return false;
             const t = this.unwrapOutputType(f.type);
             return isScalarType(t) || isEnumType(t);
           })

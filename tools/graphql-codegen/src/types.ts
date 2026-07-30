@@ -20,6 +20,16 @@ export interface ScalarMapping {
 export interface FieldFilterConfig {
   /** Fields to skip entirely */
   skipFields: Set<string>;
+  /**
+   * Fields to skip only within a specific GraphQL type, keyed by GraphQL type name → the field
+   * names to drop from that type's generated schema AND query selection. Reach for this (rather
+   * than {@link skipFields}) when the field name is legitimate on other types but must not be
+   * pulled on this one — e.g. Linear's `Project.identifier` / `Project.previousIdentifiers`, which
+   * the opt-in "Project IDs" workspace feature gates: selecting either one fails the ENTIRE
+   * Projects pull on any workspace without that feature, while the identically named
+   * `Issue.identifier` is always valid and the sync relies on it, so a blanket skip is wrong.
+   */
+  skipFieldsByType?: Record<string, Set<string>>;
   /** Connection fields to skip (paginated relationships) */
   skipConnections: Set<string>;
   /** Fields that require arguments and should be skipped */

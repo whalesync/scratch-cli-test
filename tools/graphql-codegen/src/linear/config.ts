@@ -59,6 +59,17 @@ export const LINEAR_FIELD_FILTERS: FieldFilterConfig = {
     "contentState",
   ]),
 
+  skipFieldsByType: {
+    // `Project.identifier` and `Project.previousIdentifiers` are gated by Linear's opt-in
+    // "Project IDs" workspace feature. Selecting either one makes Linear reject the whole
+    // projects query with `Feature 'Project IDs' is not enabled`, which fails the ENTIRE Projects
+    // pull on any workspace without the feature (most of them) and cascades to fail Live Export
+    // runs at the pull step. They're read-only, feature-gated, and low-value, so drop them here
+    // rather than at the query root. Scoped to `Project` on purpose: the identically named
+    // `Issue.identifier` (e.g. `WHA-142`) is always valid and the sync relies on it.
+    Project: new Set(["identifier", "previousIdentifiers"]),
+  },
+
   skipConnections: new Set([
     // Large connection fields - too deep for schema generation
     "issues",

@@ -363,7 +363,7 @@ async function main(): Promise<void> {
 
   // Generate mutations
   console.log("Generating mutations...\n");
-  const mutationOutputs = generateMutations(schema, config.entities);
+  const mutationOutputs = generateMutations(schema, config.entities, config.fieldFilters);
   console.log(`Generated mutations for ${mutationOutputs.length} entities.\n`);
 
   // Build read-only fields map from mutation outputs and entity configs

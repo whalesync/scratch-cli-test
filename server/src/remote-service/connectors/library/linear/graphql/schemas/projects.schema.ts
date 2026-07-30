@@ -469,8 +469,6 @@ export const ProjectsSchema = Type.Object(
       ]),
     ),
     url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    identifier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    previousIdentifiers: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Null()]))),
     initiatives: Type.Optional(
       Type.Union([
         Type.Object({
@@ -501,6 +499,7 @@ export const ProjectsSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    resourceCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     progress: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     scope: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     slackChannelId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -574,7 +573,6 @@ ProjectsSchema.properties.favorite[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.health[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.healthUpdatedAt[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.id[X_SCRATCH_READONLY] = true;
-ProjectsSchema.properties.identifier[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.inProgressScopeHistory[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.initiativeToProjects[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.initiatives[X_SCRATCH_READONLY] = true;
@@ -585,10 +583,10 @@ ProjectsSchema.properties.lead[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.leadTeam[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.microsoftTeamsChannelId[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.needs[X_SCRATCH_READONLY] = true;
-ProjectsSchema.properties.previousIdentifiers[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.priorityLabel[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.progress[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.progressHistory[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.resourceCount[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.scope[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.scopeHistory[X_SCRATCH_READONLY] = true;
 ProjectsSchema.properties.slackChannelId[X_SCRATCH_READONLY] = true;
@@ -603,7 +601,7 @@ ProjectsSchema.properties.url[X_SCRATCH_READONLY] = true;
 /**
  * GraphQL query field selection for Projects
  */
-export const PROJECTS_QUERY_FIELDS = `id createdAt updatedAt archivedAt updateReminderFrequencyInWeeks updateReminderFrequency frequencyResolution updateRemindersDay updateRemindersHour name description slugId icon color status { id createdAt updatedAt archivedAt name color description position type indefinite } creator { id } lead { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } leadTeam { id } facets { id createdAt updatedAt archivedAt sortOrder sourcePage } projectUpdateRemindersPausedUntilAt startDate startDateResolution targetDate targetDateResolution startedAt completedAt canceledAt autoArchivedAt trashed sortOrder prioritySortOrder convertedFromIssue { id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary labelIds previousIdentifiers subIssueSortOrder reactionData priorityLabel trusted inheritsSharedAccess identifier url branchName customerTicketCount description } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } priority lastUpdate { id createdAt updatedAt archivedAt body editedAt reactionData bodyData slugId health infoSnapshot isDiffHidden url isStale diff diffMarkdown commentCount } health healthUpdatedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress slackNewIssue slackIssueComments slackIssueStatuses labelIds favorite { id } url identifier previousIdentifiers progress scope slackChannelId microsoftTeamsChannelId content documentContent { id createdAt updatedAt archivedAt content restoredAt } state priorityLabel syncedWith { id service }`;
+export const PROJECTS_QUERY_FIELDS = `id createdAt updatedAt archivedAt updateReminderFrequencyInWeeks updateReminderFrequency frequencyResolution updateRemindersDay updateRemindersHour name description slugId icon color status { id createdAt updatedAt archivedAt name color description position type indefinite } creator { id } lead { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId hasGitHubCodeAccess } leadTeam { id } facets { id createdAt updatedAt archivedAt sortOrder sourcePage } projectUpdateRemindersPausedUntilAt startDate startDateResolution targetDate targetDateResolution startedAt completedAt canceledAt autoArchivedAt trashed sortOrder prioritySortOrder convertedFromIssue { id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary labelIds previousIdentifiers subIssueSortOrder reactionData priorityLabel trusted inheritsSharedAccess identifier url branchName customerTicketCount description } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } priority lastUpdate { id createdAt updatedAt archivedAt body editedAt reactionData bodyData slugId health infoSnapshot isDiffHidden url isStale diff diffMarkdown commentCount } health healthUpdatedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress slackNewIssue slackIssueComments slackIssueStatuses labelIds favorite { id } url resourceCount progress scope slackChannelId microsoftTeamsChannelId content documentContent { id createdAt updatedAt archivedAt content restoredAt } state priorityLabel syncedWith { id service }`;
 
 /**
  * Entity configuration for Projects

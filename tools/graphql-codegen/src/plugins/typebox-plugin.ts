@@ -318,7 +318,7 @@ class TypeBoxGenerator {
    */
   generateSchemaCode(type: GraphQLObjectType, entity: EntityConfig): string {
     const fields = type.getFields();
-    const properties = this.generateProperties(fields, 1);
+    const properties = this.generateProperties(fields, 1, type.name);
 
     return `Type.Object({
 ${properties}
@@ -366,7 +366,7 @@ ${properties}
       }
     }
 
-    const properties = this.generateProperties(allFields, 1);
+    const properties = this.generateProperties(allFields, 1, interfaceType.name);
     const schemaCode = `Type.Object({
 ${properties}
 }, {
@@ -408,12 +408,13 @@ ${properties}
   private generateProperties(
     fields: Record<string, GraphQLField<unknown, unknown>>,
     depth: number,
+    parentTypeName?: string,
   ): string {
     const lines: string[] = [];
     const indent = "  ".repeat(depth);
 
     for (const [name, field] of Object.entries(fields)) {
-      if (this.shouldSkipField(name, field)) {
+      if (this.shouldSkipField(name, field, parentTypeName)) {
         continue;
       }
 
@@ -482,18 +483,19 @@ ${properties}
       return "Type.Unknown()";
     }
 
-    const props = this.generateNestedProperties(fields, depth);
+    const props = this.generateNestedProperties(fields, depth, type.name);
     return `Type.Object({ ${props} })`;
   }
 
   private generateNestedProperties(
     fields: Record<string, GraphQLField<unknown, unknown>>,
     depth: number,
+    parentTypeName?: string,
   ): string {
     const props: string[] = [];
 
     for (const [name, field] of Object.entries(fields)) {
-      if (this.shouldSkipField(name, field)) {
+      if (this.shouldSkipField(name, field, parentTypeName)) {
         continue;
       }
 
@@ -655,8 +657,15 @@ ${properties}
   private shouldSkipField(
     name: string,
     field: GraphQLField<unknown, unknown>,
+    parentTypeName?: string,
   ): boolean {
     if (this.fieldFilters.skipFields.has(name)) return true;
+    if (
+      parentTypeName &&
+      this.fieldFilters.skipFieldsByType?.[parentTypeName]?.has(name)
+    ) {
+      return true;
+    }
     if (this.fieldFilters.skipConnections.has(name)) return true;
     if (this.fieldFilters.fieldsRequiringArgs.has(name)) return true;
     if (field.args && field.args.length > 0) {
@@ -674,7 +683,7 @@ ${properties}
     const selections: string[] = [];
 
     for (const [name, field] of Object.entries(fields)) {
-      if (this.shouldSkipField(name, field)) {
+      if (this.shouldSkipField(name, field, type.name)) {
         continue;
       }
 
@@ -774,7 +783,7 @@ ${properties}
     const selections: string[] = [];
 
     for (const [name, field] of Object.entries(fields)) {
-      if (this.shouldSkipField(name, field)) {
+      if (this.shouldSkipField(name, field, type.name)) {
         continue;
       }
 
@@ -789,7 +798,7 @@ ${properties}
         // For nested objects, only go one more level
         if (isObjectType(fieldType)) {
           const nestedFields = Object.entries(fieldType.getFields())
-            .filter(([n, f]) => !this.shouldSkipField(n, f))
+            .filter(([n, f]) => !this.shouldSkipField(n, f, fieldType.name))
             .filter(([, f]) => {
               const t = this.unwrapType(f.type);
               return isScalarType(t) || isEnumType(t);
