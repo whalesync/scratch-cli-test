@@ -988,6 +988,33 @@ The metadata is served at `GET /connectors/metadata` and consumed by the client 
 
 For resumability, pass `connectorProgress` in the callback. Cursor and offset patterns naturally support this. Async iterators do not easily support mid-stream resume.
 
+### Rate Limiting
+
+Rate limiting has two halves and a connector needs **both**. Declaring `rateLimiterSpec` only gets you the first.
+
+1. **Proactive** — `rateLimiterSpec` on the registration feeds a Redis token bucket shared by every request for that connector account; `RateLimiter.waitForQuota()` waits for room before each call.
+2. **Reactive** — wrap every API call in `RateLimiter.withRetry(fn, opts)`, falling back to the standalone `withRetry` when no limiter is available (no spec, or Redis down). Proactive quota alone is never sufficient: the bucket counts only what *this* connection spends, while the service counts everything hitting the same account — a concurrent publish, a second Scratch connection, the customer's other integrations. A 429 can and does arrive with our own bucket half full, and with no retry a single one fails the folder and the whole routine step.
+
+```typescript
+export const MY_SERVICE_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => isAxiosError(error) && error.response?.status === 429,
+  getRetryAfterS: (error) => parseRetryAfterHeader(error), // omit entirely if the service sends none
+  defaultCooldownS: 5, // how long to freeze the shared bucket when there is no Retry-After
+};
+
+private async requestWithRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+  return this.rateLimiter
+    ? this.rateLimiter.withRetry(fn, MY_SERVICE_RETRY_OPTS)
+    : standaloneWithRetry(fn, MY_SERVICE_RETRY_OPTS);
+}
+```
+
+Modelling the spec (`attio-api-client.ts` and `quickbooks-api-client.ts` are worked examples):
+
+- **Prefer a per-second window.** `RateLimiterRedis` is a *fixed* window, so `{ points: 450, duration: 60 }` lets the whole minute's budget be spent at the end of one window and again at the start of the next — 900 requests in ~2s, all nominally in quota. `{ points: 7, duration: 1 }` holds the same ceiling with no burst.
+- **State `maxConcurrency` when the service documents one.** A cap on *simultaneous* requests (QuickBooks: 10 per realmId) is a separate constraint from the per-window quota and is throttled on its own. Parallel folder pulls respect it; without it, fan-out falls out of `ceil(points / duration)`, which is only a heuristic.
+- **Size `defaultCooldownS` and the retry ladder against the service's window.** A per-minute quota needs a cooldown and enough retries to outlast a full window reset; a per-second one does not.
+
 ### Error Handling
 
 1. Use `extractCommonDetailsFromAxiosError()` for HTTP-based APIs — it handles common status codes

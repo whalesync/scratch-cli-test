@@ -626,7 +626,20 @@ connectorRegistry.register({
   metadata: QuickBooksConnector.metadata,
   advancedSettings: [],
   supportedAuthMethods: ['oauth'],
-  rateLimiterSpec: { points: 450, duration: 60 },
+  // Intuit throttles per realmId on two independent axes, and a breach of either
+  // is a 429 / `003001`: 500 requests per minute, and 10 simultaneous requests.
+  //
+  // The per-minute quota is expressed as a per-*second* window (7/s ≈ 420/min)
+  // rather than 450/60 on purpose. `RateLimiterRedis` is a fixed window, so a
+  // per-minute spec permits the whole minute's budget to be spent in the last
+  // instant of one window and again in the first instant of the next — 900
+  // requests in ~2s, all nominally "within quota". A per-second window keeps the
+  // same overall ceiling while making that burst impossible.
+  //
+  // `maxConcurrency` sits below Intuit's documented 10 to leave headroom for
+  // anything else touching the same company at the same time — a publish job, a
+  // token refresh, or the customer's other integrations.
+  rateLimiterSpec: { points: 7, duration: 1, maxConcurrency: 8 },
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for QuickBooks', Service.QUICKBOOKS);

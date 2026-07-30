@@ -234,6 +234,24 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       expect(getMaxConcurrency('airtable', 2)).toBe(2);
     });
 
+    it('should cap at the documented concurrency limit when it is below the rate', () => {
+      jest.spyOn(connectorRegistry, 'get').mockReturnValue({
+        rateLimiterSpec: { points: 100, duration: 1, maxConcurrency: 4 },
+      } as ReturnType<typeof connectorRegistry.get>);
+
+      // Rate allows 100/s, but the service permits only 4 simultaneous requests.
+      expect(getMaxConcurrency('some-service', 20)).toBe(4);
+    });
+
+    it('should still cap at the rate when it is below the documented concurrency limit', () => {
+      jest.spyOn(connectorRegistry, 'get').mockReturnValue({
+        rateLimiterSpec: { points: 3, duration: 1, maxConcurrency: 10 },
+      } as ReturnType<typeof connectorRegistry.get>);
+
+      // Both ceilings apply independently; the lower one wins.
+      expect(getMaxConcurrency('some-service', 20)).toBe(3);
+    });
+
     it('should cap at default when folder count is less than default and no spec', () => {
       jest.spyOn(connectorRegistry, 'get').mockReturnValue(undefined);
 

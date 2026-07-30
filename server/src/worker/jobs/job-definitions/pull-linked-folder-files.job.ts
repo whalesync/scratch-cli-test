@@ -1509,15 +1509,26 @@ function findFolderProgress(
 
 /**
  * Derive max parallel folder fetches from the connector's rate limiter spec.
- * Each parallel folder has roughly 1 in-flight API call at a time,
- * so we cap at the rate limit's requests-per-second.
+ *
+ * Two independent ceilings apply, and we take the lower:
+ *  - **Rate.** Each parallel folder has roughly 1 in-flight API call at a time,
+ *    so the rate limit's requests-per-second is a reasonable proxy for how many
+ *    folders can make progress without simply queueing on the limiter.
+ *  - **Concurrency.** When the service documents a cap on *simultaneous*
+ *    requests (`spec.maxConcurrency`), exceeding it is throttled on its own —
+ *    independently of the per-window quota — so it binds regardless of rate.
+ *
+ * The rate proxy alone is only a heuristic: it happens to land near the right
+ * number for some connectors and is unrelated to the real limit for others,
+ * which is why a service with a published concurrency cap should state it.
  */
 export function getMaxConcurrency(service: string, folderCount: number): number {
   const registration = connectorRegistry.get(service);
   const spec = registration?.rateLimiterSpec;
   if (!spec) return Math.min(folderCount, DEFAULT_CONCURRENCY);
   const maxFromRate = Math.ceil(spec.points / spec.duration);
-  return Math.min(folderCount, maxFromRate);
+  const maxFromDocumentedConcurrency = spec.maxConcurrency ?? Number.POSITIVE_INFINITY;
+  return Math.min(folderCount, maxFromRate, maxFromDocumentedConcurrency);
 }
 
 /**
