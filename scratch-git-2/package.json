@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "GIT_REPOS_DIR=\"$INIT_CWD/../local/scratch-git-repos\" cargo run",
+    "dev": "GIT_REPOS_DIR=\"$INIT_CWD/../local/scratch-git-repos\" sh -c 'stale_pids=$(lsof -ti tcp:3100 2>/dev/null); [ -n \"$stale_pids\" ] && echo \"[dev] reclaiming ports 3100/3101 from stale scratch-git ($stale_pids)\" && kill $stale_pids 2>/dev/null && sleep 1 && kill -9 $stale_pids 2>/dev/null; exec cargo run'",
     "build": "cargo build --release 2>&1 | tail -5",
     "format": "cargo fmt",
     "test": "cargo test"

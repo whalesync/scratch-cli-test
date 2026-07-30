@@ -32,7 +32,32 @@ Gitignored env files under `local/audit-creds/`:
 Use **burner accounts** — audits create, edit, and delete real records.
 
 OAuth-only services can't be connected headlessly: connect once via local dusky
-(`localhost:3030/exports`), then pass `--workbook wkb_… --source-connection coa_…`.
+(`localhost:3030/exports`), then pass `--workbook wkb_… --source-connection coa_…`. Because
+connections are workbook-scoped and the harness wants one workbook per destination, use
+`clone-oauth-connection.mjs` (below) rather than re-walking consent three times.
+
+## Helper scripts
+
+Cross-service, reusable outside the connector they were first written for:
+
+| Script | What it does |
+| --- | --- |
+| `clone-oauth-connection.mjs` | Copies a human-connected OAuth connection's encrypted credential blob + `extras` into a fresh disposable workbook, mirroring `OAuthService.createOAuthAccount`. The one workaround that makes OAuth-only sources auditable across several destinations without touching the user's real workbook. |
+| `verify-notion.mjs` | Reads a Notion database back through Notion's own API — property types, row counts, per-record values — for the "trust nothing you didn't confirm against the destination" step. |
+| `verify-supabase.mjs` | The same for a Supabase/Postgres destination: column types, row counts, spot-check values. |
+
+Per-source seeders live in `seeds/<service>/` and are the thing to re-run before a re-audit so the
+torture set is identical. Each one is idempotent — re-running updates rather than duplicating:
+
+- `seeds/wix_blog/` — `seed.mjs`, `crud-pass.mjs`, `provision-workbook.sh`, `wix-api.mjs`
+- `seeds/quickbooks/` — `seed.mjs`, `crud-pass.mjs`, `qbo-client.mjs`, `refresh-connection-token.mjs`
+  (mints a QBO token out-of-band and re-encrypts it into the connection, for dev servers whose
+  `.env` lacks `QUICKBOOKS_CLIENT_ID`/`_SECRET` and so can't refresh)
+- `seeds/pipedrive/`
+
+A `crud-pass.mjs` must make the create target a title the site does **not** already have — a
+previous pass leaves its created record behind, and silently reusing it turns the create assertion
+into a no-op that still reads as a pass.
 
 ## Design notes
 

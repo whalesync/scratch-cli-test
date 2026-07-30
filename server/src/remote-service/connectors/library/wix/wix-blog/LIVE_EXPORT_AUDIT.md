@@ -32,22 +32,26 @@ Run by `/test-live-export WIX_BLOG notion,supabase,airtable` against the **local
   numbers (`minutesToRead`/`wordCount` are read-only), dates (`firstPublishedDate` is read-only,
   `scheduledPublishDate` is not in our schema), and true single/multi-select enums.
 
-## Gates
+> **Read [Round 3 — pre-launch validation](#round-3--pre-launch-validation-2026-07-30) first.** The
+> gates table below and the Round 1 findings that follow it are kept for history; Round 3 re-ran the
+> whole audit against the Round 2 connector and supersedes them.
 
-| #   | Gate                                                             | Status  | Evidence                                                                                                                                                                                                                                                                                  |
-| --- | ---------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Preflight (server, token, creds)                                 | ✅      | `preflight OK` in all three run logs; cloned connections `coa_qaWixNot3`/`coa_qaWixSup1`/`coa_qaWixAir1` each returned `{"health":"ok"}`                                                                                                                                                  |
-| 2   | Recon: connector + View read, tables chosen                      | ✅      | `wix-blog-connector.ts`, `wix-blog-json-schema.ts`, `wix-blog-schema-parser.ts`, `rich-content/*`. **There is no `wix-blog-default-view.ts` and `WixBlogConnector` does not override `buildDefaultView`** — root cause of most findings below. Only one table exists, so it was selected. |
-| 3   | Torture data seeded + read back via service API                  | ✅      | `seed.mjs` → 213 draft posts; every record re-read through `GET /blog/v3/draft-posts/{id}`                                                                                                                                                                                                |
-| 4   | Plan audit: every downgraded field judged                        | ✅      | `/tmp/audit-wix_blog-{notion,supabase,airtable}.json` — 15 non-`mapped` notes, identical on all three destinations. See [Findings](#findings) and [Accepted downgrades](#accepted-downgrades). Round 2 brought this to **0**.                                                             |
-| 5   | FKs identified as foreignKey; links resolve on destination       | ❌ → ✅ | Round 1: **all 5 FKs unresolvable → dropped on all three destinations** (DEV-11115, DEV-11116). Round 2: `droppedForeignKeys: 0`, all 4 bound to sibling tables, real Airtable record links — see [Round 2](#round-2--fixes-implemented-and-re-verified)                                  |
-| 6   | First run: publish failures = 0                                  | ✅      | Notion `rrn_UD8W1EA094`, Supabase `rrn_QTgXD9pD1j`, Airtable `rrn_sN794wzm7N` — 213 creates executed, `failedCount: 0`, `failedOperations: []` on each                                                                                                                                    |
-| 7   | Destination-side spot check (≥3 records/table, dest service API) | ✅      | Notion `GET /v1/databases/7729dd66…` + query (213 pages), Supabase `psql` on `public."Blog Posts"` (213 rows), Airtable `GET /v0/meta/bases/appGoopxI4Px4dyuv/tables` + records (213). Field-by-field on the all-empty, unicode, long-text, rich-text and flags records.                  |
-| 8   | CRUD pass: edit / create / delete mirrored                       | ⚠      | All 4 change classes mirrored on all three destinations, but **Notion created the new record twice** (existing DEV-11016, reproduced from a second source). See [CRUD pass](#crud-pass-phase-4)                                                                                           |
-| 9   | Pagination: 200+ record table fully synced                       | ✅      | 213 seeded → 213 pulled → 213 published → 213 read back on **each** destination. Caveat filed as DEV-11123 (unstable page ordering).                                                                                                                                                      |
-| 10  | Second run is a no-op                                            | ❌      | Notion **and** Airtable republished all 213 records unchanged; Supabase was a clean no-op. 2+ destinations ⇒ upstream, not a dest-pack bug ⇒ evidence added to the generic **DEV-10556**, not filed per-source.                                                                           |
-| 11  | Destination drift: out-of-band delete restored                   | ✅      | see [Destination drift](#destination-drift-gate-11)                                                                                                                                                                                                                                       |
-| 12  | Findings filed under DEV-10932 with `live-export-qa`             | ✅      | DEV-11114 … DEV-11124                                                                                                                                                                                                                                                                     |
+## Gates (Round 1, superseded — see [Round 3](#round-3--pre-launch-validation-2026-07-30))
+
+| # | Gate | Status | Evidence |
+|---|---|---|---|
+| 1 | Preflight (server, token, creds) | ✅ | `preflight OK` in all three run logs; cloned connections `coa_qaWixNot3`/`coa_qaWixSup1`/`coa_qaWixAir1` each returned `{"health":"ok"}` |
+| 2 | Recon: connector + View read, tables chosen | ✅ | `wix-blog-connector.ts`, `wix-blog-json-schema.ts`, `wix-blog-schema-parser.ts`, `rich-content/*`. **There is no `wix-blog-default-view.ts` and `WixBlogConnector` does not override `buildDefaultView`** — root cause of most findings below. Only one table exists, so it was selected. |
+| 3 | Torture data seeded + read back via service API | ✅ | `seed.mjs` → 213 draft posts; every record re-read through `GET /blog/v3/draft-posts/{id}` |
+| 4 | Plan audit: every downgraded field judged | ✅ | `/tmp/audit-wix_blog-{notion,supabase,airtable}.json` — 15 non-`mapped` notes, identical on all three destinations. See [Findings](#findings) and [Accepted downgrades](#accepted-downgrades). Round 2 brought this to **0**. |
+| 5 | FKs identified as foreignKey; links resolve on destination | ❌ → ✅ | Round 1: **all 5 FKs unresolvable → dropped on all three destinations** (DEV-11115, DEV-11116). Round 2: `droppedForeignKeys: 0`, all 4 bound to sibling tables, real Airtable record links — see [Round 2](#round-2--fixes-implemented-and-re-verified) |
+| 6 | First run: publish failures = 0 | ✅ | Notion `rrn_UD8W1EA094`, Supabase `rrn_QTgXD9pD1j`, Airtable `rrn_sN794wzm7N` — 213 creates executed, `failedCount: 0`, `failedOperations: []` on each |
+| 7 | Destination-side spot check (≥3 records/table, dest service API) | ✅ | Notion `GET /v1/databases/7729dd66…` + query (213 pages), Supabase `psql` on `public."Blog Posts"` (213 rows), Airtable `GET /v0/meta/bases/appGoopxI4Px4dyuv/tables` + records (213). Field-by-field on the all-empty, unicode, long-text, rich-text and flags records. |
+| 8 | CRUD pass: edit / create / delete mirrored | ⚠ | All 4 change classes mirrored on all three destinations, but **Notion created the new record twice** (existing DEV-11016, reproduced from a second source). See [CRUD pass](#crud-pass-phase-4) |
+| 9 | Pagination: 200+ record table fully synced | ✅ | 213 seeded → 213 pulled → 213 published → 213 read back on **each** destination. Caveat filed as DEV-11123 (unstable page ordering). |
+| 10 | Second run is a no-op | ❌ | Notion **and** Airtable republished all 213 records unchanged; Supabase was a clean no-op. 2+ destinations ⇒ upstream, not a dest-pack bug ⇒ evidence added to the generic **DEV-10556**, not filed per-source. |
+| 11 | Destination drift: out-of-band delete restored | ✅ | see [Destination drift](#destination-drift-gate-11) |
+| 12 | Findings filed under DEV-10932 with `live-export-qa` | ✅ | DEV-11114 … DEV-11124 |
 
 ## What the plan produces (destination-independent — judged once)
 
@@ -289,7 +293,7 @@ tag + 1 author link; `fable_qa 12 related posts` carries 3 self-links; `fable_qa
 - **DEV-11123** is mitigated (`EDITING_DATE_ASC` turns a skipped record into a harmless re-read), not
   solved. Real fix is cursor paging via `queryDraftPosts`, folded into DEV-11126.
 
-> **Superseded by Round 3** — all three of the connector-owned items above are now fixed. Only
+> **Superseded by Round 4** — all three of the connector-owned items above are now fixed. Only
 > DEV-10556 (core) remains.
 
 ### New follow-ups
@@ -301,7 +305,210 @@ tag + 1 author link; `fable_qa 12 related posts` carries 3 self-links; `fable_qa
 | [DEV-11128](https://linear.app/whalesync/issue/DEV-11128) | Creating a post is impossible — Wix requires `memberId` on create, our schema marks it readonly                              |
 | [DEV-11129](https://linear.app/whalesync/issue/DEV-11129) | `getBatchSize()` is 1 and the comments wrongly claim Wix has no bulk endpoints                                               |
 
-## Round 3 — launch laundry list
+## Round 3 — pre-launch validation (2026-07-30)
+
+A full re-run of `/test-live-export WIX_BLOG notion,supabase,airtable` against the Round 2 connector,
+to decide which of the DEV-10932 children are still real. **This is the authoritative section.**
+
+- Code under test: branch `wix-blog-live-export-audit`, commit `08a173a7e` — **not yet merged to
+  master.** Everything below is true of that branch and of nothing on `master`. Merging it is the
+  single biggest launch blocker at the time; see
+  [Launch blockers](#launch-blockers-as-of-round-3--13-cleared-since). It has since merged as
+  `9ca75f1b0`, so this section now describes shipped code.
+- Server: the already-running local dev server on `:3010` (`nest start --watch` out of the
+  `wix-blog-live-export-audit` worktree), not a parallel session.
+- Source connection: the human-connected Wix OAuth row has been re-created since Round 2 — it is now
+  `wkb_kbxXKqnzF7` / **`coa_q5d6HiSWVW`** (was `coa_OFBt3xqMf0`), same site `instanceId`
+  `d9be332a-…`. Pass it to the provisioner as `WIX_SOURCE_CONNECTION=coa_q5d6HiSWVW`.
+- Seeds: `seed.mjs` re-run idempotently → **214 draft posts** (the 12 torture records incl. the
+  restored `fable_qa 11 dangling fk`, `fable_qa 13 crud created` left over from Round 1's CRUD pass,
+  the `T200 …` boundary record, and 200 `fable_qa bulk NNNN`), 3 categories, 4 tags, 1 member.
+- Fresh workbooks, one per destination:
+
+| Destination | Workbook | Source conn / dest conn | Sync | First run |
+|---|---|---|---|---|
+| Supabase | `wkb_aJmTjkffWE` | `coa_plSUPWix1` / `coa_SYy6MKUdyr` | `syn_LIdYoBsHGI` | `rrn_b2aqBRllyJ` |
+| Airtable | `wkb_gdw1uyWTNY` | `coa_plAIRWix1` / `coa_fVFk0wa2pk` | `syn_ogdntxgyRN` | `rrn_28DOHlMgJV` |
+| Notion | `wkb_8G7koqHS1F` | `coa_plNOTWix1` / `coa_MRJSvn56qf` | `syn_CnrmzAGMpH` | `rrn_8gEPQu26TJ` |
+
+- Destination tables created: Supabase `public."Blog Posts 2" / "Categories 4" / "Tags 3" / "Members"`;
+  Airtable `tblkgxPicLzNrITEd / tblz9e0Jz05pfBjdM / tblM6DFjTzHO9sKm4 / tblBkE2GFDp6Xtrc4` in
+  `appGoopxI4Px4dyuv`; Notion dbs `33b9d420-… / 78191d5e-… / 5038371c-… / 500ade13-…`.
+- Reports: `.context/wix-prelaunch/reports/` (gitignored) — `audit-wix_blog-{supabase,airtable}.json`
+  (first run + no-op check), `noop3-notion.json` (Notion's no-op check, re-run cleanly after the
+  wedge), `crud-{supabase2,airtable,notion}.json` (the CRUD + drift round).
+- **The server wedged mid-audit** (DEV-11041) during Notion's first no-op check, freezing run
+  `rrn_r4WdNRfGfT` at `status: running`. Notes for anyone re-running: the `RoutineRunReaperService`
+  cron *does* recover it, but only once the step's job has been terminal for longer than its 5-minute
+  "just finished, give the driver a chance" guard — here that took ~2.5 h because the wedged sync job
+  itself didn't finish until the server came back. While it is stuck, `POST routines/trigger` returns
+  **409 `already has an active run`**, so you cannot simply retry. Wait it out rather than restarting.
+  Do **not** trust the reaper-resumed run's numbers: `rrn_r4WdNRfGfT` reported `sync: no changes`
+  followed by `publish: 222 updates`, because its sync had already staged those changes in an earlier
+  execution. The clean isolated re-run (`noop3-notion.json`) is the one to cite.
+
+### Gates
+
+| # | Gate | Status | Evidence |
+|---|---|---|---|
+| 1 | Preflight (server, token, creds) | ✅ | `preflight OK` on all three; cloned connections `coa_plSUPWix1`/`coa_plAIRWix1`/`coa_plNOTWix1` each `{"health":"ok"}`, as did all three destination connections |
+| 2 | Recon: connector + View read, tables chosen | ✅ | `wix-blog-{connector,json-schema,default-view,tables,media,schema-parser}.ts`. All **4** tables selected (`wix-blog`, `wix-blog-categories`, `wix-blog-tags`, `wix-members`) |
+| 3 | Torture data seeded + read back via service API | ✅ | `seed.mjs` → 214 posts / 3 categories / 4 tags / 1 member, all re-read through Wix's own API |
+| 4 | Plan audit: every downgraded field judged | ✅ | **0 downgrade notes** across all 4 tables on Supabase and Airtable. The only non-`mapped` notes are `needs_target` lines for sibling-table FKs, which are the known per-folder-plan harness artifact, plus one real `downgraded` on Supabase: `Related posts → only the first linked record will sync` (correct for a single-valued Postgres FK; DEV-10956/DEV-11047) |
+| 5 | FKs identified as foreignKey; links resolve on destination | ✅ | `droppedForeignKeys: []` everywhere. Airtable: `Author`/`Categories`/`Tags`/`Related posts` are `multipleRecordLinks`, `fable_qa 08 arrays many` holds **3** category + **3** tag links, `fable_qa 12 related posts` holds **3** self-links. Notion: 4 `relation` properties, same multiplicities. Supabase: 4 real FK constraints, first-element only |
+| 6 | First run: publish failures = 0 | ✅ | All three: `Published 222 changes`, `createsExecuted: 222`, `failedCount: 0`, `failedOperations: []` |
+| 7 | Destination-side spot check (≥3 records/table, dest service API) | ✅ | 214/3/4/1 read back on each destination's own API. Field-by-field on the all-empty, unicode/RTL/ZWSP/emoji, 6 647-char body, cover-image, arrays-many, related-posts and flags records — see [What was verified](#what-was-verified-round-3) |
+| 8 | CRUD pass: edit / create / delete mirrored | ✅ | All six change classes mirrored on all three destinations — see [CRUD pass](#crud-pass-round-3). **Notion did NOT duplicate the create this round** (214 pages, zero duplicate titles), so Round 1's DEV-11016 reproduction is duration-dependent and flaky, not deterministic |
+| 9 | Pagination: 200+ record table fully synced | ✅ | 214 seeded → 214 pulled → 214 published → 214 read back on each destination, across 3 pages of 100. Soundness caveat still open as DEV-11123 |
+| 10 | Second run is a no-op | ❌ | Supabase **clean no-op** (0 operations). Airtable **217 edits**, Notion **222 edits** on unchanged data. Two *different* mechanisms — see [the churn differential](#the-churn-differential-gate-10) |
+| 11 | Destination drift: out-of-band delete restored | ✅ | Deleted/archived `fable_qa bulk 0100` out-of-band on each destination, then re-ran: restored on all three as a fresh record — see [CRUD pass](#crud-pass-round-3) |
+| 12 | Findings filed under DEV-10932 with `live-export-qa` | ✅ | See [Issue disposition](#issue-disposition-round-3) |
+
+### What was verified (Round 3)
+
+Read back through each destination's **own** API, not through our pull:
+
+| Torture case | Result |
+|---|---|
+| all-empty (`fable_qa 01 minimal`) | Publishes cleanly everywhere. Note the body is **never** empty: Wix returns a 307-char boilerplate Ricos document for a post with no content, so `Content` is a JSON blob on every row (DEV-11114) |
+| unicode / RTL / ZWSP / emoji / quotes / HTML entities / tab | Intact in `Title` and `Excerpt` on all three (`fable_qa 02 unicode`, 144-char excerpt, 482-char body) |
+| >2 000 and >4 000 char body | `fable_qa 03 longtext` — 6 647 chars intact on Supabase `text`, Airtable `multilineText`, Notion `rich_text` (chunked across spans). No truncation anywhere |
+| boundary values | `T200 …` title at Wix's 200-char cap, 500-char excerpt, 100-char `seoSlug` — all intact |
+| arrays 0 / 1 / 5 elements, with commas + quotes inside elements | `Hashtags` comma-joined; ambiguous by construction, closed as DEV-11047's problem, not Wix's |
+| foreign keys, in-export and dangling | 3 categories + 3 tags + 1 author + 3 related posts resolve to real links (Airtable/Notion) and real FK rows (Supabase). `pricingPlanIds` is deliberately a plain id array, so the dangling GUID on `fable_qa 11` drops nothing |
+| rich text (every Ricos node kind) | Survives as raw Ricos JSON — see DEV-11114 |
+| Wix media image | `wix:image://v1/9a4116_…` → `https://static.wixstatic.com/media/9a4116_…` on all three (`url` column on Airtable/Notion) |
+| 200+ records | 214/214 on each destination |
+| reference tables | Categories 3/3, Tags 4/4, Members 1/1 with correct unicode labels and populated dates |
+
+### CRUD pass (Round 3)
+
+Gates 8 and 11 in one round: six source-side change classes through Wix's own API
+([`crud-pass.mjs`](/tools/live-export-audit/seeds/wix_blog/crud-pass.mjs)) **plus** an out-of-band
+destination delete, then one `--rerun` per workbook. Site total stayed at 214 (1 created, 1 deleted).
+
+| Change | Target | What changed |
+|---|---|---|
+| edit (long text) | `f2842f0a-…` `fable_qa 03 longtext` | body → 4 312-char paragraph; excerpt → `CRUD-EDITED excerpt — 🥺 日本語 "quoted" line1\nline2` |
+| edit (scalars) | `a733bd6a-…` `fable_qa 09 flags` | excerpt, `featured`, `commentingEnabled`, `hashtags` |
+| create | `2380447b-…` `fable_qa 14 crud created` | new draft post |
+| delete | `a1477996-…` `fable_qa 11 dangling fk` | hard-deleted (`permanent: true`) |
+| **edit on a reference table** | category `36578837-…` `fable_qa cat alpha` | description → unicode string. **New in Round 3** — Categories/Tags/Members only became exported tables in Round 2, so no round had ever proved a reference-table change mirrors |
+| **publish a post** | `a733bd6a-…` `fable_qa 09 flags` | `UNPUBLISHED` → `PUBLISHED`. **New in Round 3** — every seeded post had been a pure draft, leaving two things unproven: that a PUBLISHED post is pulled at all (the connector only calls `listDraftPosts`), and that `firstPublishedDate` is ever non-empty |
+| destination drift | `fable_qa bulk 0100` | deleted out-of-band on each destination before the rerun |
+
+| Destination | Run | Publish counts | Verified on that service's own API |
+|---|---|---|---|
+| Supabase | `rrn_wvlQ7oNI8z` (failed, scratch-git 500) → `rrn_YSw3RV2DgL` retry | **2 creates / 3 edits / 1 delete**, `failedCount: 0` — *exactly* the change set, zero churn | 214 rows; create present; delete gone; drift row restored; body 4 486 chars; **excerpt newline preserved**; `Status = PUBLISHED`, `First published = 2026-07-30 04:06:59+00`; category description mirrored |
+| Airtable | `rrn_6vMxIa6OJT` | 2 creates / 216 edits / 1 delete (2 real edits + category + 213 churn) | 214 records; create `recnxgjPVnD7VNjh5`; delete gone; drift restored as `recElrlrvDF45MXTP`; body 4 486; `Status = PUBLISHED`, `First published = 2026-07-30T04:06:59.000Z`; category mirrored. **Excerpt newline flattened** to a space (`singleLineText`) |
+| Notion | `rrn_mBhu4l7J6A` | 2 creates / 220 edits / 1 delete, `failedCount: 0` | **214 pages, zero duplicate titles**; create present exactly once; delete gone; drift restored; body 4 486; **newline preserved**; `Status = PUBLISHED`, `First published` populated; category mirrored |
+
+Three things this pass established:
+
+- **Published posts are exported.** `listDraftPosts` keeps returning a post after it is published
+  (status flips to `PUBLISHED`), so the connector's draft-only endpoint choice does not hide live
+  content. `firstPublishedDate` populates at the same moment, so the `First published` column is not
+  dead — it is simply empty for drafts, which is Wix's own semantics.
+- **Reference-table edits mirror.** A category description change reached all three destinations with
+  unicode intact.
+- **Notion's duplicate-create (DEV-11016) did not reproduce.** Round 1's duplicating run took >15 min;
+  this one took ~7. Evidence commented on DEV-11016 that the repro is duration-dependent.
+
+Two incidental findings, both commented rather than re-filed:
+
+- **Wix's Categories read and write shapes disagree.** `GET` returns `displayPosition: -1` for a
+  menu-hidden category; `Update Category` rejects it with `got -1, expected 0 or more`, so a
+  read-modify-write of an untouched category 400s. That is a landmine for DEV-11127 (making Categories
+  writable), since our view exposes it as an editable `Menu position` column. Commented there.
+- **A transient scratch-git `HTTP 500` on one folder's destination pull aborted the entire Supabase
+  run** (sync and publish skipped, nothing published); an identical retry succeeded. Same shape as
+  DEV-11075, which is Canceled — commented there with the recurrence.
+
+### The churn differential (gate 10)
+
+The three destinations churn for **different reasons**, which is only visible because the reference
+tables are in the export:
+
+| Destination | Blog Posts (214) | Categories (3) | Tags (4) | Members (1) | Total |
+|---|---|---|---|---|---|
+| Supabase | 0 | 0 | 0 | 0 | **0 — clean no-op** |
+| Airtable | 214 | 3 | **0** | **0** | 217 |
+| Notion | 214 | 3 | **4** | **1** | **222 — everything** |
+
+Tags and Members are the tell. Airtable leaves them alone; Notion re-publishes them too.
+
+- **Notion churns every row of every table** — not value-dependent, so it is DEV-10556's original
+  echoed-envelope mechanism.
+- **Airtable churns exactly the rows holding at least one empty value.** Tags and Members have every
+  field populated; every Blog Post and every Category has at least one empty field. Root cause: the
+  Airtable API omits empty fields from `record.fields` entirely, so an omitted field never equals the
+  empty string we mean to write. Filed as **DEV-11131** with a 4-for-4 table-level correlation.
+- **Supabase stores what we send and returns it verbatim**, so nothing churns.
+
+Cost asymmetry worth knowing: the same workload is a ~13 s no-op on Supabase, a ~20 s 217-edit run on
+Airtable, and a **~7 min** 222-edit run on Notion — and that Notion edit pass is what wedged the local
+server mid-audit (DEV-11041).
+
+### Issue disposition (Round 3)
+
+| Issue | Round 3 verdict |
+|---|---|
+| [DEV-11115](https://linear.app/whalesync/issue/DEV-11115) 4 of 5 FKs dangling | **Done** — 4 tables exposed, `droppedForeignKeys: []`, real links on all three |
+| [DEV-11116](https://linear.app/whalesync/issue/DEV-11116) `relatedPostIds` self-FK | **Done** — self-relation resolves, 3 links preserved |
+| [DEV-11117](https://linear.app/whalesync/issue/DEV-11117) 6 phantom schema fields | **Done** — removed from the schema; asset extraction re-pointed at `media.wixMedia.image` |
+| [DEV-11118](https://linear.app/whalesync/issue/DEV-11118) real fields absent from the schema | **Done** — `editedDate` (+ last-modified annotation), `_createdDate`, `slugs`, `hasUnpublishedChanges`, `previewTextParagraph`, `mostRecentContributorId` declared; `contentId`/`editingSessionId`/`changeOrigin`/`translations` deliberately left undeclared |
+| [DEV-11119](https://linear.app/whalesync/issue/DEV-11119) dates as text | **Done** — `timestamptz` / `dateTime` / `date` with real values |
+| [DEV-11121](https://linear.app/whalesync/issue/DEV-11121) 32-column plan | **Done** — 19 columns, no duplicated containers, no bare leaf names |
+| [DEV-11122](https://linear.app/whalesync/issue/DEV-11122) `wix:image://` URI | **Done** — resolved https URL on all three |
+| [DEV-11124](https://linear.app/whalesync/issue/DEV-11124) `html-to-ricos` `_blank` | **Done** — enum mapping added both directions; unit-tested, not live-exercised (Live Export never writes to Wix) |
+| [DEV-11120](https://linear.app/whalesync/issue/DEV-11120) `hashtags` comma-join | **Canceled** — the warning is gone but the ambiguity is unfixable at the view layer (`TablePropertyType` has no multi-value member). Evidence moved to [DEV-11047](https://linear.app/whalesync/issue/DEV-11047) |
+| [DEV-11114](https://linear.app/whalesync/issue/DEV-11114) body exports as raw Ricos | **STILL OPEN (Urgent)** — column shape fixed (one `multilineText`/`richtext` column, no duplicate), value unchanged. Retitled to the remaining scope. → **fixed in [Round 4](#round-4--launch-laundry-list)** |
+| [DEV-11123](https://linear.app/whalesync/issue/DEV-11123) unstable pagination | **STILL OPEN** — a `sort` was added but the mitigation doesn't hold; see below. Retitled, blocked on DEV-11126. → **fixed in [Round 4](#round-4--launch-laundry-list)** with real cursor paging |
+| [DEV-11126](https://linear.app/whalesync/issue/DEV-11126) incremental pull | open, unchanged (now unblocked by `editedDate`) |
+| [DEV-11127](https://linear.app/whalesync/issue/DEV-11127) Categories/Tags writable | open, unchanged |
+| [DEV-11128](https://linear.app/whalesync/issue/DEV-11128) create needs `memberId` | open, unchanged (`memberId` is still `x-scratch-readonly`). → **fixed in [Round 4](#round-4--launch-laundry-list)** (`x-scratch-write-once`) |
+| [DEV-11129](https://linear.app/whalesync/issue/DEV-11129) `getBatchSize()` is 1 | open, unchanged. → **fixed in [Round 4](#round-4--launch-laundry-list)** (per-operation batch sizes) |
+| **[DEV-11130](https://linear.app/whalesync/issue/DEV-11130)** *(new)* | Members table exports the site's whole member directory, with login email + CRM contact name visible by default. → **cancelled** (we mirror, we don't filter), but re-checking it surfaced the real bug — Members offered unconditionally — filed and fixed as DEV-11143 in [Round 4](#round-4--launch-laundry-list) |
+| **[DEV-11131](https://linear.app/whalesync/issue/DEV-11131)** *(new)* | `[→AIRTABLE][dest-pack]` steady-state churn root cause: Airtable omits empty fields on read-back |
+| [DEV-11041](https://linear.app/whalesync/issue/DEV-11041) | evidence added — the server wedge that blocked gates 8 and 11 |
+| [DEV-10556](https://linear.app/whalesync/issue/DEV-10556) | still the umbrella for churn; the Airtable half is now root-caused in DEV-11131 |
+
+#### Why DEV-11123's mitigation doesn't hold
+
+Round 2 switched `fetchPage` to `sort: 'EDITING_DATE_ASC'` on the argument that an edited post moves
+past the cursor, so the worst case is a harmless re-read. That accounts for where the edited record
+goes but not for the hole it leaves behind. With the cursor at `offset=100`, editing a post at index
+5 shifts old index 101 into new index 100 — so **old index 100 is never fetched.** Each direction
+loses a record under a different, equally ordinary condition:
+
+| Sort | Edit to an already-read record | Edit to a not-yet-read record |
+|---|---|---|
+| `EDITING_DATE_DESC` (Round 1) | safe | skipped + one duplicate |
+| `EDITING_DATE_ASC` (now) | **skipped** | safe |
+
+Offset paging over a mutable ordering can't be made safe; the fix is cursor paging via
+`queryDraftPosts`, folded into DEV-11126. The code comment claiming ASC is safe should be corrected.
+
+> **Resolved in [Round 4](#round-4--launch-laundry-list):** Blog Posts now page by cursor through
+> `queryDraftPosts` sorted `ascending('_id')`, so the ordering is immutable and a mid-scan edit can no
+> longer shift rows past the cursor in either direction.
+
+### Launch blockers (as of Round 3 — 1–3 cleared since)
+
+1. ~~**The connector fixes are on an unmerged branch.**~~ Merged — the Round 2 work landed on `master`
+   as `9ca75f1b0`, so every ✅ in this section now describes shipped code.
+2. ~~**[DEV-11114](https://linear.app/whalesync/issue/DEV-11114)** — post bodies export as raw Ricos JSON.~~ Fixed in Round 4 and
+   re-verified live (see [Verified live](#verified-live-post-merge-2026-07-30)).
+3. ~~**[DEV-11130](https://linear.app/whalesync/issue/DEV-11130)** — member login emails on by default.~~ Cancelled; the real bug it
+   surfaced (DEV-11143) is fixed in Round 4.
+4. **Gate 10 (second run is a no-op) still fails** — Airtable 217, Notion 222, Supabase clean.
+   [DEV-11131](https://linear.app/whalesync/issue/DEV-11131) makes the Airtable half concretely fixable; the Notion half stays with DEV-10556.
+
+Everything else on the launch checklist now passes: gates 1–9, 11 and 12 are green on all three
+destinations, including the CRUD, reference-table, publish-state and destination-drift cases that no
+earlier round had exercised.
+
+## Round 4 — launch laundry list
 
 Cleared the remaining connector-owned launch blockers under DEV-10932. **Code + unit coverage only —
 not re-run against live services**, so the gate table above still reflects Round 2's live evidence.
@@ -320,6 +527,36 @@ guardrail that proves the body renders to HTML through the real default view on 
 
 **Still open, unchanged:** gate 10 / DEV-10556 (core republish churn), DEV-11126 (incremental pull),
 DEV-11127 (Categories/Tags writable), `pullRecordFilesByIds`, and the live integration spec.
+
+### Verified live (post-merge, 2026-07-30)
+
+The "live re-verification" this round was waiting on. A fresh single-destination export on `master`
+(`b30ea6903`) against the same burner site — workbook `wkb_X4zUEACjwk`, Supabase
+`public."Blog Posts 3" / "Categories 5" / "Tags 4" / "Members 2"`:
+
+- `Published 222 changes`, 0 failures, 214 posts, `droppedForeignKeys: []`, FK joins resolve to the
+  right rows, dates / cover image / publish state all correct — no regression from Round 3.
+- **Second run is a clean no-op** on Supabase, as before.
+- **DEV-11114 confirmed on real data.** `fable_qa 05 richtext` lands as 728 chars of HTML covering
+  every Ricos node kind the seeder emits, with escaping intact in both an `href` and a code block:
+
+  ```html
+  <h1>Heading level 1</h1><h2>…</h2><p>plain <strong>bold</strong> <em>italic</em> <u>underline</u> <del>struck</del></p>
+  <p>a link to <a href="https://example.com/a?b=c&amp;d=e" target="_blank">example.com</a></p>
+  <ul><li>bullet one</li>…</ul><ol>…</ol><pre>const x = {"a": 1};… `&lt;b&gt;${x}&lt;/b&gt;`</pre>
+  <blockquote><p>A quoted claim.</p></blockquote><hr><img src="https://static.wixstatic.com/media/9a4116_…" alt="QA alt text">
+  ```
+
+  The all-empty post went from **307 characters of Ricos boilerplate to `<br>`** — 4 chars.
+- **Prime Directive holds.** The sampled record on disk is still the verbatim Ricos document; the HTML
+  exists only on the export path.
+- **DEV-11123 confirmed.** The cursor-paged pull returned 214/214 across 3 pages.
+
+Not exercised, and still without live coverage: the new bulk **update (20)** and **delete (100)**
+write paths, `memberId` write-once (DEV-11128), and the Members 403/404/428 probe (DEV-11143). All
+three are Wix-as-destination or environment-dependent, so no Live Export run can reach them — they
+have unit coverage only. Airtable and Notion were not re-exported post-merge; Supabase was chosen
+because its clean no-op makes every count unambiguous.
 
 ## Human remainder (not automatable — do before launch)
 
@@ -362,12 +599,21 @@ DEV-11127 (Categories/Tags writable), `pullRecordFilesByIds`, and the live integ
   tests 86 → 130. Gates 5 and 8 now pass; **gate 10 still fails** (DEV-10556). Filed DEV-11126–11129.
   Round 2's Airtable tables (`tblgycvicSNF49mqW` and the three reference tables in
   `appGoopxI4Px4dyuv`) are also QA debris worth deleting once reviewed.
-- 2026-07-30 — Round 3, "launch laundry list" (Claude) — cleared the remaining connector-owned
+- 2026-07-30 — Round 3, pre-launch validation (Claude) — full re-run of all three destinations against
+  the Round 2 connector, to decide which DEV-10932 children were still real. **Gates 1–9, 11 and 12
+  pass; only gate 10 fails.** Proved CRUD, reference-table edits, publish state and destination drift
+  against the four-table shape for the first time. Closed DEV-11115–11119, DEV-11121, DEV-11122,
+  DEV-11124; cancelled DEV-11120 into DEV-11047; filed DEV-11130 and DEV-11131. See
+  [Round 3](#round-3--pre-launch-validation-2026-07-30).
+- 2026-07-30 — Round 4, "launch laundry list" (Claude) — cleared the remaining connector-owned
   blockers under DEV-10932: DEV-11114 (Ricos→HTML on export), DEV-11128 (`memberId` write-once),
   DEV-11129 (per-operation batch sizes + bulk update/delete), DEV-11123 (real cursor paging via
   `queryDraftPosts`), and a Members-table capability probe found while re-checking the cancelled
-  DEV-11130. See [Round 3](#round-3--launch-laundry-list). Connector unit tests 130 → 146; added a
+  DEV-11130. See [Round 4](#round-4--launch-laundry-list). Connector unit tests 130 → 146; added a
   `ricos_to_html` transformer spec and a `wix-blog-posts` view-codec golden fixture.
   **Not re-run against live services** — this round is code + unit coverage. A live re-verification
   (especially the create path, which nobody has exercised since `memberId` became writable, and the
   bulk update/delete paths) is the remaining gate before flipping the LaunchDarkly flag.
+- 2026-07-30 — post-merge live verification (Claude) — re-ran a single-destination export on `master`
+  after Round 4 landed; confirmed the Ricos→HTML body and the cursor-paged pull on real data, with no
+  regression to the Round 3 results. See [Verified live](#verified-live-post-merge-2026-07-30).
