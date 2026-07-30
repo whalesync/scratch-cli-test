@@ -113,7 +113,7 @@ Max records (or fields) per API request, **per operation** — services often di
 |---|---|---|
 | `<field>` | `<Entity>` | `<e.g. needs POST/DELETE /…/{id}/followers — rejected on the normal update>` |
 
-<Note any org-wide rate/quota limits (daily credits, concurrency, token-endpoint throttle) separately — they're independent of bulk size.>
+**Org-wide rate/quota limits.** **10,000 requests/minute per app** and **25,000/minute per workspace** — the workspace ceiling is shared by every app installed on it, so a busy workspace can throttle us even when we are inside our own budget. Intercom enforces the per-minute figure in **10-second buckets of one sixth** the allowance, so a per-second `rateLimiterSpec` is the right shape (150/s = 9,000/min). Every response carries `X-RateLimit-Limit` / `-Remaining` / `-Reset`; **`X-RateLimit-Reset` is an absolute Unix timestamp in seconds**, so the wait is `reset - now` (contrast Brevo, whose reset header is a relative duration). `Retry-After` is undocumented — read opportunistically, never relied on. Job endpoints have their own concurrency caps that also surface as 429 (Data Export: 1 pending job/workspace). https://developers.intercom.com/docs/references/rest-api/errors/rate-limiting
 
 ## Incremental polling
 - **Supported:** <YES / NO>. Driver field = `<last-modified field>` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns <SUPPORTED/NOT_SUPPORTED> when <condition>.

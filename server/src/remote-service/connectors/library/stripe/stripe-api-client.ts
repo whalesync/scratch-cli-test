@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
+import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
 import {
   StripeCharge,
@@ -54,6 +55,44 @@ export class StripeError extends Error {
 export const STRIPE_CONNECTOR_API_VERSION = '2026-07-29.dahlia';
 
 /**
+ * True when Stripe is throttling us.
+ *
+ * Detection is by HTTP status alone, deliberately. Stripe's error reference
+ * enumerates only four `error.type` values and `rate_limit_error` is not among
+ * them, and Stripe's own Node SDK dispatches on the status code rather than the
+ * type — so branching on `error.type === 'rate_limit_error'` would fail closed
+ * and the retry would silently never fire.
+ *
+ * Matching the status also picks up `lock_timeout`, a *different* failure that
+ * Stripe returns as 429: another request or an internal Stripe process is
+ * holding the object. Stripe explicitly recommends retrying it on backoff — and
+ * notes their SDKs do retry it — so folding it in here is correct, not
+ * incidental. The one thing backoff cannot fix is sustained contention on a
+ * single object, which needs serialized writes rather than a longer sleep.
+ *
+ * https://docs.stripe.com/rate-limits · https://docs.stripe.com/error-codes
+ */
+export function isStripeRateLimitError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 429;
+}
+
+/**
+ * Retry policy for every Stripe API call.
+ *
+ * Stripe documents no `Retry-After` header — their guidance is client-computed
+ * exponential backoff with jitter, which is what {@link WithRetryOpts} does by
+ * default — so `getRetryAfterS` is omitted rather than guessing at a header that
+ * may not exist.
+ *
+ * Retries are safe here because this connector's Stripe calls are all `GET`s,
+ * which Stripe guarantees are idempotent. A future write path must send an
+ * `Idempotency-Key` before it can rely on this retry.
+ */
+export const STRIPE_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: isStripeRateLimitError,
+};
+
+/**
  * Endpoint configuration for each entity type.
  */
 const ENTITY_ENDPOINTS: Record<StripeEntityType, string> = {
@@ -76,8 +115,11 @@ const ENTITY_ENDPOINTS: Record<StripeEntityType, string> = {
  */
 export class StripeApiClient {
   private readonly client: AxiosInstance;
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(credentials: StripeCredentials) {
+  constructor(credentials: StripeCredentials, opts?: { rateLimiter?: RateLimiter }) {
+    this.rateLimiter = opts?.rateLimiter;
+
     const headers: RawAxiosRequestHeaders = {
       Authorization: `Bearer ${credentials.apiKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -92,12 +134,23 @@ export class StripeApiClient {
   }
 
   /**
+   * Execute a request under the connector account's rate limiter, retrying if
+   * Stripe throttles us (see {@link STRIPE_RETRY_OPTS}).
+   */
+  private async requestWithRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, STRIPE_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, STRIPE_RETRY_OPTS);
+  }
+
+  /**
    * Validate the API key by fetching account info.
    * @throws StripeError if the API key is invalid.
    */
   async validateCredentials(): Promise<void> {
     try {
-      await this.client.get('/v1/customers', { params: { limit: 1 } });
+      await this.requestWithRateLimitRetry(() => this.client.get('/v1/customers', { params: { limit: 1 } }));
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
         const data = error.response?.data as { error?: { message?: string } } | undefined;
@@ -139,9 +192,11 @@ export class StripeApiClient {
       // (e.g. subscriptions exclude canceled ones unless status=all is passed).
       const fullPullFilterParams = this.getListFilterParamsToIncludeAllRecords(entityType);
 
-      const response = await this.client.get<StripeListResponse<Record<string, unknown>>>(endpoint, {
-        params: { ...params, ...expandParams, ...fullPullFilterParams },
-      });
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<StripeListResponse<Record<string, unknown>>>(endpoint, {
+          params: { ...params, ...expandParams, ...fullPullFilterParams },
+        }),
+      );
 
       const list = response.data;
 
@@ -168,9 +223,11 @@ export class StripeApiClient {
     const endpoint = ENTITY_ENDPOINTS[entityType];
     try {
       const expandParams = this.getExpandParams(entityType);
-      const response = await this.client.get<Record<string, unknown>>(`${endpoint}/${id}`, {
-        params: expandParams,
-      });
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<Record<string, unknown>>(`${endpoint}/${id}`, {
+          params: expandParams,
+        }),
+      );
       const entity = response.data;
       if (entityType === 'subscriptions') {
         await this.hydrateTruncatedSubscriptionItems(entity);
@@ -266,9 +323,11 @@ export class StripeApiClient {
         params.starting_after = startingAfter;
       }
 
-      const response = await this.client.get<StripeListResponse<Record<string, unknown>>>('/v1/subscription_items', {
-        params,
-      });
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<StripeListResponse<Record<string, unknown>>>('/v1/subscription_items', {
+          params,
+        }),
+      );
       const list = response.data;
 
       if (list.data && list.data.length > 0) {

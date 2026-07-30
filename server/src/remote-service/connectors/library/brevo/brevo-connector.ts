@@ -1,5 +1,6 @@
 import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -95,9 +96,9 @@ export class BrevoConnector extends Connector {
 
   private readonly client: BrevoApiClient;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new BrevoApiClient(apiKey);
+    this.client = new BrevoApiClient(apiKey, { rateLimiter: opts?.rateLimiter });
   }
 
   async testConnection(): Promise<void> {
@@ -391,6 +392,17 @@ connectorRegistry.register({
   metadata: BrevoConnector.metadata,
   advancedSettings: [],
   supportedAuthMethods: ['user_provided_params'],
+  // Brevo's limits are per endpoint GROUP, which a single bucket cannot express.
+  // 8/s sits just under the 10 requests/second that `/v3/contacts/…` allows —
+  // covering Contacts and Mailing Lists, the two highest-volume tables.
+  //
+  // Templates are the exception and are knowingly under-modelled: `/v3/smtp/…`
+  // (other than sending) is capped at **300 requests/HOUR**, which no per-second
+  // bucket can approximate. Rather than throttle Contacts to 1 request per 12
+  // seconds to suit the smallest table, we let Templates hit 429 and rely on the
+  // retry policy to back off — `x-sib-ratelimit-reset` tells us exactly how long
+  // to wait, so the pull slows down instead of failing.
+  // https://developers.brevo.com/docs/api-limits
   rateLimiterSpec: { points: 8, duration: 1 },
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
@@ -400,6 +412,8 @@ connectorRegistry.register({
     if (!ctx.decryptedCredentials?.apiKey) {
       throw new ConnectorInstantiationError('API key is required for Brevo', Service.BREVO);
     }
-    return new BrevoConnector(ctx.decryptedCredentials.apiKey);
+    return new BrevoConnector(ctx.decryptedCredentials.apiKey, {
+      rateLimiter: ctx.createRateLimiter(ctx.connectorAccount.id),
+    });
   },
 });

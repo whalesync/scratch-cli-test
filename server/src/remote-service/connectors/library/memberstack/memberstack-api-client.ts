@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
+import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
 import {
   MemberstackCreateMemberRequest,
@@ -9,6 +10,33 @@ import {
 } from './memberstack-types';
 
 const MEMBERSTACK_API_BASE_URL = 'https://admin.memberstack.com';
+
+/**
+ * True when Memberstack is throttling us.
+ *
+ * Detection is by HTTP status alone, deliberately. Memberstack's error bodies are
+ * `{ code, message }` but its docs state that `code` is the literal string
+ * `generic-message` for most errors and document no rate-limit code at all, so
+ * branching on the body would fail closed — the retry would simply never fire.
+ *
+ * https://developers.memberstack.com/admin-rest-api/quick-start
+ */
+export function isMemberstackRateLimitError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 429;
+}
+
+/**
+ * Retry policy for every Memberstack Admin API call.
+ *
+ * Memberstack documents a flat 25 requests/second and — uniquely among our
+ * connectors — returns **no** rate-limit headers whatsoever: no `X-RateLimit-*`,
+ * no `Retry-After`. Blind exponential backoff is the only option available, and
+ * is exactly what their own docs prescribe (300ms base, doubling, ~5 attempts).
+ */
+export const MEMBERSTACK_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: isMemberstackRateLimitError,
+  initialRetryDelayMs: 500,
+};
 
 /**
  * Custom error class for Memberstack API errors.
@@ -33,8 +61,11 @@ export class MemberstackError extends Error {
  */
 export class MemberstackApiClient {
   private readonly client: AxiosInstance;
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
+    this.rateLimiter = opts?.rateLimiter;
+
     const headers: RawAxiosRequestHeaders = {
       'X-API-KEY': apiKey,
       'Content-Type': 'application/json',
@@ -48,14 +79,27 @@ export class MemberstackApiClient {
   }
 
   /**
+   * Execute a request under the connector account's rate limiter, retrying if
+   * Memberstack throttles us (see {@link MEMBERSTACK_RETRY_OPTS}).
+   */
+  private async requestWithRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, MEMBERSTACK_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, MEMBERSTACK_RETRY_OPTS);
+  }
+
+  /**
    * Validate the API key by listing members with limit=1.
    * @throws MemberstackError if the API key is invalid.
    */
   async validateCredentials(): Promise<void> {
     try {
-      await this.client.get<MemberstackPaginatedResponse>('/members', {
-        params: { limit: 1 },
-      });
+      await this.requestWithRateLimitRetry(() =>
+        this.client.get<MemberstackPaginatedResponse>('/members', {
+          params: { limit: 1 },
+        }),
+      );
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
         throw new MemberstackError('Invalid API key', 401, error.response?.data);
@@ -81,7 +125,9 @@ export class MemberstackApiClient {
         params.after = cursor;
       }
 
-      const response = await this.client.get<MemberstackPaginatedResponse>('/members', { params });
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<MemberstackPaginatedResponse>('/members', { params }),
+      );
       const { data, endCursor, hasNextPage: nextPage } = response.data;
 
       cursor = endCursor;
@@ -124,7 +170,9 @@ export class MemberstackApiClient {
    */
   async getMember(idOrEmail: string): Promise<MemberstackMember | null> {
     try {
-      const response = await this.client.get<{ data: MemberstackMember }>(`/members/${encodeURIComponent(idOrEmail)}`);
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<{ data: MemberstackMember }>(`/members/${encodeURIComponent(idOrEmail)}`),
+      );
       return response.data.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -139,7 +187,9 @@ export class MemberstackApiClient {
    * @returns The created member.
    */
   async createMember(data: MemberstackCreateMemberRequest): Promise<MemberstackMember> {
-    const response = await this.client.post<{ data: MemberstackMember }>('/members', data);
+    const response = await this.requestWithRateLimitRetry(() =>
+      this.client.post<{ data: MemberstackMember }>('/members', data),
+    );
     return response.data.data;
   }
 
@@ -148,7 +198,9 @@ export class MemberstackApiClient {
    * @returns The updated member.
    */
   async updateMember(id: string, data: MemberstackUpdateMemberRequest): Promise<MemberstackMember> {
-    const response = await this.client.patch<{ data: MemberstackMember }>(`/members/${id}`, data);
+    const response = await this.requestWithRateLimitRetry(() =>
+      this.client.patch<{ data: MemberstackMember }>(`/members/${id}`, data),
+    );
     return response.data.data;
   }
 
@@ -158,7 +210,7 @@ export class MemberstackApiClient {
    */
   async deleteMember(id: string, options?: MemberstackDeleteMemberRequest): Promise<void> {
     try {
-      await this.client.delete(`/members/${id}`, { data: options });
+      await this.requestWithRateLimitRetry(() => this.client.delete(`/members/${id}`, { data: options }));
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         return;
@@ -171,13 +223,13 @@ export class MemberstackApiClient {
    * Add a free plan to a member.
    */
   async addPlan(memberId: string, planId: string): Promise<void> {
-    await this.client.post(`/members/${memberId}/add-plan`, { planId });
+    await this.requestWithRateLimitRetry(() => this.client.post(`/members/${memberId}/add-plan`, { planId }));
   }
 
   /**
    * Remove a free plan from a member.
    */
   async removePlan(memberId: string, planId: string): Promise<void> {
-    await this.client.post(`/members/${memberId}/remove-plan`, { planId });
+    await this.requestWithRateLimitRetry(() => this.client.post(`/members/${memberId}/remove-plan`, { planId }));
   }
 }

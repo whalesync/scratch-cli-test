@@ -2,6 +2,7 @@ import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { randomUUID } from 'crypto';
 import { WSLogger } from 'src/logger';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -56,9 +57,9 @@ export class MemberstackConnector extends Connector {
 
   private readonly client: MemberstackApiClient;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new MemberstackApiClient(apiKey);
+    this.client = new MemberstackApiClient(apiKey, { rateLimiter: opts?.rateLimiter });
   }
 
   async testConnection(): Promise<void> {
@@ -249,7 +250,10 @@ connectorRegistry.register({
   metadata: MemberstackConnector.metadata,
   advancedSettings: [],
   supportedAuthMethods: ['user_provided_params'],
-  rateLimiterSpec: { points: 25, duration: 1 },
+  // Memberstack documents a flat 25 requests/second across the whole Admin API;
+  // we sit just under it rather than exactly on the documented ceiling.
+  // https://developers.memberstack.com/admin-rest-api/quick-start
+  rateLimiterSpec: { points: 20, duration: 1 },
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
@@ -258,6 +262,8 @@ connectorRegistry.register({
     if (!ctx.decryptedCredentials?.apiKey) {
       throw new ConnectorInstantiationError('API key is required for Memberstack', Service.MEMBERSTACK);
     }
-    return new MemberstackConnector(ctx.decryptedCredentials.apiKey);
+    return new MemberstackConnector(ctx.decryptedCredentials.apiKey, {
+      rateLimiter: ctx.createRateLimiter(ctx.connectorAccount.id),
+    });
   },
 });

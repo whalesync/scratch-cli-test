@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
+import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
 import {
   BrevoContact,
@@ -15,6 +16,54 @@ import {
 } from './brevo-types';
 
 const BREVO_API_BASE_URL = 'https://api.brevo.com/v3';
+
+/**
+ * Ceiling on the `x-sib-ratelimit-reset` value we will honor, in seconds.
+ *
+ * Brevo's hourly buckets mean a legitimate reset can be minutes away, so this is
+ * generous; it exists only to stop a header in unexpected units (milliseconds,
+ * say) from turning into an hours-long sleep. Past the ceiling the retry falls
+ * back to the exponential ladder.
+ */
+const BREVO_MAX_TRUSTED_RATE_LIMIT_RESET_S = 120;
+
+/**
+ * True when Brevo is throttling us.
+ *
+ * Detection is by HTTP status alone, deliberately. Brevo's error bodies are
+ * `{ code, message }`, but neither its documented error-code table nor its
+ * OpenAPI spec defines any rate-limit `code` value — so branching on the body
+ * would fail closed and the retry would never fire.
+ *
+ * https://developers.brevo.com/docs/api-limits
+ */
+export function isBrevoRateLimitError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 429;
+}
+
+/**
+ * Retry policy for every Brevo API call.
+ *
+ * Brevo sends no standard `Retry-After`, but it does send a bespoke
+ * `x-sib-ratelimit-reset` on every response — and, importantly, that header is a
+ * **relative duration in seconds** ("resets in 45s"), not an absolute timestamp,
+ * so it can be used as `Retry-After` directly. Brevo's own SDK samples do
+ * `setTimeout(resolve, reset * 1000)`. Values are sanity-checked against
+ * {@link BREVO_MAX_TRUSTED_RATE_LIMIT_RESET_S} in case an endpoint ever reports
+ * in different units — the docs hedge the granularity as "typically seconds".
+ *
+ * https://developers.brevo.com/docs/limit-headers
+ */
+export const BREVO_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: isBrevoRateLimitError,
+  getRetryAfterS: (error) => {
+    if (!axios.isAxiosError(error)) return undefined;
+    const resetHeader = error.response?.headers?.['x-sib-ratelimit-reset'] as string | number | undefined;
+    const resetSeconds = resetHeader === undefined ? NaN : parseInt(String(resetHeader), 10);
+    if (isNaN(resetSeconds) || resetSeconds <= 0) return undefined;
+    return Math.min(resetSeconds, BREVO_MAX_TRUSTED_RATE_LIMIT_RESET_S);
+  },
+};
 
 /**
  * Custom error class for Brevo API errors.
@@ -39,8 +88,11 @@ export class BrevoError extends Error {
  */
 export class BrevoApiClient {
   private readonly client: AxiosInstance;
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
+    this.rateLimiter = opts?.rateLimiter;
+
     const headers: RawAxiosRequestHeaders = {
       'api-key': apiKey,
       'Content-Type': 'application/json',
@@ -53,6 +105,17 @@ export class BrevoApiClient {
     });
   }
 
+  /**
+   * Execute a request under the connector account's rate limiter, retrying if
+   * Brevo throttles us (see {@link BREVO_RETRY_OPTS}).
+   */
+  private async requestWithRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, BREVO_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, BREVO_RETRY_OPTS);
+  }
+
   // ---------------------------------------------------------------------------
   // Auth
   // ---------------------------------------------------------------------------
@@ -63,9 +126,11 @@ export class BrevoApiClient {
    */
   async validateCredentials(): Promise<void> {
     try {
-      await this.client.get<BrevoContactsListResponse>('/contacts', {
-        params: { limit: 1, offset: 0 },
-      });
+      await this.requestWithRateLimitRetry(() =>
+        this.client.get<BrevoContactsListResponse>('/contacts', {
+          params: { limit: 1, offset: 0 },
+        }),
+      );
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
         throw new BrevoError('Invalid API key', 401, error.response?.data);
@@ -87,9 +152,11 @@ export class BrevoApiClient {
     let total = Infinity;
 
     while (offset < total) {
-      const response = await this.client.get<BrevoContactsListResponse>('/contacts', {
-        params: { limit: pageSize, offset },
-      });
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<BrevoContactsListResponse>('/contacts', {
+          params: { limit: pageSize, offset },
+        }),
+      );
 
       total = response.data.count;
       const contacts = response.data.contacts ?? [];
@@ -109,7 +176,9 @@ export class BrevoApiClient {
   async getContact(identifier: string | number): Promise<BrevoContact | null> {
     try {
       const encoded = typeof identifier === 'string' ? encodeURIComponent(identifier) : identifier;
-      const response = await this.client.get<BrevoContact>(`/contacts/${encoded}`);
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<BrevoContact>(`/contacts/${encoded}`),
+      );
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -124,7 +193,7 @@ export class BrevoApiClient {
    * The API returns only `{ id }`, so we follow up with a GET to return the full record.
    */
   async createContact(data: BrevoCreateContactRequest): Promise<BrevoContact> {
-    const response = await this.client.post<{ id: number }>('/contacts', data);
+    const response = await this.requestWithRateLimitRetry(() => this.client.post<{ id: number }>('/contacts', data));
     const created = await this.getContact(response.data.id);
     if (!created) {
       throw new BrevoError(`Contact created with id ${response.data.id} but could not be retrieved`);
@@ -137,7 +206,7 @@ export class BrevoApiClient {
    */
   async updateContact(identifier: string | number, data: BrevoUpdateContactRequest): Promise<void> {
     const encoded = typeof identifier === 'string' ? encodeURIComponent(identifier) : identifier;
-    await this.client.put(`/contacts/${encoded}`, data);
+    await this.requestWithRateLimitRetry(() => this.client.put(`/contacts/${encoded}`, data));
   }
 
   /**
@@ -147,7 +216,7 @@ export class BrevoApiClient {
   async deleteContact(identifier: string | number): Promise<void> {
     try {
       const encoded = typeof identifier === 'string' ? encodeURIComponent(identifier) : identifier;
-      await this.client.delete(`/contacts/${encoded}`);
+      await this.requestWithRateLimitRetry(() => this.client.delete(`/contacts/${encoded}`));
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         return;
@@ -160,7 +229,9 @@ export class BrevoApiClient {
    * List all contact attribute definitions.
    */
   async getContactAttributes(): Promise<BrevoContactAttribute[]> {
-    const response = await this.client.get<{ attributes: BrevoContactAttribute[] }>('/contacts/attributes');
+    const response = await this.requestWithRateLimitRetry(() =>
+      this.client.get<{ attributes: BrevoContactAttribute[] }>('/contacts/attributes'),
+    );
     return response.data.attributes;
   }
 
@@ -178,9 +249,11 @@ export class BrevoApiClient {
     let total = Infinity;
 
     while (offset < total) {
-      const response = await this.client.get<BrevoTemplatesListResponse>('/smtp/templates', {
-        params: { limit: pageSize, offset },
-      });
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<BrevoTemplatesListResponse>('/smtp/templates', {
+          params: { limit: pageSize, offset },
+        }),
+      );
 
       total = response.data.count ?? 0;
       const templates = response.data.templates ?? [];
@@ -199,7 +272,9 @@ export class BrevoApiClient {
    */
   async getTemplate(id: number): Promise<BrevoTemplate | null> {
     try {
-      const response = await this.client.get<BrevoTemplate>(`/smtp/templates/${id}`);
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<BrevoTemplate>(`/smtp/templates/${id}`),
+      );
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -214,7 +289,9 @@ export class BrevoApiClient {
    * The API returns only `{ id }`, so we follow up with a GET to return the full record.
    */
   async createTemplate(data: BrevoCreateTemplateRequest): Promise<BrevoTemplate> {
-    const response = await this.client.post<{ id: number }>('/smtp/templates', data);
+    const response = await this.requestWithRateLimitRetry(() =>
+      this.client.post<{ id: number }>('/smtp/templates', data),
+    );
     const created = await this.getTemplate(response.data.id);
     if (!created) {
       throw new BrevoError(`Template created with id ${response.data.id} but could not be retrieved`);
@@ -226,7 +303,7 @@ export class BrevoApiClient {
    * Update an existing template by ID.
    */
   async updateTemplate(id: number, data: BrevoUpdateTemplateRequest): Promise<void> {
-    await this.client.put(`/smtp/templates/${id}`, data);
+    await this.requestWithRateLimitRetry(() => this.client.put(`/smtp/templates/${id}`, data));
   }
 
   /**
@@ -236,7 +313,7 @@ export class BrevoApiClient {
    */
   async deleteTemplate(id: number): Promise<void> {
     try {
-      await this.client.delete(`/smtp/templates/${id}`);
+      await this.requestWithRateLimitRetry(() => this.client.delete(`/smtp/templates/${id}`));
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         return;
@@ -258,9 +335,11 @@ export class BrevoApiClient {
     let total = Infinity;
 
     while (offset < total) {
-      const response = await this.client.get<BrevoMailingListsResponse>('/contacts/lists', {
-        params: { limit: pageSize, offset },
-      });
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<BrevoMailingListsResponse>('/contacts/lists', {
+          params: { limit: pageSize, offset },
+        }),
+      );
 
       total = response.data.count;
       const lists = response.data.lists ?? [];
@@ -279,7 +358,9 @@ export class BrevoApiClient {
    */
   async getMailingList(id: number): Promise<BrevoMailingList | null> {
     try {
-      const response = await this.client.get<BrevoMailingList>(`/contacts/lists/${id}`);
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<BrevoMailingList>(`/contacts/lists/${id}`),
+      );
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {

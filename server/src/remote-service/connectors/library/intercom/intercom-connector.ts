@@ -5,6 +5,7 @@ import {
   TableView,
 } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -102,9 +103,9 @@ export class IntercomConnector extends Connector {
 
   private readonly client: IntercomApiClient;
 
-  constructor(accessToken: string) {
+  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new IntercomApiClient(accessToken);
+    this.client = new IntercomApiClient(accessToken, { rateLimiter: opts?.rateLimiter });
   }
 
   async testConnection(): Promise<void> {
@@ -414,6 +415,11 @@ connectorRegistry.register({
   metadata: IntercomConnector.metadata,
   advancedSettings: IntercomConnector.advancedSettings,
   supportedAuthMethods: ['user_provided_params'],
+  // Intercom allows 10,000 requests/minute per app, but enforces it in 10-second
+  // buckets of one sixth that — so a per-second spec is the right shape. 150/s
+  // (9,000/min) stays inside the app budget while leaving room under the
+  // 25,000/min WORKSPACE ceiling that every app installed on the workspace shares.
+  // https://developers.intercom.com/docs/references/rest-api/errors/rate-limiting
   rateLimiterSpec: { points: 150, duration: 1 },
   resolveIncrementalPullSupport: ({ tableId }) => intercomIncrementalPullSupport(tableId[0] ?? ''),
   // eslint-disable-next-line @typescript-eslint/require-await
@@ -424,6 +430,8 @@ connectorRegistry.register({
     if (!ctx.decryptedCredentials?.apiKey) {
       throw new ConnectorInstantiationError('Access token is required for Intercom', Service.INTERCOM);
     }
-    return new IntercomConnector(ctx.decryptedCredentials.apiKey);
+    return new IntercomConnector(ctx.decryptedCredentials.apiKey, {
+      rateLimiter: ctx.createRateLimiter(ctx.connectorAccount.id),
+    });
   },
 });

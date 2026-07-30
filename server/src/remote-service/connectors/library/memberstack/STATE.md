@@ -113,7 +113,7 @@ Max records (or fields) per API request, **per operation** — services often di
 |---|---|---|
 | `<field>` | `<Entity>` | `<e.g. needs POST/DELETE /…/{id}/followers — rejected on the normal update>` |
 
-<Note any org-wide rate/quota limits (daily credits, concurrency, token-endpoint throttle) separately — they're independent of bulk size.>
+**Org-wide rate/quota limits.** A flat **25 requests/second** across the whole Admin API, with no documented per-endpoint variation and no per-minute/hour/day quota; the connector's `rateLimiterSpec` sits just under at 20/s. Memberstack returns **no rate-limit headers at all** — no `X-RateLimit-*`, no `Retry-After` — so blind exponential backoff is the only option, which is what their own docs prescribe. Error bodies use the literal `code: "generic-message"` for most failures with no rate-limit code, so a 429 must be detected by HTTP status. https://developers.memberstack.com/admin-rest-api/quick-start
 
 ## Incremental polling
 - **Supported:** <YES / NO>. Driver field = `<last-modified field>` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns <SUPPORTED/NOT_SUPPORTED> when <condition>.

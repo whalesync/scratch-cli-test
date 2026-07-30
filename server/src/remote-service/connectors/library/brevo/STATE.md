@@ -113,7 +113,7 @@ Max records (or fields) per API request, **per operation** — services often di
 |---|---|---|
 | `<field>` | `<Entity>` | `<e.g. needs POST/DELETE /…/{id}/followers — rejected on the normal update>` |
 
-<Note any org-wide rate/quota limits (daily credits, concurrency, token-endpoint throttle) separately — they're independent of bulk size.>
+**Org-wide rate/quota limits.** Brevo's limits are **per endpoint GROUP and per plan tier**, which a single token bucket cannot express. On the general tier: `/v3/contacts/…` gets **10 req/s** (36,000/hour), but everything outside the named groups falls to **100 requests/HOUR**, and `/v3/smtp/…` other than sending gets **300/hour**. The connector's `rateLimiterSpec` of 8/s is sized for Contacts and Mailing Lists (the high-volume tables); **Templates are knowingly under-modelled** — throttling every table down to the Templates budget would mean ~1 request per 12 seconds, so instead Templates rely on retry + backoff. Every response carries `x-sib-ratelimit-limit` / `-remaining` / `-reset`; **`x-sib-ratelimit-reset` is a RELATIVE duration in seconds** ("resets in 45s"), not a timestamp. No standard `Retry-After`, and no documented rate-limit `code` in the error body — detect by HTTP status. https://developers.brevo.com/docs/api-limits
 
 ## Incremental polling
 - **Supported:** <YES / NO>. Driver field = `<last-modified field>` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns <SUPPORTED/NOT_SUPPORTED> when <condition>.

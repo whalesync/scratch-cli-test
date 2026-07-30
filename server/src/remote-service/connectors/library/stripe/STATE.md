@@ -113,7 +113,7 @@ Max records (or fields) per API request, **per operation** — services often di
 |---|---|---|
 | `<field>` | `<Entity>` | `<e.g. needs POST/DELETE /…/{id}/followers — rejected on the normal update>` |
 
-<Note any org-wide rate/quota limits (daily credits, concurrency, token-endpoint throttle) separately — they're independent of bulk size.>
+**Org-wide rate/quota limits.** Stripe enforces several ceilings at once: **100 requests/second globally in live mode but only 25/s in sandbox**, plus **25/s for any single endpoint** regardless of mode, plus undocumented *concurrency* ceilings surfaced via the `Stripe-Rate-Limited-Reason` header (`global-concurrency` / `endpoint-concurrency`). A pull walks one entity's endpoint at a time, so the per-endpoint 25/s is the ceiling that actually binds — hence `rateLimiterSpec` of 20/s. Stripe sends **no `Retry-After`**; its guidance is exponential backoff with jitter. Note that `lock_timeout` is *also* returned as 429 but is object contention, not rate limiting — backoff helps, but sustained contention needs serialized writes. Separately, reads are metered against a rolling 30-day allocation (avg 500 per transaction, floor 10,000/month) — a billing quota, not a rate limit. https://docs.stripe.com/rate-limits
 
 ## Incremental polling
 - **Supported:** <YES / NO>. Driver field = `<last-modified field>` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns <SUPPORTED/NOT_SUPPORTED> when <condition>.

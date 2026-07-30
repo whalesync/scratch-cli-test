@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { TableView, connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -104,9 +105,9 @@ export class StripeConnector extends Connector {
 
   private readonly client: StripeApiClient;
 
-  constructor(credentials: StripeCredentials) {
+  constructor(credentials: StripeCredentials, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new StripeApiClient(credentials);
+    this.client = new StripeApiClient(credentials, { rateLimiter: opts?.rateLimiter });
   }
 
   /**
@@ -289,8 +290,14 @@ connectorRegistry.register({
   metadata: StripeConnector.metadata,
   advancedSettings: [],
   supportedAuthMethods: ['user_provided_params'],
+  // Stripe enforces several ceilings at once: 100 requests/second globally in
+  // live mode but only **25/s in sandbox**, and — regardless of mode — 25/s for
+  // any single endpoint. A pull walks one entity's endpoint at a time, so the
+  // per-endpoint ceiling is the one that actually binds, and the previous 90/s
+  // sat far above it (and above the sandbox global limit entirely).
+  // https://docs.stripe.com/rate-limits
   rateLimiterSpec: {
-    points: 90,
+    points: 20,
     duration: 1,
   },
   // eslint-disable-next-line @typescript-eslint/require-await
@@ -301,6 +308,9 @@ connectorRegistry.register({
     if (!ctx.decryptedCredentials?.apiKey) {
       throw new ConnectorInstantiationError('API key is required for Stripe', Service.STRIPE);
     }
-    return new StripeConnector({ apiKey: ctx.decryptedCredentials.apiKey });
+    return new StripeConnector(
+      { apiKey: ctx.decryptedCredentials.apiKey },
+      { rateLimiter: ctx.createRateLimiter(ctx.connectorAccount.id) },
+    );
   },
 });
