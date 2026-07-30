@@ -515,8 +515,9 @@ The full list of transformer types, labels, and options is defined in `@spinner/
 | `wrap_object`                | `DATA`                | Wraps a value into a template object (`"$value"` placeholder)       |
 | `ensure_type`                | `DATA`                | Validates runtime type with configurable fallback behavior          |
 | `replace_regex`              | `DATA`                | Pattern-based text replacement with capture groups                  |
+| `epoch_to_iso`               | `DATA`                | Unix-epoch number (seconds/ms) to an ISO-8601 date-time string      |
 
-See `transformers/implementations/` for the complete set of 24 transformers.
+See `transformers/implementations/` for the complete set of transformers.
 
 ## Key Files
 

@@ -348,6 +348,7 @@ export const TransformerTypes = {
   MapArray: 'map_array',
   SkipIfDestArrayMatches: 'skip_if_dest_array_matches',
   ValueMap: 'value_map',
+  EpochToIso: 'epoch_to_iso',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -386,6 +387,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.MapArray, label: 'Map Array' },
   { type: TransformerTypes.SkipIfDestArrayMatches, label: 'Skip If Dest Array Matches' },
   { type: TransformerTypes.ValueMap, label: 'Value Map' },
+  { type: TransformerTypes.EpochToIso, label: 'Unix Timestamp to Date' },
 ];
 
 /** Get the display label for a transformer type */
@@ -518,6 +520,19 @@ export interface ReplaceRegexOptions {
   replacement?: string;
 }
 
+/**
+ * Options for the epoch_to_iso transformer — a Unix-epoch NUMBER to an ISO-8601 date-time
+ * string. Services that report times as bare epochs (Stripe, Intercom, ClickUp) otherwise
+ * export a date as a raw number, so a destination creates a number column and the value is
+ * unusable as a date. Annotating such a field `format: 'date-time'` alone makes it WORSE:
+ * the destination gets a real date column and is still handed the bare integer. The
+ * conversion has to happen in the value pipeline, which is what this transformer is for.
+ */
+export interface EpochToIsoOptions {
+  /** Unit of the incoming epoch value. Defaults to `'seconds'` (what most REST APIs emit). */
+  unit?: 'seconds' | 'milliseconds';
+}
+
 /** Options for the wrap_object transformer */
 export interface WrapObjectOptions {
   /** Template object where "$value" strings are replaced with the source value */
@@ -596,7 +611,8 @@ export type TransformerOptions =
   | WrapObjectOptions
   | MapArrayOptions
   | SkipIfDestArrayMatchesOptions
-  | ValueMapOptions;
+  | ValueMapOptions
+  | EpochToIsoOptions;
 
 /** Options for the notion_file_url transformer */
 export interface NotionFileUrlOptions {
@@ -631,7 +647,8 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.WrapObject; options: WrapObjectOptions }
   | { type: typeof TransformerTypes.MapArray; options: MapArrayOptions }
   | { type: typeof TransformerTypes.SkipIfDestArrayMatches; options?: SkipIfDestArrayMatchesOptions }
-  | { type: typeof TransformerTypes.ValueMap; options: ValueMapOptions };
+  | { type: typeof TransformerTypes.ValueMap; options: ValueMapOptions }
+  | { type: typeof TransformerTypes.EpochToIso; options?: EpochToIsoOptions };
 
 /**
  * Transformer arms that are SERVER-ONLY: their options carry a branded `DataFolderId` and

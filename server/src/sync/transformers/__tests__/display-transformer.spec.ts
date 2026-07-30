@@ -199,6 +199,45 @@ describe('applyDisplayTransformer: computed-field (Airtable aiText / formula-err
     expect(() => applyDisplayTransformer(brokenConfig, { value: 'x' })).not.toThrow();
     expect(applyDisplayTransformer(brokenConfig, { value: 'x' })).toEqual({ ok: false });
   });
+
+  // A Unix-epoch column (Stripe/Intercom timestamps) renders through the text cell, so the grid
+  // shows a date instead of the raw integer. Must agree with the `epoch_to_iso` sync transformer.
+  describe('epoch_to_iso', () => {
+    const epochSeconds: DisplayTransformerConfig = { type: 'epoch_to_iso', options: { unit: 'seconds' } };
+
+    it('renders epoch seconds as an ISO string', () => {
+      expect(applyDisplayTransformer(epochSeconds, 1785436554)).toEqual({
+        ok: true,
+        value: '2026-07-30T18:35:54.000Z',
+      });
+    });
+
+    it('defaults to seconds when no unit is given', () => {
+      expect(applyDisplayTransformer({ type: 'epoch_to_iso' }, 1785436554)).toEqual({
+        ok: true,
+        value: '2026-07-30T18:35:54.000Z',
+      });
+    });
+
+    it('honors milliseconds', () => {
+      expect(
+        applyDisplayTransformer({ type: 'epoch_to_iso', options: { unit: 'milliseconds' } }, 1785436554000),
+      ).toEqual({ ok: true, value: '2026-07-30T18:35:54.000Z' });
+    });
+
+    it('renders the epoch itself rather than treating it as blank', () => {
+      expect(applyDisplayTransformer(epochSeconds, 0)).toEqual({ ok: true, value: '1970-01-01T00:00:00.000Z' });
+    });
+
+    it.each([['not-a-number'], [{}], [[]], [true]])('fails closed on %p so the raw value shows', (value) => {
+      expect(applyDisplayTransformer(epochSeconds, value)).toEqual({ ok: false });
+    });
+
+    it('fails closed rather than throwing on an unrepresentable timestamp', () => {
+      expect(() => applyDisplayTransformer(epochSeconds, 1e18)).not.toThrow();
+      expect(applyDisplayTransformer(epochSeconds, 1e18)).toEqual({ ok: false });
+    });
+  });
 });
 
 describe('shared-types barrel isolation (keeps jsonpath out of barrel consumers)', () => {

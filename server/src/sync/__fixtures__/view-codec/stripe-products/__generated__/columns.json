@@ -30,7 +30,7 @@
     "column": "Active",
     "columnId": "active",
     "cardinality": "single",
-    "logicalType": "boolean",
+    "logicalType": "checkbox",
     "primitiveType": "boolean",
     "toCore": null,
     "fromCore": null
@@ -66,8 +66,22 @@
     "column": "Created",
     "columnId": "created",
     "cardinality": "single",
-    "logicalType": "number",
+    "logicalType": "datetime",
     "primitiveType": "number",
+    "toCore": {
+      "type": "epoch_to_iso",
+      "options": {
+        "unit": "seconds"
+      }
+    },
+    "fromCore": null
+  },
+  {
+    "column": "Images",
+    "columnId": "images",
+    "cardinality": "multi",
+    "logicalType": "object",
+    "primitiveType": "array",
     "toCore": null,
     "fromCore": null
   },
@@ -75,9 +89,14 @@
     "column": "Updated",
     "columnId": "updated",
     "cardinality": "single",
-    "logicalType": "number",
+    "logicalType": "datetime",
     "primitiveType": "number",
-    "toCore": null,
+    "toCore": {
+      "type": "epoch_to_iso",
+      "options": {
+        "unit": "seconds"
+      }
+    },
     "fromCore": null
   }
 ]

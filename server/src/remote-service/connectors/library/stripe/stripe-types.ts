@@ -286,6 +286,16 @@ export interface StripeBillingDetails {
 }
 
 /**
+ * `x-scratch-connector-data-type` marking a field Stripe reports as a Unix-epoch timestamp in
+ * SECONDS (`created`, `start_date`, `canceled_at`, `due_date`, `paid_at`, …). Stripe has no ISO
+ * date type — every time it reports is a bare integer — so this is a faithful fact about the
+ * field, not a display opinion, and it is the only signal that distinguishes `created` from a
+ * genuine number like `balance`. The default view reads it to build a real date column backed by
+ * an `epoch_to_iso` codec; without it every timestamp exports as a raw number (DEV-11145).
+ */
+export const STRIPE_UNIX_TIMESTAMP_DATA_TYPE = 'unix-timestamp-seconds';
+
+/**
  * Union type for all Stripe entities
  */
 export type StripeEntity =

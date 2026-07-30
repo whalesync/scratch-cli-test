@@ -856,6 +856,13 @@ export function inferLogicalFieldType(
         return { status: 'mapped', fieldType: { kind: 'number' } };
       case 'date':
         return { status: 'mapped', fieldType: dateCreateFieldType(field) };
+      // An explicitly time-bearing column. `dateCreateFieldType` normally learns that from the
+      // value's JSON-Schema `format`, but a column whose raw value is a Unix epoch NUMBER has no
+      // string format to carry it (Stripe's `created`, flattened to a date by an `epoch_to_iso`
+      // codec), so the view declares it directly. Without this it would land as a date-only
+      // column and drop the time-of-day for the life of the export.
+      case 'datetime':
+        return { status: 'mapped', fieldType: { kind: 'date', includesTime: true } };
       case 'url':
         return { status: 'mapped', fieldType: { kind: 'url' } };
       // A connector that knows a flattened string is an address / number says so

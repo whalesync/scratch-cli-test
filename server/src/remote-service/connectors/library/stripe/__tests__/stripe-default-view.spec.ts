@@ -1,6 +1,23 @@
-import { Type } from '@sinclair/typebox';
-import { TableViewCol, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { TSchema, Type } from '@sinclair/typebox';
+import { TableView, TableViewCol, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { EntityId } from '../../../types';
 import { buildStripeDefaultView } from '../stripe-default-view';
+import { buildStripeJsonTableSpec } from '../stripe-json-schema';
+import { StripeEntityType } from '../stripe-types';
+
+/** The view a real (generated) Stripe schema produces — the shape Live Export actually sees. */
+function realView(entityType: StripeEntityType): TableView {
+  const id = { wsId: entityType, remoteId: [entityType] } as unknown as EntityId;
+  return buildStripeDefaultView(buildStripeJsonTableSpec(id, entityType).schema, entityType);
+}
+
+function col(view: TableView, path: string): TableViewCol | undefined {
+  return view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol | undefined;
+}
+
+function colNames(view: TableView): string[] {
+  return view.cols.map((c) => (c as TableViewCol).name ?? '');
+}
 
 describe('buildStripeDefaultView', () => {
   function buildCustomerSchema() {
@@ -62,92 +79,58 @@ describe('buildStripeDefaultView', () => {
   it('should place non-priority fields after priority fields alphabetically', () => {
     const paths = view.cols.map((c) => (c as TableViewCol).path);
     const createdIdx = paths.indexOf('created'); // last priority field
-    const addressIdx = paths.indexOf('address');
     const livemodeIdx = paths.indexOf('livemode');
     const objectIdx = paths.indexOf('object');
 
-    expect(addressIdx).toBeGreaterThan(createdIdx);
+    expect(paths.indexOf('address.city')).toBeGreaterThan(createdIdx);
     expect(livemodeIdx).toBeGreaterThan(createdIdx);
     expect(objectIdx).toBeGreaterThan(createdIdx);
   });
 
   it('should propagate readonly from schema', () => {
-    const idCol = view.cols.find((c) => c.kind === 'col' && c.path === 'id') as TableViewCol;
-    expect(idCol.readonly).toBe(true);
-
-    const nameCol = view.cols.find((c) => c.kind === 'col' && c.path === 'name') as TableViewCol;
-    expect(nameCol.readonly).toBeUndefined();
+    expect(col(view, 'id')?.readonly).toBe(true);
+    expect(col(view, 'name')?.readonly).toBeUndefined();
   });
 
   it('should map number fields to number type', () => {
-    const balance = view.cols.find((c) => c.kind === 'col' && c.path === 'balance') as TableViewCol;
-    expect(balance.type).toBe('number');
-
-    const created = view.cols.find((c) => c.kind === 'col' && c.path === 'created') as TableViewCol;
-    expect(created.type).toBe('number');
+    expect(col(view, 'balance')?.type).toBe('number');
   });
 
   it('should map boolean fields to checkbox type', () => {
-    const delinquent = view.cols.find((c) => c.kind === 'col' && c.path === 'delinquent') as TableViewCol;
-    expect(delinquent.type).toBe('checkbox');
-  });
-
-  it('should map nested object unions to object type', () => {
-    const address = view.cols.find((c) => c.kind === 'col' && c.path === 'address') as TableViewCol;
-    expect(address.type).toBe('object');
+    expect(col(view, 'delinquent')?.type).toBe('checkbox');
   });
 
   it('should map Record (metadata) to object type', () => {
-    const metadata = view.cols.find((c) => c.kind === 'col' && c.path === 'metadata') as TableViewCol;
-    expect(metadata.type).toBe('object');
+    expect(col(view, 'metadata')?.type).toBe('object');
   });
 
-  it('should hide system fields', () => {
-    const objectCol = view.cols.find((c) => c.kind === 'col' && c.path === 'object') as TableViewCol;
-    expect(objectCol.hidden).toBe(true);
-
-    const livemodeCol = view.cols.find((c) => c.kind === 'col' && c.path === 'livemode') as TableViewCol;
-    expect(livemodeCol.hidden).toBe(true);
-
-    const metadataCol = view.cols.find((c) => c.kind === 'col' && c.path === 'metadata') as TableViewCol;
-    expect(metadataCol.hidden).toBe(true);
-
-    const addressCol = view.cols.find((c) => c.kind === 'col' && c.path === 'address') as TableViewCol;
-    expect(addressCol.hidden).toBe(true);
+  it('should hide only genuine plumbing', () => {
+    expect(col(view, 'object')?.hidden).toBe(true);
+    expect(col(view, 'livemode')?.hidden).toBe(true);
+    expect(col(view, 'metadata')?.hidden).toBe(true);
   });
 
   it('should not hide business fields', () => {
-    const nameCol = view.cols.find((c) => c.kind === 'col' && c.path === 'name') as TableViewCol;
-    expect(nameCol.hidden).toBeUndefined();
-
-    const emailCol = view.cols.find((c) => c.kind === 'col' && c.path === 'email') as TableViewCol;
-    expect(emailCol.hidden).toBeUndefined();
+    expect(col(view, 'name')?.hidden).toBeUndefined();
+    expect(col(view, 'email')?.hidden).toBeUndefined();
   });
 
   it('should format snake_case field names as Title Case', () => {
-    const col = view.cols.find((c) => c.kind === 'col' && c.path === 'created') as TableViewCol;
-    expect(col.name).toBe('Created');
+    expect(col(view, 'created')?.name).toBe('Created');
 
-    // Multi-word field (not in this schema but test the formatter indirectly via another entity)
     const invoiceView = buildStripeDefaultView(
-      Type.Object({
-        amount_due: Type.Number({ [X_SCRATCH_READONLY]: true }),
-      }),
+      Type.Object({ amount_due: Type.Number({ [X_SCRATCH_READONLY]: true }) }),
       'invoices',
     );
-    const amountDue = invoiceView.cols.find((c) => c.kind === 'col' && c.path === 'amount_due') as TableViewCol;
-    expect(amountDue.name).toBe('Amount Due');
+    expect(col(invoiceView, 'amount_due')?.name).toBe('Amount Due');
   });
 
   it('should handle an empty schema gracefully', () => {
-    const empty = Type.Object({});
-    const emptyView = buildStripeDefaultView(empty, 'customers');
-    expect(emptyView.cols).toEqual([]);
+    expect(buildStripeDefaultView(Type.Object({}), 'customers').cols).toEqual([]);
   });
 
   it('should not produce any banner groups', () => {
-    const groups = view.cols.filter((c) => c.kind === 'banner-group');
-    expect(groups.length).toBe(0);
+    expect(view.cols.filter((c) => c.kind === 'banner-group').length).toBe(0);
   });
 
   describe('entity-specific priority ordering', () => {
@@ -171,15 +154,9 @@ describe('buildStripeDefaultView', () => {
         created: Type.Number({ [X_SCRATCH_READONLY]: true }),
         livemode: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
       });
-      const chargeView = buildStripeDefaultView(chargeSchema, 'charges');
-      const paths = chargeView.cols.map((c) => (c as TableViewCol).path);
+      const paths = buildStripeDefaultView(chargeSchema, 'charges').cols.map((c) => (c as TableViewCol).path);
 
-      expect(paths[0]).toBe('id');
-      expect(paths[1]).toBe('customer');
-      expect(paths[2]).toBe('amount');
-      expect(paths[3]).toBe('currency');
-      expect(paths[4]).toBe('status');
-      expect(paths[5]).toBe('paid');
+      expect(paths.slice(0, 6)).toEqual(['id', 'customer', 'amount', 'currency', 'status', 'paid']);
     });
 
     it('should prioritize number and amount_due for invoices', () => {
@@ -196,15 +173,144 @@ describe('buildStripeDefaultView', () => {
         created: Type.Number({ [X_SCRATCH_READONLY]: true }),
         livemode: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
       });
-      const invoiceView = buildStripeDefaultView(invoiceSchema, 'invoices');
-      const paths = invoiceView.cols.map((c) => (c as TableViewCol).path);
+      const paths = buildStripeDefaultView(invoiceSchema, 'invoices').cols.map((c) => (c as TableViewCol).path);
 
-      expect(paths[0]).toBe('number');
-      expect(paths[1]).toBe('id');
-      expect(paths[2]).toBe('customer');
-      expect(paths[3]).toBe('status');
-      expect(paths[4]).toBe('currency');
-      expect(paths[5]).toBe('amount_due');
+      expect(paths.slice(0, 6)).toEqual(['number', 'id', 'customer', 'status', 'currency', 'amount_due']);
     });
+  });
+
+  // ── DEV-11145: Unix-epoch timestamps export as real dates, not raw numbers ──
+  describe('Unix-epoch timestamps', () => {
+    const customers = realView('customers');
+
+    it('builds a date-backed column for an annotated timestamp', () => {
+      const created = col(customers, 'created');
+
+      // Rendered through the text cell (the only one that reads displayTransformer)…
+      expect(created?.type).toBe('string');
+      // …but exported as a real datetime, so the destination column keeps time-of-day.
+      expect(created?.logicalType).toBe('datetime');
+      expect(created?.displayTransformer).toEqual({ type: 'epoch_to_iso', options: { unit: 'seconds' } });
+      expect(created?.codec?.toCore).toEqual({ type: 'epoch_to_iso', options: { unit: 'seconds' } });
+      expect(created?.readonly).toBe(true);
+    });
+
+    it('leaves a genuine number alone', () => {
+      const balance = col(customers, 'balance');
+
+      expect(balance?.type).toBe('number');
+      expect(balance?.logicalType).toBeUndefined();
+      expect(balance?.codec).toBeUndefined();
+    });
+
+    it('converts nullable timestamps on subscriptions too', () => {
+      const subscriptions = realView('subscriptions');
+
+      for (const path of ['canceled_at', 'ended_at', 'start_date', 'trial_start', 'trial_end', 'created']) {
+        expect(col(subscriptions, path)?.logicalType).toBe('datetime');
+      }
+    });
+
+    it('converts timestamps nested inside an expanded composite', () => {
+      const invoices = realView('invoices');
+
+      expect(col(invoices, 'status_transitions.paid_at')?.logicalType).toBe('datetime');
+      expect(col(invoices, 'status_transitions.paid_at')?.name).toBe('Status Transitions (Paid At)');
+    });
+  });
+
+  // ── DEV-11148: address/shipping/images/items/billing_details reach a destination ──
+  describe('previously dropped fields', () => {
+    it('expands a customer address into one column per subfield plus a hidden raw container', () => {
+      const customers = realView('customers');
+
+      expect(col(customers, 'address.city')?.name).toBe('Address (City)');
+      expect(col(customers, 'address.postal_code')?.name).toBe('Address (Postal Code)');
+      expect(col(customers, 'address.city')?.hidden).toBeUndefined();
+      expect(col(customers, 'address')?.name).toBe('Address (raw)');
+      expect(col(customers, 'address')?.hidden).toBe(true);
+    });
+
+    it('recurses one level so a nested shipping address becomes real columns', () => {
+      const customers = realView('customers');
+
+      expect(col(customers, 'shipping.name')?.name).toBe('Shipping (Name)');
+      expect(col(customers, 'shipping.address.line1')?.name).toBe('Shipping (Address Line1)');
+      expect(col(customers, 'shipping.address.line1')?.hidden).toBeUndefined();
+    });
+
+    it('expands charge billing details', () => {
+      const charges = realView('charges');
+
+      expect(col(charges, 'billing_details.email')?.name).toBe('Billing Details (Email)');
+      expect(col(charges, 'billing_details.address.city')?.name).toBe('Billing Details (Address City)');
+    });
+
+    it('exposes product images and subscription items instead of dropping them', () => {
+      expect(col(realView('products'), 'images')?.hidden).toBeUndefined();
+      expect(col(realView('subscriptions'), 'items')?.hidden).toBeUndefined();
+    });
+
+    it('keeps only genuine plumbing hidden', () => {
+      const customers = realView('customers');
+      const hiddenPaths = customers.cols
+        .filter((c) => c.kind === 'col' && c.hidden && !(c.name ?? '').endsWith('(raw)'))
+        .map((c) => (c as TableViewCol).path);
+
+      expect(hiddenPaths.sort()).toEqual(['invoice_prefix', 'livemode', 'metadata', 'object']);
+    });
+
+    it('does not collide names between an address and a shipping address', () => {
+      const names = colNames(realView('customers'));
+
+      expect(new Set(names).size).toBe(names.length);
+    });
+  });
+
+  // ── DEV-11149: prices.recurring plucks interval rather than exporting raw JSON ──
+  describe('prices.recurring', () => {
+    const prices = realView('prices');
+
+    it('offers the useful inner scalars as subfields with interval preselected', () => {
+      const recurring = col(prices, 'recurring');
+
+      expect(recurring?.subfields).toEqual([
+        { name: 'Interval', relativePath: 'interval', type: 'string', readonly: true },
+        { name: 'Interval Count', relativePath: 'interval_count', type: 'number', readonly: true },
+        { name: 'Usage Type', relativePath: 'usage_type', type: 'string', readonly: true },
+      ]);
+      expect(recurring?.selectedSubfield).toBe(0);
+    });
+
+    it('keeps the raw container reachable rather than expanding it away', () => {
+      expect(col(prices, 'recurring')?.path).toBe('recurring');
+      expect(col(prices, 'recurring')?.hidden).toBeUndefined();
+    });
+
+    it('only offers subfields the schema actually declares', () => {
+      const view = buildStripeDefaultView(
+        Type.Object({ recurring: Type.Object({ interval: Type.String() }) }),
+        'prices',
+      );
+
+      expect(col(view, 'recurring')?.subfields).toEqual([
+        { name: 'Interval', relativePath: 'interval', type: 'string' },
+      ]);
+    });
+  });
+
+  // The view is regenerated from a schema that may have been JSON-parsed off disk, where TypeBox's
+  // `Kind` symbols are gone. A Kind-based type mapping silently types every column `undefined` there.
+  it('types columns identically from a JSON round-tripped schema', () => {
+    const id = { wsId: 'customers', remoteId: ['customers'] } as unknown as EntityId;
+    const liveSchema = buildStripeJsonTableSpec(id, 'customers').schema;
+    const roundTrippedSchema = JSON.parse(JSON.stringify(liveSchema)) as TSchema;
+
+    const live = buildStripeDefaultView(liveSchema, 'customers');
+    const roundTripped = buildStripeDefaultView(roundTrippedSchema, 'customers');
+
+    expect(roundTripped).toEqual(live);
+    expect(col(roundTripped, 'balance')?.type).toBe('number');
+    expect(col(roundTripped, 'delinquent')?.type).toBe('checkbox');
   });
 });

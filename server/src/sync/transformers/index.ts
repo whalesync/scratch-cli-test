@@ -25,6 +25,7 @@ import './implementations/airmark-to-html.transformer';
 import './implementations/array-auto-convert.transformer';
 import './implementations/auto-convert.transformer';
 import './implementations/ensure-type.transformer';
+import './implementations/epoch-to-iso.transformer';
 import './implementations/escape-html.transformer';
 import './implementations/html-to-airmark.transformer';
 import './implementations/jsonpath.transformer';

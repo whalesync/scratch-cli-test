@@ -187,7 +187,15 @@ export type TablePropertyType =
   | 'string'
   | 'richtext'
   | 'number'
+  // A calendar date with NO time-of-day. Most connectors emit `'date'` for both kinds and let
+  // the JSON-Schema `format` on the value (`date-time` / `date-time-local`) say which it is —
+  // that stays the primary signal. Use `'datetime'` only as a `logicalType`, for a column whose
+  // RAW value carries a wall-clock time but whose schema `format` can't say so because the raw
+  // value isn't an ISO string at all (a Unix epoch number, flattened to a date by a codec). It
+  // is export-only — no renderer consults `logicalType` — and it exists so such a column creates
+  // a real datetime destination field instead of silently dropping the time-of-day.
   | 'date'
+  | 'datetime'
   | 'url'
   | 'checkbox'
   | 'object'

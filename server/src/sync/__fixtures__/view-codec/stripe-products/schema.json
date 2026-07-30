@@ -1,9 +1,7 @@
 {
   "id": {
     "wsId": "products",
-    "remoteId": [
-      "products"
-    ]
+    "remoteId": ["products"]
   },
   "slug": "products",
   "name": "Products",
@@ -11,15 +9,7 @@
     "$id": "stripe/products",
     "title": "Products",
     "type": "object",
-    "required": [
-      "id",
-      "object",
-      "name",
-      "active",
-      "created",
-      "updated",
-      "livemode"
-    ],
+    "required": ["id", "object", "name", "active", "created", "updated", "livemode"],
     "properties": {
       "id": {
         "description": "Unique identifier",
@@ -54,7 +44,8 @@
         "description": "Default price ID",
         "x-scratch-readonly": true,
         "x-scratch-foreign-key": {
-          "linkedTableId": "prices"
+          "linkedTableId": "prices",
+          "linkedTableRemoteId": ["prices"]
         },
         "anyOf": [
           {
@@ -101,11 +92,13 @@
       },
       "created": {
         "description": "Created timestamp (Unix)",
+        "x-scratch-connector-data-type": "unix-timestamp-seconds",
         "x-scratch-readonly": true,
         "type": "number"
       },
       "updated": {
         "description": "Updated timestamp (Unix)",
+        "x-scratch-connector-data-type": "unix-timestamp-seconds",
         "x-scratch-readonly": true,
         "type": "number"
       },

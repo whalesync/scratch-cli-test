@@ -171,6 +171,15 @@ const transformerConfigSchema: z.ZodType = z.discriminatedUnion('type', [
       })
       .strict(),
   }),
+  z.object({
+    type: z.literal(TransformerTypes.EpochToIso),
+    options: z
+      .object({
+        unit: z.enum(['seconds', 'milliseconds']).optional(),
+      })
+      .strict()
+      .optional(),
+  }),
 ]);
 
 // -- V1 column / table / sync mapping schemas (legacy on-disk shape) --

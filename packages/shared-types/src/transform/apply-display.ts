@@ -1,4 +1,4 @@
-import type { JSONPathOptions } from '../sync-mapping';
+import type { EpochToIsoOptions, JSONPathOptions } from '../sync-mapping';
 import { applyJsonPath } from './apply-jsonpath';
 
 /**
@@ -13,7 +13,8 @@ import { applyJsonPath } from './apply-jsonpath';
  */
 export type DisplayTransformerConfig =
   | { type: 'jsonpath'; options: JSONPathOptions }
-  | { type: 'computed-field'; options: ComputedFieldOptions };
+  | { type: 'computed-field'; options: ComputedFieldOptions }
+  | { type: 'epoch_to_iso'; options?: EpochToIsoOptions };
 
 /**
  * Options for the `computed-field` display transformer — a generic flattener for
@@ -130,9 +131,33 @@ function applyDisplayTransformerUnsafe(config: DisplayTransformerConfig, value: 
     }
     case 'computed-field':
       return applyComputedFieldTransformer(config.options, value);
+    case 'epoch_to_iso':
+      return applyEpochToIsoTransformer(config.options?.unit ?? 'seconds', value);
     default:
       return { ok: false };
   }
+}
+
+/**
+ * Milliseconds either side of the epoch that `new Date(ms)` can represent; beyond this the Date
+ * is Invalid and `toISOString()` throws.
+ */
+const MAX_REPRESENTABLE_EPOCH_MILLISECONDS = 8.64e15;
+
+/**
+ * Render a Unix-epoch NUMBER as an ISO-8601 string, so a grid shows a date where the raw value is
+ * an integer (Stripe/Intercom timestamps). Mirrors the `epoch_to_iso` sync transformer, keeping the
+ * cell and the exported value in step. Fails closed — the raw number is then shown verbatim — for
+ * anything that isn't a finite, representable epoch.
+ */
+function applyEpochToIsoTransformer(unit: 'seconds' | 'milliseconds', value: unknown): DisplayResult {
+  const epochValue = typeof value === 'string' ? Number(value) : value;
+  if (typeof epochValue !== 'number' || !Number.isFinite(epochValue)) return { ok: false };
+
+  const epochMilliseconds = unit === 'seconds' ? epochValue * 1000 : epochValue;
+  if (Math.abs(epochMilliseconds) > MAX_REPRESENTABLE_EPOCH_MILLISECONDS) return { ok: false };
+
+  return { ok: true, value: new Date(epochMilliseconds).toISOString() };
 }
 
 /**

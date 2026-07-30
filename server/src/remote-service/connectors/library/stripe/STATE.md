@@ -146,10 +146,12 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - Association endpoint (if any): <describe> — ⬜
 
 ## Edge cases discovered
-- (none yet — see SKILL.md → Stage E for what to hunt for)
+- **Every Stripe timestamp is a Unix-epoch integer in SECONDS**, not an ISO string — Stripe has no ISO date type. The schema records that as `x-scratch-connector-data-type: unix-timestamp-seconds` (`STRIPE_UNIX_TIMESTAMP_DATA_TYPE`); the default view reads the annotation and emits a date column backed by an `epoch_to_iso` codec. Annotating `format: 'date-time'` instead would be WRONG twice over: the raw value isn't a string, and it would create a real date column while still handing the destination the bare integer (DEV-11145).
+- **Stripe caps every free-text string at 350 chars**, so `text` (not `longText`) is the honest declaration for a description — the multi-line data loss seen on Airtable was the destination pack choosing `singleLineText`, not a Stripe-side problem (DEV-11147).
 
 ## Gotchas
-- (connector-specific operational notes)
+- **Hidden ≠ collapsed.** A column marked `hidden` in the default view is dropped from Live Export field selection entirely, so the user is never offered it. Keep `HIDDEN_FIELDS` to genuine plumbing (`object`, `livemode`, `metadata`, `invoice_prefix`); anything hidden beyond that is silently unexportable (DEV-11148).
+- **The default view must read the serialized JSON-Schema `type` keyword, never TypeBox's `Kind` symbol.** The view is regenerated from a schema that may have been JSON-parsed off disk, where symbols are gone — a `Kind`-based mapping silently types every column `undefined` there (this was live until the DEV-11145 pass; the `stripe-products` view-codec golden shows the before/after).
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
@@ -163,7 +165,12 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - [ ] **Confirm CS + IP** (next connector-build pass) — the Create-schema / Incremental-polling values in `docs/connector-build.md` are best-effort (not code-verified). Probe the service API (partial schema creation — e.g. custom fields — counts as 🟠) and update the table to ✅/🟠/❌.
 
 ## Open issues
-- (link Linear issues for ❌ cells)
+- **Fixed, pending live re-verification** (all four landed as view/transform changes; the audit's live evidence predates them):
+  - [DEV-11145](https://linear.app/whalesync/issue/DEV-11145) — epoch timestamps now export as real datetimes via the new `epoch_to_iso` transformer.
+  - [DEV-11147](https://linear.app/whalesync/issue/DEV-11147) — the Airtable pack creates `text` as `multilineText`, so newlines survive.
+  - [DEV-11148](https://linear.app/whalesync/issue/DEV-11148) — `address` / `shipping` / `billing_details` expand into per-subfield columns; `images` / `items` are offered instead of dropped.
+  - [DEV-11149](https://linear.app/whalesync/issue/DEV-11149) — `prices.recurring` plucks `interval` (with `interval_count` / `usage_type` selectable).
+- **Still open, not connector-layer:** [DEV-11146](https://linear.app/whalesync/issue/DEV-11146) (orphaned routine runs wedge a sync — `[core]`) and the generic steady-state republish churn ([DEV-10556](https://linear.app/whalesync/issue/DEV-10556)). Neither is addressed by the above.
 
 ## OAuth (final milestone — create the client with the user, or document what it takes)
 API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-release nicety done *with* the user. Fill this in when you reach Milestone 9.

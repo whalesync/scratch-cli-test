@@ -52,8 +52,9 @@ export const DEFAULT_CURRENCY_PRECISION = 2;
  */
 export function mapKindToNativeType(kind: CreateFieldKind): AirtableApiCreateFieldTypeAndOptions['type'] {
   switch (kind) {
+    // Both text kinds become `multilineText` — see `buildAirtableCreateField` for why
+    // `text` does not map to `singleLineText`.
     case 'text':
-      return 'singleLineText';
     case 'longText':
       return 'multilineText';
     case 'number':
@@ -167,11 +168,16 @@ export function buildAirtableCreateField(spec: ResolvedCreateFieldSpec, ctx: { b
 
   const fieldType = spec.fieldType;
   switch (fieldType.kind) {
+    // Both text kinds become `multilineText`. `singleLineText` would be the literal
+    // reading of `text`, but Airtable SILENTLY collapses newlines and tabs to spaces
+    // when storing into it — irreversible data loss on the happy path for any source
+    // field that can contain newlines (descriptions, notes, addresses, message bodies).
+    // The downgrade risk is asymmetric: `multilineText` renders single-line content
+    // identically, so choosing it costs nothing and choosing `singleLineText` destroys
+    // data (DEV-11147). Plain multiline text, not richText — richText would route
+    // pulled values through the AirMark↔HTML converters, changing the stored shape.
     case 'text':
-      return { field: { ...common, type: 'singleLineText' } };
     case 'longText':
-      // Plain multiline text, not richText — richText would route pulled values
-      // through the AirMark↔HTML converters, changing the stored shape.
       return { field: { ...common, type: 'multilineText' } };
     case 'url':
       return { field: { ...common, type: 'url' } };

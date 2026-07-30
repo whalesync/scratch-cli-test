@@ -1,7 +1,11 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
-import { StripeEntityType } from './stripe-types';
+import { STRIPE_UNIX_TIMESTAMP_DATA_TYPE, StripeEntityType } from './stripe-types';
 
 /**
  * Display names for Stripe entity types
@@ -94,6 +98,30 @@ function addressSchema(description: string): TSchema {
   );
 }
 
+/**
+ * A required Unix-epoch timestamp (seconds). The value stays exactly what Stripe sent — a bare
+ * integer; the annotation only RECORDS that Stripe reports this number as a timestamp, which is
+ * what lets the default view build a date column instead of a number one.
+ */
+function unixTimestampSchema(description: string): TSchema {
+  return Type.Number({
+    description,
+    [X_SCRATCH_CONNECTOR_DATA_TYPE]: STRIPE_UNIX_TIMESTAMP_DATA_TYPE,
+    [X_SCRATCH_READONLY]: true,
+  });
+}
+
+/** An optional/nullable Unix-epoch timestamp (seconds). See {@link unixTimestampSchema}. */
+function nullableUnixTimestampSchema(description: string): TSchema {
+  return Type.Optional(
+    Type.Union([Type.Number(), Type.Null()], {
+      description,
+      [X_SCRATCH_CONNECTOR_DATA_TYPE]: STRIPE_UNIX_TIMESTAMP_DATA_TYPE,
+      [X_SCRATCH_READONLY]: true,
+    }),
+  );
+}
+
 function metadataSchema(): TSchema {
   return Type.Optional(
     Type.Record(Type.String(), Type.String(), {
@@ -172,7 +200,7 @@ function buildCustomerSchema(): TSchema {
       tax_exempt: Type.Optional(
         Type.Union([Type.String(), Type.Null()], { description: 'Tax exemption status', [X_SCRATCH_READONLY]: true }),
       ),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      created: unixTimestampSchema('Created timestamp (Unix)'),
       livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/customers', title: 'Customers' },
@@ -202,8 +230,8 @@ function buildProductSchema(): TSchema {
       metadata: metadataSchema(),
       url: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Product URL' })),
       type: Type.Optional(Type.String({ description: 'Product type', [X_SCRATCH_READONLY]: true })),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
-      updated: Type.Number({ description: 'Updated timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      created: unixTimestampSchema('Created timestamp (Unix)'),
+      updated: unixTimestampSchema('Updated timestamp (Unix)'),
       livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/products', title: 'Products' },
@@ -251,7 +279,7 @@ function buildPriceSchema(): TSchema {
       lookup_key: Type.Optional(
         Type.Union([Type.String(), Type.Null()], { description: 'Lookup key', [X_SCRATCH_READONLY]: true }),
       ),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      created: unixTimestampSchema('Created timestamp (Unix)'),
       livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/prices', title: 'Prices' },
@@ -277,25 +305,11 @@ function buildSubscriptionSchema(): TSchema {
         description: 'Will cancel at end of period',
         [X_SCRATCH_READONLY]: true,
       }),
-      canceled_at: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], {
-          description: 'Cancellation timestamp (Unix)',
-          [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      ended_at: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], {
-          description: 'End timestamp (Unix)',
-          [X_SCRATCH_READONLY]: true,
-        }),
-      ),
-      start_date: Type.Number({ description: 'Start date (Unix)', [X_SCRATCH_READONLY]: true }),
-      trial_start: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Trial start (Unix)', [X_SCRATCH_READONLY]: true }),
-      ),
-      trial_end: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Trial end (Unix)', [X_SCRATCH_READONLY]: true }),
-      ),
+      canceled_at: nullableUnixTimestampSchema('Cancellation timestamp (Unix)'),
+      ended_at: nullableUnixTimestampSchema('End timestamp (Unix)'),
+      start_date: unixTimestampSchema('Start date (Unix)'),
+      trial_start: nullableUnixTimestampSchema('Trial start (Unix)'),
+      trial_end: nullableUnixTimestampSchema('Trial end (Unix)'),
       default_payment_method: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Default payment method ID',
@@ -358,7 +372,7 @@ function buildSubscriptionSchema(): TSchema {
           { description: 'Subscription line items', [X_SCRATCH_READONLY]: true },
         ),
       ),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      created: unixTimestampSchema('Created timestamp (Unix)'),
       livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/subscriptions', title: 'Subscriptions' },
@@ -459,27 +473,25 @@ function buildInvoiceSchema(): TSchema {
         Type.Union([Type.String(), Type.Null()], { description: 'Invoice number', [X_SCRATCH_READONLY]: true }),
       ),
       description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Invoice description' })),
-      due_date: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Due date (Unix)', [X_SCRATCH_READONLY]: true }),
-      ),
+      due_date: nullableUnixTimestampSchema('Due date (Unix)'),
       // Replaces the removed top-level `paid` — whether an invoice is paid is now read from `status`,
       // and when it was paid from `status_transitions.paid_at`.
       status_transitions: Type.Optional(
         Type.Union(
           [
             Type.Object({
-              finalized_at: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-              marked_uncollectible_at: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-              paid_at: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-              voided_at: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+              finalized_at: nullableUnixTimestampSchema('When the invoice was finalized (Unix)'),
+              marked_uncollectible_at: nullableUnixTimestampSchema('When the invoice was marked uncollectible (Unix)'),
+              paid_at: nullableUnixTimestampSchema('When the invoice was paid (Unix)'),
+              voided_at: nullableUnixTimestampSchema('When the invoice was voided (Unix)'),
             }),
             Type.Null(),
           ],
           { description: 'Timestamps for each status the invoice has moved through', [X_SCRATCH_READONLY]: true },
         ),
       ),
-      period_start: Type.Number({ description: 'Period start (Unix)', [X_SCRATCH_READONLY]: true }),
-      period_end: Type.Number({ description: 'Period end (Unix)', [X_SCRATCH_READONLY]: true }),
+      period_start: unixTimestampSchema('Period start (Unix)'),
+      period_end: unixTimestampSchema('Period end (Unix)'),
       hosted_invoice_url: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Hosted invoice page URL',
@@ -491,7 +503,7 @@ function buildInvoiceSchema(): TSchema {
       ),
       collection_method: Type.Optional(Type.String({ description: 'Collection method', [X_SCRATCH_READONLY]: true })),
       metadata: metadataSchema(),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      created: unixTimestampSchema('Created timestamp (Unix)'),
       livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/invoices', title: 'Invoices' },
@@ -536,7 +548,7 @@ function buildPaymentIntentSchema(): TSchema {
           [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'charges', linkedTableRemoteId: ['charges'] },
         }),
       ),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      created: unixTimestampSchema('Created timestamp (Unix)'),
       livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/payment_intents', title: 'Payment Intents' },
@@ -620,7 +632,7 @@ function buildChargeSchema(): TSchema {
         ),
       ),
       metadata: metadataSchema(),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      created: unixTimestampSchema('Created timestamp (Unix)'),
       livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/charges', title: 'Charges' },

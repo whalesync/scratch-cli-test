@@ -5,6 +5,7 @@ import {
   buildAirtableCreateField,
   clampPrecision,
   currencySymbolFor,
+  isAirtablePrimaryEligibleKind,
   mapKindToNativeType,
 } from '../airtable-create-schema';
 import { type AirtableApiCreateField } from '../airtable-types';
@@ -61,7 +62,9 @@ describe('AIRTABLE_SCHEMA_CREATION_CAPABILITIES', () => {
 
 describe('buildAirtableCreateField', () => {
   it.each<[string, CreateFieldType, AirtableApiCreateField['type']]>([
-    ['text', { kind: 'text' }, 'singleLineText'],
+    // Both text kinds map to multilineText: singleLineText silently strips newlines
+    // and tabs from stored values (DEV-11147).
+    ['text', { kind: 'text' }, 'multilineText'],
     ['longText', { kind: 'longText' }, 'multilineText'],
     ['url', { kind: 'url' }, 'url'],
     ['email', { kind: 'email' }, 'email'],
@@ -247,6 +250,11 @@ describe('helpers', () => {
   it('mapKindToNativeType returns the representative Airtable type per kind', () => {
     expect(mapKindToNativeType('foreignKey')).toBe('multipleRecordLinks');
     expect(mapKindToNativeType('boolean')).toBe('checkbox');
-    expect(mapKindToNativeType('text')).toBe('singleLineText');
+    expect(mapKindToNativeType('text')).toBe('multilineText');
+  });
+
+  it('keeps text primary-field-eligible now that it maps to multilineText', () => {
+    expect(isAirtablePrimaryEligibleKind('text')).toBe(true);
+    expect(isAirtablePrimaryEligibleKind('longText')).toBe(true);
   });
 });
