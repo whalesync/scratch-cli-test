@@ -14,7 +14,11 @@ push master to prod:
     - git fetch --all --prune
     - git checkout -B master origin/master
     - git checkout -B prod origin/prod
-    - git merge -m "(Auto) Merge branch 'master' into prod" --no-ff -X theirs master
+    # Put the summaries of the commits being merged into the merge commit body, so the
+    # git history and the "release build started" Slack ping (gitlab-ci/stages/01-build-and-test.yml)
+    # both show what's actually in the release.
+    - COMMIT_LIST=$(git log --no-merges --format='- %s' HEAD..master)
+    - git merge -m "(Auto) Merge branch 'master' into prod" -m "${COMMIT_LIST:-(no new commits)}" --no-ff -X theirs master
     - git push origin prod
     - echo "Successfully merged master into prod"
   rules:

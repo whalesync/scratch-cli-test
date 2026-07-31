@@ -407,6 +407,30 @@ build and test scratch-desktop:
 # MISC
 # =============================================================================
 
+# The scheduled master->prod merge (stages/02-push-to-prod.yml) lists the merged
+# commit summaries in the merge commit body. This renders that body
+# ($CI_COMMIT_DESCRIPTION) into $COMMIT_LIST_SLACK as Slack blockquote lines,
+# escaped for Slack markup and for embedding in the JSON payload. Empty when the
+# commit has no body (e.g. a hand-pushed prod commit).
+#
+# The list is capped at $COMMIT_LIST_MAX_LINES with an "…and N more" tail: a
+# release that has been held for weeks can carry hundreds of commits, which is
+# unreadable in Slack and can blow past Slack's 40k-character `text` limit —
+# which would fail the whole notification rather than just truncate it.
+.render_commit_list:
+  script:
+    - |
+      COMMIT_LIST_MAX_LINES="${COMMIT_LIST_MAX_LINES:-25}"
+      COMMIT_LIST_ESCAPED=$(printf '%s' "${CI_COMMIT_DESCRIPTION}" \
+        | sed -e 's/\\/\\\\/g' -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
+              -e 's/"/\\"/g' -e '/^$/d')
+      COMMIT_LIST_TOTAL_COUNT=$(printf '%s\n' "${COMMIT_LIST_ESCAPED}" | sed -e '/^$/d' | wc -l | tr -d ' ')
+      COMMIT_LIST_SLACK=$(printf '%s\n' "${COMMIT_LIST_ESCAPED}" | sed -e '/^$/d' \
+        | head -n "${COMMIT_LIST_MAX_LINES}" | sed -e 's/^/>/' -e 's/$/\\n/' | tr -d '\n')
+      if [ "${COMMIT_LIST_TOTAL_COUNT}" -gt "${COMMIT_LIST_MAX_LINES}" ]; then
+        COMMIT_LIST_SLACK="${COMMIT_LIST_SLACK}>…and $((COMMIT_LIST_TOTAL_COUNT - COMMIT_LIST_MAX_LINES)) more\\n"
+      fi
+
 # Same Slack channel / format as desktop 'release started' + deploy notifications
 # (scratch-desktop/.gitlab-ci-release.yml, 05-deploy.yml). Runs in this stage
 # so the team sees prod builds as soon as build-and-test work begins.
@@ -415,9 +439,10 @@ build and test scratch-desktop:
   allow_failure: true
   dependencies: []
   script:
+    - !reference [.render_commit_list, script]
     - |
       curl -X POST -H 'Content-type: application/json' \
-      --data "{\"text\":\"${SLACK_PROD_PIPELINE_STARTED_PREFIX} Scratch production release build started — ${CI_COMMIT_SHORT_SHA}\n>${CI_COMMIT_TITLE}\n<${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
+      --data "{\"text\":\"${SLACK_PROD_PIPELINE_STARTED_PREFIX} Scratch production release build started — ${CI_COMMIT_SHORT_SHA}\n>${CI_COMMIT_TITLE}\n${COMMIT_LIST_SLACK}<${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
       "${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}"
 
 notify slack prod release pipeline started:
