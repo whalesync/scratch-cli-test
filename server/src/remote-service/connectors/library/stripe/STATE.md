@@ -170,6 +170,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
   - [DEV-11147](https://linear.app/whalesync/issue/DEV-11147) — the Airtable pack creates `text` as `multilineText`, so newlines survive.
   - [DEV-11148](https://linear.app/whalesync/issue/DEV-11148) — `address` / `shipping` / `billing_details` expand into per-subfield columns; `images` / `items` are offered instead of dropped.
   - [DEV-11149](https://linear.app/whalesync/issue/DEV-11149) — `prices.recurring` plucks `interval` (with `interval_count` / `usage_type` selectable).
+  - [DEV-11154](https://linear.app/whalesync/issue/DEV-11154) — `invoices.parent` plucks `subscription_details.subscription` (a two-level relative path, resolved through the nullable-union wrappers), so the invoice → subscription foreign key DEV-11144 relocated finally surfaces as a relation column instead of `parent` downgrading to a text blob.
 - **Still open, not connector-layer:** [DEV-11146](https://linear.app/whalesync/issue/DEV-11146) (orphaned routine runs wedge a sync — `[core]`) and the generic steady-state republish churn ([DEV-10556](https://linear.app/whalesync/issue/DEV-10556)). Neither is addressed by the above.
 
 ## OAuth (final milestone — create the client with the user, or document what it takes)

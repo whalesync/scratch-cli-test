@@ -426,5 +426,69 @@ describe('selectPlanFieldsFromTableView', () => {
       expect(paths).toContain('articlesCount');
       expect(paths).not.toContain('articlesCount.count');
     });
+
+    // A Stripe invoice `parent` — the subscription link sits TWO nullable-union levels below the
+    // column (`parent.subscription_details.subscription`, DEV-11154). The composed subfield path
+    // must join back to the schema field that carries the foreign key, so the plan proposes a
+    // relation column rather than text.
+    it('keeps the foreign key of a subfield two levels below the column', () => {
+      const invoiceSchema = Type.Object({
+        parent: Type.Optional(
+          Type.Union(
+            [
+              Type.Object({
+                type: Type.String(),
+                subscription_details: Type.Optional(
+                  Type.Union([
+                    Type.Object({
+                      subscription: Type.Optional(
+                        Type.Union([Type.String(), Type.Null()], {
+                          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
+                            linkedTableId: 'subscriptions',
+                            linkedTableRemoteId: ['subscriptions'],
+                          },
+                        }),
+                      ),
+                    }),
+                    Type.Null(),
+                  ]),
+                ),
+              }),
+              Type.Null(),
+            ],
+            { [X_SCRATCH_READONLY]: true },
+          ),
+        ),
+      });
+      const view: TableView = {
+        name: 'Default',
+        cols: [
+          {
+            kind: 'col',
+            name: 'Parent',
+            path: 'parent',
+            type: 'object',
+            readonly: true,
+            subfields: [
+              {
+                relativePath: 'subscription_details.subscription',
+                name: 'Subscription',
+                type: 'string',
+                readonly: true,
+              },
+            ],
+            selectedSubfield: 0,
+          },
+        ],
+      };
+
+      const { schemaFields, viewTypeByPath } = selectPlanFieldsFromTableView({ schema: invoiceSchema, view });
+
+      const subscriptionField = schemaFields.find((f) => f.path === 'parent.subscription_details.subscription');
+      expect(subscriptionField?.foreignKey?.linkedTableId).toBe('subscriptions');
+      expect(subscriptionField?.displayLabel).toBe('Parent');
+      expect(subscriptionField?.readonly).toBe(true);
+      expect(viewTypeByPath['parent.subscription_details.subscription']).toBe('string');
+    });
   });
 });

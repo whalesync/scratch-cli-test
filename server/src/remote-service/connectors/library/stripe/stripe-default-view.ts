@@ -76,6 +76,11 @@ const PLUCKED_SUBFIELDS_BY_FIELD_NAME: Record<string, { relativePath: string; na
     { relativePath: 'interval_count', name: 'Interval Count' },
     { relativePath: 'usage_type', name: 'Usage Type' },
   ],
+  // An invoice's link to the subscription that generated it lives two levels down, where Stripe
+  // reports it (`parent.subscription_details.subscription`, DEV-11144). Plucking it surfaces the
+  // schema's foreign-key annotation as a real relation column; left whole, `parent` downgrades to
+  // a JSON text blob and the invoice → subscription relation never materializes (DEV-11154).
+  parent: [{ relativePath: 'subscription_details.subscription', name: 'Subscription' }],
 };
 
 /**
@@ -139,6 +144,23 @@ function objectPropertiesOf(fieldSchema: TSchema | undefined): Record<string, TS
   // A `Record` (Stripe's open-ended `metadata`) is `type: 'object'` with no declared `properties`;
   // there is nothing to expand, so it is not a composite.
   return (shape as TSchema & { properties?: Record<string, TSchema> }).properties;
+}
+
+/**
+ * The schema declared at a dot-separated path below an object's properties, unwrapping the
+ * `Union([<shape>, Null])` wrapper at every hop — an invoice's subscription link sits two
+ * nullable-union levels down (`parent.subscription_details.subscription`). Undefined when any
+ * segment isn't declared.
+ */
+function schemaAtRelativePath(properties: Record<string, TSchema>, relativePath: string): TSchema | undefined {
+  let currentLevelProperties: Record<string, TSchema> | undefined = properties;
+  let resolvedSchema: TSchema | undefined;
+  for (const segment of relativePath.split('.')) {
+    resolvedSchema = currentLevelProperties?.[segment];
+    if (!resolvedSchema) return undefined;
+    currentLevelProperties = objectPropertiesOf(resolvedSchema);
+  }
+  return resolvedSchema;
 }
 
 /**
@@ -282,7 +304,8 @@ function expandCompositeObjectCols(
 /**
  * A column offering the object's useful inner scalars as selectable subfields, with the first
  * preselected. Only subfields the schema actually declares are offered, so a shape change in the
- * API can't leave the view pointing at a path that isn't there.
+ * API can't leave the view pointing at a path that isn't there. A relative path may span several
+ * levels (`subscription_details.subscription`); every hop is resolved through the schema.
  */
 function buildPluckedSubfieldCol(
   path: string,
@@ -291,14 +314,17 @@ function buildPluckedSubfieldCol(
   pluckable: { relativePath: string; name: string }[],
   isReadonly: boolean,
 ): TableViewCol | undefined {
-  const subfields: TableViewSubfield[] = pluckable
-    .filter((candidate) => properties[candidate.relativePath] !== undefined)
-    .map((candidate) => ({
+  const subfields: TableViewSubfield[] = [];
+  for (const candidate of pluckable) {
+    const declaredSubfieldSchema = schemaAtRelativePath(properties, candidate.relativePath);
+    if (declaredSubfieldSchema === undefined) continue;
+    subfields.push({
       name: candidate.name,
       relativePath: candidate.relativePath,
-      type: mapType(properties[candidate.relativePath]),
+      type: mapType(declaredSubfieldSchema),
       ...(isReadonly ? { readonly: true } : {}),
-    }));
+    });
+  }
 
   if (subfields.length === 0) return undefined;
 

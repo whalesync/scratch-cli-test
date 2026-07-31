@@ -1,5 +1,6 @@
 import { TSchema, Type } from '@sinclair/typebox';
 import { TableView, TableViewCol, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { extractSchemaFields } from 'src/utils/schema-helpers';
 import { EntityId } from '../../../types';
 import { buildStripeDefaultView } from '../stripe-default-view';
 import { buildStripeJsonTableSpec } from '../stripe-json-schema';
@@ -296,6 +297,49 @@ describe('buildStripeDefaultView', () => {
       expect(col(view, 'recurring')?.subfields).toEqual([
         { name: 'Interval', relativePath: 'interval', type: 'string' },
       ]);
+    });
+  });
+
+  // ── DEV-11154: invoices.parent plucks the subscription link rather than exporting raw JSON ──
+  describe('invoices.parent', () => {
+    const invoices = realView('invoices');
+
+    it('plucks the nested subscription link through two nullable-union levels, preselected', () => {
+      const parent = col(invoices, 'parent');
+
+      expect(parent?.subfields).toEqual([
+        { name: 'Subscription', relativePath: 'subscription_details.subscription', type: 'string', readonly: true },
+      ]);
+      expect(parent?.selectedSubfield).toBe(0);
+    });
+
+    it('keeps the raw container reachable rather than expanding it away', () => {
+      expect(col(invoices, 'parent')?.path).toBe('parent');
+      expect(col(invoices, 'parent')?.hidden).toBeUndefined();
+    });
+
+    it('composes a subfield path that joins back to the schema field carrying the foreign key', () => {
+      const id = { wsId: 'invoices', remoteId: ['invoices'] } as unknown as EntityId;
+      const invoiceSchema = buildStripeJsonTableSpec(id, 'invoices').schema;
+      const parent = col(buildStripeDefaultView(invoiceSchema, 'invoices'), 'parent');
+      const preselectedSubfield = parent?.subfields?.[parent.selectedSubfield ?? 0];
+
+      const composedSubfieldPath = `${parent?.path}.${preselectedSubfield?.relativePath}`;
+      const backingSchemaField = extractSchemaFields(invoiceSchema).find(
+        (field) => field.path === composedSubfieldPath,
+      );
+      expect(backingSchemaField?.foreignKey?.linkedTableId).toBe('subscriptions');
+    });
+
+    it('drops the pluck when the schema no longer declares the nested path', () => {
+      const view = buildStripeDefaultView(
+        Type.Object({ parent: Type.Object({ quote_details: Type.Object({ quote: Type.String() }) }) }),
+        'invoices',
+      );
+
+      const parent = col(view, 'parent');
+      expect(parent?.subfields).toBeUndefined();
+      expect(parent?.type).toBe('object');
     });
   });
 
