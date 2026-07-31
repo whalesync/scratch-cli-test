@@ -220,7 +220,6 @@ resource "google_cloud_run_v2_service" "api_service" {
             "LANGSMITH_PROJECT" : var.langsmith_project,
             "SERVICE_TYPE" : "api",
             "SLACK_NOTIFICATION_ENABLED" : "true",
-            "USE_JOBS" : "true",
             "WORKER_CONCURRENCY" : tostring(var.worker_concurrency),
           },
           var.enable_scratch_git ? {
@@ -507,7 +506,6 @@ resource "google_cloud_run_v2_service" "cron_service" {
             "LANGSMITH_PROJECT" : var.langsmith_project,
             "SERVICE_TYPE" : "cron",
             "SLACK_NOTIFICATION_ENABLED" : "true",
-            "USE_JOBS" : "true",
             "WORKER_CONCURRENCY" : tostring(var.worker_concurrency),
           },
           var.enable_scratch_git ? {
@@ -768,7 +766,6 @@ resource "google_cloud_run_v2_service" "worker_service" {
             "LANGSMITH_PROJECT" : var.langsmith_project,
             "SERVICE_TYPE" : "worker",
             "SLACK_NOTIFICATION_ENABLED" : "true",
-            "USE_JOBS" : "true",
             "WORKER_CONCURRENCY" : tostring(var.worker_concurrency),
           },
           var.enable_scratch_git ? {
