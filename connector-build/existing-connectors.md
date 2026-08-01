@@ -35,6 +35,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [Pipedrive](../server/src/remote-service/connectors/library/pipedrive/STATE.md) | ✅ | ✅ | 🟠 | ✅ | 👁️ | Trial → paid | ✅ | ❌ | |
 | [Postgres](../server/src/remote-service/connectors/library/postgres/STATE.md) | ❌ | ✅ | ✅ | ✅ | 🔒 | Self-host | ✅† | ❌ | |
 | [QuickBooks](../server/src/remote-service/connectors/library/quickbooks/STATE.md) | ✅ | ❌ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
+| [Sanity](../server/src/remote-service/connectors/library/sanity/STATE.md) | ❌ | ✅ | 🟠 | ✅ | 🔒 | Free tier | ✅ | ❌ | 2026-08-01 |
 | [Shopify](../server/src/remote-service/connectors/library/shopify/STATE.md) | ❌ | ✅ | 🟠 | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
 | [Stripe](../server/src/remote-service/connectors/library/stripe/STATE.md) | 🟠 | ✅ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
 | [Supabase](../server/src/remote-service/connectors/library/supabase/STATE.md) | ✅ | ✅ | ✅ | ✅ | 👁️ | Free tier | ❌ | ❌ | |

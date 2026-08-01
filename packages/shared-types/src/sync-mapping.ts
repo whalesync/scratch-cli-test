@@ -328,6 +328,7 @@ export const TransformerTypes = {
   SourceFkToDestFk: 'source_fk_to_dest_fk',
   LookupField: 'lookup_field',
   NotionToHtml: 'notion_to_html',
+  PortableTextToHtml: 'portable_text_to_html',
   RicosToHtml: 'ricos_to_html',
   AirmarkToHtml: 'airmark_to_html',
   HtmlToAirmark: 'html_to_airmark',
@@ -367,6 +368,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.SourceFkToDestFk, label: 'Foreign Key Lookup' },
   { type: TransformerTypes.LookupField, label: 'Lookup Field' },
   { type: TransformerTypes.NotionToHtml, label: 'Notion to HTML' },
+  { type: TransformerTypes.PortableTextToHtml, label: 'Portable Text to HTML' },
   { type: TransformerTypes.RicosToHtml, label: 'Ricos to HTML' },
   { type: TransformerTypes.AirmarkToHtml, label: 'AirMark to HTML' },
   { type: TransformerTypes.HtmlToAirmark, label: 'HTML to AirMark' },
@@ -450,7 +452,7 @@ export interface LookupFieldOptions {
 }
 
 /** How to handle multiple results from a JSONPath expression */
-export type JSONPathArrayHandling = 'first' | 'array' | 'join_space' | 'join_comma' | 'concat';
+export type JSONPathArrayHandling = 'first' | 'array' | 'join_space' | 'join_comma' | 'concat' | 'join_matches_space';
 
 /** Options for the jsonpath transformer */
 export interface JSONPathOptions {
@@ -628,6 +630,7 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.SourceFkToDestFk; options: SourceFkToDestFkOptions }
   | { type: typeof TransformerTypes.LookupField; options: LookupFieldOptions }
   | { type: typeof TransformerTypes.NotionToHtml; options?: Record<string, never> }
+  | { type: typeof TransformerTypes.PortableTextToHtml; options?: Record<string, never> }
   | { type: typeof TransformerTypes.RicosToHtml; options?: Record<string, never> }
   | { type: typeof TransformerTypes.AirmarkToHtml; options?: Record<string, never> }
   | { type: typeof TransformerTypes.HtmlToAirmark; options?: Record<string, never> }

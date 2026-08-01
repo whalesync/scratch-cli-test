@@ -47,7 +47,7 @@ const lookupFieldOptionsSchema = z
 const jsonpathOptionsSchema = z
   .object({
     expression: z.string().min(1),
-    arrayHandling: z.enum(['first', 'array', 'join_space', 'join_comma', 'concat']).optional(),
+    arrayHandling: z.enum(['first', 'array', 'join_space', 'join_comma', 'concat', 'join_matches_space']).optional(),
   })
   .strict();
 
@@ -81,6 +81,10 @@ const transformerConfigSchema: z.ZodType = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.SourceFkToDestFk), options: sourceFkToDestFkOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.LookupField), options: lookupFieldOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.NotionToHtml), options: z.record(z.string(), z.never()).optional() }),
+  z.object({
+    type: z.literal(TransformerTypes.PortableTextToHtml),
+    options: z.record(z.string(), z.never()).optional(),
+  }),
   z.object({ type: z.literal(TransformerTypes.RicosToHtml), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.AirmarkToHtml), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.HtmlToAirmark), options: z.record(z.string(), z.never()).optional() }),

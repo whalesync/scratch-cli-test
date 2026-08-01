@@ -34,6 +34,7 @@ import './implementations/map-array.transformer';
 import './implementations/match-asset-by-hash.transformer';
 import './implementations/notion-file-url.transformer';
 import './implementations/notion-to-html.transformer';
+import './implementations/portable-text-to-html.transformer';
 import './implementations/replace-newlines.transformer';
 import './implementations/replace-regex.transformer';
 import './implementations/ricos-to-html.transformer';

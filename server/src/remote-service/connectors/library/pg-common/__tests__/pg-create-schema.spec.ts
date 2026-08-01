@@ -350,3 +350,45 @@ describe('dotted column names (DEV-11063)', () => {
     );
   });
 });
+
+/**
+ * A `?` inside a column name is knex's positional-binding placeholder — unescaped, the compiled
+ * DDL replaced it with a `$n` binding reference, so creating a column named "Featured?" actually
+ * created `"Featured$1"` and broke created-field resolution at sync-draft save (SANITY Live Export
+ * audit 2026-08-01: the deployed Studio schema's authored title "Featured?"). The DDL builder now
+ * escapes it via {@link escapeKnexColumnIdentifierSpecialCharacters}, same as the DML side.
+ */
+describe('column names containing a question mark', () => {
+  const quotingKnex: Knex = knex({ client: 'pg' });
+  applyVerbatimIdentifierQuoting(quotingKnex);
+
+  afterAll(async () => {
+    await quotingKnex.destroy();
+  });
+
+  it('quotes a CREATE TABLE column name containing a ? verbatim, not as a binding reference', () => {
+    const sql = buildCreateTableQuery(
+      quotingKnex,
+      'public',
+      'post',
+      [field('Featured?', { kind: 'boolean' })],
+      new Map(),
+    ).toString();
+
+    expect(sql).toContain('"Featured?" boolean');
+    expect(sql).not.toContain('Featured$');
+  });
+
+  it('quotes an ALTER TABLE added column containing a ? verbatim', () => {
+    const sql = buildAddColumnsQuery(
+      quotingKnex,
+      'public',
+      'post',
+      [field('Sold out?', { kind: 'boolean' })],
+      new Map(),
+    ).toString();
+
+    expect(sql).toContain('"Sold out?" boolean');
+    expect(sql).not.toContain('Sold out$');
+  });
+});

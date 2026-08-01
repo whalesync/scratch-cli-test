@@ -35,6 +35,7 @@ export const jsonpathTransformer: FieldTransformer = {
         { value: 'array', label: 'Array' },
         { value: 'concat', label: 'Join without delimiter' },
         { value: 'join_space', label: 'Join with spaces' },
+        { value: 'join_matches_space', label: 'Join all matches with spaces' },
         { value: 'join_comma', label: 'Join with commas' },
       ],
     },

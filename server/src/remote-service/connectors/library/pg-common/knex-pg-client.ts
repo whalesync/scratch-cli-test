@@ -11,6 +11,7 @@ import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
 import {
   decodeColumnIdentifierSentinelDots,
   encodeColumnIdentifierDotsForKnex,
+  escapeKnexColumnIdentifierSpecialCharacters,
 } from './knex-column-identifier-dot-encoding';
 import {
   chooseUniquelyAddressableColumn,
@@ -40,15 +41,14 @@ import { buildAddColumnsQuery, buildCreateTableQuery, type ForeignKeyResolutions
 // ---------------------------------------------------------------------------
 
 /**
- * Make a column name safe for knex's query builder: `?` is a binding
- * placeholder (a column containing `?` must be escaped), and `.` is knex's
- * qualification separator (a column containing `.` must be sentinel-encoded so
- * it is not split into `"table"."column"` — see
- * {@link encodeColumnIdentifierDotsForKnex} / DEV-11063). Apply to column
- * identifiers only, never to a `schema.table` reference.
+ * Make a column name safe for knex's query builder — delegates to the shared
+ * {@link escapeKnexColumnIdentifierSpecialCharacters} (`?` binding-placeholder
+ * escape + DEV-11063 dot sentinel), which the DDL side (`pg-create-schema.ts`)
+ * uses too. Apply to column identifiers only, never to a `schema.table`
+ * reference.
  */
 function escapeKnexSpecialCharacters(column: string): string {
-  return encodeColumnIdentifierDotsForKnex(column.replace(/\?/g, '\\?'));
+  return escapeKnexColumnIdentifierSpecialCharacters(column);
 }
 
 /**

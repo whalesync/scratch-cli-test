@@ -110,6 +110,18 @@ function applyDisplayTransformerUnsafe(config: DisplayTransformerConfig, value: 
           if (typeof first === 'number' || typeof first === 'boolean') return { ok: true, value: String(first) };
           return { ok: false };
         }
+        case 'join_matches_space': {
+          // Join EVERY string match, WITHOUT the one-match-per-element rule the
+          // branch below enforces — for nested structures where a top-level element
+          // legally contributes 0..n matches (e.g. Portable Text: blocks → children
+          // spans → text; a multi-span block yields several matches, a custom
+          // object block yields none). Still fail-closed on shape: array input
+          // only, and every match must be a string.
+          if (!Array.isArray(value)) return { ok: false };
+          if (matches.length === 0) return { ok: true, value: '' };
+          if (!matches.every((match): match is string => typeof match === 'string')) return { ok: false };
+          return { ok: true, value: matches.join(' ') };
+        }
         case 'concat':
         case 'join_space':
         case 'join_comma': {

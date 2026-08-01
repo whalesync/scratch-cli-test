@@ -61,7 +61,10 @@ function editedTextToCoreValue(viewCol: TableViewCol, text: string): unknown {
  */
 function displayJoinDelimiter(viewCol: TableViewCol): RegExp {
   const transformer = viewCol.displayTransformer;
-  if (transformer?.type === 'jsonpath' && transformer.options.arrayHandling === 'join_space') {
+  if (
+    transformer?.type === 'jsonpath' &&
+    (transformer.options.arrayHandling === 'join_space' || transformer.options.arrayHandling === 'join_matches_space')
+  ) {
     return /\s+/;
   }
   return /,/;

@@ -37,6 +37,11 @@ export interface DecryptedCredentials {
   // the Server API key is scoped to. The `framer-api` SDK's connect() needs both
   // the project URL and the key, so both are captured at connect time.
   projectUrl?: string;
+
+  // Sanity specific: the project the API token targets. Optional — robot tokens are
+  // project-scoped, so the connector auto-discovers the project from the token via the
+  // management API; this is only required when the token can see multiple projects.
+  sanityProjectId?: string;
 }
 
 export interface SupabaseProjectCredentials {

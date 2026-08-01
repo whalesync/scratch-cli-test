@@ -60,3 +60,23 @@ export function encodeColumnIdentifierDotsForKnex(columnIdentifier: string): str
 export function decodeColumnIdentifierSentinelDots(identifier: string): string {
   return identifier.split(COLUMN_IDENTIFIER_LITERAL_DOT_SENTINEL).join('.');
 }
+
+/**
+ * Make a column name safe for BOTH of knex's special characters in one call:
+ *
+ *  - `?` is knex's positional-binding placeholder. It is substituted in the
+ *    COMPILED SQL string — schema-builder DDL included — so an unescaped `?`
+ *    inside a column identifier is replaced with a `$n` binding reference:
+ *    creating a column named `Featured?` actually created `"Featured$1"`,
+ *    which then broke created-field resolution at sync-draft save (found by
+ *    the SANITY Live Export audit 2026-08-01 — the deployed Studio schema's
+ *    authored title "Featured?"). `\?` is knex's documented literal escape,
+ *    un-escaped by the formatter after binding interpolation.
+ *  - `.` is knex's qualification separator, sentinel-encoded by
+ *    {@link encodeColumnIdentifierDotsForKnex} (DEV-11063).
+ *
+ * Apply to COLUMN identifiers only, never to a `schema.table` reference.
+ */
+export function escapeKnexColumnIdentifierSpecialCharacters(columnIdentifier: string): string {
+  return encodeColumnIdentifierDotsForKnex(columnIdentifier.replace(/\?/g, '\\?'));
+}

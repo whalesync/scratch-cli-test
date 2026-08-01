@@ -38,12 +38,18 @@ export function applyJsonPath(
     case 'array':
       return { ok: true, value: results };
     case 'join_space':
+    case 'join_matches_space':
     case 'join_comma':
     case 'concat': {
       if (results.some((r) => typeof r === 'object' && r !== null)) {
         return { ok: false, reason: 'JSONPath results contain objects that cannot be joined into a string' };
       }
-      const delimiter = arrayHandling === 'join_space' ? ' ' : arrayHandling === 'join_comma' ? ', ' : '';
+      const delimiter =
+        arrayHandling === 'join_space' || arrayHandling === 'join_matches_space'
+          ? ' '
+          : arrayHandling === 'join_comma'
+            ? ', '
+            : '';
       return { ok: true, value: results.map(String).join(delimiter) };
     }
     case 'first':

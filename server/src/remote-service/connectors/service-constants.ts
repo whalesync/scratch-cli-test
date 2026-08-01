@@ -35,4 +35,5 @@ export const Service = {
   GOHIGHLEVEL: 'GOHIGHLEVEL',
   CLICKUP: 'CLICKUP',
   FRAMER: 'FRAMER',
+  SANITY: 'SANITY',
 } as const;
