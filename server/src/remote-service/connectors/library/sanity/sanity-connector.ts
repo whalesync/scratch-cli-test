@@ -83,7 +83,7 @@ export class SanityConnector extends Connector {
     base: 'dataset',
     bases: 'datasets',
     logo: 'https://static.scratch.md/connector-icons/sanity.svg',
-    visible: false,
+    visible: true,
     incrementalPull: true,
     defaultAuthMethod: 'user_provided_params',
     credentialFields: {

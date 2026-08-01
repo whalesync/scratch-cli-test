@@ -137,3 +137,7 @@ Review round 3 — PASS:
 [07:40:00] [Scratch CLI] SUPABASE clean run (wkb_dlbuehTxuw): 221/0 failed; SQL verification —`"Featured?" boolean`verbatim,`"Published At" timestamptz`full precision`12:34:56.789+00`, `"Date Only" date`, body flattened, FK uuid joins correct, `Co Authors` first-member collapse (DEV-10956, warned). Second run 215 ops (DEV-10556)
 [07:50:00] [Service API] CRUD pass ×3 (source mutations: 2 edits incl. 4002-char longText, 1 create, 1 delete): AT rrn_9WLUWPHi7s, NO rrn_CWDWXc1TEl (4002-char EDIT intact — DEV-10955 re-proven fixed), SB rrn_qUQamhjZ6D — all verified on destination APIs. Drift ×3 (out-of-band delete/archive of filler-001): AT rrn_veSqkHzp4g restored, NO rrn_N6FPLdJwHe restored (unarchived), SB rrn_AbIPaOkQDk failed loudly on a transient scratch-git 500 then rrn_Wf4A4oaNbb re-inserted
 [08:00:00] [Manual Edits] Close-out: LIVE_EXPORT_AUDIT.md written (gates, per-destination evidence, accepted downgrades, human remainder); umbrella DEV-11160 created; destination cleanup (Airtable stale tables renamed zz_stale_sanity\*\* — API can't delete tables; Notion stale DBs archived; Supabase empty tables dropped); source re-seeded to canonical
+
+## 2026-08-01 — enabled
+
+[09:30:34] [Manual Edits] Flipped `metadata.visible: true` after Ryder's manual sign-off (review gate PASS + live-export audit green + his own dusky/app testing). Human-only decision per the build process — made by Ryder
