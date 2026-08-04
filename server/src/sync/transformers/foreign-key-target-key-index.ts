@@ -25,21 +25,34 @@ export interface TargetRecordForKeyIndex {
   fields: unknown;
 }
 
+/** An empty index, ready to be filled page by page via {@link addTargetRecordsToForeignKeyTargetKeyIndex}. */
+export function createEmptyForeignKeyTargetKeyIndex(): ForeignKeyTargetKeyIndex {
+  return {
+    targetSourceRemoteIdByKeyValue: new Map<string, string>(),
+    claimCountByAmbiguousKeyValue: new Map<string, number>(),
+  };
+}
+
 /**
- * Build a {@link ForeignKeyTargetKeyIndex} over a referenced folder's records.
+ * Fold one batch of a referenced folder's records into an index under construction.
  *
- * PURE — no I/O, so the matching rules are testable on their own. Key values are compared as
- * strings via the same `String()` coercion the FK path already applies to the referencing value,
- * so a numeric key (a Postgres `REFERENCES other(legacy_code)`) matches whether it is stored as a
- * number or a string. A record whose key path is missing, null, or a non-scalar simply isn't
- * indexed — it cannot be named by that key, which is different from being ambiguous.
+ * PURE — no I/O, so the matching rules are testable on their own. Incremental so a large folder
+ * can be indexed one page at a time without ever materializing every record in memory; folding
+ * the same records in any batch split yields the same index, including demoting a key value to
+ * ambiguous when its claimants arrive in different batches.
+ *
+ * Key values are compared as strings via the same `String()` coercion the FK path already applies
+ * to the referencing value, so a numeric key (a Postgres `REFERENCES other(legacy_code)`) matches
+ * whether it is stored as a number or a string. A record whose key path is missing, null, or a
+ * non-scalar simply isn't indexed — it cannot be named by that key, which is different from being
+ * ambiguous.
  */
-export function buildForeignKeyTargetKeyIndex(
+export function addTargetRecordsToForeignKeyTargetKeyIndex(
+  indexUnderConstruction: ForeignKeyTargetKeyIndex,
   targetRecords: TargetRecordForKeyIndex[],
   targetKeyPath: string,
-): ForeignKeyTargetKeyIndex {
-  const targetSourceRemoteIdByKeyValue = new Map<string, string>();
-  const claimCountByAmbiguousKeyValue = new Map<string, number>();
+): void {
+  const { targetSourceRemoteIdByKeyValue, claimCountByAmbiguousKeyValue } = indexUnderConstruction;
 
   for (const targetRecord of targetRecords) {
     const rawKeyValue = readFieldValueAtPath(targetRecord.fields, targetKeyPath);
@@ -62,8 +75,20 @@ export function buildForeignKeyTargetKeyIndex(
     }
     targetSourceRemoteIdByKeyValue.set(keyValue, targetRecord.id);
   }
+}
 
-  return { targetSourceRemoteIdByKeyValue, claimCountByAmbiguousKeyValue };
+/**
+ * Build a {@link ForeignKeyTargetKeyIndex} over a referenced folder's records in one call.
+ * Convenience wrapper over the incremental builder for callers (and tests) that already hold
+ * every record.
+ */
+export function buildForeignKeyTargetKeyIndex(
+  targetRecords: TargetRecordForKeyIndex[],
+  targetKeyPath: string,
+): ForeignKeyTargetKeyIndex {
+  const index = createEmptyForeignKeyTargetKeyIndex();
+  addTargetRecordsToForeignKeyTargetKeyIndex(index, targetRecords, targetKeyPath);
+  return index;
 }
 
 /**

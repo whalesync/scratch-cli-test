@@ -10,7 +10,8 @@ import { DbService } from 'src/db/db.service';
 import { readFieldValueAtPath } from 'src/utils/field-path';
 import { sanitizeConnectionFolderName } from 'src/workbook/connector-folder-path.util';
 import {
-  buildForeignKeyTargetKeyIndex,
+  addTargetRecordsToForeignKeyTargetKeyIndex,
+  createEmptyForeignKeyTargetKeyIndex,
   resolveForeignKeyValueAgainstTargetKeyIndex,
   type ForeignKeyTargetKeyIndex,
   type TargetRecordForKeyIndex,
@@ -18,11 +19,17 @@ import {
 import { AssetMappingResult, FkMappingResult, ForeignKeyTargetResolution, LookupTools } from './transformer.types';
 
 /**
- * Read every source record of a referenced folder, so a foreign key whose value names its target by
- * a non-id field can be resolved. Injected rather than imported so this module keeps no dependency
- * on the folder/git services and stays unit-testable.
+ * Stream every source record of a referenced folder, one page at a time, so a foreign key whose
+ * value names its target by a non-id field can be resolved. Paged (rather than returning the whole
+ * folder) so a large referenced folder never has to be materialized in memory at once — the OOM
+ * that motivated this shape held ~40k full Stripe records live. Resolves after the last page has
+ * been delivered. Injected rather than imported so this module keeps no dependency on the
+ * folder/git services and stays unit-testable.
  */
-export type ReadReferencedFolderRecords = (referencedDataFolderId: DataFolderId) => Promise<TargetRecordForKeyIndex[]>;
+export type ReadReferencedFolderRecordPages = (
+  referencedDataFolderId: DataFolderId,
+  onRecordPage: (recordPage: TargetRecordForKeyIndex[]) => void,
+) => Promise<void>;
 
 /**
  * Creates a no-op LookupTools where every method returns null / rejects.
@@ -52,8 +59,9 @@ export function createNullLookupTools(): LookupTools {
  * @param workbookId - The workbook ID for asset lookups
  * @param sourceService - The Service of the source connector
  * @param destinationService - The Service of the destination connector
- * @param readReferencedFolderRecords - Reads a referenced folder's source records, for resolving a
- *   foreign key whose value names its target by a field other than the target's remote id
+ * @param readReferencedFolderRecordPages - Streams a referenced folder's source records page by
+ *   page, for resolving a foreign key whose value names its target by a field other than the
+ *   target's remote id
  */
 export function createLookupTools(
   db: DbService,
@@ -61,7 +69,7 @@ export function createLookupTools(
   workbookId: WorkbookId,
   sourceService: Service,
   destinationService: Service,
-  readReferencedFolderRecords: ReadReferencedFolderRecords,
+  readReferencedFolderRecordPages: ReadReferencedFolderRecordPages,
 ): LookupTools {
   // ── FK mapping cache ──────────────────────────────────────────────────────
   //
@@ -97,8 +105,8 @@ export function createLookupTools(
   // name the same target table by different keys, and serving an id-keyed index to a
   // slug-keyed lookup would silently resolve nothing.
   //
-  // One bulk folder read per (folder, key path) — the same read `populateForeignKeyRecordCache`
-  // already performs to index a referenced folder for `lookup_field`.
+  // One paged folder read per (folder, key path). The index folds each page in as it streams,
+  // so only the compact key→remote-id maps are retained — never the folder's full records.
   // ──────────────────────────────────────────────────────────────────────────
   const targetKeyIndexCache = new Map<string, Promise<ForeignKeyTargetKeyIndex>>();
 
@@ -111,9 +119,10 @@ export function createLookupTools(
     let index = targetKeyIndexCache.get(cacheKey);
     if (!index) {
       // Cache the PROMISE, not the result, so concurrent FK elements share one folder read.
-      index = readReferencedFolderRecords(referencedDataFolderId).then((targetRecords) =>
-        buildForeignKeyTargetKeyIndex(targetRecords, targetKeyPath),
-      );
+      const indexUnderConstruction = createEmptyForeignKeyTargetKeyIndex();
+      index = readReferencedFolderRecordPages(referencedDataFolderId, (recordPage) =>
+        addTargetRecordsToForeignKeyTargetKeyIndex(indexUnderConstruction, recordPage, targetKeyPath),
+      ).then(() => indexUnderConstruction);
       targetKeyIndexCache.set(cacheKey, index);
     }
     return index;

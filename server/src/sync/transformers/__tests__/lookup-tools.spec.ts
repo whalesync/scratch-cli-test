@@ -29,7 +29,7 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
     } as unknown as DbService;
 
     const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
-      Promise.resolve([]),
+      Promise.resolve(),
     );
 
     return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((mapping) => {
@@ -61,7 +61,7 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
     } as unknown as DbService;
 
     const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
-      Promise.resolve([]),
+      Promise.resolve(),
     );
 
     return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((mapping) => {
@@ -82,27 +82,41 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
     { id: 'item_bbb', fields: { id: 'item_bbb', slug: 'design' } },
   ];
 
+  /** A paged reader that delivers the given pages in order, one onRecordPage call per page. */
+  const pagedReaderOf = (...pages: { id: string; fields: unknown }[][]) =>
+    jest.fn((_folderId: DataFolderId, onRecordPage: (recordPage: { id: string; fields: unknown }[]) => void) => {
+      for (const page of pages) {
+        onRecordPage(page);
+      }
+      return Promise.resolve();
+    });
+
   it('is the identity function — and reads NO records — when no key path is declared', async () => {
-    const readReferencedFolderRecords = jest.fn();
+    const readReferencedFolderRecordPages = pagedReaderOf(FRAMER_TAGS);
     const lookupTools = createLookupTools(
       EMPTY_DB,
       SYNC_ID,
       WORKBOOK_ID,
       Service.AIRTABLE,
       Service.WEBFLOW,
-      readReferencedFolderRecords,
+      readReferencedFolderRecordPages,
     );
 
     await expect(
       lookupTools.resolveForeignKeyValueToTargetRemoteId('rec_1', SOURCE_REFERENCED_FOLDER),
     ).resolves.toEqual({ kind: 'resolved', targetSourceRemoteId: 'rec_1' });
     // Every connector whose references carry ids must pay nothing for this feature.
-    expect(readReferencedFolderRecords).not.toHaveBeenCalled();
+    expect(readReferencedFolderRecordPages).not.toHaveBeenCalled();
   });
 
   it("resolves a declared key against the referenced folder's records", async () => {
-    const lookupTools = createLookupTools(EMPTY_DB, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
-      Promise.resolve(FRAMER_TAGS),
+    const lookupTools = createLookupTools(
+      EMPTY_DB,
+      SYNC_ID,
+      WORKBOOK_ID,
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      pagedReaderOf(FRAMER_TAGS),
     );
 
     await expect(
@@ -110,15 +124,34 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
     ).resolves.toEqual({ kind: 'resolved', targetSourceRemoteId: 'item_bbb' });
   });
 
-  it('reads the referenced folder ONCE however many values are resolved', async () => {
-    const readReferencedFolderRecords = jest.fn().mockResolvedValue(FRAMER_TAGS);
+  it('folds records delivered across multiple pages into one index', async () => {
+    // One record per page — the index must accumulate across onRecordPage calls.
     const lookupTools = createLookupTools(
       EMPTY_DB,
       SYNC_ID,
       WORKBOOK_ID,
       Service.AIRTABLE,
       Service.WEBFLOW,
-      readReferencedFolderRecords,
+      pagedReaderOf([FRAMER_TAGS[0]], [FRAMER_TAGS[1]]),
+    );
+
+    await expect(
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('engineering', SOURCE_REFERENCED_FOLDER, 'slug'),
+    ).resolves.toEqual({ kind: 'resolved', targetSourceRemoteId: 'item_aaa' });
+    await expect(
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('design', SOURCE_REFERENCED_FOLDER, 'slug'),
+    ).resolves.toEqual({ kind: 'resolved', targetSourceRemoteId: 'item_bbb' });
+  });
+
+  it('reads the referenced folder ONCE however many values are resolved', async () => {
+    const readReferencedFolderRecordPages = pagedReaderOf(FRAMER_TAGS);
+    const lookupTools = createLookupTools(
+      EMPTY_DB,
+      SYNC_ID,
+      WORKBOOK_ID,
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      readReferencedFolderRecordPages,
     );
 
     // Concurrent, so this also pins that the PROMISE is cached, not just the settled result.
@@ -127,19 +160,18 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
       lookupTools.resolveForeignKeyValueToTargetRemoteId('design', SOURCE_REFERENCED_FOLDER, 'slug'),
       lookupTools.resolveForeignKeyValueToTargetRemoteId('engineering', SOURCE_REFERENCED_FOLDER, 'slug'),
     ]);
-    expect(readReferencedFolderRecords).toHaveBeenCalledTimes(1);
+    expect(readReferencedFolderRecordPages).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a separate index per key path, so one does not answer for another', async () => {
-    const records = [{ id: 'r1', fields: { slug: 'a', code: 'b' } }];
-    const readReferencedFolderRecords = jest.fn().mockResolvedValue(records);
+    const readReferencedFolderRecordPages = pagedReaderOf([{ id: 'r1', fields: { slug: 'a', code: 'b' } }]);
     const lookupTools = createLookupTools(
       EMPTY_DB,
       SYNC_ID,
       WORKBOOK_ID,
       Service.AIRTABLE,
       Service.WEBFLOW,
-      readReferencedFolderRecords,
+      readReferencedFolderRecordPages,
     );
 
     await expect(
@@ -149,15 +181,35 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
     await expect(
       lookupTools.resolveForeignKeyValueToTargetRemoteId('a', SOURCE_REFERENCED_FOLDER, 'code'),
     ).resolves.toEqual({ kind: 'no_match' });
-    expect(readReferencedFolderRecords).toHaveBeenCalledTimes(2);
+    expect(readReferencedFolderRecordPages).toHaveBeenCalledTimes(2);
   });
 
   it('surfaces an ambiguous key instead of picking a claimant', async () => {
-    const lookupTools = createLookupTools(EMPTY_DB, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
-      Promise.resolve([
+    const lookupTools = createLookupTools(
+      EMPTY_DB,
+      SYNC_ID,
+      WORKBOOK_ID,
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      pagedReaderOf([
         { id: 'r1', fields: { slug: 'dup' } },
         { id: 'r2', fields: { slug: 'dup' } },
       ]),
+    );
+
+    await expect(
+      lookupTools.resolveForeignKeyValueToTargetRemoteId('dup', SOURCE_REFERENCED_FOLDER, 'slug'),
+    ).resolves.toEqual({ kind: 'ambiguous', matchCount: 2 });
+  });
+
+  it('surfaces an ambiguous key when its claimants arrive in different pages', async () => {
+    const lookupTools = createLookupTools(
+      EMPTY_DB,
+      SYNC_ID,
+      WORKBOOK_ID,
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      pagedReaderOf([{ id: 'r1', fields: { slug: 'dup' } }], [{ id: 'r2', fields: { slug: 'dup' } }]),
     );
 
     await expect(

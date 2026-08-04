@@ -1,5 +1,7 @@
 import {
+  addTargetRecordsToForeignKeyTargetKeyIndex,
   buildForeignKeyTargetKeyIndex,
+  createEmptyForeignKeyTargetKeyIndex,
   resolveForeignKeyValueAgainstTargetKeyIndex,
   type TargetRecordForKeyIndex,
 } from '../foreign-key-target-key-index';
@@ -103,5 +105,32 @@ describe('buildForeignKeyTargetKeyIndex', () => {
 
   it('handles an empty folder', () => {
     expect(resolve([], 'slug', 'anything')).toEqual({ kind: 'no_match' });
+  });
+
+  it('builds the same index however the records are split into batches', () => {
+    // The incremental builder exists so a paged folder read can fold records in page by page
+    // (DEV-11192) — every batch split must agree with the all-at-once build, including a
+    // collision whose claimants arrive in different batches.
+    const records: TargetRecordForKeyIndex[] = [
+      { id: 'a', fields: { slug: 'dup' } },
+      { id: 'b', fields: { slug: 'unique' } },
+      { id: 'c', fields: { slug: 'dup' } },
+    ];
+    const indexBuiltInOneBatch = buildForeignKeyTargetKeyIndex(records, 'slug');
+
+    const indexBuiltRecordByRecord = createEmptyForeignKeyTargetKeyIndex();
+    for (const record of records) {
+      addTargetRecordsToForeignKeyTargetKeyIndex(indexBuiltRecordByRecord, [record], 'slug');
+    }
+
+    expect(indexBuiltRecordByRecord).toEqual(indexBuiltInOneBatch);
+    expect(resolveForeignKeyValueAgainstTargetKeyIndex(indexBuiltRecordByRecord, 'dup')).toEqual({
+      kind: 'ambiguous',
+      matchCount: 2,
+    });
+    expect(resolveForeignKeyValueAgainstTargetKeyIndex(indexBuiltRecordByRecord, 'unique')).toEqual({
+      kind: 'resolved',
+      targetSourceRemoteId: 'b',
+    });
   });
 });

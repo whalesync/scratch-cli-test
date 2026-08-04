@@ -1286,7 +1286,8 @@ export class SyncService {
       workbookId,
       sourceFolder.connectorService as Service,
       destinationFolder.connectorService as Service,
-      (referencedDataFolderId) => this.readSourceRecordsForReferencedFolder(workbookId, referencedDataFolderId, actor),
+      (referencedDataFolderId, onRecordPage) =>
+        this.readSourceRecordsForReferencedFolderInPages(workbookId, referencedDataFolderId, actor, onRecordPage),
     );
 
     // Track new records so we can backfill SyncRemoteIdMapping with their file paths and record IDs
@@ -1936,37 +1937,56 @@ export class SyncService {
 
   /**
    * Read and parse every source record of a REFERENCED folder — the folder on the far end of a
-   * foreign key. Shared by the `lookup_field` record cache (which indexes them by remote id) and
-   * the FK phase's non-id target-key index (which indexes them by a declared field), so both
+   * foreign key — delivering them to `onRecordPage` one page (PAGINATED_FILE_BATCH_SIZE files) at
+   * a time. Paged rather than returned as one array so a large referenced folder (e.g. 40k Stripe
+   * invoices) is never fully materialized in memory — doing so is what OOM-killed the sync worker
+   * (DEV-11192). Shared by the `lookup_field` record cache (which indexes records by remote id)
+   * and the FK phase's non-id target-key index (which indexes them by a declared field), so both
    * agree on how a referenced record is read and what its remote id is.
    *
    * The folder's own schema supplies the `idPath`, so each record's `id` is its source remote id.
-   * Returns an empty list for a folder with no records; throws (via `parseFileToRecord`) if a
-   * record has no id at that path, which is a genuinely broken record rather than an empty table.
+   * Delivers no pages for a missing or empty folder; throws (via `parseFileToRecord`) if a record
+   * has no id at that path, which is a genuinely broken record rather than an empty table.
    */
-  private async readSourceRecordsForReferencedFolder(
+  private async readSourceRecordsForReferencedFolderInPages(
     workbookId: WorkbookId,
     referencedFolderId: DataFolderId,
     actor: Actor,
-  ): Promise<SyncRecord[]> {
+    onRecordPage: (recordPage: SyncRecord[]) => void | Promise<void>,
+  ): Promise<void> {
     const folder = await this.db.client.dataFolder.findUnique({ where: { id: referencedFolderId } });
     if (!folder) {
       WSLogger.warn({
-        source: 'SyncService.readSourceRecordsForReferencedFolder',
+        source: 'SyncService.readSourceRecordsForReferencedFolderInPages',
         message: `Referenced DataFolder ${referencedFolderId} not found`,
       });
-      return [];
+      return;
     }
     const referencedSchema = await this.readSchemaFromGit(workbookId, folder.connectorAccountId, folder.path);
     const idColumn = this.getIdColumnFromSchema(referencedSchema);
-    const files = await this.dataFolderService.getAllFileContentsByFolderId(workbookId, referencedFolderId, actor);
-    return files.map((file) => parseFileToRecord(file, idColumn));
+    let cursor: string | undefined;
+    do {
+      const page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
+        workbookId,
+        referencedFolderId,
+        actor,
+        DIRTY_BRANCH,
+        cursor,
+      );
+      await onRecordPage(page.files.map((file) => parseFileToRecord(file, idColumn)));
+      cursor = page.nextCursor;
+    } while (cursor);
   }
 
   /**
    * Populates the SyncForeignKeyRecord cache for lookup_field transformers.
    * Uses pre-collected FK values (from collectForeignKeyValues) to fetch and
    * cache the referenced record data.
+   *
+   * The cache itself lives in Postgres; memory is only a staging area, so each page of the
+   * referenced folder is filtered and inserted as it streams. Peak memory is one page of
+   * records, not the whole referenced folder — materializing the folder here is what
+   * OOM-killed the sync worker on large tables (DEV-11192).
    */
   private async populateForeignKeyRecordCache(
     syncId: SyncId,
@@ -1984,46 +2004,50 @@ export class SyncService {
     for (const [referencedFolderId, fkValues] of fkValuesByFolder) {
       if (fkValues.size === 0) continue;
 
-      // Fetch the referenced DataFolder for its schema
-      const folder = await this.db.client.dataFolder.findUnique({
-        where: { id: referencedFolderId },
+      let cachedRecordCount = 0;
+      await this.readSourceRecordsForReferencedFolderInPages(
+        workbookId,
+        referencedFolderId,
+        actor,
+        async (recordPage) => {
+          // One cache entry per referenced record some collected FK value points at. Record ids are
+          // unique within a folder, so filtering records against the FK-value set yields the same
+          // entries as looking each FK value up in a full-folder index.
+          const entries: Array<{
+            syncId: string;
+            dataFolderId: string;
+            foreignKeyValue: string;
+            recordData: Prisma.InputJsonValue;
+          }> = [];
+
+          for (const record of recordPage) {
+            if (!fkValues.has(record.id)) continue;
+            entries.push({
+              syncId,
+              dataFolderId: referencedFolderId,
+              foreignKeyValue: record.id,
+              recordData: record.fields as Prisma.InputJsonValue,
+            });
+          }
+
+          if (entries.length > 0) {
+            await this.db.client.syncForeignKeyRecord.createMany({
+              data: entries,
+              skipDuplicates: true,
+            });
+            cachedRecordCount += entries.length;
+          }
+        },
+      );
+
+      WSLogger.info({
+        source: 'SyncService.populateForeignKeyRecordCache',
+        message: 'Cached referenced records for lookup_field transformers',
+        syncId,
+        referencedFolderId,
+        collectedFkValues: fkValues.size,
+        cachedRecords: cachedRecordCount,
       });
-      if (!folder) {
-        WSLogger.warn({
-          source: 'SyncService',
-          message: `Referenced DataFolder ${referencedFolderId} not found for lookup_field transformer`,
-        });
-        continue;
-      }
-
-      const records = await this.readSourceRecordsForReferencedFolder(workbookId, referencedFolderId, actor);
-      const recordsById = new Map(records.map((r) => [r.id, r.fields]));
-
-      // Create one cache entry per unique (dataFolderId, foreignKeyValue)
-      const entries: Array<{
-        syncId: string;
-        dataFolderId: string;
-        foreignKeyValue: string;
-        recordData: Prisma.InputJsonValue;
-      }> = [];
-
-      for (const fkValue of fkValues) {
-        const recordData = recordsById.get(fkValue);
-        if (!recordData) continue;
-        entries.push({
-          syncId,
-          dataFolderId: referencedFolderId,
-          foreignKeyValue: fkValue,
-          recordData: recordData as Prisma.InputJsonValue,
-        });
-      }
-
-      if (entries.length > 0) {
-        await this.db.client.syncForeignKeyRecord.createMany({
-          data: entries,
-          skipDuplicates: true,
-        });
-      }
     }
   }
 
