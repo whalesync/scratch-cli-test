@@ -61,6 +61,12 @@ export class CronController {
         run: () => this.staleJobReaper.reapStaleCreatedJobs(),
       },
       {
+        slug: 'stale-active-job-reaper',
+        description: "Reconcile DbJobs stuck 'active' whose BullMQ job is gone/terminal, clearing folder locks.",
+        schedule: 'EVERY_5_MINUTES',
+        run: () => this.staleJobReaper.reapStaleActiveJobs(),
+      },
+      {
         slug: 'routine-run-reaper',
         description: 'Resume routine runs stuck in the running state.',
         schedule: 'EVERY_5_MINUTES',

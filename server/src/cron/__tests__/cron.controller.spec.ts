@@ -14,7 +14,7 @@ const NON_ADMIN_REQ = { user: { id: 'usr_user', role: UserRole.USER, authType: '
 describe('CronController', () => {
   let recordCountRefresh: { refreshRecordCounts: jest.Mock };
   let oldJobCleanup: { cleanupOldJobs: jest.Mock };
-  let staleJobReaper: { reapStaleCreatedJobs: jest.Mock };
+  let staleJobReaper: { reapStaleCreatedJobs: jest.Mock; reapStaleActiveJobs: jest.Mock };
   let routineRunReaper: { reapStuckRoutineRuns: jest.Mock };
   let expiredApiTokenCleanup: { cleanupExpiredWhalesyncSessionTokens: jest.Mock };
   let controller: CronController;
@@ -22,7 +22,10 @@ describe('CronController', () => {
   beforeEach(() => {
     recordCountRefresh = { refreshRecordCounts: jest.fn().mockResolvedValue(undefined) };
     oldJobCleanup = { cleanupOldJobs: jest.fn().mockResolvedValue(undefined) };
-    staleJobReaper = { reapStaleCreatedJobs: jest.fn().mockResolvedValue(undefined) };
+    staleJobReaper = {
+      reapStaleCreatedJobs: jest.fn().mockResolvedValue(undefined),
+      reapStaleActiveJobs: jest.fn().mockResolvedValue(undefined),
+    };
     routineRunReaper = { reapStuckRoutineRuns: jest.fn().mockResolvedValue(undefined) };
     expiredApiTokenCleanup = { cleanupExpiredWhalesyncSessionTokens: jest.fn().mockResolvedValue(undefined) };
     controller = new CronController(
@@ -54,6 +57,7 @@ describe('CronController', () => {
       'old-job-cleanup',
       'record-count-refresh',
       'routine-run-reaper',
+      'stale-active-job-reaper',
       'stale-job-reaper',
     ]);
     for (const job of jobs) {

@@ -1,6 +1,8 @@
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
+import { CustomMetric } from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { RoutineExecutorService } from 'src/routine/routine-executor.service';
 import { RoutineRunReaperService } from '../routine-run-reaper.service';
 
@@ -32,8 +34,15 @@ function makeReaper(deps: {
   const execute = jest.fn().mockResolvedValue(undefined);
   const routineExecutorService = { execute } as unknown as RoutineExecutorService;
 
-  const service = new RoutineRunReaperService(db, jobService, routineExecutorService);
-  return { service, execute, routineRunUpdateMany };
+  const metricsService = { logValue: jest.fn() };
+
+  const service = new RoutineRunReaperService(
+    db,
+    jobService,
+    routineExecutorService,
+    metricsService as unknown as CustomMetricsService,
+  );
+  return { service, execute, routineRunUpdateMany, metricsService };
 }
 
 describe('RoutineRunReaperService', () => {
@@ -79,6 +88,21 @@ describe('RoutineRunReaperService', () => {
     await service.reapStuckRoutineRuns();
 
     expect(execute).toHaveBeenCalledWith(RUN_ID);
+  });
+
+  it('resumes a stale pending run that was never claimed, and counts it', async () => {
+    // A run created but never claimed (instance died between create and claimRun) sits at step 0 with
+    // its steps already created (jobId null). It occupies the same partial index that blocks retriggers.
+    const { service, execute, metricsService } = makeReaper({
+      stuckRuns: [{ id: RUN_ID, currentStepIndex: 0, status: 'pending' }],
+      step: { id: 'rrs_0', stepIndex: 0, jobId: null },
+      dbJob: null,
+    });
+
+    await service.reapStuckRoutineRuns();
+
+    expect(execute).toHaveBeenCalledWith(RUN_ID);
+    expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.ROUTINE_RUN_REAPED, 1);
   });
 
   it('does not drive when the atomic re-claim is lost to another reaper/driver', async () => {

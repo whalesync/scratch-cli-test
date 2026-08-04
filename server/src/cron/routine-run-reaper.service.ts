@@ -1,10 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { RoutineRun as PrismaRoutineRun } from '@prisma/client';
 import { RoutineRunId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
+import { CustomMetric } from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { RoutineExecutorService } from 'src/routine/routine-executor.service';
 import { minutes } from 'src/utils/duration';
 
@@ -33,13 +35,16 @@ export class RoutineRunReaperService {
     private readonly db: DbService,
     private readonly jobService: JobService,
     private readonly routineExecutorService: RoutineExecutorService,
+    @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {}
 
   @Cron(CronExpression.EVERY_5_MINUTES)
   async reapStuckRoutineRuns(): Promise<void> {
     const staleCutoff = ROUTINE_RUN_STALE_THRESHOLD.inPast();
+    // Both 'pending' (created but never claimed — the driver died between create and claimRun) and
+    // 'running' runs occupy the partial unique index that blocks re-triggering, so both are reapable.
     const stuckRuns = await this.db.client.routineRun.findMany({
-      where: { status: 'running', updatedAt: { lt: staleCutoff } },
+      where: { status: { in: ['pending', 'running'] }, updatedAt: { lt: staleCutoff } },
     });
 
     if (stuckRuns.length === 0) {
@@ -60,16 +65,17 @@ export class RoutineRunReaperService {
         // Atomic re-claim: only the reaper that flips updatedAt (count === 1) drives the resume. The
         // `updatedAt < staleCutoff` guard also loses to a driver that advanced in the meantime.
         const claimed = await this.db.client.routineRun.updateMany({
-          where: { id: run.id, status: 'running', updatedAt: { lt: staleCutoff } },
+          where: { id: run.id, status: { in: ['pending', 'running'] }, updatedAt: { lt: staleCutoff } },
           data: { updatedAt: new Date() },
         });
         if (claimed.count !== 1) {
           continue;
         }
 
+        this.metricsService.logValue(CustomMetric.ROUTINE_RUN_REAPED, 1);
         WSLogger.info({
           source: 'RoutineRunReaperService',
-          message: `Resuming stuck routine run ${run.id} from step ${run.currentStepIndex}`,
+          message: `Resuming stuck '${run.status}' routine run ${run.id} from step ${run.currentStepIndex}`,
         });
         await this.routineExecutorService.execute(run.id as RoutineRunId);
       } catch (error) {

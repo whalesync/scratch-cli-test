@@ -135,6 +135,36 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       if (job?.id) {
         this.activeJobToAbortCtrl.delete(job.id.toString());
       }
+
+      // Belt-and-suspenders crash recovery: when BullMQ fails a job OUTSIDE a handler run (stall
+      // exhaustion, or a job whose instance died), processJob's catch never ran, so the DbJob is
+      // still 'active'/'created'. Reconcile it to 'failed' (guarded — a no-op if the handler already
+      // wrote a terminal status) and release any folder lock it held, so recovery doesn't wait a full
+      // StaleJobReaper cron tick. User cancellations are already handled by processJob's catch.
+      if (job?.id && !(err instanceof JobCanceledError)) {
+        const bullJobId = job.id.toString();
+        void (async () => {
+          try {
+            const dbJob = await this.jobService.getJobByBullJobId(bullJobId);
+            if (dbJob && (await this.jobService.reconcileOrphanedJob(dbJob, 'failed', err.message))) {
+              this.metricsService.logValue(CustomMetric.JOB_RECONCILED_ON_FAILED_EVENT, 1);
+              WSLogger.warn({
+                source: 'QueueService',
+                message: 'Reconciled orphaned DbJob after BullMQ-declared failure',
+                jobId: bullJobId,
+                jobType,
+              });
+            }
+          } catch (reconcileError) {
+            WSLogger.warn({
+              source: 'QueueService',
+              message: 'Failed to reconcile orphaned DbJob after job failure',
+              jobId: bullJobId,
+              error: reconcileError,
+            });
+          }
+        })();
+      }
     });
 
     this.worker.on('error', (err: Error) => {

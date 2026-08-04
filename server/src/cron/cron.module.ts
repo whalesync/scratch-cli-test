@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
+import { MetricsModule } from 'src/metrics/metrics.module';
 import { RecordCountModule } from 'src/record-count/record-count.module';
 import { RoutineExecutionModule } from 'src/routine/routine-execution.module';
 import { ScratchConfigModule } from '../config/scratch-config.module';
@@ -23,6 +24,7 @@ import { StaleJobReaperService } from './stale-job-reaper.service';
     WorkerEnqueuerModule,
     RoutineExecutionModule,
     RecordCountModule,
+    MetricsModule,
   ],
   controllers: [CronController],
   providers: [

@@ -79,6 +79,58 @@ export class JobService {
   }
 
   /**
+   * The DataFolder ids this job holds a `lock` for. Single-folder pulls set `dbJob.dataFolderId`;
+   * multi-folder ("pull all" / routine) pulls leave `dataFolderId` null and carry the set in
+   * `data.dataFolderIds` (see bull-enqueuer.service.ts `enqueuePullLinkedFolderFilesJob`).
+   */
+  private folderIdsHeldByJob(dbJob: DbJob): string[] {
+    if (dbJob.dataFolderId) {
+      return [dbJob.dataFolderId];
+    }
+    const data = dbJob.data;
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      const dataFolderIds = (data as Record<string, unknown>).dataFolderIds;
+      if (Array.isArray(dataFolderIds)) {
+        return dataFolderIds.filter((id): id is string => typeof id === 'string');
+      }
+    }
+    return [];
+  }
+
+  /**
+   * Release any `DataFolder.lock` this job acquired (a `'pull'` lock is taken before enqueue and
+   * normally cleared inside the pull handler's `finally`; a crashed worker strands it).
+   */
+  async clearFolderLocksForJob(dbJob: DbJob): Promise<void> {
+    const folderIds = this.folderIdsHeldByJob(dbJob);
+    if (folderIds.length === 0) {
+      return;
+    }
+    await this.db.client.dataFolder.updateMany({
+      where: { id: { in: folderIds }, lock: { not: null } },
+      data: { lock: null },
+    });
+  }
+
+  /**
+   * Reconcile a DbJob that a dead worker left in a non-terminal state (`created`/`active`). Guarded
+   * on `status IN ('created','active')` so it NEVER clobbers a terminal status the handler already
+   * wrote (`completed`/`failed`/`canceled`). Also releases any DataFolder lock the job held.
+   * Returns true iff it actually flipped the row.
+   */
+  async reconcileOrphanedJob(dbJob: DbJob, status: 'failed' | 'completed', error?: string): Promise<boolean> {
+    const result = await this.db.client.dbJob.updateMany({
+      where: { id: dbJob.id, status: { in: ['created', 'active'] } },
+      data: { status, error, finishedOn: new Date() },
+    });
+    if (result.count !== 1) {
+      return false;
+    }
+    await this.clearFolderLocksForJob(dbJob);
+    return true;
+  }
+
+  /**
    * Update progress and return whether cancellation has been requested.
    * This combines the progress write with the cancellation check in a single DB round-trip.
    */

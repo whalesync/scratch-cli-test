@@ -5,6 +5,8 @@ import { Job } from 'bullmq';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
+import { CustomMetric } from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { StaleJobReaperService } from '../stale-job-reaper.service';
 
@@ -36,6 +38,7 @@ describe('StaleJobReaperService', () => {
   let dbService: jest.Mocked<DbService>;
   let jobService: jest.Mocked<JobService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
+  let metricsService: { logValue: jest.Mock };
 
   beforeEach(() => {
     jest.spyOn(WSLogger, 'info').mockImplementation();
@@ -46,72 +49,126 @@ describe('StaleJobReaperService', () => {
         dbJob: {
           findMany: jest.fn().mockResolvedValue([]),
         },
-        dataFolder: {
-          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-        },
       },
     } as unknown as jest.Mocked<DbService>;
 
     jobService = {
-      updateJobStatus: jest.fn().mockResolvedValue({}),
+      reconcileOrphanedJob: jest.fn().mockResolvedValue(true),
     } as unknown as jest.Mocked<JobService>;
 
     bullEnqueuerService = {
       getJob: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<BullEnqueuerService>;
 
-    service = new StaleJobReaperService(dbService, jobService, bullEnqueuerService);
+    metricsService = { logValue: jest.fn() };
+
+    service = new StaleJobReaperService(
+      dbService,
+      jobService,
+      bullEnqueuerService,
+      metricsService as unknown as CustomMetricsService,
+    );
   });
 
   afterEach(() => jest.restoreAllMocks());
 
-  it('marks a stale created job as failed when BullMQ job is missing', async () => {
-    const staleJob = makeStaleJob();
-    (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
-    bullEnqueuerService.getJob.mockResolvedValue(undefined);
+  describe('reapStaleCreatedJobs', () => {
+    it('reconciles a stale created job to failed when the BullMQ job is missing, and counts it', async () => {
+      const staleJob = makeStaleJob();
+      (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
+      bullEnqueuerService.getJob.mockResolvedValue(undefined);
 
-    await service.reapStaleCreatedJobs();
+      await service.reapStaleCreatedJobs();
 
-    expect(jobService.updateJobStatus).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: staleJob.id,
-        status: 'failed',
-        error: expect.stringContaining('Reaped'),
-      }),
-    );
-  });
+      expect(jobService.reconcileOrphanedJob).toHaveBeenCalledWith(
+        staleJob,
+        'failed',
+        expect.stringContaining('Reaped'),
+      );
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.JOB_REAPED_STALE_CREATED, 1);
+    });
 
-  it('clears DataFolder lock for affected folders', async () => {
-    const staleJob = makeStaleJob({ dataFolderId: 'df_locked' });
-    (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
-    bullEnqueuerService.getJob.mockResolvedValue(undefined);
+    it('skips a created job whose BullMQ job is still waiting', async () => {
+      const staleJob = makeStaleJob();
+      (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
+      bullEnqueuerService.getJob.mockResolvedValue({
+        getState: jest.fn().mockResolvedValue('waiting'),
+      } as unknown as Job);
 
-    await service.reapStaleCreatedJobs();
+      await service.reapStaleCreatedJobs();
 
-    expect(dbService.client.dataFolder.updateMany).toHaveBeenCalledWith({
-      where: { id: 'df_locked', lock: { not: null } },
-      data: { lock: null },
+      expect(jobService.reconcileOrphanedJob).not.toHaveBeenCalled();
+      expect(metricsService.logValue).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when there are no stale created jobs', async () => {
+      (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([]);
+
+      await service.reapStaleCreatedJobs();
+
+      expect(jobService.reconcileOrphanedJob).not.toHaveBeenCalled();
     });
   });
 
-  it('skips jobs that are less than 5 minutes old', async () => {
-    // The service queries with createdAt < cutoff, so recent jobs won't be returned
-    (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([]);
+  describe('reapStaleActiveJobs', () => {
+    it('queries only active jobs older than the stale threshold', async () => {
+      await service.reapStaleActiveJobs();
 
-    await service.reapStaleCreatedJobs();
+      expect(dbService.client.dbJob.findMany).toHaveBeenCalledWith({
+        where: { status: 'active', processedOn: { lt: expect.any(Date) } },
+      });
+    });
 
-    expect(jobService.updateJobStatus).not.toHaveBeenCalled();
-  });
+    it('reconciles a stale active job to failed when the BullMQ job is missing, and counts it', async () => {
+      const staleJob = makeStaleJob({ status: 'active', processedOn: new Date('2025-01-01T00:00:00Z') });
+      (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
+      bullEnqueuerService.getJob.mockResolvedValue(undefined);
 
-  it('skips jobs that have a valid BullMQ job still waiting', async () => {
-    const staleJob = makeStaleJob();
-    (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
-    bullEnqueuerService.getJob.mockResolvedValue({
-      getState: jest.fn().mockResolvedValue('waiting'),
-    } as unknown as Job);
+      await service.reapStaleActiveJobs();
 
-    await service.reapStaleCreatedJobs();
+      expect(jobService.reconcileOrphanedJob).toHaveBeenCalledWith(
+        staleJob,
+        'failed',
+        expect.stringContaining('Reaped'),
+      );
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.JOB_REAPED_STALE_ACTIVE, 1);
+    });
 
-    expect(jobService.updateJobStatus).not.toHaveBeenCalled();
+    it('leaves an active job alone when a worker still owns its BullMQ job', async () => {
+      const staleJob = makeStaleJob({ status: 'active', processedOn: new Date('2025-01-01T00:00:00Z') });
+      (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
+      bullEnqueuerService.getJob.mockResolvedValue({
+        getState: jest.fn().mockResolvedValue('active'),
+      } as unknown as Job);
+
+      await service.reapStaleActiveJobs();
+
+      expect(jobService.reconcileOrphanedJob).not.toHaveBeenCalled();
+      expect(metricsService.logValue).not.toHaveBeenCalled();
+    });
+
+    it('mirrors completed when the BullMQ job finished but the DbJob was left active', async () => {
+      const staleJob = makeStaleJob({ status: 'active', processedOn: new Date('2025-01-01T00:00:00Z') });
+      (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
+      bullEnqueuerService.getJob.mockResolvedValue({
+        getState: jest.fn().mockResolvedValue('completed'),
+      } as unknown as Job);
+
+      await service.reapStaleActiveJobs();
+
+      expect(jobService.reconcileOrphanedJob).toHaveBeenCalledWith(staleJob, 'completed', undefined);
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.JOB_REAPED_STALE_ACTIVE, 1);
+    });
+
+    it('does not emit a metric when the reconcile did not flip the row (lost the race)', async () => {
+      const staleJob = makeStaleJob({ status: 'active', processedOn: new Date('2025-01-01T00:00:00Z') });
+      (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
+      bullEnqueuerService.getJob.mockResolvedValue(undefined);
+      jobService.reconcileOrphanedJob.mockResolvedValue(false);
+
+      await service.reapStaleActiveJobs();
+
+      expect(metricsService.logValue).not.toHaveBeenCalled();
+    });
   });
 });

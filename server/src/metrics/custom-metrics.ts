@@ -59,6 +59,14 @@ export enum CustomMetric {
   JOB_CLEANUP_CONNECTION_INDEX_ROWS_STALLED = 'job_cleanup_connection_index_rows_stalled',
   JOB_APPLY_SYNC_DRAFT_STALLED = 'job_apply_sync_draft_stalled',
 
+  // Orphaned-job / stuck-run recovery (DEV-11146). Each counter fires when a crash-recovery path
+  // actually reclaims something a dead worker left behind — rare "something crashed upstream"
+  // signals, charted to watch frequency and confirm fixes reduce them.
+  JOB_REAPED_STALE_ACTIVE = 'job_reaped_stale_active',
+  JOB_REAPED_STALE_CREATED = 'job_reaped_stale_created',
+  JOB_RECONCILED_ON_FAILED_EVENT = 'job_reconciled_on_failed_event',
+  ROUTINE_RUN_REAPED = 'routine_run_reaped',
+
   // Sync — unmatched-destination (Pass 3) accounting. Summed across all table
   // mappings within one sync run.
   SYNC_UNMATCHED_WITH_KEY_COUNT = 'sync_unmatched_with_key_count',
@@ -116,6 +124,10 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_APPLY_SYNC_DRAFT_FAILED:
     case CustomMetric.JOB_APPLY_SYNC_DRAFT_CANCELED:
     case CustomMetric.JOB_APPLY_SYNC_DRAFT_STALLED:
+    case CustomMetric.JOB_REAPED_STALE_ACTIVE:
+    case CustomMetric.JOB_REAPED_STALE_CREATED:
+    case CustomMetric.JOB_RECONCILED_ON_FAILED_EVENT:
+    case CustomMetric.ROUTINE_RUN_REAPED:
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
     case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
@@ -175,6 +187,10 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.JOB_APPLY_SYNC_DRAFT_FAILED:
     case CustomMetric.JOB_APPLY_SYNC_DRAFT_CANCELED:
     case CustomMetric.JOB_APPLY_SYNC_DRAFT_STALLED:
+    case CustomMetric.JOB_REAPED_STALE_ACTIVE:
+    case CustomMetric.JOB_REAPED_STALE_CREATED:
+    case CustomMetric.JOB_RECONCILED_ON_FAILED_EVENT:
+    case CustomMetric.ROUTINE_RUN_REAPED:
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
     case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
