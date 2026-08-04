@@ -12,6 +12,10 @@ import type {
 } from '@spinner/shared-types';
 import { TIME_BEARING_DATE_FORMATS } from '@spinner/shared-types';
 import type { SchemaField } from 'src/utils/schema-helpers';
+import {
+  firstIndexedValueForLookupKeys,
+  linkedTableIdLookupKeysForConnectorForeignKey,
+} from './foreign-key-linked-table-id';
 import { allocateUniqueName, elideNameToMaxLength, normalizeNameForUniqueness } from './schema-builder-unique-names';
 
 /**
@@ -53,12 +57,12 @@ export interface PlanGeneratorSource {
    */
   serviceDisplayName?: string;
   /**
-   * Remote table identifiers for THIS source. A sibling source's foreignKey
-   * whose `linkedTableId` matches one of these resolves to an in-plan `{ ref }`.
-   * The caller supplies every form the folder's compound `tableId` can be named by
-   * (see `linkedTableIdCandidateTokensForRemoteTableId`) — both the bare table-name
-   * segment and the dot-qualified `<schema>.<table>` the pg connectors emit for a
-   * non-`public` schema — so either spelling binds.
+   * Remote table identifiers for THIS source. A sibling source's foreignKey that names one of these
+   * resolves to an in-plan `{ ref }`. The caller supplies every key the folder's compound `tableId` can
+   * be named by (see `linkedTableIdIndexKeysForRemoteTableId`): the exact-identity key of the full
+   * segment array (what a connector's `linkedTableRemoteId` binds by), plus the legacy tokens — the bare
+   * table-name segment and the dot-qualified `<schema>.<table>` the pg connectors emit for a
+   * non-`public` schema — so every spelling binds.
    */
   remoteTableIds: string[];
   /** Optional `TablePropertyType` per field path (from the source's TableView). */
@@ -441,8 +445,19 @@ function areReciprocalForeignKeyFields(
   return (
     sideAForeignKey.inverseFieldId === sideB.field.remoteFieldId &&
     sideBForeignKey.inverseFieldId === sideA.field.remoteFieldId &&
-    sideB.source.remoteTableIds.includes(sideAForeignKey.linkedTableId) &&
-    sideA.source.remoteTableIds.includes(sideBForeignKey.linkedTableId)
+    foreignKeyNamesSourceTable(sideAForeignKey, sideB.source) &&
+    foreignKeyNamesSourceTable(sideBForeignKey, sideA.source)
+  );
+}
+
+/** Whether a foreign key points at the given plan source's table, by EITHER form its target can be named by. */
+function foreignKeyNamesSourceTable(
+  foreignKey: { linkedTableId: string; linkedTableRemoteId?: string[] },
+  source: PlanGeneratorSource,
+): boolean {
+  const sourceRemoteTableIdKeys = new Set(source.remoteTableIds);
+  return linkedTableIdLookupKeysForConnectorForeignKey(foreignKey).some((lookupKey) =>
+    sourceRemoteTableIdKeys.has(lookupKey),
   );
 }
 
@@ -681,7 +696,7 @@ function mapSchemaFieldToCreateFieldSpec(
   let foreignKeyNeedsTargetLinkedTableId: string | null = null;
   if (schemaField.foreignKey) {
     const linkedTableId = schemaField.foreignKey.linkedTableId;
-    const resolution = resolveForeignKey(linkedTableId, linkedIdToRef, mappingByLinkedId);
+    const resolution = resolveForeignKey(schemaField.foreignKey, linkedIdToRef, mappingByLinkedId);
     const isSiblingRefTarget = resolution !== null && 'ref' in resolution;
     const targetIsUsable = resolution !== null && !(isSiblingRefTarget && !options.allowSiblingRefForeignKeys);
     if (targetIsUsable) {
@@ -943,13 +958,17 @@ function dateCreateFieldType(field: SchemaField): CreateFieldType {
 
 /** Resolve a source foreignKey's linked table to a create-side target, or null if unresolvable. */
 function resolveForeignKey(
-  linkedTableId: string,
+  foreignKey: { linkedTableId: string; linkedTableRemoteId?: string[] },
   linkedIdToRef: Map<string, string>,
   mappingByLinkedId: Map<string, string[]>,
 ): ForeignKeyTarget | null {
-  const siblingRef = linkedIdToRef.get(linkedTableId);
+  // Try the linked table's full remote id before the connector-specific string: the string is only that
+  // connector's own name for the table and need not appear in the target's remote id at all (QuickBooks
+  // annotates `'account'` for the table whose remote id is `['Account']`).
+  const lookupKeys = linkedTableIdLookupKeysForConnectorForeignKey(foreignKey);
+  const siblingRef = firstIndexedValueForLookupKeys(linkedIdToRef, lookupKeys);
   if (siblingRef !== undefined) return { ref: siblingRef };
-  const existingRemoteTableId = mappingByLinkedId.get(linkedTableId);
+  const existingRemoteTableId = firstIndexedValueForLookupKeys(mappingByLinkedId, lookupKeys);
   if (existingRemoteTableId !== undefined) return { existingRemoteTableId };
   return null;
 }

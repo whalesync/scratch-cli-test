@@ -507,6 +507,97 @@ describe('SyncDraftService', () => {
       expect(dbService.client.syncDraft.updateMany).toHaveBeenCalled();
     });
 
+    it("allows the save when only the linked table's REMOTE ID array names a mapped table (DEV-10941)", async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock)
+        .mockResolvedValueOnce(makeDraftRow({ version: 1 }))
+        .mockResolvedValueOnce(makeDraftRow({ version: 2 }));
+      (dbService.client.syncDraft.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      // The QuickBooks shape: the connector annotates a foreign key with its LOWER-CASED wsId
+      // (`'customer'`) while `listTables` gives that table the RAW-cased remote id `['Customer']`.
+      // No candidate token of `['Customer']` is `'customer'`, so only the remote-id array binds —
+      // without it the user saw "1 foreign key field(s) point at a table that is not in this draft"
+      // for a table sitting right there in the draft.
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_invoice_src', tableId: ['Invoice'] },
+        { id: 'dfd_customer_src', tableId: ['Customer'] },
+      ]);
+
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_invoice',
+            source: { dataFolderId: 'dfd_invoice_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_invoice_dst' },
+            fieldAdditions: [
+              {
+                ref: 'fa_customer',
+                createFieldSpec: {
+                  name: 'Customer Ref',
+                  fieldType: {
+                    kind: 'foreignKey',
+                    target: { unresolvedLinkedTableId: 'customer', unresolvedLinkedTableRemoteId: ['Customer'] },
+                  },
+                },
+              },
+            ],
+            columnMappings: [],
+          },
+          {
+            ref: 'tm_customer',
+            source: { dataFolderId: 'dfd_customer_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_customer_dst' },
+            columnMappings: [],
+          },
+        ],
+      };
+
+      await expect(service.patch(DRAFT_ID, dto as never, ACTOR)).resolves.toBeDefined();
+      expect(dbService.client.syncDraft.updateMany).toHaveBeenCalled();
+    });
+
+    it('still 422s when neither the remote-id array nor the token names a mapped table (DEV-10941)', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ version: 1 }));
+      // The linked table is genuinely absent — carrying a remote-id array must not weaken the guard.
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_invoice_src', tableId: ['Invoice'] },
+      ]);
+
+      const dto = {
+        version: 1,
+        tableMappings: [
+          {
+            ref: 'tm_invoice',
+            source: { dataFolderId: 'dfd_invoice_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_invoice_dst' },
+            fieldAdditions: [
+              {
+                ref: 'fa_customer',
+                createFieldSpec: {
+                  name: 'Customer Ref',
+                  fieldType: {
+                    kind: 'foreignKey',
+                    target: { unresolvedLinkedTableId: 'customer', unresolvedLinkedTableRemoteId: ['Customer'] },
+                  },
+                },
+              },
+            ],
+            columnMappings: [],
+          },
+        ],
+      };
+
+      const error = await service.patch(DRAFT_ID, dto as never, ACTOR).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+        error: 'SYNC_DRAFT_FK_TARGET_MISSING',
+        missingTargets: [
+          { tableMappingRef: 'tm_invoice', fieldName: 'Customer Ref', target: { unresolvedLinkedTableId: 'customer' } },
+        ],
+      });
+      expect(dbService.client.syncDraft.updateMany).not.toHaveBeenCalled();
+    });
+
     it('still 422s a schema-qualified token whose table is absent from the draft (DEV-11071)', async () => {
       (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ version: 1 }));
       // Same schema is present, but no folder for `fable_qa.authors` — a bare-schema-segment

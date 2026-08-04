@@ -1,5 +1,6 @@
 import { TransformerTypes } from '@spinner/shared-types';
 import type { SchemaField } from 'src/utils/schema-helpers';
+import { linkedTableIdIndexKeysForRemoteTableId } from '../foreign-key-linked-table-id';
 import {
   generateCreatePlanFromSources,
   inferLogicalFieldType,
@@ -274,6 +275,42 @@ describe('generateCreatePlanFromSources', () => {
         unresolvedLinkedTableRemoteId: ['projectRef', 'public', 'authors'],
       },
     });
+  });
+
+  it("binds a sibling foreignKey by the linked table's remote id when the string token matches nothing (DEV-10941)", () => {
+    // QuickBooks annotates a foreign key with its LOWER-CASED wsId while `listTables` gives the
+    // linked table the RAW-cased remote id, so the string token can never match the sibling's
+    // remote-table keys — only the `linkedTableRemoteId` array binds the two.
+    const invoice: PlanGeneratorSource = {
+      ref: 'invoice',
+      dataFolderId: 'invoice',
+      tableName: 'Invoice',
+      remoteTableIds: linkedTableIdIndexKeysForRemoteTableId(['Invoice']),
+      schemaFields: [
+        field({
+          path: 'CustomerRef',
+          type: 'string',
+          foreignKey: { linkedTableId: 'customer', linkedTableRemoteId: ['Customer'] },
+        }),
+      ],
+    };
+    const customer: PlanGeneratorSource = {
+      ref: 'customer',
+      dataFolderId: 'customer',
+      tableName: 'Customer',
+      remoteTableIds: linkedTableIdIndexKeysForRemoteTableId(['Customer']),
+      schemaFields: [field({ path: 'DisplayName', type: 'string' })],
+    };
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [invoice, customer],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    expect(tables.find((table) => table.ref === 'invoice')?.fields[0].fieldType).toEqual({
+      kind: 'foreignKey',
+      target: { ref: 'customer' },
+    });
+    expect(notes.find((note) => note.sourceFieldPath === 'CustomerRef')?.status).not.toBe('needs_target');
   });
 
   it('resolves a foreignKey via linkedTableMappings to an existing remote table', () => {

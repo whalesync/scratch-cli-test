@@ -36,3 +36,73 @@ export function linkedTableIdCandidateTokensForRemoteTableId(remoteTableId: stri
   }
   return [...candidateTokens];
 }
+
+/**
+ * The EXACT-identity key for a remote table id: the form a foreign key names its target by when the connector emits
+ * `linkedTableRemoteId` — the linked table's full segment array, deep-equal to that table's `DataFolder.tableId`.
+ *
+ * Kept in its own key namespace (a NUL-prefixed, NUL-joined string — a NUL byte can't appear in a real id segment) so
+ * an exact-identity key can never collide with one of the {@link linkedTableIdCandidateTokensForRemoteTableId} tokens
+ * indexed in the same map.
+ */
+export function exactRemoteTableIdIdentityKey(remoteTableId: string[]): string {
+  return `\u0000exact\u0000${remoteTableId.join('\u0000')}`;
+}
+
+/**
+ * Every key a folder's `remoteTableId` should be INDEXED under so a foreign key naming that table — by EITHER form —
+ * finds it: the exact-identity key plus the legacy candidate tokens. Pair with
+ * {@link linkedTableIdLookupKeysForPendingForeignKeyTarget} at the lookup side.
+ */
+export function linkedTableIdIndexKeysForRemoteTableId(remoteTableId: string[]): string[] {
+  return [exactRemoteTableIdIdentityKey(remoteTableId), ...linkedTableIdCandidateTokensForRemoteTableId(remoteTableId)];
+}
+
+/**
+ * The keys a PENDING foreignKey target should be LOOKED UP by, most specific first: the exact-identity key of its
+ * `unresolvedLinkedTableRemoteId` (when the connector emitted one), then the connector-specific
+ * `unresolvedLinkedTableId` string.
+ *
+ * The array form is authoritative because the string form is only the connector's own name for the table and need not
+ * appear in the target folder's `tableId` at all: QuickBooks annotates a foreign key with its LOWER-CASED `wsId`
+ * (`'account'`) while `listTables` gives that table the RAW-cased remote id `['Account']`, so no candidate token ever
+ * matched and every QuickBooks foreign key was rejected at save with 422 `SYNC_DRAFT_FK_TARGET_MISSING` — the target
+ * table sitting right there in the draft (DEV-10941). The string stays as the fallback for connectors that don't emit
+ * the array yet.
+ */
+export function linkedTableIdLookupKeysForPendingForeignKeyTarget(target: {
+  unresolvedLinkedTableId: string;
+  unresolvedLinkedTableRemoteId?: string[];
+}): string[] {
+  return linkedTableIdLookupKeys(target.unresolvedLinkedTableId, target.unresolvedLinkedTableRemoteId);
+}
+
+/**
+ * The same lookup keys for a foreign key still in its CONNECTOR-annotated form (`x-scratch-foreign-key`, as surfaced
+ * on a `SchemaField`), before plan generation turns it into a pending target. See
+ * {@link linkedTableIdLookupKeysForPendingForeignKeyTarget}.
+ */
+export function linkedTableIdLookupKeysForConnectorForeignKey(foreignKey: {
+  linkedTableId: string;
+  linkedTableRemoteId?: string[];
+}): string[] {
+  return linkedTableIdLookupKeys(foreignKey.linkedTableId, foreignKey.linkedTableRemoteId);
+}
+
+function linkedTableIdLookupKeys(linkedTableId: string, linkedTableRemoteId: string[] | undefined): string[] {
+  return linkedTableRemoteId && linkedTableRemoteId.length > 0
+    ? [exactRemoteTableIdIdentityKey(linkedTableRemoteId), linkedTableId]
+    : [linkedTableId];
+}
+
+/** The first value indexed under any of `lookupKeys`, in order — the "most specific match wins" resolution step. */
+export function firstIndexedValueForLookupKeys<TIndexedValue>(
+  valueByIndexKey: Map<string, TIndexedValue>,
+  lookupKeys: string[],
+): TIndexedValue | undefined {
+  for (const lookupKey of lookupKeys) {
+    const indexedValue = valueByIndexKey.get(lookupKey);
+    if (indexedValue !== undefined) return indexedValue;
+  }
+  return undefined;
+}

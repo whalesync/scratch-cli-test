@@ -34,7 +34,7 @@ import { SchemaField, extractSchemaFields } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
-import { linkedTableIdCandidateTokensForRemoteTableId } from './foreign-key-linked-table-id';
+import { linkedTableIdIndexKeysForRemoteTableId } from './foreign-key-linked-table-id';
 import { selectPlanFieldsFromTableView } from './schema-builder-field-selection';
 import { normalizeCreateSchema } from './schema-builder-normalizer';
 import {
@@ -360,7 +360,7 @@ export class SchemaBuilderService {
         schemaFields,
         primaryFieldPath: toDotPath(stored.titlePath),
         idFieldPath: typeof stored.idPath === 'string' ? stored.idPath : undefined,
-        remoteTableIds: linkedTableIdCandidateTokensForRemoteTableId(folder.tableId),
+        remoteTableIds: linkedTableIdIndexKeysForRemoteTableId(folder.tableId),
         ...(folder.connectorService
           ? {
               connectorService: folder.connectorService,

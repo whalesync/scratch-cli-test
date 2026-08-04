@@ -48,7 +48,11 @@ import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
 import { buildSyncRoutineFile } from 'src/routine/routine-generator';
 import { RoutineService } from 'src/routine/routine.service';
-import { linkedTableIdCandidateTokensForRemoteTableId } from 'src/schema-builder/foreign-key-linked-table-id';
+import {
+  firstIndexedValueForLookupKeys,
+  linkedTableIdIndexKeysForRemoteTableId,
+  linkedTableIdLookupKeysForPendingForeignKeyTarget,
+} from 'src/schema-builder/foreign-key-linked-table-id';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
 import {
   columnTransformInputFromSchemaField,
@@ -239,7 +243,10 @@ function resolveFieldForeignKeyTarget(
   if (fieldType.kind !== 'foreignKey' || !('unresolvedLinkedTableId' in fieldType.target)) {
     return field;
   }
-  const resolvedTarget = resolutionBySourceRemoteTableId.get(fieldType.target.unresolvedLinkedTableId);
+  const resolvedTarget = firstIndexedValueForLookupKeys(
+    resolutionBySourceRemoteTableId,
+    linkedTableIdLookupKeysForPendingForeignKeyTarget(fieldType.target),
+  );
   return resolvedTarget ? { ...field, fieldType: { ...fieldType, target: resolvedTarget } } : field;
 }
 
@@ -980,11 +987,11 @@ export class SyncDraftService {
       }
       if (!resolvedTarget) continue;
 
-      // A foreignKey's `unresolvedLinkedTableId` is a single source remote-id string; index every
-      // token the source table's compound remote id can be named by so either form resolves.
-      for (const candidateToken of linkedTableIdCandidateTokensForRemoteTableId(sourceRemoteTableId)) {
-        if (!resolutionBySourceRemoteTableId.has(candidateToken)) {
-          resolutionBySourceRemoteTableId.set(candidateToken, resolvedTarget);
+      // A pending foreignKey names its target either by its full remote-id array or by a single
+      // connector-specific string; index every key the source table can be named by so either form resolves.
+      for (const indexKey of linkedTableIdIndexKeysForRemoteTableId(sourceRemoteTableId)) {
+        if (!resolutionBySourceRemoteTableId.has(indexKey)) {
+          resolutionBySourceRemoteTableId.set(indexKey, resolvedTarget);
         }
       }
     }
@@ -995,8 +1002,9 @@ export class SyncDraftService {
    * Reject a draft state whose foreignKey fields point at a table no longer present in
    * the draft — the "deleting the table a foreignKey points at forces you to unmap"
    * guard, and more generally the no-broken-draft-saved check. A sibling `{ ref }` must
-   * match a placeholder table in the draft; a `{ unresolvedLinkedTableId }` token must
-   * match some mapping's source remote table id (the same binding {@link
+   * match a placeholder table in the draft; a pending target must name some mapping's source
+   * remote table — by its `unresolvedLinkedTableRemoteId` array or, failing that, its
+   * `unresolvedLinkedTableId` token (the same binding {@link
    * buildForeignKeyResolutionMap} uses at materialize). A concrete `{ existingRemoteTableId }`
    * always resolves (the remote table exists regardless of the draft) and is never
    * flagged. Throws 422 `SYNC_DRAFT_FK_TARGET_MISSING` listing each stranded field so
@@ -1018,10 +1026,10 @@ export class SyncDraftService {
       where: { id: { in: sourceFolderIds } },
       select: { tableId: true },
     });
-    const draftSourceRemoteTableIds = new Set<string>();
+    const draftSourceRemoteTableIdLookupKeys = new Set<string>();
     for (const folder of folders) {
-      for (const candidateToken of linkedTableIdCandidateTokensForRemoteTableId(folder.tableId)) {
-        draftSourceRemoteTableIds.add(candidateToken);
+      for (const indexKey of linkedTableIdIndexKeysForRemoteTableId(folder.tableId)) {
+        draftSourceRemoteTableIdLookupKeys.add(indexKey);
       }
     }
 
@@ -1036,7 +1044,10 @@ export class SyncDraftService {
           });
         }
       } else if ('unresolvedLinkedTableId' in reference.target) {
-        if (!draftSourceRemoteTableIds.has(reference.target.unresolvedLinkedTableId)) {
+        const bindsToADraftSourceTable = linkedTableIdLookupKeysForPendingForeignKeyTarget(reference.target).some(
+          (lookupKey) => draftSourceRemoteTableIdLookupKeys.has(lookupKey),
+        );
+        if (!bindsToADraftSourceTable) {
           missingTargets.push({
             tableMappingRef: reference.tableMappingRef,
             fieldName: reference.fieldName,
@@ -1539,9 +1550,9 @@ export class SyncDraftService {
     });
     const sourceFolderIdByRemoteTableId = new Map<string, DataFolderId>();
     for (const folder of folders) {
-      for (const candidateToken of linkedTableIdCandidateTokensForRemoteTableId(folder.tableId)) {
-        if (!sourceFolderIdByRemoteTableId.has(candidateToken)) {
-          sourceFolderIdByRemoteTableId.set(candidateToken, folder.id as DataFolderId);
+      for (const indexKey of linkedTableIdIndexKeysForRemoteTableId(folder.tableId)) {
+        if (!sourceFolderIdByRemoteTableId.has(indexKey)) {
+          sourceFolderIdByRemoteTableId.set(indexKey, folder.id as DataFolderId);
         }
       }
     }
@@ -1642,7 +1653,12 @@ export class SyncDraftService {
     const target = this.foreignKeyTargetForColumn(ref, tableMapping);
     if (!target) return null;
     if ('unresolvedLinkedTableId' in target) {
-      return sourceFolderIdByRemoteTableId.get(target.unresolvedLinkedTableId) ?? null;
+      return (
+        firstIndexedValueForLookupKeys(
+          sourceFolderIdByRemoteTableId,
+          linkedTableIdLookupKeysForPendingForeignKeyTarget(target),
+        ) ?? null
+      );
     }
     if ('ref' in target) {
       return sourceDataFolderIdByPlaceholderCreateSpecRef.get(target.ref) ?? null;
