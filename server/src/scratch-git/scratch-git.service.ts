@@ -694,7 +694,13 @@ export class ScratchGitService {
   // ---------------------------------------------------------------------------
 
   async stageFiles(jobId: string, folder: string, files: Array<{ path: string; content: string }>): Promise<void> {
-    await this.scratchGitClient.stageFiles(jobId, folder, files);
+    // Chunk by payload size like commitFilesToBranch does — a single batch of
+    // large records (e.g. 1000+ rich-text CMS items) can exceed scratch-git's
+    // 50MB request body limit. Staging is incremental by design, so splitting
+    // one logical batch across several requests changes nothing downstream.
+    for (const chunk of this.chunkFilesBySize(files)) {
+      await this.scratchGitClient.stageFiles(jobId, folder, chunk);
+    }
   }
 
   async readStagedFiles(
@@ -718,6 +724,20 @@ export class ScratchGitService {
     batchSize?: number,
   ): Promise<{ committed: number; remaining: number; created: string[]; updated: string[]; unchanged: string[] }> {
     return this.scratchGitClient.commitStagedFiles(jobId, repoId, branch, folder, message, batchSize);
+  }
+
+  /** Commit ALL uncommitted staged files for a folder as exactly ONE git commit
+   *  (all-or-nothing: the branch never shows a partial batch). Used by the sync
+   *  engine, which stages transformed records page by page to keep server memory
+   *  flat but must land a table's writes atomically (DEV-11193). */
+  async commitStagedFilesAtomic(
+    jobId: string,
+    repoId: string,
+    branch: string,
+    folder: string,
+    message: string,
+  ): Promise<{ committed: number; createdCount: number; updatedCount: number; unchangedCount: number }> {
+    return this.scratchGitClient.commitStagedFilesAtomic(jobId, repoId, branch, folder, message);
   }
 
   async cleanupStaging(jobId: string): Promise<void> {

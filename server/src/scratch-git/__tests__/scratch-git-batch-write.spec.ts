@@ -70,6 +70,25 @@ describe('ScratchGitService.commitFilesToBranch', () => {
     expect(result).toEqual({ created: [], updated: [], unchanged: [] });
   });
 
+  it('chunks staging uploads by payload size so a spill never exceeds the request body limit', async () => {
+    const mockStageFiles = jest.fn().mockResolvedValue({ count: 0 });
+    const mockClient = { stageFiles: mockStageFiles } as unknown as ScratchGitClient;
+    const stagingService = new ScratchGitService(mockClient, {} as never);
+
+    // ~1MB per file → 60MB total: must split into 2 requests under the 40MB
+    // target (a single unchunked spill would 413 at scratch-git's 50MB limit).
+    const files = Array.from({ length: 60 }, (_, i) => makeFile(i, 1_000_000));
+    await stagingService.stageFiles('job-1', 'Charges', files);
+
+    expect(mockStageFiles).toHaveBeenCalledTimes(2);
+    const stagedCalls = mockStageFiles.mock.calls as [string, string, { path: string; content: string }[]][];
+    expect(stagedCalls[0][0]).toBe('job-1');
+    expect(stagedCalls[0][1]).toBe('Charges');
+    // Every file arrives exactly once, in order.
+    const allStagedPaths = stagedCalls.flatMap(([, , chunk]) => chunk.map((f) => f.path));
+    expect(allStagedPaths).toEqual(files.map((f) => f.path));
+  });
+
   it('aggregates created/updated/unchanged across chunks', async () => {
     let callIndex = 0;
     mockCommitFiles.mockImplementation(() => {

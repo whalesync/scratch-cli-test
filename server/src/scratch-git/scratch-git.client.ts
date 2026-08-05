@@ -54,6 +54,16 @@ export interface CommitStagedResult extends CommitFilesResult {
   remaining: number;
 }
 
+/** Response from an atomic staging commit — all staged files land in one git
+ *  commit, so there is no `remaining` to loop on. Counts rather than path
+ *  lists: the file set is unbounded (that is the point of the endpoint). */
+export interface CommitStagedAtomicResult {
+  committed: number;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+}
+
 // Maximum number of response body characters to log when an error occurs
 const MAX_LOG_RESPONSE = 1000;
 
@@ -594,6 +604,35 @@ export class ScratchGitClient {
       created: (data.created as string[]) ?? [],
       updated: (data.updated as string[]) ?? [],
       unchanged: (data.unchanged as string[]) ?? [],
+    };
+  }
+
+  /** Commit ALL uncommitted staged files for a folder as exactly ONE git commit.
+   *  Unlike commitStagedFiles (one commit per call, caller loops), the endpoint
+   *  folds every staged file into a single tree — reading from its local disk in
+   *  bounded batches, so no HTTP body limit applies — and the branch never shows
+   *  a partial state. `batchSize` bounds the endpoint's peak memory only. */
+  async commitStagedFilesAtomic(
+    jobId: string,
+    repoId: string,
+    branch: string,
+    folder: string,
+    message: string,
+    batchSize?: number,
+  ): Promise<CommitStagedAtomicResult> {
+    const result = await this.callGitApi(`/api/staging/${encodeURIComponent(jobId)}/commit-atomic`, 'POST', {
+      repoId,
+      branch,
+      folder,
+      message,
+      batchSize,
+    });
+    const data = result as Record<string, unknown>;
+    return {
+      committed: (data.committed as number) ?? 0,
+      createdCount: (data.createdCount as number) ?? 0,
+      updatedCount: (data.updatedCount as number) ?? 0,
+      unchangedCount: (data.unchangedCount as number) ?? 0,
     };
   }
 

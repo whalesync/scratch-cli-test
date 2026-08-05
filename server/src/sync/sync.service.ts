@@ -13,6 +13,7 @@ import {
   ColumnMapping,
   ColumnMappingV2,
   ConstantTypeMismatchError,
+  createPlainId,
   createScratchPendingPublishId,
   createSyncId,
   DataFolderId,
@@ -1293,8 +1294,69 @@ export class SyncService {
     // Track new records so we can backfill SyncRemoteIdMapping with their file paths and record IDs
     const newRecordMappings: Array<{ sourceRemoteId: string; filePath: string; destinationRecordId: string }> = [];
 
-    // Accumulated files to write across all source pages
-    const filesToWrite: Array<{ path: string; content: string }> = [];
+    // ── Output-file writer: bounded memory, one commit ─────────────────────────
+    //
+    // Transformed destination files are NOT accumulated for the whole table —
+    // holding every serialized record in memory is what OOM-killed the sync
+    // worker on large tables (DEV-11193). Instead, files buffer up to one source
+    // page and then spill to the scratch-git staging area (disk on the git
+    // service, tracked in its SQLite index); step 8 lands everything as exactly
+    // ONE commit via the atomic staged-commit endpoint, so the dirty branch
+    // never shows a partially-synced table and a mid-run failure leaves nothing
+    // behind — the same all-or-nothing contract the old single commitFilesToBranch
+    // call provided. A table whose writes fit in one buffer never touches
+    // staging and commits directly, keeping small syncs (and syncOneRecord) to a
+    // single round-trip.
+    //
+    // Staged paths are relative to the destination folder (scratch-git prefixes
+    // the staging folder name on commit). A destination folder at the repo root
+    // (no path prefix) can't express that split, so it stays on the buffered
+    // direct-commit path regardless of size — connector folders always have a
+    // path, so this is a defensive fallback, not an expected case.
+    //
+    // The staging key carries a per-run random component ON PURPOSE: concurrent
+    // runs of the same sync are not prevented anywhere (a manual trigger during
+    // a scheduled run, a double-enqueue), and a key shared across runs would let
+    // one run's cleanup delete another run's staged rows — or its atomic commit
+    // absorb them — silently landing a partial table as "success". A unique key
+    // also guarantees a crashed attempt's leftover rows can never be committed
+    // by any later run (only this run ever names this key); the leftover
+    // directory itself is disk garbage on the git service until swept, the same
+    // trade the pull jobs make with their per-run staging keys.
+    const stagedWriteFlushThreshold = 1000; // one source page (PAGINATED_FILE_BATCH_SIZE)
+    const stagingJobKey = `sync-${syncId}-${tableMapping.destinationDataFolderId}-${createPlainId()}`;
+    let bufferedFilesToWrite: Array<{ path: string; content: string }> = [];
+    let stagedFileCountBeforeBuffer = 0;
+    let stagingActive = false;
+    // Every queued file's repo path, in queue order — the step-8 failure loop
+    // reports exactly this set, mirroring the old all-in-memory filesToWrite.
+    const queuedFilePathsForErrorReporting: string[] = [];
+
+    const spillBufferedFilesToStaging = async (): Promise<void> => {
+      if (bufferedFilesToWrite.length === 0) {
+        return;
+      }
+      stagingActive = true;
+      const filesRelativeToDestinationFolder = bufferedFilesToWrite.map((file) => {
+        if (!file.path.startsWith(`${destinationFolderPath}/`)) {
+          throw new Error(`Sync write path "${file.path}" is not under destination folder "${destinationFolderPath}"`);
+        }
+        return { path: file.path.slice(destinationFolderPath.length + 1), content: file.content };
+      });
+      await this.scratchGitService.stageFiles(stagingJobKey, destinationFolderPath, filesRelativeToDestinationFolder);
+      stagedFileCountBeforeBuffer += bufferedFilesToWrite.length;
+      bufferedFilesToWrite = [];
+    };
+
+    // Called at page boundaries (never inside a per-record try/catch, so a
+    // staging failure fails the table sync instead of being misattributed to
+    // one record while its file stays buffered).
+    const spillBufferedFilesToStagingIfThresholdReached = async (): Promise<void> => {
+      if (destinationFolderPath !== '' && bufferedFilesToWrite.length >= stagedWriteFlushThreshold) {
+        await spillBufferedFilesToStaging();
+      }
+    };
+
     // Pass 3 'delete' policy collects orphaned destination record paths here;
     // committed as a batch deletion after the writes land (see step 8).
     const filesToDelete: string[] = [];
@@ -1494,7 +1556,8 @@ export class SyncService {
           }
 
           const content = serializeRecord(transformedFields);
-          filesToWrite.push({ path: destinationPath, content });
+          bufferedFilesToWrite.push({ path: destinationPath, content });
+          queuedFilePathsForErrorReporting.push(destinationPath);
         } catch (error) {
           result.errors.push({
             sourceRemoteId,
@@ -1502,6 +1565,8 @@ export class SyncService {
           });
         }
       }
+
+      await spillBufferedFilesToStagingIfThresholdReached();
 
       sourceCursor = page.nextCursor;
       batchCounter++;
@@ -1643,13 +1708,16 @@ export class SyncService {
             result.unmatchedDestinationCounts.archived++;
             result.recordsUpdated++;
             result.updatedPaths.push(destPath);
-            filesToWrite.push({ path: destPath, content: serializeRecord(transformResult.fields) });
+            bufferedFilesToWrite.push({ path: destPath, content: serializeRecord(transformResult.fields) });
+            queuedFilePathsForErrorReporting.push(destPath);
           } catch (error) {
             result.errors.push({
               sourceRemoteId: destRecord.id,
               error: error instanceof Error ? error.message : String(error),
             });
           }
+
+          await spillBufferedFilesToStagingIfThresholdReached();
         }
 
         WSLogger.info({
@@ -1667,27 +1735,58 @@ export class SyncService {
       await this.updateRemoteIdMappingsForNewRecords(syncId, tableMapping.sourceDataFolderId, newRecordMappings);
     }
 
-    // 8. Write all files in batch to the dirty branch
-    if (filesToWrite.length > 0) {
+    // 8. Land all queued writes on the dirty branch as ONE commit. Small runs
+    // (everything still in the buffer) commit directly; larger runs flush the
+    // buffer tail to staging and use the atomic staged commit, which folds the
+    // staged files into a single commit on the scratch-git side.
+    const totalFilesToWrite = stagedFileCountBeforeBuffer + bufferedFilesToWrite.length;
+    if (totalFilesToWrite > 0) {
       WSLogger.info({
         source: 'SyncService.syncTableMapping',
         message: `Committing files to git`,
         syncId,
-        files: filesToWrite.length,
+        files: totalFilesToWrite,
+        viaStaging: stagingActive,
       });
       try {
-        await this.scratchGitService.commitFilesToBranch(
-          destinationRepoId,
-          DIRTY_BRANCH,
-          filesToWrite,
-          'Sync: batch write files',
-        );
+        if (stagingActive) {
+          await spillBufferedFilesToStaging();
+          const atomicCommitResult = await this.scratchGitService.commitStagedFilesAtomic(
+            stagingJobKey,
+            destinationRepoId,
+            DIRTY_BRANCH,
+            destinationFolderPath,
+            'Sync: batch write files',
+          );
+          // The endpoint reports empty success when the staging index is gone
+          // (it can't tell "nothing staged" from "staging state destroyed", e.g.
+          // the git service's local disk was replaced mid-run). We know we
+          // staged files, so zero committed means the writes were lost — fail
+          // loudly instead of reporting a successful sync that wrote nothing.
+          // (No exact-count check: duplicate destination paths legitimately
+          // collapse into one staged row.)
+          if (atomicCommitResult.committed === 0) {
+            throw new Error(
+              `Atomic staged commit wrote 0 of ${totalFilesToWrite} staged file(s) — staging state was lost`,
+            );
+          }
+        } else {
+          await this.scratchGitService.commitFilesToBranch(
+            destinationRepoId,
+            DIRTY_BRANCH,
+            bufferedFilesToWrite,
+            'Sync: batch write files',
+          );
+        }
       } catch (error) {
-        // If batch write fails, all records are affected
+        // If the batch write fails, all records are affected. Nothing landed on
+        // the branch — staged files only become visible at the atomic commit —
+        // so the whole run's writes are reported failed, exactly as with the
+        // old single commitFilesToBranch call.
         const errorMessage = error instanceof Error ? error.message : String(error);
-        for (const file of filesToWrite) {
+        for (const path of queuedFilePathsForErrorReporting) {
           result.errors.push({
-            sourceRemoteId: file.path,
+            sourceRemoteId: path,
             error: `Batch write failed: ${errorMessage}`,
           });
         }
@@ -1703,6 +1802,22 @@ export class SyncService {
         result.recordsDeleted = 0;
         result.deletedPaths = [];
         return result;
+      } finally {
+        if (stagingActive) {
+          // Best-effort disk cleanup on the git service; a leftover directory is
+          // harmless garbage (its per-run key is never named again).
+          try {
+            await this.scratchGitService.cleanupStaging(stagingJobKey);
+          } catch (cleanupError) {
+            WSLogger.warn({
+              source: 'SyncService.syncTableMapping',
+              message: 'Failed to clean up sync staging directory',
+              syncId,
+              stagingJobKey,
+              error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+            });
+          }
+        }
       }
     }
 

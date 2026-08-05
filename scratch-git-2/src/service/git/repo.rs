@@ -113,6 +113,37 @@ impl GitRepo {
         Ok(())
     }
 
+    /// Update a branch ref ONLY if it still points at `expected_current` — a
+    /// compare-and-swap. Long-running commit builders (the atomic staged
+    /// commit) use this so a build orphaned by a dropped request (the axum
+    /// handler future is cancelled, releasing the write lock, but its
+    /// spawn_blocking closure keeps running) loses the race instead of
+    /// clobbering commits that landed after its lock was released.
+    pub fn force_ref_expecting_current(
+        &self,
+        branch: &str,
+        new_oid: ObjectId,
+        expected_current: ObjectId,
+    ) -> Result<(), AppError> {
+        let full_ref = format!("refs/heads/{}", branch);
+        self.repo
+            .reference(
+                full_ref.as_str(),
+                new_oid,
+                gix::refs::transaction::PreviousValue::MustExistAndMatch(
+                    gix::refs::Target::Object(expected_current),
+                ),
+                "compare-and-swap ref update",
+            )
+            .map_err(|e| {
+                AppError::internal(format!(
+                    "Failed to update ref {} (expected tip {}): {}",
+                    branch, expected_current, e
+                ))
+            })?;
+        Ok(())
+    }
+
     pub fn create_branch(&self, branch: &str, oid: ObjectId) -> Result<(), AppError> {
         self.force_ref(branch, oid)
     }
@@ -919,6 +950,57 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let repo = GitRepo::init(tmp.path(), "test").unwrap();
         (tmp, repo)
+    }
+
+    #[test]
+    fn force_ref_expecting_current_rejects_a_moved_tip() {
+        let (_tmp, repo) = setup_repo();
+        let tip_at_build_start = repo.resolve_ref(MAIN_BRANCH).unwrap();
+
+        // Another writer lands a commit while our "build" is in flight.
+        let (tip_after_other_writer, _) = repo
+            .commit_changes_to_ref(
+                MAIN_BRANCH,
+                &[FileChange {
+                    path: "other.txt".to_string(),
+                    content: Some("someone else".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                }],
+                "other writer",
+            )
+            .unwrap();
+
+        // Our orphaned build tries to CAS against the stale tip — must fail
+        // and must NOT move the ref.
+        let (orphan_tree, _) = repo
+            .apply_changes_to_tree(
+                repo.get_commit_tree_oid(tip_at_build_start).unwrap(),
+                &[FileChange {
+                    path: "orphan.txt".to_string(),
+                    content: Some("stale build".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                }],
+                "",
+            )
+            .unwrap();
+        let orphan_commit = repo
+            .write_commit(orphan_tree, &[tip_at_build_start], "orphaned build")
+            .unwrap();
+        assert!(repo
+            .force_ref_expecting_current(MAIN_BRANCH, orphan_commit, tip_at_build_start)
+            .is_err());
+        assert_eq!(
+            repo.resolve_ref(MAIN_BRANCH).unwrap(),
+            tip_after_other_writer
+        );
+
+        // With the CORRECT expected tip the same update succeeds.
+        assert!(repo
+            .force_ref_expecting_current(MAIN_BRANCH, orphan_commit, tip_after_other_writer)
+            .is_ok());
+        assert_eq!(repo.resolve_ref(MAIN_BRANCH).unwrap(), orphan_commit);
     }
 
     #[test]

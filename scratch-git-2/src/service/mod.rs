@@ -284,6 +284,10 @@ pub async fn run() {
             post(routes::staging::commit_staged),
         )
         .route(
+            "/api/staging/{jobId}/commit-atomic",
+            post(routes::staging::commit_staged_atomic),
+        )
+        .route(
             "/api/staging/{jobId}",
             delete(routes::staging::cleanup_staging),
         )

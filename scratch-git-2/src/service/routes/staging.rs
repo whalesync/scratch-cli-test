@@ -465,6 +465,220 @@ pub async fn commit_staged(
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/staging/{jobId}/commit-atomic — commit ALL staged files as ONE commit
+//
+// Unlike /commit (one git commit per call, looped by the caller until
+// drained), this folds every uncommitted staged file for the folder into a
+// single tree — reading from SQLite + disk in bounded batches — and writes
+// exactly ONE commit whose parent is the current branch tip. Until the final
+// ref update nothing is visible on the branch, so the caller gets
+// all-or-nothing semantics however many files are staged, with no HTTP body
+// limit in play (content streams from the staging dir, not the request).
+//
+// Built for the sync engine (DEV-11193): a table sync stages transformed
+// records page by page to keep server memory flat, but must land them
+// atomically — per-batch commits would leave a partially-synced table on the
+// dirty branch when a later batch fails.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitStagedAtomicBody {
+    pub repo_id: String,
+    pub branch: Option<String>,
+    pub folder: String,
+    pub message: Option<String>,
+    /// Files read from disk per tree-fold step. Bounds peak memory only —
+    /// the result is always exactly zero or one commit. Each fold iterates
+    /// the destination folder's full tree, so larger batches also mean fewer
+    /// O(folder-size) passes; the default trades ~tens of MB of content in
+    /// memory for 5× fewer folds than the /commit endpoint's batch size.
+    pub batch_size: Option<usize>,
+}
+
+pub async fn commit_staged_atomic(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+    Json(body): Json<CommitStagedAtomicBody>,
+) -> Response {
+    let branch = body.branch.unwrap_or_else(|| MAIN_BRANCH.to_string());
+    let staging_dir = state.staging_job_path(&job_id);
+    let folder_dir = staging_dir.join(&body.folder);
+    let repo_id = body.repo_id.clone();
+    let message = body
+        .message
+        .unwrap_or_else(|| format!("Commit staged files for {}", body.folder));
+    let batch_size = body.batch_size.unwrap_or(5000);
+
+    let folder_name = body.folder.clone();
+    let result = {
+        let repos_dir = state.repos_dir.clone();
+        let write_locks = state.write_locks.clone();
+        let branch_clone = branch.clone();
+        let repo_id_clone = repo_id.clone();
+
+        write_locks
+            .with_lock(&repo_id_clone, &branch_clone, || {
+                let repos_dir = repos_dir.clone();
+                let repo_id = repo_id_clone.clone();
+                let branch = branch_clone.clone();
+                let folder_name = folder_name.clone();
+                let message = message.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let git_repo = GitRepo::open(&repos_dir, &repo_id)?;
+
+                        // No index.db means nothing was ever staged — report an
+                        // empty success rather than a 404 so callers can treat
+                        // "no writes" uniformly.
+                        let db_path = staging_dir.join("index.db");
+                        if !db_path.exists() {
+                            return Ok(json!({
+                                "success": true,
+                                "committed": 0,
+                                "createdCount": 0,
+                                "updatedCount": 0,
+                                "unchangedCount": 0,
+                            }));
+                        }
+
+                        let conn = open_staging_db(&staging_dir)?;
+
+                        // Resolve the tip ONCE; every batch folds into a tree that
+                        // descends from it, and the single commit at the end gets it
+                        // as sole parent. The write lock held around this closure is
+                        // what keeps the tip from moving underneath us.
+                        let parent_oid = git_repo.resolve_ref(&branch)?;
+                        let tip_tree_oid = git_repo.get_commit_tree_oid(parent_oid)?;
+
+                        let mut current_tree_oid = tip_tree_oid;
+                        let mut total_committed = 0usize;
+                        let mut created_count = 0usize;
+                        let mut updated_count = 0usize;
+                        let mut unchanged_count = 0usize;
+
+                        // Walk uncommitted rows by rowid so batching stays stable —
+                        // rows are only marked committed after the ref moves.
+                        let mut last_rowid: i64 = 0;
+                        loop {
+                            let mut stmt = conn
+                                .prepare(
+                                    "SELECT rowid, path FROM staged_files \
+                                     WHERE folder = ?1 AND committed = 0 AND rowid > ?2 \
+                                     ORDER BY rowid LIMIT ?3",
+                                )
+                                .map_err(|e| {
+                                    AppError::internal(format!(
+                                        "Failed to query uncommitted files: {}",
+                                        e
+                                    ))
+                                })?;
+
+                            let rows: Vec<(i64, String)> = stmt
+                                .query_map(
+                                    params![folder_name, last_rowid, batch_size as i64],
+                                    |row| Ok((row.get(0)?, row.get(1)?)),
+                                )
+                                .map_err(|e| {
+                                    AppError::internal(format!(
+                                        "Failed to read uncommitted files: {}",
+                                        e
+                                    ))
+                                })?
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(|e| {
+                                    AppError::internal(format!(
+                                        "Failed to collect uncommitted paths: {}",
+                                        e
+                                    ))
+                                })?;
+
+                            if rows.is_empty() {
+                                break;
+                            }
+                            last_rowid = rows.last().map(|(rowid, _)| *rowid).unwrap_or(last_rowid);
+
+                            let changes: Vec<FileChange> = rows
+                                .iter()
+                                .map(|(_, rel_path)| {
+                                    let full_path = folder_dir.join(rel_path);
+                                    let content =
+                                        std::fs::read_to_string(&full_path).map_err(|e| {
+                                            AppError::internal(format!(
+                                                "Failed to read staged file: {}",
+                                                e
+                                            ))
+                                        })?;
+                                    Ok(FileChange {
+                                        path: format!("{}/{}", folder_name, rel_path),
+                                        content: Some(content),
+                                        oid: None,
+                                        change_type: ChangeType::Modify,
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, AppError>>()?;
+
+                            let (next_tree_oid, stats) =
+                                git_repo.apply_changes_to_tree(current_tree_oid, &changes, "")?;
+                            current_tree_oid = next_tree_oid;
+                            total_committed += rows.len();
+                            created_count += stats.created.len();
+                            updated_count += stats.updated.len();
+                            unchanged_count += stats.unchanged.len();
+                        }
+
+                        // Write the single commit — skipped when every staged file
+                        // matched the tip byte-for-byte (tree unchanged), mirroring
+                        // commit_changes_to_ref's no-op behavior.
+                        if total_committed > 0 && current_tree_oid != tip_tree_oid {
+                            let new_commit_oid =
+                                git_repo.write_commit(current_tree_oid, &[parent_oid], &message)?;
+                            // Compare-and-swap: if the tip moved while this build
+                            // ran (only possible when a dropped request released
+                            // the write lock but this spawn_blocking closure kept
+                            // going), fail rather than erase the newer commits.
+                            git_repo.force_ref_expecting_current(
+                                &branch,
+                                new_commit_oid,
+                                parent_oid,
+                            )?;
+                        }
+
+                        // Mark everything committed only after the ref moved, so a
+                        // crash mid-fold re-commits (idempotent) instead of dropping
+                        // files.
+                        if total_committed > 0 {
+                            conn.execute(
+                                "UPDATE staged_files SET committed = 1 WHERE folder = ?1 AND committed = 0",
+                                params![folder_name],
+                            )
+                            .map_err(|e| {
+                                AppError::internal(format!("Failed to mark files committed: {}", e))
+                            })?;
+                        }
+
+                        Ok::<_, AppError>(json!({
+                            "success": true,
+                            "committed": total_committed,
+                            "createdCount": created_count,
+                            "updatedCount": updated_count,
+                            "unchangedCount": unchanged_count,
+                        }))
+                    })
+                    .await
+                    .map_err(|e| AppError::internal(e.to_string()))?
+                }
+            })
+            .await
+    };
+
+    match result {
+        Ok(data) => envelope(&state, Some(&repo_id), data),
+        Err(err) => envelope_error(&state, Some(&repo_id), err),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // DELETE /api/staging/{jobId} — remove staging directory for a job
 //
 // On macOS, `remove_dir_all` can transiently fail with "Directory not empty"
@@ -947,5 +1161,122 @@ mod tests {
         let json = response_json(response).await;
         assert_eq!(json["data"]["files"].as_array().unwrap().len(), 0);
         assert_eq!(json["data"]["remaining"], 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // commit_staged_atomic — many staged batches must land as exactly ONE
+    // commit on the branch (DEV-11193).
+    // -----------------------------------------------------------------------
+
+    async fn do_commit_staged_atomic(
+        state: &AppState,
+        job_id: &str,
+        repo_id: &str,
+        folder: &str,
+        batch_size: Option<usize>,
+    ) -> serde_json::Value {
+        let response = commit_staged_atomic(
+            State(state.clone()),
+            AxumPath(job_id.to_string()),
+            Json(CommitStagedAtomicBody {
+                repo_id: repo_id.to_string(),
+                branch: Some(MAIN_BRANCH.to_string()),
+                folder: folder.to_string(),
+                message: Some("Atomic commit".to_string()),
+                batch_size,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        response_json(response).await
+    }
+
+    #[tokio::test]
+    async fn commit_staged_atomic_missing_folder_returns_empty_success() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let json =
+            do_commit_staged_atomic(&state, "job_does_not_exist", &repo_id, "Empty", None).await;
+        assert_eq!(json["data"]["success"], true);
+        assert_eq!(json["data"]["committed"], 0);
+        assert_eq!(json["data"]["createdCount"], 0);
+    }
+
+    #[tokio::test]
+    async fn commit_staged_atomic_lands_many_batches_as_one_commit() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let job_id = "job_atomic";
+        let folder = "Charges";
+
+        let files: Vec<(String, String)> = (0..5)
+            .map(|i| (format!("charge-{}.json", i), format!(r#"{{"id":{}}}"#, i)))
+            .collect();
+        let file_refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(n, c)| (n.as_str(), c.as_str()))
+            .collect();
+        do_stage_files(&state, job_id, folder, file_refs).await;
+
+        let git_repo = GitRepo::open(&state.repos_dir, &repo_id).unwrap();
+        let tip_before = git_repo.resolve_ref(MAIN_BRANCH).unwrap();
+
+        // batch_size=2 forces three internal tree-fold steps — still one commit.
+        let json = do_commit_staged_atomic(&state, job_id, &repo_id, folder, Some(2)).await;
+        assert_eq!(json["data"]["success"], true);
+        assert_eq!(json["data"]["committed"], 5);
+        assert_eq!(json["data"]["createdCount"], 5);
+        assert_eq!(json["data"]["updatedCount"], 0);
+
+        // Exactly one commit: the new tip's sole parent is the old tip.
+        let tip_after = git_repo.resolve_ref(MAIN_BRANCH).unwrap();
+        assert_ne!(tip_after, tip_before);
+        let info = git_repo.read_commit_info(tip_after).unwrap();
+        assert_eq!(info.parents, vec![tip_before]);
+        assert_eq!(info.message.trim(), "Atomic commit");
+
+        // Every staged file is readable at the new tip, under the folder prefix.
+        for i in 0..5 {
+            let content = git_repo
+                .get_file_content(MAIN_BRANCH, &format!("Charges/charge-{}.json", i))
+                .unwrap();
+            assert_eq!(
+                content.as_deref(),
+                Some(format!(r#"{{"id":{}}}"#, i).as_str())
+            );
+        }
+
+        // Re-running commits nothing (all rows marked committed) and moves no ref.
+        let json = do_commit_staged_atomic(&state, job_id, &repo_id, folder, Some(2)).await;
+        assert_eq!(json["data"]["committed"], 0);
+        assert_eq!(git_repo.resolve_ref(MAIN_BRANCH).unwrap(), tip_after);
+    }
+
+    #[tokio::test]
+    async fn commit_staged_atomic_identical_content_moves_no_ref() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let job_id = "job_atomic_noop";
+        let folder = "Charges";
+
+        do_stage_files(&state, job_id, folder, vec![("a.json", r#"{"id":1}"#)]).await;
+        do_commit_staged_atomic(&state, job_id, &repo_id, folder, None).await;
+
+        let git_repo = GitRepo::open(&state.repos_dir, &repo_id).unwrap();
+        let tip_after_first = git_repo.resolve_ref(MAIN_BRANCH).unwrap();
+
+        // Stage the SAME content again (fresh job, as a retried sync would).
+        let job_id_2 = "job_atomic_noop_retry";
+        do_stage_files(&state, job_id_2, folder, vec![("a.json", r#"{"id":1}"#)]).await;
+        let json = do_commit_staged_atomic(&state, job_id_2, &repo_id, folder, None).await;
+
+        // The staged file was processed but the tree is byte-identical, so no
+        // commit is written — mirroring commit_changes_to_ref's no-op skip.
+        assert_eq!(json["data"]["committed"], 1);
+        assert_eq!(json["data"]["unchangedCount"], 1);
+        assert_eq!(git_repo.resolve_ref(MAIN_BRANCH).unwrap(), tip_after_first);
     }
 }

@@ -337,6 +337,9 @@ describe('SyncService - syncTableMapping', () => {
   // Track written files for verification
   let writtenFiles: Array<{ path: string; content: string }>;
 
+  // Track files spilled to the scratch-git staging area (large-table write path)
+  let stagedFiles: Array<{ folder: string; path: string; content: string }>;
+
   // Schema map keyed by folder path — readSchemaFromGit returns the right schema per folder
   let gitSchemasByPath: Record<string, Record<string, unknown>>;
 
@@ -346,6 +349,7 @@ describe('SyncService - syncTableMapping', () => {
 
   beforeEach(async () => {
     writtenFiles = [];
+    stagedFiles = [];
     gitSchemasByPath = {
       '/src': { idPath: 'id' },
       '/dest': { idPath: 'id' },
@@ -391,6 +395,25 @@ describe('SyncService - syncTableMapping', () => {
           writtenFiles.push(...files);
           return Promise.resolve({ created: [], updated: [], unchanged: [] });
         }),
+      stageFiles: jest
+        .fn()
+        .mockImplementation((_stagingJobKey, folder: string, files: Array<{ path: string; content: string }>) => {
+          stagedFiles.push(...files.map((file) => ({ folder, path: file.path, content: file.content })));
+          return Promise.resolve();
+        }),
+      commitStagedFilesAtomic: jest
+        .fn()
+        // `committed` mirrors the staged-row count — the sync treats an
+        // unexpected zero as lost staging state and fails the run.
+        .mockImplementation(() =>
+          Promise.resolve({
+            committed: stagedFiles.length,
+            createdCount: stagedFiles.length,
+            updatedCount: 0,
+            unchangedCount: 0,
+          }),
+        ),
+      cleanupStaging: jest.fn().mockResolvedValue(undefined),
     } as unknown as ScratchGitService;
 
     const scheduleService = { create: jest.fn(), update: jest.fn(), delete: jest.fn() } as unknown as ScheduleService;
@@ -832,6 +855,135 @@ describe('SyncService - syncTableMapping', () => {
     expect(result.errors.length).toBeGreaterThan(0);
     expect(result.errors[0].error).toContain('Batch write failed');
   });
+
+  // -------------------------------------------------------------------------
+  // Large-table write path (DEV-11193): output files exceeding one source page
+  // spill to the scratch-git staging area page by page and land as exactly ONE
+  // atomic commit, instead of accumulating every serialized file in memory.
+  // -------------------------------------------------------------------------
+
+  /** 1001 source records served in two pages (1000 + 1), crossing the one-page spill threshold. */
+  function mockSourcePagesCrossingSpillThreshold(recordCount: number) {
+    const sourceFilesForPagination = Array.from({ length: recordCount }, (_, recordIndex) => ({
+      folderId: sourceFolderId,
+      path: `src/file${recordIndex}.json`,
+      content: `{"id": "rec${recordIndex}", "email": "user${recordIndex}@example.com"}`,
+    }));
+    (dataFolderService.getFileContentsByFolderIdPaginated as jest.Mock).mockImplementation(
+      (_wbId, folderId, _actorArg, _branch, cursor) => {
+        if (folderId !== sourceFolderId) {
+          return Promise.resolve({ files: [], nextCursor: undefined });
+        }
+        if (cursor === undefined) {
+          return Promise.resolve({ files: sourceFilesForPagination.slice(0, 1000), nextCursor: 'page-2' });
+        }
+        return Promise.resolve({ files: sourceFilesForPagination.slice(1000), nextCursor: undefined });
+      },
+    );
+  }
+
+  it('spills output files to staging and lands them as one atomic commit when writes exceed one page', async () => {
+    mockSourcePagesCrossingSpillThreshold(1001);
+
+    const tableMapping: TableMapping = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: [{ sourceColumnId: 'email', destinationColumnId: 'email_address' }],
+      recordMatching: { sourceColumnId: 'email', destinationColumnId: 'email_address' },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.recordsCreated).toBe(1001);
+
+    // The whole run landed through staging + ONE atomic commit — never the
+    // in-memory commitFilesToBranch path.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(scratchGitService.commitFilesToBranch).not.toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(scratchGitService.commitStagedFilesAtomic).toHaveBeenCalledTimes(1);
+    const atomicCommitArgs = (scratchGitService.commitStagedFilesAtomic as jest.Mock).mock.calls[0] as string[];
+    expect(atomicCommitArgs[2]).toBe(DIRTY_BRANCH);
+    expect(atomicCommitArgs[3]).toBe('dest');
+    expect(atomicCommitArgs[4]).toBe('Sync: batch write files');
+
+    // Every file was staged (page spill + tail flush), with paths RELATIVE to
+    // the destination folder — scratch-git prefixes the folder on commit.
+    expect(stagedFiles).toHaveLength(1001);
+    expect(stagedFiles.every((file) => file.folder === 'dest')).toBe(true);
+    expect(stagedFiles.every((file) => !file.path.includes('/'))).toBe(true);
+
+    // The staging key carries a per-run random component (a shared key would
+    // let concurrent runs of the same sync clean up or commit each other's
+    // rows), and every staging call in the run uses the SAME key.
+    const stagingKeysUsed = [
+      ...(scratchGitService.stageFiles as jest.Mock).mock.calls.map((call) => call[0] as string),
+      atomicCommitArgs[0],
+      ...(scratchGitService.cleanupStaging as jest.Mock).mock.calls.map((call) => call[0] as string),
+    ];
+    expect(new Set(stagingKeysUsed).size).toBe(1);
+    expect(stagingKeysUsed[0]).toMatch(new RegExp(`^sync-${syncId}-${destFolderId}-.+`));
+
+    // The staging dir is cleaned up after the commit (per-run key ⇒ no
+    // pre-spill cleanup is needed; a crashed attempt's rows are unreachable).
+    const cleanupCallOrders = (scratchGitService.cleanupStaging as jest.Mock).mock.invocationCallOrder;
+    expect(cleanupCallOrders.length).toBe(1);
+    expect(cleanupCallOrders[0]).toBeGreaterThan(
+      (scratchGitService.commitStagedFilesAtomic as jest.Mock).mock.invocationCallOrder[0],
+    );
+  }, 60_000);
+
+  it('zeroes counts and reports every record failed when the atomic staged commit fails', async () => {
+    mockSourcePagesCrossingSpillThreshold(1001);
+    (scratchGitService.commitStagedFilesAtomic as jest.Mock).mockRejectedValue(new Error('Atomic commit failed'));
+
+    const tableMapping: TableMapping = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: [{ sourceColumnId: 'email', destinationColumnId: 'email_address' }],
+      recordMatching: { sourceColumnId: 'email', destinationColumnId: 'email_address' },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    // Nothing landed (staged files only become visible at the atomic commit),
+    // so the run reports all-or-nothing failure — same contract as the old
+    // single commitFilesToBranch call.
+    expect(result.recordsCreated).toBe(0);
+    expect(result.recordsUpdated).toBe(0);
+    expect(result.errors).toHaveLength(1001);
+    expect(result.errors[0].error).toContain('Batch write failed');
+    // Staging dir still cleaned up on the failure path.
+    expect((scratchGitService.cleanupStaging as jest.Mock).mock.invocationCallOrder.length).toBe(1);
+  }, 60_000);
+
+  it('fails the run when the atomic commit reports zero committed files (staging state lost)', async () => {
+    // The endpoint returns empty success when its staging index is missing —
+    // it cannot tell "nothing staged" from "staging state destroyed". The sync
+    // KNOWS it staged files, so it must fail loudly rather than report a
+    // successful sync that wrote nothing.
+    mockSourcePagesCrossingSpillThreshold(1001);
+    (scratchGitService.commitStagedFilesAtomic as jest.Mock).mockResolvedValue({
+      committed: 0,
+      createdCount: 0,
+      updatedCount: 0,
+      unchangedCount: 0,
+    });
+
+    const tableMapping: TableMapping = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: [{ sourceColumnId: 'email', destinationColumnId: 'email_address' }],
+      recordMatching: { sourceColumnId: 'email', destinationColumnId: 'email_address' },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    expect(result.recordsCreated).toBe(0);
+    expect(result.errors).toHaveLength(1001);
+    expect(result.errors[0].error).toContain('staging state was lost');
+  }, 60_000);
 
   it('should return error when source record is missing match key field', async () => {
     const sourceFiles = [
