@@ -8,11 +8,13 @@ export const LabelValuePair = ({
   label,
   value,
   canCopy,
+  copyValue,
   minLabelWidth,
 }: {
   label: ReactNode;
   value: ReactNode;
   canCopy?: boolean;
+  copyValue?: string;
   minLabelWidth?: string | number;
 }): JSX.Element => {
   return (
@@ -29,7 +31,7 @@ export const LabelValuePair = ({
         )}
 
         {canCopy ? (
-          <CopyButton value={typeof value === 'string' ? value : JSON.stringify(value)} timeout={2000}>
+          <CopyButton value={copyValue ?? (typeof value === 'string' ? value : JSON.stringify(value))} timeout={2000}>
             {({ copied, copy }) => (
               <Tooltip label={copied ? 'Copied' : 'Copy'} withArrow position="right">
                 <ActionIcon color={copied ? 'blue' : 'gray'} size="xs" variant="subtle" onClick={copy}>

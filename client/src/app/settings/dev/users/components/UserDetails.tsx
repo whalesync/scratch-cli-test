@@ -8,6 +8,7 @@ import { ScratchpadNotifications } from '@/app/components/ScratchpadNotification
 import { ToolIconButton } from '@/app/components/ToolIconButton';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { getBuildFlavor } from '@/utils/build';
+import { RouteUrls } from '@/utils/route-urls';
 import {
   Accordion,
   Anchor,
@@ -36,6 +37,7 @@ import {
   Trash2Icon,
   UserCogIcon,
 } from 'lucide-react';
+import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { clerkUserUrl, posthogPersonUrl, stripeCustomerUrl } from '../utils';
 
@@ -364,7 +366,22 @@ export const UserDetailsCard = ({
               {details.workbooks.map((workbook) => (
                 <Tabs.Panel key={workbook.id} value={workbook.id} pt="sm">
                   <Stack gap="sm">
-                    <LabelValuePair label="ID" value={workbook.id} canCopy />
+                    <LabelValuePair
+                      label="ID"
+                      value={
+                        <Anchor
+                          component={Link}
+                          href={RouteUrls.workbookPageUrl(workbook.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          size="sm"
+                        >
+                          {workbook.id}
+                        </Anchor>
+                      }
+                      canCopy
+                      copyValue={workbook.id}
+                    />
                     <LabelValuePair
                       label="Status"
                       value={
