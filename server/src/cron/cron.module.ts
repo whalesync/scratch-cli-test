@@ -7,7 +7,7 @@ import { ScratchConfigModule } from '../config/scratch-config.module';
 import { DbModule } from '../db/db.module';
 import { JobModule } from '../job/job.module';
 import { WorkerEnqueuerModule } from '../worker-enqueuer/worker-enqueuer.module';
-import { CronController } from './cron.controller';
+import { CronDebugController } from './cron-debug.controller';
 import { ExpiredApiTokenCleanupService } from './expired-api-token-cleanup.service';
 import { OldJobCleanupService } from './old-job-cleanup.service';
 import { RecordCountRefreshService } from './record-count-refresh.service';
@@ -26,7 +26,7 @@ import { StaleJobReaperService } from './stale-job-reaper.service';
     RecordCountModule,
     MetricsModule,
   ],
-  controllers: [CronController],
+  controllers: [CronDebugController],
   providers: [
     StaleJobReaperService,
     OldJobCleanupService,

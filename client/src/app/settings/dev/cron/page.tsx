@@ -4,17 +4,17 @@ import MainContent from '@/app/components/layouts/MainContent';
 import { useCronDevTools } from '@/hooks/use-cron-dev-tools';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
-import { Badge, Button, Center, Code, Group, Loader, Stack, Table, Text } from '@mantine/core';
+import { Alert, Badge, Button, Center, Code, Group, Loader, Stack, Table, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { TriggerCronJobResponseDto } from '@spinner/shared-types';
-import { ClockIcon, PlayIcon } from 'lucide-react';
+import { ClockIcon, ExternalLinkIcon, InfoIcon, PlayIcon } from 'lucide-react';
 import { useState } from 'react';
 
 const TITLE = 'Cron Jobs';
 
 export default function CronJobsDevPage() {
   const { isAdmin, isLoading: isUserLoading } = useScratchPadUser();
-  const { jobs, isLoading, error } = useCronDevTools();
+  const { jobs, canTrigger, cronServiceLogsUrl, isLoading, error } = useCronDevTools();
   const [triggeringSlugs, setTriggeringSlugs] = useState<Set<string>>(new Set());
   const [lastResultBySlug, setLastResultBySlug] = useState<Map<string, TriggerCronJobResponseDto>>(new Map());
 
@@ -74,9 +74,33 @@ export default function CronJobsDevPage() {
       <MainContent.Body>
         <Stack gap="md">
           <Text c="dimmed" size="sm">
-            Manually trigger a scheduled cron job to run now. The job runs synchronously and the outcome is reported
-            below — intended for testing.
+            {canTrigger
+              ? 'Manually trigger a scheduled cron job to run now. The job runs synchronously and the outcome is reported below — intended for testing.'
+              : 'The cron jobs registered on the server, with their schedules — listed here for reference.'}
           </Text>
+
+          {!canTrigger && (
+            <Alert variant="light" color="gray" icon={<InfoIcon size={16} />}>
+              Manual triggering is disabled in this environment. Cron jobs run on their schedule on the dedicated cron
+              service; they&apos;re listed here for reference.
+            </Alert>
+          )}
+
+          {cronServiceLogsUrl && (
+            <Group justify="flex-end">
+              <Button
+                variant="default"
+                size="xs"
+                component="a"
+                href={cronServiceLogsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                leftSection={<ExternalLinkIcon size={14} />}
+              >
+                View cron service logs
+              </Button>
+            </Group>
+          )}
 
           {error && <Text c="red">Failed to load cron jobs: {error.message}</Text>}
 
@@ -135,6 +159,7 @@ export default function CronJobsDevPage() {
                           size="xs"
                           leftSection={<PlayIcon size={14} />}
                           loading={triggeringSlugs.has(job.slug)}
+                          disabled={!canTrigger}
                           onClick={() => handleTrigger(job.slug)}
                         >
                           Trigger

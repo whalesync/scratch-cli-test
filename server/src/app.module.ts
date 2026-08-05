@@ -8,6 +8,7 @@ import { CliModule } from './cli/cli.module';
 import { CodeMigrationsModule } from './code-migrations/code-migrations.module';
 import { ScratchConfigModule } from './config/scratch-config.module';
 import { ScratchConfigService } from './config/scratch-config.service';
+import { CronListModule } from './cron/cron-list.module';
 import { CronModule } from './cron/cron.module';
 import { DbModule } from './db/db.module';
 import { DesktopReleaseModule } from './desktop-release/desktop-release.module';
@@ -85,7 +86,12 @@ import { WorkerModule } from './worker/workers.module';
       ? [DevToolsModule, BugReportModule, CodeMigrationsModule, InternalModule]
       : []),
     ...(ScratchConfigService.isTaskWorkerService() ? [WorkerModule] : []),
+    // The cron service runs the @Cron schedules and hosts CronDebugController (manual triggering).
     ...(ScratchConfigService.isCronService() ? [CronModule] : []),
+    // The browser talks to the API service, so the read-only cron job list (CronController) is served
+    // there. It's dependency-free and must NOT load CronModule's @Cron services — that would double-fire
+    // the jobs. In the local monolith both mount; their routes don't overlap (GET list vs POST trigger).
+    ...(ScratchConfigService.isAPIService() ? [CronListModule] : []),
   ],
   controllers: [],
   providers: [

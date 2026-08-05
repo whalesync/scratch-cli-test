@@ -5,6 +5,10 @@ import useSWR from 'swr';
 
 interface UseCronDevToolsReturn {
   jobs: CronJobSummaryDto[];
+  /** Whether this environment permits manually triggering a job (false in deployed environments). */
+  canTrigger: boolean;
+  /** GCP Cloud Logging deep link for the cron service, or null in local dev (deployed environments only). */
+  cronServiceLogsUrl: string | null;
   isLoading: boolean;
   error: Error | undefined;
   refresh: () => Promise<unknown>;
@@ -23,6 +27,8 @@ export const useCronDevTools = (): UseCronDevToolsReturn => {
 
   return {
     jobs: data?.jobs ?? [],
+    canTrigger: data?.canTrigger ?? false,
+    cronServiceLogsUrl: data?.cronServiceLogsUrl ?? null,
     isLoading,
     error,
     refresh: mutate,

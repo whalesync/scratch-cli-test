@@ -16,6 +16,18 @@ export interface CronJobSummaryDto {
 /** Response of `GET /cron/jobs`. */
 export interface ListCronJobsResponseDto {
   jobs: CronJobSummaryDto[];
+  /**
+   * Whether this server permits running a job now. True only in local development; false in all
+   * deployed (Cloud Run) environments, where cron jobs run on their own schedule on the dedicated
+   * cron service. The web client uses this to disable the "Trigger" action.
+   */
+  canTrigger: boolean;
+  /**
+   * Deep link to the GCP Cloud Logging Explorer, pre-filtered to the cron service's Cloud Run logs.
+   * Non-null only in deployed (Cloud Run) environments; null in local development, where there are no
+   * Cloud Run logs to view. The web client shows a "View logs" action only when this is present.
+   */
+  cronServiceLogsUrl: string | null;
 }
 
 /** Response of `POST /cron/jobs/:slug/trigger` — the outcome of one manual run. */
