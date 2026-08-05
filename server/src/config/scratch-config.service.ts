@@ -141,6 +141,15 @@ export class ScratchConfigService {
   }
 
   /**
+   * How long (ms) QueueService.onModuleDestroy waits for the BullMQ worker to drain in-flight jobs on
+   * shutdown before giving up and letting the rest of the shutdown lifecycle run. Kept under Cloud
+   * Run's fixed ~10s SIGTERM→SIGKILL grace so the later Prisma/OTel shutdown hooks still fire (DEV-11184).
+   */
+  getWorkerShutdownTimeoutMs(): number {
+    return this.getOptionalNumberVariable('WORKER_SHUTDOWN_TIMEOUT_MS', 8_000);
+  }
+
+  /**
    * When true, API token requests bypass rate limiting as if every token had the `rate-limit:unlimited` scope.
    *
    * Defaults to true in development so the local server doesn't 429 on integration drivers,

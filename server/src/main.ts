@@ -1,4 +1,4 @@
-import { ValidationPipe } from '@nestjs/common';
+import { ShutdownSignal, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ZodValidationPipe } from 'nestjs-zod';
@@ -86,6 +86,13 @@ async function bootstrap(): Promise<void> {
   WSLogger.info({ source: 'main', message: `Listening on port: ${port}` });
   WSLogger.info({ source: 'main', message: `Microservice Type: ${process.env.SERVICE_TYPE?.toUpperCase()}` });
   WSLogger.info({ source: 'main', message: `==========================================` });
+
+  // Enable NestJS shutdown hooks so a Cloud Run SIGTERM (deploy / scale-down) runs the
+  // destroy/shutdown lifecycle instead of hard-killing the process: the BullMQ worker drains
+  // in-flight jobs (bounded — see QueueService.onModuleDestroy) and the Prisma / OTel-metrics
+  // shutdown hooks flush cleanly. Without this, in-flight jobs are orphaned and re-dispatched as
+  // stalls (DEV-11184). Scoped to the signals Cloud Run and local dev actually send.
+  app.enableShutdownHooks([ShutdownSignal.SIGTERM, ShutdownSignal.SIGINT]);
 
   await app.listen(port);
   startupFinished = true;

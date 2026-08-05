@@ -67,6 +67,12 @@ export enum CustomMetric {
   JOB_RECONCILED_ON_FAILED_EVENT = 'job_reconciled_on_failed_event',
   ROUTINE_RUN_REAPED = 'routine_run_reaped',
 
+  // Graceful-shutdown drain accounting (DEV-11184). Exactly one of these fires per worker instance on
+  // SIGTERM (Cloud Run deploy / scale-down). The DRAINED:TIMED_OUT ratio over deploys is the chartable
+  // signal that graceful shutdown is working and that deploy-induced job orphaning trends to zero.
+  WORKER_SHUTDOWN_DRAINED = 'worker_shutdown_drained',
+  WORKER_SHUTDOWN_TIMED_OUT = 'worker_shutdown_timed_out',
+
   // Sync — unmatched-destination (Pass 3) accounting. Summed across all table
   // mappings within one sync run.
   SYNC_UNMATCHED_WITH_KEY_COUNT = 'sync_unmatched_with_key_count',
@@ -133,6 +139,8 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
     case CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL:
+    case CustomMetric.WORKER_SHUTDOWN_DRAINED:
+    case CustomMetric.WORKER_SHUTDOWN_TIMED_OUT:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -195,6 +203,8 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
     case CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL:
+    case CustomMetric.WORKER_SHUTDOWN_DRAINED:
+    case CustomMetric.WORKER_SHUTDOWN_TIMED_OUT:
       return CustomMetricUnit.EVENT_COUNT;
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
       // A gauge: how many syncs remain on the frozen v1 column right now, not a

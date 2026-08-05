@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnApplicationShutdown, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Job, Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -20,7 +20,7 @@ import { JobData, JobProgress } from './jobs/union-types';
 import { WORKER_QUEUE_NAME, WORKER_QUEUE_STREAM_OPTIONS } from './worker-queue.constants';
 
 @Injectable()
-export class QueueService implements OnModuleInit, OnModuleDestroy {
+export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicationShutdown {
   private redis: IORedis | null = null;
   private pubSubRedis: IORedis | null = null;
   private worker: Worker | null = null;
@@ -400,18 +400,121 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
-    if (this.worker) {
-      await this.worker.close();
+    // Phase 1 of graceful shutdown (DEV-11184), mirroring the sibling bottlenose convention
+    // (onModuleDestroy -> pause, onApplicationShutdown -> close). NestJS only reaches these hooks
+    // because main.ts calls enableShutdownHooks(). Pausing here — the instant SIGTERM lands — stops
+    // the worker pulling NEW jobs and drains the in-flight one(s), while leaving Redis connected so
+    // the enqueuer/HTTP layer can keep working. We disconnect later, in onApplicationShutdown, once
+    // the HTTP server has drained. The drain is bounded so a long-running job can't hang the shutdown
+    // sequence past Cloud Run's ~10s grace or starve the later onApplicationShutdown hooks.
+    await this.drainWorkerWithinShutdownBudget();
+  }
+
+  async onApplicationShutdown() {
+    // Phase 2 of graceful shutdown (DEV-11184): disconnect as late as possible, after HTTP
+    // connections have terminated. Force-close the worker (its jobs already drained in
+    // onModuleDestroy, or the budget was exceeded and we must not wait again), then best-effort close
+    // the Queue and Redis clients this service owns.
+    await this.disconnectWorker();
+    await this.quitOwnedConnectionsBestEffort();
+  }
+
+  /**
+   * Race the BullMQ worker's pause (which stops new-job intake and waits for the in-flight handler(s)
+   * to finish, with no internal timeout) against the configured shutdown budget. On timeout we
+   * proceed rather than block: onApplicationShutdown force-closes the worker, and the in-flight job is
+   * left for the next instance, which re-runs it idempotently via stall-recovery / the DEV-11146
+   * reaper.
+   */
+  private async drainWorkerWithinShutdownBudget(): Promise<void> {
+    const worker = this.worker;
+    if (!worker) {
+      return;
     }
-    if (this.queue) {
-      await this.queue.close();
+    const shutdownBudgetMs = this.configService.getWorkerShutdownTimeoutMs();
+    // Swallow a late rejection (e.g. the worker being force-closed in onApplicationShutdown while this
+    // pause is still pending) so it can't surface as an unhandledRejection after we've moved on.
+    const drainedOrRejected = worker
+      .pause()
+      .then(() => 'drained' as const)
+      .catch(() => 'drained' as const);
+    let shutdownBudgetTimeoutHandle: NodeJS.Timeout | undefined;
+    const budgetExceeded = new Promise<'timed_out'>((resolve) => {
+      shutdownBudgetTimeoutHandle = setTimeout(() => resolve('timed_out'), shutdownBudgetMs);
+    });
+    const outcome = await Promise.race([drainedOrRejected, budgetExceeded]);
+    if (shutdownBudgetTimeoutHandle) {
+      clearTimeout(shutdownBudgetTimeoutHandle);
     }
-    if (this.redis) {
-      await this.redis.quit();
+    if (outcome === 'timed_out') {
+      WSLogger.warn({
+        source: 'QueueService',
+        message: `Worker did not finish draining within the ${shutdownBudgetMs}ms shutdown budget; proceeding so the remaining shutdown hooks run before SIGKILL. In-flight job(s) will be re-processed idempotently on the next instance.`,
+      });
+      this.metricsService.logValue(CustomMetric.WORKER_SHUTDOWN_TIMED_OUT, 1);
+    } else {
+      WSLogger.info({
+        source: 'QueueService',
+        message: 'Worker drained in-flight jobs and paused on shutdown',
+      });
+      this.metricsService.logValue(CustomMetric.WORKER_SHUTDOWN_DRAINED, 1);
     }
-    if (this.pubSubRedis) {
-      await this.pubSubRedis.quit();
+  }
+
+  /**
+   * Force-close the worker to disconnect its dedicated blocking Redis client. `close(true)` skips
+   * waiting for in-flight jobs: they either already drained during the onModuleDestroy pause, or the
+   * drain budget was exceeded and we must not re-wait here (BullMQ's graceful close has no internal
+   * timeout and would block until SIGKILL, starving the shutdown hooks ordered after this one).
+   */
+  private async disconnectWorker(): Promise<void> {
+    const worker = this.worker;
+    if (!worker) {
+      return;
     }
+    try {
+      await worker.close(true);
+    } catch (error) {
+      this.logShutdownCloseFailure('worker', error);
+    }
+  }
+
+  /**
+   * Best-effort teardown of the connections QueueService owns. BullMQ never closes the shared command
+   * connection (`this.redis`) itself, so we must. Each close is guarded so one failure can't abort the
+   * NestJS shutdown chain, and always runs so the process can still exit cleanly on a local Ctrl+C.
+   */
+  private async quitOwnedConnectionsBestEffort(): Promise<void> {
+    const { queue, redis, pubSubRedis } = this;
+    if (queue) {
+      try {
+        await queue.close();
+      } catch (error) {
+        this.logShutdownCloseFailure('queue', error);
+      }
+    }
+    if (redis) {
+      try {
+        await redis.quit();
+      } catch (error) {
+        this.logShutdownCloseFailure('redis', error);
+      }
+    }
+    if (pubSubRedis) {
+      try {
+        await pubSubRedis.quit();
+      } catch (error) {
+        this.logShutdownCloseFailure('pubSubRedis', error);
+      }
+    }
+  }
+
+  private logShutdownCloseFailure(resource: string, error: unknown): void {
+    WSLogger.warn({
+      source: 'QueueService',
+      message: `Failed to close ${resource} during shutdown`,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
