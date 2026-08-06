@@ -222,8 +222,7 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
     base: 'spreadsheet',
     bases: 'spreadsheets',
     logo: 'https://static.scratch.md/connector-icons/google-sheets.svg',
-    // Built hidden; flipped to true after live testing (creds land in a separate MR).
-    visible: false,
+    visible: true,
     supportsSchemaCreation: true,
     incrementalPull: false,
     incrementalPullInstructions: 'Google Sheets has no per-row modified time, so every pull re-reads the whole sheet.',
