@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Google Sheets">
+  <!-- Document body -->
+  <path fill="#0F9D58" d="M14.727 0H4.909A1.64 1.64 0 0 0 3.273 1.636v20.728A1.64 1.64 0 0 0 4.909 24h14.182a1.64 1.64 0 0 0 1.636-1.636V6z"/>
+  <!-- Folded corner -->
+  <path fill="#87CEAC" d="M14.727 0v4.364A1.64 1.64 0 0 0 16.364 6h4.363z"/>
+  <!-- Table grid -->
+  <path fill="#FFF" d="M7.364 10.364v7.09h9.272v-7.09zm1.09 1.09h2.728v1.364H8.455zm3.819 0h3.272v1.364h-3.272zm-3.818 2.455h2.727v1.364H8.455zm3.818 0h3.272v1.364h-3.272zm-3.818 2.455h2.727v1.09H8.455zm3.818 0h3.272v1.09h-3.272z"/>
+</svg>

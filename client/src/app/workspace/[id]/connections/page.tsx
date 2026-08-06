@@ -38,6 +38,7 @@ import type {
 } from '@spinner/shared-types';
 import { AuthType } from '@spinner/shared-types';
 import {
+  CloudCogIcon,
   FolderIcon,
   FolderLockIcon,
   LinkIcon,
@@ -462,6 +463,13 @@ function ServiceActions({
             <ActionIconThreeDots size="sm" />
           </Menu.Target>
           <Menu.Dropdown>
+            {/* OAuth's primary is Reconnect, but its settings (name, extras-backed
+                fields like Google Sheets' spreadsheet URLs) stay reachable here. */}
+            {isOAuth && (
+              <Menu.Item leftSection={<SettingsIcon size={16} />} onClick={onEditConnection}>
+                Edit settings
+              </Menu.Item>
+            )}
             <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={onRemove}>
               Remove connection
             </Menu.Item>
@@ -476,20 +484,22 @@ function ServiceActions({
       <button className={styles.actionBtn} onClick={onChooseTables}>
         Choose tables
       </button>
-      {isOAuth ? (
-        <button className={styles.actionBtn} onClick={onReauthorize}>
-          Reauthorize
-        </button>
-      ) : (
-        <button className={styles.actionBtn} onClick={onEditConnection}>
-          Edit settings
-        </button>
-      )}
+      {/* Edit settings applies to every connection (rename; credential re-entry
+          for API-key connectors; extras-backed fields like Google Sheets'
+          spreadsheet URLs for OAuth). OAuth's rarer Reauthorize moves to ⋮. */}
+      <button className={styles.actionBtn} onClick={onEditConnection}>
+        Edit settings
+      </button>
       <Menu>
         <Menu.Target>
           <ActionIconThreeDots size="sm" />
         </Menu.Target>
         <Menu.Dropdown>
+          {isOAuth && (
+            <Menu.Item leftSection={<CloudCogIcon size={16} />} onClick={onReauthorize}>
+              Reauthorize
+            </Menu.Item>
+          )}
           <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={onRemove}>
             Remove connection
           </Menu.Item>

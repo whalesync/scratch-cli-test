@@ -155,3 +155,20 @@ Strong references enforce referential integrity at WRITE time (409 on dangling) 
 ## Log
 
 - 2026-08-01 — Claude (test-live-export, sydney worktree) — Airtable runs 1–4 (3 connector bugs found+fixed: inference sample size, FK token form, ref-array codec); Airtable verified via REST API. Portable Text mixed-member detection bug found via Airtable data → fixed → Notion run verified the flatten end-to-end. Datetime time-loss found on Airtable → `logicalType: 'datetime'` + date-only annotation → verified on Supabase (timestamptz/date DDL). Supabase first attempt exposed DEV-11161 (`?` → `$1` in created column names; filed + fixed in pg-common with regression tests) → clean re-run. CRUD + drift passes verified on all three destinations via their own APIs. Known-generic churn evidence recorded (DEV-10556/11131/11146, DEV-10956 collapse, DEV-10955 re-proven fixed). Destination cleanup done; source state restored.
+
+## Destination: GOOGLE_SHEETS (2026-08-05, connector pre-launch audit round)
+
+Run inside the Google Sheets connector build (branch `google-sheets-connector`); this section doubles as the sheets DESTINATION shakedown. Workbooks: wkb_91BwGOVGcE (r1, save failed), wkb_Bz5mPRIIyM (r2), wkb_jDJYtvrwst (r3), **wkb_r6dUc7C4DC (r4, the verified run)** → spreadsheet `1xRKK_UoarSlZ-ucqTLAwgW_87BoFRzpzvSCsurnyFS0` ("Scratch Export", 5 tabs). Source connection cloned per run via clone-oauth-connection.mjs from coa_S8WUAP6AI4.
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Plan/save/materialize | ✅ (after fix) | r1 failed apply: `SYNC_DRAFT_FIELD_RESOLUTION_FAILED` — sheets schemas are slug-keyed, created fields are name-keyed. Fixed: create results report the raw header as remoteFieldId + additive last-resort matcher fallback in `findCreatedDestinationField`. |
+| First publish | ✅ | 221/221 records, `publishFailures: []` (r2–r4). All 5 tables in ONE new spreadsheet (new-spreadsheet sentinel + per-batch memo). |
+| Field fidelity (verified via Sheets API) | ✅ (after fixes) | r2 found booleans/numbers as STRINGS (no dest pack → picker string default) → checkbox/number/currency/percent columns now declare auto_convert packs. r4 verified: `Active` = boolValue TRUE with BOOLEAN validation, serials with DATE_TIME format, unicode/2001+4001-char texts intact, extreme dates ±serial (year 0100 = -657434, 9999 = 2958465.9…). |
+| Formatting | ✅ (after fix) | INSERT_ROWS append inherited the bold header format onto data rows and pushed pre-formatted rows down (Ryder's screenshots: bold leak, unformatted dates, checkboxes only on empty rows). Fixed: `insertDataOption: OVERWRITE` + null cells skipped on create + typed `updateCells` (null = real clear) on update. Verified at effectiveFormat level (r4): no bold, DATE_TIME on date cells, BOOLEAN validation renders on data + empty-record rows. |
+| FKs | ✅ | Single-link `Author`/`Favorite Post` resolved to destination `scr_` ids across co-created tables (qualified `spreadsheetId.gid` linkedTableId). Keyed-ref array narrowed to first (declared single-valued; `supportsManyToManyForeignKeys: false`) — accepted. Dangling/orphan refs correctly downgraded/dropped per plan notes. |
+| CRUD mirror | ✅ | Source edit ×2 (name + 2001-char longText), create, delete → rerun: 1 create / 1 delete / edits executed, 0 failures; verified in-sheet (CRUD-EDIT applied, 🚀 row appeared typed, filler-210 gone). |
+| Destination drift | ✅ | Out-of-band row deletion → rerun restored the record (fresh scr_ id, correct values). |
+| Second run no-op | ❌ known | 215 ops on unchanged data — DEV-10556 family (same scale as this source's AT/NO/SB runs; do not re-file). Sheets-specific contributors worth revisiting: `''`-producing transforms vs null-normalized pulls (e.g. Tags Empty). |
+
+Accepted downgrades: Sanity object fields (geopoint/address) sync as JSON text; multi-value arrays comma-joined (comma-in-element lossy); Portable Text flattened to plain text.

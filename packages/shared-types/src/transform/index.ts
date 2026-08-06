@@ -11,3 +11,4 @@ export {
   type DisplayTransformerConfig,
 } from './apply-display';
 export { applyJsonPath, type JsonPathEvalResult } from './apply-jsonpath';
+export { isoStringToSerialDateNumber, serialDateNumberToIsoString } from './serial-date';

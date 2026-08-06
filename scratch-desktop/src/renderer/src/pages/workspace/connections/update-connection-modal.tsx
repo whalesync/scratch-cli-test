@@ -4,7 +4,9 @@ import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { Alert, Checkbox, Group, Modal, PasswordInput, Stack, TextInput } from '@mantine/core';
 import { AuthType, type ConnectorAccount, type ConnectorSettingDefinition } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
+import { credentialFieldValidationError, stringListRowsFromAccountExtras } from './credential-field-helpers';
 import { GenericApiConnectionModal } from './generic-api-connection-modal';
+import { StringListCredentialField } from './string-list-credential-field';
 
 interface UpdateConnectionModalProps {
   opened: boolean;
@@ -48,19 +50,49 @@ function StandardUpdateConnectionModal({ opened, onClose, workbookId, connectorA
   const credentialFields: ConnectorSettingDefinition[] =
     metadata?.[connectorAccount.service]?.credentialFields?.user_provided_params ?? [];
 
+  // Connect-form fields that persist verbatim rows in extras (`extrasKey`, e.g.
+  // Google Sheets' spreadsheet URLs) stay editable after connect: prefill the
+  // rows from extras and write them back on save. All generic — the key comes
+  // from metadata, the values are the user's own input.
+  const extrasBackedFields: ConnectorSettingDefinition[] = (
+    (connectorAccount.authType === AuthType.OAUTH
+      ? metadata?.[connectorAccount.service]?.credentialFields?.oauth
+      : undefined) ?? []
+  ).filter((field) => field.type === 'string-list' && field.extrasKey !== undefined);
+  const [extrasFieldRows, setExtrasFieldRows] = useState<Record<string, string[]>>({});
+
   useEffect(() => {
     if (opened) {
       setUpdatedName(connectorAccount.displayName);
       setFieldValues({});
+      setExtrasFieldRows(
+        Object.fromEntries(
+          extrasBackedFields.map((field) => [
+            field.key,
+            stringListRowsFromAccountExtras(field, connectorAccount.extras),
+          ]),
+        ),
+      );
       setError(null);
     }
-  }, [opened, connectorAccount]);
+    // extrasBackedFields is derived from connectorAccount + static metadata.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened, connectorAccount, metadata]);
 
   const setFieldValue = (key: string, value: string | boolean) => {
     setFieldValues((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleUpdate = async () => {
+    // Validate extras-backed rows (required + per-row pattern) before saving.
+    for (const field of extrasBackedFields) {
+      const validationError = credentialFieldValidationError(field, extrasFieldRows[field.key]);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       let userProvidedParams: Record<string, string> | undefined;
@@ -80,9 +112,24 @@ function StandardUpdateConnectionModal({ opened, onClose, workbookId, connectorA
         }
       }
 
+      // Rewrite the extras-backed rows (trimmed, blanks dropped) on top of the
+      // account's existing extras — only when such fields exist, so other
+      // connectors' extras are never touched from here.
+      let updatedExtras: Record<string, unknown> | undefined;
+      if (extrasBackedFields.length > 0) {
+        updatedExtras = { ...(connectorAccount.extras ?? {}) };
+        for (const field of extrasBackedFields) {
+          if (field.extrasKey === undefined) continue;
+          updatedExtras[field.extrasKey] = (extrasFieldRows[field.key] ?? [])
+            .map((row) => row.trim())
+            .filter((row) => row.length > 0);
+        }
+      }
+
       await updateConnectorAccount(connectorAccount.id, {
         displayName: updatedName,
         ...(userProvidedParams && { userProvidedParams }),
+        ...(updatedExtras && { extras: updatedExtras }),
       });
       onClose();
     } catch (e) {
@@ -139,6 +186,15 @@ function StandardUpdateConnectionModal({ opened, onClose, workbookId, connectorA
         {isUserProvidedParams && credentialFields.length > 0 && (
           <Stack>{credentialFields.map((field) => renderField(field))}</Stack>
         )}
+
+        {extrasBackedFields.map((field) => (
+          <StringListCredentialField
+            key={field.key}
+            field={field}
+            rows={extrasFieldRows[field.key] ?? []}
+            onChange={(rows) => setExtrasFieldRows((prev) => ({ ...prev, [field.key]: rows }))}
+          />
+        ))}
 
         <Group justify="flex-end" gap="sm" mt="md">
           <ButtonSecondaryOutline onClick={onClose}>Cancel</ButtonSecondaryOutline>

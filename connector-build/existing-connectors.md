@@ -26,6 +26,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [Framer](../server/src/remote-service/connectors/library/framer/STATE.md) | ❌ | ✅ | 🟠 | ❌ | 👁️ | Free tier | ✅ | ❌ | 2026-06-19 |
 | [Generic API](../server/src/remote-service/connectors/library/generic-api/STATE.md) | ❌ | ✅ | ❌ | 🟠 | 👁️ | n/a (any API) | ❌ | ❌ | |
 | [GoHighLevel](../server/src/remote-service/connectors/library/gohighlevel/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Trial → paid | ✅ | ✅ | 2026-06-18 |
+| [Google Sheets](../server/src/remote-service/connectors/library/google-sheets/STATE.md) | ✅ | ❌ | ✅ | ❌ | 🔒 | Free tier | ✅ | ❌ | |
 | [HubSpot](../server/src/remote-service/connectors/library/hubspot/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ✅\* | |
 | [Intercom](../server/src/remote-service/connectors/library/intercom/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Trial → paid | ✅ | ❌ | |
 | [Linear](../server/src/remote-service/connectors/library/linear/STATE.md) | ✅ | ✅ | ❌ | ✅ | 👁️ | Free tier | ❌ | ❌ | |

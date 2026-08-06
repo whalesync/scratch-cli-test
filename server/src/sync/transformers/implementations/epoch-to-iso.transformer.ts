@@ -15,7 +15,7 @@ const MAX_REPRESENTABLE_EPOCH_MILLISECONDS = 8.64e15;
  * the union arms are unwrapped before checking — otherwise every optional epoch field (Stripe's
  * `canceled_at`, `trial_end`, …) would fail the type trace.
  */
-function collectSchemaTypeKeywords(schema: TSchema): string[] {
+export function collectSchemaTypeKeywords(schema: TSchema): string[] {
   const unionArms = (schema as TSchema & { anyOf?: TSchema[] }).anyOf;
   if (unionArms) {
     return unionArms.flatMap((arm) => collectSchemaTypeKeywords(arm));

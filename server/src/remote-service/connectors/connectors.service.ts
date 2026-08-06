@@ -56,6 +56,7 @@ export class ConnectorsService {
       getOAuthAccessToken: (id) => this.oauthService.getValidAccessToken(id),
       createRateLimiter: (id) => this.rateLimiterFactory.createLimiter({ service, connectorAccountId: id }),
       getFolderOptionsByTableId: (id, tableId) => this.lookupFolderOptions(id, tableId),
+      listFolderTableIds: (id) => this.listFolderTableIds(id),
       isFeatureEnabled: (flagKey) => this.evaluateFeatureFlagForUser(flagKey, userId),
     });
   }
@@ -96,5 +97,18 @@ export class ConnectorsService {
     });
     if (!folder) return null;
     return (folder.options ?? {}) as DataFolderOptions;
+  }
+
+  /**
+   * Implementation of `ConnectorFactoryContext.listFolderTableIds`. Same direct
+   * Prisma read as `lookupFolderOptions` (and for the same circular-dependency
+   * reason). Folders without a tableId (unlinked folders) are omitted.
+   */
+  private async listFolderTableIds(connectorAccountId: string): Promise<string[][]> {
+    const folders = await this.dbService.client.dataFolder.findMany({
+      where: { connectorAccountId },
+      select: { tableId: true },
+    });
+    return folders.map((folder) => folder.tableId).filter((tableId): tableId is string[] => (tableId?.length ?? 0) > 0);
   }
 }

@@ -652,8 +652,8 @@ export function ChooseTablesModal({
           <Text13Regular c="dimmed">Loading tables...</Text13Regular>
         </Group>
       ) : availableTables.length === 0 ? (
-        <Text13Regular c="dimmed" ta="center" py="xl">
-          No tables available for this connection
+        <Text13Regular c="dimmed" ta="center" py="xl" px="lg">
+          {data?.tableSearchInstructions ?? 'No tables available for this connection'}
         </Text13Regular>
       ) : (
         <ScrollArea.Autosize mah={400}>
@@ -761,7 +761,7 @@ export function ChooseTablesModal({
           )}
 
           <TextInput
-            placeholder="Search for databases..."
+            placeholder={data?.tableSearchPlaceholder ?? 'Search for databases...'}
             leftSection={<SearchIcon size={16} />}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.currentTarget.value)}
@@ -822,8 +822,8 @@ export function ChooseTablesModal({
               </Stack>
             </ScrollArea.Autosize>
           ) : (
-            <Text13Regular c="dimmed" ta="center" py="md">
-              Type to search for databases
+            <Text13Regular c="dimmed" ta="center" py="md" px="lg">
+              {data?.tableSearchInstructions ?? 'Type to search for databases'}
             </Text13Regular>
           )}
         </>

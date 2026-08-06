@@ -255,6 +255,12 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   const supportsFilter = data?.supportsFilters ?? false;
   const supportsFieldSelection = data?.supportsFieldSelection ?? false;
   const advancedSettings = useMemo(() => data?.advancedSettings ?? [], [data?.advancedSettings]);
+  // Connector-specific search-box placeholder and empty-state copy (the latter
+  // covers SEARCH mode's nothing-typed-yet state AND LIST mode's no-tables
+  // state — e.g. Google Sheets explains that spreadsheet URLs are managed on
+  // the connection). Generic fallbacks at the render sites otherwise.
+  const tableSearchPlaceholder = data?.tableSearchPlaceholder ?? 'Search for databases...';
+  const tableSearchInstructions = data?.tableSearchInstructions;
 
   // Search state for SEARCH mode
   const [searchTerm, setSearchTerm] = useState('');
@@ -908,8 +914,8 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
           <Text13Regular c="dimmed">Loading tables...</Text13Regular>
         </Group>
       ) : availableTables.length === 0 ? (
-        <Text13Regular c="dimmed" ta="center" py="xl">
-          No tables available for this connection
+        <Text13Regular c="dimmed" ta="center" py="xl" px="lg">
+          {tableSearchInstructions ?? 'No tables available for this connection'}
         </Text13Regular>
       ) : (
         <ScrollArea.Autosize mah={400}>
@@ -1029,7 +1035,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
           )}
 
           <TextInput
-            placeholder="Search for databases..."
+            placeholder={tableSearchPlaceholder}
             leftSection={<SearchIcon size={16} />}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.currentTarget.value)}
@@ -1106,8 +1112,8 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
               </Stack>
             </ScrollArea.Autosize>
           ) : (
-            <Text13Regular c="dimmed" ta="center" py="md">
-              Type to search for databases
+            <Text13Regular c="dimmed" ta="center" py="md" px="lg">
+              {tableSearchInstructions ?? 'Type to search for databases'}
             </Text13Regular>
           )}
         </>

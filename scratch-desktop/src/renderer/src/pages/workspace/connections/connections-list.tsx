@@ -10,7 +10,16 @@ import { ActionIcon, Box, Menu, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { ConnectorAccount, DataFolder, DataFolderGroup, DataFolderOptions } from '@spinner/shared-types';
 import { AuthType, ConnectorHealthStatus } from '@spinner/shared-types';
-import { FolderIcon, FolderLockIcon, Plug2Icon, PlugZapIcon, SettingsIcon, Trash2Icon, UnlinkIcon } from 'lucide-react';
+import {
+  CloudCogIcon,
+  FolderIcon,
+  FolderLockIcon,
+  Plug2Icon,
+  PlugZapIcon,
+  SettingsIcon,
+  Trash2Icon,
+  UnlinkIcon,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { AdvancedFolderSettingsModal } from './advanced-folder-settings-modal';
 import { ChooseTablesModal } from './choose-tables-modal';
@@ -470,6 +479,13 @@ function ServiceActions({
             </ActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
+            {/* OAuth's primary is Reconnect, but its settings (name, extras-backed
+                fields like Google Sheets' spreadsheet URLs) stay reachable here. */}
+            {isOAuth && (
+              <Menu.Item leftSection={<SettingsIcon size={16} />} onClick={onEditConnection}>
+                Edit settings
+              </Menu.Item>
+            )}
             <Menu.Item leftSection={<Trash2Icon size={16} />} onClick={onRemove} color="red">
               Remove connection
             </Menu.Item>
@@ -484,15 +500,12 @@ function ServiceActions({
       <button className={styles.actionBtn} onClick={onChooseTables}>
         Choose tables
       </button>
-      {isOAuth ? (
-        <button className={styles.actionBtn} onClick={onReauthorize}>
-          Reauthorize
-        </button>
-      ) : (
-        <button className={styles.actionBtn} onClick={onEditConnection}>
-          Edit settings
-        </button>
-      )}
+      {/* Edit settings applies to every connection (rename; credential re-entry
+          for API-key connectors; extras-backed fields like Google Sheets'
+          spreadsheet URLs for OAuth). OAuth's rarer Reauthorize moves to ⋮. */}
+      <button className={styles.actionBtn} onClick={onEditConnection}>
+        Edit settings
+      </button>
       <Menu>
         <Menu.Target>
           <ActionIcon variant="subtle" size="sm">
@@ -500,6 +513,11 @@ function ServiceActions({
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
+          {isOAuth && (
+            <Menu.Item leftSection={<CloudCogIcon size={16} />} onClick={onReauthorize}>
+              Reauthorize
+            </Menu.Item>
+          )}
           <Menu.Item leftSection={<Trash2Icon size={16} />} onClick={onRemove} color="red">
             Remove connection
           </Menu.Item>

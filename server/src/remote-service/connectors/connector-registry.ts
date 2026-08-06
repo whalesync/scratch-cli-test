@@ -43,6 +43,15 @@ export interface ConnectorFactoryContext {
    */
   getFolderOptionsByTableId: (connectorAccountId: string, tableId: string[]) => Promise<DataFolderOptions | null>;
   /**
+   * List the `DataFolder.tableId` of every folder on a connector account. For
+   * connectors that can't enumerate their remote resources (Google Sheets has no
+   * Drive scope, so it can't list the user's spreadsheets), the folders a user
+   * already created are the connection's memory of which resources it knows —
+   * `listTables` / `listCreateDestinations` derive their listing from them.
+   * Connectors with real list APIs ignore it (like `getFolderOptionsByTableId`).
+   */
+  listFolderTableIds: (connectorAccountId: string) => Promise<string[][]>;
+  /**
    * Evaluate a host feature flag for the user this connector instance is acting
    * on behalf of (`ctx.userId`). Lets a connector gate its own behavior behind a
    * flag without taking a dependency on the experiments / PostHog stack — the

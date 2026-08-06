@@ -2,11 +2,13 @@ import type {
   ClientSafeTransformer,
   JSONPathOptions,
   MapArrayOptions,
+  SerialDateOptions,
   TransformerConfig,
   ValueMapOptions,
   WrapObjectOptions,
 } from '../sync-mapping';
 import { applyJsonPath } from './apply-jsonpath';
+import { isoStringToSerialDateNumber, serialDateNumberToIsoString } from './serial-date';
 
 /**
  * Result of packing a value with a client-safe transformer. FAIL-CLOSED: any
@@ -54,6 +56,10 @@ function applyAnyTransformer(config: TransformerConfig, value: unknown): ClientS
         return applyMapArray(config.options, value);
       case 'value_map':
         return { ok: true, value: applyValueMap(config.options, value) };
+      case 'serial_date_to_iso':
+        return applySerialDateToIso(config.options, value);
+      case 'iso_to_serial_date':
+        return applyIsoToSerialDate(value);
       default:
         // Server-only arms (FK / asset / lookup) and any arm not (yet) ported to
         // the client fall through here — the caller refuses the write.
@@ -117,6 +123,40 @@ function applyValueMap(options: ValueMapOptions, value: unknown): unknown {
   const mappedValue = options.mapping[mappingKey];
   if (mappedValue !== undefined) return mappedValue;
   return options.onUnmapped === 'null' ? null : mappingKey;
+}
+
+/**
+ * `serial_date_to_iso` — spreadsheet serial number → ISO wall-clock string. Faithful port of
+ * `server/src/sync/transformers/implementations/serial-date-to-iso.transformer.ts`: empty
+ * (null/undefined/'') maps to `null`; a numeric string is accepted; an unconvertible value
+ * fails closed.
+ */
+function applySerialDateToIso(options: SerialDateOptions | undefined, value: unknown): ClientSafeTransformResult {
+  // Whitespace-only counts as empty — Number('  ') is 0, which would otherwise
+  // silently become the 1899-12-30 epoch.
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+    return { ok: true, value: null };
+  }
+  const serialValue = typeof value === 'string' ? Number(value) : value;
+  if (typeof serialValue !== 'number' || !Number.isFinite(serialValue)) return { ok: false };
+  const isoString = serialDateNumberToIsoString(serialValue, options?.isoShape ?? 'auto');
+  return isoString === null ? { ok: false } : { ok: true, value: isoString };
+}
+
+/**
+ * `iso_to_serial_date` — ISO date / date-time string → spreadsheet serial number. Faithful
+ * port of `server/src/sync/transformers/implementations/iso-to-serial-date.transformer.ts`:
+ * empty maps to `null`; an already-numeric value (a serial) passes through; an unparseable
+ * string fails closed.
+ */
+function applyIsoToSerialDate(value: unknown): ClientSafeTransformResult {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+    return { ok: true, value: null };
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return { ok: true, value };
+  if (typeof value !== 'string') return { ok: false };
+  const serialValue = isoStringToSerialDateNumber(value);
+  return serialValue === null ? { ok: false } : { ok: true, value: serialValue };
 }
 
 /**

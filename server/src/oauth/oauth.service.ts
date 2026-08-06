@@ -8,6 +8,8 @@ import {
 import { AuthType, ConnectorAccount, Prisma } from '@prisma/client';
 import {
   createConnectorAccountId,
+  GoogleSheetsConnectorExtras,
+  isGoogleSheetsConnectorExtras,
   parseYouTubeAdditionalChannels,
   QuickBooksConnectorExtras,
   SupabaseProjectCredentials,
@@ -22,6 +24,7 @@ import { CredentialEncryptionService } from 'src/credential-encryption/credentia
 import { WSLogger } from 'src/logger';
 import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
 import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
+import { splitGoogleSheetsSpreadsheetUrlInput } from 'src/remote-service/connectors/library/google-sheets/google-sheets-url-parsing';
 import { KnexPGClient } from 'src/remote-service/connectors/library/pg-common';
 import {
   buildConnectionString,
@@ -41,6 +44,7 @@ import { asOAuthAppVersion, OAuthAppCredentials, OAuthAppVersion } from './oauth
 import { OAuthProvider, OAuthTokenResponse } from './oauth-provider.interface';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
 import { GoHighLevelOAuthProvider } from './providers/gohighlevel-oauth.provider';
+import { GoogleSheetsOAuthProvider } from './providers/google-sheets-oauth.provider';
 import { LinearOAuthProvider } from './providers/linear-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { PipedriveOAuthProvider } from './providers/pipedrive-oauth.provider';
@@ -79,6 +83,7 @@ export class OAuthService {
     private readonly db: DbService,
     private readonly airtableProvider: AirtableOAuthProvider,
     private readonly gohighlevelProvider: GoHighLevelOAuthProvider,
+    private readonly googleSheetsProvider: GoogleSheetsOAuthProvider,
     private readonly notionProvider: NotionOAuthProvider,
     private readonly supabaseProvider: SupabaseOAuthProvider,
     private readonly webflowProvider: WebflowOAuthProvider,
@@ -97,6 +102,7 @@ export class OAuthService {
     // Register OAuth providers
     this.providers.set('AIRTABLE', this.airtableProvider);
     this.providers.set('GOHIGHLEVEL', this.gohighlevelProvider);
+    this.providers.set('GOOGLE_SHEETS', this.googleSheetsProvider);
     this.providers.set('NOTION', this.notionProvider);
     this.providers.set('SUPABASE', this.supabaseProvider);
     this.providers.set('WEBFLOW', this.webflowProvider);
@@ -170,6 +176,7 @@ export class OAuthService {
       quickbooksSandbox: options.quickbooksSandbox,
       zohoDataCenter: options.zohoDataCenter,
       youtubeAdditionalChannels: options.youtubeAdditionalChannels,
+      googleSheetsSpreadsheetUrls: options.googleSheetsSpreadsheetUrls,
       codeVerifier,
       oauthAppVersion,
       ts: Date.now(),
@@ -301,6 +308,7 @@ export class OAuthService {
         customClientId: statePayload.customClientId,
         customClientSecret: statePayload.customClientSecret,
         connectionName: statePayload.connectionName,
+        googleSheetsSpreadsheetUrls: statePayload.googleSheetsSpreadsheetUrls,
       });
 
       // Re-run Supabase project setup on re-auth to refresh credentials
@@ -324,6 +332,7 @@ export class OAuthService {
           connectionName: statePayload.connectionName,
           quickbooksSandbox: statePayload.quickbooksSandbox,
           youtubeAdditionalChannels: statePayload.youtubeAdditionalChannels,
+          googleSheetsSpreadsheetUrls: statePayload.googleSheetsSpreadsheetUrls,
         },
       );
 
@@ -510,11 +519,13 @@ export class OAuthService {
       connectionName?: string;
       quickbooksSandbox?: boolean;
       youtubeAdditionalChannels?: string;
+      googleSheetsSpreadsheetUrls?: string;
     },
   ) {
     const serviceKey = service.toUpperCase();
     const isQuickBooks = serviceKey === Service.QUICKBOOKS;
     const isYouTube = serviceKey === Service.YOUTUBE;
+    const isGoogleSheets = serviceKey === Service.GOOGLE_SHEETS;
 
     // Load the workbook to get its organizationId (don't rely on actor's organizationId)
     const workbook = await this.db.client.workbook.findUniqueOrThrow({
@@ -551,7 +562,7 @@ export class OAuthService {
     const repoPath = getDefaultRepoPath(workbook.organizationId, workbookId, accountId);
 
     // Store non-sensitive metadata in extras for direct querying
-    let extras: QuickBooksConnectorExtras | YouTubeConnectorExtras | undefined;
+    let extras: QuickBooksConnectorExtras | YouTubeConnectorExtras | GoogleSheetsConnectorExtras | undefined;
     if (isQuickBooks && tokenResponse.workspace_id) {
       extras = { realmId: tokenResponse.workspace_id, sandbox: connectionInfo?.quickbooksSandbox ?? false };
     } else if (isYouTube) {
@@ -561,6 +572,16 @@ export class OAuthService {
       const additionalChannels = parseYouTubeAdditionalChannels(connectionInfo?.youtubeAdditionalChannels);
       if (additionalChannels.length > 0) {
         extras = { additionalChannels };
+      }
+    } else if (isGoogleSheets) {
+      // Spreadsheet URL rows from the connect form, stored VERBATIM — the
+      // spreadsheets-only scope can't browse Drive, so this is the table
+      // picker's "known spreadsheets" list (ids derived at read time). Only set
+      // when non-empty so a URL-less connect (e.g. Whalesync-initiated Live
+      // Export, which bypasses the form) leaves extras null.
+      const spreadsheetUrls = splitGoogleSheetsSpreadsheetUrlInput(connectionInfo?.googleSheetsSpreadsheetUrls);
+      if (spreadsheetUrls.length > 0) {
+        extras = { spreadsheetUrls };
       }
     }
 
@@ -615,9 +636,11 @@ export class OAuthService {
       customClientId?: string;
       customClientSecret?: string;
       connectionName?: string;
+      googleSheetsSpreadsheetUrls?: string;
     },
   ): Promise<void> {
     const isQuickBooks = connectorAccount.service === 'QUICKBOOKS';
+    const isGoogleSheets = connectorAccount.service === Service.GOOGLE_SHEETS;
 
     // Prepare credentials for encryption
     // For QuickBooks, workspace-specific IDs are stored in extras (not encrypted)
@@ -635,9 +658,23 @@ export class OAuthService {
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(credentials);
 
     // Store non-sensitive metadata in extras for direct querying
-    let extras: QuickBooksConnectorExtras | undefined;
+    let extras: QuickBooksConnectorExtras | GoogleSheetsConnectorExtras | undefined;
     if (isQuickBooks && tokenResponse.workspace_id) {
       extras = { realmId: tokenResponse.workspace_id };
+    } else if (isGoogleSheets && connectionInfo?.googleSheetsSpreadsheetUrls) {
+      // Re-auth with URLs typed on the form: UNION into the existing rows (the
+      // reconnect form isn't prefilled, so replace semantics would silently
+      // drop previously-connected spreadsheets). Dedupes by parsed id, existing
+      // rows first. Managing/removing rows lives in Edit Connection instead.
+      const existingSpreadsheetUrlRows = isGoogleSheetsConnectorExtras(connectorAccount.extras)
+        ? connectorAccount.extras.spreadsheetUrls
+        : [];
+      const mergedSpreadsheetUrls = splitGoogleSheetsSpreadsheetUrlInput(
+        [...existingSpreadsheetUrlRows, connectionInfo.googleSheetsSpreadsheetUrls].join('\n'),
+      );
+      if (mergedSpreadsheetUrls.length > 0) {
+        extras = { spreadsheetUrls: mergedSpreadsheetUrls };
+      }
     }
 
     await this.db.client.connectorAccount.update({

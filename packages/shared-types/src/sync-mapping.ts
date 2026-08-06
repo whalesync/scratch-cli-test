@@ -350,6 +350,8 @@ export const TransformerTypes = {
   SkipIfDestArrayMatches: 'skip_if_dest_array_matches',
   ValueMap: 'value_map',
   EpochToIso: 'epoch_to_iso',
+  SerialDateToIso: 'serial_date_to_iso',
+  IsoToSerialDate: 'iso_to_serial_date',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -390,6 +392,8 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.SkipIfDestArrayMatches, label: 'Skip If Dest Array Matches' },
   { type: TransformerTypes.ValueMap, label: 'Value Map' },
   { type: TransformerTypes.EpochToIso, label: 'Unix Timestamp to Date' },
+  { type: TransformerTypes.SerialDateToIso, label: 'Spreadsheet Serial to Date' },
+  { type: TransformerTypes.IsoToSerialDate, label: 'Date to Spreadsheet Serial' },
 ];
 
 /** Get the display label for a transformer type */
@@ -535,6 +539,28 @@ export interface EpochToIsoOptions {
   unit?: 'seconds' | 'milliseconds';
 }
 
+/**
+ * Options for the serial_date_to_iso / iso_to_serial_date transformers — spreadsheet
+ * serial date NUMBERS (days since 1899-12-30, the Excel/Google Sheets/LibreOffice
+ * encoding; the fraction is the time of day) to/from ISO-8601 strings. Sheets' API
+ * returns date cells as serial numbers when read losslessly
+ * (`valueRenderOption=UNFORMATTED_VALUE`), so without the conversion a date exports
+ * as a bare number like `46238.5` — same failure mode as {@link EpochToIsoOptions}.
+ *
+ * Serial values are timezone-naive wall-clock times, so the ISO side carries no
+ * `Z`/offset: `45870` ↔ `2025-08-01`, `45870.5` ↔ `2025-08-01T12:00:00`. The
+ * ISO-consuming direction also accepts `Z`-suffixed timestamps (a source service's
+ * UTC instant becomes the serial of its UTC wall clock).
+ */
+export interface SerialDateOptions {
+  /**
+   * Force the ISO output shape of serial_date_to_iso. Default `'auto'`: an
+   * integer serial emits a date-only string, a fractional serial emits a
+   * date-time string.
+   */
+  isoShape?: 'auto' | 'date' | 'datetime';
+}
+
 /** Options for the wrap_object transformer */
 export interface WrapObjectOptions {
   /** Template object where "$value" strings are replaced with the source value */
@@ -614,7 +640,8 @@ export type TransformerOptions =
   | MapArrayOptions
   | SkipIfDestArrayMatchesOptions
   | ValueMapOptions
-  | EpochToIsoOptions;
+  | EpochToIsoOptions
+  | SerialDateOptions;
 
 /** Options for the notion_file_url transformer */
 export interface NotionFileUrlOptions {
@@ -651,7 +678,9 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.MapArray; options: MapArrayOptions }
   | { type: typeof TransformerTypes.SkipIfDestArrayMatches; options?: SkipIfDestArrayMatchesOptions }
   | { type: typeof TransformerTypes.ValueMap; options: ValueMapOptions }
-  | { type: typeof TransformerTypes.EpochToIso; options?: EpochToIsoOptions };
+  | { type: typeof TransformerTypes.EpochToIso; options?: EpochToIsoOptions }
+  | { type: typeof TransformerTypes.SerialDateToIso; options?: SerialDateOptions }
+  | { type: typeof TransformerTypes.IsoToSerialDate; options?: Record<string, never> };
 
 /**
  * Transformer arms that are SERVER-ONLY: their options carry a branded `DataFolderId` and

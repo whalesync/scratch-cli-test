@@ -31,6 +31,7 @@ export type OAuthStatePayload = {
   quickbooksSandbox?: boolean;
   zohoDataCenter?: string; // Zoho multi-DC: US | EU | IN | AU | JP | CA | CN | SA
   youtubeAdditionalChannels?: string; // YouTube: raw extra channel-id list (parsed into extras.additionalChannels)
+  googleSheetsSpreadsheetUrls?: string; // Google Sheets: raw spreadsheet URL/id list (parsed into extras.spreadsheetIds)
   codeVerifier?: string;
   // Which OAuth *app* generation this flow is authorizing against. Chosen at initiate and
   // echoed back so the code exchange uses the same app's credentials and the connection is

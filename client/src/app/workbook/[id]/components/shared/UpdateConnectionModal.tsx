@@ -8,6 +8,11 @@ import { Alert, Checkbox, ModalProps, PasswordInput, Stack, TextInput } from '@m
 import { AuthType, ConnectorAccount, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 import { GenericApiConnectionModal } from './GenericApiConnectionModal';
+import {
+  credentialFieldValidationError,
+  StringListCredentialField,
+  stringListRowsFromAccountExtras,
+} from './StringListCredentialField';
 
 interface UpdateConnectionModalProps extends ModalProps {
   connectorAccount: ConnectorAccount | null;
@@ -43,12 +48,33 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
       ? metadata?.[connectorAccount.service]?.credentialFields?.user_provided_params
       : undefined) ?? [];
 
+  // Connect-form fields that persist verbatim rows in extras (`extrasKey`, e.g.
+  // Google Sheets' spreadsheet URLs) stay editable after connect: prefill the
+  // rows from extras and write them back on save. All generic — the key comes
+  // from metadata, the values are the user's own input.
+  const extrasBackedFields: ConnectorSettingDefinition[] = (
+    (connectorAccount?.service && connectorAccount.authType === AuthType.OAUTH
+      ? metadata?.[connectorAccount.service]?.credentialFields?.oauth
+      : undefined) ?? []
+  ).filter((field) => field.type === 'string-list' && field.extrasKey !== undefined);
+  const [extrasFieldRows, setExtrasFieldRows] = useState<Record<string, string[]>>({});
+
   useEffect(() => {
     if (connectorAccount) {
       setUpdatedName(connectorAccount.displayName);
       setUpdatedModifier(connectorAccount.modifier);
+      setExtrasFieldRows(
+        Object.fromEntries(
+          extrasBackedFields.map((field) => [
+            field.key,
+            stringListRowsFromAccountExtras(field, connectorAccount.extras),
+          ]),
+        ),
+      );
     }
-  }, [connectorAccount]);
+    // extrasBackedFields is derived from connectorAccount + static metadata.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectorAccount, metadata]);
 
   const setFieldValue = (key: string, value: string | boolean) => {
     setFieldValues((prev) => ({ ...prev, [key]: value }));
@@ -56,6 +82,16 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
 
   const handleUpdate = async () => {
     if (!connectorAccount) return;
+
+    // Validate extras-backed rows (required + per-row pattern) before saving.
+    for (const field of extrasBackedFields) {
+      const validationError = credentialFieldValidationError(field, extrasFieldRows[field.key]);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       // Build userProvidedParams only if user has entered values
@@ -76,9 +112,24 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
         }
       }
 
+      // Rewrite the extras-backed rows (trimmed, blanks dropped) on top of the
+      // account's existing extras — only when such fields exist, so other
+      // connectors' extras are never touched from here.
+      let updatedExtras: Record<string, unknown> | undefined = undefined;
+      if (extrasBackedFields.length > 0) {
+        updatedExtras = { ...(connectorAccount.extras ?? {}) };
+        for (const field of extrasBackedFields) {
+          if (field.extrasKey === undefined) continue;
+          updatedExtras[field.extrasKey] = (extrasFieldRows[field.key] ?? [])
+            .map((row) => row.trim())
+            .filter((row) => row.length > 0);
+        }
+      }
+
       await updateConnectorAccount(connectorAccount.id, {
         displayName: updatedName,
         ...(userProvidedParams && { userProvidedParams }),
+        ...(updatedExtras && { extras: updatedExtras }),
         modifier: updatedModifier || undefined,
       });
       ScratchpadNotifications.success({
@@ -150,6 +201,17 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
       onExitTransitionEnd={() => {
         setFieldValues({});
         setError(null);
+        // Re-prefill the extras-backed rows so a same-account reopen doesn't
+        // show stale unsaved edits (the connectorAccount effect only fires on
+        // account change).
+        setExtrasFieldRows(
+          Object.fromEntries(
+            extrasBackedFields.map((field) => [
+              field.key,
+              stringListRowsFromAccountExtras(field, connectorAccount?.extras),
+            ]),
+          ),
+        );
       }}
     >
       <Stack>
@@ -159,6 +221,15 @@ const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
         {isUserProvidedParams && credentialFields.length > 0 && (
           <Stack>{credentialFields.map((field) => renderField(field))}</Stack>
         )}
+
+        {extrasBackedFields.map((field) => (
+          <StringListCredentialField
+            key={field.key}
+            field={field}
+            rows={extrasFieldRows[field.key] ?? []}
+            onChange={(rows) => setExtrasFieldRows((prev) => ({ ...prev, [field.key]: rows }))}
+          />
+        ))}
       </Stack>
     </ModalWrapper>
   );

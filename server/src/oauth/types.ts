@@ -24,6 +24,7 @@ export type OAuthStatePayload = {
   quickbooksSandbox?: boolean;
   zohoDataCenter?: string; // Zoho multi-DC: US | EU | IN | AU | JP | CA | CN | SA
   youtubeAdditionalChannels?: string; // YouTube: raw extra channel-id list (parsed into extras.additionalChannels)
+  googleSheetsSpreadsheetUrls?: string; // Google Sheets: raw spreadsheet URL/id list (parsed into extras.spreadsheetIds)
   codeVerifier?: string;
   // Which OAuth *app* generation this flow authorizes against. Chosen at initiate; the
   // callback stamps it on the connection. Optional for back-compat with pre-feature states.

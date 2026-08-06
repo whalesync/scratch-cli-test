@@ -629,6 +629,31 @@ describe('schema-helpers', () => {
       expect(findCreatedDestinationField(fields, { fieldName: 'Missing' })).toBeUndefined();
     });
 
+    it('falls back to a column whose REMOTE FIELD ID is the created name (slug-keyed grid destinations)', () => {
+      // Google Sheets keys its schema by a derived slug ('customer_name') while the
+      // column's x-scratch-remote-field-id is the verbatim header — exactly the
+      // name the field was created with.
+      const fields: SchemaField[] = [
+        { path: 'scratch_id', type: 'string', readonly: true },
+        { path: 'customer_name', type: 'string', remoteFieldId: 'Customer Name' },
+      ];
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'Customer Name' });
+
+      expect(match?.path).toBe('customer_name');
+    });
+
+    it('the remote-field-id-as-name fallback never overrides a name/label match', () => {
+      const fields: SchemaField[] = [
+        { path: 'Customer Name', type: 'string' }, // a real path match…
+        { path: 'other', type: 'string', remoteFieldId: 'Customer Name' }, // …beats a remote-id-as-name match
+      ];
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'Customer Name' });
+
+      expect(match?.path).toBe('Customer Name');
+    });
+
     it('resolves an Airtable `fields.<name>` column whose name contains a dot (DEV-10815)', () => {
       const fields = extractSchemaFields(airtableRecordFields([{ name: 'No. of Employees', fieldId: 'fldCount' }]));
 

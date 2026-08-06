@@ -45,6 +45,7 @@ import {
   getConnectorCurrentVersion,
   getServiceAdvancedSettings,
   getServiceDisplayName,
+  getServiceMetadata,
 } from '../connectors/display-names';
 import { ConnectorAuthError, exceptionForConnectorError, isUserFriendlyError } from '../connectors/error';
 import { probeAuthOnly } from '../connectors/library/generic-api/generic-api-probe';
@@ -734,12 +735,19 @@ export class ConnectorAccountService {
       const tables = await connector
         .listTables()
         .then((tables) => tables.sort((a, b) => a.displayName.localeCompare(b.displayName)));
+      const serviceMetadata = getServiceMetadata(account.service);
       return {
         tables,
         discoveryMode: connector.tableDiscoveryMode,
         supportsFilters: connector.supportsFilters(),
         supportsFieldSelection: connector.supportsFieldSelection(),
         advancedSettings: getServiceAdvancedSettings(account.service),
+        ...(serviceMetadata.tableSearchPlaceholder !== undefined
+          ? { tableSearchPlaceholder: serviceMetadata.tableSearchPlaceholder }
+          : {}),
+        ...(serviceMetadata.tableSearchInstructions !== undefined
+          ? { tableSearchInstructions: serviceMetadata.tableSearchInstructions }
+          : {}),
       };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);

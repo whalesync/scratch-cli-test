@@ -44,6 +44,7 @@ type OAuthAppEnvVarNamesByVersion = { 1: OAuthAppEnvVarNames } & Partial<Record<
 type OAuthAppServiceKey =
   | typeof Service.AIRTABLE
   | typeof Service.GOHIGHLEVEL
+  | typeof Service.GOOGLE_SHEETS
   | typeof Service.LINEAR
   | typeof Service.NOTION
   | typeof Service.PIPEDRIVE
@@ -81,6 +82,19 @@ const OAUTH_APP_ENV_VARS_BY_SERVICE: Record<OAuthAppServiceKey, OAuthAppEnvVarNa
       clientIdEnvVar: 'GOHIGHLEVEL_CLIENT_ID',
       clientSecretEnvVar: 'GOHIGHLEVEL_CLIENT_SECRET',
       redirectUri: (config) => whalesyncRedirectUri(config, 'hl'),
+    },
+  },
+  // Shares Whalesync's Google Cloud OAuth app (scope: spreadsheets only; the
+  // GOOGLE_SHEETS_* secrets were brought over from Whalesync). The ws connector
+  // id is the literal `iapp_sheets` (SHEETS_IAPP_CONNECTOR_ID — the connector
+  // kept its iApp-era id through the direct-connector migration), so that is
+  // the redirect slug registered on the Google client; `sheets` 400s with
+  // redirect_uri_mismatch.
+  [Service.GOOGLE_SHEETS]: {
+    1: {
+      clientIdEnvVar: 'GOOGLE_SHEETS_CLIENT_ID',
+      clientSecretEnvVar: 'GOOGLE_SHEETS_CLIENT_SECRET',
+      redirectUri: (config) => whalesyncRedirectUri(config, 'iapp_sheets'),
     },
   },
   [Service.NOTION]: {

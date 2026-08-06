@@ -20,14 +20,39 @@ export interface ConnectorSettingDefinition {
    * `field-select`: rendered by the client as a searchable picker of the
    * folder's schema field names (with a free-text fallback for untyped
    * columns). Persisted/validated identically to `string`.
+   *
+   * `string-list`: rendered by the client as repeatable text rows with
+   * add/remove controls (e.g. Google Sheets' spreadsheet URLs on the connect
+   * form). `required` means "at least one non-empty row"; each non-empty row
+   * is validated against `itemPattern` when set. On submit the rows are
+   * newline-joined into ONE string wherever the wire contract expects a string
+   * value (OAuth initiate options, userProvidedParams), so consumers parse it
+   * exactly like a `string` field.
    */
-  type: 'boolean' | 'number' | 'string' | 'password' | 'field-select';
+  type: 'boolean' | 'number' | 'string' | 'password' | 'field-select' | 'string-list';
   label: string;
   description?: string;
   placeholder?: string;
   min?: number;
   max?: number;
   required?: boolean;
+  /**
+   * `string-list` only: JS regex source each non-empty row must match (a cheap
+   * client-side shape check — the server stays lenient and re-parses on its
+   * own terms). Evaluated as `new RegExp(itemPattern)`, no flags.
+   */
+  itemPattern?: string;
+  /** `string-list` only: per-row error message shown when `itemPattern` fails. */
+  itemPatternDescription?: string;
+  /**
+   * `string-list` only: the `ConnectorAccount.extras` key under which this
+   * field's rows persist VERBATIM as a `string[]` (the server derives whatever
+   * it needs from them at read time). Declaring it makes the field editable
+   * after connect: the edit-connection modal prefills the rows from
+   * `extras[extrasKey]` and writes them back on save — all generically, with no
+   * connector knowledge in the frontend. Omit for connect-form-only fields.
+   */
+  extrasKey?: string;
   /**
    * `field-select` only: restricts the picker to the folder's schema fields
    * whose JSON Schema `format` is one of these values — e.g. `['date-time']` to

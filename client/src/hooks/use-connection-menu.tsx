@@ -249,12 +249,16 @@ export function useConnectionMenu(
 
   // --- Build items ---
 
+  // Every connection gets "Edit Connection" (rename, credential re-entry for
+  // API-key connectors, extras-backed settings like Google Sheets' spreadsheet
+  // URLs for OAuth connectors); OAuth additionally gets "Reauthorize".
   const authItem: ContextMenuItem[] =
     connection.authType !== undefined && fullConnectorAccount
       ? [
-          connection.authType === AuthType.OAUTH
-            ? { label: 'Reauthorize', icon: CloudCogIcon, onClick: handleReauthorize }
-            : { label: 'Edit Connection', icon: SettingsIcon, onClick: openUpdateConnectionModal },
+          ...(connection.authType === AuthType.OAUTH
+            ? [{ label: 'Reauthorize', icon: CloudCogIcon, onClick: handleReauthorize }]
+            : []),
+          { label: 'Edit Connection', icon: SettingsIcon, onClick: openUpdateConnectionModal },
         ]
       : [];
 

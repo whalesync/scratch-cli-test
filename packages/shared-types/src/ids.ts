@@ -40,6 +40,7 @@ export enum IdPrefixes {
   ROUTINE_RUN = 'rrn_', // Routine run (execution history)
   ROUTINE_RUN_STEP = 'rrs_', // Routine run step
   ORGANIZATION_MONTHLY_RUN_COUNT = 'omr_', // Per-organization monthly run-count bucket
+  SCRATCH_ROW = 'scr_', // Scratch-assigned record id for services with no native row identity (Google Sheets "Scratch ID" column)
 }
 
 type PrefixedId<T extends IdPrefixes> = `${T}${string}`;
@@ -365,6 +366,21 @@ export function isRoutineRunId(id: unknown): id is RoutineRunId {
 
 export function createRoutineRunId(): RoutineRunId {
   return createId(IdPrefixes.ROUTINE_RUN) as RoutineRunId;
+}
+
+// ------- Scratch Row -------
+// The id Scratch itself assigns to a record in a service that has no native row
+// identity (Google Sheets rows, via the managed "Scratch ID" column). Generated
+// by the connector and written INTO the external service, then used as the
+// record's remote id from that point on.
+export type ScratchRowId = PrefixedId<IdPrefixes.SCRATCH_ROW>;
+
+export function isScratchRowId(id: unknown): id is ScratchRowId {
+  return isId(id, IdPrefixes.SCRATCH_ROW);
+}
+
+export function createScratchRowId(): ScratchRowId {
+  return createId(IdPrefixes.SCRATCH_ROW) as ScratchRowId;
 }
 
 // ------- RoutineRunStep -------

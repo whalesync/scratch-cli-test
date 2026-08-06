@@ -1,5 +1,6 @@
-import type { EpochToIsoOptions, JSONPathOptions } from '../sync-mapping';
+import type { EpochToIsoOptions, JSONPathOptions, SerialDateOptions } from '../sync-mapping';
 import { applyJsonPath } from './apply-jsonpath';
+import { serialDateNumberToIsoString } from './serial-date';
 
 /**
  * The narrow set of transformers a renderer may run on a value to derive its
@@ -14,7 +15,8 @@ import { applyJsonPath } from './apply-jsonpath';
 export type DisplayTransformerConfig =
   | { type: 'jsonpath'; options: JSONPathOptions }
   | { type: 'computed-field'; options: ComputedFieldOptions }
-  | { type: 'epoch_to_iso'; options?: EpochToIsoOptions };
+  | { type: 'epoch_to_iso'; options?: EpochToIsoOptions }
+  | { type: 'serial_date_to_iso'; options?: SerialDateOptions };
 
 /**
  * Options for the `computed-field` display transformer — a generic flattener for
@@ -145,6 +147,8 @@ function applyDisplayTransformerUnsafe(config: DisplayTransformerConfig, value: 
       return applyComputedFieldTransformer(config.options, value);
     case 'epoch_to_iso':
       return applyEpochToIsoTransformer(config.options?.unit ?? 'seconds', value);
+    case 'serial_date_to_iso':
+      return applySerialDateToIsoTransformer(config.options?.isoShape ?? 'auto', value);
     default:
       return { ok: false };
   }
@@ -170,6 +174,23 @@ function applyEpochToIsoTransformer(unit: 'seconds' | 'milliseconds', value: unk
   if (Math.abs(epochMilliseconds) > MAX_REPRESENTABLE_EPOCH_MILLISECONDS) return { ok: false };
 
   return { ok: true, value: new Date(epochMilliseconds).toISOString() };
+}
+
+/**
+ * Render a spreadsheet serial-date NUMBER (days since 1899-12-30, fraction = time of
+ * day; what Google Sheets returns for date cells read with UNFORMATTED_VALUE) as an
+ * ISO-8601 wall-clock string. Mirrors the `serial_date_to_iso` sync transformer,
+ * keeping the cell and the exported value in step. Fails closed — the raw number is
+ * then shown verbatim — for anything that isn't a finite, representable serial.
+ */
+function applySerialDateToIsoTransformer(isoShape: 'auto' | 'date' | 'datetime', value: unknown): DisplayResult {
+  // Number('') and Number('  ') are 0 — an empty-string cell must not render as
+  // the 1899-12-30 epoch. Fail closed so the raw (blank) value shows verbatim.
+  if (typeof value === 'string' && value.trim() === '') return { ok: false };
+  const serialValue = typeof value === 'string' ? Number(value) : value;
+  if (typeof serialValue !== 'number' || !Number.isFinite(serialValue)) return { ok: false };
+  const isoString = serialDateNumberToIsoString(serialValue, isoShape);
+  return isoString === null ? { ok: false } : { ok: true, value: isoString };
 }
 
 /**

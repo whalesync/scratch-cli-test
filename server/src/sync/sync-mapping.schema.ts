@@ -184,6 +184,19 @@ const transformerConfigSchema: z.ZodType = z.discriminatedUnion('type', [
       .strict()
       .optional(),
   }),
+  z.object({
+    type: z.literal(TransformerTypes.SerialDateToIso),
+    options: z
+      .object({
+        isoShape: z.enum(['auto', 'date', 'datetime']).optional(),
+      })
+      .strict()
+      .optional(),
+  }),
+  z.object({
+    type: z.literal(TransformerTypes.IsoToSerialDate),
+    options: z.object({}).strict().optional(),
+  }),
 ]);
 
 // -- V1 column / table / sync mapping schemas (legacy on-disk shape) --

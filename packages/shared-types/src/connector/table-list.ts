@@ -47,6 +47,10 @@ export interface TableList {
   supportsFilters: boolean;
   supportsFieldSelection: boolean;
   advancedSettings: ConnectorSettingDefinition[];
+  /** Connector-specific search-box placeholder (see ConnectorMetadata.tableSearchPlaceholder). */
+  tableSearchPlaceholder?: string;
+  /** Connector-specific empty-state copy for SEARCH and LIST modes (see ConnectorMetadata.tableSearchInstructions). */
+  tableSearchInstructions?: string;
 }
 
 /** Response for `GET .../connections/:id/tables/search`. */

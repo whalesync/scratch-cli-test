@@ -36,4 +36,5 @@ export const Service = {
   CLICKUP: 'CLICKUP',
   FRAMER: 'FRAMER',
   SANITY: 'SANITY',
+  GOOGLE_SHEETS: 'GOOGLE_SHEETS',
 } as const;

@@ -417,7 +417,20 @@ for (const f of folders) {
     const tgt = fl.fieldType.target ?? {};
     if (tgt.existingRemoteTableId || tgt.ref) return [fl];
     const linked = tgt.unresolvedLinkedTableId;
-    if (linked && (selectedRemoteLeafIds.has(linked) || folders.some((o) => o.remoteId?.includes(linked)))) return [fl];
+    // Match the server's own binder convention (linkedTableIdCandidateTokensForRemoteTableId):
+    // a linked id may be the bare leaf OR any dot-joined suffix of the remote id
+    // (pg connectors emit "schema.table" for non-public schemas — DEV-11071 family).
+    const linkedMatchesSelectedTable =
+      linked &&
+      folders.some((o) => {
+        const remoteIdSegments = o.remoteId ?? [];
+        if (remoteIdSegments.includes(linked)) return true;
+        for (let suffixStart = 0; suffixStart < remoteIdSegments.length; suffixStart++) {
+          if (remoteIdSegments.slice(suffixStart).join('.') === linked) return true;
+        }
+        return false;
+      });
+    if (linkedMatchesSelectedTable) return [fl];
     tableReport.droppedForeignKeys.push({ field: fl.name, linkedTableId: linked ?? null });
     return [];
   });

@@ -44,6 +44,21 @@ export interface ConnectorMetadata {
   supportsSchemaCreation: boolean;
   pushOperationName: string;
   pullOperationName: string;
+  /**
+   * Connector-specific copy for the SEARCH-mode table picker's search box —
+   * shown as the input placeholder. For connectors whose search accepts
+   * something other than a name (Google Sheets has no listing scope, so the
+   * "search" is really paste-a-spreadsheet-URL), this is how the user learns
+   * that. Optional; pickers fall back to generic copy.
+   */
+  tableSearchPlaceholder?: string;
+  /**
+   * Connector-specific copy for the table picker's EMPTY state — SEARCH mode's
+   * "no search typed yet, nothing to list" state and LIST mode's "no tables at
+   * all" state (e.g. Google Sheets explains that spreadsheet URLs are managed
+   * on the connection). May be a sentence or two. Optional.
+   */
+  tableSearchInstructions?: string;
   supportedAuthMethods: AuthMethod[];
   defaultAuthMethod: AuthMethod;
   oauth?: {
@@ -167,6 +182,39 @@ export function parseYouTubeAdditionalChannels(rawAdditionalChannels: string | u
     .map((channelId) => channelId.trim())
     .filter((channelId) => channelId.length > 0);
   return Array.from(new Set(channelIds));
+}
+
+// ============= Google Sheets Connector Extras =============
+
+/**
+ * Extras stored on Google Sheets ConnectorAccount records. The spreadsheets-only
+ * OAuth scope can't browse Drive, so the spreadsheets a connection works with
+ * are exactly the ones the user has pointed it at. `spreadsheetUrls` holds the
+ * URL rows the user entered on the connect form VERBATIM (matching the
+ * `extrasKey` contract on ConnectorSettingDefinition, so the edit-connection
+ * modal can prefill and rewrite them generically); the server parses ids out of
+ * them at read time. The durable seed for the table picker's "known
+ * spreadsheets" list (folder-derived ids are unioned in at query time). Stored
+ * unencrypted so `listTables` can read them without decrypting credentials.
+ */
+export interface GoogleSheetsConnectorExtras {
+  spreadsheetUrls: string[];
+}
+
+/**
+ * Type guard for GoogleSheetsConnectorExtras: an object whose `spreadsheetUrls`
+ * is an array of strings.
+ */
+export function isGoogleSheetsConnectorExtras(extras: unknown): extras is GoogleSheetsConnectorExtras {
+  return (
+    typeof extras === 'object' &&
+    extras !== null &&
+    'spreadsheetUrls' in extras &&
+    Array.isArray((extras as Record<string, unknown>).spreadsheetUrls) &&
+    (extras as GoogleSheetsConnectorExtras).spreadsheetUrls.every(
+      (spreadsheetUrl) => typeof spreadsheetUrl === 'string',
+    )
+  );
 }
 
 // ============= Generic API Connector Extras =============

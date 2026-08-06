@@ -331,7 +331,16 @@ export function findCreatedDestinationField(
       field.path.endsWith(`.${target.fieldName}`) ||
       field.displayLabel === target.fieldName,
   );
-  if (fieldsMatchingByNameOrLabel.length <= 1) return fieldsMatchingByNameOrLabel[0];
+  if (fieldsMatchingByNameOrLabel.length === 0) {
+    // Last resort: a destination whose columns are ADDRESSED BY the created
+    // field's name itself. Grid destinations (Google Sheets) key their schema
+    // by a derived slug — the created name never appears as a path — but the
+    // column's `x-scratch-remote-field-id` is the verbatim header text, i.e.
+    // exactly the name the field was created with. Additive: only consulted
+    // when every name/label rule above found nothing.
+    return destinationFields.find((field) => field.remoteFieldId === target.fieldName);
+  }
+  if (fieldsMatchingByNameOrLabel.length === 1) return fieldsMatchingByNameOrLabel[0];
   // Ambiguous name (record-envelope meta vs a real column): prefer the real
   // writable column. A genuine connector column carries a remote field id and is
   // not readonly; the top-level `id`/`fields`/`createdTime` meta carry neither.

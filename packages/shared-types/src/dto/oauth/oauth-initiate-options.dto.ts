@@ -38,6 +38,14 @@ export const oauthInitiateOptionsSchema = z.object({
    * separated; parsed into `ConnectorAccount.extras.additionalChannels` on connect.
    */
   youtubeAdditionalChannels: z.string().optional(),
+  /**
+   * Google Sheets: raw, user-entered spreadsheet URL(s) (or bare ids) from the
+   * connect form. The spreadsheets-only OAuth scope can't browse Drive, so the
+   * spreadsheets a connection works with are the ones the user points it at —
+   * this seeds that list at connect time. Comma/whitespace/newline separated;
+   * parsed into `ConnectorAccount.extras.spreadsheetIds` on connect.
+   */
+  googleSheetsSpreadsheetUrls: z.string().optional(),
 });
 
 export type OAuthInitiateOptionsDto = z.infer<typeof oauthInitiateOptionsSchema>;

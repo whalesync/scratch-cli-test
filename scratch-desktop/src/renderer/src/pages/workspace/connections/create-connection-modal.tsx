@@ -31,7 +31,9 @@ import { ConnectorHealthStatus } from '@spinner/shared-types';
 import { Check } from 'lucide-react';
 import { useState } from 'react';
 import { useCurrentUser } from '../../../hooks/use-current-user';
+import { credentialFieldValidationError, credentialFieldWireValue } from './credential-field-helpers';
 import { GenericApiConnectionModal } from './generic-api-connection-modal';
+import { StringListCredentialField } from './string-list-credential-field';
 
 interface CreateConnectionModalProps {
   opened: boolean;
@@ -64,7 +66,7 @@ export function CreateConnectionModal({
   const [authMethod, setAuthMethod] = useState<AuthMethod>('oauth');
 
   const { user } = useCurrentUser();
-  const [fieldValues, setFieldValues] = useState<Record<string, string | boolean>>({});
+  const [fieldValues, setFieldValues] = useState<Record<string, string | boolean | string[]>>({});
   const [isOAuthLoading, setIsOAuthLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [customClientId, setCustomClientId] = useState('');
@@ -81,7 +83,7 @@ export function CreateConnectionModal({
   const isDisplayNameTaken =
     trimmedDisplayName.length > 0 && (connectorAccounts ?? []).some((a) => a.displayName === trimmedDisplayName);
 
-  const setFieldValue = (key: string, value: string | boolean) => {
+  const setFieldValue = (key: string, value: string | boolean | string[]) => {
     setFieldValues((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -127,11 +129,11 @@ export function CreateConnectionModal({
         customClientSecret: isCustom ? customClientSecret : undefined,
         connectionName,
       };
-      // Assign credential field values to the options
+      // Assign credential field values to the options (string-lists newline-join)
       for (const field of currentFields) {
-        const val = fieldValues[field.key];
-        if (val !== undefined && val !== '') {
-          (oauthOptions as Record<string, unknown>)[field.key] = val;
+        const wireValue = credentialFieldWireValue(fieldValues[field.key]);
+        if (wireValue !== undefined && wireValue !== '') {
+          (oauthOptions as Record<string, unknown>)[field.key] = wireValue;
         }
       }
       await initiateDesktopOAuth(newService, oauthOptions);
@@ -154,13 +156,14 @@ export function CreateConnectionModal({
       return;
     }
 
-    // Validate required credential fields
-    if (authMethod === 'user_provided_params') {
-      for (const field of currentFields) {
-        if (field.required && !fieldValues[field.key]) {
-          setError(`${field.label} is required.`);
-          return;
-        }
+    // Validate credential fields (required + per-row patterns) for every auth
+    // method — OAuth included, since fields like Google Sheets' spreadsheet
+    // URLs ride the OAuth initiate options.
+    for (const field of currentFields) {
+      const validationError = credentialFieldValidationError(field, fieldValues[field.key]);
+      if (validationError) {
+        setError(validationError);
+        return;
       }
     }
 
@@ -171,12 +174,12 @@ export function CreateConnectionModal({
         return;
       }
 
-      // Build userProvidedParams from field values
+      // Build userProvidedParams from field values (string-lists newline-join)
       const userProvidedParams: Record<string, string> = {};
       for (const field of currentFields) {
-        const val = fieldValues[field.key];
-        if (typeof val === 'string' && val) {
-          userProvidedParams[field.key] = val;
+        const wireValue = credentialFieldWireValue(fieldValues[field.key]);
+        if (typeof wireValue === 'string' && wireValue) {
+          userProvidedParams[field.key] = wireValue;
         }
       }
 
@@ -227,6 +230,17 @@ export function CreateConnectionModal({
           description={field.description}
           value={(fieldValues[field.key] as string) ?? ''}
           onChange={(e) => setFieldValue(field.key, e.currentTarget.value)}
+        />
+      );
+    }
+    if (field.type === 'string-list') {
+      const storedValue = fieldValues[field.key];
+      return (
+        <StringListCredentialField
+          key={field.key}
+          field={field}
+          rows={Array.isArray(storedValue) ? storedValue : []}
+          onChange={(rows) => setFieldValue(field.key, rows)}
         />
       );
     }
