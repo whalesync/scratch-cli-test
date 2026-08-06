@@ -404,8 +404,13 @@ export class DataFolderService {
 
     const dataFolderId = createDataFolderId();
 
-    // Case 1: Connected folder with connector account and table IDs
-    const connectorAccount = await this.connectorAccountService.findOneById(connectorAccountId, actor);
+    // Case 1: Connected folder with connector account and table IDs.
+    // Scoped by workbook on purpose (DEV-11167): `connectorAccountId` arrives in the request body while
+    // `workbookId` comes from the route, so an unscoped lookup would let a caller attach ANOTHER
+    // workbook's connection — and its credentials — to a workbook they own, permanently. This is also
+    // the check that upholds the invariant every DataFolder-derived lookup relies on: a folder's
+    // connector account always belongs to that folder's workbook.
+    const connectorAccount = await this.connectorAccountService.findOne(workbookId, connectorAccountId, actor);
     if (!connectorAccount) {
       throw new NotFoundException('Connector account not found');
     }
@@ -852,7 +857,10 @@ export class DataFolderService {
 
     // When setting a filter, verify the connector supports filters
     if (dto.filter && dataFolder.connectorAccountId) {
-      const connectorAccount = await this.connectorAccountService.findOneById(dataFolder.connectorAccountId, actor);
+      const connectorAccount = await this.connectorAccountService.findOneByIdUnscoped(
+        dataFolder.connectorAccountId,
+        actor,
+      );
       if (!connectorAccount) {
         throw new NotFoundException('Connector account not found');
       }
@@ -926,7 +934,10 @@ export class DataFolderService {
     await this.workbookService.assertReadableWorkbook(actor, dataFolder.workbookId as WorkbookId);
 
     if (dataFolder.connectorAccountId && dataFolder.connectorService) {
-      const connectorAccount = await this.connectorAccountService.findOneById(dataFolder.connectorAccountId, actor);
+      const connectorAccount = await this.connectorAccountService.findOneByIdUnscoped(
+        dataFolder.connectorAccountId,
+        actor,
+      );
       if (!connectorAccount) {
         throw new NotFoundException('Connector account not found');
       }
@@ -1208,7 +1219,7 @@ export class DataFolderService {
       return null;
     }
 
-    const connectorAccount = await this.connectorAccountService.findOneById(folder.connectorAccountId, actor);
+    const connectorAccount = await this.connectorAccountService.findOneByIdUnscoped(folder.connectorAccountId, actor);
     if (!connectorAccount) {
       return null;
     }
@@ -1289,7 +1300,7 @@ export class DataFolderService {
     connectorAccountId: string,
     actor: Actor,
   ): Promise<RefreshConnectionSchemasResponse> {
-    const connectorAccount = await this.connectorAccountService.findOneById(connectorAccountId, actor);
+    const connectorAccount = await this.connectorAccountService.findOneByIdUnscoped(connectorAccountId, actor);
     // Fail fast at the boundary; each per-folder fetchSchemaSpec also re-checks folder access.
     const workbook = await this.workbookService.assertWritableWorkbook(
       actor,

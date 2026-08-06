@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method */
+import { NotFoundException } from '@nestjs/common';
 import type { TSchema } from '@sinclair/typebox';
 import type { DataFolderId, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
 import type { AuditLogService } from 'src/audit/audit-log.service';
@@ -597,7 +598,7 @@ describe('DataFolderService.refreshSchemasForConnection', () => {
     } as unknown as jest.Mocked<DbService>;
 
     mockConnectorAccountService = {
-      findOneById: jest.fn().mockResolvedValue({
+      findOneByIdUnscoped: jest.fn().mockResolvedValue({
         id: CONNECTOR_ACCOUNT_ID,
         workbookId: WORKBOOK_ID,
         displayName: 'My Airtable',
@@ -687,7 +688,84 @@ describe('DataFolderService.refreshSchemasForConnection', () => {
 
     await service.refreshSchemasForConnection(CONNECTOR_ACCOUNT_ID, ACTOR);
 
-    expect(mockConnectorAccountService.findOneById).toHaveBeenCalledWith(CONNECTOR_ACCOUNT_ID, ACTOR);
+    expect(mockConnectorAccountService.findOneByIdUnscoped).toHaveBeenCalledWith(CONNECTOR_ACCOUNT_ID, ACTOR);
     expect(mockWorkbookService.assertWritableWorkbook).toHaveBeenCalledWith(ACTOR, WORKBOOK_ID);
+  });
+});
+
+// DEV-11167: createFolder is the WRITE half of the connector-account IDOR. `workbookId` comes from the
+// route (and is authorized) but `connectorAccountId` comes from the request body, so an unscoped lookup
+// let a caller attach ANOTHER workbook's connection to a workbook they own — persisting the foreign id
+// on the DataFolder row and pulling that tenant's records on every subsequent sync.
+//
+// It is also the check that upholds the invariant the rest of this service leans on: every other
+// connector lookup here reads `connectorAccountId` off an already-authorized DataFolder and trusts that
+// it belongs to that folder's workbook. This is the only place that could break that.
+describe('DataFolderService.createFolder connector-account scoping', () => {
+  const WORKBOOK_ID = 'wkb_mine' as WorkbookId;
+  const ORG_ID = 'org_test';
+  const ANOTHER_WORKBOOKS_CONNECTOR_ACCOUNT_ID = 'coa_belonging_to_another_workbook';
+  const ACTOR: Actor = { userId: 'usr_test', organizationId: ORG_ID, authSource: 'user' };
+
+  let service: DataFolderService;
+  let mockConnectorAccountService: jest.Mocked<ConnectorAccountService>;
+  let mockConnectorsService: jest.Mocked<ConnectorsService>;
+  let mockWorkbookService: jest.Mocked<WorkbookService>;
+
+  beforeEach(() => {
+    // Mirrors the real scoped `findOne`, which throws when the row exists in a different workbook.
+    mockConnectorAccountService = {
+      findOne: jest.fn().mockRejectedValue(new NotFoundException('ConnectorAccount not found')),
+    } as unknown as jest.Mocked<ConnectorAccountService>;
+
+    mockConnectorsService = {
+      getConnector: jest.fn(),
+    } as unknown as jest.Mocked<ConnectorsService>;
+
+    mockWorkbookService = {
+      assertWritableWorkbook: jest.fn().mockResolvedValue({ id: WORKBOOK_ID, organizationId: ORG_ID }),
+    } as unknown as jest.Mocked<WorkbookService>;
+
+    const stub = {} as unknown;
+    service = new DataFolderService(
+      mockWorkbookService,
+      stub as DbService,
+      mockConnectorAccountService,
+      mockConnectorsService,
+      stub as ScratchConfigService,
+      stub as BullEnqueuerService,
+      stub as AuditLogService,
+      stub as PostHogService,
+      stub as ScratchGitService,
+      stub as FilesService,
+      stub as WorkbookEventService,
+      stub as FileIndexService,
+      stub as FileReferenceService,
+    );
+  });
+
+  it('refuses to link a connector account that belongs to a different workbook', async () => {
+    await expect(
+      service.createFolder(
+        {
+          name: 'Stolen Table',
+          workbookId: WORKBOOK_ID,
+          connectorAccountId: ANOTHER_WORKBOOKS_CONNECTOR_ACCOUNT_ID,
+          tableId: ['tbl_1'],
+        } as unknown as Parameters<typeof service.createFolder>[0],
+        ACTOR,
+        {} as Parameters<typeof service.createFolder>[2],
+      ),
+    ).rejects.toThrow(NotFoundException);
+
+    // Scoped on the ROUTE's workbook, not on the account id alone.
+    expect(mockConnectorAccountService.findOne).toHaveBeenCalledWith(
+      WORKBOOK_ID,
+      ANOTHER_WORKBOOKS_CONNECTOR_ACCOUNT_ID,
+      ACTOR,
+    );
+    // The security property: we never built a connector, so the foreign tenant's credentials were
+    // never decrypted and their service was never called.
+    expect(mockConnectorsService.getConnector).not.toHaveBeenCalled();
   });
 });

@@ -137,7 +137,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     } as unknown as jest.Mocked<ConnectorsService>;
 
     mockConnectorAccountService = {
-      findOneById: jest.fn(),
+      findOneByIdUnscoped: jest.fn(),
     } as unknown as jest.Mocked<ConnectorAccountService>;
 
     mockWorkbookEventService = {
@@ -348,7 +348,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
       (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
       (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
-      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorAccountService.findOneByIdUnscoped as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
       // Default: no rate limiter spec
@@ -457,7 +457,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
         (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
-        (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+        (mockConnectorAccountService.findOneByIdUnscoped as jest.Mock).mockResolvedValue(connectorAccount);
         (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
         jest.spyOn(connectorRegistry, 'get').mockReturnValue(undefined);
 
@@ -638,7 +638,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValueOnce(folder1).mockResolvedValueOnce(folder2);
         (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(folder1);
-        (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+        (mockConnectorAccountService.findOneByIdUnscoped as jest.Mock).mockResolvedValue(connectorAccount);
         (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
         jest.spyOn(connectorRegistry, 'get').mockReturnValue(undefined);
 
@@ -736,7 +736,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValueOnce(folder1).mockResolvedValueOnce(folder2);
         (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(folder1);
-        (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+        (mockConnectorAccountService.findOneByIdUnscoped as jest.Mock).mockResolvedValue(connectorAccount);
         (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
         jest.spyOn(connectorRegistry, 'get').mockReturnValue(undefined);
 
@@ -903,7 +903,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValueOnce(folder1).mockResolvedValueOnce(folder2);
         (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(folder1);
-        (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+        (mockConnectorAccountService.findOneByIdUnscoped as jest.Mock).mockResolvedValue(connectorAccount);
         (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
         jest.spyOn(connectorRegistry, 'get').mockReturnValue(undefined);
 

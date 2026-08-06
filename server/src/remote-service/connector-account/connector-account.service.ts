@@ -332,10 +332,19 @@ export class ConnectorAccountService {
 
   /**
    * Find a connector account by ID only, without workbook context.
-   * Used for internal operations like OAuth callback where we need to look up an account.
+   *
+   * **PERFORMS NO AUTHORIZATION — internal callers only.** The lookup is not scoped to a workbook
+   * or an organization, and the returned object carries DECRYPTED credentials, so any caller that
+   * takes its `id` from user input hands out cross-tenant access to another workbook's connection
+   * (DEV-11167). Only use this where the id was derived from a resource the caller already owns
+   * (e.g. a DataFolder that was itself authorized), or where the workbook is resolved *from* the
+   * returned account and authorized afterwards.
+   *
+   * Anything reachable from an HTTP route with a caller-supplied id must use {@link findOne},
+   * which scopes the query on `{ id, workbookId }`.
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async findOneById(id: string, _actor: Actor): Promise<ConnectorAccount & DecryptedCredentials> {
+  async findOneByIdUnscoped(id: string, _actor: Actor): Promise<ConnectorAccount & DecryptedCredentials> {
     const connectorAccount = await this.db.client.connectorAccount.findFirst({
       where: { id },
     });
@@ -712,8 +721,8 @@ export class ConnectorAccountService {
     });
   }
 
-  async listTables(connectorAccountId: string, actor: Actor): Promise<TableList> {
-    const account = await this.findOneById(connectorAccountId, actor);
+  async listTables(workbookId: WorkbookId, connectorAccountId: string, actor: Actor): Promise<TableList> {
+    const account = await this.findOne(workbookId, connectorAccountId, actor);
 
     await this.assertGenericConnectorEnabled(account.service, actor);
 
@@ -760,8 +769,12 @@ export class ConnectorAccountService {
    * alphabetically by name. Throws a 400 when the connector does not support
    * creating tables.
    */
-  async listCreateDestinations(connectorAccountId: string, actor: Actor): Promise<CreateDestinationList> {
-    const account = await this.findOneById(connectorAccountId, actor);
+  async listCreateDestinations(
+    workbookId: WorkbookId,
+    connectorAccountId: string,
+    actor: Actor,
+  ): Promise<CreateDestinationList> {
+    const account = await this.findOne(workbookId, connectorAccountId, actor);
 
     await this.assertGenericConnectorEnabled(account.service, actor);
 
@@ -805,11 +818,12 @@ export class ConnectorAccountService {
    * supports neither listing nor searching create destinations.
    */
   async searchCreateDestinations(
+    workbookId: WorkbookId,
     connectorAccountId: string,
     searchTerm: string,
     actor: Actor,
   ): Promise<CreateDestinationSearchResult> {
-    const { account, connector } = await this.buildConnectorForAccount(connectorAccountId, actor);
+    const { account, connector } = await this.buildConnectorForAccount(workbookId, connectorAccountId, actor);
 
     if (!connector.searchCreateDestinations && !connector.listCreateDestinations) {
       throw new BadRequestException(
@@ -840,11 +854,12 @@ export class ConnectorAccountService {
    * supports neither lookup nor listing.
    */
   async lookupCreateDestination(
+    workbookId: WorkbookId,
     connectorAccountId: string,
     destinationId: string,
     actor: Actor,
   ): Promise<CreateDestinationLookup> {
-    const { account, connector } = await this.buildConnectorForAccount(connectorAccountId, actor);
+    const { account, connector } = await this.buildConnectorForAccount(workbookId, connectorAccountId, actor);
 
     if (!connector.lookupCreateDestination && !connector.listCreateDestinations) {
       throw new BadRequestException(
@@ -898,10 +913,11 @@ export class ConnectorAccountService {
    * inline setup the older table endpoints use.
    */
   private async buildConnectorForAccount(
+    workbookId: WorkbookId,
     connectorAccountId: string,
     actor: Actor,
   ): Promise<{ account: ConnectorAccount & DecryptedCredentials; connector: Connector }> {
-    const account = await this.findOneById(connectorAccountId, actor);
+    const account = await this.findOne(workbookId, connectorAccountId, actor);
 
     await this.assertGenericConnectorEnabled(account.service, actor);
 
@@ -920,8 +936,13 @@ export class ConnectorAccountService {
     }
   }
 
-  async searchTables(connectorAccountId: string, searchTerm: string, actor: Actor): Promise<TableSearchResult> {
-    const account = await this.findOneById(connectorAccountId, actor);
+  async searchTables(
+    workbookId: WorkbookId,
+    connectorAccountId: string,
+    searchTerm: string,
+    actor: Actor,
+  ): Promise<TableSearchResult> {
+    const account = await this.findOne(workbookId, connectorAccountId, actor);
 
     await this.assertGenericConnectorEnabled(account.service, actor);
 

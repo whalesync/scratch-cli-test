@@ -106,7 +106,9 @@ export class SchemaBuilderService {
 
     const connectorAccountId = readConnectorAccountId(body);
     if (connectorAccountId) {
-      const account = await this.connectorAccountService.findOneById(connectorAccountId, actor).catch(() => null);
+      const account = await this.connectorAccountService
+        .findOneByIdUnscoped(connectorAccountId, actor)
+        .catch(() => null);
       if (!account) {
         issues.push({
           path: 'connectorAccountId',
@@ -701,7 +703,7 @@ export class SchemaBuilderService {
     workbookId: WorkbookId,
     actor: Actor,
   ): Promise<{ connector: Connector; account: ConnectorAccount }> {
-    const account = await this.connectorAccountService.findOneById(connectorAccountId, actor);
+    const account = await this.connectorAccountService.findOneByIdUnscoped(connectorAccountId, actor);
     if (!account) {
       throw new NotFoundException('Connector account not found');
     }

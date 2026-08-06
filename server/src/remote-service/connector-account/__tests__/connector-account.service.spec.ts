@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { ConnectorAccount } from '@prisma/client';
-import type { ConnectorAccountId, WorkbookId } from '@spinner/shared-types';
+import { TableDiscoveryMode, type ConnectorAccountId, type WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
@@ -259,7 +259,7 @@ describe('ConnectorAccountService', () => {
   describe('listCreateDestinations', () => {
     it('returns the connector destinations sorted alphabetically by name', async () => {
       const account = createMockAccount();
-      (dbService.client.connectorAccount.findFirst as jest.Mock).mockResolvedValue(account);
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
       (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
 
       const mockConnector = {
@@ -270,7 +270,7 @@ describe('ConnectorAccountService', () => {
       };
       (connectorsService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      const result = await service.listCreateDestinations(ACCOUNT_ID, ACTOR);
+      const result = await service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
 
       expect(result).toEqual({
         destinations: [
@@ -283,21 +283,121 @@ describe('ConnectorAccountService', () => {
 
     it('throws BadRequestException when the connector does not implement listCreateDestinations', async () => {
       const account = createMockAccount();
-      (dbService.client.connectorAccount.findFirst as jest.Mock).mockResolvedValue(account);
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
       (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
 
       // A connector without the optional method (e.g. a read-only connector).
       (connectorsService.getConnector as jest.Mock).mockResolvedValue({});
 
-      await expect(service.listCreateDestinations(ACCOUNT_ID, ACTOR)).rejects.toThrow(BadRequestException);
+      await expect(service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR)).rejects.toThrow(BadRequestException);
     });
 
     it('throws NotFoundException when the account is not found', async () => {
-      (dbService.client.connectorAccount.findFirst as jest.Mock).mockResolvedValue(null);
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(null);
 
-      await expect(service.listCreateDestinations(ACCOUNT_ID, ACTOR)).rejects.toThrow(NotFoundException);
+      await expect(service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR)).rejects.toThrow(NotFoundException);
 
       expect(connectorsService.getConnector).not.toHaveBeenCalled();
+    });
+  });
+
+  // DEV-11167: every connection endpoint reachable over HTTP takes its `connectorAccountId` straight
+  // from the caller. The controller's `checkWorkspacePermissions` only proves the caller may access
+  // the workbook they NAMED — so without scoping the lookup on `{ id, workbookId }` too, a caller
+  // could pair their own workbook id with another tenant's connector account id and have the server
+  // decrypt that tenant's credentials and call their external service on the caller's behalf.
+  //
+  // Each case below asserts BOTH halves of the fix:
+  //   1. the query was scoped to the requested workbook (so a foreign row is never returned), and
+  //   2. `getConnector` was never called — i.e. we never reached anyone's external service with
+  //      credentials that weren't ours. (2) is the assertion that actually encodes the security
+  //      property; (1) alone would still pass if we loaded and decrypted the row before rejecting it.
+  describe('cross-workbook scoping (DEV-11167)', () => {
+    /** An account that exists, but in a workbook other than the one the caller named. */
+    const OTHER_WORKBOOK_ACCOUNT_ID = 'ca_belonging_to_another_workbook' as ConnectorAccountId;
+
+    beforeEach(() => {
+      // Prisma's `findUnique({ where: { id, workbookId } })` returns null when the row exists but the
+      // non-unique filter doesn't match — exactly the cross-workbook case we're guarding against.
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(null);
+      // Present but unused: if any method regressed to an unscoped lookup, it would find the foreign
+      // account here and the "never constructed the connector" assertion would fail loudly.
+      (dbService.client.connectorAccount.findFirst as jest.Mock).mockResolvedValue(
+        createMockAccount({ id: OTHER_WORKBOOK_ACCOUNT_ID, workbookId: 'wkb_someone_else' }),
+      );
+      // A connector that would happily answer every one of these calls. Never reached while the
+      // lookup stays scoped — it exists so a regression fails as "promise resolved instead of
+      // rejected" (i.e. the caller got the other tenant's data) rather than as an incidental
+      // TypeError from a half-mocked connector.
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue({
+        tableDiscoveryMode: TableDiscoveryMode.SEARCH,
+        supportsFilters: () => false,
+        supportsFieldSelection: () => false,
+        listTables: jest.fn().mockResolvedValue([]),
+        searchTables: jest.fn().mockResolvedValue({ tables: [], hasMore: false }),
+        listCreateDestinations: jest.fn().mockResolvedValue([]),
+        searchCreateDestinations: jest.fn().mockResolvedValue({ destinations: [], hasMore: false }),
+        lookupCreateDestination: jest.fn().mockResolvedValue(null),
+        fetchJsonTableSpec: jest.fn().mockResolvedValue({}),
+      });
+    });
+
+    function expectScopedToRequestedWorkbook(): void {
+      expect(dbService.client.connectorAccount.findUnique).toHaveBeenCalledWith({
+        where: { id: OTHER_WORKBOOK_ACCOUNT_ID, workbookId: WORKBOOK_ID },
+      });
+      expect(connectorsService.getConnector).not.toHaveBeenCalled();
+      expect(credentialEncryptionService.decryptCredentials).not.toHaveBeenCalled();
+    }
+
+    it('listTables does not serve a connector account from another workbook', async () => {
+      await expect(service.listTables(WORKBOOK_ID, OTHER_WORKBOOK_ACCOUNT_ID, ACTOR)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expectScopedToRequestedWorkbook();
+    });
+
+    it('listCreateDestinations does not serve a connector account from another workbook', async () => {
+      await expect(service.listCreateDestinations(WORKBOOK_ID, OTHER_WORKBOOK_ACCOUNT_ID, ACTOR)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expectScopedToRequestedWorkbook();
+    });
+
+    it('searchCreateDestinations does not serve a connector account from another workbook', async () => {
+      await expect(
+        service.searchCreateDestinations(WORKBOOK_ID, OTHER_WORKBOOK_ACCOUNT_ID, 'anything', ACTOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expectScopedToRequestedWorkbook();
+    });
+
+    it('lookupCreateDestination does not serve a connector account from another workbook', async () => {
+      await expect(
+        service.lookupCreateDestination(WORKBOOK_ID, OTHER_WORKBOOK_ACCOUNT_ID, 'dest_1', ACTOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expectScopedToRequestedWorkbook();
+    });
+
+    it('searchTables does not serve a connector account from another workbook', async () => {
+      await expect(service.searchTables(WORKBOOK_ID, OTHER_WORKBOOK_ACCOUNT_ID, 'anything', ACTOR)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expectScopedToRequestedWorkbook();
+    });
+
+    it('getTableSchema does not serve a connector account from another workbook', async () => {
+      // Already scoped before DEV-11167; covered here so the whole endpoint family is pinned by
+      // one suite and a future refactor can't quietly unscope it.
+      await expect(service.getTableSchema(WORKBOOK_ID, OTHER_WORKBOOK_ACCOUNT_ID, ['tbl_1'], ACTOR)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expectScopedToRequestedWorkbook();
     });
   });
 

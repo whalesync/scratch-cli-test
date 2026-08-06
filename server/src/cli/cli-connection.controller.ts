@@ -86,7 +86,7 @@ export class CliConnectionController {
   ): Promise<TableList> {
     const actor = userToActor(req.user);
     await this.workbookService.assertReadableWorkbook(actor, workbookId as WorkbookId);
-    return this.connectorAccountService.listTables(connectorAccountId, actor);
+    return this.connectorAccountService.listTables(workbookId as WorkbookId, connectorAccountId, actor);
   }
 
   @Delete(':id')

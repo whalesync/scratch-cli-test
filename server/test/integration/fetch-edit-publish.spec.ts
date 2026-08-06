@@ -522,7 +522,7 @@ describe('Fetch → Edit → Publish Integration', () => {
     const refResolverService = new RefResolverService(fileIndexService, dbService);
 
     const mockConnectorAccountService = {
-      findOneById: jest.fn().mockImplementation(async (id: string) => {
+      findOneByIdUnscoped: jest.fn().mockImplementation(async (id: string) => {
         const account = await prisma.connectorAccount.findUnique({ where: { id } });
         if (!account) return null;
         const creds = await encryptionService.decryptObject(account.encryptedCredentials as any);

@@ -616,10 +616,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     const pullOptions: DataFolderOptions = (dataFolder.options as DataFolderOptions) ?? {};
 
-    const decryptedConnectorAccount = await this.connectorAccountService.findOneById(dataFolder.connectorAccountId, {
-      userId: data.userId,
-      organizationId: data.organizationId,
-    });
+    const decryptedConnectorAccount = await this.connectorAccountService.findOneByIdUnscoped(
+      dataFolder.connectorAccountId,
+      {
+        userId: data.userId,
+        organizationId: data.organizationId,
+      },
+    );
     if (!decryptedConnectorAccount) {
       throw new Error(`Connector account ${dataFolder.connectorAccountId} not found`);
     }

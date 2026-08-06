@@ -52,7 +52,7 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
 
   let app: INestApplication;
   let connectorsService: { getConnector: jest.Mock };
-  let connectorAccountService: { findOneById: jest.Mock };
+  let connectorAccountService: { findOneByIdUnscoped: jest.Mock };
   let dataFolderService: { getStoredSchema: jest.Mock; getStoredView: jest.Mock; createFolder: jest.Mock };
   let auditLogService: { logEvent: jest.Mock };
   let dbService: { client: { dataFolder: { findUnique: jest.Mock; findFirst: jest.Mock } } };
@@ -62,7 +62,7 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
       assertWritableWorkbook: jest.fn().mockResolvedValue({ id: WORKBOOK_ID, organizationId: ORG_ID }),
     };
     connectorAccountService = {
-      findOneById: jest.fn().mockResolvedValue({
+      findOneByIdUnscoped: jest.fn().mockResolvedValue({
         id: CONNECTOR_ACCOUNT_ID,
         workbookId: WORKBOOK_ID,
         service: 'AIRTABLE',

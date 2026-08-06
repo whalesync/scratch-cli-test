@@ -78,7 +78,7 @@ export class ConnectorAccountController {
   ): Promise<TableList> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
-    return this.service.listTables(connectorAccountId, actor);
+    return this.service.listTables(workbookId as WorkbookId, connectorAccountId, actor);
   }
 
   @Get(':connectorAccountId/create-destinations')
@@ -89,7 +89,7 @@ export class ConnectorAccountController {
   ): Promise<CreateDestinationList> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
-    return this.service.listCreateDestinations(connectorAccountId, actor);
+    return this.service.listCreateDestinations(workbookId as WorkbookId, connectorAccountId, actor);
   }
 
   @Get(':connectorAccountId/create-destinations/search')
@@ -101,7 +101,7 @@ export class ConnectorAccountController {
   ): Promise<CreateDestinationSearchResult> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
-    return this.service.searchCreateDestinations(connectorAccountId, searchTerm, actor);
+    return this.service.searchCreateDestinations(workbookId as WorkbookId, connectorAccountId, searchTerm, actor);
   }
 
   @Get(':connectorAccountId/create-destinations/lookup')
@@ -116,7 +116,7 @@ export class ConnectorAccountController {
     if (!destinationId?.trim()) {
       throw new BadRequestException('destinationId is required');
     }
-    return this.service.lookupCreateDestination(connectorAccountId, destinationId, actor);
+    return this.service.lookupCreateDestination(workbookId as WorkbookId, connectorAccountId, destinationId, actor);
   }
 
   @Get(':connectorAccountId/tables/search')
@@ -128,7 +128,7 @@ export class ConnectorAccountController {
   ): Promise<TableSearchResult> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
-    return this.service.searchTables(connectorAccountId, searchTerm, actor);
+    return this.service.searchTables(workbookId as WorkbookId, connectorAccountId, searchTerm, actor);
   }
 
   @Get(':connectorAccountId/tables/schema')

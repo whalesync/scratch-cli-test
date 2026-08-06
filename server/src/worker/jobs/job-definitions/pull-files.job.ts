@@ -197,12 +197,16 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
     // Get connector
     const service = dataFolder.connectorService;
 
-    let decryptedConnectorAccount: Awaited<ReturnType<typeof this.connectorAccountService.findOneById>> | null = null;
+    let decryptedConnectorAccount: Awaited<ReturnType<typeof this.connectorAccountService.findOneByIdUnscoped>> | null =
+      null;
     if (dataFolder.connectorAccountId) {
-      decryptedConnectorAccount = await this.connectorAccountService.findOneById(dataFolder.connectorAccountId, {
-        userId: data.userId,
-        organizationId: data.organizationId,
-      });
+      decryptedConnectorAccount = await this.connectorAccountService.findOneByIdUnscoped(
+        dataFolder.connectorAccountId,
+        {
+          userId: data.userId,
+          organizationId: data.organizationId,
+        },
+      );
       if (!decryptedConnectorAccount) {
         throw new Error(`Connector account ${dataFolder.connectorAccountId} not found`);
       }

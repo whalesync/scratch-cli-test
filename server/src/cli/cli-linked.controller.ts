@@ -93,7 +93,11 @@ export class CliLinkedController {
     const validatedDto = dto as ValidatedCreateCliLinkedTableDto;
 
     // Check if the table is disabled (e.g. no unique column)
-    const { tables } = await this.connectorAccountService.listTables(validatedDto.connectorAccountId, actor);
+    const { tables } = await this.connectorAccountService.listTables(
+      workbookId as WorkbookId,
+      validatedDto.connectorAccountId,
+      actor,
+    );
     const tableIdStr = validatedDto.tableId.join(',');
     const matchedTable = tables.find((t) => [...t.id.remoteId].join(',') === tableIdStr);
     if (matchedTable?.disabled) {

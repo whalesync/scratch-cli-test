@@ -83,7 +83,7 @@ describe('PullFilesJobHandler', () => {
     } as unknown as jest.Mocked<ConnectorsService>;
 
     mockConnectorAccountService = {
-      findOneById: jest.fn(),
+      findOneByIdUnscoped: jest.fn(),
     } as unknown as jest.Mocked<ConnectorAccountService>;
 
     mockWorkbookEventService = {
@@ -185,7 +185,7 @@ describe('PullFilesJobHandler', () => {
       (mockFileIndexService.upsertBatch as jest.Mock).mockResolvedValue(undefined);
       (mockFileReferenceService.updateRefsForFiles as jest.Mock).mockResolvedValue(undefined);
       (mockAssetExtractorService.extractAssets as jest.Mock).mockReturnValue([]);
-      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue({
+      (mockConnectorAccountService.findOneByIdUnscoped as jest.Mock).mockResolvedValue({
         id: 'coa_123',
         credentials: {},
       });
