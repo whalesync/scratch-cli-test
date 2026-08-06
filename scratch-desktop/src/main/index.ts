@@ -17,6 +17,8 @@ import { initAutoDownloadScheduler, type AutoDownloadSchedulerController } from 
 import { detectCloudSync, type CloudSyncDetection } from './cloud-sync';
 import { isSafeExternalUrl, type ExternalUrlPolicy } from './external-url';
 import { installScratchmdToPath, isCliSymlinkInstalled, uninstallScratchmdFromPath } from './install-cli';
+import { createPathConfinedIpcRegistrar } from './ipc-path-confinement';
+import { IPC_PATH_ARGUMENT_POLICIES } from './ipc-path-policies';
 import {
   acceptFieldEditFromInputText,
   acceptUnreviewedFieldEdit,
@@ -99,6 +101,7 @@ import {
   type PublishJobEntry,
   type SessionEvent,
 } from './workspace-logger';
+import { createPickedParentFolderAllowlist, createWorkspacePathGuard } from './workspace-path-guard';
 
 // DEV-10318: point in-process (napi) git shell-outs at the bundled git binary
 // before anything can invoke them, so a packaged build never falls back to
@@ -543,6 +546,40 @@ async function findWorkspaceRootForRealPath(candidatePath: string): Promise<stri
   return matchingRealWorkspaceRoots.sort((a, b) => b.length - a.length)[0] ?? null;
 }
 
+// ── IPC path confinement (SCR-007 / DEV-11002) ──────────────────────────────────────────────────
+//
+// Every handler below registers through `confinedIpc` rather than `ipcMain` directly, so that the
+// path arguments the renderer sends are validated against IPC_PATH_ARGUMENT_POLICIES before the
+// handler body runs. Registering a channel with no policy entry throws at startup — see
+// `ipc-path-confinement.ts` for why that is deliberate.
+
+/**
+ * The registry rows the guard treats as authorising directories.
+ *
+ * Deliberately NOT pruned first. Pruning is registry hygiene, not authorization: what makes a
+ * directory legitimate is that the user chose it and it got registered, and `pruneStale…` decides
+ * a row is dead by looking for a `.scratch/.scratchmd` marker — a CLI-owned detail that has no
+ * bearing on whether the renderer should be allowed to touch the folder. Skipping it also keeps
+ * this off the critical path in two ways that matter here: `pruneStale…` **writes** the registry
+ * file as a side effect, which a read-only security check has no business doing, and it costs two
+ * `stat` calls per row on a check that runs for every path-taking IPC call.
+ *
+ * A row whose folder no longer exists is harmless — `realpath` fails on it inside the guard and it
+ * simply confines nothing.
+ */
+async function readRegisteredWorkspaceRootPaths(): Promise<string[]> {
+  const entries = await readWorkspaceRegistry();
+  return entries.map((entry) => entry.path);
+}
+
+const workspacePathGuard = createWorkspacePathGuard(readRegisteredWorkspaceRootPaths);
+const pickedParentFolderAllowlist = createPickedParentFolderAllowlist(readRegisteredWorkspaceRootPaths);
+
+const confinedIpc = createPathConfinedIpcRegistrar(ipcMain, IPC_PATH_ARGUMENT_POLICIES, {
+  workspacePathGuard,
+  pickedParentFolderAllowlist,
+});
+
 async function withWorkspaceInternalMutation<T>(workspacePath: string, action: () => Promise<T>): Promise<T> {
   const endInternalMutation = workspaceFileWatchService.beginInternalWorkspaceMutation(workspacePath);
   try {
@@ -680,13 +717,13 @@ function startWorkspaceInternalLiveCommand(
 }
 
 // Auth IPC handlers
-ipcMain.handle('auth:get-credentials', () => {
+confinedIpc.handle('auth:get-credentials', () => {
   const start = performance.now();
   const result = getCredentials();
   logPerf('main ipc getCredentials', performance.now() - start);
   return result;
 });
-ipcMain.handle(
+confinedIpc.handle(
   'auth:save-credentials',
   async (_, creds: { apiToken: string; email?: string; tokenExpiresAt?: string; serverUrl: string }) => {
     saveCredentials(creds);
@@ -701,14 +738,14 @@ ipcMain.handle(
     await syncCredentialsToScratchmdCli(creds);
   },
 );
-ipcMain.handle('auth:clear-credentials', () => clearCredentials());
-ipcMain.handle('auth:is-token-expired', () => {
+confinedIpc.handle('auth:clear-credentials', () => clearCredentials());
+confinedIpc.handle('auth:is-token-expired', () => {
   const start = performance.now();
   const result = isTokenExpired();
   logPerf('main ipc isTokenExpired', performance.now() - start);
   return result;
 });
-ipcMain.handle('auth:open-external', (_, url: string) => {
+confinedIpc.handle('auth:open-external', (_, url: string) => {
   // `shell.openExternal` dispatches on URL scheme, so an unchecked renderer-supplied string
   // reaches `file://`, `smb://`, and every custom protocol handler on the machine (DEV-10998).
   // Rejecting throws rather than silently resolving: callers that fall back on failure (e.g. the
@@ -730,7 +767,7 @@ ipcMain.handle('auth:open-external', (_, url: string) => {
  * instruction. The folder is confined to a registered workspace — via realpath, so a symlink
  * inside a workspace can't aim an agent at, say, `~/.ssh`.
  */
-ipcMain.handle(
+confinedIpc.handle(
   'scratch:open-agent-deep-link',
   async (
     _,
@@ -758,15 +795,15 @@ ipcMain.handle(
 );
 
 // Preferences IPC handlers
-ipcMain.handle('preferences:get-current-workspace-id', () => getCurrentWorkspaceId());
-ipcMain.handle('preferences:set-current-workspace-id', (_, id: string | null) => setCurrentWorkspaceId(id));
-ipcMain.handle('preferences:get-workbook-settings', (_, workbookId: string) => getWorkbookSettings(workbookId));
-ipcMain.handle(
+confinedIpc.handle('preferences:get-current-workspace-id', () => getCurrentWorkspaceId());
+confinedIpc.handle('preferences:set-current-workspace-id', (_, id: string | null) => setCurrentWorkspaceId(id));
+confinedIpc.handle('preferences:get-workbook-settings', (_, workbookId: string) => getWorkbookSettings(workbookId));
+confinedIpc.handle(
   'preferences:set-workbook-setting',
   (_, workbookId: string, key: keyof WorkbookSettings, value: unknown) => setWorkbookSetting(workbookId, key, value),
 );
 
-ipcMain.handle('scratch:get-workspaces-registry', async () => {
+confinedIpc.handle('scratch:get-workspaces-registry', async () => {
   const start = performance.now();
   const rawEntries = await readWorkspaceRegistry();
   const entries = await pruneStaleWorkspaceRegistryEntries(rawEntries);
@@ -799,7 +836,7 @@ function toCloudSyncWarning(detection: CloudSyncDetection | null) {
     evidencePath: detection.evidencePath,
   };
 }
-ipcMain.handle('scratch:pick-parent-folder', async () => {
+confinedIpc.handle('scratch:pick-parent-folder', async () => {
   while (true) {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory', 'createDirectory'],
@@ -811,6 +848,10 @@ ipcMain.handle('scratch:pick-parent-folder', async () => {
     if (!picked) return null;
     const detection = await detectCloudSync(picked);
     if (!detection) {
+      // Record the choice so `scratch:init-workspace` will accept this directory when the renderer
+      // hands it back. The dialog is the only way a directory becomes legitimate for workspace
+      // creation, since a brand-new workspace is by definition not yet in the registry.
+      await pickedParentFolderAllowlist.rememberUserPickedParentFolder(picked);
       return picked;
     }
     const refusal = await dialog.showMessageBox({
@@ -829,13 +870,13 @@ ipcMain.handle('scratch:pick-parent-folder', async () => {
     }
   }
 });
-ipcMain.handle('scratch:create-workspace', async (_, name: string) =>
+confinedIpc.handle('scratch:create-workspace', async (_, name: string) =>
   runScratchmdJson<{ id: string; name: string }>(['--json', 'workspaces', 'create', name]),
 );
-ipcMain.handle('scratch:init-workspace', async (_, workbookId: string, cwd: string, opts?: { force?: boolean }) =>
+confinedIpc.handle('scratch:init-workspace', async (_, workbookId: string, cwd: string, opts?: { force?: boolean }) =>
   runScratchmd(['workspaces', 'init', workbookId, ...(opts?.force ? ['--force'] : [])], cwd),
 );
-ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) => {
+confinedIpc.handle('scratch:remove-workspace', async (_, workbookId: string) => {
   const ipcStart = performance.now();
   console.log('[remove-workspace] start', workbookId);
 
@@ -899,17 +940,17 @@ ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) => {
 
   console.log(`[remove-workspace] total IPC: ${(performance.now() - ipcStart).toFixed(0)}ms`);
 });
-ipcMain.handle('scratch:prepare-workspace-index', async () => {
+confinedIpc.handle('scratch:prepare-workspace-index', async () => {
   // No-op: the folder-index seeds itself lazily on first run_query call.
 });
 
-ipcMain.handle(
+confinedIpc.handle(
   'scratch:clear-folder-index',
   async (_, workspacePath: string, folderPath: string): Promise<{ rows_cleared: number }> => {
     return clearFolderIndex(workspacePath, folderPath);
   },
 );
-ipcMain.handle(
+confinedIpc.handle(
   'scratch:rerun-validation',
   async (event, workspacePath: string, scope: RerunValidationScope): Promise<RerunValidationSummary> => {
     // Forward per-folder stderr progress lines so the renderer can update a live toast.
@@ -920,7 +961,7 @@ ipcMain.handle(
     });
   },
 );
-ipcMain.handle('scratch:refresh-paths', () => {
+confinedIpc.handle('scratch:refresh-paths', () => {
   // No-op: working-tree changes are detected automatically by `index find-stale-files`
   // on the next paginate-records call. Dirty/master mutations trigger explicit
   // `index refresh-files-full` / `index rebuild-folder` calls at the IPC handler
@@ -957,7 +998,7 @@ function resolveBulkReviewFolderArgs(
   }
   return { ok: true, folderArgs: ['--folder', cliFolder] };
 }
-ipcMain.handle(
+confinedIpc.handle(
   'scratch:accept-all-changes',
   async (_, workspacePath: string, folderPath?: string, connectionId?: string) => {
     const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
@@ -969,13 +1010,13 @@ ipcMain.handle(
     return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
   },
 );
-ipcMain.handle('scratch:discard-all-changes', async (_, workspacePath: string, folderPath?: string) => {
+confinedIpc.handle('scratch:discard-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
   if (!folder.ok) return folder.result;
   const args = ['files', 'discard-all', ...folder.folderArgs];
   return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
-ipcMain.handle(
+confinedIpc.handle(
   'scratch:reject-all-changes',
   async (_, workspacePath: string, folderPath?: string, connectionId?: string) => {
     const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
@@ -987,7 +1028,7 @@ ipcMain.handle(
     return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
   },
 );
-ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>
+confinedIpc.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await runScratchmdCapture(['files', 'accept', recordPath], workspacePath);
     if (result.exitCode === 0) {
@@ -997,7 +1038,7 @@ ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordP
     return result;
   }),
 );
-ipcMain.handle('scratch:accept-records', async (_, workspacePath: string, recordPaths: string[]) =>
+confinedIpc.handle('scratch:accept-records', async (_, workspacePath: string, recordPaths: string[]) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     if (recordPaths.length === 0) return { stdout: '', stderr: '', exitCode: 0 };
     // The CLI `files accept` takes many paths in one call (the by-type view's
@@ -1020,13 +1061,13 @@ ipcMain.handle('scratch:accept-records', async (_, workspacePath: string, record
     return result;
   }),
 );
-ipcMain.handle('scratch:reject-record', async (_, workspacePath: string, recordPath: string) =>
+confinedIpc.handle('scratch:reject-record', async (_, workspacePath: string, recordPath: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     // reject reverts working only; hot path detects working-tree changes automatically
     return runScratchmdCapture(['files', 'reject', recordPath], workspacePath);
   }),
 );
-ipcMain.handle('scratch:discard-record', async (_, workspacePath: string, recordPath: string) =>
+confinedIpc.handle('scratch:discard-record', async (_, workspacePath: string, recordPath: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await runScratchmdCapture(['files', 'discard', recordPath], workspacePath);
     if (result.exitCode === 0) {
@@ -1036,11 +1077,13 @@ ipcMain.handle('scratch:discard-record', async (_, workspacePath: string, record
     return result;
   }),
 );
-ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
+confinedIpc.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
   listUnreviewedChanges(workspacePath),
 );
-ipcMain.handle('scratch:list-unpushed-changes', async (_, workspacePath: string) => listUnpushedChanges(workspacePath));
-ipcMain.handle(
+confinedIpc.handle('scratch:list-unpushed-changes', async (_, workspacePath: string) =>
+  listUnpushedChanges(workspacePath),
+);
+confinedIpc.handle(
   'scratch:upload-workspace-changes',
   async (_, workspacePath: string, opts?: { filePath?: string; connectionId?: string }) =>
     // `files upload` reindexes the affected folders itself (per-path,
@@ -1052,7 +1095,7 @@ ipcMain.handle(
 // Single-record post-publish reconcile (DEV-10413). The scoped analogue of the
 // `files download` pull above — runs after a single-record publish lands so the
 // other unreviewed edits in the workspace don't block the refresh.
-ipcMain.handle(
+confinedIpc.handle(
   'scratch:reconcile-published-record',
   async (_, workspacePath: string, filePath: string, pipelineId?: string) =>
     withWorkspaceInternalMutation(workspacePath, () => reconcilePublishedRecord(workspacePath, filePath, pipelineId)),
@@ -1062,7 +1105,7 @@ ipcMain.handle(
 // drops publish-no-op survivors, and re-surfaces failed edits as needs-approval —
 // replacing the generic `pullWorkspaceChanges` for the publish path so failures
 // aren't lost. `failedOpsJson` is the run-job's `failedOperations` as a JSON string.
-ipcMain.handle(
+confinedIpc.handle(
   'scratch:reconcile-after-publish',
   async (_, workspacePath: string, connectionId: string, failedOpsJson: string, pipelineId?: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
@@ -1073,30 +1116,30 @@ ipcMain.handle(
       return result;
     }),
 );
-ipcMain.handle(
+confinedIpc.handle(
   'scratch:pull-workspace-changes',
   async (_, workspacePath: string, opts?: { onDelete?: string; filePath?: string; connectionId?: string }) =>
     performWorkspaceDownload(workspacePath, opts),
 );
-ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
-ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>
+confinedIpc.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
+confinedIpc.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>
   runScratchmdCapture(['syncs', 'validate-local', '--sync', syncName], workspacePath),
 );
-ipcMain.handle('scratch:start-run-local-sync', async (event, workspacePath: string, syncName: string) =>
+confinedIpc.handle('scratch:start-run-local-sync', async (event, workspacePath: string, syncName: string) =>
   startWorkspaceInternalLiveCommand(event.sender, workspacePath, ['syncs', 'run-local', '--sync', syncName]),
 );
 
-ipcMain.handle('scratch:pull-all-linked-tables', async (_, workspacePath: string) =>
+confinedIpc.handle('scratch:pull-all-linked-tables', async (_, workspacePath: string) =>
   withWorkspaceInternalMutation(workspacePath, () =>
     runScratchmdJson<{ jobIds: string[] }>(['--json', 'linked', 'pull-all'], workspacePath),
   ),
 );
 // Derive the record tree of a folder whose schema declares `recordTree`
 // parent-pointer paths (read-only one-shot — plain shell-out, no mutation lock).
-ipcMain.handle('scratch:record-tree', async (_, workspacePath: string, folder: string) =>
+confinedIpc.handle('scratch:record-tree', async (_, workspacePath: string, folder: string) =>
   runScratchmdJson(['record-tree', '--folder', folder], workspacePath),
 );
-ipcMain.handle('scratch:watch-workspace-files', async (event, workspacePath: string) => {
+confinedIpc.handle('scratch:watch-workspace-files', async (event, workspacePath: string) => {
   const folders = await listFolders(workspacePath);
   const folderPaths = folders.map((f) => f.path);
   // Register the renderer as the subscriber for review-stats notifications.
@@ -1105,7 +1148,7 @@ ipcMain.handle('scratch:watch-workspace-files', async (event, workspacePath: str
   reviewStatsNotifier.setSubscriber(event.sender);
   return workspaceFileWatchService.watchWorkspaceFiles(event.sender, workspacePath, folderPaths);
 });
-ipcMain.handle('scratch:clear-workspace-file-watch', (_, workspacePath?: string) => {
+confinedIpc.handle('scratch:clear-workspace-file-watch', (_, workspacePath?: string) => {
   workspaceFileWatchService.clearWorkspaceFileWatch();
   reviewStatsNotifier.setSubscriber(null);
   // Drop any pending notify for the workspace being closed/switched away from.
@@ -1113,13 +1156,13 @@ ipcMain.handle('scratch:clear-workspace-file-watch', (_, workspacePath?: string)
     reviewStatsNotifier.cancelWorkspace(workspacePath);
   }
 });
-ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {
+confinedIpc.handle('scratch:show-in-folder', (_, folderPath: string) => {
   void shell.openPath(folderPath);
 });
-ipcMain.handle('scratch:show-item-in-folder', (_, filePath: string) => {
+confinedIpc.handle('scratch:show-item-in-folder', (_, filePath: string) => {
   shell.showItemInFolder(filePath);
 });
-ipcMain.handle('scratch:show-workspace-log', async (_, workspacePath: string) => {
+confinedIpc.handle('scratch:show-workspace-log', async (_, workspacePath: string) => {
   const logPath = join(workspacePath, 'workspace.log');
   try {
     await stat(logPath);
@@ -1128,7 +1171,7 @@ ipcMain.handle('scratch:show-workspace-log', async (_, workspacePath: string) =>
     void shell.openPath(workspacePath);
   }
 });
-ipcMain.handle('scratch:open-in-terminal', (_, folderPath: string) => {
+confinedIpc.handle('scratch:open-in-terminal', (_, folderPath: string) => {
   if (process.platform === 'win32') {
     // Open a VISIBLE PowerShell window at the folder. Launch via `cmd /c start`
     // so PowerShell gets its own new console window (showing it is the whole
@@ -1146,7 +1189,7 @@ ipcMain.handle('scratch:open-in-terminal', (_, folderPath: string) => {
   // macOS: open Terminal.app at the folder.
   spawn('open', ['-a', 'Terminal', folderPath], { stdio: 'ignore', detached: true }).unref();
 });
-ipcMain.on(
+confinedIpc.on(
   'scratch:show-native-context-menu',
   (
     event,
@@ -1188,17 +1231,17 @@ ipcMain.on(
     menu.popup({ window: win });
   },
 );
-ipcMain.handle('scratch:toggle-devtools', (event) => {
+confinedIpc.handle('scratch:toggle-devtools', (event) => {
   event.sender.toggleDevTools();
 });
 
-ipcMain.handle('scratch:get-app-version', () => app.getVersion());
+confinedIpc.handle('scratch:get-app-version', () => app.getVersion());
 
 // Updater IPC. Routes the renderer's "Check for updates" / "Restart & install"
 // requests through the updater controller. When the controller is null
 // (development build or SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE), we still surface
 // a manual-check 'error' event so the menu click feels responsive.
-ipcMain.handle('updater:check-now', async () => {
+confinedIpc.handle('updater:check-now', async () => {
   if (!updaterController) {
     sendUpdaterEvent({
       type: 'error',
@@ -1210,7 +1253,7 @@ ipcMain.handle('updater:check-now', async () => {
   }
   await updaterController.checkForUpdates();
 });
-ipcMain.handle('updater:quit-and-install', () => {
+confinedIpc.handle('updater:quit-and-install', () => {
   updaterController?.quitAndInstall();
 });
 
@@ -1319,12 +1362,12 @@ function buildApplicationMenu(): Menu {
 }
 
 // Local file access IPC handlers
-ipcMain.handle('files:workspace-config', async (_, workspacePath: string) => readWorkspaceConfig(workspacePath));
-ipcMain.handle('files:list-folders', async (_, workspacePath: string) => listFolders(workspacePath));
-ipcMain.handle('files:folder-metadata', async (_, folderPath: string, workspacePath: string) =>
+confinedIpc.handle('files:workspace-config', async (_, workspacePath: string) => readWorkspaceConfig(workspacePath));
+confinedIpc.handle('files:list-folders', async (_, workspacePath: string) => listFolders(workspacePath));
+confinedIpc.handle('files:folder-metadata', async (_, folderPath: string, workspacePath: string) =>
   getFolderMetadata(folderPath, workspacePath),
 );
-ipcMain.handle(
+confinedIpc.handle(
   'files:list-files',
   async (
     _,
@@ -1341,15 +1384,15 @@ ipcMain.handle(
     return listFiles(folderPath, opts);
   },
 );
-ipcMain.handle('files:read-file', async (_, filePath: string) => readFileContent(filePath));
-ipcMain.handle('files:read-file-text-raw', async (_, filePath: string) => readFileTextRaw(filePath));
-ipcMain.handle('files:write-file-text-raw', async (_, filePath: string, contents: string) =>
+confinedIpc.handle('files:read-file', async (_, filePath: string) => readFileContent(filePath));
+confinedIpc.handle('files:read-file-text-raw', async (_, filePath: string) => readFileTextRaw(filePath));
+confinedIpc.handle('files:write-file-text-raw', async (_, filePath: string, contents: string) =>
   withFilePathInternalMutation(filePath, async () => {
     const result = await writeFileTextRaw(filePath, contents);
     return result;
   }),
 );
-ipcMain.handle(
+confinedIpc.handle(
   'publish-plan:revert',
   async (
     _,
@@ -1384,19 +1427,21 @@ ipcMain.handle(
       }
     }),
 );
-ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSize?: number }) =>
+confinedIpc.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSize?: number }) =>
   readBatch(filePaths, opts),
 );
-ipcMain.handle('files:read-schema', async (_, workspacePath: string, folderName: string) =>
+confinedIpc.handle('files:read-schema', async (_, workspacePath: string, folderName: string) =>
   readSchema(workspacePath, folderName),
 );
-ipcMain.handle('files:read-connection-schema', async (_, workspacePath: string, relPath: string) =>
+confinedIpc.handle('files:read-connection-schema', async (_, workspacePath: string, relPath: string) =>
   readConnectionSchema(workspacePath, relPath),
 );
-ipcMain.handle('files:read-connection-view', async (_, folderPath: string, workspacePath: string, viewName: string) =>
-  readConnectionViewByName(folderPath, workspacePath, viewName),
+confinedIpc.handle(
+  'files:read-connection-view',
+  async (_, folderPath: string, workspacePath: string, viewName: string) =>
+    readConnectionViewByName(folderPath, workspacePath, viewName),
 );
-ipcMain.handle(
+confinedIpc.handle(
   'files:read-grid-data',
   async (
     _,
@@ -1414,14 +1459,14 @@ ipcMain.handle(
   ) => readGridData(folderPath, { ...opts }),
 );
 
-ipcMain.handle('files:read-folder-statuses', async (_, folderPath: string, workspacePath: string) =>
+confinedIpc.handle('files:read-folder-statuses', async (_, folderPath: string, workspacePath: string) =>
   readFolderStatuses(folderPath, workspacePath),
 );
-ipcMain.handle('files:find-record-offset', async (_, folderPath: string, workspacePath: string, filename: string) =>
+confinedIpc.handle('files:find-record-offset', async (_, folderPath: string, workspacePath: string, filename: string) =>
   findRecordOffset(folderPath, workspacePath, filename),
 );
 
-ipcMain.handle(
+confinedIpc.handle(
   'files:read-diff-grid-data',
   async (
     event,
@@ -1446,22 +1491,28 @@ ipcMain.handle(
     });
   },
 );
-ipcMain.handle('files:read-diff-record-data', async (_, folderPath: string, workspacePath: string, filename: string) =>
-  readDiffRecordData(folderPath, workspacePath, filename),
+confinedIpc.handle(
+  'files:read-diff-record-data',
+  async (_, folderPath: string, workspacePath: string, filename: string) =>
+    readDiffRecordData(folderPath, workspacePath, filename),
 );
-ipcMain.handle('files:get-validation-results', async (_, workspacePath: string, folderPath: string, filename: string) =>
-  getValidationResults(workspacePath, folderPath, filename),
+confinedIpc.handle(
+  'files:get-validation-results',
+  async (_, workspacePath: string, folderPath: string, filename: string) =>
+    getValidationResults(workspacePath, folderPath, filename),
 );
-ipcMain.handle('files:get-folder-validation-results', async (_, workspacePath: string, folderPath: string) =>
+confinedIpc.handle('files:get-folder-validation-results', async (_, workspacePath: string, folderPath: string) =>
   getFolderValidationResults(workspacePath, folderPath),
 );
-ipcMain.handle('files:get-validation-stats', async (_, workspacePath: string) => getValidationStats(workspacePath));
-ipcMain.handle('files:get-review-stats', async (_, workspacePath: string) => getReviewStats(workspacePath));
-ipcMain.handle('files:get-folder-validation-sample', async (_, workspacePath: string, folder: string) =>
+confinedIpc.handle('files:get-validation-stats', async (_, workspacePath: string) => getValidationStats(workspacePath));
+confinedIpc.handle('files:get-review-stats', async (_, workspacePath: string) => getReviewStats(workspacePath));
+confinedIpc.handle('files:get-folder-validation-sample', async (_, workspacePath: string, folder: string) =>
   getFolderValidationSample(workspacePath, folder),
 );
-ipcMain.handle('files:get-validation-configs', async (_, workspacePath: string) => getValidationConfigs(workspacePath));
-ipcMain.handle(
+confinedIpc.handle('files:get-validation-configs', async (_, workspacePath: string) =>
+  getValidationConfigs(workspacePath),
+);
+confinedIpc.handle(
   'files:write-validation-config',
   async (_, workspacePath: string, connection: string, folderPath: string, entries: unknown[]) =>
     writeValidationConfig(
@@ -1471,13 +1522,13 @@ ipcMain.handle(
       entries as Parameters<typeof writeValidationConfig>[3],
     ),
 );
-ipcMain.handle('files:ensure-schema-validator-seeded', async (_, workspacePath: string) =>
+confinedIpc.handle('files:ensure-schema-validator-seeded', async (_, workspacePath: string) =>
   // Wrap in the internal-mutation window so the seeded `validation.json` writes (under `.scratch/`)
   // and the follow-up revalidation do not trip the workspace file watcher into a spurious
   // schema/view hot-reload in the renderer.
   withWorkspaceInternalMutation(workspacePath, () => seedSchemaValidatorsAndPopulateProblems(workspacePath)),
 );
-ipcMain.handle(
+confinedIpc.handle(
   'files:accept-cell-input-text',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
@@ -1486,7 +1537,7 @@ ipcMain.handle(
       return result;
     }),
 );
-ipcMain.handle(
+confinedIpc.handle(
   'files:accept-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
@@ -1495,7 +1546,7 @@ ipcMain.handle(
       return result;
     }),
 );
-ipcMain.handle(
+confinedIpc.handle(
   'files:undo-approved-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
@@ -1504,7 +1555,7 @@ ipcMain.handle(
       return result;
     }),
 );
-ipcMain.handle(
+confinedIpc.handle(
   'files:reject-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
@@ -1513,59 +1564,67 @@ ipcMain.handle(
       return result;
     }),
 );
-ipcMain.handle('files:restore-deleted-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
-  withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await restoreDeletedRecordViaCli(
-      workspacePath,
-      toWorkspaceRecordPath(workspacePath, folderPath, filename),
-    );
-    return result;
-  }),
+confinedIpc.handle(
+  'files:restore-deleted-record',
+  async (_, folderPath: string, workspacePath: string, filename: string) =>
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await restoreDeletedRecordViaCli(
+        workspacePath,
+        toWorkspaceRecordPath(workspacePath, folderPath, filename),
+      );
+      return result;
+    }),
 );
-ipcMain.handle('files:discard-created-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
-  withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await discardCreatedRecordViaCli(
-      workspacePath,
-      toWorkspaceRecordPath(workspacePath, folderPath, filename),
-    );
-    return result;
-  }),
+confinedIpc.handle(
+  'files:discard-created-record',
+  async (_, folderPath: string, workspacePath: string, filename: string) =>
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await discardCreatedRecordViaCli(
+        workspacePath,
+        toWorkspaceRecordPath(workspacePath, folderPath, filename),
+      );
+      return result;
+    }),
 );
-ipcMain.handle('files:accept-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
-  withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await acceptFieldChanges(workspacePath, folderPath, fieldName);
-    // result.paths has workspace-relative paths; all in the same folder
-    if (result.paths.length > 0) {
-      const folder = folderFromRecordPath(result.paths[0]);
-      await reindexFiles(workspacePath, folder, result.paths.map(filenameFromRecordPath));
-    }
-    return result;
-  }),
+confinedIpc.handle(
+  'files:accept-field-changes',
+  async (_, folderPath: string, workspacePath: string, fieldName: string) =>
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await acceptFieldChanges(workspacePath, folderPath, fieldName);
+      // result.paths has workspace-relative paths; all in the same folder
+      if (result.paths.length > 0) {
+        const folder = folderFromRecordPath(result.paths[0]);
+        await reindexFiles(workspacePath, folder, result.paths.map(filenameFromRecordPath));
+      }
+      return result;
+    }),
 );
-ipcMain.handle('files:reject-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
-  withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await rejectFieldChanges(workspacePath, folderPath, fieldName);
-    // result.paths has workspace-relative paths; all in the same folder
-    if (result.paths.length > 0) {
-      const folder = folderFromRecordPath(result.paths[0]);
-      await reindexFiles(workspacePath, folder, result.paths.map(filenameFromRecordPath));
-    }
-    return result;
-  }),
+confinedIpc.handle(
+  'files:reject-field-changes',
+  async (_, folderPath: string, workspacePath: string, fieldName: string) =>
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await rejectFieldChanges(workspacePath, folderPath, fieldName);
+      // result.paths has workspace-relative paths; all in the same folder
+      if (result.paths.length > 0) {
+        const folder = folderFromRecordPath(result.paths[0]);
+        await reindexFiles(workspacePath, folder, result.paths.map(filenameFromRecordPath));
+      }
+      return result;
+    }),
 );
 
-ipcMain.on('scratch:log-api-call', (_event, workspacePath: string, entry: ApiLogEntry) => {
+confinedIpc.on('scratch:log-api-call', (_event, workspacePath: string, entry: ApiLogEntry) => {
   if (typeof workspacePath !== 'string' || !workspacePath) return;
   logApiCall(workspacePath, entry);
 });
 
-ipcMain.on('scratch:log-session', (_event, workspacePath: string, event: SessionEvent) => {
+confinedIpc.on('scratch:log-session', (_event, workspacePath: string, event: SessionEvent) => {
   if (typeof workspacePath !== 'string' || !workspacePath) return;
   if (event !== 'start' && event !== 'end') return;
   logSession(workspacePath, event);
 });
 
-ipcMain.on('scratch:log-publish-job', (_event, workspacePath: string, entry: PublishJobEntry) => {
+confinedIpc.on('scratch:log-publish-job', (_event, workspacePath: string, entry: PublishJobEntry) => {
   if (typeof workspacePath !== 'string' || !workspacePath) return;
   logPublishJob(workspacePath, entry);
 });
@@ -1647,7 +1706,7 @@ app.on('before-quit', (event) => {
     app.quit();
   };
 
-  ipcMain.once(APP_QUIT_CONFIRMED_CHANNEL, finish);
+  confinedIpc.once(APP_QUIT_CONFIRMED_CHANNEL, finish);
   setTimeout(finish, QUIT_FLUSH_TIMEOUT_MS);
   mainWindow.webContents.send(APP_WILL_QUIT_CHANNEL, payload);
 });

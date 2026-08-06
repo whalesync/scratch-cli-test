@@ -44,6 +44,9 @@ const USER_DATA_DIR_ENV_VAR = 'SCRATCH_DESKTOP_USER_DATA_DIR';
 
 const CONNECTION_DIR_NAME = 'Webflow';
 
+/** Identifies the fixture workspace in the seeded scratchmd registry. */
+const FIXTURE_WORKBOOK_ID = 'wkb_reflabels_fixture';
+
 const launchedApps: ElectronApplication[] = [];
 const createdDirs: string[] = [];
 
@@ -89,6 +92,10 @@ function tableSchema(args: {
 function buildFixtureWorkspace(): string {
   const workspacePath = mkdtempSync(join(tmpdir(), 'scratch-desktop-reflabels-'));
   createdDirs.push(workspacePath);
+
+  // Deliberately no `.scratch/.scratchmd` marker — see the file header. The fixture is still
+  // reachable through the IPC path guard because `launchDesktopApp` lists it in an isolated
+  // scratchmd registry, and registration (not the marker) is what authorises a directory.
 
   const recordPath = (folder: string, filename: string): string =>
     join(workspacePath, CONNECTION_DIR_NAME, folder, filename);
@@ -137,14 +144,29 @@ function buildFixtureWorkspace(): string {
   return workspacePath;
 }
 
-async function launchDesktopApp(): Promise<ElectronApplication> {
+async function launchDesktopApp(workspacePath: string): Promise<ElectronApplication> {
   const userDataDir = mkdtempSync(join(tmpdir(), 'scratch-desktop-e2e-'));
   createdDirs.push(userDataDir);
+
+  // Isolated HOME holding a scratchmd registry that lists the fixture workspace. Without it the
+  // IPC path guard refuses every path under the fixture, because an unregistered directory is not
+  // a workspace as far as the app is concerned (SCR-007).
+  const homeDir = mkdtempSync(join(tmpdir(), 'scratch-desktop-e2e-home-'));
+  createdDirs.push(homeDir);
+  mkdirSync(join(homeDir, '.scratchmd'), { recursive: true });
+  writeFileSync(
+    join(homeDir, '.scratchmd', 'workspaces.yaml'),
+    `version: '1'\nworkspaces:\n- id: ${JSON.stringify(FIXTURE_WORKBOOK_ID)}\n  path: ${JSON.stringify(workspacePath)}\n`,
+  );
+
   const app = await electron.launch({
     args: [MAIN_PROCESS_ENTRY],
     env: {
       ...(process.env as Record<string, string>),
       [USER_DATA_DIR_ENV_VAR]: userDataDir,
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+      SCRATCH_DESKTOP_HOME_DIR: homeDir,
       SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE: '1',
       // The app derives the CLI path from app.getAppPath(), which doesn't line up
       // with the repo checkout when Playwright launches out/main/index.js directly.
@@ -178,7 +200,7 @@ test('resolves foreign-key cells to the referenced records’ names', async () =
   const workspacePath = buildFixtureWorkspace();
   const postsFolderPath = join(workspacePath, CONNECTION_DIR_NAME, 'Posts');
 
-  const app = await launchDesktopApp();
+  const app = await launchDesktopApp(workspacePath);
   const window: Page = await app.firstWindow();
 
   // The preload exposes scratchFiles on every window regardless of auth state, but
