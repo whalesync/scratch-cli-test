@@ -1,4 +1,5 @@
 import type { TableView } from '@spinner/shared-types';
+import type { AgentDeepLinkProduct } from '../shared/agent-deep-links';
 import type { AutoDownloadCompletedEvent } from '../shared/auto-download-events';
 import type { CliInstallEvent } from '../shared/cli-install-events';
 import type { AppWillQuitPayload } from '../shared/lifecycle-events';
@@ -296,6 +297,12 @@ interface ScratchDesktopAPI {
     onClick: (id: string) => void,
   ) => void;
   openInTerminal: (folderPath: string) => Promise<void>;
+  openAgentDeepLink: (
+    product: AgentDeepLinkProduct,
+    workspacePath: string,
+    workspaceName: string | null,
+    selectedFolderRelativePath: string | null,
+  ) => Promise<void>;
   toggleDevTools: () => Promise<void>;
   getAppVersion: () => Promise<string>;
   logApiCall: (

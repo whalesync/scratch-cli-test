@@ -151,22 +151,20 @@ export function WorkspaceHeader({
 
           case 'claude-cowork':
           case 'claude-code': {
-            const product = id === 'claude-cowork' ? 'cowork' : 'code';
-            const prompt = buildAgentPrompt(workspace.name, localPath, 'CLAUDE.md', selectedFolderRelativePath);
-            const claudeUrl = `claude://${product}/new?q=${encodeURIComponent(prompt)}&folder=${encodeURIComponent(localPath)}`;
-            void window.scratchAuth.openExternal(claudeUrl).catch(() => {
-              void window.scratchAuth.openExternal('https://claude.ai/download');
-            });
+            void window.scratchDesktop
+              .openAgentDeepLink(id, localPath, workspace.name, selectedFolderRelativePath)
+              // The agent isn't installed (or the link was refused) — send them to the download page.
+              .catch(() => window.scratchAuth.openExternal('https://claude.ai/download'))
+              .catch(() => undefined);
             break;
           }
 
           case 'codex': {
             // TODO: There's also originUrl that can be used to try to match an existing workspace.
-            const prompt = buildAgentPrompt(workspace.name, localPath, 'AGENTS.md', selectedFolderRelativePath);
-            const codexUrl = `codex://new?prompt=${encodeURIComponent(prompt)}&path=${encodeURIComponent(localPath)}`;
-            void window.scratchAuth.openExternal(codexUrl).catch(() => {
-              void window.scratchAuth.openExternal('https://openai.com/codex/');
-            });
+            void window.scratchDesktop
+              .openAgentDeepLink('codex', localPath, workspace.name, selectedFolderRelativePath)
+              .catch(() => window.scratchAuth.openExternal('https://openai.com/codex/'))
+              .catch(() => undefined);
             break;
           }
         }
@@ -425,29 +423,6 @@ function PublishBreakdown({ total, breakdown }: { total: number; breakdown: Appr
       </Stack>
     </Stack>
   );
-}
-
-function buildAgentPrompt(
-  workspaceName: string | null,
-  localPath: string,
-  agentFile: string,
-  selectedFolderRelativePath: string | null,
-): string {
-  let prompt = `I'm working on my Scratch workspace, "${workspaceName ?? ''}". It is described at \`${localPath}/${agentFile}\`.  `;
-
-  // When the user opened the agent from a specific folder, scope it to that
-  // service folder so it works on the Scratch files there instead of drifting
-  // out of scope (e.g. reaching for the browser). The first path segment is the
-  // connection/service directory; the full relative path is the table/folder.
-  if (selectedFolderRelativePath) {
-    const serviceFolderName = selectedFolderRelativePath.split('/')[0];
-    prompt +=
-      `I opened this from the \`${serviceFolderName}\` service — specifically the \`${selectedFolderRelativePath}\` folder ` +
-      `(at \`${localPath}/${selectedFolderRelativePath}\`). Please focus your work on the Scratch files in that folder and ` +
-      `stay scoped to the \`${serviceFolderName}\` service unless I tell you otherwise.`;
-  }
-
-  return prompt;
 }
 
 /**

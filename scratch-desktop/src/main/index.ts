@@ -4,15 +4,18 @@ import './setup-userdata';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { spawn } from 'child_process';
 import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItemConstructorOptions, shell } from 'electron';
-import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises';
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'fs/promises';
 import { dirname, join, relative, resolve, sep } from 'path';
 import { performance } from 'perf_hooks';
+import type { AgentDeepLinkProduct } from '../shared/agent-deep-links';
 import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-install-events';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import { UPDATER_EVENT_CHANNEL, UpdaterEvent } from '../shared/updater-events';
+import { buildAgentDeepLinkUrl } from './agent-deep-link';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import { initAutoDownloadScheduler, type AutoDownloadSchedulerController } from './auto-download-scheduler';
 import { detectCloudSync, type CloudSyncDetection } from './cloud-sync';
+import { isSafeExternalUrl, type ExternalUrlPolicy } from './external-url';
 import { installScratchmdToPath, isCliSymlinkInstalled, uninstallScratchmdFromPath } from './install-cli';
 import {
   acceptFieldEditFromInputText,
@@ -232,6 +235,14 @@ interface LocalWorkspaceEntry {
   id: string;
   path: string;
 }
+
+/**
+ * Plain `http:` is only ever legitimate in development, where `VITE_SCRATCH_WEB_URL` defaults to
+ * `http://localhost:3000`. Packaged builds always target an https origin, so they reject http
+ * outright — otherwise a compromised renderer could open any local service on any port in the
+ * user's browser (DEV-10998).
+ */
+const EXTERNAL_URL_POLICY: ExternalUrlPolicy = { allowLoopbackHttp: is.dev };
 
 function registryPath(): string {
   return join(app.getPath('home'), '.scratchmd', 'workspaces.yaml');
@@ -467,7 +478,14 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    void shell.openExternal(details.url);
+    // Denying the popup is only half the job: handing the URL to the OS on the way out is the
+    // more dangerous of the two outcomes, so it goes through the same allowlist as the explicit
+    // `auth:open-external` path (DEV-10998).
+    if (isSafeExternalUrl(details.url, EXTERNAL_URL_POLICY)) {
+      void shell.openExternal(details.url);
+    } else {
+      console.warn(`[security] blocked window.open to a disallowed URL scheme: ${details.url}`);
+    }
     return { action: 'deny' };
   });
 
@@ -486,6 +504,43 @@ async function findWorkspaceRootForPath(filePath: string): Promise<string | null
     .filter((entry) => absolutePath === entry.path || absolutePath.startsWith(`${entry.path}${sep}`))
     .sort((a, b) => b.path.length - a.path.length);
   return matchingEntries[0]?.path ?? null;
+}
+
+/**
+ * Like `findWorkspaceRootForPath`, but usable as a security boundary rather than only as a lookup.
+ *
+ * `findWorkspaceRootForPath` compares lexically, and `resolve()` normalises `..` without following
+ * symlinks — so a symlink (or Windows junction) sitting inside a workspace and pointing at, say,
+ * `~/.ssh` passes that check while actually escaping the workspace. This resolves both sides with
+ * `realpath` before comparing, which closes that hole.
+ *
+ * Requires the path to exist: `realpath` fails otherwise, and every caller here is confining a
+ * folder that the user already downloaded. Returns the real workspace root, or null when the path
+ * is outside every registered workspace (or cannot be resolved at all).
+ */
+async function findWorkspaceRootForRealPath(candidatePath: string): Promise<string | null> {
+  let realCandidatePath: string;
+  try {
+    realCandidatePath = await realpath(resolve(candidatePath));
+  } catch {
+    return null;
+  }
+
+  const entries = await pruneStaleWorkspaceRegistryEntries(await readWorkspaceRegistry());
+  const matchingRealWorkspaceRoots: string[] = [];
+  for (const entry of entries) {
+    let realEntryPath: string;
+    try {
+      realEntryPath = await realpath(entry.path);
+    } catch {
+      continue; // Registry entry no longer resolves; it cannot confine anything.
+    }
+    if (realCandidatePath === realEntryPath || realCandidatePath.startsWith(`${realEntryPath}${sep}`)) {
+      matchingRealWorkspaceRoots.push(realEntryPath);
+    }
+  }
+
+  return matchingRealWorkspaceRoots.sort((a, b) => b.length - a.length)[0] ?? null;
 }
 
 async function withWorkspaceInternalMutation<T>(workspacePath: string, action: () => Promise<T>): Promise<T> {
@@ -653,7 +708,54 @@ ipcMain.handle('auth:is-token-expired', () => {
   logPerf('main ipc isTokenExpired', performance.now() - start);
   return result;
 });
-ipcMain.handle('auth:open-external', (_, url: string) => shell.openExternal(url));
+ipcMain.handle('auth:open-external', (_, url: string) => {
+  // `shell.openExternal` dispatches on URL scheme, so an unchecked renderer-supplied string
+  // reaches `file://`, `smb://`, and every custom protocol handler on the machine (DEV-10998).
+  // Rejecting throws rather than silently resolving: callers that fall back on failure (e.g. the
+  // agent deep links) depend on seeing the failure, and a silent no-op would hide the block.
+  if (!isSafeExternalUrl(url, EXTERNAL_URL_POLICY)) {
+    console.warn(`[security] blocked openExternal to a disallowed URL scheme: ${url}`);
+    throw new Error('Blocked external URL: only https may be opened.');
+  }
+  return shell.openExternal(url);
+});
+
+/**
+ * Launch a coding agent at a workspace folder.
+ *
+ * Deliberately NOT routed through `auth:open-external`: `claude://` and `codex://` are exactly
+ * the custom-protocol-handler class that DEV-10998 is about. The renderer names a product and
+ * supplies data values; main owns the scheme AND the prompt template, so a compromised renderer
+ * can neither point this at a different application nor hand a coding agent an attacker-authored
+ * instruction. The folder is confined to a registered workspace — via realpath, so a symlink
+ * inside a workspace can't aim an agent at, say, `~/.ssh`.
+ */
+ipcMain.handle(
+  'scratch:open-agent-deep-link',
+  async (
+    _,
+    product: AgentDeepLinkProduct,
+    workspacePath: string,
+    workspaceName: string | null,
+    selectedFolderRelativePath: string | null,
+  ) => {
+    const realWorkspaceRoot = await findWorkspaceRootForRealPath(workspacePath);
+    if (!realWorkspaceRoot) {
+      console.warn(`[security] blocked agent deep link to a path outside every workspace: ${workspacePath}`);
+      throw new Error('Blocked agent deep link: the folder is not inside a downloaded workspace.');
+    }
+    // Hand the agent the resolved root rather than the path we were given, so the launched agent
+    // and the containment check can never disagree about which directory this is.
+    return shell.openExternal(
+      buildAgentDeepLinkUrl({
+        product,
+        workspaceName,
+        workspacePath: realWorkspaceRoot,
+        selectedFolderRelativePath,
+      }),
+    );
+  },
+);
 
 // Preferences IPC handlers
 ipcMain.handle('preferences:get-current-workspace-id', () => getCurrentWorkspaceId());

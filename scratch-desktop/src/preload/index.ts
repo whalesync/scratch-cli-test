@@ -1,5 +1,6 @@
 import type { TableView } from '@spinner/shared-types';
 import { contextBridge, ipcRenderer } from 'electron';
+import type { AgentDeepLinkProduct } from '../shared/agent-deep-links';
 import { AUTO_DOWNLOAD_COMPLETED_CHANNEL, type AutoDownloadCompletedEvent } from '../shared/auto-download-events';
 import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-install-events';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
@@ -252,6 +253,16 @@ const scratchDesktop = {
     ipcRenderer.once('scratch:native-context-menu-click', handler);
   },
   openInTerminal: (folderPath: string): Promise<void> => invoke('scratch:open-in-terminal', folderPath),
+  // Takes a product and data values rather than a URL or a prompt: main assembles both the
+  // `claude://` / `codex://` scheme and the prompt text, so the renderer can neither choose the
+  // target application nor author the instruction the agent receives (DEV-10998).
+  openAgentDeepLink: (
+    product: AgentDeepLinkProduct,
+    workspacePath: string,
+    workspaceName: string | null,
+    selectedFolderRelativePath: string | null,
+  ): Promise<void> =>
+    invoke('scratch:open-agent-deep-link', product, workspacePath, workspaceName, selectedFolderRelativePath),
   toggleDevTools: (): Promise<void> => invoke('scratch:toggle-devtools'),
   getAppVersion: (): Promise<string> => invoke('scratch:get-app-version'),
   logApiCall: (
