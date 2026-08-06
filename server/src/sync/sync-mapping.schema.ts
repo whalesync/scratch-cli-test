@@ -51,6 +51,17 @@ const jsonpathOptionsSchema = z
   })
   .strict();
 
+const transcriptToSrtOptionsSchema = z
+  .object({
+    speakerPath: z.string().optional(),
+    sentencesPath: z.string().optional(),
+    textPath: z.string().optional(),
+    startMsPath: z.string().optional(),
+    endMsPath: z.string().optional(),
+  })
+  .strict()
+  .optional();
+
 const sourceAssetToDestAssetOptionsSchema = z
   .object({
     sourceDataFolderId: z.string().min(1),
@@ -96,6 +107,7 @@ const transformerConfigSchema: z.ZodType = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal(TransformerTypes.Slugify), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.JSONPath), options: jsonpathOptionsSchema }),
+  z.object({ type: z.literal(TransformerTypes.TranscriptToSrt), options: transcriptToSrtOptionsSchema }),
   z.object({
     type: z.literal(TransformerTypes.SourceAssetToDestAsset),
     options: sourceAssetToDestAssetOptionsSchema,

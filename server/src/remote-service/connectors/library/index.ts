@@ -11,6 +11,7 @@ import './copper/copper-connector';
 import './framer/framer-connector';
 import './generic-api/generic-api-connector';
 import './gohighlevel/gohighlevel-connector';
+import './gong/gong-connector';
 import './google-sheets/google-sheets-connector';
 import './hubspot/hubspot-connector';
 import './intercom/intercom-connector';

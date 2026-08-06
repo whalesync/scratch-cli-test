@@ -352,6 +352,7 @@ export const TransformerTypes = {
   EpochToIso: 'epoch_to_iso',
   SerialDateToIso: 'serial_date_to_iso',
   IsoToSerialDate: 'iso_to_serial_date',
+  TranscriptToSrt: 'transcript_to_srt',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -394,6 +395,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.EpochToIso, label: 'Unix Timestamp to Date' },
   { type: TransformerTypes.SerialDateToIso, label: 'Spreadsheet Serial to Date' },
   { type: TransformerTypes.IsoToSerialDate, label: 'Date to Spreadsheet Serial' },
+  { type: TransformerTypes.TranscriptToSrt, label: 'Transcript to SRT' },
 ];
 
 /** Get the display label for a transformer type */
@@ -641,7 +643,8 @@ export type TransformerOptions =
   | SkipIfDestArrayMatchesOptions
   | ValueMapOptions
   | EpochToIsoOptions
-  | SerialDateOptions;
+  | SerialDateOptions
+  | TranscriptToSrtOptions;
 
 /** Options for the notion_file_url transformer */
 export interface NotionFileUrlOptions {
@@ -650,6 +653,28 @@ export interface NotionFileUrlOptions {
 }
 
 /** Configuration for a field transformer with strictly typed options */
+
+/**
+ * Options for the transcript_to_srt transformer: render an array of
+ * speaker-attributed transcript segments (each holding millisecond-timed
+ * sentences) as a SubRip (SRT) document with "Speaker N:" labels. All shape
+ * knowledge rides in these dot paths, so the transformer stays
+ * connector-agnostic. See `transform/apply-transcript-to-srt.ts` for the
+ * rendering contract.
+ */
+export interface TranscriptToSrtOptions {
+  /** Dot path IN EACH SEGMENT to its speaker identifier; omitted ⇒ cues carry no speaker label */
+  speakerPath?: string;
+  /** Dot path IN EACH SEGMENT to its timed-sentence array; omitted ⇒ each segment IS one timed sentence */
+  sentencesPath?: string;
+  /** Dot path IN EACH SENTENCE to the spoken text (default 'text') */
+  textPath?: string;
+  /** Dot path IN EACH SENTENCE to its start time in milliseconds (default 'start') */
+  startMsPath?: string;
+  /** Dot path IN EACH SENTENCE to its end time in milliseconds (default 'end') */
+  endMsPath?: string;
+}
+
 export type TransformerConfig =
   | { type: typeof TransformerTypes.AutoConvert; options: AutoConvertOptions }
   | { type: typeof TransformerTypes.ArrayAutoConvert; options: ArrayAutoConvertOptions }
@@ -680,7 +705,8 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.ValueMap; options: ValueMapOptions }
   | { type: typeof TransformerTypes.EpochToIso; options?: EpochToIsoOptions }
   | { type: typeof TransformerTypes.SerialDateToIso; options?: SerialDateOptions }
-  | { type: typeof TransformerTypes.IsoToSerialDate; options?: Record<string, never> };
+  | { type: typeof TransformerTypes.IsoToSerialDate; options?: Record<string, never> }
+  | { type: typeof TransformerTypes.TranscriptToSrt; options?: TranscriptToSrtOptions };
 
 /**
  * Transformer arms that are SERVER-ONLY: their options carry a branded `DataFolderId` and

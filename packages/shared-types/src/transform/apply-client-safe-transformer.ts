@@ -3,11 +3,13 @@ import type {
   JSONPathOptions,
   MapArrayOptions,
   SerialDateOptions,
+  TranscriptToSrtOptions,
   TransformerConfig,
   ValueMapOptions,
   WrapObjectOptions,
 } from '../sync-mapping';
 import { applyJsonPath } from './apply-jsonpath';
+import { applyTranscriptToSrt } from './apply-transcript-to-srt';
 import { isoStringToSerialDateNumber, serialDateNumberToIsoString } from './serial-date';
 
 /**
@@ -60,6 +62,8 @@ function applyAnyTransformer(config: TransformerConfig, value: unknown): ClientS
         return applySerialDateToIso(config.options, value);
       case 'iso_to_serial_date':
         return applyIsoToSerialDate(value);
+      case 'transcript_to_srt':
+        return applyTranscriptToSrtArm(config.options ?? {}, value);
       default:
         // Server-only arms (FK / asset / lookup) and any arm not (yet) ported to
         // the client fall through here — the caller refuses the write.
@@ -68,6 +72,12 @@ function applyAnyTransformer(config: TransformerConfig, value: unknown): ClientS
   } catch {
     return { ok: false };
   }
+}
+
+/** `transcript_to_srt` — render timed transcript segments as SubRip text (mirrors the server arm). */
+function applyTranscriptToSrtArm(options: TranscriptToSrtOptions, value: unknown): ClientSafeTransformResult {
+  const result = applyTranscriptToSrt(value, options);
+  return result.ok ? { ok: true, value: result.value } : { ok: false };
 }
 
 /** `jsonpath` — extract via the client-safe RFC 9535 evaluator (mirrors the server arm). */

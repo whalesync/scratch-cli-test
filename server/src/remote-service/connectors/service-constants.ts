@@ -37,4 +37,5 @@ export const Service = {
   FRAMER: 'FRAMER',
   SANITY: 'SANITY',
   GOOGLE_SHEETS: 'GOOGLE_SHEETS',
+  GONG: 'GONG',
 } as const;

@@ -42,6 +42,14 @@ export interface DecryptedCredentials {
   // project-scoped, so the connector auto-discovers the project from the token via the
   // management API; this is only required when the token can see multiple projects.
   sanityProjectId?: string;
+
+  // Gong specific (Basic auth pair from Gong Admin → API, plus the
+  // instance-specific API base URL, e.g. https://us02-12345.api.gong.io —
+  // Gong routes each company to a regional cell; the generic
+  // https://api.gong.io also resolves but Gong recommends the per-instance host).
+  gongAccessKey?: string;
+  gongAccessKeySecret?: string;
+  gongBaseUrl?: string;
 }
 
 export interface SupabaseProjectCredentials {

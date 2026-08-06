@@ -15,5 +15,6 @@ Connectors whose **provisioning is finished**: a test account exists, secrets ar
 | **Shortcut** | Task/Issue | `CB_SHORTCUT_API_TOKEN` | 🟢 | ✅ | `GET api.app.shortcut.com/api/v3/member` (Shortcut-Token) | token is Read-only; make Full-access for writes |
 | **SeaTable** | Spreadsheet/DB (OSS) | `CB_SEATABLE_API_TOKEN` (+login email/pw) | 🟢 | ✅ | `GET cloud.seatable.io/api2/account/info/` (Token) | account token → per-base tokens for data |
 | **Coda** | Doc/Database | `CB_CODA_API_TOKEN` (+login email) | 🟢 | 👤 | `GET coda.io/apis/v1/whoami` (Bearer) | reCAPTCHA on signup (one human click) |
+| **Gong** | Revenue intelligence | `CB_GONG_ACCESS_KEY` `CB_GONG_ACCESS_KEY_SECRET` `CB_GONG_API_BASE_URL` | 🟡 | ⛔ | `GET <base>/v2/workspaces` (Basic: key:secret) | partner **developer instance** (form at collective.gong.io, ~5 business days — no self-serve); login is Google SSO only → **API-only**, no login.sh; instance-specific base URL (us02-125032) |
 
 _All nine re-validated HTTP 200 on 2026-06-26. Provisioning runs: [`provisioning-runs/`](./provisioning-runs/)._
