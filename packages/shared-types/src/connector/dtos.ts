@@ -81,6 +81,22 @@ export interface ConnectorSettingDefinition {
    * both fields = applies to all tables.
    */
   forTableWsIdPrefixes?: string[];
+  /**
+   * Hide this field where the connection is only ever used to CREATE new tables — today that
+   * means the destination side of a Live Export workbook (`Workspace.managedBy ===
+   * WorkbookManager.WS_EXPORT`), which always makes its own tables and never reads existing data.
+   *
+   * For fields that exist only to reach data already in the service. Google Sheets' spreadsheet
+   * URLs are the case this exists for: its scope can't browse Drive, so the URLs tell a connection
+   * which existing spreadsheets it may read, and a Live Export sheet is always brand new.
+   *
+   * A create-only client drops the field everywhere: connect form, reauthorize form, and the
+   * post-connect settings editor. Everyone else renders it normally — Scratch, and the Live Export
+   * SOURCE side, which reads existing data and so still needs the URLs.
+   *
+   * Never set this on a field the connection cannot authenticate or operate without.
+   */
+  hideForCreateOnly?: boolean;
 }
 
 /**

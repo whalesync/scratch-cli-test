@@ -175,6 +175,10 @@ const GOOGLE_SHEETS_SPREADSHEET_URL_FIELD: ConnectorSettingDefinition = {
   // Rows persist verbatim in extras.spreadsheetUrls, which also makes the field
   // editable after connect (Edit Connection prefills + rewrites it generically).
   extrasKey: 'spreadsheetUrls',
+  // A Live Export destination always creates a brand-new spreadsheet and never reads
+  // existing data, so the URL list is pointless there — hide it in create-only clients
+  // (the destination side). Scratch and the Live Export source side still render it.
+  hideForCreateOnly: true,
 };
 
 /**
