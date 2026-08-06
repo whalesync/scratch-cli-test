@@ -174,8 +174,12 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
 
     let totalFilesSynced = 0;
 
-    // Track unique source records that hit errors, per table
-    const erroredRecordIds: Set<string>[] = tableMappings.map(() => new Set<string>());
+    // Errors seen per table, summed across the DATA and FK phases. A count rather
+    // than a set of record ids: the service caps the error samples it returns, so
+    // the ids of every errored record are no longer available (and holding one per
+    // record is what these lists were changed to avoid).
+    const errorCounts: number[] = tableMappings.map(() => 0);
+    const warningCounts: number[] = tableMappings.map(() => 0);
 
     // Aggregate Pass 3 (unmatched-destination) counts across table mappings.
     // Surfaces in the per-run PostHog event, audit log entry, and metrics.
@@ -215,7 +219,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
           tableIndex: i,
           recordsCreated: result.recordsCreated,
           recordsUpdated: result.recordsUpdated,
-          errorCount: result.errors.length,
+          errorCount: result.errorCount,
         });
 
         // Update progress with results
@@ -224,10 +228,10 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         tableProgress.skipped = result.recordsSkipped;
         tableProgress.createdPaths = result.createdPaths.slice(0, MAX_PROGRESS_PATHS);
         tableProgress.updatedPaths = result.updatedPaths.slice(0, MAX_PROGRESS_PATHS);
-        for (const e of result.errors) erroredRecordIds[i].add(e.sourceRemoteId);
-        tableProgress.errorCount = erroredRecordIds[i].size;
+        errorCounts[i] += result.errorCount;
+        tableProgress.errorCount = errorCounts[i];
         tableProgress.errors = result.errors.slice(0, MAX_PROGRESS_ERRORS);
-        tableProgress.status = result.errors.length > 0 ? 'failed' : 'completed';
+        tableProgress.status = result.errorCount > 0 ? 'failed' : 'completed';
         totalFilesSynced += result.recordsCreated + result.recordsUpdated;
         unmatchedDestinationTotals.withMatchKey += result.unmatchedDestinationCounts.withMatchKey;
         unmatchedDestinationTotals.withoutMatchKey += result.unmatchedDestinationCounts.withoutMatchKey;
@@ -236,13 +240,14 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         unmatchedDestinationTotals.deleted += result.unmatchedDestinationCounts.deleted;
 
         // Store warnings in dedicated warnings array
-        if (result.warnings.length > 0) {
+        if (result.warningCount > 0) {
+          warningCounts[i] += result.warningCount;
           tableProgress.warnings = [...tableProgress.warnings, ...result.warnings].slice(0, MAX_PROGRESS_WARNINGS);
-          tableProgress.warningCount = tableProgress.warnings.length;
+          tableProgress.warningCount = warningCounts[i];
         }
 
         // Log any errors
-        if (result.errors.length > 0) {
+        if (result.errorCount > 0) {
           WSLogger.warn({
             source: 'SyncDataFoldersJob',
             message: 'Sync completed with errors',
@@ -298,19 +303,20 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
             syncId: data.syncId,
             tableIndex: i,
             recordsUpdated: fkResult.recordsUpdated,
-            errorCount: fkResult.errors.length,
+            errorCount: fkResult.errorCount,
           });
 
           // Store FK resolution warnings in dedicated warnings array
-          if (fkResult.warnings.length > 0) {
+          if (fkResult.warningCount > 0) {
+            warningCounts[i] += fkResult.warningCount;
             tablesProgress[i].warnings = [...tablesProgress[i].warnings, ...fkResult.warnings].slice(
               0,
               MAX_PROGRESS_WARNINGS,
             );
-            tablesProgress[i].warningCount = tablesProgress[i].warnings.length;
+            tablesProgress[i].warningCount = warningCounts[i];
           }
 
-          if (fkResult.errors.length > 0) {
+          if (fkResult.errorCount > 0) {
             WSLogger.warn({
               source: 'SyncDataFoldersJob',
               message: 'FK resolution completed with errors',
@@ -318,8 +324,8 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
               tableIndex: i,
               errors: fkResult.errors,
             });
-            for (const e of fkResult.errors) erroredRecordIds[i].add(e.sourceRemoteId);
-            tablesProgress[i].errorCount = erroredRecordIds[i].size;
+            errorCounts[i] += fkResult.errorCount;
+            tablesProgress[i].errorCount = errorCounts[i];
             tablesProgress[i].errors = [...tablesProgress[i].errors, ...fkResult.errors].slice(0, MAX_PROGRESS_ERRORS);
             tablesProgress[i].status = 'failed';
           }

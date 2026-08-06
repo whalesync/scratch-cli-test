@@ -316,6 +316,50 @@ describe('SyncService - fillSyncCaches', () => {
     expect(janeMapping?.destinationRemoteId).toBeNull();
     expect(janeMapping?.destinationFilePath).toBeNull();
   });
+
+  it('collapses two source match keys sharing a remote ID, keeping the one that matched a destination', async () => {
+    // SyncMatchKeys is unique on (syncId, dataFolderId, matchId), not on remoteId, so
+    // two records with the same id but different match-key values both survive the
+    // insert. Both then reduce to the same sourceRemoteId, which is the ON CONFLICT
+    // target of the set-based mapping build — without DISTINCT ON, Postgres aborts the
+    // whole statement with "cannot affect row a second time" and fails the sync run.
+    const sourceRecords = [
+      { id: '/file1.json', filePath: '/file1.json', fields: { email: 'john@example.com' } },
+      { id: '/file1.json', filePath: '/copy-of-file1.json', fields: { email: 'jane@example.com' } },
+    ];
+    const destinationRecords = [{ id: '/item1.json', filePath: '/item1.json', fields: { email: 'jane@example.com' } }];
+
+    const tableMapping: TableMapping = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: [],
+      recordMatching: {
+        sourceColumnId: 'email',
+        destinationColumnId: 'email',
+      },
+    };
+
+    await syncService.fillSyncCachesBatch(syncId, tableMapping, sourceRecords, destinationRecords);
+
+    // Both match keys are stored — the duplicate remote ID is only a problem downstream.
+    const sourceMatches = await prisma.syncMatchKeys.findMany({
+      where: { syncId, dataFolderId: sourceFolderId },
+    });
+    expect(sourceMatches).toHaveLength(2);
+    expect(new Set(sourceMatches.map((m) => m.remoteId))).toEqual(new Set(['/file1.json']));
+
+    await expect(syncService.buildRecordMatchingMappings(syncId, tableMapping)).resolves.not.toThrow();
+
+    // One row survives per source remote ID, and it is the one that actually matched
+    // a destination rather than whichever the planner happened to reach first.
+    const mappings = await prisma.syncRemoteIdMapping.findMany({
+      where: { syncId, dataFolderId: sourceFolderId },
+    });
+    expect(mappings).toHaveLength(1);
+    expect(mappings[0].sourceRemoteId).toBe('/file1.json');
+    expect(mappings[0].destinationRemoteId).toBe('/item1.json');
+    expect(mappings[0].destinationFilePath).toBe('/item1.json');
+  });
 });
 
 describe('SyncService - syncTableMapping', () => {
@@ -934,6 +978,39 @@ describe('SyncService - syncTableMapping', () => {
     );
   }, 60_000);
 
+  it('writes one SyncRemoteIdMapping per source record across pages, and samples the reported paths', async () => {
+    // Guards the set-based mapping build and the per-page backfill (DEV-11192):
+    // both used to queue one database operation per record, and both are exercised
+    // here by a table whose records span more than one source page and are all
+    // creates (empty destination).
+    mockSourcePagesCrossingSpillThreshold(1001);
+
+    const tableMapping: TableMapping = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: [{ sourceColumnId: 'email', destinationColumnId: 'email_address' }],
+      recordMatching: { sourceColumnId: 'email', destinationColumnId: 'email_address' },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    expect(result.errorCount).toBe(0);
+    expect(result.recordsCreated).toBe(1001);
+    // Counts stay exact; the path lists are samples.
+    expect(result.createdPaths).toHaveLength(100);
+
+    // Every source record got a mapping row, and the backfill filled in each
+    // one's destination path and record id.
+    const mappings = await prisma.syncRemoteIdMapping.findMany({
+      where: { syncId, dataFolderId: sourceFolderId },
+      select: { sourceRemoteId: true, destinationFilePath: true, destinationRemoteId: true },
+    });
+    expect(mappings).toHaveLength(1001);
+    expect(new Set(mappings.map((m) => m.sourceRemoteId)).size).toBe(1001);
+    expect(mappings.every((m) => m.destinationFilePath?.startsWith('dest/'))).toBe(true);
+    expect(mappings.every((m) => m.destinationRemoteId !== null)).toBe(true);
+  }, 60_000);
+
   it('zeroes counts and reports every record failed when the atomic staged commit fails', async () => {
     mockSourcePagesCrossingSpillThreshold(1001);
     (scratchGitService.commitStagedFilesAtomic as jest.Mock).mockRejectedValue(new Error('Atomic commit failed'));
@@ -952,7 +1029,10 @@ describe('SyncService - syncTableMapping', () => {
     // single commitFilesToBranch call.
     expect(result.recordsCreated).toBe(0);
     expect(result.recordsUpdated).toBe(0);
-    expect(result.errors).toHaveLength(1001);
+    // Every queued record counts as failed; the errors list carries a sample of
+    // them rather than one entry per record.
+    expect(result.errorCount).toBe(1001);
+    expect(result.errors).toHaveLength(100);
     expect(result.errors[0].error).toContain('Batch write failed');
     // Staging dir still cleaned up on the failure path.
     expect((scratchGitService.cleanupStaging as jest.Mock).mock.invocationCallOrder.length).toBe(1);
@@ -981,7 +1061,8 @@ describe('SyncService - syncTableMapping', () => {
     const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
 
     expect(result.recordsCreated).toBe(0);
-    expect(result.errors).toHaveLength(1001);
+    expect(result.errorCount).toBe(1001);
+    expect(result.errors).toHaveLength(100);
     expect(result.errors[0].error).toContain('staging state was lost');
   }, 60_000);
 

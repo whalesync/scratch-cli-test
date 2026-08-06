@@ -40,6 +40,7 @@ import {
   ValidateSyncMappingTypesResponse,
   WorkbookId,
 } from '@spinner/shared-types';
+import chunk from 'lodash/chunk';
 import isEqual from 'lodash/isEqual';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
@@ -112,18 +113,53 @@ interface MatchKeyTransformContext {
   destinationService: Service;
 }
 
+/**
+ * How many sample paths / errors / warnings a table result keeps. These lists are
+ * for display only — every count a caller reports comes from the numeric fields
+ * beside them — so they are capped at the point of collection rather than grown to
+ * one entry per record and trimmed by the reader. A table with 42k records used to
+ * build 42k-entry arrays here on its way to showing the first hundred.
+ */
+const MAX_REPORTED_SAMPLES = 100;
+
+/** Appends to a display list until it reaches `MAX_REPORTED_SAMPLES`, then drops silently. */
+function pushSample<T>(samples: T[], value: T): void {
+  if (samples.length < MAX_REPORTED_SAMPLES) {
+    samples.push(value);
+  }
+}
+
+/**
+ * Rows per statement when writing `SyncRemoteIdMapping`. One source page, so a
+ * table's mapping writes cost the same whether it holds a thousand records or a
+ * hundred thousand. Well under Postgres' 65,535 bind-parameter ceiling at three
+ * parameters per row.
+ */
+const REMOTE_ID_MAPPING_WRITE_CHUNK_SIZE = 1000;
+
 export interface SyncTableMappingResult {
   recordsCreated: number;
   recordsUpdated: number;
   recordsSkipped: number;
   /** Destination record files deleted by Pass 3's `'delete'` policy. */
   recordsDeleted: number;
+  /** Sample of created paths, capped at `MAX_REPORTED_SAMPLES`. Count: `recordsCreated`. */
   createdPaths: string[];
+  /** Sample of updated paths, capped at `MAX_REPORTED_SAMPLES`. Count: `recordsUpdated`. */
   updatedPaths: string[];
-  /** Destination record paths deleted by Pass 3's `'delete'` policy. */
+  /**
+   * Sample of paths deleted by Pass 3's `'delete'` policy, capped at
+   * `MAX_REPORTED_SAMPLES`. Count: `recordsDeleted`.
+   */
   deletedPaths: string[];
+  /** Sample of errors, capped at `MAX_REPORTED_SAMPLES`. Count: `errorCount`. */
   errors: Array<{ sourceRemoteId: string; error: string }>;
+  /** Sample of warnings, capped at `MAX_REPORTED_SAMPLES`. Count: `warningCount`. */
   warnings: Array<{ sourceRemoteId: string; warning: string }>;
+  /** Every error raised, including those past the `errors` sample cap. */
+  errorCount: number;
+  /** Every warning raised, including those past the `warnings` sample cap. */
+  warningCount: number;
   /**
    * Per-table summary of Pass 3 (unmatched-destination) activity. Zero across
    * the board when Pass 3 is gated off (no `unmatchedDestinationPolicy`, no
@@ -1099,7 +1135,21 @@ export class SyncService {
       deletedPaths: [],
       errors: [],
       warnings: [],
+      errorCount: 0,
+      warningCount: 0,
       unmatchedDestinationCounts: { withMatchKey: 0, withoutMatchKey: 0, archived: 0, unarchived: 0, deleted: 0 },
+    };
+
+    /** Records an error: always counted, sampled up to the display cap. */
+    const recordError = (sourceRemoteId: string, error: string): void => {
+      result.errorCount++;
+      pushSample(result.errors, { sourceRemoteId, error });
+    };
+
+    /** Records a warning: always counted, sampled up to the display cap. */
+    const recordWarning = (sourceRemoteId: string, warning: string): void => {
+      result.warningCount++;
+      pushSample(result.warnings, { sourceRemoteId, warning });
     };
 
     // 1. Fetch source and destination DataFolders with their schemas
@@ -1291,8 +1341,19 @@ export class SyncService {
         this.readSourceRecordsForReferencedFolderInPages(workbookId, referencedDataFolderId, actor, onRecordPage),
     );
 
-    // Track new records so we can backfill SyncRemoteIdMapping with their file paths and record IDs
-    const newRecordMappings: Array<{ sourceRemoteId: string; filePath: string; destinationRecordId: string }> = [];
+    // Track new records so we can backfill SyncRemoteIdMapping with their file paths and record IDs.
+    // Flushed at page boundaries (and again after the last page) so a table whose
+    // records are all creates — any sync into an empty destination — never holds
+    // more than one page of them.
+    let newRecordMappings: Array<{ sourceRemoteId: string; filePath: string; destinationRecordId: string }> = [];
+    const flushNewRecordMappings = async (): Promise<void> => {
+      if (phase !== 'DATA' || newRecordMappings.length === 0) {
+        return;
+      }
+      const pending = newRecordMappings;
+      newRecordMappings = [];
+      await this.updateRemoteIdMappingsForNewRecords(syncId, tableMapping.sourceDataFolderId, pending);
+    };
 
     // ── Output-file writer: bounded memory, one commit ─────────────────────────
     //
@@ -1328,9 +1389,16 @@ export class SyncService {
     let bufferedFilesToWrite: Array<{ path: string; content: string }> = [];
     let stagedFileCountBeforeBuffer = 0;
     let stagingActive = false;
-    // Every queued file's repo path, in queue order — the step-8 failure loop
-    // reports exactly this set, mirroring the old all-in-memory filesToWrite.
-    const queuedFilePathsForErrorReporting: string[] = [];
+    // Queued files, for the step-8 failure report. A batch write fails as a unit,
+    // so every queued file is affected and the count is what callers act on; only
+    // a sample of the paths is kept, since holding one path string per record put
+    // a second whole-table array next to the one DEV-11193 removed.
+    let queuedFileCount = 0;
+    const queuedFilePathSamples: string[] = [];
+    const queueFilePathForErrorReporting = (path: string): void => {
+      queuedFileCount++;
+      pushSample(queuedFilePathSamples, path);
+    };
 
     const spillBufferedFilesToStaging = async (): Promise<void> => {
       if (bufferedFilesToWrite.length === 0) {
@@ -1434,10 +1502,7 @@ export class SyncService {
       for (const [sourceRemoteId, mapping] of batchMappings) {
         const sourceRecord = batchRecordsById.get(sourceRemoteId);
         if (!sourceRecord) {
-          result.errors.push({
-            sourceRemoteId,
-            error: 'Source record not found',
-          });
+          recordError(sourceRemoteId, 'Source record not found');
           continue;
         }
 
@@ -1463,7 +1528,7 @@ export class SyncService {
             });
             transformedFields = transformResult.fields;
             for (const w of transformResult.warnings) {
-              result.warnings.push({ sourceRemoteId, warning: w });
+              recordWarning(sourceRemoteId, w);
             }
 
             // Generate a temporary ID for the new record so it can be matched on subsequent syncs,
@@ -1493,7 +1558,7 @@ export class SyncService {
             });
 
             result.recordsCreated++;
-            result.createdPaths.push(destinationPath);
+            pushSample(result.createdPaths, destinationPath);
           } else {
             // Existing record: pass the existing fields as the base so applyColumnMappings
             // surgically updates only the mapped fields. This is critical to preserve the
@@ -1517,7 +1582,7 @@ export class SyncService {
             });
             transformedFields = transformResult.fields;
             for (const w of transformResult.warnings) {
-              result.warnings.push({ sourceRemoteId, warning: w });
+              recordWarning(sourceRemoteId, w);
             }
 
             // DEV-11013: repair an archived / soft-deleted destination record whose
@@ -1549,7 +1614,7 @@ export class SyncService {
             }
 
             result.recordsUpdated++;
-            result.updatedPaths.push(destinationPath);
+            pushSample(result.updatedPaths, destinationPath);
             if (hasMatchedBucketConstant || appliedArchiveRepair) {
               result.unmatchedDestinationCounts.unarchived++;
             }
@@ -1557,16 +1622,14 @@ export class SyncService {
 
           const content = serializeRecord(transformedFields);
           bufferedFilesToWrite.push({ path: destinationPath, content });
-          queuedFilePathsForErrorReporting.push(destinationPath);
+          queueFilePathForErrorReporting(destinationPath);
         } catch (error) {
-          result.errors.push({
-            sourceRemoteId,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          recordError(sourceRemoteId, error instanceof Error ? error.message : String(error));
         }
       }
 
       await spillBufferedFilesToStagingIfThresholdReached();
+      await flushNewRecordMappings();
 
       sourceCursor = page.nextCursor;
       batchCounter++;
@@ -1676,7 +1739,7 @@ export class SyncService {
             // Committed as a batch in step 9 (after the Pass 2/3 writes land).
             result.unmatchedDestinationCounts.deleted++;
             result.recordsDeleted++;
-            result.deletedPaths.push(destPath);
+            pushSample(result.deletedPaths, destPath);
             filesToDelete.push(destPath);
             continue;
           }
@@ -1698,7 +1761,7 @@ export class SyncService {
               },
             });
             for (const w of transformResult.warnings) {
-              result.warnings.push({ sourceRemoteId: destRecord.id, warning: w });
+              recordWarning(destRecord.id, w);
             }
             if (isEqual(transformResult.fields, destRecord.fields)) {
               // No effective change — the unmatched rules produced the same
@@ -1707,14 +1770,11 @@ export class SyncService {
             }
             result.unmatchedDestinationCounts.archived++;
             result.recordsUpdated++;
-            result.updatedPaths.push(destPath);
+            pushSample(result.updatedPaths, destPath);
             bufferedFilesToWrite.push({ path: destPath, content: serializeRecord(transformResult.fields) });
-            queuedFilePathsForErrorReporting.push(destPath);
+            queueFilePathForErrorReporting(destPath);
           } catch (error) {
-            result.errors.push({
-              sourceRemoteId: destRecord.id,
-              error: error instanceof Error ? error.message : String(error),
-            });
+            recordError(destRecord.id, error instanceof Error ? error.message : String(error));
           }
 
           await spillBufferedFilesToStagingIfThresholdReached();
@@ -1730,10 +1790,9 @@ export class SyncService {
     }
 
     // 7. Backfill SyncRemoteIdMapping for newly created records with their file paths
-    // This is needed so the FOREIGN_KEY_MAPPING phase can resolve FK references to new records
-    if (phase === 'DATA' && newRecordMappings.length > 0) {
-      await this.updateRemoteIdMappingsForNewRecords(syncId, tableMapping.sourceDataFolderId, newRecordMappings);
-    }
+    // This is needed so the FOREIGN_KEY_MAPPING phase can resolve FK references to new records.
+    // Earlier pages already flushed; this covers the tail.
+    await flushNewRecordMappings();
 
     // 8. Land all queued writes on the dirty branch as ONE commit. Small runs
     // (everything still in the buffer) commit directly; larger runs flush the
@@ -1784,11 +1843,11 @@ export class SyncService {
         // so the whole run's writes are reported failed, exactly as with the
         // old single commitFilesToBranch call.
         const errorMessage = error instanceof Error ? error.message : String(error);
-        for (const path of queuedFilePathsForErrorReporting) {
-          result.errors.push({
-            sourceRemoteId: path,
-            error: `Batch write failed: ${errorMessage}`,
-          });
+        // Every queued file failed, so the count is the queued count; the sampled
+        // paths give the same first-N detail the old per-path loop surfaced.
+        result.errorCount += queuedFileCount;
+        for (const path of queuedFilePathSamples) {
+          pushSample(result.errors, { sourceRemoteId: path, error: `Batch write failed: ${errorMessage}` });
         }
         result.recordsCreated = 0;
         result.recordsUpdated = 0;
@@ -1843,10 +1902,7 @@ export class SyncService {
         // run summary doesn't claim records were removed when none were.
         const errorMessage = error instanceof Error ? error.message : String(error);
         for (const path of filesToDelete) {
-          result.errors.push({
-            sourceRemoteId: path,
-            error: `Batch delete failed: ${errorMessage}`,
-          });
+          recordError(path, `Batch delete failed: ${errorMessage}`);
         }
         result.unmatchedDestinationCounts.deleted = 0;
         result.recordsDeleted = 0;
@@ -1954,6 +2010,33 @@ export class SyncService {
    * Finalizes sync caches after all batches have been processed.
    * Joins source and destination match keys to create remote ID mappings.
    * Only needed when recordMatching is configured.
+   *
+   * Both sides of this already live in Postgres, so the join result never travels
+   * through the worker: one statement reads `SyncMatchKeys` and writes
+   * `SyncRemoteIdMapping`, and only the summary counts come back. Selecting every
+   * row and replaying it as one Prisma operation per record is what OOM-killed the
+   * sync worker on large tables — a 42k-record table built 42k upsert operations in
+   * a single `$transaction` and died before sending any of them (DEV-11192).
+   *
+   * `id` and `updatedAt` are set explicitly because raw SQL bypasses Prisma's
+   * client-side `cuid()` / `@updatedAt` defaults (the same reason `run-count`'s raw
+   * upsert sets them); `createdAt` has a database default and is left alone.
+   *
+   * The left join can't fan a source row out: `SyncMatchKeys` is unique on
+   * `(syncId, dataFolderId, matchId)`, so it adds at most one destination row to each.
+   *
+   * The driving side is a different story. That uniqueness covers `matchId`, not
+   * `remoteId`, and `insertMatchKeys` writes one row per record with `skipDuplicates`
+   * — so two source records sharing a `remoteId` but reducing to different match keys
+   * (a record file duplicated on disk with the match-key field edited and the id left
+   * alone) both survive, and produce two `joined` rows with the same `sourceRemoteId`.
+   * That is the `ON CONFLICT` target, and Postgres aborts the whole statement with
+   * "ON CONFLICT DO UPDATE command cannot affect row a second time" rather than
+   * writing anything. `DISTINCT ON` collapses them to one, which is what the previous
+   * per-record upsert loop did by overwriting; the `ORDER BY` makes the survivor
+   * deterministic and prefers a row that actually matched a destination, where the
+   * loop kept whichever happened to be written last. Reported counts are unaffected
+   * — they come from `joined`, not from the rows inserted.
    */
   async buildRecordMatchingMappings(syncId: SyncId, inputTableMapping: TableMappingV1 | TableMappingV2): Promise<void> {
     const tableMapping = ensureTableMappingV2(inputTableMapping);
@@ -1962,34 +2045,48 @@ export class SyncService {
     }
 
     // Create remote ID mappings for both matched and unmatched source records
-    const allSourceMappings = await this.db.client.$queryRaw<
-      { sourceRemoteId: string; destinationRemoteId: string | null; destinationFilePath: string | null }[]
-    >`
-      SELECT src."remoteId" as "sourceRemoteId",
-             dest."remoteId" as "destinationRemoteId",
-             dest."filePath" as "destinationFilePath"
-      FROM "SyncMatchKeys" src
-      LEFT JOIN "SyncMatchKeys" dest
-        ON src."syncId" = dest."syncId"
-        AND src."matchId" = dest."matchId"
-        AND dest."dataFolderId" = ${tableMapping.destinationDataFolderId}
-      WHERE src."syncId" = ${syncId}
-        AND src."dataFolderId" = ${tableMapping.sourceDataFolderId}
+    const [counts] = await this.db.client.$queryRaw<{ total: bigint; matched: bigint }[]>`
+      WITH joined AS (
+        SELECT src."remoteId" as "sourceRemoteId",
+               dest."remoteId" as "destinationRemoteId",
+               dest."filePath" as "destinationFilePath"
+        FROM "SyncMatchKeys" src
+        LEFT JOIN "SyncMatchKeys" dest
+          ON src."syncId" = dest."syncId"
+          AND src."matchId" = dest."matchId"
+          AND dest."dataFolderId" = ${tableMapping.destinationDataFolderId}
+        WHERE src."syncId" = ${syncId}
+          AND src."dataFolderId" = ${tableMapping.sourceDataFolderId}
+      ), upserted AS (
+        INSERT INTO "SyncRemoteIdMapping" (
+          "id", "updatedAt", "syncId", "dataFolderId",
+          "sourceRemoteId", "destinationRemoteId", "destinationFilePath"
+        )
+        SELECT DISTINCT ON ("sourceRemoteId")
+               gen_random_uuid()::text, NOW(), ${syncId}, ${tableMapping.sourceDataFolderId},
+               "sourceRemoteId", "destinationRemoteId", "destinationFilePath"
+        FROM joined
+        ORDER BY "sourceRemoteId", "destinationRemoteId" NULLS LAST, "destinationFilePath" NULLS LAST
+        ON CONFLICT ("syncId", "dataFolderId", "sourceRemoteId")
+        DO UPDATE SET "destinationRemoteId" = EXCLUDED."destinationRemoteId",
+                      "destinationFilePath" = EXCLUDED."destinationFilePath",
+                      "updatedAt" = NOW()
+        RETURNING 1
+      )
+      SELECT (SELECT COUNT(*) FROM joined) AS "total",
+             (SELECT COUNT(*) FROM joined WHERE "destinationRemoteId" IS NOT NULL) AS "matched"
     `;
 
-    const matchedCount = allSourceMappings.filter((m) => m.destinationRemoteId !== null).length;
+    const totalSourceRecords = Number(counts?.total ?? 0);
+    const matchedRecords = Number(counts?.matched ?? 0);
     WSLogger.info({
       source: 'SyncService.buildRecordMatchingMappings',
       message: 'Built mappings for record matching',
       syncId,
-      totalSourceRecords: allSourceMappings.length,
-      matchedRecords: matchedCount,
-      unmatchedRecords: allSourceMappings.length - matchedCount,
+      totalSourceRecords,
+      matchedRecords,
+      unmatchedRecords: totalSourceRecords - matchedRecords,
     });
-
-    if (allSourceMappings.length > 0) {
-      await this.upsertRemoteIdMappings(syncId, tableMapping, allSourceMappings);
-    }
   }
 
   /**
@@ -2187,36 +2284,45 @@ export class SyncService {
       return;
     }
 
-    await this.db.client.$transaction(
-      mappings.map((mapping) =>
-        this.db.client.syncRemoteIdMapping.upsert({
-          where: {
-            syncId_dataFolderId_sourceRemoteId: {
+    // Chunked so the operation list stays bounded no matter how many mappings a
+    // caller passes — matching how the asset and file indexes write their upserts.
+    for (const chunkOfMappings of chunk(mappings, REMOTE_ID_MAPPING_WRITE_CHUNK_SIZE)) {
+      await this.db.client.$transaction(
+        chunkOfMappings.map((mapping) =>
+          this.db.client.syncRemoteIdMapping.upsert({
+            where: {
+              syncId_dataFolderId_sourceRemoteId: {
+                syncId,
+                dataFolderId: tableMapping.sourceDataFolderId,
+                sourceRemoteId: mapping.sourceRemoteId,
+              },
+            },
+            create: {
               syncId,
               dataFolderId: tableMapping.sourceDataFolderId,
               sourceRemoteId: mapping.sourceRemoteId,
+              destinationRemoteId: mapping.destinationRemoteId,
+              destinationFilePath: mapping.destinationFilePath,
             },
-          },
-          create: {
-            syncId,
-            dataFolderId: tableMapping.sourceDataFolderId,
-            sourceRemoteId: mapping.sourceRemoteId,
-            destinationRemoteId: mapping.destinationRemoteId,
-            destinationFilePath: mapping.destinationFilePath,
-          },
-          update: {
-            destinationRemoteId: mapping.destinationRemoteId,
-            destinationFilePath: mapping.destinationFilePath,
-          },
-        }),
-      ),
-    );
+            update: {
+              destinationRemoteId: mapping.destinationRemoteId,
+              destinationFilePath: mapping.destinationFilePath,
+            },
+          }),
+        ),
+      );
+    }
   }
 
   /**
    * Updates SyncRemoteIdMapping entries for newly created records with their destination file paths
    * and record IDs. During Phase 1, new records have null destination fields. This backfills them
    * so Phase 2 FK resolution can resolve references to new records.
+   *
+   * Written as one `UPDATE ... FROM (VALUES ...)` per chunk rather than one statement
+   * per record: a sync where every source record is a create (an empty destination,
+   * the common first run) queued one operation per record here, the same shape that
+   * OOM-killed the worker in `buildRecordMatchingMappings` (DEV-11192).
    */
   private async updateRemoteIdMappingsForNewRecords(
     syncId: SyncId,
@@ -2227,23 +2333,23 @@ export class SyncService {
       return;
     }
 
-    await this.db.client.$transaction(
-      newRecords.map((record) =>
-        this.db.client.syncRemoteIdMapping.update({
-          where: {
-            syncId_dataFolderId_sourceRemoteId: {
-              syncId,
-              dataFolderId,
-              sourceRemoteId: record.sourceRemoteId,
-            },
-          },
-          data: {
-            destinationRemoteId: record.destinationRecordId,
-            destinationFilePath: record.filePath,
-          },
-        }),
-      ),
-    );
+    for (const chunkOfRecords of chunk(newRecords, REMOTE_ID_MAPPING_WRITE_CHUNK_SIZE)) {
+      const values = Prisma.join(
+        chunkOfRecords.map(
+          (record) => Prisma.sql`(${record.sourceRemoteId}, ${record.destinationRecordId}, ${record.filePath})`,
+        ),
+      );
+      await this.db.client.$executeRaw`
+        UPDATE "SyncRemoteIdMapping" AS m
+        SET "destinationRemoteId" = v."destinationRecordId",
+            "destinationFilePath" = v."filePath",
+            "updatedAt" = NOW()
+        FROM (VALUES ${values}) AS v("sourceRemoteId", "destinationRecordId", "filePath")
+        WHERE m."syncId" = ${syncId}
+          AND m."dataFolderId" = ${dataFolderId}
+          AND m."sourceRemoteId" = v."sourceRemoteId"
+      `;
+    }
   }
 
   /**
