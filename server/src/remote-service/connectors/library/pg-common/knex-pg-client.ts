@@ -610,16 +610,28 @@ export class KnexPGClient {
     );
   }
 
-  /** Resolve a view's pg_class OID, or null when no such view exists. */
-  async findViewRelationOid(schema: string, viewName: string): Promise<number | null> {
-    const result = await this.knex.raw<{ rows: { oid: number }[] }>(
-      `SELECT c.oid::int AS oid
+  /**
+   * Resolve a relation's pg_class OID and kind ('r' ordinary table, 'v' view,
+   * 'm' materialized view, 'p' partitioned table, 'f' foreign table), or null
+   * when the schema holds no relation by that name. One lookup serves callers
+   * that need the kind (is this a view?) and callers that need the OID itself
+   * (Supabase's dashboard addresses a table in its editor by OID).
+   */
+  async findRelationOidAndKind(schema: string, relationName: string): Promise<{ oid: number; relkind: string } | null> {
+    const result = await this.knex.raw<{ rows: { oid: number; relkind: string }[] }>(
+      `SELECT c.oid::int AS oid, c.relkind::text AS relkind
        FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = ? AND c.relname = ? AND c.relkind = 'v'`,
-      [schema, viewName],
+       WHERE n.nspname = ? AND c.relname = ?`,
+      [schema, relationName],
     );
-    return result.rows[0]?.oid ?? null;
+    return result.rows[0] ?? null;
+  }
+
+  /** Resolve a view's pg_class OID, or null when no such view exists. */
+  async findViewRelationOid(schema: string, viewName: string): Promise<number | null> {
+    const relation = await this.findRelationOidAndKind(schema, viewName);
+    return relation?.relkind === 'v' ? relation.oid : null;
   }
 
   /**

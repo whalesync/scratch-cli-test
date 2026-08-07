@@ -72,7 +72,11 @@ import {
 import { buildPgDefaultView } from '../pg-common/pg-default-view';
 import { SupabaseApiError } from './supabase-api-client';
 import { SupabaseAuthParser } from './supabase-auth-parser';
-import { extractProjectRef } from './supabase-setup-utils';
+import {
+  buildSupabaseTableEditorUrl,
+  extractProjectRef,
+  isSupabaseCloudHostedConnectionString,
+} from './supabase-setup-utils';
 import { SupabaseCredentials, SupabaseProjectConfig } from './supabase-types';
 
 const READ_BATCH_SIZE = 500;
@@ -131,6 +135,7 @@ export class SupabaseConnector extends Connector {
   private readonly projects: SupabaseProjectConfig[];
   private readonly isOAuth: boolean;
   private readonly connectionStringProjectRef: string | undefined;
+  private readonly connectionStringIsSupabaseCloudHosted: boolean;
 
   constructor(credentials: SupabaseCredentials) {
     super();
@@ -140,6 +145,20 @@ export class SupabaseConnector extends Connector {
     this.connectionStringProjectRef = credentials.connectionString
       ? extractProjectRef(credentials.connectionString)
       : undefined;
+    this.connectionStringIsSupabaseCloudHosted = credentials.connectionString
+      ? isSupabaseCloudHostedConnectionString(credentials.connectionString)
+      : false;
+  }
+
+  /**
+   * Whether supabase.com dashboard deep links are meaningful for this
+   * connection. OAuth projects always come from Supabase cloud; a user-supplied
+   * connection string may instead point at a self-hosted Supabase or a plain
+   * Postgres, which has no dashboard — omit the link there rather than emit a
+   * broken one.
+   */
+  private get supabaseDashboardDeepLinksAreAvailable(): boolean {
+    return this.isOAuth || this.connectionStringIsSupabaseCloudHosted;
   }
 
   /**
@@ -445,12 +464,17 @@ export class SupabaseConnector extends Connector {
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
 
-      const [columns, pkCandidates, foreignKeys, singleColumnUniqueIndexColumns] = await Promise.all([
-        client.findAllColumnsInTable(schema, tableName),
-        client.findPrimaryColumnCandidates(schema, tableName),
-        client.findAllForeignKeysInTable(schema, tableName),
-        client.findSingleColumnUniqueIndexColumns(schema, tableName),
-      ]);
+      const [columns, pkCandidates, foreignKeys, singleColumnUniqueIndexColumns, relationOidAndKind] =
+        await Promise.all([
+          client.findAllColumnsInTable(schema, tableName),
+          client.findPrimaryColumnCandidates(schema, tableName),
+          client.findAllForeignKeysInTable(schema, tableName),
+          client.findSingleColumnUniqueIndexColumns(schema, tableName),
+          // Serves two callers below: the view fallback (is this relation a
+          // view?) and the dashboard deep link (which addresses a relation by
+          // its OID).
+          client.findRelationOidAndKind(schema, tableName),
+        ]);
 
       // A view has no indexes of its own, so the index-backed lookup comes back
       // empty; fall back to the view→base-column provenance mapping (an output
@@ -462,15 +486,9 @@ export class SupabaseConnector extends Connector {
       // branch is skipped or resolves to "not a view" and the marker stays off.
       let viewBackedUniqueColumnCandidates: SingleColumnUniqueIndexColumn[] = [];
       let idPathRequiresUserSelection = false;
-      if (singleColumnUniqueIndexColumns.length === 0) {
-        const viewRelationOid = await client.findViewRelationOid(schema, tableName);
-        if (viewRelationOid !== null) {
-          viewBackedUniqueColumnCandidates = await client.findViewUniquelyAddressableColumnCandidates(
-            schema,
-            tableName,
-          );
-          idPathRequiresUserSelection = viewBackedUniqueColumnCandidates.length === 0;
-        }
+      if (singleColumnUniqueIndexColumns.length === 0 && relationOidAndKind?.relkind === 'v') {
+        viewBackedUniqueColumnCandidates = await client.findViewUniquelyAddressableColumnCandidates(schema, tableName);
+        idPathRequiresUserSelection = viewBackedUniqueColumnCandidates.length === 0;
       }
 
       const primaryKey = this.pickPrimaryKey(pkCandidates, columns, [
@@ -546,6 +564,18 @@ export class SupabaseConnector extends Connector {
         title: tableName,
       });
 
+      // A link into the dashboard's table editor, so the client can offer
+      // "View in Supabase". Views and materialized views are pg_class relations
+      // too, and the editor addresses them by OID just the same. The OID is not
+      // stable across a drop/recreate of the relation, which is fine: the spec
+      // is refetched on every pull, so a stale link is corrected on the next
+      // one — and a missing OID only ever lands on the editor's own not-found
+      // page, never on some other table.
+      const tableEditorUrlIfAvailable =
+        this.supabaseDashboardDeepLinksAreAvailable && relationOidAndKind
+          ? buildSupabaseTableEditorUrl(projectRef, schema, relationOidAndKind.oid)
+          : undefined;
+
       return {
         id,
         slug: tableName,
@@ -555,6 +585,7 @@ export class SupabaseConnector extends Connector {
         ...(idPathRequiresUserSelection && { idPathRequiresUserSelection: true }),
         titlePath: pickTitleColumnPath(columns),
         basePath: [schema],
+        ...(tableEditorUrlIfAvailable && { remoteWebUrl: tableEditorUrlIfAvailable }),
         generatedAt: new Date().toISOString(),
       };
     }, resolved.connectionString);

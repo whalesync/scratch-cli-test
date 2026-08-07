@@ -28,6 +28,33 @@ export function extractProjectRef(connectionString: string): string {
 }
 
 /**
+ * Whether a connection string points at Supabase's own cloud, as opposed to a
+ * self-hosted Supabase or a plain Postgres reached through this connector.
+ * Only cloud projects have a supabase.com dashboard to deep-link into, and a
+ * ref extracted from some other host's connection string is meaningless there.
+ */
+export function isSupabaseCloudHostedConnectionString(connectionString: string): boolean {
+  try {
+    const { hostname } = new URL(connectionString);
+    // `.supabase.com` covers the Supavisor pooler; `.supabase.co` the direct
+    // `db.<ref>.supabase.co` host.
+    return hostname.endsWith('.supabase.com') || hostname.endsWith('.supabase.co');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Deep link to a relation in the Supabase dashboard's table editor. The editor
+ * addresses a relation by its Postgres `pg_class` OID — the same id Supabase's
+ * own pg-meta emits for a table (`c.oid :: int8 AS id`) — never by name, so the
+ * caller has to resolve the OID from the catalog first.
+ */
+export function buildSupabaseTableEditorUrl(projectRef: string, schema: string, relationOid: number): string {
+  return `https://supabase.com/dashboard/project/${projectRef}/editor/${relationOid}?schema=${encodeURIComponent(schema)}`;
+}
+
+/**
  * Build the PL/pgSQL to create a service account role with permissions on all user schemas.
  */
 export function buildCreateUserSQL(username: string, password: string): string {
