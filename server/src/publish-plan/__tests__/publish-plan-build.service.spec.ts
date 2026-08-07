@@ -775,4 +775,59 @@ describe('PublishPlanService', () => {
       expect(refCleanerService.nullifyAllForeignKeyFields).not.toHaveBeenCalled();
     });
   });
+
+  describe('large plans stay under the Postgres bind-parameter limit (DEV-11228)', () => {
+    // A publish of a large workbook can carry tens of thousands of changed
+    // paths in a single plan (the reported crash had 40,540). Both the
+    // UploadPatchMeta revert lookup and the PublishPlanOperation insert used to
+    // pass the whole list to Postgres in one statement, blowing past the 32,767
+    // bind-parameter ceiling (int16 max — measured on this repo's Prisma +
+    // Postgres: 32,767 binds succeeds, 32,768 fails). Prisma can't auto-split
+    // those queries while the `relationJoins` preview feature is on, so it
+    // failed the entire publish with "Query parameter limit exceeded error".
+    //
+    // Deletes are the sharpest case: unlike the edit/create phases, that loop
+    // buffers every op and flushes once at the end.
+    const LARGE_DELETE_COUNT = 2500;
+    const CHUNK_SIZE = 1000;
+
+    beforeEach(() => {
+      const deletedPaths = Array.from({ length: LARGE_DELETE_COUNT }, (_, i) => `articles/deleted-${i}.json`);
+      scratchGitService.getRepoStatus.mockResolvedValue(deletedPaths.map((path) => ({ path, status: 'deleted' })));
+      db.client.dataFolder.findMany.mockResolvedValue([{ id: 'df_articles', path: '/articles', options: null }]);
+    });
+
+    it('chunks the UploadPatchMeta revert lookup and still covers every changed path', async () => {
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, 'ca_test', PIPELINE_ID);
+
+      const revertLookupCalls = db.client.uploadPatchMeta.findMany.mock.calls as Array<
+        [{ where: { filePath: { in: string[] } } }]
+      >;
+      expect(revertLookupCalls.length).toBe(Math.ceil(LARGE_DELETE_COUNT / CHUNK_SIZE));
+
+      const pathsQueriedAcrossAllChunks: string[] = [];
+      for (const [queryArgs] of revertLookupCalls) {
+        const pathsInThisChunk = queryArgs.where.filePath.in;
+        expect(pathsInThisChunk.length).toBeLessThanOrEqual(CHUNK_SIZE);
+        pathsQueriedAcrossAllChunks.push(...pathsInThisChunk);
+      }
+      // Chunking must not drop or duplicate a path — a missed path would
+      // silently lose an isRecreate flag rather than crash.
+      expect(new Set(pathsQueriedAcrossAllChunks).size).toBe(LARGE_DELETE_COUNT);
+    });
+
+    it('chunks the PublishPlanOperation insert and still writes every delete op', async () => {
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, 'ca_test', PIPELINE_ID);
+
+      const insertCalls = db.client.publishPlanOperation.createMany.mock.calls as Array<
+        [{ data: Array<{ filePath: string; phase: string }> }]
+      >;
+      const filePathsWrittenAcrossAllChunks: string[] = [];
+      for (const [insertArgs] of insertCalls) {
+        expect(insertArgs.data.length).toBeLessThanOrEqual(CHUNK_SIZE);
+        filePathsWrittenAcrossAllChunks.push(...insertArgs.data.map((op) => op.filePath));
+      }
+      expect(new Set(filePathsWrittenAcrossAllChunks).size).toBe(LARGE_DELETE_COUNT);
+    });
+  });
 });

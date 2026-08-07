@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { formatRecordJson, type UploadPatchPayload, type WorkbookId } from '@spinner/shared-types';
+import { chunk } from 'lodash';
 import { ObjectStorageService } from 'src/asset/object-storage.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
@@ -11,6 +12,23 @@ import { applyJsonPatch, isJsonPatchDialect } from './json-patch';
 export function gcsKeyForPatchUpload(uploadId: string): string {
   return `upload-patches/${uploadId}.json`;
 }
+
+/**
+ * Paths per batched read of existing `dirty` contents. Matches the publish
+ * plan-build's edit/create read loop so both sides of the publish path put the
+ * same load on scratch-git.
+ */
+const DIRTY_READ_BATCH_SIZE = 100;
+
+/**
+ * Paths per UploadPatchMeta write batch. Each row binds 4 columns, so 1,000
+ * rows stays far under the 32,767 bind-parameter ceiling — which is a hard
+ * limit here because the `relationJoins` preview feature stops Prisma
+ * auto-splitting an oversized statement (see publish-plan-build.service.ts,
+ * which documents why the ceiling is 32,767 and not the 65,535 some older
+ * comments claim).
+ */
+const UPLOAD_PATCH_META_WRITE_CHUNK_SIZE = 1000;
 
 @Injectable()
 export class ApplyPatchesService {
@@ -82,13 +100,28 @@ export class ApplyPatchesService {
     await this.scratchGitService.resetDirtyToMain(repoId);
 
     // 5. Read existing dirty contents for writes (merge patches need a base).
+    //    Read in batches rather than one round trip per patch: an upload can
+    //    carry tens of thousands of records (DEV-11228 saw 40,540), and a
+    //    per-file `getRepoFile` made that many sequential HTTP calls to
+    //    scratch-git. `readRepoFilesByFolder` groups by folder and does one
+    //    optimized tree walk per folder instead. Batch size matches the publish
+    //    plan-build's read loop.
+    const existingContentByPath = new Map<string, string | null>();
+    for (const pathBatch of chunk(
+      toWrite.map((entry) => entry.path),
+      DIRTY_READ_BATCH_SIZE,
+    )) {
+      const existingFiles = await this.scratchGitService.readRepoFilesByFolder(repoId, DIRTY_BRANCH, pathBatch);
+      for (const file of existingFiles) existingContentByPath.set(file.path, file.content);
+    }
+
     const filesToCommit: { path: string; content: string }[] = [];
     for (const entry of toWrite) {
-      const existing = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, entry.path);
+      const existingContent = existingContentByPath.get(entry.path);
       let base: unknown = {};
-      if (existing) {
+      if (existingContent) {
         try {
-          base = JSON.parse(existing.content);
+          base = JSON.parse(existingContent);
         } catch {
           // Unparseable existing file — overwrite with the patch.
           base = {};
@@ -132,25 +165,28 @@ export class ApplyPatchesService {
     //    upload is cleared the moment a non-revert upload edits the same
     //    path. Read by PublishPlanBuildService to set
     //    PublishPlanOperation.isRecreate; cleared after the publish lands.
-    for (const entry of normalized) {
-      await this.db.client.uploadPatchMeta.upsert({
-        where: {
-          workbookId_connectorAccountId_filePath: {
+    //
+    //    Written as a delete-then-insert per chunk rather than one upsert per
+    //    path: a large upload issued that many sequential round trips. The two
+    //    are equivalent here because this loop sets `revert` for every path in
+    //    the payload, so nothing of the prior row survives an upsert anyway.
+    //    Duplicates within a single payload collapse to the last entry, which
+    //    preserves the same last-write-wins rule the upsert loop had.
+    const revertFlagByPath = new Map(normalized.map((entry) => [entry.path, entry.revert]));
+    for (const pathBatch of chunk([...revertFlagByPath.keys()], UPLOAD_PATCH_META_WRITE_CHUNK_SIZE)) {
+      await this.db.client.$transaction([
+        this.db.client.uploadPatchMeta.deleteMany({
+          where: { workbookId, connectorAccountId, filePath: { in: pathBatch } },
+        }),
+        this.db.client.uploadPatchMeta.createMany({
+          data: pathBatch.map((filePath) => ({
             workbookId,
             connectorAccountId,
-            filePath: entry.path,
-          },
-        },
-        create: {
-          workbookId,
-          connectorAccountId,
-          filePath: entry.path,
-          revert: entry.revert,
-        },
-        update: {
-          revert: entry.revert,
-        },
-      });
+            filePath,
+            revert: revertFlagByPath.get(filePath) ?? false,
+          })),
+        }),
+      ]);
     }
 
     // 8. Snapshot the dirty branch HEAD *after* this apply. The desktop carries

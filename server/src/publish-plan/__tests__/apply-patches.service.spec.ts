@@ -58,12 +58,15 @@ describe('ApplyPatchesService.applyPatches', () => {
         dataFolder: {
           findMany: jest.fn().mockResolvedValue([{ path: '/Companies' }, { path: '/Posts' }]),
         },
-        // applyPatches upserts per-path UploadPatchMeta to carry the upload
-        // DTO's `revert` flag to plan-build time. Stub accepts any args; the
-        // tests in this file don't assert on the persisted metadata.
+        // applyPatches persists per-path UploadPatchMeta to carry the upload
+        // DTO's `revert` flag to plan-build time, as a batched delete-then-
+        // insert. Stubs accept any args; the tests in this file don't assert on
+        // the persisted metadata.
         uploadPatchMeta: {
-          upsert: jest.fn().mockResolvedValue(undefined),
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+          createMany: jest.fn().mockResolvedValue({ count: 0 }),
         },
+        $transaction: jest.fn((operations: unknown[]) => Promise.all(operations)),
       },
     };
 
@@ -73,8 +76,15 @@ describe('ApplyPatchesService.applyPatches', () => {
       // before applying, so a publish ships exactly this upload and nothing else
       // that lingered on dirty.
       resetDirtyToMain: jest.fn().mockResolvedValue(undefined),
-      getRepoFile: jest.fn((_repo: string, _branch: string, path: string) =>
-        Promise.resolve(existingContent[path] ? { content: existingContent[path] } : null),
+      // Bases for merge patches are read in batches (one optimized tree walk
+      // per folder) rather than one round trip per patch, so the stub returns
+      // only the paths that exist — exactly what the real endpoint does.
+      readRepoFilesByFolder: jest.fn((_repo: string, _branch: string, paths: string[]) =>
+        Promise.resolve(
+          paths
+            .filter((path) => existingContent[path] !== undefined)
+            .map((path) => ({ path, content: existingContent[path] })),
+        ),
       ),
       commitFilesToBranch: jest.fn(
         (_repo: string, branch: string, files: { path: string; content: string }[], message: string) => {
@@ -148,12 +158,14 @@ describe('ApplyPatchesService.applyPatches', () => {
 
     await service.applyPatches(defaultArgs());
 
-    const { resetDirtyToMain, getRepoFile, commitFilesToBranch } = mocks.scratchGitService;
+    const { resetDirtyToMain, readRepoFilesByFolder, commitFilesToBranch } = mocks.scratchGitService;
     expect(resetDirtyToMain).toHaveBeenCalledWith('org/wkb/ca');
     // The reset must precede the base read AND the write: dirty is rebuilt from
     // main so the publish plan reflects exactly this upload, never an edit that
     // was staged on dirty earlier and since discarded locally.
-    expect(resetDirtyToMain.mock.invocationCallOrder[0]).toBeLessThan(getRepoFile.mock.invocationCallOrder[0]);
+    expect(resetDirtyToMain.mock.invocationCallOrder[0]).toBeLessThan(
+      readRepoFilesByFolder.mock.invocationCallOrder[0],
+    );
     expect(resetDirtyToMain.mock.invocationCallOrder[0]).toBeLessThan(commitFilesToBranch.mock.invocationCallOrder[0]);
   });
 

@@ -281,21 +281,33 @@ export class PublishPlanRunService {
           data: { status: `${phasePrefix}-running` },
         });
 
-        // Fetch pending entries for this phase
-        const entries = await this.db.client.publishPlanOperation.findMany({
-          where: { planId: pipelineId, phase: currentPhase, status: 'pending' },
-        });
+        // Only the asset-upload branch below consumes the full rows. Every other
+        // phase re-reads its rows per folder (see folderEntryIds), and used to
+        // load all of them here purely to log a count — which meant holding
+        // every operation's full record JSON in memory for the whole phase.
+        // At 40k records that was the dominant term in the publish worker's
+        // heap and the likely OOM (DEV-11228), so non-asset phases now count
+        // instead of materializing.
+        const pendingEntryFilter = { planId: pipelineId, phase: currentPhase, status: 'pending' };
+        const assetUploadEntries =
+          currentPhase === 'asset-upload'
+            ? await this.db.client.publishPlanOperation.findMany({ where: pendingEntryFilter })
+            : [];
+        const pendingEntryCount =
+          currentPhase === 'asset-upload'
+            ? assetUploadEntries.length
+            : await this.db.client.publishPlanOperation.count({ where: pendingEntryFilter });
 
         WSLogger.info({
           source: 'PublishRunService.runPipeline',
-          message: `Executing ${currentPhase} Phase: ${entries.length} entries`,
+          message: `Executing ${currentPhase} Phase: ${pendingEntryCount} entries`,
           workbookId: plan.workbookId,
           data: { pipelineId },
         });
 
         // Asset-upload phase: process entries sequentially (batch size 1), no tableSpec needed
         if (currentPhase === 'asset-upload') {
-          for (const entry of entries) {
+          for (const entry of assetUploadEntries) {
             abortSignal?.throwIfAborted();
             const batchHadError = await this.processBatch(
               currentPhase,
@@ -339,8 +351,17 @@ export class PublishPlanRunService {
             // Check for cancellation between folders
             abortSignal?.throwIfAborted();
 
-            // Fetch all entries for this table
-            const folderEntries = await this.db.client.publishPlanOperation.findMany({
+            // Snapshot only the IDs for this table, then read each batch's full
+            // rows just before dispatching it. Materializing every row up front
+            // meant a folder's entire record payload sat in memory for the whole
+            // folder loop (DEV-11228). IDs are ~30 bytes each, so a 40k-record
+            // folder costs ~1 MB here instead of hundreds.
+            //
+            // Snapshotting IDs (rather than re-querying `status: 'pending'` per
+            // page) keeps this safe against the status transitions the dispatch
+            // performs: a failed batch moves its rows to `failed-batch`, so a
+            // re-query-based pager would silently renumber its own pages.
+            const folderEntryIds = await this.db.client.publishPlanOperation.findMany({
               where: {
                 planId: pipelineId,
                 phase: currentPhase,
@@ -348,9 +369,10 @@ export class PublishPlanRunService {
                 dataFolderId,
               },
               orderBy: { id: 'asc' },
+              select: { id: true },
             });
 
-            if (folderEntries.length === 0) continue;
+            if (folderEntryIds.length === 0) continue;
 
             // Resolve table spec
             const tableSpec = await this.schemaService.getTableSpecById(dataFolderId, dataFolderSpecCache);
@@ -373,16 +395,24 @@ export class PublishPlanRunService {
 
             WSLogger.info({
               source: 'PublishRunService.runPipeline',
-              message: `Processing table for folder ${dataFolderId} (${folderEntries.length} entries)`,
+              message: `Processing table for folder ${dataFolderId} (${folderEntryIds.length} entries)`,
               workbookId: plan.workbookId,
               data: { pipelineId, tableSpecName: tableSpec.name, batchSize },
             });
 
             // Chunk entries
-            for (let i = 0; i < folderEntries.length; i += batchSize) {
+            for (let i = 0; i < folderEntryIds.length; i += batchSize) {
               abortSignal?.throwIfAborted();
 
-              const batch = folderEntries.slice(i, i + batchSize);
+              // Read this batch's full rows now. `batchSize` never exceeds 1000
+              // (the rename-files cap), so the `in` list stays well under the
+              // Postgres bind-parameter limit. Ordering is re-applied because
+              // `in` does not preserve the id list's order.
+              const batchIds = folderEntryIds.slice(i, i + batchSize).map((entry) => entry.id);
+              const batch = await this.db.client.publishPlanOperation.findMany({
+                where: { id: { in: batchIds } },
+                orderBy: { id: 'asc' },
+              });
               const batchHadError = await this.processBatch(
                 currentPhase,
                 batch as PublishOperation[],
@@ -408,15 +438,20 @@ export class PublishPlanRunService {
         }
 
         // --- RETRY LOGIC ---
-        // Fetch failed-batch entries for this phase (across all tables)
-        const failedEntries = (await this.db.client.publishPlanOperation.findMany({
+        // Fetch failed-batch entry IDs for this phase (across all tables). The
+        // retry loop dispatches one entry at a time, so it only ever needs one
+        // row's payload in memory — whereas a systemic failure (expired token,
+        // connector 5xx) marks an entire phase failed, and loading every failed
+        // row with its record JSON was a second OOM path on a large publish.
+        const failedEntryIds = await this.db.client.publishPlanOperation.findMany({
           where: { planId: pipelineId, phase: currentPhase, status: 'failed-batch' },
-        })) as PublishOperation[];
+          select: { id: true },
+        });
 
-        if (failedEntries.length > 0) {
+        if (failedEntryIds.length > 0) {
           WSLogger.warn({
             source: 'PublishRunService.runPipeline',
-            message: `Retrying ${failedEntries.length} failed-batch entries individually`,
+            message: `Retrying ${failedEntryIds.length} failed-batch entries individually`,
             workbookId: plan.workbookId,
             data: { pipelineId },
           });
@@ -426,9 +461,16 @@ export class PublishPlanRunService {
           // We can reuse the same table-based iteration logic or just cache specs.
           // Let's iterate individually but verify spec from cache.
 
-          for (const entry of failedEntries) {
+          for (const { id: failedEntryId } of failedEntryIds) {
             // Check for cancellation during retry loop
             abortSignal?.throwIfAborted();
+
+            const entry = (await this.db.client.publishPlanOperation.findUnique({
+              where: { id: failedEntryId },
+            })) as PublishOperation | null;
+            // Defensive: the row was here a moment ago, but a concurrent cancel
+            // or cleanup could have removed it. Skip rather than crash the run.
+            if (!entry) continue;
 
             let tableSpec: BaseJsonTableSpec | null = null;
             if (entry.dataFolderId) {

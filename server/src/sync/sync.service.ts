@@ -132,7 +132,7 @@ function pushSample<T>(samples: T[], value: T): void {
 /**
  * Rows per statement when writing `SyncRemoteIdMapping`. One source page, so a
  * table's mapping writes cost the same whether it holds a thousand records or a
- * hundred thousand. Well under Postgres' 65,535 bind-parameter ceiling at three
+ * hundred thousand. Well under the 32,767 bind-parameter ceiling at three
  * parameters per row.
  */
 const REMOTE_ID_MAPPING_WRITE_CHUNK_SIZE = 1000;

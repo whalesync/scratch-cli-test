@@ -30,6 +30,30 @@ import { parsePath } from './utils';
  * The publish job handler catches this, cancels the half-built pipeline, and
  * surfaces a structured `blockedDirtyDrift` discriminator on the job's progress.
  */
+/**
+ * Max rows per `filePath: { in: [...] }` lookup. A publish of a large workbook
+ * can carry tens of thousands of changed paths in one plan (DEV-11228: 40,540),
+ * which blows past the bind-parameter ceiling. Prisma normally splits an
+ * oversized `IN` for you, but it cannot when the `relationJoins` preview
+ * feature is on (see schema.prisma) — it fails the whole query with "Query
+ * parameter limit exceeded error: Joined queries cannot be split into multiple
+ * queries". So we chunk explicitly, matching FileIndexService.
+ *
+ * NOTE: the real ceiling is 32,767 parameters, not the 65,535 that several
+ * older comments in this package claim. Postgres' extended protocol encodes
+ * the parameter count as an int16, so 32,767 is the hard maximum. Measured
+ * against this repo's Prisma 6.16 + Postgres: 32,767 total binds succeeds and
+ * 32,768 fails. Sizing a chunk against 65,535 would reintroduce DEV-11228.
+ */
+const REVERT_PATH_LOOKUP_CHUNK_SIZE = 1000;
+
+/**
+ * Max rows per `publishPlanOperation.createMany`. Each row binds ~9 columns, so
+ * 1,000 rows ≈ 9,000 parameters — comfortably under the same 32,767 ceiling
+ * regardless of how large the caller's buffer grew.
+ */
+const PLAN_OPERATION_INSERT_CHUNK_SIZE = 1000;
+
 export class PublishDirtyDriftError extends Error {
   constructor(
     public readonly connectorAccountId: string,
@@ -73,16 +97,22 @@ export class PublishPlanBuildService {
     filePaths: string[],
   ): Promise<Set<string>> {
     if (!connectorAccountId || filePaths.length === 0) return new Set();
-    const rows = await this.db.client.uploadPatchMeta.findMany({
-      where: {
-        workbookId,
-        connectorAccountId,
-        filePath: { in: filePaths },
-        revert: true,
-      },
-      select: { filePath: true },
-    });
-    return new Set(rows.map((r) => r.filePath));
+    // Chunked to stay under the bind-parameter limit — see
+    // REVERT_PATH_LOOKUP_CHUNK_SIZE.
+    const revertFlaggedPaths = new Set<string>();
+    for (const filePathChunk of chunk(filePaths, REVERT_PATH_LOOKUP_CHUNK_SIZE)) {
+      const rows = await this.db.client.uploadPatchMeta.findMany({
+        where: {
+          workbookId,
+          connectorAccountId,
+          filePath: { in: filePathChunk },
+          revert: true,
+        },
+        select: { filePath: true },
+      });
+      for (const row of rows) revertFlaggedPaths.add(row.filePath);
+    }
+    return revertFlaggedPaths;
   }
 
   /** Returns all relevant repo IDs for a workbook. When connectorAccountId is provided, returns just that one. */
@@ -454,20 +484,25 @@ export class PublishPlanBuildService {
 
     const savePlanOperations = async () => {
       if (planOperations.length === 0) return;
-      await this.db.client.publishPlanOperation.createMany({
-        data: planOperations.map((e) => ({
-          planId: pipelineId,
-          filePath: e.filePath,
-          phase: e.phase,
-          content: e.content,
-          changedFields:
-            e.phase === 'edit' || e.phase === 'backfill' ? (e.changedFields as Prisma.InputJsonValue) : undefined,
-          remoteRecordId: e.remoteRecordId ?? null,
-          dataFolderId: e.dataFolderId ?? null,
-          status: e.status,
-          isRecreate: e.isRecreate ?? false,
-        })),
-      });
+      // The edit/create phases flush this buffer every 100 files, but the
+      // asset-upload and delete phases fill it in one go — so chunk here rather
+      // than at each call site (see PLAN_OPERATION_INSERT_CHUNK_SIZE).
+      for (const planOperationChunk of chunk(planOperations, PLAN_OPERATION_INSERT_CHUNK_SIZE)) {
+        await this.db.client.publishPlanOperation.createMany({
+          data: planOperationChunk.map((e) => ({
+            planId: pipelineId,
+            filePath: e.filePath,
+            phase: e.phase,
+            content: e.content,
+            changedFields:
+              e.phase === 'edit' || e.phase === 'backfill' ? (e.changedFields as Prisma.InputJsonValue) : undefined,
+            remoteRecordId: e.remoteRecordId ?? null,
+            dataFolderId: e.dataFolderId ?? null,
+            status: e.status,
+            isRecreate: e.isRecreate ?? false,
+          })),
+        });
+      }
       planOperations.length = 0;
     };
 
@@ -515,7 +550,8 @@ export class PublishPlanBuildService {
 
     // --- Phase 1: [edit] ---
     // Process Union of Modified Files and Ref-Clearing Candidate Files
-    const filesToProcessInEditPhase = new Set(modifiedFiles.map((f) => f.path));
+    const modifiedFilePaths = new Set(modifiedFiles.map((f) => f.path));
+    const filesToProcessInEditPhase = new Set(modifiedFilePaths);
     for (const p of filesReferringToDeletedFiles) filesToProcessInEditPhase.add(p);
 
     let editCount = 0;
@@ -558,7 +594,7 @@ export class PublishPlanBuildService {
             contentObj = JSON.parse(rawContent) as ParsedContent;
           } catch {
             // Not JSON? Just commit as is if it was user-modified.
-            if (modifiedFiles.some((m) => m.path === filePath)) {
+            if (modifiedFilePaths.has(filePath)) {
               const { folderPath } = parsePath(filePath);
               const info = await getDataFolderInfo(folderPath);
 
@@ -608,7 +644,10 @@ export class PublishPlanBuildService {
 
           // Determine Edit Operation
           const originalContentStr = JSON.stringify(contentObj, null, 2);
-          const isUserModified = modifiedFiles.some((m) => m.path === filePath);
+          // Set membership, not a linear scan: this runs once per file in the
+          // edit phase, so an O(n) scan here made plan-build O(n²) — ~1.6
+          // billion string comparisons at the 40k records of DEV-11228.
+          const isUserModified = modifiedFilePaths.has(filePath);
           const isRefCleared = pass1ContentStr !== originalContentStr;
           const isPseudoStripped = pass2ContentStr !== pass1ContentStr;
           const isAssetStripped = pass3ContentStr !== pass2ContentStr;

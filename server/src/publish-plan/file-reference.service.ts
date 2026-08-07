@@ -153,7 +153,7 @@ export class FileReferenceService {
 
     if (allRefs.length === 0) return;
 
-    // 3. Insert in chunks to avoid Postgres parameter limits (65,535 max)
+    // 3. Insert in chunks to avoid the bind-parameter limit (32,767 max)
     const recordsToInsert = allRefs.map((ref) => ({
       workbookId,
       branch,

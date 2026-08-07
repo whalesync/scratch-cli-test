@@ -40,7 +40,8 @@ export class FileIndexService {
     const now = new Date();
 
     // Use Prisma Transaction for upserts.
-    // Chunking to avoid Postgres 65,535 parameter limit
+    // Chunking to avoid the 32,767 bind-parameter limit (int16 max in Postgres'
+    // extended protocol; see publish-plan-build.service.ts for the measurement)
     const chunks = chunk(entries, 1000);
 
     for (const c of chunks) {

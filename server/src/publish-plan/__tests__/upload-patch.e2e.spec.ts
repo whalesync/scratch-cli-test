@@ -143,8 +143,12 @@ describeIfIntegration('/upload-patch end-to-end (real Prisma, mocked git/GCS/Bul
 
     const scratchGitService = {
       resolveConnectionRepoPath: jest.fn().mockResolvedValue(`${orgId}/${workbookId}/${connectorAccountId}`),
-      getRepoFile: jest.fn((_repo: string, _branch: string, path: string) =>
-        Promise.resolve(dirty.has(path) ? { content: dirty.get(path) as string } : null),
+      // Merge-patch bases are read in batches (one tree walk per folder), so the
+      // fake returns only the paths that exist on `dirty`.
+      readRepoFilesByFolder: jest.fn((_repo: string, _branch: string, paths: string[]) =>
+        Promise.resolve(
+          paths.filter((path) => dirty.has(path)).map((path) => ({ path, content: dirty.get(path) as string })),
+        ),
       ),
       commitFilesToBranch: jest.fn((_repo: string, _branch: string, files: { path: string; content: string }[]) => {
         for (const f of files) dirty.set(f.path, f.content);

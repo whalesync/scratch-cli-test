@@ -59,6 +59,16 @@ impl GitRepo {
         let batch_size = 50;
         for chunk in user_changes.chunks(batch_size) {
             for change in chunk {
+                // Skip excluded paths BEFORE reading their blobs. Step 6 drops
+                // them anyway, so reading them is pure waste — and it is not
+                // cheap waste: the publish reconcile passes every path it
+                // published, so a large publish (DEV-11228 saw 40,540 records)
+                // would otherwise read 40k+ blobs and hold every file body in
+                // memory, all while the dirty-branch write lock is held, just
+                // to discard the lot at line ~99.
+                if exclude_set.contains(change.path.as_str()) {
+                    continue;
+                }
                 if change.status == "deleted" {
                     edits.push(EditInfo {
                         path: change.path.clone(),
@@ -525,6 +535,138 @@ mod tests {
                 .as_deref(),
             Some("{\"v\":\"user2\"}"),
             "non-excluded r2 keeps the user edit"
+        );
+    }
+
+    /// Deletes take a different branch through the edit loop than modifies, so
+    /// exclusion needs its own guard: an excluded delete must be dropped (the
+    /// file stays on `dirty` at main's content) rather than re-applied.
+    #[test]
+    fn rebase_excluding_drops_an_excluded_delete() {
+        let (_tmp, repo) = setup_repo();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                FileChange {
+                    path: "r1.json".to_string(),
+                    content: Some("{\"v\":1}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "r2.json".to_string(),
+                    content: Some("{\"v\":1}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "seed main",
+        )
+        .unwrap();
+        repo.rebase_dirty("diff3").unwrap();
+
+        // User deletes both records on dirty.
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[
+                FileChange {
+                    path: "r1.json".to_string(),
+                    content: None,
+                    oid: None,
+                    change_type: ChangeType::Delete,
+                },
+                FileChange {
+                    path: "r2.json".to_string(),
+                    content: None,
+                    oid: None,
+                    change_type: ChangeType::Delete,
+                },
+            ],
+            "user deletes both",
+        )
+        .unwrap();
+
+        // r1's delete published; r2's did not.
+        let (success, _) = repo
+            .rebase_dirty_excluding("diff3", &["r1.json".to_string()])
+            .unwrap();
+        assert!(success);
+
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "r1.json")
+                .unwrap()
+                .as_deref(),
+            Some("{\"v\":1}"),
+            "an excluded delete must not be re-applied to dirty"
+        );
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "r2.json").unwrap(),
+            None,
+            "a delete the reconcile did not exclude must still be re-applied"
+        );
+    }
+
+    /// A fully-successful publish excludes EVERY changed path — the hot path for
+    /// the skip-before-reading-blobs optimization, since it means no edit's blob
+    /// need be read at all. `dirty` must land exactly on `main`.
+    #[test]
+    fn rebase_excluding_every_changed_path_converges_dirty_to_main() {
+        let (_tmp, repo) = setup_repo();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                FileChange {
+                    path: "r1.json".to_string(),
+                    content: Some("{\"v\":1}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "r2.json".to_string(),
+                    content: Some("{\"v\":1}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "seed main",
+        )
+        .unwrap();
+        repo.rebase_dirty("diff3").unwrap();
+
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[
+                FileChange {
+                    path: "r1.json".to_string(),
+                    content: Some("{\"v\":\"user1\"}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Modify,
+                },
+                FileChange {
+                    path: "r2.json".to_string(),
+                    content: Some("{\"v\":\"user2\"}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Modify,
+                },
+            ],
+            "user edits both",
+        )
+        .unwrap();
+
+        let (success, _) = repo
+            .rebase_dirty_excluding("diff3", &["r1.json".to_string(), "r2.json".to_string()])
+            .unwrap();
+        assert!(success);
+
+        let main_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let dirty_oid = repo.resolve_ref(DIRTY_BRANCH).unwrap();
+        assert!(
+            repo.compare_commits(main_oid, dirty_oid)
+                .unwrap()
+                .is_empty(),
+            "dirty must hold main's tree exactly when every changed path is excluded"
         );
     }
 }

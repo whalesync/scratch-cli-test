@@ -57,6 +57,11 @@ function makeDbMock() {
       publishPlanOperation: {
         count: jest.fn().mockResolvedValue(0),
         findMany: jest.fn().mockResolvedValue([]),
+        // The dispatch loop reads a folder's operation IDs first and then reads
+        // each batch's full rows by ID, so `findMany` mocks must serve both
+        // shapes. `findUnique` backs the same two-step read in the failed-batch
+        // retry loop.
+        findUnique: jest.fn().mockResolvedValue(null),
         updateMany: jest.fn().mockResolvedValue({}),
         groupBy: jest.fn().mockResolvedValue([]),
       },
@@ -211,10 +216,21 @@ describe('PublishPlanRunService', () => {
       return Promise.resolve(0);
     });
 
+    const pendingRows = entries.map((e) => ({
+      ...e,
+      planId: PLAN_ID,
+      phase: 'edit',
+      dataFolderId: DATA_FOLDER_ID,
+      status: 'pending',
+      error: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+
     // findMany for pending entries, distinct folders
     db.client.publishPlanOperation.findMany.mockImplementation(
       (args: {
-        where?: { phase?: string; status?: string };
+        where?: { phase?: string; status?: string; id?: { in: string[] } };
         distinct?: string[];
         select?: Record<string, boolean>;
       }) => {
@@ -222,20 +238,14 @@ describe('PublishPlanRunService', () => {
         if (args?.distinct) {
           return Promise.resolve([{ dataFolderId: DATA_FOLDER_ID }]);
         }
-        // actual entries for the edit phase
+        // Per-batch read of full rows by the IDs the folder scan collected.
+        if (args?.where?.id?.in) {
+          const requestedIds = new Set(args.where.id.in);
+          return Promise.resolve(pendingRows.filter((row) => requestedIds.has(row.id)));
+        }
+        // actual entries for the edit phase (also serves the ID-only folder scan)
         if (args?.where?.phase === 'edit' && args?.where?.status === 'pending') {
-          return Promise.resolve(
-            entries.map((e) => ({
-              ...e,
-              planId: PLAN_ID,
-              phase: 'edit',
-              dataFolderId: DATA_FOLDER_ID,
-              status: 'pending',
-              error: null,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            })),
-          );
+          return Promise.resolve(pendingRows);
         }
         // failed-batch retry query
         if (args?.where?.status === 'failed-batch') {
@@ -287,28 +297,33 @@ describe('PublishPlanRunService', () => {
       return Promise.resolve(0);
     });
 
+    const pendingRows = entries.map((e) => ({
+      ...e,
+      planId: PLAN_ID,
+      phase,
+      dataFolderId: DATA_FOLDER_ID,
+      status: 'pending',
+      error: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+
     db.client.publishPlanOperation.findMany.mockImplementation(
       (args: {
-        where?: { phase?: string; status?: string };
+        where?: { phase?: string; status?: string; id?: { in: string[] } };
         distinct?: string[];
         select?: Record<string, boolean>;
       }) => {
         if (args?.distinct) {
           return Promise.resolve([{ dataFolderId: DATA_FOLDER_ID }]);
         }
+        // Per-batch read of full rows by the IDs the folder scan collected.
+        if (args?.where?.id?.in) {
+          const requestedIds = new Set(args.where.id.in);
+          return Promise.resolve(pendingRows.filter((row) => requestedIds.has(row.id)));
+        }
         if (args?.where?.phase === phase && args?.where?.status === 'pending') {
-          return Promise.resolve(
-            entries.map((e) => ({
-              ...e,
-              planId: PLAN_ID,
-              phase,
-              dataFolderId: DATA_FOLDER_ID,
-              status: 'pending',
-              error: null,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            })),
-          );
+          return Promise.resolve(pendingRows);
         }
         if (args?.where?.status === 'failed-batch') {
           return Promise.resolve([]);
@@ -1128,39 +1143,47 @@ describe('PublishPlanRunService', () => {
       // ...and the bounded summary query (the one with a `select`) returns the
       // failed row carrying the connector's persisted message. The retry query
       // (no `select`) returns [] so the entry isn't reprocessed.
+      const pendingRows = [
+        {
+          id: 'op_1',
+          filePath: 'Activities/call-nishant.json',
+          content: { id: 'rec_1', person_id: 5022 },
+          changedFields: { person_id: 5022 },
+          remoteRecordId: 'rec_1',
+          planId: PLAN_ID,
+          phase: 'edit',
+          dataFolderId: DATA_FOLDER_ID,
+          status: 'pending',
+          error: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ];
       jest.mocked(db.client.publishPlanOperation.findMany).mockImplementation((args: unknown) => {
         const a = args as {
-          where?: { phase?: string; status?: string };
+          where?: { phase?: string; status?: string; id?: { in: string[] } };
           distinct?: string[];
           select?: Record<string, boolean>;
         };
         if (a?.distinct) return Promise.resolve([{ dataFolderId: DATA_FOLDER_ID }]);
         // The bounded summary query (has a `select`) returns the failed row with
-        // its persisted connector message; the retry query (no `select`) returns
-        // [] so the failed entry isn't reprocessed.
+        // its persisted connector message; the retry scan (also projected, but
+        // selecting only `id`) returns [] so the entry isn't reprocessed.
         if (a?.where?.status === 'failed-batch') {
           return Promise.resolve(
-            a.select ? [{ filePath: 'Activities/call-nishant.json', phase: 'edit', error: connectorMessage }] : [],
+            a.select?.filePath
+              ? [{ filePath: 'Activities/call-nishant.json', phase: 'edit', error: connectorMessage }]
+              : [],
           );
+        }
+        // Per-batch read of full rows by the IDs the folder scan collected.
+        if (a?.where?.id?.in) {
+          const requestedIds = new Set(a.where.id.in);
+          return Promise.resolve(pendingRows.filter((row) => requestedIds.has(row.id)));
         }
         // Pending entries only exist for the edit phase in this test.
         if (a?.where?.phase === 'edit' && a?.where?.status === 'pending') {
-          return Promise.resolve([
-            {
-              id: 'op_1',
-              filePath: 'Activities/call-nishant.json',
-              content: { id: 'rec_1', person_id: 5022 },
-              changedFields: { person_id: 5022 },
-              remoteRecordId: 'rec_1',
-              planId: PLAN_ID,
-              phase: 'edit',
-              dataFolderId: DATA_FOLDER_ID,
-              status: 'pending',
-              error: null,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-          ]);
+          return Promise.resolve(pendingRows);
         }
         return Promise.resolve([]);
       });
