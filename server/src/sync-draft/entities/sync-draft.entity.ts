@@ -6,10 +6,15 @@ import { DraftTableMapping, SyncDraft, SyncDraftId, SyncId, WorkbookId } from '@
  * ISO strings; the `tableMappings` JSON column is the validated draft contents
  * (written only via the zod-checked PATCH path or our own server writers), so it
  * is surfaced as `DraftTableMapping[]`.
+ *
+ * `suggestedNewParentName` is derived, not stored — the caller resolves the
+ * draft's source services and passes the suggestion in. Pass `null` on paths
+ * that don't need it (nothing breaks; the UI just has no prefill).
  */
 export const SyncDraftEntity = {
-  from(row: PrismaSyncDraft): SyncDraft {
+  from(row: PrismaSyncDraft, suggestedNewParentName: string | null = null): SyncDraft {
     return {
+      suggestedNewParentName,
       id: row.id as SyncDraftId,
       workbookId: row.workbookId as WorkbookId,
       version: row.version,

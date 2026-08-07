@@ -936,14 +936,16 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
       knownSpreadsheetIds.map(async (spreadsheetId): Promise<CreateDestination | null> => {
         try {
           const spreadsheet = await this.client.getSpreadsheetStructure(spreadsheetId);
-          return { id: spreadsheetId, name: spreadsheet.properties?.title ?? spreadsheetId };
+          return { id: spreadsheetId, name: spreadsheet.properties?.title ?? spreadsheetId, created: true };
         } catch {
           return null;
         }
       }),
     );
     return [
-      { id: NEW_SPREADSHEET_DESTINATION_ID, name: NEW_SPREADSHEET_DESTINATION_NAME },
+      // The only destination that does not exist yet: `created: false` is what
+      // tells a UI to render "will be created" without knowing this sentinel id.
+      { id: NEW_SPREADSHEET_DESTINATION_ID, name: NEW_SPREADSHEET_DESTINATION_NAME, created: false },
       ...knownDestinations.filter((destination): destination is CreateDestination => destination !== null),
     ];
   }
@@ -960,7 +962,9 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
       try {
         const spreadsheet = await this.client.getSpreadsheetStructure(pastedSpreadsheetId);
         return {
-          destinations: [{ id: pastedSpreadsheetId, name: spreadsheet.properties?.title ?? pastedSpreadsheetId }],
+          destinations: [
+            { id: pastedSpreadsheetId, name: spreadsheet.properties?.title ?? pastedSpreadsheetId, created: true },
+          ],
           hasMore: false,
         };
       } catch (error) {
@@ -982,11 +986,11 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
 
   override async lookupCreateDestination(destinationId: string): Promise<CreateDestination | null> {
     if (destinationId === NEW_SPREADSHEET_DESTINATION_ID) {
-      return { id: NEW_SPREADSHEET_DESTINATION_ID, name: NEW_SPREADSHEET_DESTINATION_NAME };
+      return { id: NEW_SPREADSHEET_DESTINATION_ID, name: NEW_SPREADSHEET_DESTINATION_NAME, created: false };
     }
     try {
       const spreadsheet = await this.client.getSpreadsheetStructure(destinationId);
-      return { id: destinationId, name: spreadsheet.properties?.title ?? destinationId };
+      return { id: destinationId, name: spreadsheet.properties?.title ?? destinationId, created: true };
     } catch (error) {
       // 404 (deleted) and 403 (access revoked / different account) are the
       // definitive "stale selection" answers; anything else is transient and throws.
@@ -995,6 +999,21 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
       }
       throw error;
     }
+  }
+
+  /**
+   * A create destination is a spreadsheet, which Drive addresses directly. The
+   * "new spreadsheet" sentinel has no URL — nothing exists to link to until
+   * materialize provisions it.
+   *
+   * A destination id can be text the user PASTED into the search box (see
+   * {@link searchCreateDestinations}), so it goes through the same parser rather
+   * than being interpolated raw; unparseable input yields no link.
+   */
+  override buildCreateDestinationRemoteWebUrl(destinationId: string): string | undefined {
+    if (destinationId === NEW_SPREADSHEET_DESTINATION_ID) return undefined;
+    const spreadsheetId = parseSpreadsheetIdFromUrlOrId(destinationId);
+    return spreadsheetId ? `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit` : undefined;
   }
 
   override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
@@ -1080,6 +1099,11 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
       name: newSheetProperties.title ?? plan.name,
       status: 'created',
       remoteTableId: [spreadsheetId, String(sheetId)],
+      // Report the spreadsheet we actually landed in. When the plan named the
+      // "new spreadsheet" sentinel this is the one we just provisioned, and the
+      // caller pins it so a later create adds tabs here rather than spinning up
+      // a second spreadsheet.
+      remoteParentId: [spreadsheetId],
       fields: fieldResults,
     };
   }

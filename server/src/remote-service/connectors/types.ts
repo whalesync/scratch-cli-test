@@ -1,12 +1,12 @@
 import { TSchema } from '@sinclair/typebox';
-import type { CreateDestination, DataFolderOptions, EntityId } from '@spinner/shared-types';
+import type { CreateDestination, DataFolderOptions, EntityId, RemoteContainer } from '@spinner/shared-types';
 import { PostgresColumnType, X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import { get, set, toPath, unset } from 'lodash';
 import { JsonSafeObject } from 'src/utils/objects';
 
 // Re-export from shared-types for backwards compatibility
 export { PostgresColumnType };
-export type { CreateDestination, EntityId };
+export type { CreateDestination, EntityId, RemoteContainer };
 
 export type TablePreview = {
   id: EntityId;
@@ -329,6 +329,22 @@ export type BaseJsonTableSpec = {
    * deep link — omit it rather than emit a guessed/broken URL.
    */
   remoteWebUrl?: string;
+
+  /**
+   * The container this table lives in on the service — the Airtable base, Google
+   * Sheets spreadsheet, Supabase project+schema, or Notion parent page. Same
+   * place a `CreateDestination` names, resolved for a table that already exists,
+   * so a client can show "this table lives in X" and link there (Live Export's
+   * "where tables are created" card).
+   *
+   * Stamped onto `DataFolder.remoteContainer*` at folder-create time and
+   * refreshed on every pull, so a renamed container follows without a migration.
+   * Build it from what `fetchJsonTableSpec` already has — the remote id usually
+   * carries the container id — and omit it when the service has no meaningful
+   * container. `remoteWebUrl: null` is fine and expected: a container with a
+   * name but no constructible link still renders.
+   */
+  remoteContainer?: RemoteContainer;
 
   /**
    * The connector's on-disk folder *structure* version for this table, stamped

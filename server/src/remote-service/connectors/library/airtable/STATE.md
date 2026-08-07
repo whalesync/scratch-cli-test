@@ -189,6 +189,7 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 
 ## Gotchas
 - (connector-specific operational notes)
+- **Create-destination deep link is the BARE base URL** — `buildCreateDestinationRemoteWebUrl` returns `https://airtable.com/{baseId}` (see `buildAirtableBaseWebUrl`, shared with the per-table `remoteWebUrl`, which just appends `/{tableId}`). Airtable renders the base with its left nav intact and picks a starting tab itself, so naming a child table buys nothing and would tie the link's identity to a table that can be renamed, reordered, or deleted.
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).

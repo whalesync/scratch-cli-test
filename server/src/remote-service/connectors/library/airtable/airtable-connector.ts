@@ -47,7 +47,7 @@ import {
 } from './airtable-create-schema';
 import { buildAirtableDefaultView } from './airtable-default-view';
 import { buildAirtableModifiedSinceFormula, combineAirtableFormulas } from './airtable-incremental';
-import { buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';
+import { buildAirtableBaseWebUrl, buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';
 import { AirtableSchemaParser } from './airtable-schema-parser';
 import { type AirtableApiCreateField } from './airtable-types';
 
@@ -176,7 +176,12 @@ export class AirtableConnector extends Connector {
   /** A new Airtable table lives inside a base, so the create destinations are the user's bases. */
   override async listCreateDestinations(): Promise<CreateDestination[]> {
     const bases = await this.client.listBases();
-    return bases.bases.map((base) => ({ id: base.id, name: base.name }));
+    return bases.bases.map((base) => ({ id: base.id, name: base.name, created: true }));
+  }
+
+  /** A create destination is a base id, which addresses the base directly. */
+  override buildCreateDestinationRemoteWebUrl(destinationId: string): string {
+    return buildAirtableBaseWebUrl(destinationId);
   }
 
   /**

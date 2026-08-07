@@ -189,9 +189,14 @@ export class PostgresConnector extends Connector {
         .filter(
           (schema) => !POSTGRES_SYSTEM_SCHEMAS.includes(schema.schema_name) && !schema.schema_name.startsWith('pg_'),
         )
-        .map((schema) => ({ id: schema.schema_name, name: schema.schema_name }));
+        .map((schema) => ({ id: schema.schema_name, name: schema.schema_name, created: true }));
     });
   }
+
+  // No `buildCreateDestinationRemoteWebUrl`: a Postgres database is reached by
+  // connection string and has no web UI to deep-link into. (Supabase is a
+  // Postgres too, but it has a dashboard — that's why its connector implements
+  // the hook and this one doesn't.)
 
   private parseTable(t: TableName, tablesWithUnique: Set<string>, tablesWithAutoGenPK: Set<string>): TablePreview {
     const tableKey = `${t.table_schema}.${t.table_name}`;

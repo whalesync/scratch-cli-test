@@ -47,8 +47,20 @@ export const draftTableDestinationSchema = z.discriminatedUnion('kind', [
     ref: z.string().min(1),
     /** Destination connector account the table is created on (the plan includes where to create it). */
     connectorAccountId: z.string().min(1),
-    /** Remote base/parent under which to create (connector-interpreted), e.g. an Airtable base id. */
+    /**
+     * Remote base/parent under which to create (connector-interpreted), e.g. an
+     * Airtable base id. For a parent the connector PROVISIONS (Google Sheets'
+     * `scratch-new-spreadsheet`), materialize rewrites this to the real id once
+     * the container exists, so a later run adds tables to the same container.
+     */
     remoteParentId: z.array(z.string()).optional(),
+    /**
+     * What to name a parent container the connector has to provision — the
+     * user's answer to the "name the spreadsheet we're about to create" box.
+     * Absent means "use the server's suggestion" (`SyncDraft.suggestedNewParentName`,
+     * `"<Source service> export"`). Ignored once the parent exists.
+     */
+    newParentName: z.string().min(1).optional(),
     /** The approved table-create spec the user signed off on in the UI. */
     createSpec: createTableSpecSchema,
     /** Absent until materialize succeeds; presence is the "resolved" signal. */

@@ -35,6 +35,17 @@ export interface SyncDraft {
   /** The desired-state working copy. */
   tableMappings: DraftTableMapping[];
   /**
+   * The name to prefill the "name the container we're about to create" box with
+   * — `"<Source service> export"` (`"Airtable & HubSpot export"` when the draft
+   * mixes sources), derived from the source folders each run.
+   *
+   * DERIVED, never stored: it tracks the draft's sources, so adding a source
+   * changes it right up until the user types their own, which is persisted as
+   * the destination's `newParentName` and wins from then on. Null when the draft
+   * has no sources to name it after.
+   */
+  suggestedNewParentName: string | null;
+  /**
    * The BullMQ job id of the in-flight `apply-sync-draft` save job, or null when no save is
    * running. Set by POST /sync-drafts/:draftId/save and cleared by the job on completion/failure,
    * so a cold page load (getOrCreate → get) rediscovers an in-flight save with no client-side

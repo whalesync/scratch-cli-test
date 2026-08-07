@@ -4,6 +4,7 @@ import {
   DataFolderGroup,
   DataFolderId,
   IncrementalPullSupport,
+  RemoteContainer,
   Schedule,
   Service,
   WorkbookId,
@@ -28,6 +29,8 @@ export class DataFolderEntity implements DataFolder {
   connectorDisplayName: string | null;
   path: string | null;
   remoteWebUrl: string | null;
+  remoteContainer: RemoteContainer | null;
+  remoteBreadcrumb: string[];
   lock: string | null;
   version: number;
   tableId: string[];
@@ -54,6 +57,20 @@ export class DataFolderEntity implements DataFolder {
     this.connectorDisplayName = dataFolder.connectorAccount ? dataFolder.connectorAccount.displayName : null;
     this.path = dataFolder.path;
     this.remoteWebUrl = dataFolder.remoteWebUrl;
+    // Reassemble the container the three scalar columns store. `id` is the
+    // presence signal — a container with no constructible link still renders,
+    // it just has `remoteWebUrl: null`.
+    this.remoteContainer =
+      dataFolder.remoteContainerId !== null && dataFolder.remoteContainerName !== null
+        ? {
+            id: dataFolder.remoteContainerId,
+            name: dataFolder.remoteContainerName,
+            remoteWebUrl: dataFolder.remoteContainerWebUrl,
+          }
+        : null;
+    // Derived, never stored — storing it would be a third copy of two strings
+    // that would then need its own invalidation.
+    this.remoteBreadcrumb = this.remoteContainer ? [this.remoteContainer.name, dataFolder.name] : [dataFolder.name];
     this.lock = dataFolder.lock;
     this.version = dataFolder.version;
     this.tableId = dataFolder.tableId;

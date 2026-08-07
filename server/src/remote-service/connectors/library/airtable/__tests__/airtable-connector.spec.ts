@@ -74,9 +74,13 @@ describe('AirtableConnector.listCreateDestinations', () => {
     const destinations = await connector.listCreateDestinations();
 
     expect(destinations).toEqual([
-      { id: 'appOne', name: 'Marketing' },
-      { id: 'appTwo', name: 'Sales' },
+      { id: 'appOne', name: 'Marketing', created: true },
+      { id: 'appTwo', name: 'Sales', created: true },
     ]);
+  });
+
+  it('deep-links a base by id', () => {
+    expect(connector.buildCreateDestinationRemoteWebUrl('appOne')).toBe('https://airtable.com/appOne');
   });
 });
 

@@ -122,9 +122,13 @@ describe('PostgresConnector.listCreateDestinations', () => {
     const destinations = await connector.listCreateDestinations();
 
     expect(destinations).toEqual([
-      { id: 'public', name: 'public' },
-      { id: 'analytics', name: 'analytics' },
+      { id: 'public', name: 'public', created: true },
+      { id: 'analytics', name: 'analytics', created: true },
     ]);
+  });
+
+  it('offers no destination deep link — a Postgres database has no web UI', () => {
+    expect(typeof connector.buildCreateDestinationRemoteWebUrl).toBe('undefined');
   });
 });
 

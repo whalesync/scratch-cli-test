@@ -431,6 +431,30 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     );
   });
 
+  it('reports the (project, schema) container in the create-destination id form', async () => {
+    const spec = await fetchSchema([buildColumn({ column_name: 'id' })]);
+
+    // The id matches what listCreateDestinations emits, so a table's container
+    // is comparable with the destination it was created under.
+    expect(spec.remoteContainer).toEqual({
+      id: `${PROJECT_REF}/public`,
+      name: 'public',
+      remoteWebUrl: `https://supabase.com/dashboard/project/${PROJECT_REF}/editor?schema=public`,
+    });
+  });
+
+  it('names the container after the container-less link when the host is not Supabase cloud', async () => {
+    const connector = new SupabaseConnector({
+      connectionString: 'postgresql://postgres.myref:pw@db.internal.example.com:6543/postgres',
+    });
+    mockFindAllColumnsInTable.mockResolvedValue([buildColumn({ column_name: 'id' })]);
+
+    const spec = await connector.fetchJsonTableSpec(id);
+
+    // Still a named container — it just has nowhere to link to.
+    expect(spec.remoteContainer).toEqual({ id: `${PROJECT_REF}/public`, name: 'public', remoteWebUrl: null });
+  });
+
   it('deep-links a view by its own OID too', async () => {
     mockFindPrimaryColumnCandidates.mockResolvedValue([]);
     mockFindRelationOidAndKind.mockResolvedValue({ oid: VIEW_RELATION_OID, relkind: 'v' });
@@ -746,8 +770,8 @@ describe('SupabaseConnector.listCreateDestinations', () => {
     const destinations = await connector.listCreateDestinations();
 
     expect(destinations).toEqual([
-      { id: `${PROJECT_REF}/public`, name: 'public' },
-      { id: `${PROJECT_REF}/analytics`, name: 'analytics' },
+      { id: `${PROJECT_REF}/public`, name: 'public', created: true },
+      { id: `${PROJECT_REF}/analytics`, name: 'analytics', created: true },
     ]);
   });
 
@@ -768,9 +792,39 @@ describe('SupabaseConnector.listCreateDestinations', () => {
     const destinations = await connector.listCreateDestinations();
 
     expect(destinations).toEqual([
-      { id: `${PROJECT_REF}/public`, name: 'Prod / public' },
-      { id: `${OTHER_PROJECT_REF}/public`, name: 'Staging / public' },
+      { id: `${PROJECT_REF}/public`, name: 'Prod / public', created: true },
+      { id: `${OTHER_PROJECT_REF}/public`, name: 'Staging / public', created: true },
     ]);
+  });
+
+  it('deep-links a destination to the dashboard editor opened on that schema', () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+    expect(connector.buildCreateDestinationRemoteWebUrl(`${PROJECT_REF}/analytics`)).toBe(
+      `https://supabase.com/dashboard/project/${PROJECT_REF}/editor?schema=analytics`,
+    );
+  });
+
+  it('defaults a bare project ref to the public schema', () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+    expect(connector.buildCreateDestinationRemoteWebUrl(PROJECT_REF)).toBe(
+      `https://supabase.com/dashboard/project/${PROJECT_REF}/editor?schema=public`,
+    );
+  });
+
+  it('percent-encodes a schema name in the destination deep link', () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+    expect(connector.buildCreateDestinationRemoteWebUrl(`${PROJECT_REF}/my schema`)).toContain('?schema=my%20schema');
+  });
+
+  it('offers no destination deep link for a non-Supabase-cloud host', () => {
+    const connector = new SupabaseConnector({
+      connectionString: 'postgresql://postgres.myref:pw@db.internal.example.com:6543/postgres',
+    });
+
+    expect(connector.buildCreateDestinationRemoteWebUrl('myref/public')).toBeUndefined();
   });
 });
 

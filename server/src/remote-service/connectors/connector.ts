@@ -163,6 +163,33 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   lookupCreateDestination?(destinationId: string): Promise<CreateDestination | null>;
 
   /**
+   * Build a deep link that lands the user in a create destination on the
+   * service's own web UI — e.g. an Airtable base at
+   * `https://airtable.com/{baseId}`. The REST layer calls this for every
+   * destination it returns from list / search / lookup and stamps the result
+   * onto `CreateDestination.remoteWebUrl`, so a connector implements the URL
+   * once here rather than at each of its `{ id, name }` construction sites.
+   *
+   * Must be **synchronous, pure, and free of network calls** — the picker
+   * invokes it across a whole list, so a per-destination API round trip would
+   * be paid N times.
+   *
+   * Return `undefined` when no link is constructible: a destination that does
+   * not exist yet (Google Sheets' "new spreadsheet" sentinel), a self-hosted
+   * deployment with no public web UI, or an id that fails to parse. Omitting is
+   * always correct — a wrong link is worse than none.
+   *
+   * A service with no CONTAINER-level URL at all should leave this undefined
+   * rather than invent one; consumers fall back to a representative child
+   * table's link, so "top-level when the service supports it, a child when it
+   * does not" needs no per-connector code.
+   *
+   * Optional. Must not throw — callers treat a failure as "no link", but a
+   * thrown error is logged as a connector bug.
+   */
+  buildCreateDestinationRemoteWebUrl?(destinationId: string): string | undefined;
+
+  /**
    * Search for tables by name. Only used when tableDiscoveryMode is SEARCH.
    * Connectors opting into SEARCH mode must override this method.
    * @param searchTerm The search term to filter tables by.

@@ -58,8 +58,8 @@ describe('NotionConnector.listCreateDestinations', () => {
       page_size: 100,
     });
     expect(destinations).toEqual([
-      { id: 'page_1', name: 'Engineering' },
-      { id: 'page_2', name: 'Marketing' },
+      { id: 'page_1', name: 'Engineering', created: true },
+      { id: 'page_2', name: 'Marketing', created: true },
     ]);
   });
 
@@ -75,7 +75,7 @@ describe('NotionConnector.listCreateDestinations', () => {
 
     const destinations = await connector.listCreateDestinations();
 
-    expect(destinations).toEqual([{ id: 'page_untitled', name: 'page_untitled' }]);
+    expect(destinations).toEqual([{ id: 'page_untitled', name: 'page_untitled', created: true }]);
   });
 });
 
@@ -106,7 +106,7 @@ describe('NotionConnector.searchCreateDestinations', () => {
       filter: { property: 'object', value: 'page' },
       page_size: 100,
     });
-    expect(result).toEqual({ destinations: [{ id: 'page_1', name: 'Engineering' }], hasMore: true });
+    expect(result).toEqual({ destinations: [{ id: 'page_1', name: 'Engineering', created: true }], hasMore: true });
   });
 
   it('omits the query for an empty term, mirroring the list endpoint', async () => {
@@ -140,7 +140,7 @@ describe('NotionConnector.lookupCreateDestination', () => {
     const destination = await connector.lookupCreateDestination('page_1');
 
     expect(mockRetrievePage).toHaveBeenCalledWith({ page_id: 'page_1' });
-    expect(destination).toEqual({ id: 'page_1', name: 'Engineering' });
+    expect(destination).toEqual({ id: 'page_1', name: 'Engineering', created: true });
   });
 
   it('maps object_not_found to null (deleted / inaccessible page)', async () => {

@@ -27,6 +27,9 @@ export function extractProjectRef(connectionString: string): string {
   );
 }
 
+/** Root of every Supabase dashboard deep link, shared by the URL builders below. */
+const SUPABASE_DASHBOARD_PROJECT_URL_PREFIX = 'https://supabase.com/dashboard/project';
+
 /**
  * Whether a connection string points at Supabase's own cloud, as opposed to a
  * self-hosted Supabase or a plain Postgres reached through this connector.
@@ -45,13 +48,23 @@ export function isSupabaseCloudHostedConnectionString(connectionString: string):
 }
 
 /**
+ * Deep link to a SCHEMA in the Supabase dashboard's table editor — the editor
+ * opened on that schema's table list. This is the right landing page for a
+ * create destination: it is where the tables we create will appear.
+ */
+export function buildSupabaseSchemaEditorUrl(projectRef: string, schema: string): string {
+  return `${SUPABASE_DASHBOARD_PROJECT_URL_PREFIX}/${projectRef}/editor?schema=${encodeURIComponent(schema)}`;
+}
+
+/**
  * Deep link to a relation in the Supabase dashboard's table editor. The editor
  * addresses a relation by its Postgres `pg_class` OID — the same id Supabase's
  * own pg-meta emits for a table (`c.oid :: int8 AS id`) — never by name, so the
- * caller has to resolve the OID from the catalog first.
+ * caller has to resolve the OID from the catalog first. Same URL as
+ * {@link buildSupabaseSchemaEditorUrl} with the relation appended.
  */
 export function buildSupabaseTableEditorUrl(projectRef: string, schema: string, relationOid: number): string {
-  return `https://supabase.com/dashboard/project/${projectRef}/editor/${relationOid}?schema=${encodeURIComponent(schema)}`;
+  return `${SUPABASE_DASHBOARD_PROJECT_URL_PREFIX}/${projectRef}/editor/${relationOid}?schema=${encodeURIComponent(schema)}`;
 }
 
 /**

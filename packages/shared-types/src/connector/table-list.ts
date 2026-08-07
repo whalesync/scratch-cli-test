@@ -60,6 +60,25 @@ export interface TableSearchResult {
 }
 
 /**
+ * The container a table lives in on the external service — an Airtable base, a
+ * Google Sheets spreadsheet, a Supabase project+schema, a Notion parent page.
+ * The same place a {@link CreateDestination} names, but resolved for a table
+ * that already exists, so a client can say "this table lives in <container>"
+ * and link there.
+ *
+ * Cached rather than resolved live: a connector rebuilds it on every pull, the
+ * same refresh that keeps the table's own name and `remoteWebUrl` current.
+ */
+export interface RemoteContainer {
+  /** The container's remote id, in the same form a `CreateDestination.id` takes. */
+  id: string;
+  /** Display name. Never treat it as identity — that's `id`; a rename must follow. */
+  name: string;
+  /** Deep link on the SERVICE's site, or null when it has no constructible container link. */
+  remoteWebUrl: string | null;
+}
+
+/**
  * A location where a connector can create a new table for the user — an
  * Airtable base, a Postgres schema, a Notion page, etc. The `id` is the remote
  * identifier the create-table flow passes back as the new table's parent; `name`
@@ -69,6 +88,24 @@ export interface TableSearchResult {
 export interface CreateDestination {
   id: string;
   name: string;
+  /**
+   * False for a destination that does not exist yet and will be provisioned on
+   * the first create (Google Sheets' "new spreadsheet"), true for one that is
+   * already there. This is what lets a UI render "will be created" WITHOUT
+   * knowing any connector's sentinel id — frontends must never branch on a
+   * service. Required so the compiler catches every construction site.
+   */
+  created: boolean;
+  /**
+   * A deep link that lands the user in this destination on the external
+   * service's own web UI (e.g. https://airtable.com/{baseId}), so a client can
+   * offer an "open in {service}" action. A URL on the SERVICE's site, not a
+   * Scratch URL. Stamped by the REST layer from
+   * `Connector.buildCreateDestinationRemoteWebUrl`, not set by connectors
+   * directly. Absent when the service has no constructible container link, or
+   * when the destination does not exist yet — omitted rather than guessed.
+   */
+  remoteWebUrl?: string;
 }
 
 /** Response for `GET .../connections/:id/create-destinations`. */

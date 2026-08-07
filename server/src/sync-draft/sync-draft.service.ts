@@ -376,13 +376,13 @@ export class SyncDraftService {
       });
     });
 
-    return SyncDraftEntity.from(row);
+    return SyncDraftEntity.from(row, await this.resolveSuggestedNewParentName(row));
   }
 
   async get(draftId: SyncDraftId, actor: Actor): Promise<SyncDraft> {
     const row = await this.loadDraftOrThrow(draftId);
     await this.workbookService.assertReadableWorkbook(actor, row.workbookId as WorkbookId);
-    return SyncDraftEntity.from(row);
+    return SyncDraftEntity.from(row, await this.resolveSuggestedNewParentName(row));
   }
 
   /**
@@ -432,7 +432,7 @@ export class SyncDraftService {
     }
 
     const updated = await this.loadDraftOrThrow(draftId);
-    return SyncDraftEntity.from(updated);
+    return SyncDraftEntity.from(updated, await this.resolveSuggestedNewParentName(updated));
   }
 
   async delete(draftId: SyncDraftId, actor: Actor): Promise<void> {
@@ -603,7 +603,11 @@ export class SyncDraftService {
     );
 
     const fresh = await this.loadDraftOrThrow(draftId);
-    return { draft: SyncDraftEntity.from(fresh), results, status: aggregateMaterializeStatus(results) };
+    return {
+      draft: SyncDraftEntity.from(fresh, await this.resolveSuggestedNewParentName(fresh)),
+      results,
+      status: aggregateMaterializeStatus(results),
+    };
   }
 
   /**
@@ -838,6 +842,27 @@ export class SyncDraftService {
    * account query for the whole set. Used to name a brand-new destination container
    * after the source service it exports.
    */
+  /**
+   * The name to prefill the "name the container we're about to create" box with,
+   * derived from every source folder the draft maps. Recomputed on each read
+   * rather than stored so it tracks the draft's sources; once the user types
+   * their own it is persisted as the destination's `newParentName` and wins.
+   * Null when the draft maps no sources yet.
+   */
+  private async resolveSuggestedNewParentName(row: PrismaSyncDraft): Promise<string | null> {
+    const tableMappings = (row.tableMappings ?? []) as unknown as DraftTableMapping[];
+    const sourceDataFolderIds = tableMappings.map((tableMapping) => tableMapping.source.dataFolderId);
+    if (sourceDataFolderIds.length === 0) return null;
+    const displayNameByDataFolderId = await this.resolveSourceServiceDisplayNamesByDataFolderId(sourceDataFolderIds);
+    return (
+      buildNewDestinationParentName(
+        sourceDataFolderIds
+          .map((dataFolderId) => displayNameByDataFolderId.get(dataFolderId))
+          .filter((displayName): displayName is string => displayName !== undefined),
+      ) ?? null
+    );
+  }
+
   private async resolveSourceServiceDisplayNamesByDataFolderId(dataFolderIds: string[]): Promise<Map<string, string>> {
     const distinctDataFolderIds = [...new Set(dataFolderIds)];
     if (distinctDataFolderIds.length === 0) return new Map();
@@ -937,11 +962,20 @@ export class SyncDraftService {
     );
 
     for (const group of groups.values()) {
-      const newParentName = buildNewDestinationParentName(
-        [...group.sourceDataFolderIds]
-          .map((dataFolderId) => sourceServiceDisplayNameByDataFolderId.get(dataFolderId))
-          .filter((displayName): displayName is string => displayName !== undefined),
-      );
+      // The user's answer to the "name the container we're about to create" box
+      // wins; the source-derived suggestion is only the fallback for a draft
+      // saved without one. Every placeholder in a group shares a parent, so the
+      // first that named it decides.
+      const userChosenNewParentName = group.placeholders.find(
+        (placeholder) => placeholder.newParentName,
+      )?.newParentName;
+      const newParentName =
+        userChosenNewParentName ??
+        buildNewDestinationParentName(
+          [...group.sourceDataFolderIds]
+            .map((dataFolderId) => sourceServiceDisplayNameByDataFolderId.get(dataFolderId))
+            .filter((displayName): displayName is string => displayName !== undefined),
+        );
       // Early per-table ticks for the progress bar: tables in this batch are created sequentially
       // on the remote service, and the schema builder notifies us as each one lands — the batch
       // response below stays authoritative for results and checkpoint persistence.
@@ -985,7 +1019,19 @@ export class SyncDraftService {
             });
           }
         }
-        // Checkpoint the whole batch's successes the instant they land.
+        // The connector may have PROVISIONED the parent container during this
+        // batch rather than being handed an existing one (Google Sheets' "new
+        // spreadsheet" sentinel). Pin EVERY placeholder in the group — including
+        // ones that failed and will be retried — to the parent it actually used,
+        // so a later materialize adds tables to that same container instead of
+        // provisioning a second one and splitting the export across two.
+        const provisionedRemoteParentId = response.tables.find((table) => table.remoteParentId)?.remoteParentId;
+        if (provisionedRemoteParentId) {
+          for (const placeholder of group.placeholders) {
+            placeholder.remoteParentId = provisionedRemoteParentId;
+          }
+        }
+        // Checkpoint the whole batch's successes — and the pin above — the instant they land.
         await this.persistTableMappings(draftId, tableMappings);
       } catch (error) {
         for (const placeholder of group.placeholders) {

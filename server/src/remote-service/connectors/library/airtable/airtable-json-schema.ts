@@ -36,6 +36,16 @@ import {
  * `jest -u server/src/sync/view-codec-snapshots.spec.ts`, or the view-codec guardrail keeps
  * exercising the old shape.
  */
+/**
+ * Deep link to a base in Airtable's web UI. Airtable renders the base with its
+ * left nav intact and picks a starting table itself, so this is a complete
+ * destination on its own — no need to name a child table, and no risk of the
+ * link changing identity when that child is renamed, reordered, or deleted.
+ */
+export function buildAirtableBaseWebUrl(baseId: string): string {
+  return `https://airtable.com/${baseId}`;
+}
+
 export function buildAirtableJsonTableSpec(
   id: EntityId,
   base: AirtableBase,
@@ -92,7 +102,9 @@ export function buildAirtableJsonTableSpec(
     basePath: [base.name],
     // Deep link to the table in Airtable's web UI, e.g.
     // https://airtable.com/appXXXX/tblYYYY/
-    remoteWebUrl: `https://airtable.com/${baseId}/${tableId}`,
+    remoteWebUrl: `${buildAirtableBaseWebUrl(baseId)}/${tableId}`,
+    // The base the table lives in — the same place a create destination names.
+    remoteContainer: { id: baseId, name: base.name, remoteWebUrl: buildAirtableBaseWebUrl(baseId) },
     generatedAt: new Date().toISOString(),
   };
 }

@@ -73,6 +73,7 @@ import { buildPgDefaultView } from '../pg-common/pg-default-view';
 import { SupabaseApiError } from './supabase-api-client';
 import { SupabaseAuthParser } from './supabase-auth-parser';
 import {
+  buildSupabaseSchemaEditorUrl,
   buildSupabaseTableEditorUrl,
   extractProjectRef,
   isSupabaseCloudHostedConnectionString,
@@ -413,6 +414,7 @@ export class SupabaseConnector extends Connector {
           destinations.push({
             id: `${project.projectRef}/${schema}`,
             name: `${project.projectName || project.projectRef} / ${schema}`,
+            created: true,
           });
         }
       }
@@ -424,7 +426,31 @@ export class SupabaseConnector extends Connector {
       throw new Error('listCreateDestinations called without a connection-string project ref');
     }
     const schemas = await this.listUserSchemas(this.connectionString);
-    return schemas.map((schema) => ({ id: `${projectRef}/${schema}`, name: schema }));
+    return schemas.map((schema) => ({ id: `${projectRef}/${schema}`, name: schema, created: true }));
+  }
+
+  /**
+   * A create destination is `"<projectRef>/<schema>"`, which the dashboard's
+   * table editor addresses directly — the schema's table list, i.e. exactly
+   * where the tables we create will appear. Reuses {@link resolveCreateParent}
+   * so `"ref/schema"` and a bare `"ref"` (schema defaulting to `public`)
+   * normalize the same way the create path normalizes them.
+   */
+  override buildCreateDestinationRemoteWebUrl(destinationId: string): string | undefined {
+    if (!this.supabaseDashboardDeepLinksAreAvailable) return undefined;
+    const { projectRef, schema } = this.resolveCreateParent([destinationId]);
+    return projectRef ? buildSupabaseSchemaEditorUrl(projectRef, schema) : undefined;
+  }
+
+  /**
+   * Label for a (project, schema) container. Matches the create-destination
+   * labels: `"<project> / <schema>"` in OAuth mode, where a human-readable
+   * project name is on hand, and the bare schema in connection-string mode,
+   * where the only "name" available is the opaque project ref.
+   */
+  private buildContainerDisplayName(projectRef: string, schema: string): string {
+    const project = this.projects.find((candidate) => candidate.projectRef === projectRef);
+    return project ? `${project.projectName || project.projectRef} / ${schema}` : schema;
   }
 
   /**
@@ -586,6 +612,17 @@ export class SupabaseConnector extends Connector {
         titlePath: pickTitleColumnPath(columns),
         basePath: [schema],
         ...(tableEditorUrlIfAvailable && { remoteWebUrl: tableEditorUrlIfAvailable }),
+        // The (project, schema) the table lives in — the same pair a create
+        // destination names, down to the `"<projectRef>/<schema>"` id form, so a
+        // table's container matches the destination it was created under. The
+        // OAuth project name is the friendlier label when we have one.
+        remoteContainer: {
+          id: `${projectRef}/${schema}`,
+          name: this.buildContainerDisplayName(projectRef, schema),
+          remoteWebUrl: this.supabaseDashboardDeepLinksAreAvailable
+            ? buildSupabaseSchemaEditorUrl(projectRef, schema)
+            : null,
+        },
         generatedAt: new Date().toISOString(),
       };
     }, resolved.connectionString);

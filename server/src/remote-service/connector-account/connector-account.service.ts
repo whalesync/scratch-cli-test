@@ -801,7 +801,10 @@ export class ConnectorAccountService {
     try {
       const destinations = await connector
         .listCreateDestinations()
-        .then((destinations) => destinations.sort((a, b) => a.name.localeCompare(b.name)));
+        .then((destinations) => destinations.sort((a, b) => a.name.localeCompare(b.name)))
+        .then((destinations) =>
+          destinations.map((destination) => this.decorateCreateDestinationWithRemoteWebUrl(connector, destination)),
+        );
       return { destinations };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
@@ -837,7 +840,11 @@ export class ConnectorAccountService {
       const result = connector.searchCreateDestinations
         ? await connector.searchCreateDestinations(normalizedSearchTerm)
         : await this.filterCreateDestinationsInProcess(connector, normalizedSearchTerm);
-      const sortedDestinations = result.destinations.sort((a, b) => a.name.localeCompare(b.name));
+      // One decoration site covers both the connector-search path and the
+      // in-process fallback above — they converge on `result.destinations`.
+      const sortedDestinations = result.destinations
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((destination) => this.decorateCreateDestinationWithRemoteWebUrl(connector, destination));
       return { destinations: sortedDestinations, hasMore: result.hasMore };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
@@ -868,18 +875,55 @@ export class ConnectorAccountService {
     }
 
     try {
+      // Both branches converge on one `destination` so the single decoration
+      // below covers the connector lookup AND the list-scan fallback — no future
+      // path can return an undecorated destination.
+      let destination: CreateDestination | null;
       if (connector.lookupCreateDestination) {
-        const destination = await connector.lookupCreateDestination(destinationId);
-        return { destination };
+        destination = await connector.lookupCreateDestination(destinationId);
+      } else {
+        // Fallback for connectors with a small, complete list: an id absent from the
+        // list is inaccessible (null), matching the lookup contract.
+        const allDestinations = connector.listCreateDestinations ? await connector.listCreateDestinations() : [];
+        destination = allDestinations.find((candidate) => candidate.id === destinationId) ?? null;
       }
-      // Fallback for connectors with a small, complete list: an id absent from the
-      // list is inaccessible (null), matching the lookup contract.
-      const allDestinations = connector.listCreateDestinations ? await connector.listCreateDestinations() : [];
-      const destination = allDestinations.find((candidate) => candidate.id === destinationId) ?? null;
-      return { destination };
+      return {
+        destination: destination ? this.decorateCreateDestinationWithRemoteWebUrl(connector, destination) : null,
+      };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
     }
+  }
+
+  /**
+   * Stamp a create destination with its deep link into the service's own web UI,
+   * so every destination the API returns carries the link and each connector
+   * builds it in exactly one place. Returns the destination unchanged when the
+   * connector has no URL builder or the id has no constructible link — leaving
+   * `remoteWebUrl` ABSENT rather than explicitly `undefined`, which would change
+   * the wire shape for every existing consumer.
+   *
+   * A connector's builder is contractually pure and non-throwing, but a bug in
+   * one must never take down the destination picker: a throw is logged and the
+   * destination comes back undecorated.
+   */
+  private decorateCreateDestinationWithRemoteWebUrl(
+    connector: Connector,
+    destination: CreateDestination,
+  ): CreateDestination {
+    if (!connector.buildCreateDestinationRemoteWebUrl) return destination;
+    let remoteWebUrl: string | undefined;
+    try {
+      remoteWebUrl = connector.buildCreateDestinationRemoteWebUrl(destination.id);
+    } catch (error) {
+      WSLogger.warn({
+        source: 'ConnectorAccountService',
+        message: `buildCreateDestinationRemoteWebUrl threw for ${connector.service} destination "${destination.id}"; returning it without a link`,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+      return destination;
+    }
+    return remoteWebUrl ? { ...destination, remoteWebUrl } : destination;
   }
 
   /**

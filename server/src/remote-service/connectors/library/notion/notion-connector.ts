@@ -67,7 +67,7 @@ import {
 import { isFullDatabase, isFullDataSource, NotionDataSourceSearchResult } from './notion-data-source-types';
 import { buildNotionDefaultView, buildNotionStandalonePagesDefaultView } from './notion-default-view';
 import { buildNotionLastEditedFilter, combineNotionFilters } from './notion-incremental';
-import { buildNotionJsonTableSpec, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
+import { buildNotionJsonTableSpec, buildNotionPageWebUrl, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
 import { NotionSchemaParser } from './notion-schema-parser';
 import {
   buildNotionStandalonePagesTablePreview,
@@ -404,7 +404,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     });
     return response.results
       .filter((result): result is PageObjectResponse => result.object === 'page' && 'properties' in result)
-      .map((page) => ({ id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName }));
+      .map((page) => ({ id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName, created: true }));
   }
 
   /**
@@ -424,7 +424,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     });
     const destinations = response.results
       .filter((result): result is PageObjectResponse => result.object === 'page' && 'properties' in result)
-      .map((page) => ({ id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName }));
+      .map((page) => ({ id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName, created: true }));
     return { destinations, hasMore: response.has_more };
   }
 
@@ -438,7 +438,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   override async lookupCreateDestination(destinationId: string): Promise<CreateDestination | null> {
     try {
       const page = (await this.client.retrievePage({ page_id: destinationId })) as PageObjectResponse;
-      return { id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName };
+      return { id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName, created: true };
     } catch (error) {
       if (
         error instanceof NotionError &&
@@ -448,6 +448,11 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       }
       throw error;
     }
+  }
+
+  /** A create destination is a parent page id, which notion.so addresses directly. */
+  override buildCreateDestinationRemoteWebUrl(destinationId: string): string {
+    return buildNotionPageWebUrl(destinationId);
   }
 
   /**

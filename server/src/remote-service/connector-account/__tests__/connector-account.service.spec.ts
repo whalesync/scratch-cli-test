@@ -301,6 +301,118 @@ describe('ConnectorAccountService', () => {
     });
   });
 
+  /**
+   * The URL is stamped here rather than by each connector so a connector builds
+   * it once instead of at each of its `{ id, name }` construction sites. These
+   * cover every path a destination can leave the service by — including the two
+   * in-process fallbacks, where a missed decoration would silently ship a picker
+   * that links but a saved-selection refresh that doesn't.
+   */
+  describe('create-destination remoteWebUrl stamping', () => {
+    const DESTINATION = { id: 'app_a', name: 'Apple base', created: true };
+
+    function mockConnectorReturning(overrides: Record<string, unknown>) {
+      const mockConnector = {
+        buildCreateDestinationRemoteWebUrl: jest.fn((id: string) => `https://example.test/${id}`),
+        ...overrides,
+      };
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+      return mockConnector;
+    }
+
+    it('stamps the link on listed destinations', async () => {
+      mockConnectorReturning({ listCreateDestinations: jest.fn().mockResolvedValue([DESTINATION]) });
+
+      const result = await service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(result.destinations).toEqual([{ ...DESTINATION, remoteWebUrl: 'https://example.test/app_a' }]);
+    });
+
+    it('leaves the key ABSENT when the connector has no link for the id', async () => {
+      mockConnectorReturning({
+        listCreateDestinations: jest.fn().mockResolvedValue([DESTINATION]),
+        buildCreateDestinationRemoteWebUrl: jest.fn().mockReturnValue(undefined),
+      });
+
+      const result = await service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      // toEqual, not toMatchObject: an explicit `remoteWebUrl: undefined` would
+      // change the wire shape for every existing consumer.
+      expect(result.destinations).toEqual([DESTINATION]);
+    });
+
+    it('passes a connector without the hook through untouched', async () => {
+      mockConnectorReturning({
+        listCreateDestinations: jest.fn().mockResolvedValue([DESTINATION]),
+        buildCreateDestinationRemoteWebUrl: undefined,
+      });
+
+      const result = await service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(result.destinations).toEqual([DESTINATION]);
+    });
+
+    it('does not fail the request when a connectorhook throws', async () => {
+      mockConnectorReturning({
+        listCreateDestinations: jest.fn().mockResolvedValue([DESTINATION]),
+        buildCreateDestinationRemoteWebUrl: jest.fn(() => {
+          throw new Error('bad id');
+        }),
+      });
+
+      const result = await service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(result.destinations).toEqual([DESTINATION]);
+    });
+
+    it('stamps on the connector search path', async () => {
+      mockConnectorReturning({
+        searchCreateDestinations: jest.fn().mockResolvedValue({ destinations: [DESTINATION], hasMore: false }),
+      });
+
+      const result = await service.searchCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, 'app', ACTOR);
+
+      expect(result.destinations).toEqual([{ ...DESTINATION, remoteWebUrl: 'https://example.test/app_a' }]);
+    });
+
+    it('stamps on the in-process search fallback', async () => {
+      // No searchCreateDestinations — the service filters the full list itself.
+      mockConnectorReturning({ listCreateDestinations: jest.fn().mockResolvedValue([DESTINATION]) });
+
+      const result = await service.searchCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, 'apple', ACTOR);
+
+      expect(result.destinations).toEqual([{ ...DESTINATION, remoteWebUrl: 'https://example.test/app_a' }]);
+    });
+
+    it('stamps on the connector lookup path', async () => {
+      mockConnectorReturning({ lookupCreateDestination: jest.fn().mockResolvedValue(DESTINATION) });
+
+      const result = await service.lookupCreateDestination(WORKBOOK_ID, ACCOUNT_ID, 'app_a', ACTOR);
+
+      expect(result.destination).toEqual({ ...DESTINATION, remoteWebUrl: 'https://example.test/app_a' });
+    });
+
+    it('stamps on the list-scan lookup fallback', async () => {
+      // No lookupCreateDestination — the service scans the full list itself.
+      mockConnectorReturning({ listCreateDestinations: jest.fn().mockResolvedValue([DESTINATION]) });
+
+      const result = await service.lookupCreateDestination(WORKBOOK_ID, ACCOUNT_ID, 'app_a', ACTOR);
+
+      expect(result.destination).toEqual({ ...DESTINATION, remoteWebUrl: 'https://example.test/app_a' });
+    });
+
+    it('leaves a stale lookup null rather than decorating it', async () => {
+      mockConnectorReturning({ lookupCreateDestination: jest.fn().mockResolvedValue(null) });
+
+      const result = await service.lookupCreateDestination(WORKBOOK_ID, ACCOUNT_ID, 'gone', ACTOR);
+
+      expect(result.destination).toBeNull();
+    });
+  });
+
   // DEV-11167: every connection endpoint reachable over HTTP takes its `connectorAccountId` straight
   // from the caller. The controller's `checkWorkspacePermissions` only proves the caller may access
   // the workbook they NAMED — so without scoping the lookup on `{ id, workbookId }` too, a caller

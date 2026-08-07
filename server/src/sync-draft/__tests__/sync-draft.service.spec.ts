@@ -346,6 +346,39 @@ describe('SyncDraftService', () => {
       expect(workbookService.assertReadableWorkbook).toHaveBeenCalledWith(ACTOR, WORKBOOK_ID);
       expect(draft.id).toBe(DRAFT_ID);
     });
+
+    it('derives the suggested container name from the draft sources so the rename box can prefill', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(
+        makeDraftRow({
+          tableMappings: [
+            {
+              ref: 'tm1',
+              source: { dataFolderId: 'dfd_src' },
+              destination: { kind: 'existing', dataFolderId: 'dfd_dest' },
+              columnMappings: [],
+            },
+          ],
+        }),
+      );
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_src', connectorAccountId: 'coa_src', tableId: ['0-1'] },
+      ]);
+      (dbService.client.connectorAccount.findMany as jest.Mock).mockResolvedValue([
+        { id: 'coa_src', service: 'AIRTABLE' },
+      ]);
+
+      const draft = await service.get(DRAFT_ID, ACTOR);
+
+      expect(draft.suggestedNewParentName).toBe('Airtable export');
+    });
+
+    it('suggests nothing for a draft with no sources yet', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(makeDraftRow({ tableMappings: [] }));
+
+      const draft = await service.get(DRAFT_ID, ACTOR);
+
+      expect(draft.suggestedNewParentName).toBeNull();
+    });
   });
 
   describe('patch', () => {
@@ -787,6 +820,97 @@ describe('SyncDraftService', () => {
 
       const dto = schemaBuilderService.createTables.mock.calls[0][1];
       expect(dto.newParentName).toBe('Airtable export');
+    });
+
+    it("prefers the user's chosen container name over the source-derived suggestion", async () => {
+      const row = makeDraftRow({ tableMappings: [placeholderTableDraft({ newParentName: 'Q3 CRM export' })] });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_src', connectorAccountId: 'coa_src', tableId: ['0-1'] },
+      ]);
+      (dbService.client.connectorAccount.findMany as jest.Mock).mockResolvedValue([
+        { id: 'coa_src', service: 'AIRTABLE' },
+      ]);
+      schemaBuilderService.createTables.mockResolvedValue({
+        status: 'ok',
+        tables: [
+          { ref: 'spec_contacts', name: 'Contacts', status: 'created', remoteTableId: ['base1', 'tbl1'], fields: [] },
+        ],
+      } as never);
+
+      await service.materialize(DRAFT_ID, ACTOR);
+
+      // Without the override this would be the suggestion, "Airtable export".
+      expect(schemaBuilderService.createTables.mock.calls[0][1].newParentName).toBe('Q3 CRM export');
+    });
+
+    /**
+     * A connector that PROVISIONS its parent (Google Sheets' "new spreadsheet")
+     * reports the parent it actually used. Without pinning it back onto the
+     * draft, the sentinel survives and a retry provisions a SECOND spreadsheet,
+     * splitting the export across two files.
+     */
+    describe('pinning a connector-provisioned parent', () => {
+      /** Two placeholders in one group; the second fails so it will be retried. */
+      function twoPlaceholdersOneFailing(): Record<string, unknown>[] {
+        return [
+          placeholderTableDraft({ remoteParentId: ['scratch-new-spreadsheet'] }),
+          {
+            ...placeholderTableDraft({ remoteParentId: ['scratch-new-spreadsheet'] }),
+            ref: 'tm2',
+            destination: {
+              kind: 'placeholderTable',
+              ref: 'ph_orders',
+              connectorAccountId: 'coa_1',
+              remoteParentId: ['scratch-new-spreadsheet'],
+              createSpec: { ref: 'spec_orders', name: 'Orders', fields: [] },
+            },
+          },
+        ];
+      }
+
+      it('pins every placeholder in the group, including one that failed', async () => {
+        const row = makeDraftRow({ tableMappings: twoPlaceholdersOneFailing() });
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+        schemaBuilderService.createTables.mockResolvedValue({
+          status: 'partial',
+          tables: [
+            {
+              ref: 'spec_contacts',
+              name: 'Contacts',
+              status: 'created',
+              remoteTableId: ['ss_new', '7'],
+              remoteParentId: ['ss_new'],
+              fields: [],
+            },
+            { ref: 'spec_orders', name: 'Orders', status: 'failed', error: 'boom', fields: [] },
+          ],
+        } as never);
+
+        const res = await service.materialize(DRAFT_ID, ACTOR);
+
+        const remoteParentIds = res.draft.tableMappings.map((mapping) => {
+          const destination = mapping.destination;
+          return destination.kind === 'placeholderTable' ? destination.remoteParentId : undefined;
+        });
+        expect(remoteParentIds).toEqual([['ss_new'], ['ss_new']]);
+      });
+
+      it('leaves remoteParentId alone when no connector reports a provisioned parent', async () => {
+        const row = makeDraftRow({ tableMappings: [placeholderTableDraft()] });
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+        schemaBuilderService.createTables.mockResolvedValue({
+          status: 'ok',
+          tables: [
+            { ref: 'spec_contacts', name: 'Contacts', status: 'created', remoteTableId: ['base1', 'tbl1'], fields: [] },
+          ],
+        } as never);
+
+        const res = await service.materialize(DRAFT_ID, ACTOR);
+
+        const destination = res.draft.tableMappings[0].destination;
+        expect(destination.kind === 'placeholderTable' && destination.remoteParentId).toEqual(['base1']);
+      });
     });
 
     it('ticks onPlaceholderCreatedInBatch with the DRAFT placeholder ref as each table lands mid-batch (DEV-10875)', async () => {

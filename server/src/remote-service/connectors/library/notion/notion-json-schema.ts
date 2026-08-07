@@ -52,6 +52,23 @@ export const NOTION_READ_ONLY_PROPERTY_TYPES = new Set([
  * `jest -u server/src/sync/view-codec-snapshots.spec.ts`, or the view-codec guardrail keeps
  * exercising the old shape.
  */
+/**
+ * Deep link to a page or database in Notion's web UI. notion.so addresses both
+ * by id with dashes stripped (the 32-char hex form). The API also hands back a
+ * `url` carrying a title slug (`.../My-Page-208a942…`), but the bare-id form
+ * resolves to the same page and is derivable from the id alone — which is what
+ * lets the create-destination URL hook stay pure and network-free.
+ */
+export function buildNotionPageWebUrl(pageOrDatabaseId: string): string {
+  return `https://www.notion.so/${pageOrDatabaseId.replace(/-/g, '')}`;
+}
+
+// No `remoteContainer`: a Notion create destination is the PARENT PAGE a
+// database is created under, and neither the remote id (`[databaseId,
+// dataSourceId]`) nor the data-source object carries that page's id or title —
+// resolving it would cost an extra `retrievePage` on every schema fetch. Naming
+// the database instead would be a different thing wearing the container's name.
+// Omit rather than guess.
 export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObjectResponse): BaseJsonTableSpec {
   const [databaseId] = id.remoteId;
 
@@ -198,7 +215,7 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
     // Deep link to the database in Notion's web UI. notion.so addresses a
     // database by its id with dashes stripped (the 32-char hex form), e.g.
     // https://www.notion.so/208a94267a718094b634e83686fb1755
-    remoteWebUrl: `https://www.notion.so/${databaseId.replace(/-/g, '')}`,
+    remoteWebUrl: buildNotionPageWebUrl(databaseId),
     generatedAt: new Date().toISOString(),
   };
 }

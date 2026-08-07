@@ -90,6 +90,12 @@ describe('buildGoogleSheetsJsonTableSpec', () => {
     expect(spec.name).toBe('Orders');
     expect(spec.basePath).toEqual(['My Data']);
     expect(spec.remoteWebUrl).toBe('https://docs.google.com/spreadsheets/d/spreadsheet123/edit#gid=42');
+    // The container is the spreadsheet — same link without the per-sheet fragment.
+    expect(spec.remoteContainer).toEqual({
+      id: 'spreadsheet123',
+      name: 'My Data',
+      remoteWebUrl: 'https://docs.google.com/spreadsheets/d/spreadsheet123/edit',
+    });
   });
 
   it('annotates date columns with the serial-date transformer pair', () => {

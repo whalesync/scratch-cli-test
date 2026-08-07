@@ -1367,6 +1367,12 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       // Keep the deep link to the service's web UI fresh — the connector rebuilds
       // it from the just-fetched table spec, so a changed/added link lands here.
       remoteWebUrl: tableSpec.remoteWebUrl ?? null,
+      // Same for the container: rebuilt from the just-fetched spec, so a base or
+      // spreadsheet RENAMED on the service follows here on the next pull rather
+      // than leaving a stale label in the UI.
+      remoteContainerId: tableSpec.remoteContainer?.id ?? null,
+      remoteContainerName: tableSpec.remoteContainer?.name ?? null,
+      remoteContainerWebUrl: tableSpec.remoteContainer?.remoteWebUrl ?? null,
     };
     if (effectiveMode === 'full') {
       finalizeData.lastFullPullAt = pullStartedAt;

@@ -408,6 +408,17 @@ model DataFolder {
   // service has no constructible deep link.
   remoteWebUrl String?
 
+  // The container this table lives in on the external service — an Airtable base,
+  // a Google Sheets spreadsheet, a Supabase project+schema, a Notion parent page.
+  // Lets the client show "this table lives in X" and link there. Connector-populated
+  // during schema building and refreshed on every pull (so a container rename
+  // follows), null when the connector reports no container. Stored as scalars and
+  // reassembled into `DataFolder.remoteContainer` on the wire; the URL is null on
+  // its own when a container has a name but no constructible link.
+  remoteContainerId     String?
+  remoteContainerName   String?
+  remoteContainerWebUrl String?
+
   // Denormalized count of record files in this folder: direct-child, non-dotfile blobs on
   // the `main` branch of the folder's git repo (matches what the folder viewer shows).
   // Sourced from git (NOT FileIndex) and refreshed after a pull and by an hourly cron, so

@@ -423,6 +423,43 @@ describe('GoogleSheetsConnector', () => {
       >[];
       expect(secondSetupRequests.some((request) => 'deleteSheet' in request)).toBe(false);
     });
+
+    it('reports the provisioned spreadsheet as remoteParentId so the caller can pin to it', async () => {
+      const connector = makeConnector();
+
+      const result = await connector.createTable(planForNewSpreadsheet('Airtable export'));
+
+      // Without this the sentinel stays in the draft and a retry provisions a
+      // SECOND spreadsheet, splitting the export across two files.
+      expect(result.remoteParentId).toEqual([CREATED_SPREADSHEET_ID]);
+    });
+  });
+
+  describe('buildCreateDestinationRemoteWebUrl', () => {
+    const SPREADSHEET_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+
+    it('deep-links a spreadsheet by id', () => {
+      expect(makeConnector().buildCreateDestinationRemoteWebUrl(SPREADSHEET_ID)).toBe(
+        `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit`,
+      );
+    });
+
+    it('offers no link for the "new spreadsheet" sentinel — nothing exists to open yet', () => {
+      expect(makeConnector().buildCreateDestinationRemoteWebUrl('scratch-new-spreadsheet')).toBeUndefined();
+    });
+
+    it('parses a pasted spreadsheet URL rather than interpolating it raw', () => {
+      // The search box accepts a pasted URL, so that URL can BE the destination id.
+      expect(
+        makeConnector().buildCreateDestinationRemoteWebUrl(
+          `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit#gid=42`,
+        ),
+      ).toBe(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit`);
+    });
+
+    it('offers no link for an id that does not parse', () => {
+      expect(makeConnector().buildCreateDestinationRemoteWebUrl('not a spreadsheet')).toBeUndefined();
+    });
   });
 });
 

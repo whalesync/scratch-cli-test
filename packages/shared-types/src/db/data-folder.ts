@@ -1,3 +1,4 @@
+import type { RemoteContainer } from '../connector/table-list';
 import { IncrementalPullSupport, Service } from '../enums/enums';
 import { DataFolderId, WorkbookId } from '../ids';
 import { Schedule } from './schedule';
@@ -21,6 +22,15 @@ export interface DataFolder {
   // site, e.g. https://airtable.com/{baseId}/{tableId}). Null when the service has
   // no constructible deep link. Lets the client offer an "open in {service}" link.
   remoteWebUrl: string | null;
+  // The container this table lives in on the service (Airtable base, Sheets
+  // spreadsheet, Supabase project+schema, Notion parent page) — for a "this
+  // table lives in X" affordance alongside the table's own link. Null when the
+  // connector doesn't report one. Connector-populated, refreshed on every pull.
+  remoteContainer: RemoteContainer | null;
+  // [container name, table name] — e.g. ["Q3 CRM export", "Appointments"].
+  // DERIVED from `remoteContainer.name` + `name` at serialization time, not
+  // stored; just the table name alone when there is no container.
+  remoteBreadcrumb: string[];
   // TODO - instead of returning the raw lock this should be a status object that denotes "downloading" or "syncing"
   lock: string | null;
   version: number;

@@ -174,6 +174,13 @@ export function buildGoogleSheetsJsonTableSpec(params: {
     titlePath: firstDataColumnSlug ? dotPath(firstDataColumnSlug) : undefined,
     basePath: [description.spreadsheetTitle],
     remoteWebUrl: `https://docs.google.com/spreadsheets/d/${description.spreadsheetId}/edit#gid=${description.sheetId}`,
+    // The spreadsheet the sheet lives in — the same place a create destination
+    // names; its URL is this one without the per-sheet `#gid` fragment.
+    remoteContainer: {
+      id: description.spreadsheetId,
+      name: description.spreadsheetTitle,
+      remoteWebUrl: `https://docs.google.com/spreadsheets/d/${description.spreadsheetId}/edit`,
+    },
     generatedAt: new Date().toISOString(),
   };
 }

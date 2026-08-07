@@ -128,6 +128,14 @@ export interface CreateTableResult {
   status: 'created' | 'failed' | 'partial' | 'skipped';
   /** New remote table id on success; feeds materializeLocally + FK resolution. */
   remoteTableId?: string[];
+  /**
+   * The parent the table was actually created under. Set only by connectors that
+   * PROVISION the parent rather than being handed an existing one — today just
+   * Google Sheets, whose "new spreadsheet" destination is a sentinel resolved to
+   * a real spreadsheet during the create. Callers pin subsequent creates to this
+   * so a retry adds tables to the same container instead of provisioning another.
+   */
+  remoteParentId?: string[];
   fields: CreateFieldResult[];
   /** Set when materializeLocally succeeded. */
   dataFolderId?: string;
