@@ -209,6 +209,15 @@ export const createSchemaTablesSchema = z
     connectorAccountId: z.string().min(1),
     /** Remote base/parent under which to create (connector-interpreted). */
     remoteParentId: z.array(z.string()).optional(),
+    /**
+     * Suggested display name for a brand-new parent container the connector must
+     * create for this batch (e.g. the Google Sheets spreadsheet spun up for a
+     * "new spreadsheet" Live Export destination, or an Airtable base). Ignored by
+     * connectors that create tables into an already-existing parent. The caller
+     * owns the naming policy (Live Export passes "<Source service> export"); the
+     * connector falls back to its own default when this is absent.
+     */
+    newParentName: z.string().min(1).optional(),
     tables: z.array(createTableSpecSchema).min(1),
     /** Also create a local DataFolder + schema.json for each created table. */
     materializeLocally: z.boolean().optional(),

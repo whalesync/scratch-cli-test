@@ -356,6 +356,74 @@ describe('GoogleSheetsConnector', () => {
       expect(deleteRequests.map((request) => request.deleteDimension.range.startIndex)).toEqual([3, 1]);
     });
   });
+
+  describe('createTable into a brand-new spreadsheet', () => {
+    const NEW_SPREADSHEET_SENTINEL = 'scratch-new-spreadsheet';
+    const CREATED_SPREADSHEET_ID = 'newSpreadsheet999';
+    const CREATED_SHEET_ID = 7;
+
+    function planForNewSpreadsheet(newParentName?: string) {
+      return {
+        remoteParentId: [NEW_SPREADSHEET_SENTINEL],
+        newParentName,
+        ref: 'ref-orders',
+        name: 'Orders',
+        fields: [{ name: 'Name', fieldType: { kind: 'text' as const } }],
+        deferredFkFields: [],
+      };
+    }
+
+    let createSpreadsheetSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      createSpreadsheetSpy = jest.spyOn(GoogleSheetsApiClient.prototype, 'createSpreadsheet').mockResolvedValue({
+        spreadsheetId: CREATED_SPREADSHEET_ID,
+        // `spreadsheets.create` seeds one blank default sheet; proto3 elides its gid 0.
+        sheets: [{ properties: { title: 'Sheet1' } as never }],
+      });
+      // The addSheet batch returns the new sheet's id; the setup batch returns {}.
+      batchUpdateSpreadsheetSpy
+        .mockReset()
+        .mockResolvedValueOnce({
+          replies: [{ addSheet: { properties: { sheetId: CREATED_SHEET_ID, title: 'Orders' } } }],
+        })
+        .mockResolvedValue({});
+    });
+
+    it('titles the new spreadsheet from the caller-supplied source name', async () => {
+      const connector = makeConnector();
+      await connector.createTable(planForNewSpreadsheet('Airtable export'));
+      expect(createSpreadsheetSpy).toHaveBeenCalledWith('Airtable export');
+    });
+
+    it('falls back to the default title when no name is supplied', async () => {
+      const connector = makeConnector();
+      await connector.createTable(planForNewSpreadsheet());
+      expect(createSpreadsheetSpy).toHaveBeenCalledWith('Scratch Export');
+    });
+
+    it('deletes the blank default sheet in the first created table setup batch, once', async () => {
+      const connector = makeConnector();
+      await connector.createTable(planForNewSpreadsheet('Airtable export'));
+
+      // Call 0 is addSheet; call 1 is the setup batch that also drops the default tab (gid 0).
+      const setupRequests = (batchUpdateSpreadsheetSpy.mock.calls[1] as unknown[])[1] as Record<string, unknown>[];
+      const deleteSheetRequests = setupRequests.filter((request) => 'deleteSheet' in request);
+      expect(deleteSheetRequests).toEqual([{ deleteSheet: { sheetId: 0 } }]);
+
+      // A second table in the same batch reuses the spreadsheet and does NOT delete again.
+      batchUpdateSpreadsheetSpy
+        .mockResolvedValueOnce({ replies: [{ addSheet: { properties: { sheetId: 8, title: 'Items' } } }] })
+        .mockResolvedValue({});
+      await connector.createTable({ ...planForNewSpreadsheet('Airtable export'), ref: 'ref-items', name: 'Items' });
+      expect(createSpreadsheetSpy).toHaveBeenCalledTimes(1);
+      const secondSetupRequests = (batchUpdateSpreadsheetSpy.mock.calls[3] as unknown[])[1] as Record<
+        string,
+        unknown
+      >[];
+      expect(secondSetupRequests.some((request) => 'deleteSheet' in request)).toBe(false);
+    });
+  });
 });
 
 describe('cellValueCountsAsRecordData (the human definition of blank)', () => {

@@ -31,6 +31,15 @@ export type ResolvedCreateFieldSpec = CreateFieldSpec;
 export interface NormalizedCreateTablePlan {
   /** Remote base/parent under which to create (connector-interpreted). */
   remoteParentId?: string[];
+  /**
+   * Suggested display name for a brand-new parent container the connector must
+   * create for this batch (e.g. a Google Sheets spreadsheet or an Airtable base).
+   * Copied verbatim from the request onto every table plan in the batch so the
+   * connector can name the parent it lazily creates on the first table. Connectors
+   * that create into an existing parent ignore it; the connector supplies its own
+   * default when this is absent.
+   */
+  newParentName?: string;
   /** The caller-assigned correlation handle from the request. */
   ref: string;
   name: string;

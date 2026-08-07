@@ -254,6 +254,13 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
    */
   private createdSpreadsheetIdForNewDestination?: string;
   /**
+   * The blank default sheet ("Sheet1") that `spreadsheets.create` seeds into a
+   * spreadsheet we spun up for a "new spreadsheet" batch. Set right after that
+   * create; cleared once the first created table's setup batch deletes it (a
+   * spreadsheet must always keep ≥1 sheet, so the delete waits for a real sheet).
+   */
+  private blankDefaultSheetIdToDeleteFromNewSpreadsheet?: number;
+  /**
    * Per-instance memo of sheet descriptions (a connector instance lives for one
    * job/request). A pull's spec-fetch + row-scan, and every batch of one
    * publish, would otherwise re-issue the same 2 describe requests against a
@@ -991,7 +998,7 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
   }
 
   override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
-    const spreadsheetId = await this.resolveCreateParentSpreadsheetId(plan.remoteParentId);
+    const spreadsheetId = await this.resolveCreateParentSpreadsheetId(plan.remoteParentId, plan.newParentName);
 
     // Order (primary first → column B), then map each field to its column plan.
     // Slugs must be unique up front — two headers that slugify identically
@@ -1060,6 +1067,11 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
     columnPlans.forEach((columnPlan, planIndex) => {
       setupRequests.push(...this.buildFieldColumnRequests(sheetId, 1 + planIndex, columnPlan));
     });
+    // Now that this real sheet exists, it is safe to drop the blank default tab
+    // of a spreadsheet we just created (no-op for existing spreadsheets / after
+    // the first created table). Bundled into the setup batch so it costs no extra
+    // request.
+    setupRequests.push(...this.takeBlankDefaultSheetDeletionRequests(spreadsheetId));
     await this.client.batchUpdateSpreadsheet(spreadsheetId, setupRequests);
     this.invalidateSheetDescriptionMemo({ spreadsheetId, sheetId });
 
@@ -1204,7 +1216,10 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
   }
 
   /** Resolve the createTable parent: an existing spreadsheet id, or the "new spreadsheet" sentinel. */
-  private async resolveCreateParentSpreadsheetId(remoteParentId: string[] | undefined): Promise<string> {
+  private async resolveCreateParentSpreadsheetId(
+    remoteParentId: string[] | undefined,
+    newSpreadsheetTitle: string | undefined,
+  ): Promise<string> {
     const parentId = remoteParentId?.[0];
     if (parentId && parentId !== NEW_SPREADSHEET_DESTINATION_ID) {
       const pastedSpreadsheetId = parseSpreadsheetIdFromUrlOrId(parentId);
@@ -1213,17 +1228,41 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
     // "New spreadsheet" (or no parent chosen): create one — memoized so every
     // table in the same materialize batch lands in the same spreadsheet.
     if (!this.createdSpreadsheetIdForNewDestination) {
-      const spreadsheet = await this.client.createSpreadsheet(NEW_SPREADSHEET_DEFAULT_TITLE);
+      const title = newSpreadsheetTitle ?? NEW_SPREADSHEET_DEFAULT_TITLE;
+      const spreadsheet = await this.client.createSpreadsheet(title);
       if (!spreadsheet.spreadsheetId) {
         throw new GoogleSheetsError('Google did not return an id for the newly created spreadsheet.');
       }
       this.createdSpreadsheetIdForNewDestination = spreadsheet.spreadsheetId;
+      // `spreadsheets.create` always seeds one empty default sheet ("Sheet1").
+      // Every table we add becomes its OWN sheet, so that default tab would be
+      // left blank and unused — remember its id so the first created table can
+      // delete it (a spreadsheet must always keep ≥1 sheet, so we can only drop
+      // it once a real sheet exists). Proto3 elides the default gid 0, so read
+      // it as `?? 0`.
+      this.blankDefaultSheetIdToDeleteFromNewSpreadsheet = spreadsheet.sheets?.[0]?.properties?.sheetId ?? 0;
       WSLogger.info({
         source: 'GoogleSheetsConnector',
-        message: `Created spreadsheet ${spreadsheet.spreadsheetId} for Live Export ("${NEW_SPREADSHEET_DEFAULT_TITLE}")`,
+        message: `Created spreadsheet ${spreadsheet.spreadsheetId} for Live Export ("${title}")`,
       });
     }
     return this.createdSpreadsheetIdForNewDestination;
+  }
+
+  /**
+   * A `deleteSheet` request for the blank default tab of the spreadsheet we just
+   * created for this "new spreadsheet" batch, or `[]` if there is nothing pending
+   * (an existing spreadsheet, or the default tab was already deleted by an earlier
+   * table in the batch). Clears the pending id so the delete happens exactly once.
+   * Must only be appended to a batchUpdate that ALSO adds a real sheet, so the
+   * spreadsheet never momentarily drops to zero sheets.
+   */
+  private takeBlankDefaultSheetDeletionRequests(spreadsheetId: string): GoogleSheetsBatchUpdateRequest[] {
+    if (spreadsheetId !== this.createdSpreadsheetIdForNewDestination) return [];
+    const blankDefaultSheetId = this.blankDefaultSheetIdToDeleteFromNewSpreadsheet;
+    if (blankDefaultSheetId === undefined) return [];
+    this.blankDefaultSheetIdToDeleteFromNewSpreadsheet = undefined;
+    return [{ deleteSheet: { sheetId: blankDefaultSheetId } }];
   }
 
   // ── Errors ────────────────────────────────────────────────────────────────

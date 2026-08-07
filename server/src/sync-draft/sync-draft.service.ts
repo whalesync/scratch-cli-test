@@ -46,6 +46,7 @@ import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
+import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
 import { buildSyncRoutineFile } from 'src/routine/routine-generator';
 import { RoutineService } from 'src/routine/routine.service';
 import {
@@ -290,6 +291,20 @@ function collectConnectorAccountIds(
   return folderIds
     .map((folderId) => connectorAccountIdByFolderId.get(folderId) ?? null)
     .filter((connectorAccountId): connectorAccountId is string => connectorAccountId !== null);
+}
+
+/**
+ * Build the display name for a brand-new destination parent container (a Google
+ * Sheets spreadsheet, an Airtable base) that a connector spins up for a Live
+ * Export batch, from the distinct source services feeding it — e.g. "Airtable
+ * export", or "Airtable & HubSpot export" when a batch mixes sources. Returns
+ * `undefined` when no source service could be resolved, letting the connector
+ * fall back to its own generic default.
+ */
+function buildNewDestinationParentName(sourceServiceDisplayNames: string[]): string | undefined {
+  const distinctDisplayNames = [...new Set(sourceServiceDisplayNames)];
+  if (distinctDisplayNames.length === 0) return undefined;
+  return `${distinctDisplayNames.join(' & ')} export`;
 }
 
 @Injectable()
@@ -816,6 +831,45 @@ export class SyncDraftService {
 
   // ── materialize internals ────────────────────────────────────────────────────
 
+  /**
+   * Map each given source data folder id → its connector's service display name
+   * (e.g. "Airtable"). A folder with no connector account (a scratch folder) or an
+   * unresolvable id is simply absent from the map. One folder query + one connector
+   * account query for the whole set. Used to name a brand-new destination container
+   * after the source service it exports.
+   */
+  private async resolveSourceServiceDisplayNamesByDataFolderId(dataFolderIds: string[]): Promise<Map<string, string>> {
+    const distinctDataFolderIds = [...new Set(dataFolderIds)];
+    if (distinctDataFolderIds.length === 0) return new Map();
+    const folders = await this.db.client.dataFolder.findMany({
+      where: { id: { in: distinctDataFolderIds } },
+      select: { id: true, connectorAccountId: true },
+    });
+    const connectorAccountIds = [
+      ...new Set(
+        folders
+          .map((folder) => folder.connectorAccountId)
+          .filter((connectorAccountId): connectorAccountId is string => connectorAccountId !== null),
+      ),
+    ];
+    if (connectorAccountIds.length === 0) return new Map();
+    const connectorAccounts = await this.db.client.connectorAccount.findMany({
+      where: { id: { in: connectorAccountIds } },
+      select: { id: true, service: true },
+    });
+    const serviceDisplayNameByConnectorAccountId = new Map(
+      connectorAccounts.map((account) => [account.id, getServiceDisplayName(account.service)]),
+    );
+    const serviceDisplayNameByDataFolderId = new Map<string, string>();
+    for (const folder of folders) {
+      const displayName = folder.connectorAccountId
+        ? serviceDisplayNameByConnectorAccountId.get(folder.connectorAccountId)
+        : undefined;
+      if (displayName) serviceDisplayNameByDataFolderId.set(folder.id, displayName);
+    }
+    return serviceDisplayNameByDataFolderId;
+  }
+
   private async materializePlaceholderTables(
     workbookId: WorkbookId,
     draftId: SyncDraftId,
@@ -836,10 +890,18 @@ export class SyncDraftService {
     });
 
     // Group unresolved placeholder tables by (connectorAccountId, remoteParentId)
-    // so each createTables call is one batch against one destination base.
+    // so each createTables call is one batch against one destination base. Each
+    // group also remembers the source folders feeding it, so we can name a
+    // brand-new destination container (e.g. a Google Sheets spreadsheet) after
+    // the source service it exports.
     const groups = new Map<
       string,
-      { connectorAccountId: string; remoteParentId?: string[]; placeholders: PlaceholderTableDestination[] }
+      {
+        connectorAccountId: string;
+        remoteParentId?: string[];
+        placeholders: PlaceholderTableDestination[];
+        sourceDataFolderIds: Set<string>;
+      }
     >();
     for (const tableMapping of tableMappings) {
       if (tableMapping.destination.kind !== 'placeholderTable') continue;
@@ -859,8 +921,10 @@ export class SyncDraftService {
         connectorAccountId: destination.connectorAccountId,
         remoteParentId: destination.remoteParentId,
         placeholders: [],
+        sourceDataFolderIds: new Set<string>(),
       };
       group.placeholders.push(destination);
+      group.sourceDataFolderIds.add(tableMapping.source.dataFolderId);
       groups.set(key, group);
     }
 
@@ -868,7 +932,16 @@ export class SyncDraftService {
     // checkpoint, not from zero.
     if (results.length > 0) await onBatchProgress?.('tables', results);
 
+    const sourceServiceDisplayNameByDataFolderId = await this.resolveSourceServiceDisplayNamesByDataFolderId(
+      [...groups.values()].flatMap((group) => [...group.sourceDataFolderIds]),
+    );
+
     for (const group of groups.values()) {
+      const newParentName = buildNewDestinationParentName(
+        [...group.sourceDataFolderIds]
+          .map((dataFolderId) => sourceServiceDisplayNameByDataFolderId.get(dataFolderId))
+          .filter((displayName): displayName is string => displayName !== undefined),
+      );
       // Early per-table ticks for the progress bar: tables in this batch are created sequentially
       // on the remote service, and the schema builder notifies us as each one lands — the batch
       // response below stays authoritative for results and checkpoint persistence.
@@ -879,6 +952,7 @@ export class SyncDraftService {
         const dto: CreateSchemaTablesDto = {
           connectorAccountId: group.connectorAccountId,
           ...(group.remoteParentId ? { remoteParentId: group.remoteParentId } : {}),
+          ...(newParentName ? { newParentName } : {}),
           tables: group.placeholders.map((placeholder) =>
             resolveCreateSpecForeignKeyTargets(placeholder.createSpec, foreignKeyResolutionMap),
           ),

@@ -75,6 +75,7 @@ export function normalizeCreateSchema(request: CreateSchemaTablesDto): Normalize
     orderedRefs.add(picked.table.ref);
     tablesInCreationOrder.push({
       remoteParentId: request.remoteParentId,
+      newParentName: request.newParentName,
       ref: picked.table.ref,
       name: picked.table.name,
       fields: picked.keptFields,

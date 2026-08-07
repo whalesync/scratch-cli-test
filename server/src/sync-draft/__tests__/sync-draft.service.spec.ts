@@ -70,6 +70,9 @@ describe('SyncDraftService', () => {
         // findMany defaults to [] so materialize's foreignKey-resolution pass (which
         // looks up source/destination folder remote ids) is a noop unless a test sets it.
         dataFolder: { findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+        // Source-service lookup for naming a brand-new destination container; defaults
+        // to [] so materialize passes no newParentName unless a test opts in.
+        connectorAccount: { findMany: jest.fn().mockResolvedValue([]) },
         // getOrCreate runs its find-or-create inside a transaction guarded by an
         // advisory lock; the mock runs the callback against the same client.
         $transaction: jest.fn().mockImplementation((cb: (tx: unknown) => unknown) => cb(dbService.client)),
@@ -761,6 +764,29 @@ describe('SyncDraftService', () => {
       expect(dbService.client.syncDraft.update).toHaveBeenCalled();
       const dest = res.draft.tableMappings[0].destination;
       expect(dest.kind === 'placeholderTable' && dest.resolved?.remoteTableId).toEqual(['base1', 'tbl1']);
+    });
+
+    it('names a brand-new destination container after the source service (newParentName)', async () => {
+      const row = makeDraftRow({ tableMappings: [placeholderTableDraft()] });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      // The source folder resolves to an Airtable connector account.
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_src', connectorAccountId: 'coa_src', tableId: ['0-1'] },
+      ]);
+      (dbService.client.connectorAccount.findMany as jest.Mock).mockResolvedValue([
+        { id: 'coa_src', service: 'AIRTABLE' },
+      ]);
+      schemaBuilderService.createTables.mockResolvedValue({
+        status: 'ok',
+        tables: [
+          { ref: 'spec_contacts', name: 'Contacts', status: 'created', remoteTableId: ['base1', 'tbl1'], fields: [] },
+        ],
+      } as never);
+
+      await service.materialize(DRAFT_ID, ACTOR);
+
+      const dto = schemaBuilderService.createTables.mock.calls[0][1];
+      expect(dto.newParentName).toBe('Airtable export');
     });
 
     it('ticks onPlaceholderCreatedInBatch with the DRAFT placeholder ref as each table lands mid-batch (DEV-10875)', async () => {
