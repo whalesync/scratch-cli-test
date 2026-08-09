@@ -53,6 +53,7 @@ import {
   computeOrphanFolderPaths,
   liveChildFolderPathsUnder,
   rootOrphanFolderPaths,
+  selectSplitRecordIdArtifactRowIds,
 } from './fileindex-filereference-orphan-gc';
 import {
   accumulate,
@@ -162,15 +163,20 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
     name: 'fileindex-filereference-orphan-gc',
     supportsDryRun: true,
     description:
-      'DEV-10885 Phase B — one-time GC of FileIndex + FileReference rows orphaned by connection ' +
-      'delete/reset BEFORE the Phase A forward fix (~93.5k FileIndex rows on prod). Per workbook, ' +
-      'deletes rows whose folderPath has NO live DataFolder owner (its own path or an ancestor). ' +
-      'Preserves live rows, Shopify-GID artifact rows under a live folder, and Webflow secondary-locale ' +
-      'rows. Destructive, but only removes rows with no live owner — a derived cache the next pull ' +
-      'rebuilds. Idempotent (re-runs find nothing to delete) and dry-runnable. `ids` targets specific ' +
+      'DEV-10885 Phase B — one-time GC of dead FileIndex + FileReference rows, in two passes. ' +
+      'PASS 1: rows orphaned by connection delete/reset BEFORE the Phase A forward fix (~105k FileIndex ' +
+      'rows on prod) — per workbook, deletes rows whose folderPath has NO live DataFolder owner (its own ' +
+      'path or an ancestor). Preserves live rows, rows nested under a live folder, and Webflow ' +
+      'secondary-locale rows. PASS 2: DEV-11015 split-recordId artifact rows (~2.3k on prod, all Shopify) ' +
+      '— index entries whose folderPath/filename were split apart by an unsanitized slash-bearing record ' +
+      'id before that bug was fixed on 2026-07-24. Pass 1 cannot reach them (a live ancestor owns them) ' +
+      'and the files they point at were deleted by the same buggy pull, so no re-pull will ever refresh ' +
+      'them. Destructive, but only removes rows with no live owner or no live file — a derived cache the ' +
+      'next pull rebuilds. Idempotent (re-runs find nothing to delete) and dry-runnable. `ids` targets specific ' +
       'workbooks (preferred for live runs — the affected set is known from the DEV-10880 read-only ' +
       'query); `qty` takes that many workbooks that still have connectorAccountId-NULL rows (the bulk ' +
-      'of the orphans) — a scoped orphan in an otherwise-clean workbook needs `ids`. remainingCount is ' +
+      'of the orphans) — a scoped orphan in an otherwise-clean workbook needs `ids`, and so do most of ' +
+      'the pass-2 workbooks, whose artifact rows are largely already scoped. remainingCount is ' +
       'the orphan rows left in the workbooks processed THIS run (0 after a live run; the would-delete ' +
       'total on a dry-run), not a fleet-wide figure — batch with `ids`/`qty` and verify in the DB.',
   },
@@ -799,6 +805,7 @@ export class CodeMigrationsController {
     const migratedIds: string[] = [];
     let totalFileIndexRowsDeleted = 0;
     let totalFileReferenceRowsDeleted = 0;
+    let totalSplitRecordIdArtifactRowsDeleted = 0;
     let totalOrphanFolderPaths = 0;
 
     for (const workbookId of workbookIds) {
@@ -884,25 +891,71 @@ export class CodeMigrationsController {
         workbookFileIndexRowsDeleted += count;
       }
 
+      // Second pass — DEV-11015 split-recordId artifact rows. These have a LIVE
+      // ancestor folder, so the orphan rule above deliberately can't reach them; they
+      // are index entries for files that the same buggy pull's stale-cleanup deleted
+      // years-of-pulls ago. Row-level (the test needs recordId + filename, not just
+      // folderPath), so load the workbook's slash-bearing-recordId rows and filter in
+      // JS. `contains: '/'` is a plain substring — `/` is not a LIKE wildcard, so it
+      // needs no escaping — and the candidate set is tiny (9,657 rows fleet-wide).
+      // FileReference needs no equivalent pass: zero rows reference these paths.
+      const rowsWithSlashBearingRecordId = await this.db.client.fileIndex.findMany({
+        where: { workbookId, recordId: { contains: '/' } },
+        select: { id: true, folderPath: true, filename: true, recordId: true },
+      });
+      // Exclude rows pass 1 already covers, or the two modes disagree: on a DRY-RUN
+      // nothing is deleted, so a row that is both an orphan and an artifact is counted
+      // by pass 1's folderPath-IN count AND flagged again here (2 reported for 1 real
+      // row); on a LIVE run pass 1's delete lands first, so pass 2 never sees it and
+      // reports 1. That would make the dry-run over-report exactly the pre-flight
+      // number an operator uses to approve a destructive run. Exact-match membership
+      // mirrors pass 1's `folderPath IN` delete precisely. A no-op on a live run (the
+      // rows are already gone) and on prod today (0 rows currently sit in both sets),
+      // but it goes wrong the moment one of these Shopify connections is deleted or
+      // reset, which turns its folders into orphans.
+      const orphanFolderPathSet = new Set(orphanFolderPaths);
+      const splitRecordIdArtifactRowIds = selectSplitRecordIdArtifactRowIds(
+        rowsWithSlashBearingRecordId.filter((row) => !orphanFolderPathSet.has(row.folderPath)),
+      );
+      let workbookSplitRecordIdArtifactRowsDeleted = 0;
+      if (dryRun) {
+        workbookSplitRecordIdArtifactRowsDeleted = splitRecordIdArtifactRowIds.length;
+      } else {
+        for (const rowIdBatch of chunk(splitRecordIdArtifactRowIds, FOLDER_PATH_IN_CLAUSE_BATCH_SIZE)) {
+          const { count } = await this.db.client.fileIndex.deleteMany({ where: { id: { in: rowIdBatch } } });
+          workbookSplitRecordIdArtifactRowsDeleted += count;
+        }
+      }
+
       totalFileIndexRowsDeleted += workbookFileIndexRowsDeleted;
       totalFileReferenceRowsDeleted += workbookFileReferenceRowsDeleted;
-      if (workbookFileIndexRowsDeleted > 0 || workbookFileReferenceRowsDeleted > 0) migratedIds.push(workbookId);
+      totalSplitRecordIdArtifactRowsDeleted += workbookSplitRecordIdArtifactRowsDeleted;
+      if (
+        workbookFileIndexRowsDeleted > 0 ||
+        workbookFileReferenceRowsDeleted > 0 ||
+        workbookSplitRecordIdArtifactRowsDeleted > 0
+      )
+        migratedIds.push(workbookId);
       this.logger.log(
         `${migrationName}: workbook ${workbookId} → ${orphanFolderPaths.length} orphan folderPath(s); ` +
           `FileIndex ${dryRun ? 'would delete' : 'deleted'} ${workbookFileIndexRowsDeleted}, ` +
-          `FileReference ${dryRun ? 'would delete' : 'deleted'} ${workbookFileReferenceRowsDeleted}` +
+          `FileReference ${dryRun ? 'would delete' : 'deleted'} ${workbookFileReferenceRowsDeleted}, ` +
+          `split-recordId artifacts ${dryRun ? 'would delete' : 'deleted'} ` +
+          `${workbookSplitRecordIdArtifactRowsDeleted}` +
           `${dryRun ? ' (dry-run)' : ''}`,
       );
     }
 
-    // remainingCount = orphan FileIndex rows left in the workbooks processed THIS run:
-    // 0 after a live run (we deleted them), the would-delete total on a dry-run. Not a
-    // fleet-wide figure — batch with `ids`/`qty` and verify in the DB per the runbook.
-    const remainingCount = dryRun ? totalFileIndexRowsDeleted : 0;
+    // remainingCount = FileIndex rows left to clean in the workbooks processed THIS run:
+    // 0 after a live run (we deleted them), the would-delete total on a dry-run. Counts
+    // BOTH passes, since both delete FileIndex rows. Not a fleet-wide figure — batch with
+    // `ids`/`qty` and verify in the DB per the runbook.
+    const remainingCount = dryRun ? totalFileIndexRowsDeleted + totalSplitRecordIdArtifactRowsDeleted : 0;
 
     this.logger.log(
       `${migrationName} complete${dryRun ? ' (dry-run)' : ''}: ` +
         `FileIndex=${totalFileIndexRowsDeleted}; FileReference=${totalFileReferenceRowsDeleted}; ` +
+        `splitRecordIdArtifacts=${totalSplitRecordIdArtifactRowsDeleted}; ` +
         `orphanFolderPaths=${totalOrphanFolderPaths}; workbooks=${workbookIds.length}; remaining=${remainingCount}`,
     );
 
@@ -919,6 +972,12 @@ export class CodeMigrationsController {
         {
           label: dryRun ? 'FileReference orphan rows that would be deleted' : 'FileReference orphan rows deleted',
           count: totalFileReferenceRowsDeleted,
+        },
+        {
+          label: dryRun
+            ? 'DEV-11015 split-recordId artifact rows that would be deleted'
+            : 'DEV-11015 split-recordId artifact rows deleted',
+          count: totalSplitRecordIdArtifactRowsDeleted,
         },
         { label: 'Orphan folderPaths (no live DataFolder owner)', count: totalOrphanFolderPaths },
         { label: 'Workbooks processed', count: workbookIds.length },

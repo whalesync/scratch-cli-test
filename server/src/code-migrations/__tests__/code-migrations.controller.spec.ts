@@ -178,7 +178,9 @@ describe('CodeMigrationsController', () => {
       dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([{ path: '/Contacts' }]);
       dbService.client.fileIndex.findMany = jest
         .fn()
-        .mockResolvedValue([{ folderPath: 'Contacts' }, { folderPath: 'DeadConn/Issues' }]);
+        // 1st call = pass 1 (distinct folderPaths); 2nd = pass 2 (slash-bearing recordIds, none here)
+        .mockResolvedValueOnce([{ folderPath: 'Contacts' }, { folderPath: 'DeadConn/Issues' }])
+        .mockResolvedValue([]);
       dbService.client.fileIndex.deleteMany = jest.fn().mockResolvedValue({ count: 5 });
       dbService.client.fileReference.deleteMany = jest.fn().mockResolvedValue({ count: 3 });
 
@@ -197,6 +199,7 @@ describe('CodeMigrationsController', () => {
       expect(result.summary).toEqual([
         { label: 'FileIndex orphan rows deleted', count: 5 },
         { label: 'FileReference orphan rows deleted', count: 3 },
+        { label: 'DEV-11015 split-recordId artifact rows deleted', count: 0 },
         { label: 'Orphan folderPaths (no live DataFolder owner)', count: 1 },
         { label: 'Workbooks processed', count: 1 },
       ]);
@@ -208,7 +211,10 @@ describe('CodeMigrationsController', () => {
       // through the (much larger) FileReference pass would leave orphan refs that a retry could no
       // longer identify, because the folderPaths naming them are gone from FileIndex.
       dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]); // no live folders
-      dbService.client.fileIndex.findMany = jest.fn().mockResolvedValue([{ folderPath: 'DeadConn/Issues' }]);
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValueOnce([{ folderPath: 'DeadConn/Issues' }])
+        .mockResolvedValue([]);
 
       const deleteCallOrderByTable: string[] = [];
       dbService.client.fileIndex.deleteMany = jest.fn().mockImplementation(() => {
@@ -228,11 +234,92 @@ describe('CodeMigrationsController', () => {
       expect(deleteCallOrderByTable).toEqual(['fileReference', 'fileIndex']);
     });
 
+    it('deletes DEV-11015 split-recordId artifact rows that pass 1 cannot reach', async () => {
+      // /Product Media is LIVE, so the orphan rule owns (and spares) everything beneath it —
+      // including the artifact row, which is why pass 2 has to be row-level.
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([{ path: '/Product Media' }]);
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        // pass 1: distinct folderPaths — both have a live owner, so nothing is an orphan
+        .mockResolvedValueOnce([
+          { folderPath: 'Product Media' },
+          { folderPath: 'Product Media/gid://shopify/MediaImage' },
+        ])
+        // pass 2: the workbook's slash-bearing-recordId rows
+        .mockResolvedValueOnce([
+          {
+            id: 'fi_artifact',
+            folderPath: 'Product Media/gid://shopify/MediaImage',
+            filename: '38012599304435.json',
+            recordId: 'gid://shopify/MediaImage/38012599304435',
+          },
+          {
+            id: 'fi_live',
+            folderPath: 'Product Media',
+            filename: 'gid-shopify-MediaImage-38012599304435.json',
+            recordId: 'gid://shopify/MediaImage/38012599304435',
+          },
+        ]);
+      dbService.client.fileIndex.deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-filereference-orphan-gc',
+        ids: ['wkb_1'],
+      });
+
+      // Only the artifact row's id is deleted — the correctly-indexed live row is spared,
+      // and pass 1 found no orphan folderPaths to delete at all.
+      expect(dbService.client.fileIndex.deleteMany).toHaveBeenCalledTimes(1);
+      expect(dbService.client.fileIndex.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ['fi_artifact'] } },
+      });
+      expect(result.summary).toContainEqual({
+        label: 'DEV-11015 split-recordId artifact rows deleted',
+        count: 1,
+      });
+    });
+
+    it('does not double-count a row that is BOTH an orphan and a split-recordId artifact', async () => {
+      // A deleted Shopify connection: its folder is an orphan AND holds artifact rows.
+      // On a dry-run nothing is deleted, so without the pass-1 exclusion pass 2 would
+      // flag the same row again and the pre-flight total would read 2 for 1 real row —
+      // disagreeing with the live run, where pass 1's delete lands first.
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]); // no live folders
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValueOnce([{ folderPath: 'Shop/Product Media/gid://shopify/MediaImage' }])
+        .mockResolvedValueOnce([
+          {
+            id: 'fi_both',
+            folderPath: 'Shop/Product Media/gid://shopify/MediaImage',
+            filename: '123.json',
+            recordId: 'gid://shopify/MediaImage/123',
+          },
+        ]);
+      dbService.client.fileIndex.count = jest.fn().mockResolvedValue(1);
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-filereference-orphan-gc',
+        ids: ['wkb_1'],
+        dryRun: true,
+      });
+
+      // Counted once, by pass 1 only — and remainingCount (both passes) agrees.
+      expect(result.summary).toContainEqual({ label: 'FileIndex orphan rows that would be deleted', count: 1 });
+      expect(result.summary).toContainEqual({
+        label: 'DEV-11015 split-recordId artifact rows that would be deleted',
+        count: 0,
+      });
+      expect(result.remainingCount).toBe(1);
+    });
+
     it('writes nothing on a dry-run and reports the would-delete totals', async () => {
       dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([{ path: '/Contacts' }]);
       dbService.client.fileIndex.findMany = jest
         .fn()
-        .mockResolvedValue([{ folderPath: 'Contacts' }, { folderPath: 'DeadConn/Issues' }]);
+        // 1st call = pass 1 (distinct folderPaths); 2nd = pass 2 (slash-bearing recordIds, none here)
+        .mockResolvedValueOnce([{ folderPath: 'Contacts' }, { folderPath: 'DeadConn/Issues' }])
+        .mockResolvedValue([]);
       dbService.client.fileIndex.count = jest.fn().mockResolvedValue(5);
       dbService.client.fileReference.count = jest.fn().mockResolvedValue(3);
 
@@ -254,7 +341,11 @@ describe('CodeMigrationsController', () => {
       dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]); // no live folders
       dbService.client.fileIndex.findMany = jest
         .fn()
-        .mockResolvedValue([{ folderPath: 'Shop/Product Variants' }, { folderPath: 'Shop/Product Variants/gid://x' }]);
+        .mockResolvedValueOnce([
+          { folderPath: 'Shop/Product Variants' },
+          { folderPath: 'Shop/Product Variants/gid://x' },
+        ])
+        .mockResolvedValue([]);
       dbService.client.fileReference.count = jest.fn().mockResolvedValue(4);
 
       const result = await controller.runMigration(makeReqWithUser(), {
@@ -275,7 +366,10 @@ describe('CodeMigrationsController', () => {
     it('escapes SQL LIKE wildcards in an orphan folderPath so a `_` cannot over-match refs', async () => {
       // snake_case folder name: the `_` must be escaped or LIKE would treat it as a wildcard.
       dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]); // no live folders
-      dbService.client.fileIndex.findMany = jest.fn().mockResolvedValue([{ folderPath: 'DeadConn/product_variants' }]);
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValueOnce([{ folderPath: 'DeadConn/product_variants' }])
+        .mockResolvedValue([]);
       dbService.client.fileReference.deleteMany = jest.fn().mockResolvedValue({ count: 2 });
 
       await controller.runMigration(makeReqWithUser(), {
@@ -293,7 +387,8 @@ describe('CodeMigrationsController', () => {
       dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([{ path: '/DeadConn/Issues/fr' }]);
       dbService.client.fileIndex.findMany = jest
         .fn()
-        .mockResolvedValue([{ folderPath: 'DeadConn/Issues' }, { folderPath: 'DeadConn/Issues/fr' }]);
+        .mockResolvedValueOnce([{ folderPath: 'DeadConn/Issues' }, { folderPath: 'DeadConn/Issues/fr' }])
+        .mockResolvedValue([]);
       dbService.client.fileIndex.deleteMany = jest.fn().mockResolvedValue({ count: 2 });
       dbService.client.fileReference.deleteMany = jest.fn().mockResolvedValue({ count: 1 });
 

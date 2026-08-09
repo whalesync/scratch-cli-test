@@ -1,8 +1,10 @@
 import {
   computeOrphanFolderPaths,
   folderPathHasLiveOwner,
+  isSplitRecordIdArtifactRow,
   liveChildFolderPathsUnder,
   rootOrphanFolderPaths,
+  selectSplitRecordIdArtifactRowIds,
 } from '../fileindex-filereference-orphan-gc';
 
 describe('folderPathHasLiveOwner', () => {
@@ -85,5 +87,89 @@ describe('rootOrphanFolderPaths', () => {
 
   it('does not treat a mere string-prefix sibling as nested (slash boundary)', () => {
     expect(rootOrphanFolderPaths(['Foo', 'Foobar'])).toEqual(['Foo', 'Foobar']);
+  });
+});
+
+describe('isSplitRecordIdArtifactRow (DEV-11015)', () => {
+  it('flags a Shopify GID row whose record id was split into folderPath + filename', () => {
+    // The exact prod shape: the id's slashes became directory separators at pull.
+    expect(
+      isSplitRecordIdArtifactRow({
+        folderPath: 'Product Media/gid://shopify/MediaImage',
+        filename: '38012599304435.json',
+        recordId: 'gid://shopify/MediaImage/38012599304435',
+      }),
+    ).toBe(true);
+  });
+
+  it('flags the doubly-nested row left by a deduplicateFileName collision suffix', () => {
+    // The dedup suffix carried a second unsanitized id, nesting one level deeper —
+    // which is why the folderPath test is `includes`, not `endsWith`.
+    expect(
+      isSplitRecordIdArtifactRow({
+        folderPath: 'Product Media/gid://shopify/MediaImage/44040420655417-gid://shopify/MediaImage',
+        filename: '44040420655417.json',
+        recordId: 'gid://shopify/MediaImage/44040420655417',
+      }),
+    ).toBe(true);
+  });
+
+  it('does NOT flag a row correctly indexed at its own folder with a slash-bearing id', () => {
+    // Post-fix rows: same GID record id, but the filename is sanitized and the row
+    // sits at the real folder — this is the common case and must never be deleted.
+    expect(
+      isSplitRecordIdArtifactRow({
+        folderPath: 'Product Media',
+        filename: 'gid-shopify-MediaImage-38012599304435.json',
+        recordId: 'gid://shopify/MediaImage/38012599304435',
+      }),
+    ).toBe(false);
+  });
+
+  it('does NOT flag a Webflow secondary-locale row (slash-free record id)', () => {
+    // The legitimately-nested case the orphan rule protects: a slash-free id can
+    // never reconstruct a folderPath tail, so the pass structurally cannot reach it.
+    expect(
+      isSplitRecordIdArtifactRow({
+        folderPath: 'Site/Collections/Blog Posts/fr',
+        filename: 'my-post.json',
+        recordId: '65f0c1a2b3d4e5f60718293a',
+      }),
+    ).toBe(false);
+  });
+
+  it('does NOT flag a row whose folderPath merely resembles the id prefix but whose filename differs', () => {
+    expect(
+      isSplitRecordIdArtifactRow({
+        folderPath: 'Product Media/gid://shopify/MediaImage',
+        filename: 'something-else.json',
+        recordId: 'gid://shopify/MediaImage/38012599304435',
+      }),
+    ).toBe(false);
+  });
+
+  it('does NOT flag ids with a leading slash or a trailing slash (empty prefix/segment)', () => {
+    expect(isSplitRecordIdArtifactRow({ folderPath: 'Anything', filename: 'x.json', recordId: '/x' })).toBe(false);
+    expect(isSplitRecordIdArtifactRow({ folderPath: 'Anything', filename: 'x.json', recordId: 'x/' })).toBe(false);
+  });
+});
+
+describe('selectSplitRecordIdArtifactRowIds', () => {
+  it('returns only the artifact rows’ ids, leaving live rows untouched', () => {
+    const rows = [
+      {
+        id: 'fi_artifact',
+        folderPath: 'Product Media/gid://shopify/MediaImage',
+        filename: '38012599304435.json',
+        recordId: 'gid://shopify/MediaImage/38012599304435',
+      },
+      {
+        id: 'fi_live',
+        folderPath: 'Product Media',
+        filename: 'gid-shopify-MediaImage-38012599304435.json',
+        recordId: 'gid://shopify/MediaImage/38012599304435',
+      },
+    ];
+    expect(selectSplitRecordIdArtifactRowIds(rows)).toEqual(['fi_artifact']);
   });
 });
