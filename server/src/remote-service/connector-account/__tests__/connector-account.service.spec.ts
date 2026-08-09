@@ -101,6 +101,8 @@ describe('ConnectorAccountService', () => {
     scratchGitService = {
       deleteRepo: jest.fn().mockResolvedValue(undefined),
       removeDataFolder: jest.fn().mockResolvedValue(undefined),
+      resolveConnectionRepoPath: jest.fn().mockResolvedValue('org_test--wkb_test--ca_test'),
+      initRepo: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     posthogService = {
@@ -252,6 +254,29 @@ describe('ConnectorAccountService', () => {
         eventType: 'delete',
         message: 'Deleted connection Test Connection',
         entityId: ACCOUNT_ID,
+      });
+    });
+  });
+
+  describe('resetConnection', () => {
+    it('cleans FileIndex/FileReference inline and escapes LIKE wildcards in the folder-path prefix', async () => {
+      (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({
+        id: WORKBOOK_ID,
+        organizationId: 'org_test',
+        version: 2,
+      });
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(createMockAccount());
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([{ path: '/product_variants' }]);
+
+      await service.resetConnection(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      // FileIndex scoped delete (covers nested sub-paths for free).
+      expect(dbService.client.fileIndex.deleteMany).toHaveBeenCalledWith({
+        where: { workbookId: WORKBOOK_ID, connectorAccountId: ACCOUNT_ID },
+      });
+      // FileReference prefix delete with the `_` escaped so LIKE can't over-match another folder.
+      expect(dbService.client.fileReference.deleteMany).toHaveBeenCalledWith({
+        where: { workbookId: WORKBOOK_ID, sourceFilePath: { startsWith: 'product\\_variants/' } },
       });
     });
   });

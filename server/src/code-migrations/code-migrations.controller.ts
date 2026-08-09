@@ -23,6 +23,7 @@ import type {
   WorkbookId,
 } from '@spinner/shared-types';
 import { type DataFolderId } from '@spinner/shared-types';
+import { chunk } from 'lodash';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { hasAdminToolsPermission } from 'src/auth/permissions';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
@@ -40,6 +41,7 @@ import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SYSTEM_ACTOR } from 'src/users/types';
 import { EncryptedData } from 'src/utils/encryption';
+import { escapeLikeWildcards } from 'src/utils/prisma-like';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
@@ -47,6 +49,11 @@ import { DbService } from '../db/db.service';
 import { ConnectionDrainTimeoutError, ConnectionQuiesceService } from './connection-quiesce.service';
 import { RunMigrationDto } from './dto/code-migrations.dto';
 import { resolveFolderPathsToConnectorAccountIds } from './fileindex-connector-account-backfill';
+import {
+  computeOrphanFolderPaths,
+  liveChildFolderPathsUnder,
+  rootOrphanFolderPaths,
+} from './fileindex-filereference-orphan-gc';
 import {
   accumulate,
   AuditLogEntry,
@@ -152,6 +159,22 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'that many workbooks that still have unscoped rows.',
   },
   {
+    name: 'fileindex-filereference-orphan-gc',
+    supportsDryRun: true,
+    description:
+      'DEV-10885 Phase B — one-time GC of FileIndex + FileReference rows orphaned by connection ' +
+      'delete/reset BEFORE the Phase A forward fix (~93.5k FileIndex rows on prod). Per workbook, ' +
+      'deletes rows whose folderPath has NO live DataFolder owner (its own path or an ancestor). ' +
+      'Preserves live rows, Shopify-GID artifact rows under a live folder, and Webflow secondary-locale ' +
+      'rows. Destructive, but only removes rows with no live owner — a derived cache the next pull ' +
+      'rebuilds. Idempotent (re-runs find nothing to delete) and dry-runnable. `ids` targets specific ' +
+      'workbooks (preferred for live runs — the affected set is known from the DEV-10880 read-only ' +
+      'query); `qty` takes that many workbooks that still have connectorAccountId-NULL rows (the bulk ' +
+      'of the orphans) — a scoped orphan in an otherwise-clean workbook needs `ids`. remainingCount is ' +
+      'the orphan rows left in the workbooks processed THIS run (0 after a live run; the would-delete ' +
+      'total on a dry-run), not a fleet-wide figure — batch with `ids`/`qty` and verify in the DB.',
+  },
+  {
     name: 'webflow-folder-restructure-inverse',
     supportsDryRun: true,
     description:
@@ -236,6 +259,8 @@ export class CodeMigrationsController {
         return this.runSyncMappingV2Backfill(dto);
       case 'fileindex-connector-account-backfill':
         return this.runFileIndexConnectorAccountBackfill(dto);
+      case 'fileindex-filereference-orphan-gc':
+        return this.runFileIndexFileReferenceOrphanGc(dto);
       case 'webflow-folder-restructure':
         return this.runWebflowFolderRestructure(dto);
       case 'webflow-folder-restructure-inverse':
@@ -731,6 +756,171 @@ export class CodeMigrationsController {
           label: 'Ambiguous folderPaths left NULL (shared across connections; fixed by re-pull)',
           count: totalAmbiguousFolderPaths,
         },
+        { label: 'Workbooks processed', count: workbookIds.length },
+      ],
+    };
+  }
+
+  /**
+   * DEV-10885 Phase B — one-time GC of FileIndex + FileReference rows orphaned by a
+   * past connection delete/reset (before the Phase A forward fix cleaned them up).
+   * A row is an orphan when no live DataFolder in its workbook owns its folderPath
+   * (its own path or an ancestor); see fileindex-filereference-orphan-gc.ts. This
+   * preserves any row with a live owner — live rows, Shopify-GID artifact rows under
+   * a live folder, Webflow secondary-locale rows — and removes only rows under
+   * folders that no longer exist. Destructive, but the removed rows are a derived
+   * cache the next pull rebuilds. Idempotent (a re-run finds nothing) and dry-run-able.
+   */
+  private async runFileIndexFileReferenceOrphanGc(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
+    const migrationName = 'fileindex-filereference-orphan-gc';
+    const dryRun = dto.dryRun ?? false;
+    const FOLDER_PATH_IN_CLAUSE_BATCH_SIZE = 500;
+
+    // Candidate workbooks. `ids` targets them directly (preferred for live runs — the
+    // affected set is known from the DEV-10880 read-only query). `qty` takes that many
+    // distinct workbooks that still have connectorAccountId-NULL FileIndex rows, where
+    // the vast majority of legacy orphans live, in a deterministic order. Per-workbook
+    // detection below scans ALL folderPaths (scoped or not), so a scoped orphan in a
+    // selected workbook is also removed — only the `qty` SELECTION is NULL-biased.
+    let workbookIds: string[];
+    if (dto.ids && dto.ids.length > 0) {
+      workbookIds = dto.ids;
+    } else {
+      const candidateWorkbookRows = await this.db.client.fileIndex.findMany({
+        where: { connectorAccountId: null },
+        select: { workbookId: true },
+        distinct: ['workbookId'],
+        orderBy: { workbookId: 'asc' },
+        take: dto.qty,
+      });
+      workbookIds = candidateWorkbookRows.map((row) => row.workbookId);
+    }
+
+    const migratedIds: string[] = [];
+    let totalFileIndexRowsDeleted = 0;
+    let totalFileReferenceRowsDeleted = 0;
+    let totalOrphanFolderPaths = 0;
+
+    for (const workbookId of workbookIds) {
+      const liveDataFolders = await this.db.client.dataFolder.findMany({
+        where: { workbookId, path: { not: null } },
+        select: { path: true },
+      });
+      const liveFolderPathsNoSlash = liveDataFolders
+        .map((folder) => folder.path?.replace(/^\//, ''))
+        .filter((path): path is string => !!path);
+
+      const distinctFolderPathRows = await this.db.client.fileIndex.findMany({
+        where: { workbookId },
+        select: { folderPath: true },
+        distinct: ['folderPath'],
+      });
+      const orphanFolderPaths = computeOrphanFolderPaths(
+        distinctFolderPathRows.map((row) => row.folderPath),
+        liveFolderPathsNoSlash,
+      );
+      totalOrphanFolderPaths += orphanFolderPaths.length;
+
+      // ORDER IS LOAD-BEARING: FileReference is deleted BEFORE FileIndex, because the
+      // orphan set above is derived solely from `FileIndex.folderPath`. Deleting FileIndex
+      // first would make a partially-failed live run unrecoverable by this migration — the
+      // deletes are not wrapped in one transaction, so a statement timeout / aborted request
+      // / pod restart partway through the (much larger) FileReference pass would commit the
+      // FileIndex deletes and leave orphan FileReference rows behind; the retry would then
+      // recompute the orphan set from a FileIndex that no longer lists those folderPaths,
+      // find nothing, and strand those rows for manual SQL. Deleting FileReference first
+      // keeps the orphan set derivable until its own delete lands, so a retry re-derives the
+      // same folders and finishes the job. Both failure directions converge: a crash after
+      // the FileReference pass leaves FileIndex rows that are still orphans, and the retry's
+      // FileReference pass simply deletes 0.
+
+      // FileReference is keyed by sourceFilePath (a file path, no folder column), so
+      // delete per orphan folder by prefix — excluding any live child folder nested
+      // under it so the prefix delete can't reach the child's fresh refs (mirrors the
+      // Phase A cleanup guard). Iterate only the ROOT orphan folders (those not nested
+      // under another orphan): a root's subtree already covers every ref under its
+      // descendant orphans, so this keeps the dry-run COUNT equal to the live DELETION
+      // (a naive per-orphan count double-tallies refs under a nested orphan) and skips
+      // redundant deletes on a live run.
+      let workbookFileReferenceRowsDeleted = 0;
+      for (const orphanFolderPath of rootOrphanFolderPaths(orphanFolderPaths)) {
+        const liveChildFolderPaths = liveChildFolderPathsUnder(orphanFolderPath, liveFolderPathsNoSlash);
+        // Escape LIKE wildcards: a folderPath like `product_variants` would otherwise
+        // let the `_` match any char and over-match (over-delete/over-count) refs
+        // outside the orphan folder — including a live folder differing only at the `_`.
+        const where: Prisma.FileReferenceWhereInput = {
+          workbookId,
+          sourceFilePath: { startsWith: `${escapeLikeWildcards(orphanFolderPath)}/` },
+          ...(liveChildFolderPaths.length > 0
+            ? {
+                AND: liveChildFolderPaths.map((childFolderPath) => ({
+                  NOT: { sourceFilePath: { startsWith: `${escapeLikeWildcards(childFolderPath)}/` } },
+                })),
+              }
+            : {}),
+        };
+        if (dryRun) {
+          workbookFileReferenceRowsDeleted += await this.db.client.fileReference.count({ where });
+          continue;
+        }
+        const { count } = await this.db.client.fileReference.deleteMany({ where });
+        workbookFileReferenceRowsDeleted += count;
+      }
+
+      // FileIndex: orphan rows match an orphan folderPath exactly, so an IN delete is
+      // safe (it can't reach a live child's distinct folderPath). Runs last — see the
+      // ordering note above.
+      let workbookFileIndexRowsDeleted = 0;
+      for (const folderPathBatch of chunk(orphanFolderPaths, FOLDER_PATH_IN_CLAUSE_BATCH_SIZE)) {
+        if (dryRun) {
+          workbookFileIndexRowsDeleted += await this.db.client.fileIndex.count({
+            where: { workbookId, folderPath: { in: folderPathBatch } },
+          });
+          continue;
+        }
+        const { count } = await this.db.client.fileIndex.deleteMany({
+          where: { workbookId, folderPath: { in: folderPathBatch } },
+        });
+        workbookFileIndexRowsDeleted += count;
+      }
+
+      totalFileIndexRowsDeleted += workbookFileIndexRowsDeleted;
+      totalFileReferenceRowsDeleted += workbookFileReferenceRowsDeleted;
+      if (workbookFileIndexRowsDeleted > 0 || workbookFileReferenceRowsDeleted > 0) migratedIds.push(workbookId);
+      this.logger.log(
+        `${migrationName}: workbook ${workbookId} → ${orphanFolderPaths.length} orphan folderPath(s); ` +
+          `FileIndex ${dryRun ? 'would delete' : 'deleted'} ${workbookFileIndexRowsDeleted}, ` +
+          `FileReference ${dryRun ? 'would delete' : 'deleted'} ${workbookFileReferenceRowsDeleted}` +
+          `${dryRun ? ' (dry-run)' : ''}`,
+      );
+    }
+
+    // remainingCount = orphan FileIndex rows left in the workbooks processed THIS run:
+    // 0 after a live run (we deleted them), the would-delete total on a dry-run. Not a
+    // fleet-wide figure — batch with `ids`/`qty` and verify in the DB per the runbook.
+    const remainingCount = dryRun ? totalFileIndexRowsDeleted : 0;
+
+    this.logger.log(
+      `${migrationName} complete${dryRun ? ' (dry-run)' : ''}: ` +
+        `FileIndex=${totalFileIndexRowsDeleted}; FileReference=${totalFileReferenceRowsDeleted}; ` +
+        `orphanFolderPaths=${totalOrphanFolderPaths}; workbooks=${workbookIds.length}; remaining=${remainingCount}`,
+    );
+
+    return {
+      migratedIds,
+      remainingCount,
+      migrationName,
+      dryRun,
+      summary: [
+        {
+          label: dryRun ? 'FileIndex orphan rows that would be deleted' : 'FileIndex orphan rows deleted',
+          count: totalFileIndexRowsDeleted,
+        },
+        {
+          label: dryRun ? 'FileReference orphan rows that would be deleted' : 'FileReference orphan rows deleted',
+          count: totalFileReferenceRowsDeleted,
+        },
+        { label: 'Orphan folderPaths (no live DataFolder owner)', count: totalOrphanFolderPaths },
         { label: 'Workbooks processed', count: workbookIds.length },
       ],
     };

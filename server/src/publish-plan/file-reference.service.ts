@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { chunk } from 'lodash';
 import { ParsedContent, Schema } from 'src/utils/objects';
+import { escapeLikeWildcards } from 'src/utils/prisma-like';
 import { DbService } from '../db/db.service';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 import { RefCleanerService } from './ref-cleaner.service';
@@ -247,7 +248,9 @@ export class FileReferenceService {
     deletedFolderPath: string,
     liveChildFolderPaths: string[],
   ): Promise<void> {
-    const subtreePrefix = deletedFolderPath.endsWith('/') ? deletedFolderPath : `${deletedFolderPath}/`;
+    // Escape LIKE wildcards so a `_`/`%` in a folder path (e.g. `product_variants`)
+    // can't turn the prefix match into a wildcard and over-delete refs in another folder.
+    const subtreePrefix = `${escapeLikeWildcards(deletedFolderPath.replace(/\/+$/, ''))}/`;
     await this.db.client.fileReference.deleteMany({
       where: {
         workbookId,
@@ -258,7 +261,7 @@ export class FileReferenceService {
               AND: liveChildFolderPaths.map((childFolderPath) => ({
                 NOT: {
                   sourceFilePath: {
-                    startsWith: childFolderPath.endsWith('/') ? childFolderPath : `${childFolderPath}/`,
+                    startsWith: `${escapeLikeWildcards(childFolderPath.replace(/\/+$/, ''))}/`,
                   },
                 },
               })),

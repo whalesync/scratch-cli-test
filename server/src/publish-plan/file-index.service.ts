@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { chunk } from 'lodash';
 import { DbService } from '../db/db.service';
+import { escapeLikeWildcards } from '../utils/prisma-like';
 
 export interface FileIndexEntry {
   workbookId: string;
@@ -287,8 +288,14 @@ export class FileIndexService {
     });
 
     // Rows deeper than the folder's path: keep only those this folder still owns.
+    // Escape LIKE wildcards so a `_`/`%` in the folderPath (e.g. `product_variants`)
+    // can't over-match rows in a different folder.
     const distinctDeeperFolderPaths = await this.db.client.fileIndex.findMany({
-      where: { workbookId, connectorAccountId, folderPath: { startsWith: `${deletedFolderPath}/` } },
+      where: {
+        workbookId,
+        connectorAccountId,
+        folderPath: { startsWith: `${escapeLikeWildcards(deletedFolderPath)}/` },
+      },
       select: { folderPath: true },
       distinct: ['folderPath'],
     });

@@ -33,6 +33,7 @@ import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-g
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { canCreateDataSource } from 'src/users/subscription-utils';
 import { Actor, SYSTEM_ACTOR } from 'src/users/types';
+import { escapeLikeWildcards } from 'src/utils/prisma-like';
 import { extractApiDomain } from 'src/utils/urls';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { DbService } from '../../db/db.service';
@@ -680,8 +681,9 @@ export class ConnectorAccountService {
       if (!path) continue;
       const folderPathNoSlash = path.replace(/^\//, '');
       if (!folderPathNoSlash) continue;
+      // Escape LIKE wildcards so a `_`/`%` in the folder path can't over-match refs.
       await this.db.client.fileReference.deleteMany({
-        where: { workbookId, sourceFilePath: { startsWith: `${folderPathNoSlash}/` } },
+        where: { workbookId, sourceFilePath: { startsWith: `${escapeLikeWildcards(folderPathNoSlash)}/` } },
       });
     }
 

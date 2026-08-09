@@ -61,6 +61,15 @@ describe('CodeMigrationsController', () => {
           count: jest.fn().mockResolvedValue(0),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
+        fileIndex: {
+          findMany: jest.fn().mockResolvedValue([]),
+          count: jest.fn().mockResolvedValue(0),
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        fileReference: {
+          count: jest.fn().mockResolvedValue(0),
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
       },
     } as unknown as jest.Mocked<DbService>;
 
@@ -160,6 +169,151 @@ describe('CodeMigrationsController', () => {
           dryRun: true,
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('runMigration - fileindex-filereference-orphan-gc (DEV-10885 Phase B)', () => {
+    it('deletes only orphan folderPaths (no live owner) and their refs, preserving live rows', async () => {
+      // /Contacts is live; DeadConn/Issues has no live DataFolder → orphan.
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([{ path: '/Contacts' }]);
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ folderPath: 'Contacts' }, { folderPath: 'DeadConn/Issues' }]);
+      dbService.client.fileIndex.deleteMany = jest.fn().mockResolvedValue({ count: 5 });
+      dbService.client.fileReference.deleteMany = jest.fn().mockResolvedValue({ count: 3 });
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-filereference-orphan-gc',
+        ids: ['wkb_1'],
+      });
+
+      expect(dbService.client.fileIndex.deleteMany).toHaveBeenCalledWith({
+        where: { workbookId: 'wkb_1', folderPath: { in: ['DeadConn/Issues'] } },
+      });
+      expect(dbService.client.fileReference.deleteMany).toHaveBeenCalledWith({
+        where: { workbookId: 'wkb_1', sourceFilePath: { startsWith: 'DeadConn/Issues/' } },
+      });
+      expect(result.dryRun).toBe(false);
+      expect(result.summary).toEqual([
+        { label: 'FileIndex orphan rows deleted', count: 5 },
+        { label: 'FileReference orphan rows deleted', count: 3 },
+        { label: 'Orphan folderPaths (no live DataFolder owner)', count: 1 },
+        { label: 'Workbooks processed', count: 1 },
+      ]);
+    });
+
+    it('deletes FileReference before FileIndex so a partially-failed live run stays resumable', async () => {
+      // The orphan set is derived solely from FileIndex.folderPath and the deletes are not one
+      // transaction, so the FileIndex delete has to come LAST: if it went first, a crash partway
+      // through the (much larger) FileReference pass would leave orphan refs that a retry could no
+      // longer identify, because the folderPaths naming them are gone from FileIndex.
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]); // no live folders
+      dbService.client.fileIndex.findMany = jest.fn().mockResolvedValue([{ folderPath: 'DeadConn/Issues' }]);
+
+      const deleteCallOrderByTable: string[] = [];
+      dbService.client.fileIndex.deleteMany = jest.fn().mockImplementation(() => {
+        deleteCallOrderByTable.push('fileIndex');
+        return Promise.resolve({ count: 5 });
+      });
+      dbService.client.fileReference.deleteMany = jest.fn().mockImplementation(() => {
+        deleteCallOrderByTable.push('fileReference');
+        return Promise.resolve({ count: 3 });
+      });
+
+      await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-filereference-orphan-gc',
+        ids: ['wkb_1'],
+      });
+
+      expect(deleteCallOrderByTable).toEqual(['fileReference', 'fileIndex']);
+    });
+
+    it('writes nothing on a dry-run and reports the would-delete totals', async () => {
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([{ path: '/Contacts' }]);
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ folderPath: 'Contacts' }, { folderPath: 'DeadConn/Issues' }]);
+      dbService.client.fileIndex.count = jest.fn().mockResolvedValue(5);
+      dbService.client.fileReference.count = jest.fn().mockResolvedValue(3);
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-filereference-orphan-gc',
+        ids: ['wkb_1'],
+        dryRun: true,
+      });
+
+      expect(dbService.client.fileIndex.deleteMany).not.toHaveBeenCalled();
+      expect(dbService.client.fileReference.deleteMany).not.toHaveBeenCalled();
+      expect(result.dryRun).toBe(true);
+      expect(result.remainingCount).toBe(5); // would-delete FileIndex total, since nothing was written
+      expect(result.summary?.[0]).toEqual({ label: 'FileIndex orphan rows that would be deleted', count: 5 });
+    });
+
+    it('does not double-count FileReference on a dry-run when orphan folderPaths are nested', async () => {
+      // Dead Shopify connection: both the folder and its slash-bearing GID sub-path are orphans.
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]); // no live folders
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ folderPath: 'Shop/Product Variants' }, { folderPath: 'Shop/Product Variants/gid://x' }]);
+      dbService.client.fileReference.count = jest.fn().mockResolvedValue(4);
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-filereference-orphan-gc',
+        ids: ['wkb_1'],
+        dryRun: true,
+      });
+
+      // Only the ROOT folder's subtree is counted (once); the nested orphan is covered by it, so the
+      // would-delete total is 4 — not 8 — matching what a live run would actually delete.
+      expect(dbService.client.fileReference.count).toHaveBeenCalledTimes(1);
+      expect(dbService.client.fileReference.count).toHaveBeenCalledWith({
+        where: { workbookId: 'wkb_1', sourceFilePath: { startsWith: 'Shop/Product Variants/' } },
+      });
+      expect(result.summary?.[1]).toEqual({ label: 'FileReference orphan rows that would be deleted', count: 4 });
+    });
+
+    it('escapes SQL LIKE wildcards in an orphan folderPath so a `_` cannot over-match refs', async () => {
+      // snake_case folder name: the `_` must be escaped or LIKE would treat it as a wildcard.
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]); // no live folders
+      dbService.client.fileIndex.findMany = jest.fn().mockResolvedValue([{ folderPath: 'DeadConn/product_variants' }]);
+      dbService.client.fileReference.deleteMany = jest.fn().mockResolvedValue({ count: 2 });
+
+      await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-filereference-orphan-gc',
+        ids: ['wkb_1'],
+      });
+
+      expect(dbService.client.fileReference.deleteMany).toHaveBeenCalledWith({
+        where: { workbookId: 'wkb_1', sourceFilePath: { startsWith: 'DeadConn/product\\_variants/' } },
+      });
+    });
+
+    it('excludes a live child folder nested under an orphan parent from the FileReference delete', async () => {
+      // Reconnect recreated the nested child /DeadConn/Issues/fr but not its parent.
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([{ path: '/DeadConn/Issues/fr' }]);
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ folderPath: 'DeadConn/Issues' }, { folderPath: 'DeadConn/Issues/fr' }]);
+      dbService.client.fileIndex.deleteMany = jest.fn().mockResolvedValue({ count: 2 });
+      dbService.client.fileReference.deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+
+      await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-filereference-orphan-gc',
+        ids: ['wkb_1'],
+      });
+
+      // FileIndex: exact-match IN on the orphan parent only — the live child's distinct folderPath is untouched.
+      expect(dbService.client.fileIndex.deleteMany).toHaveBeenCalledWith({
+        where: { workbookId: 'wkb_1', folderPath: { in: ['DeadConn/Issues'] } },
+      });
+      // FileReference: prefix delete under the orphan parent, excluding the live child's subtree.
+      expect(dbService.client.fileReference.deleteMany).toHaveBeenCalledWith({
+        where: {
+          workbookId: 'wkb_1',
+          sourceFilePath: { startsWith: 'DeadConn/Issues/' },
+          AND: [{ NOT: { sourceFilePath: { startsWith: 'DeadConn/Issues/fr/' } } }],
+        },
+      });
     });
   });
 

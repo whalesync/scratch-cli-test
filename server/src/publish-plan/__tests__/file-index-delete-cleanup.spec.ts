@@ -104,6 +104,22 @@ describe('FileIndexService.deleteRowsOwnedByDeletedFolder', () => {
     expect(deleteMany).toHaveBeenCalledTimes(2);
   });
 
+  it('escapes SQL LIKE wildcards in the deeper-rows prefix scan so a `_` cannot over-match', async () => {
+    const { service, findMany } = makeService([]);
+
+    await service.deleteRowsOwnedByDeletedFolder('wkb_1', 'coa_pg', 'public/product_variants', []);
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        workbookId: 'wkb_1',
+        connectorAccountId: 'coa_pg',
+        folderPath: { startsWith: 'public/product\\_variants/' },
+      },
+      select: { folderPath: true },
+      distinct: ['folderPath'],
+    });
+  });
+
   it('only issues the exact-path delete when there are no deeper rows', async () => {
     const { service, deleteMany } = makeService([]);
 
