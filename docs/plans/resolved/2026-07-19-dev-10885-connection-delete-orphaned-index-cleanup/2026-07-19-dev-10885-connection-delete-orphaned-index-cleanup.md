@@ -1,7 +1,7 @@
 # DEV-10885 — Clean up orphaned FileIndex / FileReference rows on connection delete + reset (and GC the ~93.5k already on prod)
 
 - **Date:** 2026-07-19
-- **Status:** In Progress — Phase A **merged to master** (`5a3db5870`, MR !3092); Phase B implemented on branch `los-angeles` (cherry-picked 2026-08-09 from the original `dev-10885-phase-b-gc-orphaned-fileindex-rows`, which is abandoned), pending its own MR
+- **Status:** Resolved — Phase A merged (`5a3db5870`, MR !3092); Phase B merged (MRs !3202 + !3203) and **run to completion on prod 2026-08-09**. See [Prod run results](#prod-run-results-2026-08-09).
 - **Author:** Curtis Fonger
 - **Linear:** [DEV-10885](https://linear.app/whalesync/issue/DEV-10885/connection-deletereset-orphans-fileindex-filereference-rows-no-cleanup)
 - **Spawned from:** [DEV-10880](https://linear.app/whalesync/issue/DEV-10880) (pseudo-ref canonicalization — the `FileIndex.connectorAccountId` discriminator it added is what makes the scoped cleanup here possible)
@@ -113,7 +113,7 @@ New JobType `CleanupConnectionIndexRows` end-to-end (files, per the wiring map):
 - In `DataFolderService.delete` (`data-folder.service.ts:762`), replace the exact-match `fileIndexService.removeAll(...)` with the new owner-aware delete (load the workbook's *other* live DataFolder paths). Keep `FileReferenceService.deleteForFolder` in sync using the same owner set (its `startsWith` already handles the artifact depth; the guard is to not delete a live child locale's refs).
 
 ### Task 5 — One-time GC code-migration (Phase B) — **IMPLEMENTED (2026-07-20)**
-New migration `fileindex-filereference-orphan-gc`, mirroring `fileindex-connector-account-backfill`, on branch `los-angeles` off `master` (Phase A already landed as `5a3db5870`). `supportsDryRun: true`; build/lint/tests green (149 code-migrations tests).
+New migration `fileindex-filereference-orphan-gc`, mirroring `fileindex-connector-account-backfill` (Phase A already landed as `5a3db5870`). Merged as MRs !3202 (pass 1) + !3203 (pass 2). `supportsDryRun: true`; build/lint/tests green (164 code-migrations tests).
 
 - **Pure core** `code-migrations/fileindex-filereference-orphan-gc.ts` (+ `__tests__/` spec): `folderPathHasLiveOwner` / `computeOrphanFolderPaths` / `liveChildFolderPathsUnder`. A row is an orphan when **no** live DataFolder owns its `folderPath` (own path or ancestor). `connectorAccountId` is not consulted — orphans span NULL (pre-DEV-10880) and now-dead ids — which is exactly why the DEV-10880 backfill couldn't scope them.
 - **Orchestrator** `runFileIndexFileReferenceOrphanGc` + registry entry + dispatch case. Per workbook: load live folder paths + distinct FileIndex folderPaths → orphan set → FileIndex `deleteMany` by `folderPath IN` (batched, exact-match so it can't touch a live child's distinct path); FileReference `deleteMany` per orphan folder by `sourceFilePath` prefix, **excluding live children** (mirrors the Phase A guard — an orphan parent above a live child can't wipe the child's refs). `count` instead of `deleteMany` on dry-run.
@@ -147,3 +147,29 @@ New migration `fileindex-filereference-orphan-gc`, mirroring `fileindex-connecto
 
 1. **Two separate MRs.** Phase A (forward fix, Tasks 1–4) lands + deploys first to stop the bleeding; Phase B (Task 5 — GC + first destructive migration) is a separate, more carefully-reviewed MR.
 2. **No deleted-row snapshot in the GC migration.** "A re-pull rebuilds the derived cache" is sufficient recoverability — the migration logs counts + a small sample only, not the full deleted `(folderPath, recordId)` set.
+
+## Prod run results (2026-08-09)
+
+Executed via **app.scratch.md → Settings → Dev → Migrations** per [the runbook](../../../ops/runbook-running-prod-code-migrations.md): full-fleet dry-run → two canaries → five batches, verifying read-only in the DB between each. Every batch hit its predicted FileIndex and split-recordId-artifact counts exactly.
+
+| Run | Workbooks | FileIndex (pass 1) | FileReference | Artifacts (pass 2) |
+| --- | --- | --- | --- | --- |
+| Dry-run (pre-flight) | 27 | 105,466 | 582,622 | 2,260 |
+| Canary 1 `wkb_XB6zG5IAi9` | 1 | 101 | 92 | 0 |
+| Canary 2 `wkb_WPUf8AL4SW` | 1 | 0 | 0 | 1,772 |
+| B1 | 18 | 2,231 | 3,879 | 398 |
+| B2 | 3 | 7,157 | 35,295 | 0 |
+| B3 | 2 | 13,568 | 7,988 | 90 |
+| B4 `wkb_FvpXmp0MDg` | 1 | 26,458 | 87,739 | 0 |
+| B5 `wkb_DyOZyRsutG` | 1 | 55,951 | 447,629 | 0 |
+| **Total** | **27** | **105,466** | **582,622** | **2,260** |
+
+**690,348 dead rows removed.** Final verification: pass-1 orphans remaining **0**, pass-2 artifacts remaining **0**, `FileIndex` 2,404,427 → 2,300,839, `FileReference` 4,076,445 → 3,493,859, unscoped rows **94,357 → 88**.
+
+The two canaries were deliberately chosen to isolate one pass each (neither workbook appears in the other's bucket), and both returned the expected zeros on the other pass — confirming the passes are disjoint in practice. Canary 2 doubled as the live-data safety check: a before/after of `wkb_WPUf8AL4SW`'s 19 folder paths showed the three `…/gid://shopify/…` rows gone and all 16 real folders byte-identical in count, including two connections last pulled in April/June that were in range and untouched. No run timed out, so the delete-ordering resumability fix was never exercised.
+
+**The forward fix is independently confirmed.** The orphan total sat at exactly 94,357 from 2026-07-19 through 2026-08-09 — three weeks of connection churn after Phase A deployed produced **zero** new orphans.
+
+### The 88 remaining unscoped rows need no further work
+
+They are the "folderPath shared by 2+ live connections" tail, which genuinely self-heals on the next pull of each sharing connection — and demonstrably did so mid-run, unprompted: the bucket fell from 866 to 88 while the batches were executing, as scheduled pulls scoped the 748-row QuickBooks `Bill Payments` item (plus `Purchase Orders`, and smaller amounts in `Notes`/`Pages`). Only 2 QuickBooks rows remain. This is the contrast that justified pass 2 existing at all: **this** bucket self-heals; the DEV-11015 artifact bucket provably never does (re-pulling `wkb_WPUf8AL4SW` restamped every real folder and left all 1,772 artifact rows untouched at `lastSeenAt 2026-04-29`).
