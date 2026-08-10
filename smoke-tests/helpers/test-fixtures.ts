@@ -5,7 +5,44 @@ export interface TestWorkspace {
   workbookId: string;
   connectorAccountId: string;
   dataFolderId: string;
+  /**
+   * The data folder's path WITHOUT a connection segment (`/Authors`) — that is
+   * what the server returns, because `buildConnectorFolderPath` deliberately
+   * ignores the connection name. It is NOT a pseudo-ref path: build those with
+   * {@link buildWorkspaceAbsolutePseudoRef}.
+   */
   dataFolderPath: string;
+  /**
+   * The connection's top-level folder name in the one-tree workspace — the
+   * FIRST segment of every pseudo-ref that points into this connection.
+   */
+  connectionFolderName: string;
+}
+
+/**
+ * Mirror of the server's `sanitizeConnectionFolderName`
+ * (`server/src/workbook/connector-folder-path.util.ts`) and the Rust CLI's
+ * `sanitize_filename`: replace the filesystem-reserved set with `-` and leave
+ * everything else verbatim. Identity for ordinary names like "Airtable".
+ */
+export function sanitizeConnectionFolderName(displayName: string): string {
+  return displayName.replace(/[/\\:*?"<>|]/g, "-");
+}
+
+/**
+ * Build a workspace-absolute pseudo-ref: `@/<connection>/<folder>/<file>.json`.
+ *
+ * The leading connection segment is REQUIRED (DEV-11238). A ref without it —
+ * e.g. `@${workspace.dataFolderPath}/x.json`, the old connection-relative form —
+ * is rejected by the publish resolver with a `MalformedPseudoRefError`, so
+ * always compose refs through this helper rather than by hand.
+ */
+export function buildWorkspaceAbsolutePseudoRef(
+  workspace: Pick<TestWorkspace, "connectionFolderName">,
+  dataFolderPath: string,
+  filename: string,
+): string {
+  return `@/${workspace.connectionFolderName}${dataFolderPath}/${filename}`;
 }
 
 export interface CreateWorkspaceOpts {
@@ -47,6 +84,9 @@ export async function createTestWorkspace(
     );
   }
   const connectorAccountId = connRes.data.id;
+  const connectionFolderName = sanitizeConnectionFolderName(
+    connRes.data.displayName,
+  );
 
   // 3. Link data folder to remote table
   const folderRes = await api.post("/data-folder/create", {
@@ -64,7 +104,13 @@ export async function createTestWorkspace(
   const dataFolderId = folderRes.data.id;
   const dataFolderPath = folderRes.data.path;
 
-  return { workbookId, connectorAccountId, dataFolderId, dataFolderPath };
+  return {
+    workbookId,
+    connectorAccountId,
+    dataFolderId,
+    dataFolderPath,
+    connectionFolderName,
+  };
 }
 
 /**

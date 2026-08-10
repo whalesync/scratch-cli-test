@@ -3,6 +3,7 @@ import { TestApiClient } from "../helpers/test-api-client";
 import { airtableFixture } from "../helpers/connector-fixtures/airtable.fixture";
 import { ConnectorFixture } from "../helpers/connector-fixtures/types";
 import {
+  buildWorkspaceAbsolutePseudoRef,
   createTestWorkspace,
   pullAndWait,
   planPublish,
@@ -64,19 +65,36 @@ describe.each(fixtures)("Publish with references: $displayName", (fixture) => {
     );
     expect(pulledFiles.length).toBeGreaterThanOrEqual(2);
 
-    // Create two new files that reference each other using @/ pseudo-refs
+    // Create two new files that reference each other using @/ pseudo-refs.
     // File A: new author referencing new book
     // File B: new book referencing new author
+    //
+    // Refs MUST be workspace-absolute — `@/<connection>/<folder>/<file>.json`
+    // (DEV-11238). `workspace.dataFolderPath` carries no connection segment, so
+    // interpolating it alone produces the removed connection-relative form and
+    // publish rejects the record with a `MalformedPseudoRefError`.
     const newAuthorContent = {
       fields: {
         Name: "New Author",
-        Books: [`@${workspace.dataFolderPath}/new-book.json`],
+        Books: [
+          buildWorkspaceAbsolutePseudoRef(
+            workspace,
+            workspace.dataFolderPath,
+            "new-book.json",
+          ),
+        ],
       },
     };
     const newBookContent = {
       fields: {
         Title: "New Book",
-        Author: [`@${workspace.dataFolderPath}/new-author.json`],
+        Author: [
+          buildWorkspaceAbsolutePseudoRef(
+            workspace,
+            workspace.dataFolderPath,
+            "new-author.json",
+          ),
+        ],
       },
     };
 
