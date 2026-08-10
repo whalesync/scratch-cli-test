@@ -429,13 +429,23 @@ export interface StringToNumberOptions {
 export interface SourceFkToDestFkOptions {
   /** The DataFolder ID containing the referenced records */
   referencedDataFolderId: DataFolderId;
-  /** What to do when a referenced record cannot be found. Default: 'fail' */
+  /**
+   * What to do when a referenced record cannot be found. Default: `'ignore'` — warn rather than
+   * fail. The field is held back untouched if writing it would ERASE a link the destination already
+   * holds; a write that only adds to the destination's links still goes through, with the
+   * unresolvable one left empty. A reference whose target is gone from the source is normal (it was
+   * deleted upstream and the surviving records keep its id), and failing the record failed its whole
+   * table (DEV-11222). `'fail'` opts back into stopping the sync. An AMBIGUOUS target key fails
+   * under either setting.
+   */
   onUnresolved?: 'fail' | 'ignore';
   /**
    * Stringified source values that mean "not linked" and must be dropped BEFORE resolution,
    * for a service that writes a sentinel instead of null (WordPress `featured_media: 0`).
-   * Treated exactly like `null`; a value outside this list that resolves to nothing still
-   * fails. See `ForeignKeyOptionSchema.valuesMeaningNoLink`, which is where it comes from.
+   * Treated exactly like `null`, so they are dropped silently — where a value outside this list
+   * that resolves to nothing is reported as an unresolved foreign key (and, under the default
+   * `onUnresolved`, warned about rather than failed). See `ForeignKeyOptionSchema.valuesMeaningNoLink`,
+   * which is where it comes from.
    */
   valuesMeaningNoLink?: string[];
   /** Output shape: 'array' (default) preserves arrays, 'single' unwraps to the first element or null */

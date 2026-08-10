@@ -545,12 +545,18 @@ export class RoutineExecutorService {
       // rejection (complete-with-warning), a failed table is a hard failure: the destination is now
       // stale and a downstream publish would ship wrong state, so we fail the step and stop the run.
       const publicProgress = this.readSyncProgress(dbJob.progress);
-      const failedTables = (publicProgress?.tables ?? []).filter((table) => table.status === 'failed');
+      const tables = publicProgress?.tables ?? [];
+      const failedTables = tables.filter((table) => table.status === 'failed');
       if (failedTables.length > 0) {
         return { kind: 'failed', error: this.summarizeSyncFailure(failedTables) };
       }
+      // No table failed, but a table can still have degraded a record: a dangling foreign key whose
+      // link was left empty (DEV-11222), a value written uncoerced, an invalid date nulled out. Those
+      // are warn-and-skip by design — the sync is right to continue — but they must not read as a
+      // clean run, so they complete WITH a warning exactly as a publish's per-record rejections do.
       const result = this.deriveStepResult(action, publicProgress);
-      return { kind: 'completed', pipelineId: null, warning: null, summary: result.summary, result };
+      const warning = this.summarizeSyncWarnings(tables);
+      return { kind: 'completed', pipelineId: null, warning, summary: result.summary, result };
     }
 
     if (action === RoutineAction.PULL) {
@@ -660,6 +666,27 @@ export class RoutineExecutorService {
       .map((table) => `${table.name}: ${table.errors[0]?.error ?? 'unknown error'}`);
     const overflow = failedTables.length > MAX_NAMED_TABLES ? ` (+${failedTables.length - MAX_NAMED_TABLES} more)` : '';
     return `Sync failed for ${failedTables.length} table(s) — ${namedFailures.join('; ')}${overflow}`;
+  }
+
+  /**
+   * The run-page warning for a sync that completed but degraded some records — the count across every
+   * table plus the first warning as an example. Null when the sync was clean, which is the signal
+   * `RoutineRun.resultWarning` uses to distinguish "completed" from "completed with warnings".
+   */
+  private summarizeSyncWarnings(tables: SyncDataFoldersPublicProgress['tables']): string | null {
+    const totalWarningCount = tables.reduce(
+      (total, table) => total + (table.warningCount ?? table.warnings?.length ?? 0),
+      0,
+    );
+    if (totalWarningCount === 0) {
+      return null;
+    }
+    // Every table caps the warning samples it keeps, so a table with warnings can have no example to
+    // show; take the first one that does rather than assuming the first warned table carries it.
+    const firstWarning = tables.flatMap((table) => table.warnings ?? [])[0]?.warning;
+    return firstWarning
+      ? `Completed with ${totalWarningCount} warning(s) — e.g. ${firstWarning}`
+      : `Completed with ${totalWarningCount} warning(s)`;
   }
 
   /** A concise, bounded summary naming the failed folder(s) and their error for the run page. */

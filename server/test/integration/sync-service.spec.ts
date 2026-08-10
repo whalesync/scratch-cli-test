@@ -2530,7 +2530,11 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
     expect(resolvedPostContent.author_ids).toEqual(['dest_auth_1', 'dest_auth_2']); // Resolved to real destination remote IDs
   });
 
-  it('should return error when FK references a non-existent record', async () => {
+  it('should warn and empty the link — not fail the table — when FK references a non-existent record', async () => {
+    // DEV-11222: a reference whose target is gone from the source (deleted upstream, so the pull
+    // never saw it) is normal in every CRM/billing source. It used to fail the record, and a failed
+    // record fails its whole table and skips the run's publish; now the one link is left empty and
+    // the loss is reported as a warning.
     const sourcePostFiles = [
       {
         folderId: sourcePostsFolderId,
@@ -2568,7 +2572,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
 
     const postFiles = writtenFilesByCall[0];
 
-    // Phase 2: resolve FKs — should fail because the author doesn't exist
+    // Phase 2: resolve FKs — the author doesn't exist, so the link is emptied and warned about
     mockFiles({
       [sourcePostsFolderId]: sourcePostFiles,
       [destPostsFolderId]: [
@@ -2582,10 +2586,86 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
 
     const fkResult = await syncService.syncTableMapping(syncId, postsMapping, workbookId, actor, 'FOREIGN_KEY_MAPPING');
     expect(fkResult.recordsCreated).toBe(0);
+    expect(fkResult.errors).toHaveLength(0);
+    expect(fkResult.errorCount).toBe(0);
+    expect(fkResult.warningCount).toBe(1);
+    expect(fkResult.warnings[0].warning).toContain('Skipped unresolved foreign key');
+    expect(fkResult.warnings[0].warning).toContain('non_existent_author');
+
+    // The rest of the record still synced; only the unresolvable link is empty.
+    const resolvedPostFiles = writtenFilesByCall[writtenFilesByCall.length - 1];
+    const resolvedPostContent = JSON.parse(resolvedPostFiles[0].content) as Record<string, unknown>;
+    expect(resolvedPostContent.title).toBe('Orphan');
+    expect(resolvedPostContent.author_id).toBeNull();
+  });
+
+  it('should PRESERVE an existing destination link when the FK becomes unresolvable', async () => {
+    // DEV-11222 follow-on: the destination record already links to the author correctly from an
+    // earlier sync, and only now has the author gone missing from the source. Emptying the field
+    // here would publish an UNLINK to the destination service — destroying a good link because we
+    // could not resolve the source's reference. The field must be left exactly as it is.
+    const sourcePostFiles = [
+      {
+        folderId: sourcePostsFolderId,
+        path: 'src-posts/post1.json',
+        content: '{"id": "rec_post_1", "title": "Orphan", "slug": "orphan", "author_id": "since_deleted_author"}',
+      },
+    ];
+
+    mockFiles({
+      [sourcePostsFolderId]: sourcePostFiles,
+      [destPostsFolderId]: [],
+    });
+
+    const postsMapping: TableMapping = {
+      sourceDataFolderId: sourcePostsFolderId,
+      destinationDataFolderId: destPostsFolderId,
+      columnMappings: [
+        { sourceColumnId: 'title', destinationColumnId: 'title' },
+        { sourceColumnId: 'slug', destinationColumnId: 'slug' },
+        {
+          sourceColumnId: 'author_id',
+          destinationColumnId: 'author_id',
+          transformer: {
+            type: 'source_fk_to_dest_fk',
+            options: { referencedDataFolderId: sourceAuthorsFolderId },
+          },
+        },
+      ],
+      recordMatching: { sourceColumnId: 'slug', destinationColumnId: 'slug' },
+    };
+
+    // Phase 1 establishes the record pair, then we seed the destination copy with the link a
+    // PREVIOUS sync had resolved — the state that must survive.
+    await syncService.syncTableMapping(syncId, postsMapping, workbookId, actor);
+    const postFiles = writtenFilesByCall[0];
+    const alreadyLinkedDestRecord = {
+      ...(JSON.parse(postFiles[0].content) as Record<string, unknown>),
+      author_id: 'dest_auth_1',
+    };
+
+    const writeCallCountBeforeFkPhase = writtenFilesByCall.length;
+    mockFiles({
+      [sourcePostsFolderId]: sourcePostFiles,
+      [destPostsFolderId]: [
+        {
+          folderId: destPostsFolderId,
+          path: postFiles[0].path,
+          content: JSON.stringify(alreadyLinkedDestRecord),
+        },
+      ],
+    });
+
+    const fkResult = await syncService.syncTableMapping(syncId, postsMapping, workbookId, actor, 'FOREIGN_KEY_MAPPING');
+    expect(fkResult.errorCount).toBe(0);
+    expect(fkResult.warningCount).toBe(1);
+    expect(fkResult.warnings[0].warning).toContain('Left the field untouched');
+
+    // The record is byte-identical to what was on disk, so nothing is written and nothing is
+    // published — the existing link survives.
     expect(fkResult.recordsUpdated).toBe(0);
-    expect(fkResult.errors).toHaveLength(1);
-    expect(fkResult.errors[0].error).toContain('Could not resolve foreign key');
-    expect(fkResult.errors[0].error).toContain('non_existent_author');
+    const filesWrittenDuringFkPhase = writtenFilesByCall.slice(writeCallCountBeforeFkPhase).flat();
+    expect(filesWrittenDuringFkPhase).toHaveLength(0);
   });
 
   it('should resolve circular FK references (authors reference posts, posts reference authors)', async () => {

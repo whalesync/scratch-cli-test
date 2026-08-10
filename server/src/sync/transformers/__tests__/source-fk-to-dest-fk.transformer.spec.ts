@@ -140,8 +140,31 @@ describe('sourceFkToDestFkTransformer', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should fail when FK cannot be resolved', async () => {
+    it('leaves an unresolvable FK empty and warns rather than failing the record (DEV-11222)', async () => {
       const result = await sourceFkToDestFkTransformer.transform(createContext('missing', createSimpleLookupTools()));
+      expect(result).toEqual({
+        success: true,
+        value: null,
+        warnings: [expect.stringContaining('Skipped unresolved foreign key "missing"')],
+      });
+    });
+
+    it('names both causes in the warning — absent from the source folder, or not synced', async () => {
+      const result = await sourceFkToDestFkTransformer.transform(createContext('missing', createSimpleLookupTools()));
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.warnings?.[0]).toContain('absent from the source folder');
+        expect(result.warnings?.[0]).toContain('not synced');
+      }
+    });
+
+    it('still fails hard when the column explicitly opts into onUnresolved: fail', async () => {
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('missing', createSimpleLookupTools(), {
+          referencedDataFolderId: REFERENCED_FOLDER,
+          onUnresolved: 'fail',
+        }),
+      );
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain('Could not resolve foreign key "missing"');
@@ -165,9 +188,24 @@ describe('sourceFkToDestFkTransformer', () => {
       expect(result).toEqual({ success: true, value: ['@/DestConn/authors/alice.json'] });
     });
 
-    it('should fail if any array element cannot be resolved', async () => {
+    it('drops only the unresolvable element and keeps its resolvable siblings (DEV-11222)', async () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'missing'], lookup));
+      expect(result).toEqual({
+        success: true,
+        value: ['@/DestConn/authors/alice.json'],
+        warnings: [expect.stringContaining('Skipped unresolved foreign key "missing"')],
+      });
+    });
+
+    it('fails the whole array when the column explicitly opts into onUnresolved: fail', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['src_1', 'missing'], lookup, {
+          referencedDataFolderId: REFERENCED_FOLDER,
+          onUnresolved: 'fail',
+        }),
+      );
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain('Could not resolve foreign key "missing"');
@@ -237,22 +275,238 @@ describe('sourceFkToDestFkTransformer', () => {
       expect(result).toEqual({ success: true, value: [`@/${DEST_CONN}/dest-authors/alice.json`] });
     });
 
-    it('still fails a genuinely dangling id — only the DECLARED sentinel is forgiven', async () => {
+    // A dangling id is also dropped now (DEV-11222), so what still separates the two is the WARNING:
+    // a declared sentinel was never a link and passes silently, while an id whose target is gone is
+    // reported so the user can see the reference was lost.
+    it('warns on a genuinely dangling id — only the DECLARED sentinel passes silently', async () => {
       const result = await sourceFkToDestFkTransformer.transform(
         createContext(404, createSimpleLookupTools(), SENTINEL_ZERO),
       );
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toContain('Could not resolve foreign key "404"');
-      }
+      expect(result).toEqual({
+        success: true,
+        value: null,
+        warnings: [expect.stringContaining('Skipped unresolved foreign key "404"')],
+      });
     });
 
-    it('leaves the sentinel alone when the column declares none (unchanged behavior)', async () => {
+    it('warns on the sentinel value when the column declares none (it looks like any other id)', async () => {
       const result = await sourceFkToDestFkTransformer.transform(createContext(0, createSimpleLookupTools()));
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toContain('Could not resolve foreign key "0"');
-      }
+      expect(result).toEqual({
+        success: true,
+        value: null,
+        warnings: [expect.stringContaining('Skipped unresolved foreign key "0"')],
+      });
+    });
+  });
+
+  describe('an unresolvable FK never ERASES an existing destination link (DEV-11222)', () => {
+    // Dropping the dangling element empties the field, and writing that emptied field to a record
+    // the destination already links correctly would publish an UNLINK — destroying a good link
+    // because we could not resolve the source's reference, not because the user removed it.
+    it('leaves a scalar link untouched instead of nulling it', async () => {
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('cus_gone', createSimpleLookupTools(), undefined, 'FOREIGN_KEY_MAPPING', 'dest_cus_1'),
+      );
+      expect(result).toEqual({
+        success: true,
+        skip: true,
+        warnings: [expect.stringContaining('Left the field untouched')],
+      });
+    });
+
+    it('treats a service-specific empty sentinel on the destination as at-risk, and says "value"', async () => {
+      // A destination holding WordPress's `featured_media: 0` is unlinked, not linked — but `0` is
+      // NOT excluded here. `0` means "no link" only where a connector declares it, and the scalar-FK
+      // destinations a hardcoded rule would hit (Postgres/Supabase) use `0` as a real primary key.
+      // Holding back also beats the alternative: the write would swap the service's own empty value
+      // for ours. So the warning says "a value the destination still holds", never "a link".
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('cus_gone', createSimpleLookupTools(), undefined, 'FOREIGN_KEY_MAPPING', 0),
+      );
+      expect(result).toEqual({
+        success: true,
+        skip: true,
+        warnings: [expect.stringContaining('a value the destination still holds')],
+      });
+      expect((result as { warnings: string[] }).warnings[0]).not.toContain('existing link');
+    });
+
+    it('holds back the whole array rather than dropping the dangling entry from it', async () => {
+      const lookup = createSimpleLookupTools({ cus_a: 'customers/a.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['cus_a', 'cus_gone'], lookup, undefined, 'FOREIGN_KEY_MAPPING', [
+          '@/DestConn/customers/a.json',
+          '@/DestConn/customers/gone.json',
+        ]),
+      );
+      expect(result).toEqual({
+        success: true,
+        skip: true,
+        warnings: [expect.stringContaining('cus_gone')],
+      });
+    });
+
+    // The guard is on LOSS, not on the mere presence of a dangling sibling. Holding the field back
+    // whenever anything dangles would leave a resolvable new link unwritten for as long as the
+    // dangling one is missing — forever, for a hard-deleted CRM target.
+    it('still writes a NEW resolvable link when the write only adds to what the destination holds', async () => {
+      const lookup = createSimpleLookupTools({ cus_a: 'customers/a.json', cus_b: 'customers/b.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['cus_a', 'cus_b', 'cus_gone'], lookup, undefined, 'FOREIGN_KEY_MAPPING', [
+          '@/DestConn/customers/a.json',
+        ]),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: ['@/DestConn/customers/a.json', '@/DestConn/customers/b.json'],
+        warnings: [expect.stringContaining('Left the link empty')],
+      });
+    });
+
+    it('recognizes an existing link stored as the raw destination remote id, not the pseudo-ref', async () => {
+      // A destination element can legitimately carry either spelling; comparing only against the
+      // emitted ref would read a real, still-present link as lost and freeze the field forever.
+      const lookup = createLookupTools({
+        cus_a: { destinationFilePath: 'customers/a.json', destinationRemoteId: 'dest_a_99' },
+        cus_b: { destinationFilePath: 'customers/b.json', destinationRemoteId: 'dest_b_99' },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['cus_a', 'cus_b', 'cus_gone'], lookup, undefined, 'FOREIGN_KEY_MAPPING', ['dest_a_99']),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: ['dest_a_99', 'dest_b_99'],
+        warnings: [expect.stringContaining('Left the link empty')],
+      });
+    });
+
+    it('upgrades a pseudo-ref whose target has since published, even with a dangling sibling', async () => {
+      // Publish resolves an `@/…` ref for the API call but leaves the ON-DISK value alone
+      // (DEV-10954), so once the target publishes the record still holds the ref while we now emit
+      // the real id. Reading that as a link about to be lost would hold the field back — and since
+      // the hold-back is what would have rewritten the ref to the real id, the field would stay
+      // frozen on every later sync, not just this one.
+      const lookup = createLookupTools({
+        cus_a: { destinationFilePath: 'customers/a.json', destinationRemoteId: 'dest_a' },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['cus_a', 'cus_gone'], lookup, undefined, 'FOREIGN_KEY_MAPPING', ['@/DestConn/customers/a.json']),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: ['dest_a'],
+        warnings: [expect.stringContaining('Left the link empty')],
+      });
+    });
+
+    it('does NOT treat a non-canonical pseudo-ref as one of the links it resolved', async () => {
+      // Only the canonical workspace-absolute form counts. A ref in any other shape is malformed,
+      // not a link (DEV-11238), and this must not become the one place that quietly understands it
+      // — so it is treated like any other value we cannot vouch for and the field is held back.
+      const lookup = createSimpleLookupTools({ cus_a: 'customers/a.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['cus_a', 'cus_gone'], lookup, undefined, 'FOREIGN_KEY_MAPPING', ['@/customers/a.json']),
+      );
+      expect(result).toEqual({
+        success: true,
+        skip: true,
+        warnings: [expect.stringContaining('Left the field untouched')],
+      });
+    });
+
+    it('holds back when the destination link field is an ENVELOPE we cannot compare (Notion)', async () => {
+      // `destinationValue` is the field's raw stored value and Notion's relation pack runs after
+      // this transformer, so the existing links arrive as `{ type: 'relation', relation: [...] }`.
+      // Nothing in there is provably one of the links we resolved, so the field must be held back —
+      // Notion is the destination in the run that motivated DEV-11222.
+      const lookup = createSimpleLookupTools({ cus_a: 'customers/a.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['cus_a', 'cus_gone'], lookup, undefined, 'FOREIGN_KEY_MAPPING', {
+          type: 'relation',
+          relation: [{ id: 'dest_a' }, { id: 'dest_gone' }],
+        }),
+      );
+      expect(result).toEqual({
+        success: true,
+        skip: true,
+        warnings: [expect.stringContaining('Left the field untouched')],
+      });
+    });
+
+    it('holds back when a new link would land but an existing one would be lost', async () => {
+      // Both can't be honoured at once — writing [a, new] erases `gone`. Fail safe: nothing is
+      // erased, and the warning says the field's other changes are deferred.
+      const lookup = createSimpleLookupTools({ cus_a: 'customers/a.json', cus_new: 'customers/new.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['cus_a', 'cus_new', 'cus_gone'], lookup, undefined, 'FOREIGN_KEY_MAPPING', [
+          '@/DestConn/customers/a.json',
+          '@/DestConn/customers/gone.json',
+        ]),
+      );
+      expect(result).toEqual({
+        success: true,
+        skip: true,
+        warnings: [expect.stringContaining('deferred until it resolves')],
+      });
+    });
+
+    it('still empties the link on a record being CREATED (nothing to preserve)', async () => {
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('cus_gone', createSimpleLookupTools(), undefined, 'FOREIGN_KEY_MAPPING', undefined),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: null,
+        warnings: [expect.stringContaining('Left the link empty')],
+      });
+    });
+
+    it('still empties the link when the destination holds no link either', async () => {
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('cus_gone', createSimpleLookupTools(), undefined, 'FOREIGN_KEY_MAPPING', null),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: null,
+        warnings: [expect.stringContaining('Left the link empty')],
+      });
+    });
+
+    it('still REMOVES a link the source itself dropped — nothing was unresolvable', async () => {
+      // The guard must not freeze the field generally: a source that genuinely cleared its
+      // reference arrives as a null (or shorter) value with no unresolved key, and still clears.
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(null, createSimpleLookupTools(), undefined, 'FOREIGN_KEY_MAPPING', 'dest_cus_1'),
+      );
+      expect(result).toEqual({ success: true, value: null });
+    });
+
+    it('still removes one of two links when the source dropped it and the other resolves', async () => {
+      const lookup = createSimpleLookupTools({ cus_a: 'customers/a.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['cus_a'], lookup, undefined, 'FOREIGN_KEY_MAPPING', [
+          '@/DestConn/customers/a.json',
+          '@/DestConn/customers/b.json',
+        ]),
+      );
+      expect(result).toEqual({ success: true, value: ['@/DestConn/customers/a.json'] });
+    });
+
+    it('preserves the existing link under an explicit onUnresolved: ignore too', async () => {
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(
+          'cus_gone',
+          createSimpleLookupTools(),
+          { referencedDataFolderId: REFERENCED_FOLDER, onUnresolved: 'ignore' },
+          'FOREIGN_KEY_MAPPING',
+          'dest_cus_1',
+        ),
+      );
+      expect(result).toEqual({
+        success: true,
+        skip: true,
+        warnings: [expect.stringContaining('Left the field untouched')],
+      });
     });
   });
 
@@ -589,10 +843,11 @@ describe('sourceFkToDestFkTransformer', () => {
       const result = await sourceFkToDestFkTransformer.transform(
         createContext('marketing', lookup, OPTIONS_WITH_SLUG_KEY),
       );
-      expect(result.success).toBe(false);
-      expect((result as { error: string }).error).toContain('no record in DataFolder');
-      expect((result as { error: string }).error).toContain('"slug"');
-      expect((result as { error: string }).error).toContain('"marketing"');
+      expect(result.success).toBe(true);
+      const warning = (result as { warnings?: string[] }).warnings?.[0] ?? '';
+      expect(warning).toContain('no record in DataFolder');
+      expect(warning).toContain('"slug"');
+      expect(warning).toContain('"marketing"');
     });
 
     it('distinguishes "found the target but it has no destination row" from "no such key"', async () => {
@@ -600,8 +855,13 @@ describe('sourceFkToDestFkTransformer', () => {
       const result = await sourceFkToDestFkTransformer.transform(
         createContext('engineering', lookup, OPTIONS_WITH_SLUG_KEY),
       );
-      expect(result.success).toBe(false);
-      expect((result as { error: string }).error).toContain('no destination record');
+      expect(result.success).toBe(true);
+      const warning = (result as { warnings?: string[] }).warnings?.[0] ?? '';
+      expect(warning).toContain('has not been synced to the destination');
+      expect(warning).toContain('"slug"');
+      // A declared key path was MATCHED to reach this branch, so the record provably exists in the
+      // referenced source folder. Claiming it might be absent would send a debugger the wrong way.
+      expect(warning).not.toContain('absent from the source folder');
     });
 
     it('fails on an ambiguous key rather than linking one of the claimants', async () => {

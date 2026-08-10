@@ -915,6 +915,103 @@ describe('RoutineExecutorService.execute', () => {
     expect(enqueuePublish).toHaveBeenCalled();
   });
 
+  it('completes a sync step WITH a warning when a table degraded records (DEV-11222)', async () => {
+    // A dangling foreign key leaves that one link empty and warns rather than failing the table, so
+    // the run continues to publish — but it must not read as a clean run. The warning carries the
+    // total count and an example, and the run-level resultWarning is what shows "completed with
+    // warnings" to the user.
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.SYNC), makeStep(1, RoutineAction.PUBLISH, { folder: '/blog/posts' })];
+    const db = makeFakeDb(run, steps);
+
+    const enqueuePublish = jest.fn().mockResolvedValue({ id: 'publish-job' });
+    const bullEnqueuer = {
+      enqueueSyncDataFoldersJob: jest.fn().mockResolvedValue({ id: 'sync-job' }),
+      enqueueSelfPlanningPublishJob: enqueuePublish,
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn(async (bullJobId: string) =>
+        bullJobId === 'sync-job'
+          ? dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: {
+                publicProgress: {
+                  totalFilesSynced: 2,
+                  tables: [
+                    {
+                      id: 'dfd_1',
+                      name: 'Charges',
+                      status: 'completed',
+                      errors: [],
+                      warningCount: 812,
+                      warnings: [{ sourceRemoteId: 'ch_1', warning: 'Skipped unresolved foreign key "cus_gone"' }],
+                    },
+                    // A clean table alongside the warned one: the count is the SUM across tables.
+                    { id: 'dfd_2', name: 'Customers', status: 'completed', errors: [] },
+                  ],
+                },
+              },
+            })
+          : dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: { publicProgress: { pipelineId: 'pln_1', failedCount: 0 } },
+            }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(steps[0].status).toBe('completed');
+    expect(steps[0].error).toMatch(/812 warning\(s\)/);
+    expect(steps[0].error).toMatch(/cus_gone/);
+    // The run still proceeds to publish — a dangling link is not a reason to withhold the export.
+    expect(enqueuePublish).toHaveBeenCalled();
+    expect(run.status).toBe('completed');
+    expect(run.resultWarning).toMatch(/812 warning\(s\)/);
+  });
+
+  it('leaves a clean sync step free of any warning', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.SYNC)];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueueSyncDataFoldersJob: jest.fn().mockResolvedValue({ id: 'sync-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(
+        dbJobResult({
+          status: 'completed',
+          error: null,
+          progress: {
+            publicProgress: {
+              totalFilesSynced: 2,
+              tables: [
+                { id: 'dfd_1', name: 'Charges', status: 'completed', errors: [], warningCount: 0, warnings: [] },
+              ],
+            },
+          },
+        }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(steps[0].status).toBe('completed');
+    expect(steps[0].error).toBeNull();
+    expect(run.resultWarning).toBeNull();
+  });
+
   it('does nothing when the run cannot be claimed (already owned/terminal)', async () => {
     const run = baseRun({ status: 'completed' });
     const steps = [makeStep(0, RoutineAction.PULL)];

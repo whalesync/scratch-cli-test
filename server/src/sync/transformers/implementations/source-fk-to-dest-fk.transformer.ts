@@ -10,7 +10,9 @@ import { FieldTransformer, FkMappingResult, TransformContext, TransformResult } 
  *
  * Options:
  * - referencedDataFolderId: The source DataFolder ID of the referenced table mapping
- * - onUnresolved: 'fail' (default) stops the sync; 'ignore' skips unresolved FKs with a warning
+ * - onUnresolved: 'ignore' (default) warns instead of failing — it holds the field back rather than
+ *   let the write erase a link the destination already holds, and otherwise leaves the unresolvable
+ *   link empty (so resolvable links still land); 'fail' stops the sync
  *
  * Handles scalars, arrays, and null/undefined values.
  * Skips transformation when the destination already has the correct value.
@@ -43,10 +45,10 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
       key: 'onUnresolved',
       widget: 'select',
       label: 'When a referenced record cannot be found',
-      defaultValue: 'fail',
+      defaultValue: 'ignore',
       selectOptions: [
+        { value: 'ignore', label: 'Leave the link empty and sync the rest' },
         { value: 'fail', label: 'Stop and fail the sync' },
-        { value: 'ignore', label: 'Ignore missing record and sync the rest' },
       ],
     },
   ],
@@ -57,10 +59,22 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue, lookupTools, options, destinationValue } = ctx;
     const typedOptions = options as SourceFkToDestFkOptions;
-    const ignoreUnresolved = typedOptions.onUnresolved === 'ignore';
+    // A DANGLING foreign key — one whose target is absent from the referenced source folder — is
+    // normal in every CRM/billing source: the target was deleted upstream and the surviving records
+    // keep its id forever (Stripe's deleted customers are retrievable by id but never LISTED, so a
+    // pull can't see them). Left fatal it took the whole table down, and with it the run's publish
+    // (DEV-11222). So the default is to leave that one link empty, count it, and warn — the same
+    // "a link whose target is gone is an empty link, not a broken table" reasoning `valuesMeaningNoLink`
+    // already applies one step in. `'fail'` remains available for a source where a dangling reference
+    // really is a stop-the-line error.
+    const ignoreUnresolved = typedOptions.onUnresolved !== 'fail';
     // Sentinels the SOURCE service writes to mean "not linked" (WordPress `featured_media: 0`).
     // Declared by the connector on the field's foreign-key annotation, so they can be dropped
-    // as deliberately-empty rather than hunted for as ids that will never be found.
+    // as deliberately-empty rather than hunted for as ids that will never be found. Since an
+    // undeclared dangling id no longer fails the record either (DEV-11222), what the declaration
+    // now buys is SILENCE: a sentinel passes with no warning, where an id we genuinely could not
+    // resolve raises one. Without it, every unlinked WordPress post would warn — one per record,
+    // and a run reading "completed with warnings" over a value that was never a link.
     const valuesMeaningNoLink = new Set(typedOptions.valuesMeaningNoLink ?? []);
 
     // Handle null/undefined
@@ -87,7 +101,18 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
         : undefined;
 
     const resolved: string[] = [];
-    const warnings: string[] = [];
+    // Every spelling a destination element may legitimately carry for a link we DID resolve (see
+    // `destinationSpellingsForResolvedLink`). Used after the loop to tell "this write drops a link
+    // the destination already holds" from "this write only adds" — the difference between erasing
+    // data and making progress. Deliberately MORE permissive than `doesElementMatch`: that one
+    // decides whether a write is needed, and must report a stale spelling as a change so it gets
+    // upgraded; this one decides whether a link would be LOST, and a stale spelling of a link we
+    // resolved is not a loss.
+    const destinationSpellingsOfResolvedLinks = new Set<string>();
+    // One entry per foreign key we could not resolve, naming the key and why. Held without the
+    // consequence sentence because the consequence isn't known until the loop ends: whether the link
+    // is emptied or the destination's existing one is preserved depends on what the destination holds.
+    const unresolvedForeignKeyReports: string[] = [];
     let allMatch = destElements !== undefined;
 
     for (let i = 0; i < elements.length; i++) {
@@ -159,21 +184,31 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
       }
 
       if (destinationResolution.kind === 'no_destination_record') {
-        // Distinguish "nothing has that key" from "found the record, but it has no destination
-        // row yet" — they have completely different causes and fixes.
+        // Three genuinely different causes, each with a different fix — and how much we KNOW
+        // differs with `targetKeyPath`, so the message must not over-claim:
+        //   - no_match: the referenced folder was searched by the declared key and nothing carries
+        //     this value. Only reachable with a `targetKeyPath`.
+        //   - resolved, no key path: step 1 echoed the value back as a remote id WITHOUT verifying
+        //     it exists, so all we know is there's no destination record. The target may be absent
+        //     from the source folder (deleted upstream, never pulled) or present but not synced —
+        //     the mapping table can't tell those apart, so name both.
+        //   - resolved, with a key path: step 1 matched a REAL record in the referenced source
+        //     folder, so "absent from the source folder" is provably false here. The record exists;
+        //     it just hasn't reached the destination. Saying otherwise sends a debugger the wrong way.
         const reason =
           target.kind === 'no_match'
             ? `no record in DataFolder ${typedOptions.referencedDataFolderId} has ${describeTargetKey(typedOptions.targetKeyPath)} "${fkStr}"`
-            : `it has no destination record in DataFolder ${typedOptions.referencedDataFolderId}`;
+            : typedOptions.targetKeyPath === undefined
+              ? `no record with that id in DataFolder ${typedOptions.referencedDataFolderId} has a destination ` +
+                `record — it is either absent from the source folder (e.g. deleted in the source service) or not synced`
+              : `the record in DataFolder ${typedOptions.referencedDataFolderId} whose ` +
+                `${describeTargetKey(typedOptions.targetKeyPath)} is "${fkStr}" has not been synced to the destination`;
         if (ignoreUnresolved) {
-          const msg = `Skipped unresolved foreign key "${fkStr}": ${reason}`;
-          warnings.push(msg);
-          WSLogger.warn({
-            source: 'sourceFkToDestFkTransformer',
-            message: msg,
-            sourceRecordId: ctx.sourceRecord.id,
-            sourceFieldPath: ctx.sourceFieldPath,
-          });
+          // No per-element log line: this is the DEFAULT path now, and a mature source reaches it
+          // once per dangling reference across every record of the table (six figures on the run
+          // that motivated DEV-11222). The warning is returned instead — the sync executor counts
+          // every one and samples them onto the table's result with the source record's id.
+          unresolvedForeignKeyReports.push(`Skipped unresolved foreign key "${fkStr}": ${reason}`);
           continue;
         }
         return {
@@ -193,12 +228,71 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
           ? mapping.destinationRemoteId
           : buildDestinationPseudoRef(mapping.destinationConnectionFolder, mapping.destinationFilePath);
       resolved.push(ref);
+      for (const spelling of destinationSpellingsForResolvedLink(mapping, ref)) {
+        destinationSpellingsOfResolvedLinks.add(spelling);
+      }
 
       // Check if the existing destination value already matches
       if (allMatch && destElements !== undefined) {
         allMatch = doesElementMatch(destElements, resolved.length - 1, ref, mapping);
       }
     }
+
+    // PRESERVE an existing link rather than erase it. Dropping an unresolvable foreign key empties
+    // that link, and on a record the destination already holds a resolved link for, writing the
+    // emptied field would publish an UNLINK to the destination service — destroying a correct link
+    // because WE could not resolve the source's reference, not because the user removed it. The
+    // source still names that target; we just can't map it. So hold the field back and warn.
+    //
+    // Gated on the write actually LOSING something, not merely on an unresolved key: on a
+    // multi-value link, holding back whenever any sibling dangles would leave a perfectly
+    // resolvable new entry unwritten for as long as the dangling one is missing — which, for a
+    // hard-deleted CRM target, is forever. So a write that only ADDS to what the destination
+    // already holds goes through, and only one that would drop an existing link is held back.
+    //
+    // A link the SOURCE no longer names is still removed normally: that arrives as a null or
+    // shorter source value with nothing unresolved, so this guard never fires on it.
+    const existingDestinationLinksThatWouldBeLost = (destElements ?? []).filter((element) => {
+      if (element === null || element === undefined || element === '') {
+        return false;
+      }
+      // Only the universally-empty values are excluded above. A service-specific "no link" sentinel
+      // (WordPress's `featured_media: 0`) is NOT, and that is deliberate: `0` means "unlinked" only
+      // where a connector declares it (`valuesMeaningNoLink`, DEV-11093/11094), and the destinations
+      // that would exercise a hardcoded rule here are the scalar-FK ones — Postgres/Supabase, whose
+      // integer FK column holding `0` is a row with that primary key, i.e. a REAL link. Excluding it
+      // globally would re-open the erasure this guard exists to close. Counting a sentinel as
+      // at-risk instead only costs a held-back write, and that write would have replaced the
+      // service's own empty value (`0`) with ours (`null`) — so holding back is also the better
+      // outcome. The warning below therefore says "a value", not "a link".
+      // A destination whose link field is an ENVELOPE rather than a bare id (Notion's
+      // `{ type: 'relation', relation: [{ id }] }` — and Notion is the destination in the run that
+      // motivated this) hands us an object here, because `destinationValue` is the field's raw
+      // stored value and the pack that builds the envelope runs AFTER this transformer. We can't
+      // prove such an element is among the links we resolved, so we must not assume it is: treat it
+      // as at-risk and hold the field back. Conservative in the right direction — the cost is that
+      // an envelope-shaped destination doesn't get the add-through case below, and the alternative
+      // is publishing an unlink against exactly the destination this bug was reported on.
+      if (typeof element !== 'string' && typeof element !== 'number') {
+        return true;
+      }
+      return !destinationSpellingsOfResolvedLinks.has(String(element));
+    });
+    if (unresolvedForeignKeyReports.length > 0 && existingDestinationLinksThatWouldBeLost.length > 0) {
+      return {
+        success: true,
+        skip: true,
+        warnings: unresolvedForeignKeyReports.map(
+          (report) =>
+            `${report}. Left the field untouched rather than drop a value the destination still ` +
+            `holds; other changes to this field are deferred until it resolves.`,
+        ),
+      };
+    }
+
+    const warnings = unresolvedForeignKeyReports.map(
+      (report) => `${report}. Left the link empty and synced the rest of the record.`,
+    );
 
     // If all resolved elements match the existing destination value (and lengths match), skip
     if (allMatch && destElements !== undefined && resolved.length === destElements.length) {
@@ -230,6 +324,34 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
  */
 function describeTargetKey(targetKeyPath: string | undefined): string {
   return targetKeyPath === undefined ? 'remote id' : `"${targetKeyPath}"`;
+}
+
+/**
+ * Every spelling a destination element may legitimately carry for ONE link we resolved — used to
+ * decide whether holding the field back is protecting a real link or freezing it for nothing.
+ *
+ * A stored element is not always the id we would emit today: the target may have PUBLISHED since
+ * the sync that wrote it, so `ref` is now the real remote id while the record on disk still holds
+ * the `@/…` pseudo-ref — publish resolves a pseudo-ref for the API call but leaves the on-disk
+ * value alone (DEV-10954).
+ *
+ * Only the CANONICAL pseudo-ref counts. A ref in any other shape is malformed, not a link, and is
+ * neither produced nor accepted anywhere (DEV-11238) — this must not become the one place that
+ * quietly understands it.
+ *
+ * Missing a spelling that IS valid reads a still-correct link as one about to be lost, which holds
+ * the field back — and because the hold-back is what would have rewritten the stale spelling to the
+ * current one, the field then stays frozen on every later sync instead of just this one.
+ */
+function destinationSpellingsForResolvedLink(mapping: FkMappingResult, emittedRef: string): string[] {
+  const spellings = [
+    emittedRef,
+    buildDestinationPseudoRef(mapping.destinationConnectionFolder, mapping.destinationFilePath),
+  ];
+  if (mapping.destinationRemoteId !== null) {
+    spellings.push(mapping.destinationRemoteId);
+  }
+  return spellings;
 }
 
 /**
