@@ -139,15 +139,23 @@ export class FileIndexService {
   }
 
   /**
-   * Bulk `(folderPath, filename) → recordId` lookup, keyed by
-   * `${folderPath}:${filename}`.
+   * Bulk `(connection, folderPath, filename) → recordId` lookup, keyed by
+   * {@link fileIndexLookupKey} — build the read key with that helper rather than by hand.
    *
-   * `connectorAccountId` on a lookup **scopes** the match, but is not part of the
-   * returned key: when set, only that connection's row can satisfy the key, so a
-   * key claimed by a different connection is simply absent from the result rather
-   * than resolving to that connection's record (the two-connections-share-a-folder
-   * case). When it is absent, the match is workbook-global "first matching row
-   * wins" — the connector-less (scratch) folder case.
+   * The result carries ONE ENTRY PER LOOKUP, and the connection is part of the key. It used
+   * to be keyed `folderPath:filename` with the connection as a mere row-preference hint, which
+   * silently collapsed two lookups for the same path in different connections onto a single
+   * entry — so a batch asking for `@/HubSpot/Contacts/x.json` AND
+   * `@/HubSpot Testing/Contacts/x.json` got the SAME record id for both, and publish wrote the
+   * wrong id to the service. That was tolerable only while pseudo-refs resolved within one
+   * plan connection; now that every ref carries its own connection segment (DEV-11238) a batch
+   * routinely spans connections, so the connection belongs in the key.
+   *
+   * Within a key, `connectorAccountId` **scopes** the match strictly (DEV-11242): a key whose
+   * rows all belong to some other connection is simply absent from the result rather than
+   * resolving to that connection's record. A lookup naming NO connection stays workbook-global
+   * "first matching row wins" — the connector-less (scratch) folder case. See
+   * {@link pickPreferredRecordId}.
    */
   async getRecordIds(
     workbookId: string,
@@ -156,28 +164,20 @@ export class FileIndexService {
     if (lookups.length === 0) return new Map();
 
     // Group filenames by folderPath so we can query with `filename IN (...)` per
-    // folder instead of a giant OR with thousands of conditions. Also remember
-    // the preferred connection per `${folderPath}:${filename}` so we can pick the
-    // right row when several connections share the key.
+    // folder instead of a giant OR with thousands of conditions.
     const filenamesByFolder = new Map<string, Set<string>>();
-    const preferredAccountByKey = new Map<string, string | null | undefined>();
-    for (const { folderPath, filename, connectorAccountId } of lookups) {
+    for (const { folderPath, filename } of lookups) {
       let filenameSet = filenamesByFolder.get(folderPath);
       if (!filenameSet) {
         filenameSet = new Set();
         filenamesByFolder.set(folderPath, filenameSet);
       }
       filenameSet.add(filename);
-      const key = `${folderPath}:${filename}`;
-      // Keep the first non-undefined preference for a key (duplicate lookups for
-      // the same key with conflicting connections are a documented rare edge).
-      if (!preferredAccountByKey.has(key)) {
-        preferredAccountByKey.set(key, connectorAccountId);
-      }
     }
 
-    // Collect all matching rows per key, then pick the preferred one per key.
-    const rowsByKey = new Map<string, { connectorAccountId: string | null; recordId: string }[]>();
+    // Every matching row per path — across all connections, since the query can't filter by
+    // connection without losing the NULL-scoped fallback rows.
+    const rowsByPath = new Map<string, { connectorAccountId: string | null; recordId: string }[]>();
     for (const [folderPath, filenameSet] of filenamesByFolder) {
       for (const filenameChunk of chunk([...filenameSet], 1000)) {
         const entries = await this.db.client.fileIndex.findMany({
@@ -185,25 +185,28 @@ export class FileIndexService {
           select: { folderPath: true, filename: true, recordId: true, connectorAccountId: true },
         });
         for (const e of entries) {
-          const key = `${e.folderPath}:${e.filename}`;
-          const rows = rowsByKey.get(key);
+          const path = `${e.folderPath}:${e.filename}`;
+          const rows = rowsByPath.get(path);
           if (rows) {
             rows.push({ connectorAccountId: e.connectorAccountId, recordId: e.recordId });
           } else {
-            rowsByKey.set(key, [{ connectorAccountId: e.connectorAccountId, recordId: e.recordId }]);
+            rowsByPath.set(path, [{ connectorAccountId: e.connectorAccountId, recordId: e.recordId }]);
           }
         }
       }
     }
 
-    const map = new Map<string, string>();
-    for (const [key, rows] of rowsByKey) {
-      // A key whose rows all belong to some OTHER connection resolves to nothing and
-      // is left out of the map — callers already treat a missing key as "no record id".
-      const recordId = pickPreferredRecordId(rows, preferredAccountByKey.get(key));
-      if (recordId !== null) map.set(key, recordId);
+    // Resolve each lookup independently against its own connection scope. A lookup whose
+    // rows all belong to some OTHER connection resolves to nothing and is simply absent from
+    // the map — the caller then reports it unresolved, which is the honest answer.
+    const recordIdByLookupKey = new Map<string, string>();
+    for (const lookup of lookups) {
+      const rows = rowsByPath.get(`${lookup.folderPath}:${lookup.filename}`);
+      if (rows === undefined) continue;
+      const recordId = pickPreferredRecordId(rows, lookup.connectorAccountId);
+      if (recordId !== null) recordIdByLookupKey.set(fileIndexLookupKey(lookup), recordId);
     }
-    return map;
+    return recordIdByLookupKey;
   }
 
   async getFilename(workbookId: string, folderPath: string, recordId: string): Promise<string | null> {
@@ -353,6 +356,22 @@ export function isDeeperFolderPathOrphanedByDelete(
     }
   }
   return true;
+}
+
+/**
+ * The key a {@link FileIndexService.getRecordIds} result is stored under: the connection plus
+ * the connection-relative path. Callers must build their read key with this, so the write side
+ * and the read side can't drift on the separator or on how a missing connection is encoded.
+ *
+ * A lookup with no connection collapses to a leading empty segment, which keeps the old
+ * `:folderPath:filename` shape for the callers that never scope by connection.
+ */
+export function fileIndexLookupKey(lookup: {
+  folderPath: string;
+  filename: string;
+  connectorAccountId?: string | null;
+}): string {
+  return `${lookup.connectorAccountId ?? ''}:${lookup.folderPath}:${lookup.filename}`;
 }
 
 /**

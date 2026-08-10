@@ -87,7 +87,7 @@ import { configureBundledGitEnvironment } from './setup-git-env';
 import { seedTestCredentialsFromEnvIfPresent } from './test-credentials';
 import { initAutoUpdater } from './updater';
 import {
-  ensureSchemaValidatorSeededInEveryFolder,
+  ensureAutoSeededValidatorsInEveryFolder,
   getValidationConfigs,
   writeValidationConfig,
 } from './validation-config';
@@ -608,7 +608,7 @@ async function withWorkspaceInternalMutation<T>(workspacePath: string, action: (
 async function seedSchemaValidatorsAndPopulateProblems(workspacePath: string): Promise<void> {
   let newlySeededFolders: Array<{ connectionDirName: string; folderPath: string }> = [];
   try {
-    newlySeededFolders = await ensureSchemaValidatorSeededInEveryFolder(workspacePath);
+    newlySeededFolders = await ensureAutoSeededValidatorsInEveryFolder(workspacePath);
   } catch (error) {
     console.debug('[validation] auto-seed enforce_schema failed:', error);
     return;

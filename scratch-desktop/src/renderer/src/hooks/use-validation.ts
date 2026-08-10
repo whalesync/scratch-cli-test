@@ -37,6 +37,13 @@ export const BUILTIN_VALIDATORS: BuiltinValidatorInfo[] = [
     scope: 'record',
     paramSchema: null,
   },
+  {
+    name: 'pseudo_ref_format',
+    description:
+      'Checks that every @/ reference in the record starts with a connection folder, the only form publish accepts.',
+    scope: 'record',
+    paramSchema: null,
+  },
 ];
 
 // ---------------------------------------------------------------------------

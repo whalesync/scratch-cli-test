@@ -54,7 +54,7 @@ Rules, precisely:
 - **Ends with the target record's filename, including the `.json` extension.**
 - The path is **exactly what you would see navigating the workspace tree** to that
   file. It is:
-  - **not** connection-relative (do not drop the connection folder),
+  - **never** missing its connection folder — that first segment is required,
   - **not** a leading-slash absolute path (`@//HubSpot/…` is wrong),
   - **not** a `./`- or `../`-relative path,
   - **not** an on-disk filesystem path.
@@ -134,10 +134,26 @@ in [`publish-pipeline-flow.md`](./publish-pipeline-flow.md)):
    after `create`, every co-pending target's ID exists by the time its referrers
    resolve.
 
+### Failure: malformed references
+
+If a `@/…` value is not workspace-absolute — its first segment names no connection folder
+in the workbook — publish fails for that record with:
+
+```
+Pseudo-ref "@/Contacts/x.json" is not workspace-absolute: "Contacts" is not a connection
+folder in this workspace (expected one of: HubSpot, Airtable).
+Use "@/<connection>/<folder>/<file>.json".
+```
+
+The most common cause is a reference that **omits its connection folder** — it starts at a
+folder inside the connection instead of at the workspace root. The fix is always to write the
+reference per this spec, prepending the connection folder; never to make the resolver accept
+the shorter path.
+
 ### Failure: unresolvable references
 
-If a `@/…` value cannot be resolved — the named file was never published and has no
-file-index entry — publish fails for that record with:
+If a `@/…` value is well-formed but names a file the index doesn't know — it was never
+published and has no file-index entry — publish fails for that record with:
 
 ```
 Cannot resolve pseudo-ref "@/…": no record ID found in FileIndex for folder="…" file="…"
@@ -147,10 +163,8 @@ The most common causes:
 
 - **The target file doesn't exist / was never created.** The path names a record that
   isn't in the workspace (typo, wrong folder, wrong filename).
-- **A format mismatch** between the reference and how the file index is keyed — e.g. a
-  connection segment present in one but not the other. Any such mismatch is a **bug to
-  fix against this spec**, not a reason to change the format (see
-  [Implementation notes](#implementation-notes)).
+- **The path is stale.** It named a real record under a folder layout that has since
+  changed (e.g. a Webflow collection that moved to `<Site>/Collections/<Collection>`).
 
 ## Who writes pseudo-references
 
@@ -173,17 +187,27 @@ therefore responsible for **translating the workspace-absolute path into the tar
 connection + connection-relative path** before looking it up — the connection segment
 selects the connection; the remainder is the connection-relative file path.
 
-How this works today (DEV-10880): the publish resolver
+How this works today (DEV-10880, DEV-11238): the publish resolver
 (`server/src/publish-plan/ref-resolver.service.ts`) maps the reference's leading
 connection-folder segment to a `connectorAccountId` (via the workbook's connections,
 matching either the bare sanitized display name or the legacy
-`"<SERVICE> - <displayName>"` form), strips it, and looks the connection-relative
-remainder up in the **`FileIndex`**. `FileIndex` carries a `connectorAccountId`
-discriminator so that two connections exposing the same folder name (e.g. two HubSpot
-connections both with `Contacts`) resolve unambiguously. The resolver is **lenient**:
-a legacy reference with no connection segment is resolved within the connection being
-published, so references authored before this change (and by the pre-fix sync
-producer) still resolve without a data migration.
+`"<SERVICE> - <displayName>"` **folder naming**, since folders under both schemes exist
+on disk), strips it, and looks the connection-relative remainder up in the
+**`FileIndex`**. `FileIndex` carries a `connectorAccountId` discriminator so that two
+connections exposing the same folder name (e.g. two HubSpot connections both with
+`Contacts`) resolve unambiguously.
+
+The resolver accepts **exactly one reading**: workspace-absolute. There is no leniency and
+no fallback. A reference whose first segment names no connection in the workbook fails with a
+diagnostic error naming the workspace's actual connection folders and the required format. It
+is **not** quietly re-read against the connection being published. Because the resolver never
+guesses, the reference itself is the single source of truth for which connection it points
+at, and no caller has to tell the resolver "which connection am I publishing".
+
+In the rare case where two connections' display names sanitize to the same folder name, the
+resolver probes the `FileIndex` once per candidate connection: exactly one hit resolves the
+reference, no hits leaves it unresolvable like any missing target, and two hits fail with an
+error naming both connections rather than picking one.
 
 ## Related docs
 

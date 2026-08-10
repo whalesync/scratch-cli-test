@@ -88,6 +88,15 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
   let workbookId: WorkbookId;
   let syncId: SyncId;
   let connectorAccountId: string;
+
+  /**
+   * The connection's display name, which is also its folder name at the top of the workspace
+   * tree — and therefore the first segment of every pseudo-ref the FK producer emits for it
+   * (`@/<connection>/<folder>/<file>.json`). Named so the assertions below can strip it back
+   * off to reach the connection-relative path the VFS is keyed by.
+   */
+  const DEST_CONNECTION_FOLDER = 'Test WordPress';
+
   let sourceTagsFolderId: DataFolderId;
   let destTagsFolderId: DataFolderId;
   let sourcePostsFolderId: DataFolderId;
@@ -352,7 +361,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       data: {
         id: connectorAccountId,
         service: Service.WORDPRESS,
-        displayName: 'Test WordPress',
+        displayName: DEST_CONNECTION_FOLDER,
         workbookId,
         userId,
         encryptedCredentials: {},
@@ -494,6 +503,29 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     }
     await fileIndexService.upsertBatch(destFileIndexEntries);
 
+    // A SyncTablePair per table mapping — exactly what `createSync`/`updateSync` write for
+    // every real sync. This test drives `syncTableMapping` directly instead of going through
+    // those, so the rows have to be seeded by hand. The FK producer reads the referenced
+    // pair's DESTINATION folder through here to name the connection its pseudo-ref points at;
+    // without the tags pair it can't, and (since DEV-11238) it fails the field rather than
+    // emitting a connection-relative ref that would just fail later at publish.
+    await prisma.syncTablePair.createMany({
+      data: [
+        {
+          id: createSyncTablePairId(),
+          syncId,
+          sourceDataFolderId: sourceTagsFolderId,
+          destinationDataFolderId: destTagsFolderId,
+        },
+        {
+          id: createSyncTablePairId(),
+          syncId,
+          sourceDataFolderId: sourcePostsFolderId,
+          destinationDataFolderId: destPostsFolderId,
+        },
+      ],
+    });
+
     // =====================================================================
     // Phase B: Sync Tags (DATA phase)
     // =====================================================================
@@ -609,7 +641,12 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       let targetPath = '';
       for (const tag of tags) {
         if (tag.includes('tag-create-')) {
-          targetPath = tag.substring(2); // strip @/ prefix.
+          // A pseudo-ref is workspace-absolute: `@/<connection>/<folder>/<file>.json`. The VFS
+          // is one connection's repo, keyed connection-relative, so strip BOTH the `@/` marker
+          // and the leading connection segment to get the path it stores.
+          const workspaceAbsolutePath = tag.substring(2);
+          expect(workspaceAbsolutePath.startsWith(`${DEST_CONNECTION_FOLDER}/`)).toBe(true);
+          targetPath = workspaceAbsolutePath.substring(DEST_CONNECTION_FOLDER.length + 1);
         } else {
           const file = destFileIndexEntries.find((entry) => entry.recordId === tag);
           if (!file) {
@@ -1611,6 +1648,27 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       });
     }
     await fileIndexService.upsertBatch(destFileIndexEntries);
+
+    // One SyncTablePair per table mapping — what `createSync`/`updateSync` write for every
+    // real sync. Seeded by hand here because this test drives `syncTableMapping` directly.
+    // The FK producer reads the referenced pair's DESTINATION folder through these to name
+    // the connection its pseudo-ref points at (DEV-11238).
+    await prisma.syncTablePair.createMany({
+      data: [
+        {
+          id: createSyncTablePairId(),
+          syncId,
+          sourceDataFolderId: sourceTagsFolderId,
+          destinationDataFolderId: destTagsFolderId,
+        },
+        {
+          id: createSyncTablePairId(),
+          syncId,
+          sourceDataFolderId: sourcePostsFolderId,
+          destinationDataFolderId: destPostsFolderId,
+        },
+      ],
+    });
 
     // Sync tags
     const tagsTableMapping: TableMapping = {

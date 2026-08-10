@@ -293,6 +293,7 @@ const BUILTIN_VALIDATOR_DESCRIPTIONS: Record<string, string> = {
   length: 'String length within a range',
   max_length: 'String must not exceed max length',
   enforce_schema: 'Record conforms to folder schema',
+  pseudo_ref_format: 'Every @/ reference starts at a connection folder',
 };
 
 /** Group entries by target field, merging multi-field entries into each field. */

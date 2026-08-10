@@ -103,8 +103,14 @@ describe('Notion relation FK chain — sync → strip → backfill (composed)', 
       destinationService: Service.NOTION,
       lookupTools: {
         ...createNullLookupTools(),
-        getDestinationMappingForSourceFk: (sourceFkValue: string) =>
-          Promise.resolve(fkMappingBySourceId[sourceFkValue] ?? null),
+        getDestinationMappingForSourceFk: (sourceFkValue: string) => {
+          const mapping = fkMappingBySourceId[sourceFkValue];
+          return Promise.resolve(
+            mapping === undefined
+              ? ({ kind: 'no_destination_record' } as const)
+              : ({ kind: 'mapped', mapping } as const),
+          );
+        },
       },
       phase: 'FOREIGN_KEY_MAPPING',
     };
@@ -184,7 +190,7 @@ describe('Notion relation FK chain — sync → strip → backfill (composed)', 
       getRecordIds: jest
         .fn()
         .mockResolvedValue(
-          new Map([[`categories:${PENDING_CATEGORY_FILENAME}`, PENDING_CATEGORY_PAGE_ID_AFTER_CREATE]]),
+          new Map([[`coa_notion:categories:${PENDING_CATEGORY_FILENAME}`, PENDING_CATEGORY_PAGE_ID_AFTER_CREATE]]),
         ),
     } as unknown as FileIndexService;
     const db = {
@@ -197,7 +203,7 @@ describe('Notion relation FK chain — sync → strip → backfill (composed)', 
     } as unknown as DbService;
 
     const refResolver = new RefResolverService(fileIndexService, db);
-    const [resolved] = await refResolver.resolveBatchPseudoRefs('wkb_1', [backfillContent], undefined, 'coa_notion');
+    const [resolved] = await refResolver.resolveBatchPseudoRefs('wkb_1', [backfillContent]);
 
     expect(resolved).toEqual({
       id: 'scratch_pending_publish_prod',

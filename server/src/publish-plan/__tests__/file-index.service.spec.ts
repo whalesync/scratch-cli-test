@@ -1,5 +1,5 @@
 import { DbService } from '../../db/db.service';
-import { FileIndexService, pickPreferredRecordId } from '../file-index.service';
+import { fileIndexLookupKey, FileIndexService, pickPreferredRecordId } from '../file-index.service';
 
 describe('pickPreferredRecordId', () => {
   it('prefers the row belonging to the requested connection', () => {
@@ -20,8 +20,9 @@ describe('pickPreferredRecordId', () => {
     expect(pickPreferredRecordId(rows, null)).toBe('rec_a');
   });
 
-  // A scoped lookup is a STRICT match: resolving to an UNSCOPED row would hand the
-  // asking connection a record id that belongs to some other connection.
+  // A scoped lookup is a STRICT match (DEV-11242): neither another connection's row nor an
+  // unscoped one can satisfy it. Resolving to either would hand the asking connection a
+  // record id that belongs to someone else.
   it('returns null when the requested connection has no row, rather than taking an UNSCOPED one', () => {
     const rows = [{ connectorAccountId: null, recordId: 'legacy_rec' }];
     expect(pickPreferredRecordId(rows, 'coa_a')).toBeNull();
@@ -35,6 +36,11 @@ describe('pickPreferredRecordId', () => {
   it('still resolves a connector-less (scratch) row for an unscoped lookup', () => {
     const rows = [{ connectorAccountId: null, recordId: 'rec_scratch' }];
     expect(pickPreferredRecordId(rows, undefined)).toBe('rec_scratch');
+  });
+
+  it('returns null for no rows at all', () => {
+    expect(pickPreferredRecordId([], 'coa_a')).toBeNull();
+    expect(pickPreferredRecordId([], undefined)).toBeNull();
   });
 });
 
@@ -50,8 +56,8 @@ describe('FileIndexService.getRecordIds', () => {
     service = new FileIndexService(db);
   });
 
-  it('disambiguates two connections that share a folderPath+filename by connectorAccountId', async () => {
-    // Two connections both have Contacts/marcos.json with distinct record ids.
+  /** Both connections hold `Contacts/marcos.json`, with distinct record ids. */
+  const twoConnectionsShareTheSamePath = () =>
     fileIndexFindMany.mockResolvedValue([
       { folderPath: 'Contacts', filename: 'marcos.json', recordId: 'rec_hubspot', connectorAccountId: 'coa_hubspot' },
       {
@@ -62,15 +68,41 @@ describe('FileIndexService.getRecordIds', () => {
       },
     ]);
 
-    const scopedToHubspot = await service.getRecordIds('wkb_1', [
-      { folderPath: 'Contacts', filename: 'marcos.json', connectorAccountId: 'coa_hubspot' },
-    ]);
-    expect(scopedToHubspot.get('Contacts:marcos.json')).toBe('rec_hubspot');
+  it('disambiguates two connections that share a folderPath+filename by connectorAccountId', async () => {
+    twoConnectionsShareTheSamePath();
 
-    const scopedToTesting = await service.getRecordIds('wkb_1', [
-      { folderPath: 'Contacts', filename: 'marcos.json', connectorAccountId: 'coa_hubspot_testing' },
-    ]);
-    expect(scopedToTesting.get('Contacts:marcos.json')).toBe('rec_hubspot_testing');
+    const hubspotLookup = { folderPath: 'Contacts', filename: 'marcos.json', connectorAccountId: 'coa_hubspot' };
+    const scopedToHubspot = await service.getRecordIds('wkb_1', [hubspotLookup]);
+    expect(scopedToHubspot.get(fileIndexLookupKey(hubspotLookup))).toBe('rec_hubspot');
+
+    const testingLookup = {
+      folderPath: 'Contacts',
+      filename: 'marcos.json',
+      connectorAccountId: 'coa_hubspot_testing',
+    };
+    const scopedToTesting = await service.getRecordIds('wkb_1', [testingLookup]);
+    expect(scopedToTesting.get(fileIndexLookupKey(testingLookup))).toBe('rec_hubspot_testing');
+  });
+
+  // The regression this keying exists for: with the result keyed `folderPath:filename` these
+  // two lookups collapsed onto one entry, so BOTH refs resolved to whichever connection was
+  // registered first — publish then wrote the wrong record id to the service.
+  it('keeps both connections distinct when they are looked up in the SAME batch', async () => {
+    twoConnectionsShareTheSamePath();
+
+    const hubspotLookup = { folderPath: 'Contacts', filename: 'marcos.json', connectorAccountId: 'coa_hubspot' };
+    const testingLookup = {
+      folderPath: 'Contacts',
+      filename: 'marcos.json',
+      connectorAccountId: 'coa_hubspot_testing',
+    };
+
+    const result = await service.getRecordIds('wkb_1', [hubspotLookup, testingLookup]);
+
+    expect(result.get(fileIndexLookupKey(hubspotLookup))).toBe('rec_hubspot');
+    expect(result.get(fileIndexLookupKey(testingLookup))).toBe('rec_hubspot_testing');
+    // One DB round trip still — the two lookups share a folderPath, so they batch together.
+    expect(fileIndexFindMany).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to a workbook-global match when no connection is provided', async () => {
@@ -78,20 +110,33 @@ describe('FileIndexService.getRecordIds', () => {
       { folderPath: 'Contacts', filename: 'marcos.json', recordId: 'rec_first', connectorAccountId: 'coa_hubspot' },
     ]);
 
-    const result = await service.getRecordIds('wkb_1', [{ folderPath: 'Contacts', filename: 'marcos.json' }]);
-    expect(result.get('Contacts:marcos.json')).toBe('rec_first');
+    const unscopedLookup = { folderPath: 'Contacts', filename: 'marcos.json' };
+    const result = await service.getRecordIds('wkb_1', [unscopedLookup]);
+    expect(result.get(fileIndexLookupKey(unscopedLookup))).toBe('rec_first');
   });
 
-  // Omitting the key (rather than returning another connection's id) is what makes a
-  // scoped lookup strict — callers already treat a missing key as "no record id".
-  it('omits a key whose only row belongs to a different connection', async () => {
+  it('resolves an UNSCOPED lookup workbook-globally (the connector-less scratch folder case)', async () => {
     fileIndexFindMany.mockResolvedValue([
-      { folderPath: 'Contacts', filename: 'marcos.json', recordId: 'rec_hubspot', connectorAccountId: 'coa_hubspot' },
+      { folderPath: 'Notes', filename: 'idea.json', recordId: 'scratch_rec', connectorAccountId: null },
     ]);
 
-    const result = await service.getRecordIds('wkb_1', [
-      { folderPath: 'Contacts', filename: 'marcos.json', connectorAccountId: 'coa_other' },
+    const unscopedLookup = { folderPath: 'Notes', filename: 'idea.json' };
+    const result = await service.getRecordIds('wkb_1', [unscopedLookup]);
+    expect(result.get(fileIndexLookupKey(unscopedLookup))).toBe('scratch_rec');
+  });
+
+  // Omitting the lookup (rather than returning another connection's id) is what makes a
+  // scoped lookup strict — callers already treat a missing key as "no record id".
+  it('omits a lookup whose only row belongs to a different connection', async () => {
+    fileIndexFindMany.mockResolvedValue([
+      { folderPath: 'Contacts', filename: 'marcos.json', recordId: 'rec_other', connectorAccountId: 'coa_other' },
     ]);
-    expect(result.has('Contacts:marcos.json')).toBe(false);
+
+    const lookup = { folderPath: 'Contacts', filename: 'marcos.json', connectorAccountId: 'coa_hubspot' };
+    const result = await service.getRecordIds('wkb_1', [lookup]);
+
+    // Absent, not wrong — the caller surfaces it as unresolved instead of publishing
+    // another connection's remote id into this connection's record.
+    expect(result.has(fileIndexLookupKey(lookup))).toBe(false);
   });
 });

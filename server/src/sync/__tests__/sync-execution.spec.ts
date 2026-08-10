@@ -19,7 +19,7 @@ import {
   transformRecordAsync,
   v2ColumnAsV1,
 } from 'src/sync/sync-execution';
-import { FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.types';
+import { DestinationMappingResolution, FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.types';
 
 // Register transformers used in the tests
 import 'src/sync/transformers/implementations/auto-convert.transformer';
@@ -41,7 +41,7 @@ const NOOP_LOOKUP_TOOLS: LookupTools = {
   resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
     Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
   ),
-  getDestinationMappingForSourceFk: jest.fn(() => Promise.resolve(null)),
+  getDestinationMappingForSourceFk: jest.fn(() => Promise.resolve({ kind: 'no_destination_record' as const })),
   lookupFieldFromFkRecord: jest.fn(() => Promise.resolve(null)),
   getOrCreateDestinationAssetMapping: jest.fn(() => Promise.reject(new Error('not available'))),
   matchDestinationAssetByHash: jest.fn(() => Promise.resolve([])),
@@ -52,15 +52,16 @@ const FK_LOOKUP_TOOLS: LookupTools = {
   resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
     Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
   ),
-  getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<FkMappingResult | null> => {
+  getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<DestinationMappingResolution> => {
     const map: Record<string, FkMappingResult> = {
       src_author_1: {
         destinationFilePath: 'authors/alice.json',
         destinationRemoteId: 'wf-author-1',
-        destinationConnectionFolder: null,
+        destinationConnectionFolder: 'DestConn',
       },
     };
-    return Promise.resolve(map[fk] ?? null);
+    const mapping = map[fk];
+    return Promise.resolve(mapping === undefined ? { kind: 'no_destination_record' } : { kind: 'mapped', mapping });
   }),
   lookupFieldFromFkRecord: jest.fn(() => Promise.resolve(null)),
   getOrCreateDestinationAssetMapping: jest.fn(() => Promise.reject(new Error('not available'))),

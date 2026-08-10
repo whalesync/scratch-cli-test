@@ -9,7 +9,7 @@ import { Service } from 'src/remote-service/connectors/service-constants';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
-import { FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.types';
+import { DestinationMappingResolution, FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.types';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
@@ -1072,15 +1072,16 @@ describe('transformRecordAsync', () => {
       resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
         Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
       ),
-      getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<FkMappingResult | null> => {
+      getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<DestinationMappingResolution> => {
         const map: Record<string, FkMappingResult> = {
           src_author_1: {
             destinationFilePath: 'authors/alice.json',
             destinationRemoteId: 'wf-author-1',
-            destinationConnectionFolder: null,
+            destinationConnectionFolder: 'DestConn',
           },
         };
-        return Promise.resolve(map[fk] ?? null);
+        const mapping = map[fk];
+        return Promise.resolve(mapping === undefined ? { kind: 'no_destination_record' } : { kind: 'mapped', mapping });
       }),
       lookupFieldFromFkRecord: jest.fn(),
       getOrCreateDestinationAssetMapping: jest.fn(),

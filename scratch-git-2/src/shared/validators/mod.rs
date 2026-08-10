@@ -14,6 +14,53 @@ use serde::Deserialize;
 
 pub const VALIDATION_RESULTS_TABLE: &str = "validation_results_v1";
 
+/// Minimal view of the `<workspace>/.scratch/.scratchmd` marker: just the connection
+/// directory names. Deliberately a separate, tiny shape from `folder_index`'s own marker
+/// struct — this module must not depend on `folder_index` (that dependency runs the other way).
+#[derive(Deserialize)]
+struct WorkspaceConnectionsMarker {
+    #[serde(default)]
+    connections: Vec<WorkspaceConnectionsMarkerEntry>,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceConnectionsMarkerEntry {
+    #[serde(rename = "dirName", default)]
+    dir_name: String,
+}
+
+/// The workspace's connection folder names — the valid first segments of a workspace-absolute
+/// pseudo-reference (`@/<connection>/…`), used by
+/// [`builtin::validate_pseudo_ref_format`].
+///
+/// Read from the workspace marker rather than by listing directories on disk: the marker names
+/// EVERY connection in the workbook, including ones whose folder hasn't been materialized
+/// locally, so a reference into a not-yet-downloaded connection isn't mistaken for a malformed
+/// one.
+///
+/// Returns an empty Vec when the marker is missing or unparseable. Callers treat that as
+/// "unknown" and skip the pseudo-ref check rather than flagging every reference — the same
+/// convention `folder_index::bare_repo_for_connection` uses for a missing marker.
+pub fn read_workspace_connection_folder_names(workspace_root: &Path) -> Vec<String> {
+    let marker_path = workspace_root.join(".scratch").join(".scratchmd");
+    let Ok(content) = std::fs::read_to_string(&marker_path) else {
+        return Vec::new();
+    };
+    let Ok(marker) = serde_yaml::from_str::<WorkspaceConnectionsMarker>(&content) else {
+        eprintln!(
+            "[validation] failed to parse {} — pseudo-reference format checks will be skipped",
+            marker_path.display()
+        );
+        return Vec::new();
+    };
+    marker
+        .connections
+        .into_iter()
+        .map(|connection| connection.dir_name)
+        .filter(|dir_name| !dir_name.is_empty())
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Public interfaces
 // ---------------------------------------------------------------------------
@@ -35,6 +82,11 @@ pub struct RecordValidationContext {
     /// Parsed `schema.json` root for this folder; `None` when no schema file exists.
     pub schema: serde_json::Value,
     pub args: serde_json::Value,
+    /// The workspace's connection folder names — the valid first segments of a
+    /// workspace-absolute pseudo-reference. Only `pseudo_ref_format` reads this; see
+    /// [`read_workspace_connection_folder_names`]. Empty means "unknown", and that
+    /// validator stands down rather than flagging every reference.
+    pub workspace_connection_folders: Vec<String>,
 }
 
 /// One violation emitted by a record-scoped validator.
@@ -230,6 +282,14 @@ pub fn run_validations(
 
     reset_validation_results(&conn, selected_paths)?;
 
+    // The workspace root is the parent of the per-connection worktree — `workspace_dir` is
+    // historically the workbook materialization path (`<workspace>/.scratch/workspace`), not
+    // the root. Same derivation `ConnectionContext::to_paths` uses.
+    let workspace_connection_folder_names = worktree_dir
+        .parent()
+        .map(read_workspace_connection_folder_names)
+        .unwrap_or_default();
+
     if configs.is_empty() {
         return Ok(());
     }
@@ -241,6 +301,7 @@ pub fn run_validations(
         scratch_dir,
         bare_repo,
         &configs,
+        &workspace_connection_folder_names,
         &conn,
         selected_paths,
     )?;
@@ -360,6 +421,10 @@ pub struct DryRunViolation {
 /// Designed for agent dry-runs via the `validate-record` CLI command:
 /// test a record before saving it, try a custom validation rule, or validate
 /// inline JSON without touching the index at all.
+///
+/// `workspace_connection_folders` is only read by the `pseudo_ref_format` validator (see
+/// [`read_workspace_connection_folder_names`]); pass an empty slice when that validator isn't
+/// configured for the folder, or when the workspace marker isn't available.
 pub fn run_validators_dry(
     file_name: &str,
     record: &serde_json::Value,
@@ -367,6 +432,7 @@ pub fn run_validators_dry(
     schema: Option<&serde_json::Value>,
     entries: &[ValidatorEntry],
     workspace_dir: &Path,
+    workspace_connection_folders: &[String],
 ) -> anyhow::Result<Vec<DryRunViolation>> {
     let mut out = Vec::new();
 
@@ -417,6 +483,7 @@ pub fn run_validators_dry(
                     master_record: master_record.cloned(),
                     schema: schema.cloned().unwrap_or(serde_json::Value::Null),
                     args: entry.params.clone(),
+                    workspace_connection_folders: workspace_connection_folders.to_vec(),
                 };
                 let violations = dispatch_record_validator(&entry.validator, &record_ctx)?;
                 for v in violations {
@@ -536,6 +603,7 @@ fn validate_records(
     scratch_dir: &Path,
     bare_repo: &Path,
     configs: &HashMap<String, Vec<ValidatorEntry>>,
+    workspace_connection_folder_names: &[String],
     conn: &Connection,
     selected_paths: Option<&std::collections::HashSet<String>>,
 ) -> anyhow::Result<()> {
@@ -639,6 +707,7 @@ fn validate_records(
                 item.schema.as_ref(),
                 entries,
                 workspace_dir,
+                workspace_connection_folder_names,
             )
         })
         .collect();
@@ -732,6 +801,7 @@ fn apply_validators_to_record(
     schema: Option<&serde_json::Value>,
     entries: &[ValidatorEntry],
     workspace_dir: &Path,
+    workspace_connection_folder_names: &[String],
 ) -> anyhow::Result<Vec<PendingResult>> {
     let mut pending = Vec::new();
 
@@ -792,7 +862,8 @@ fn apply_validators_to_record(
                 );
             }
             (None, None) => {
-                // Record-scoped validator. `enforce_schema` reads schema + master.
+                // Record-scoped validator. `enforce_schema` reads schema + master;
+                // `pseudo_ref_format` reads the workspace's connection folders.
                 // Absence of rows for a record means no violations (violations-only model).
                 let record_ctx = RecordValidationContext {
                     filename: file_name.to_string(),
@@ -800,6 +871,7 @@ fn apply_validators_to_record(
                     master_record: master_record.cloned(),
                     schema: schema.cloned().unwrap_or(serde_json::Value::Null),
                     args: entry.params.clone(),
+                    workspace_connection_folders: workspace_connection_folder_names.to_vec(),
                 };
                 let violations = dispatch_record_validator(&entry.validator, &record_ctx)?;
                 for v in violations {
@@ -852,9 +924,14 @@ fn dispatch_record_validator(
 ) -> anyhow::Result<Vec<RecordValidationResult>> {
     match kind {
         "enforce_schema" => Ok(builtin::enforce_schema(ctx)),
+        builtin::PSEUDO_REF_FORMAT_VALIDATOR_KIND => Ok(builtin::validate_pseudo_ref_format(
+            &ctx.record,
+            &ctx.workspace_connection_folders,
+        )),
         other => anyhow::bail!(
-            "unknown record-scoped validator '{}' — valid: enforce_schema",
-            other
+            "unknown record-scoped validator '{}' — valid: enforce_schema, {}",
+            other,
+            builtin::PSEUDO_REF_FORMAT_VALIDATOR_KIND
         ),
     }
 }
@@ -1199,6 +1276,79 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    /// DEV-11238: `pseudo_ref_format` is a configured record-scoped validator like
+    /// `enforce_schema`, seeded into every folder by Scratch Desktop. This drives it the way
+    /// production does — through `validation.json` and `run_validations` — including the
+    /// workspace-marker read that supplies the connection folder names.
+    #[test]
+    fn pseudo_ref_format_validator_flags_a_connection_relative_ref_via_config() {
+        let tmp = TempDir::new().unwrap();
+        // `run_validations` derives the workspace ROOT from `worktree_dir.parent()`, so the
+        // worktree has to sit directly under it for the marker to be found.
+        let workspace_root = tmp.path().join("ws");
+        let scratch_dir = workspace_root.join("scratch");
+        let worktree_dir = workspace_root.join("HubSpot");
+        let workspace_dir = workspace_root.join("workspace");
+        let db_path = tmp.path().join("index.db");
+
+        // The marker names the workspace's connection folders — the valid first segments.
+        write_file(
+            &workspace_root,
+            ".scratch/.scratchmd",
+            "connections:\n  - dirName: HubSpot\n    repoPath: org_a/wkb_b/coa_c\n",
+        );
+
+        // One well-formed ref and one that omits its connection folder, in the same record.
+        write_file(
+            &worktree_dir,
+            "posts/rec1.json",
+            r#"{"id":"1","good":"@/HubSpot/Contacts/a.json","bad":"@/Contacts/b.json"}"#,
+        );
+        write_file(
+            &scratch_dir,
+            "posts/validation.json",
+            r#"[{"validator":"pseudo_ref_format","params":{}}]"#,
+        );
+
+        run_validations(
+            &scratch_dir,
+            &worktree_dir,
+            &workspace_dir,
+            Path::new(""),
+            &db_path,
+            false,
+            None,
+        )
+        .unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let rows: Vec<(String, String, String)> = conn
+            .prepare(&format!(
+                "SELECT field_path, level, COALESCE(message, '') FROM {VALIDATION_RESULTS_TABLE} \
+                 WHERE folder_path = 'posts' AND file_name = 'rec1.json' \
+                   AND validator_kind = 'pseudo_ref_format'"
+            ))
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        // Only the one missing its connection folder is flagged; the other passes.
+        assert_eq!(
+            rows.len(),
+            1,
+            "expected exactly one violation, got {rows:?}"
+        );
+        assert_eq!(rows[0].0, "bad");
+        assert_eq!(rows[0].1, "error");
+        assert!(
+            rows[0].2.contains("is not workspace-absolute"),
+            "got: {}",
+            rows[0].2
+        );
     }
 
     /// Slice F.3 regression test: the readonly-field validator reads the

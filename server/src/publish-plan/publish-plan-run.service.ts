@@ -1111,7 +1111,6 @@ export class PublishPlanRunService {
       const unresolvablePseudoRefStrings = await this.refResolverService.findUnresolvablePseudoRefs(
         workbookId,
         rawContents,
-        connectorAccountId,
       );
       if (unresolvablePseudoRefStrings.size > 0) {
         WSLogger.warn({
@@ -1130,7 +1129,6 @@ export class PublishPlanRunService {
       workbookId,
       contentsToResolve,
       (asset) => connector.resolveAssetReference(asset),
-      connectorAccountId,
     );
 
     // Backfill-phase FK rewrite via `RecreatedIdMap`. Walk EVERY entry's FK
@@ -1382,16 +1380,10 @@ export class PublishPlanRunService {
       rawOps.push(entryContent as ParsedContent);
     }
 
-    // Scope pseudo-ref resolution to this plan's connection so a legacy
-    // connection-relative ref (or a co-pending ref to a shared-folder-name
-    // record) resolves within the right connection — same as the edit/backfill
-    // path (DEV-10880).
-    const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(
-      workbookId,
-      rawOps,
-      undefined,
-      connectorAccountId,
-    );
+    // Every pseudo-ref carries its own connection folder as its first segment, so resolution
+    // needs no plan-connection scope — the ref itself says which connection it points at
+    // (DEV-11238).
+    const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
 
     // No FK rewrite here: revert-creates have their FK fields stripped at
     // plan-build (pass4) and re-applied via the BACKFILL phase, which runs

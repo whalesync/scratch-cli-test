@@ -588,7 +588,7 @@ model FileIndex {
   // (DEV-11242), which recovers ownership from the connection repos themselves.
   // No dedicated index on `connectorAccountId`: runtime lookups
   // (getRecordId/getRecordIds) still query by (workbookId, folderPath, filename)
-  // and apply the connection preference in JS (pickPreferredRecordId), so they are
+  // and apply the connection scope in JS (pickPreferredRecordId), so they are
   // served by the existing (workbookId, folderPath, filename) index; nothing
   // filters on connectorAccountId in a hot path. The only query that constrains it
   // is the one-time backfill (run in `ids` mode on large deployments to avoid a

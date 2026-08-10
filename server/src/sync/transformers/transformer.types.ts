@@ -30,11 +30,32 @@ export interface FkMappingResult {
    * The destination connection's folder name — the first segment of a
    * workspace-absolute pseudo-ref (`sanitizeConnectionFolderName(displayName)`).
    * Prepended to `destinationFilePath` so the sync producer emits the canonical
-   * `@/<connection>/<folder>/<file>.json` form (DEV-10880). Null when the
-   * destination folder has no connection (should not happen for FK targets).
+   * `@/<connection>/<folder>/<file>.json` form.
+   *
+   * Non-nullable ON PURPOSE: a mapping is only ever produced once the destination
+   * folder's connection is known, so the compiler guarantees this producer always
+   * has a connection folder to prepend. When the connection can't be resolved there
+   * is no mapping at all — see {@link DestinationMappingResolution}'s
+   * `destination_connection_unresolved`.
    */
-  destinationConnectionFolder: string | null;
+  destinationConnectionFolder: string;
 }
+
+/**
+ * Result of resolving a source foreign-key value to the DESTINATION record it maps to.
+ *
+ * `destination_connection_unresolved` is deliberately distinct from `no_destination_record`:
+ * the first means the sync knows which destination record this FK maps to but cannot name the
+ * connection that record lives in, so no workspace-absolute pseudo-ref can be built. That is a
+ * hard failure rather than a skip — there is no other reference we are allowed to write, and
+ * dropping the link silently would be the "swallow and lie" this codebase forbids.
+ */
+export type DestinationMappingResolution =
+  | { kind: 'mapped'; mapping: FkMappingResult }
+  /** Nothing in the referenced folder maps this source FK to a destination record. */
+  | { kind: 'no_destination_record' }
+  /** A destination record exists, but its connection folder could not be determined. */
+  | { kind: 'destination_connection_unresolved'; reason: string };
 
 /**
  * Result of resolving a foreign-key VALUE to the referenced record's SOURCE remote id — the
@@ -86,17 +107,17 @@ export interface LookupTools {
   ): Promise<ForeignKeyTargetResolution>;
 
   /**
-   * Gets the destination file path and remote ID for a source foreign key value.
-   * Uses SyncRemoteIdMapping to find the corresponding destination record.
+   * Gets the destination file path, remote ID and connection folder for a source foreign key
+   * value. Uses SyncRemoteIdMapping to find the corresponding destination record.
    *
    * @param sourceFkValue - The foreign key value from the source record
    * @param referencedDataFolderId - The DataFolder that contains the referenced records
-   * @returns The destination mapping, or null if not found
+   * @returns Which of the three outcomes in {@link DestinationMappingResolution} applies
    */
   getDestinationMappingForSourceFk(
     sourceFkValue: string,
     referencedDataFolderId: DataFolderId,
-  ): Promise<FkMappingResult | null>;
+  ): Promise<DestinationMappingResolution>;
 
   /**
    * Looks up a field value from a record referenced by a foreign key.

@@ -305,6 +305,10 @@ pub fn dry_run_command(
     let workspace = resolve_workspace(workspace_start)?;
     let layout = WorkspaceLayout::for_cli(&workspace);
     let workspace_dir = layout.workbook_materialization_path();
+    // For the always-on pseudo-reference format check. Read from the workspace ROOT, not
+    // `workspace_dir` (which is the workbook materialization path).
+    let workspace_connection_folder_names =
+        validators::read_workspace_connection_folder_names(&workspace);
 
     let (connection_name, subfolder): (Option<String>, Option<String>) = if let Some(f) = folder {
         let slash = f.find('/');
@@ -376,6 +380,7 @@ pub fn dry_run_command(
             schema.as_ref(),
             &entries,
             &workspace_dir,
+            &workspace_connection_folder_names,
         )?;
         all_violations.extend(violations);
     } else {
@@ -444,6 +449,7 @@ pub fn dry_run_command(
                 schema.as_ref(),
                 &entries,
                 &workspace_dir,
+                &workspace_connection_folder_names,
             )?;
             all_violations.extend(violations);
         }

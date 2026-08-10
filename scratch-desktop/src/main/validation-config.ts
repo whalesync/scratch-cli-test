@@ -99,7 +99,7 @@ export async function writeValidationConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Auto-seeding the schema validator (DEV-10453)
+// Auto-seeding the always-applied validators (DEV-10453, DEV-11238)
 // ---------------------------------------------------------------------------
 
 /**
@@ -112,6 +112,27 @@ const AUTO_SEEDED_ENFORCE_SCHEMA_ENTRY: ValidatorConfigEntry = {
   validator: 'enforce_schema',
   note: 'Auto-seeded by Scratch Desktop — validates each record against its folder schema (advisory).',
 };
+
+/**
+ * Checks that every `@/…` pseudo-reference in a record is workspace-absolute — that its first path
+ * segment names one of the workspace's connection folders (see `docs/pseudo-refs.md`). The publish
+ * resolver accepts that form and nothing else, so a reference that omits its connection folder is a
+ * guaranteed publish failure; seeding this makes the user see it while editing instead.
+ */
+const AUTO_SEEDED_PSEUDO_REF_FORMAT_ENTRY: ValidatorConfigEntry = {
+  validator: 'pseudo_ref_format',
+  note: 'Auto-seeded by Scratch Desktop — checks that @/ references are workspace-absolute.',
+};
+
+/**
+ * The validators Scratch Desktop always applies, in seed order. "Always applied" means a folder
+ * missing any of them is re-seeded on the next workspace load, so removing one via the Validation UI
+ * does not stick — see {@link ensureAutoSeededValidatorsInEveryFolder}.
+ */
+const AUTO_SEEDED_VALIDATOR_ENTRIES: ValidatorConfigEntry[] = [
+  AUTO_SEEDED_ENFORCE_SCHEMA_ENTRY,
+  AUTO_SEEDED_PSEUDO_REF_FORMAT_ENTRY,
+];
 
 /**
  * Split a workspace-relative leaf-folder name (e.g. `pipedrive/Deals`) into its connection dir name and
@@ -127,12 +148,12 @@ function splitLeafFolderName(leafFolderName: string): { connectionDirName: strin
 }
 
 /**
- * Decide which leaf folders still need an `enforce_schema` validator entry, and the full entry list to
- * write for each. Pure (no I/O) so it is unit-testable. A folder already containing an `enforce_schema`
- * entry is skipped (idempotent); otherwise `enforce_schema` is appended after any existing user
- * validators, preserving their order.
+ * Decide which leaf folders are still missing one of {@link AUTO_SEEDED_VALIDATOR_ENTRIES}, and the
+ * full entry list to write for each. Pure (no I/O) so it is unit-testable. A folder that already has
+ * every auto-seeded validator is skipped (idempotent); otherwise only the MISSING ones are appended,
+ * after any existing user validators, preserving their order.
  */
-export function computeFoldersNeedingSchemaValidatorSeed(
+export function computeFoldersNeedingAutoSeededValidators(
   leafFolderNames: string[],
   existingConfigs: ValidatorConfig[],
 ): Array<{ connectionDirName: string; folderPath: string; entriesToWrite: ValidatorConfigEntry[] }> {
@@ -151,12 +172,15 @@ export function computeFoldersNeedingSchemaValidatorSeed(
     if (!connectionDirName) continue;
 
     const existingEntries = existingEntriesByConnectionAndFolderPath.get(`${connectionDirName}/${folderPath}`) ?? [];
-    if (existingEntries.some((entry) => entry.validator === 'enforce_schema')) continue;
+    const missingEntries = AUTO_SEEDED_VALIDATOR_ENTRIES.filter(
+      (autoSeeded) => !existingEntries.some((entry) => entry.validator === autoSeeded.validator),
+    );
+    if (missingEntries.length === 0) continue;
 
     foldersToSeed.push({
       connectionDirName,
       folderPath,
-      entriesToWrite: [...existingEntries, AUTO_SEEDED_ENFORCE_SCHEMA_ENTRY],
+      entriesToWrite: [...existingEntries, ...missingEntries],
     });
   }
 
@@ -164,18 +188,19 @@ export function computeFoldersNeedingSchemaValidatorSeed(
 }
 
 /**
- * Ensure every data leaf folder in the workspace has an `enforce_schema` validator entry so schema
- * validation (and its read-only-edit warning) always runs. Idempotent and order-preserving (see
- * {@link computeFoldersNeedingSchemaValidatorSeed}). Writes only under `.scratch/`, which is excluded
- * from the publish/review diff, so it never blocks publish or pollutes the user's record diff.
- * Best-effort — callers should swallow/log errors.
+ * Ensure every data leaf folder in the workspace carries each of {@link AUTO_SEEDED_VALIDATOR_ENTRIES}
+ * — `enforce_schema`, so schema validation (and its read-only-edit warning) always runs, and
+ * `pseudo_ref_format`, so a malformed `@/…` reference surfaces at edit time rather than at publish.
+ * Idempotent and order-preserving (see {@link computeFoldersNeedingAutoSeededValidators}). Writes only
+ * under `.scratch/`, which is excluded from the publish/review diff, so it never blocks publish or
+ * pollutes the user's record diff. Best-effort — callers should swallow/log errors.
  *
  * Note: a folder whose entry was removed via the Validation UI is re-seeded on the next workspace load
  * (the rule is "always applied"); deliberate removal is not currently honored.
  *
  * @returns the (connectionDirName, folderPath) pairs newly seeded this run.
  */
-export async function ensureSchemaValidatorSeededInEveryFolder(
+export async function ensureAutoSeededValidatorsInEveryFolder(
   workspacePath: string,
 ): Promise<Array<{ connectionDirName: string; folderPath: string }>> {
   // Imported dynamically so this module (and its unit tests) don't pull in the heavier local-files /
@@ -186,7 +211,7 @@ export async function ensureSchemaValidatorSeededInEveryFolder(
     getValidationConfigs(workspacePath),
   ]);
 
-  const foldersToSeed = computeFoldersNeedingSchemaValidatorSeed(
+  const foldersToSeed = computeFoldersNeedingAutoSeededValidators(
     leafFolders.map((folder) => folder.name),
     existingConfigs,
   );

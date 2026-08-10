@@ -1,7 +1,7 @@
 import { createScratchPendingPublishId, DataFolderId, SourceFkToDestFkOptions } from '@spinner/shared-types';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { sourceFkToDestFkTransformer } from '../implementations/source-fk-to-dest-fk.transformer';
-import { FkMappingResult, LookupTools, SyncRecord, TransformContext } from '../transformer.types';
+import { DestinationMappingResolution, LookupTools, SyncRecord, TransformContext } from '../transformer.types';
 
 const REFERENCED_FOLDER = 'dfd_dest_authors' as DataFolderId;
 
@@ -12,7 +12,7 @@ const DEST_CONN = 'DestConn';
 function createLookupTools(
   mapping: Record<
     string,
-    { destinationFilePath: string; destinationRemoteId: string | null; destinationConnectionFolder?: string | null }
+    { destinationFilePath: string; destinationRemoteId: string | null; destinationConnectionFolder?: string }
   > = {},
 ): LookupTools {
   return {
@@ -20,21 +20,34 @@ function createLookupTools(
     resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
       Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
     ),
-    getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<FkMappingResult | null> => {
+    getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<DestinationMappingResolution> => {
       const entry = mapping[fk];
-      if (!entry) return Promise.resolve(null);
+      if (!entry) return Promise.resolve({ kind: 'no_destination_record' });
       return Promise.resolve({
-        destinationFilePath: entry.destinationFilePath,
-        destinationRemoteId: entry.destinationRemoteId,
-        // Default to a real connection folder so tests exercise the canonical
-        // workspace-absolute output; pass `null` explicitly to test the fallback.
-        destinationConnectionFolder:
-          entry.destinationConnectionFolder === undefined ? DEST_CONN : entry.destinationConnectionFolder,
+        kind: 'mapped',
+        mapping: {
+          destinationFilePath: entry.destinationFilePath,
+          destinationRemoteId: entry.destinationRemoteId,
+          destinationConnectionFolder: entry.destinationConnectionFolder ?? DEST_CONN,
+        },
       });
     }),
     lookupFieldFromFkRecord: jest.fn(),
     getOrCreateDestinationAssetMapping: jest.fn(),
     matchDestinationAssetByHash: jest.fn().mockResolvedValue([]),
+  };
+}
+
+/**
+ * Lookup tools whose referenced folder resolves to a destination record whose CONNECTION is
+ * unknown — the state in which this producer has no connection folder to prepend.
+ */
+function createConnectionUnresolvedLookupTools(reason: string): LookupTools {
+  return {
+    ...createLookupTools(),
+    getDestinationMappingForSourceFk: jest.fn(() =>
+      Promise.resolve({ kind: 'destination_connection_unresolved' as const, reason }),
+    ),
   };
 }
 
@@ -101,16 +114,30 @@ describe('sourceFkToDestFkTransformer', () => {
       expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/bob.json' });
     });
 
-    it('should fall back to the connection-relative form when the destination connection folder is unknown', async () => {
-      const lookup = createLookupTools({
-        src_1: {
-          destinationFilePath: 'dest-authors/alice.json',
-          destinationRemoteId: null,
-          destinationConnectionFolder: null,
-        },
-      });
+    // A ref without its connection segment does not resolve at publish, so an unknown
+    // destination connection has to fail here rather than write a reference that fails later.
+    it('fails instead of emitting a ref without a connection folder when the destination connection is unknown', async () => {
+      const lookup = createConnectionUnresolvedLookupTools(
+        'the destination folder "Authors" (dfd_x) is not attached to a connection',
+      );
       const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
-      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain('Could not build a reference for foreign key "src_1"');
+        expect(result.error).toContain('is not attached to a connection');
+      }
+    });
+
+    it('fails on an unknown destination connection even under onUnresolved: "ignore"', async () => {
+      // `ignore` forgives a target we cannot FIND, not a target we cannot ADDRESS — silently
+      // dropping the link here would be the "swallow and lie" the product principles forbid.
+      const lookup = createConnectionUnresolvedLookupTools('this sync has no table pair whose source folder is dfd_x');
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('src_1', lookup, { referencedDataFolderId: REFERENCED_FOLDER, onUnresolved: 'ignore' }),
+      );
+
+      expect(result.success).toBe(false);
     });
 
     it('should fail when FK cannot be resolved', async () => {

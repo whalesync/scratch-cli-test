@@ -946,6 +946,267 @@ fn get_by_segments<'a>(
     Some(current)
 }
 
+// ---------------------------------------------------------------------------
+// pseudo_ref_format — always-on (DEV-11238)
+// ---------------------------------------------------------------------------
+
+/// The validator kind recorded for a malformed pseudo-reference.
+pub const PSEUDO_REF_FORMAT_VALIDATOR_KIND: &str = "pseudo_ref_format";
+
+/// Flags a `@/…` pseudo-reference that is not workspace-absolute — one whose first path
+/// segment is not a connection folder of this workspace.
+///
+/// A pseudo-reference is `@/<connection folder>/<folder…>/<record file>.json` (the canonical
+/// spec lives in `docs/pseudo-refs.md`). The publish resolver accepts that form and NOTHING
+/// else, so a reference that omits its connection folder is a guaranteed publish failure.
+/// Catching it here is what makes the format one-way: the user sees it in the desktop app
+/// while editing rather than when they publish.
+///
+/// Scratch Desktop seeds this validator into every data folder alongside `enforce_schema`, so
+/// it applies everywhere without anyone configuring it per table.
+///
+/// `workspace_connection_folders` is the authoritative list from the workspace marker. When it
+/// is EMPTY the check stands down completely: a missing or unreadable marker is structurally
+/// indistinguishable from an uninitialized workspace, and flagging every reference in that
+/// state would be far worse than flagging none.
+///
+/// Walks the whole record, because a reference can sit anywhere a real link id can — a scalar
+/// field, an element of a multi-value array, or nested inside a connector-specific link shape
+/// (a HubSpot association's `id`). Only `@/` values are considered; `@asset/…` is a separate,
+/// system-managed marker with its own resolution.
+pub fn validate_pseudo_ref_format(
+    record: &serde_json::Value,
+    workspace_connection_folders: &[String],
+) -> Vec<RecordValidationResult> {
+    if workspace_connection_folders.is_empty() {
+        return Vec::new();
+    }
+    let mut violations = Vec::new();
+    let mut field_path_segments = Vec::new();
+    collect_malformed_pseudo_refs(
+        record,
+        workspace_connection_folders,
+        &mut field_path_segments,
+        &mut violations,
+    );
+    violations
+}
+
+/// Whether a reference's leading segment names the connection whose workspace folder is
+/// `folder_name`.
+///
+/// Usually a plain equality: the segment IS the folder as it appears in the tree. The two
+/// prefix cases exist because a workspace's connection folder can be named under either of two
+/// schemes — the bare display name (`Airtable`) or the older `"<SERVICE> - <displayName>"`
+/// (`AIRTABLE - Airtable`) — and a producer may legitimately write the other one. Sync, for
+/// instance, emits the bare display name even in a workspace whose folder uses the legacy
+/// scheme. The publish resolver accepts both (it registers both names per connection), so this
+/// check MUST accept both too — flagging a reference that publishes fine would be a false
+/// alarm, and this validator's whole job is to be trustworthy about the one form that doesn't.
+fn connection_segment_matches_folder(first_segment: &str, folder_name: &str) -> bool {
+    if first_segment == folder_name {
+        return true;
+    }
+    // folder is `"<SERVICE> - <segment>"` (legacy folder, bare-name reference)…
+    if folder_name
+        .strip_suffix(first_segment)
+        .is_some_and(|prefix| prefix.ends_with(" - ") && !first_segment.is_empty())
+    {
+        return true;
+    }
+    // …or the reference carries the legacy prefix while the folder is the bare name.
+    first_segment
+        .strip_suffix(folder_name)
+        .is_some_and(|prefix| prefix.ends_with(" - ") && !folder_name.is_empty())
+}
+
+/// Recursive worker for [`validate_pseudo_ref_format`], carrying the current field path so a
+/// violation can name exactly where in the record it sits. Array elements contribute their
+/// index as a segment (`Tags.0`).
+fn collect_malformed_pseudo_refs(
+    value: &serde_json::Value,
+    workspace_connection_folders: &[String],
+    field_path_segments: &mut Vec<String>,
+    violations: &mut Vec<RecordValidationResult>,
+) {
+    match value {
+        serde_json::Value::String(text) => {
+            let Some(target_path) = text.strip_prefix("@/") else {
+                return;
+            };
+            // A workspace-absolute ref always has a connection segment AND something after
+            // it, so a path with no `/` can't be one however its first segment reads.
+            let first_segment = match target_path.split_once('/') {
+                Some((connection_segment, _rest)) => connection_segment,
+                None => target_path,
+            };
+            let names_a_connection = target_path.contains('/')
+                && workspace_connection_folders.iter().any(|folder_name| {
+                    connection_segment_matches_folder(first_segment, folder_name)
+                });
+            if names_a_connection {
+                return;
+            }
+            violations.push(RecordValidationResult {
+                field_path: field_path_segments.join("."),
+                field_path_segments: field_path_segments.clone(),
+                level: ValidationLevel::Error,
+                message: Some(format!(
+                    "Reference \"{text}\" is not workspace-absolute: \"{first_segment}\" is not a \
+                     connection folder in this workspace (expected one of: {}). Use \
+                     \"@/<connection>/<folder>/<file>.json\".",
+                    workspace_connection_folders.join(", ")
+                )),
+                description: Some(
+                    "A @/ reference names a record by its path from the TOP of the workspace, so \
+                     its first segment is the connection folder. This one starts somewhere else, \
+                     so publish cannot tell which connection it points at and will reject it."
+                        .to_string(),
+                ),
+                fixable: false,
+            });
+        }
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                field_path_segments.push(index.to_string());
+                collect_malformed_pseudo_refs(
+                    item,
+                    workspace_connection_folders,
+                    field_path_segments,
+                    violations,
+                );
+                field_path_segments.pop();
+            }
+        }
+        serde_json::Value::Object(members) => {
+            for (key, member) in members {
+                field_path_segments.push(key.clone());
+                collect_malformed_pseudo_refs(
+                    member,
+                    workspace_connection_folders,
+                    field_path_segments,
+                    violations,
+                );
+                field_path_segments.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod pseudo_ref_format_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn connections() -> Vec<String> {
+        vec!["HubSpot".to_string(), "AIRTABLE - Airtable".to_string()]
+    }
+
+    #[test]
+    fn canonical_workspace_absolute_ref_passes() {
+        let record = json!({ "Author": "@/HubSpot/Contacts/marcos.json" });
+        assert!(validate_pseudo_ref_format(&record, &connections()).is_empty());
+    }
+
+    #[test]
+    fn service_qualified_connection_folder_naming_passes() {
+        // A workspace whose connection folder is named `"<SERVICE> - <displayName>"` — those
+        // folders genuinely exist on disk, so this ref leads with a real connection folder.
+        let record = json!({ "Author": "@/AIRTABLE - Airtable/MyBase/Authors/a.json" });
+        assert!(validate_pseudo_ref_format(&record, &connections()).is_empty());
+    }
+
+    #[test]
+    fn accepts_either_connection_folder_naming_scheme_whichever_the_workspace_uses() {
+        // Sync emits the BARE display name; if this workspace's folder uses the
+        // service-qualified `"<SERVICE> - <name>"` scheme the two differ. The publish resolver
+        // accepts both, so flagging either here would be a false alarm.
+        let service_qualified_folder_workspace = vec!["AIRTABLE - Airtable".to_string()];
+        let bare_reference = json!({ "Author": "@/Airtable/MyBase/Authors/a.json" });
+        assert!(
+            validate_pseudo_ref_format(&bare_reference, &service_qualified_folder_workspace)
+                .is_empty()
+        );
+
+        let bare_folder_workspace = vec!["Airtable".to_string()];
+        let service_qualified_reference =
+            json!({ "Author": "@/AIRTABLE - Airtable/MyBase/Authors/a.json" });
+        assert!(
+            validate_pseudo_ref_format(&service_qualified_reference, &bare_folder_workspace)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_suffix_match_that_is_not_the_service_qualified_scheme_is_still_flagged() {
+        // "Table" is a suffix of "Airtable" but not under the `" - "` separator, so this is
+        // NOT the service-qualified folder naming — it's a ref that omits its connection.
+        let record = json!({ "Author": "@/Table/Authors/a.json" });
+        assert_eq!(
+            validate_pseudo_ref_format(&record, &["Airtable".to_string()]).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn reference_that_omits_the_connection_folder_is_flagged() {
+        let record = json!({ "Author": "@/Contacts/marcos.json" });
+        let violations = validate_pseudo_ref_format(&record, &connections());
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field_path, "Author");
+        assert_eq!(violations[0].level, ValidationLevel::Error);
+        let message = violations[0].message.as_deref().unwrap();
+        assert!(
+            message.contains("is not workspace-absolute"),
+            "got: {message}"
+        );
+        assert!(
+            message.contains("HubSpot"),
+            "names the real folders: {message}"
+        );
+    }
+
+    #[test]
+    fn ref_with_no_folder_segment_is_flagged() {
+        let record = json!({ "Author": "@/marcos.json" });
+        assert_eq!(validate_pseudo_ref_format(&record, &connections()).len(), 1);
+    }
+
+    #[test]
+    fn finds_refs_nested_in_arrays_and_objects_with_their_paths() {
+        // The HubSpot association shape — a ref nested several levels inside a link envelope.
+        let record = json!({
+            "Tags": ["@/HubSpot/Tags/a.json", "@/Tags/b.json"],
+            "associations": {
+                "contacts": { "results": [{ "id": "@/Contacts/c.json", "type": "quote_to_contact" }] }
+            }
+        });
+        let violations = validate_pseudo_ref_format(&record, &connections());
+        let mut paths: Vec<&str> = violations.iter().map(|v| v.field_path.as_str()).collect();
+        paths.sort_unstable();
+        assert_eq!(paths, vec!["Tags.1", "associations.contacts.results.0.id"]);
+    }
+
+    #[test]
+    fn asset_refs_and_plain_strings_are_ignored() {
+        let record = json!({
+            "Image": "@asset/abc123",
+            "Title": "A post about @/ syntax",
+            "Id": "rec_123"
+        });
+        assert!(validate_pseudo_ref_format(&record, &connections()).is_empty());
+    }
+
+    #[test]
+    fn stands_down_entirely_when_the_connection_list_is_unknown() {
+        // No marker → we cannot tell a malformed ref from a ref into a connection we don't
+        // know about, and flagging everything would be worse than flagging nothing.
+        let record = json!({ "Author": "@/Contacts/marcos.json" });
+        assert!(validate_pseudo_ref_format(&record, &[]).is_empty());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1000,6 +1261,8 @@ mod tests {
             master_record: master,
             schema,
             args: json!({}),
+            // Only `pseudo_ref_format` reads this; these fixtures exercise `enforce_schema`.
+            workspace_connection_folders: Vec::new(),
         }
     }
 

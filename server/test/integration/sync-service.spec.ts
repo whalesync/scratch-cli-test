@@ -1,8 +1,10 @@
 import { PrismaClient } from '@prisma/client';
 import {
   ColumnMapping,
+  createConnectorAccountId,
   createDataFolderId,
   createSyncId,
+  createSyncTablePairId,
   createWorkbookId,
   DataFolderId,
   SyncId,
@@ -1939,7 +1941,15 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
   let syncId: SyncId;
   let orgId: string;
   let userId: string;
+  let connectorAccountId: string;
   const actor: Actor = { userId: 'test-user', organizationId: 'test-org' };
+
+  /**
+   * The connection's display name, which is also its folder name at the top of the workspace
+   * tree — and therefore the first segment of every pseudo-ref the FK producer emits for a
+   * destination record in it (`@/<connection>/<folder>/<file>.json`).
+   */
+  const DEST_CONNECTION_FOLDER = 'Test Destination';
 
   // Track written files per call for verification
   let writtenFilesByCall: Array<Array<{ path: string; content: string }>>;
@@ -2038,6 +2048,20 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
     });
     workbookId = wbId;
 
+    // The connection the DESTINATION folders belong to. A linked DataFolder always has one in
+    // production, and the FK producer reads it to build the workspace-absolute pseudo-ref, so
+    // the folders below have to carry it or no reference can be named.
+    const connAccountId = createConnectorAccountId();
+    await prisma.connectorAccount.create({
+      data: {
+        id: connAccountId,
+        workbookId,
+        service: 'AIRTABLE',
+        displayName: DEST_CONNECTION_FOLDER,
+      },
+    });
+    connectorAccountId = connAccountId;
+
     // Create 4 data folders: sourceAuthors, destAuthors, sourcePosts, destPosts
     const srcAuthId = createDataFolderId();
     await prisma.dataFolder.create({
@@ -2045,6 +2069,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         id: srcAuthId,
         name: 'Source Authors',
         workbookId,
+        connectorAccountId,
         path: '/src-authors',
       },
     });
@@ -2056,6 +2081,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         id: dstAuthId,
         name: 'Dest Authors',
         workbookId,
+        connectorAccountId,
         path: '/dest-authors',
       },
     });
@@ -2067,6 +2093,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         id: srcPostsId,
         name: 'Source Posts',
         workbookId,
+        connectorAccountId,
         path: '/src-posts',
       },
     });
@@ -2078,6 +2105,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         id: dstPostsId,
         name: 'Dest Posts',
         workbookId,
+        connectorAccountId,
         path: '/dest-posts',
       },
     });
@@ -2093,6 +2121,27 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
       },
     });
     syncId = synId;
+
+    // One SyncTablePair per table mapping — exactly what `createSync`/`updateSync` write for
+    // every real sync. These tests drive `syncTableMapping` directly instead of going through
+    // those, so the rows have to be seeded by hand. The FK producer reads the referenced pair's
+    // DESTINATION folder through here to name the connection its pseudo-ref points at.
+    await prisma.syncTablePair.createMany({
+      data: [
+        {
+          id: createSyncTablePairId(),
+          syncId,
+          sourceDataFolderId: sourceAuthorsFolderId,
+          destinationDataFolderId: destAuthorsFolderId,
+        },
+        {
+          id: createSyncTablePairId(),
+          syncId,
+          sourceDataFolderId: sourcePostsFolderId,
+          destinationDataFolderId: destPostsFolderId,
+        },
+      ],
+    });
   });
 
   afterEach(async () => {
@@ -2310,10 +2359,11 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
     expect(fkResult.recordsUpdated).toBe(1);
     expect(fkResult.errors).toHaveLength(0);
 
-    // The post's author_id should now be the author's file path
+    // The post's author_id is now a workspace-absolute pseudo-ref to the author's file:
+    // the connection folder first, then the connection-relative path.
     const resolvedPostFiles = writtenFilesByCall[writtenFilesByCall.length - 1];
     const resolvedPostContent = JSON.parse(resolvedPostFiles[0].content) as Record<string, unknown>;
-    expect(resolvedPostContent.author_id).toBe(`@/${authorFiles[0].path}`);
+    expect(resolvedPostContent.author_id).toBe(`@/${DEST_CONNECTION_FOLDER}/${authorFiles[0].path}`);
   });
 
   it('should handle FK with null value (no error)', async () => {
@@ -2667,11 +2717,11 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
     // Verify resolved values — FK fields should be file paths, not IDs
     const resolvedAuthorFiles = writtenFilesByCall[writtenFilesByCall.length - 2];
     const resolvedAuthorContent = JSON.parse(resolvedAuthorFiles[0].content) as Record<string, unknown>;
-    expect(resolvedAuthorContent.latest_post_id).toBe(`@/${postFiles[0].path}`);
+    expect(resolvedAuthorContent.latest_post_id).toBe(`@/${DEST_CONNECTION_FOLDER}/${postFiles[0].path}`);
 
     const resolvedPostFiles = writtenFilesByCall[writtenFilesByCall.length - 1];
     const resolvedPostContent = JSON.parse(resolvedPostFiles[0].content) as Record<string, unknown>;
-    expect(resolvedPostContent.author_id).toBe(`@/${authorFiles[0].path}`);
+    expect(resolvedPostContent.author_id).toBe(`@/${DEST_CONNECTION_FOLDER}/${authorFiles[0].path}`);
   });
 });
 

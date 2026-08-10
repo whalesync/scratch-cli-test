@@ -600,9 +600,12 @@ remote ID:
 
 The path after `@/` is the target file's path **from the top of the workspace**
 (the level that holds the connection folders), written **without a leading
-slash**, and it **includes the connection folder as its first segment** — it is
-exactly the file's path as it appears in the workspace tree. For example, to
-reference a new author file at `AIRTABLE - Airtable/MyBase/Authors/new-author.json`:
+slash**, and it **must include the connection folder as its first segment** — it
+is exactly the file's path as it appears in the workspace tree. This is the only
+accepted form: a reference that omits the connection folder is **rejected at
+publish** with an error naming your workspace's connection folders. For example,
+to reference a new author file at
+`AIRTABLE - Airtable/MyBase/Authors/new-author.json`:
 
 ```json
 {
@@ -611,9 +614,10 @@ reference a new author file at `AIRTABLE - Airtable/MyBase/Authors/new-author.js
 }
 ```
 
-- It is **not** an absolute filesystem path and **not** a `./`-relative path —
-  just the in-workspace file path prefixed with `@/` (the `/` is part of the
-  `@/` marker, not a leading slash on the path).
+- It is **not** an absolute filesystem path and **not** a `./`-relative path, and
+  it is never relative to the folder you happen to be editing in — always the
+  full in-workspace file path prefixed with `@/` (the `/` is part of the `@/`
+  marker, not a leading slash on the path).
 - Works for scalar link fields (`"Author": "@/…/new-author.json"`) and
   multi-value link fields (`"Tags": ["@/…/tag-a.json", "@/…/tag-b.json"]`).
 - At publish time Scratch resolves the pseudo-reference to the real remote ID
@@ -762,8 +766,8 @@ affected — only the config and schema live in `.scratch/`.
 
 | Field       | Type       | Required | Description |
 |-------------|------------|----------|-------------|
-| `validator` | `string`   | yes      | Built-in name (`enforce_schema`, `required`, `length`) or `python:<path>`. |
-| `field`     | `string`   | no       | Dot-path to a single field. Omit for record-scoped validators (`enforce_schema`). |
+| `validator` | `string`   | yes      | Built-in name (`enforce_schema`, `pseudo_ref_format`, `required`, `length`) or `python:<path>`. |
+| `field`     | `string`   | no       | Dot-path to a single field. Omit for record-scoped validators (`enforce_schema`, `pseudo_ref_format`). |
 | `params`    | `object`   | no       | Arguments passed to the validator. Defaults to `{}`. |
 | `order`     | `number`   | no       | Run order (ascending). Ties keep file order. |
 | `note`      | `string`   | no       | Free-text annotation; ignored at runtime. |
@@ -827,6 +831,39 @@ No `params`. Good default to add to every table.
 | Read-only field changed on existing record | `warning` | `Updated read-only field` (description includes old → new values) |
 | Read-only field set on new record | `warning` | `Updated read-only field` (description: value will be ignored) |
 | Write-once field changed on existing record | `warning` | `Updated write-once field` (description includes old → new values) |
+
+---
+
+### `pseudo_ref_format`
+
+**Record-scoped** (no `field` needed). Walks the whole record and checks every
+`@/…` pseudo-reference — anywhere one can appear: a scalar link field, an element
+of a multi-value array, or an `id` nested inside a connector-specific link shape.
+
+A reference must be **workspace-absolute**: its first path segment is the
+connection folder, exactly as the file appears in the workspace tree
+(`@/<connection>/<folder…>/<record file>.json`). Publish accepts nothing else, so a
+reference that omits its connection folder is a guaranteed publish failure — this
+validator surfaces it while you are still editing. `@asset/…` values are a separate
+marker and are ignored.
+
+The check stands down entirely when the workspace marker
+(`.scratch/.scratchmd`) is missing or unreadable, since the set of valid connection
+folders is then unknown and flagging every reference would be worse than flagging
+none.
+
+```json
+{ "validator": "pseudo_ref_format" }
+```
+
+No `params`. Scratch Desktop seeds this into every folder automatically, alongside
+`enforce_schema`.
+
+**Violations produced:**
+
+| Situation | Level | Message |
+|-----------|-------|---------|
+| `@/` reference whose first segment is not a connection folder | `error` | `Reference "@/Contacts/x.json" is not workspace-absolute: "Contacts" is not a connection folder in this workspace (expected one of: …)` |
 
 ---
 

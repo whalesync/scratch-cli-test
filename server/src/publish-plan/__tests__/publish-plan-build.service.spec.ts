@@ -235,7 +235,7 @@ describe('PublishPlanService', () => {
 
       // Simulate a file that refers to deleted content — present in main but not dirty
       scratchGitService.getRepoStatus.mockResolvedValue([{ path: 'articles/deleted.json', status: 'deleted' }]);
-      fileIndexService.getRecordIds.mockResolvedValue(new Map([['articles:deleted.json', 'rec_deleted']]));
+      fileIndexService.getRecordIds.mockResolvedValue(new Map([[':articles:deleted.json', 'rec_deleted']]));
       fileReferenceService.findRefsToFiles.mockResolvedValue([{ sourceFilePath: filePath, branch: 'main' }]);
 
       // dirty returns nothing for the ref-clearing candidate; main has it
@@ -361,7 +361,7 @@ describe('PublishPlanService', () => {
       const filePath = 'articles/old.json';
 
       scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'deleted' }]);
-      fileIndexService.getRecordIds.mockResolvedValue(new Map([['articles:old.json', 'rec_old']]));
+      fileIndexService.getRecordIds.mockResolvedValue(new Map([[':articles:old.json', 'rec_old']]));
       fileReferenceService.findRefsToFiles.mockResolvedValue([]);
 
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
@@ -533,7 +533,7 @@ describe('PublishPlanService', () => {
       const filePath = 'articles/old.json';
 
       scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'deleted' }]);
-      fileIndexService.getRecordIds.mockResolvedValue(new Map([['articles:old.json', 'rec_old']]));
+      fileIndexService.getRecordIds.mockResolvedValue(new Map([[':articles:old.json', 'rec_old']]));
       fileReferenceService.findRefsToFiles.mockResolvedValue([]);
 
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);

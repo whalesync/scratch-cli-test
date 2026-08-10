@@ -99,44 +99,38 @@ describe('Pseudo-ref connection scoping (DEV-10880)', () => {
     await prisma.$disconnect();
   });
 
-  it('resolves a workspace-absolute ref to the HubSpot connection when publishing HubSpot', async () => {
-    const [resolved] = await refResolverService.resolveBatchPseudoRefs(
-      workbookId,
-      [{ contactId: `@/HubSpot/${FOLDER}/${FILENAME}` }],
-      undefined,
-      hubspotAccountId,
-    );
+  it('resolves a workspace-absolute ref to the HubSpot connection', async () => {
+    const [resolved] = await refResolverService.resolveBatchPseudoRefs(workbookId, [
+      { contactId: `@/HubSpot/${FOLDER}/${FILENAME}` },
+    ]);
     expect(resolved).toEqual({ contactId: HUBSPOT_RECORD_ID });
   });
 
-  it('resolves a workspace-absolute ref to the HubSpot Testing connection when publishing HubSpot Testing', async () => {
-    const [resolved] = await refResolverService.resolveBatchPseudoRefs(
-      workbookId,
-      [{ contactId: `@/HubSpot Testing/${FOLDER}/${FILENAME}` }],
-      undefined,
-      hubspotTestingAccountId,
-    );
+  it('resolves a workspace-absolute ref to the HubSpot Testing connection', async () => {
+    const [resolved] = await refResolverService.resolveBatchPseudoRefs(workbookId, [
+      { contactId: `@/HubSpot Testing/${FOLDER}/${FILENAME}` },
+    ]);
     expect(resolved).toEqual({ contactId: HUBSPOT_TESTING_RECORD_ID });
   });
 
-  it('routes by the connection SEGMENT, not the plan connection (cross-connection ref)', async () => {
-    // Publishing HubSpot, but the ref names "HubSpot Testing" → must resolve there.
-    const [resolved] = await refResolverService.resolveBatchPseudoRefs(
-      workbookId,
-      [{ contactId: `@/HubSpot Testing/${FOLDER}/${FILENAME}` }],
-      undefined,
-      hubspotAccountId,
-    );
-    expect(resolved).toEqual({ contactId: HUBSPOT_TESTING_RECORD_ID });
+  it('routes by the connection SEGMENT alone — both connections resolve in ONE batch', async () => {
+    // The ref itself says which connection it points at, so no plan-connection scope is
+    // needed and two refs into different connections resolve side by side (DEV-11238).
+    const resolved = await refResolverService.resolveBatchPseudoRefs(workbookId, [
+      { contactId: `@/HubSpot/${FOLDER}/${FILENAME}` },
+      { contactId: `@/HubSpot Testing/${FOLDER}/${FILENAME}` },
+    ]);
+    expect(resolved).toEqual([{ contactId: HUBSPOT_RECORD_ID }, { contactId: HUBSPOT_TESTING_RECORD_ID }]);
   });
 
-  it('resolves a legacy connection-relative ref within the plan connection', async () => {
-    const [resolved] = await refResolverService.resolveBatchPseudoRefs(
-      workbookId,
-      [{ contactId: `@/${FOLDER}/${FILENAME}` }],
-      undefined,
-      hubspotTestingAccountId,
-    );
-    expect(resolved).toEqual({ contactId: HUBSPOT_TESTING_RECORD_ID });
+  it('REJECTS a ref that omits the connection folder, naming the workspace’s connection folders', async () => {
+    // The message has to tell the user both what is wrong and what the format should be.
+    await expect(
+      refResolverService.resolveBatchPseudoRefs(workbookId, [{ contactId: `@/${FOLDER}/${FILENAME}` }]),
+    ).rejects.toThrow(/is not workspace-absolute/);
+
+    await expect(
+      refResolverService.resolveBatchPseudoRefs(workbookId, [{ contactId: `@/${FOLDER}/${FILENAME}` }]),
+    ).rejects.toThrow(/expected one of: .*HubSpot/);
   });
 });

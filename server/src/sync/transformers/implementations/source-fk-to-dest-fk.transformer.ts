@@ -132,14 +132,33 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
       }
 
       // Step 2 — the target's remote id names a destination record.
-      const mapping =
+      const destinationResolution =
         target.kind === 'resolved'
           ? await lookupTools.getDestinationMappingForSourceFk(
               target.targetSourceRemoteId,
               typedOptions.referencedDataFolderId,
             )
-          : null;
-      if (mapping === null) {
+          : ({ kind: 'no_destination_record' } as const);
+
+      // The destination record is known but the connection it lives in is not, so no
+      // workspace-absolute pseudo-ref can be built — and that is the only form we may write.
+      // Dropping the link instead would be a silent lie, so fail the field even under
+      // `onUnresolved: 'ignore'` (that tolerance is for targets we can't FIND, not for targets
+      // we can't ADDRESS).
+      if (destinationResolution.kind === 'destination_connection_unresolved') {
+        const message =
+          `Could not build a reference for foreign key "${fkStr}": ${destinationResolution.reason}. ` +
+          `Re-check the sync's destination table mapping for DataFolder ${typedOptions.referencedDataFolderId}.`;
+        WSLogger.warn({
+          source: 'sourceFkToDestFkTransformer',
+          message,
+          sourceRecordId: ctx.sourceRecord.id,
+          sourceFieldPath: ctx.sourceFieldPath,
+        });
+        return { success: false, error: message };
+      }
+
+      if (destinationResolution.kind === 'no_destination_record') {
         // Distinguish "nothing has that key" from "found the record, but it has no destination
         // row yet" — they have completely different causes and fixes.
         const reason =
@@ -162,13 +181,13 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
           error: `Could not resolve foreign key "${fkStr}" to a destination path: ${reason}`,
         };
       }
+
+      const mapping = destinationResolution.mapping;
       // Use the real destination remote ID if it exists already, otherwise a
-      // pseudo-reference to the destination file. The pseudo-ref must be
+      // pseudo-reference to the destination file. The pseudo-ref is always
       // workspace-absolute (connection folder first) per the canonical format —
       // prepend the destination connection folder to the connection-relative
-      // destinationFilePath (DEV-10880). Fall back to the bare connection-relative
-      // form if the connection folder is unknown; the publish resolver accepts
-      // both.
+      // destinationFilePath (DEV-10880).
       const ref =
         mapping.destinationRemoteId && !isScratchPendingPublishId(mapping.destinationRemoteId)
           ? mapping.destinationRemoteId
@@ -216,15 +235,16 @@ function describeTargetKey(targetKeyPath: string | undefined): string {
 /**
  * Build a workspace-absolute pseudo-reference (`@/<connection>/<folder>/<file>.json`)
  * for a destination record. `destinationFilePath` is connection-relative (no
- * connection segment, no leading slash); prepend the destination connection
- * folder to reach the canonical format. When the connection folder is unknown
- * (null), fall back to the legacy connection-relative form — the publish
- * resolver still resolves it (as a plan-connection-relative ref).
+ * connection segment, no leading slash); prepending the destination connection
+ * folder reaches the canonical format.
+ *
+ * The connection segment is mandatory — the publish resolver accepts nothing else, so a ref
+ * without one is a ref that fails at publish. `FkMappingResult` types
+ * `destinationConnectionFolder` as a plain `string` precisely so this function cannot be
+ * handed a missing one.
  */
-function buildDestinationPseudoRef(destinationConnectionFolder: string | null, destinationFilePath: string): string {
-  return destinationConnectionFolder
-    ? `@/${destinationConnectionFolder}/${destinationFilePath}`
-    : `@/${destinationFilePath}`;
+function buildDestinationPseudoRef(destinationConnectionFolder: string, destinationFilePath: string): string {
+  return `@/${destinationConnectionFolder}/${destinationFilePath}`;
 }
 
 /**

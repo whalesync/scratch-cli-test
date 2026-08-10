@@ -15,7 +15,7 @@ import { ScratchGitNotFoundError } from '../scratch-git/scratch-git.client';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 import { computeChangedFields } from './diff-utils';
-import { FileIndexService } from './file-index.service';
+import { fileIndexLookupKey, FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RefCleanerService } from './ref-cleaner.service';
 import { SchemaHelperService } from './schema-helper.service';
@@ -430,7 +430,8 @@ export class PublishPlanBuildService {
 
     for (const del of deletedFiles) {
       const { folderPath, filename: fileName } = parsePath(del.path);
-      const recordId = recordIdMap.get(`${folderPath}:${fileName}`) ?? null;
+      const recordId =
+        recordIdMap.get(fileIndexLookupKey({ folderPath, filename: fileName, connectorAccountId })) ?? null;
       const folderInfo = await getDataFolderInfo(folderPath);
       // Use the last segment of the remote tableId path as the remote table identifier
       const tableIdArr: string[] = folderInfo?.tableId ?? [];

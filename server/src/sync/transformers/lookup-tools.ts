@@ -16,7 +16,28 @@ import {
   type ForeignKeyTargetKeyIndex,
   type TargetRecordForKeyIndex,
 } from './foreign-key-target-key-index';
-import { AssetMappingResult, FkMappingResult, ForeignKeyTargetResolution, LookupTools } from './transformer.types';
+import {
+  AssetMappingResult,
+  DestinationMappingResolution,
+  FkMappingResult,
+  ForeignKeyTargetResolution,
+  LookupTools,
+} from './transformer.types';
+
+/**
+ * Everything one referenced folder contributes to FK resolution, loaded once and cached.
+ *
+ * Split into two shapes because the destination CONNECTION is a property of the folder, not
+ * of an individual mapping: either we know it (and every mapping carries the canonical
+ * workspace-absolute prefix), or we don't — and then no mapping can be handed out at all,
+ * because there is no reference this producer is allowed to build without one. The unresolved
+ * shape still remembers WHICH source ids had a destination record, so "this FK maps nowhere"
+ * (a skip the user may have opted into via `onUnresolved: 'ignore'`) stays distinguishable
+ * from "this FK maps somewhere we can't name" (a hard failure).
+ */
+type ReferencedFolderDestinationMappings =
+  | { kind: 'resolved'; mappingBySourceRemoteId: Map<string, FkMappingResult> }
+  | { kind: 'connection_unresolved'; reason: string; sourceRemoteIdsWithDestination: Set<string> };
 
 /**
  * Stream every source record of a referenced folder, one page at a time, so a foreign key whose
@@ -44,7 +65,7 @@ export function createNullLookupTools(): LookupTools {
           ? ({ kind: 'resolved', targetSourceRemoteId: foreignKeyValue } as const)
           : ({ kind: 'no_match' } as const),
       ),
-    getDestinationMappingForSourceFk: () => Promise.resolve(null),
+    getDestinationMappingForSourceFk: () => Promise.resolve({ kind: 'no_destination_record' as const }),
     lookupFieldFromFkRecord: () => Promise.resolve(undefined),
     getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
     matchDestinationAssetByHash: () => Promise.resolve([]),
@@ -88,9 +109,9 @@ export function createLookupTools(
   // referenced folder), reducing FK resolution from potentially 30+ minutes
   // to under a second.
   //
-  // Keyed by referencedDataFolderId → Map of sourceRemoteId → FkMappingResult.
+  // Keyed by referencedDataFolderId → that folder's loaded destination mappings.
   // ───────────────────────────────────────────────────────────────────────────
-  const fkMappingCache = new Map<DataFolderId, Map<string, FkMappingResult>>();
+  const fkMappingCache = new Map<DataFolderId, ReferencedFolderDestinationMappings>();
 
   // Cache for hash matching: loaded once per (sourceFolder, destFolder) pair, then in-memory lookups
   const hashMatchCache = new Map<
@@ -128,6 +149,66 @@ export function createLookupTools(
     return index;
   }
 
+  /**
+   * Load one referenced folder's destination mappings, resolving the DESTINATION connection's
+   * folder name once for the whole folder.
+   *
+   * `referencedDataFolderId` is the SOURCE folder of the referenced table pair, so we hop
+   * through SyncTablePair to that pair's DESTINATION folder and read ITS connection's display
+   * name — using the source connection here would emit a ref that resolves to the wrong
+   * connection at publish (DEV-10880). Without that name there is no workspace-absolute
+   * pseudo-ref to write at all, so the folder loads in the `connection_unresolved` shape and
+   * every FK that names a destination record in it fails loudly.
+   */
+  async function loadDestinationMappingsForReferencedFolder(
+    referencedDataFolderId: DataFolderId,
+  ): Promise<ReferencedFolderDestinationMappings> {
+    const referencedTablePair = await db.client.syncTablePair.findFirst({
+      where: { syncId, sourceDataFolderId: referencedDataFolderId },
+      select: {
+        destinationDataFolderId: true,
+        destinationDataFolder: { select: { name: true, connectorAccount: { select: { displayName: true } } } },
+      },
+    });
+    const destinationConnectionDisplayName = referencedTablePair?.destinationDataFolder.connectorAccount?.displayName;
+
+    const rows = await db.client.syncRemoteIdMapping.findMany({
+      where: {
+        syncId,
+        dataFolderId: referencedDataFolderId,
+      },
+      select: { sourceRemoteId: true, destinationFilePath: true, destinationRemoteId: true },
+    });
+
+    if (destinationConnectionDisplayName === undefined) {
+      const sourceRemoteIdsWithDestination = new Set<string>();
+      for (const row of rows) {
+        if (row.destinationFilePath) sourceRemoteIdsWithDestination.add(row.sourceRemoteId);
+      }
+      return {
+        kind: 'connection_unresolved',
+        reason:
+          referencedTablePair === null
+            ? `this sync has no table pair whose source folder is ${referencedDataFolderId}, so the connection its destination records live in is unknown`
+            : `the destination folder "${referencedTablePair.destinationDataFolder.name}" ` +
+              `(${referencedTablePair.destinationDataFolderId}) is not attached to a connection`,
+        sourceRemoteIdsWithDestination,
+      };
+    }
+
+    const destinationConnectionFolder = sanitizeConnectionFolderName(destinationConnectionDisplayName);
+    const mappingBySourceRemoteId = new Map<string, FkMappingResult>();
+    for (const row of rows) {
+      if (!row.destinationFilePath) continue;
+      mappingBySourceRemoteId.set(row.sourceRemoteId, {
+        destinationFilePath: row.destinationFilePath,
+        destinationRemoteId: row.destinationRemoteId ?? null,
+        destinationConnectionFolder,
+      });
+    }
+    return { kind: 'resolved', mappingBySourceRemoteId };
+  }
+
   return {
     async resolveForeignKeyValueToTargetRemoteId(
       foreignKeyValue: string,
@@ -146,49 +227,28 @@ export function createLookupTools(
     async getDestinationMappingForSourceFk(
       sourceFkValue: string,
       referencedDataFolderId: DataFolderId,
-    ): Promise<FkMappingResult | null> {
+    ): Promise<DestinationMappingResolution> {
       // Lazy-load all mappings for this referenced folder on first access.
       // Subsequent calls for the same folder hit the in-memory Map (O(1) lookup)
       // instead of making a DB round-trip per FK element.
       let folderMappings = fkMappingCache.get(referencedDataFolderId);
       if (!folderMappings) {
-        // Resolve the DESTINATION connection's folder name once per referenced
-        // folder so the pseudo-ref this transformer emits is workspace-absolute
-        // (connection-folder-first), matching the canonical format (DEV-10880).
-        // `referencedDataFolderId` is the SOURCE folder of the referenced table
-        // pair, so we hop through SyncTablePair to that pair's DESTINATION folder
-        // and read ITS connection's display name — using the source connection
-        // here would emit a ref that resolves to the wrong connection at publish.
-        const referencedTablePair = await db.client.syncTablePair.findFirst({
-          where: { syncId, sourceDataFolderId: referencedDataFolderId },
-          select: { destinationDataFolder: { select: { connectorAccount: { select: { displayName: true } } } } },
-        });
-        const destinationConnectionFolder = referencedTablePair?.destinationDataFolder?.connectorAccount
-          ? sanitizeConnectionFolderName(referencedTablePair.destinationDataFolder.connectorAccount.displayName)
-          : null;
-
-        const rows = await db.client.syncRemoteIdMapping.findMany({
-          where: {
-            syncId,
-            dataFolderId: referencedDataFolderId,
-          },
-          select: { sourceRemoteId: true, destinationFilePath: true, destinationRemoteId: true },
-        });
-
-        folderMappings = new Map<string, FkMappingResult>();
-        for (const row of rows) {
-          if (row.destinationFilePath) {
-            folderMappings.set(row.sourceRemoteId, {
-              destinationFilePath: row.destinationFilePath,
-              destinationRemoteId: row.destinationRemoteId ?? null,
-              destinationConnectionFolder,
-            });
-          }
-        }
+        folderMappings = await loadDestinationMappingsForReferencedFolder(referencedDataFolderId);
         fkMappingCache.set(referencedDataFolderId, folderMappings);
       }
 
-      return folderMappings.get(sourceFkValue) ?? null;
+      if (folderMappings.kind === 'connection_unresolved') {
+        // "Maps nowhere" is checked FIRST so an FK with no destination record at all keeps
+        // reporting `no_destination_record` — the outcome `onUnresolved: 'ignore'` lets a user
+        // skip. Only an FK that genuinely names a destination record we can't address is a
+        // hard failure.
+        return folderMappings.sourceRemoteIdsWithDestination.has(sourceFkValue)
+          ? { kind: 'destination_connection_unresolved', reason: folderMappings.reason }
+          : { kind: 'no_destination_record' };
+      }
+
+      const mapping = folderMappings.mappingBySourceRemoteId.get(sourceFkValue);
+      return mapping === undefined ? { kind: 'no_destination_record' } : { kind: 'mapped', mapping };
     },
 
     async lookupFieldFromFkRecord(

@@ -1871,6 +1871,10 @@ fn validate_page_records(
                 .ok()
                 .and_then(|bytes| serde_json::from_slice(&bytes).ok());
         let workspace_dir = resolve_workspace_dir(workspace);
+        // Read once per batch, not per record: the `pseudo_ref_format` validator needs the
+        // workspace's connection folder names to tell whether a `@/…` reference leads with one.
+        let workspace_connection_folder_names =
+            crate::shared::validators::read_workspace_connection_folder_names(workspace);
         // Master content comes from refs/heads/main post-Slice-F. Read only the blobs for
         // this page's stale records — the map is consulted solely inside the stale_filenames
         // loop below. The unfiltered read pulls the WHOLE folder's main content into a
@@ -1955,6 +1959,7 @@ fn validate_page_records(
                     folder_schema.as_ref(),
                     &config,
                     &workspace_dir,
+                    &workspace_connection_folder_names,
                 )?
             };
 

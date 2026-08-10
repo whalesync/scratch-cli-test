@@ -32,12 +32,15 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
       Promise.resolve(),
     );
 
-    return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((mapping) => {
-      expect(mapping).toEqual({
-        destinationFilePath: 'Authors/alice.json',
-        destinationRemoteId: null,
-        // `Webflow: Marketing` → `:` is a filesystem-reserved char, sanitized to `-`.
-        destinationConnectionFolder: 'Webflow- Marketing',
+    return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((resolution) => {
+      expect(resolution).toEqual({
+        kind: 'mapped',
+        mapping: {
+          destinationFilePath: 'Authors/alice.json',
+          destinationRemoteId: null,
+          // `Webflow: Marketing` → `:` is a filesystem-reserved char, sanitized to `-`.
+          destinationConnectionFolder: 'Webflow- Marketing',
+        },
       });
       // Looked up the table pair by (syncId, sourceDataFolderId = referencedDataFolderId).
       expect(syncTablePairFindFirst).toHaveBeenCalledWith(
@@ -46,7 +49,8 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
     });
   });
 
-  it('falls back to a null connection folder when the destination connection is unknown', () => {
+  // An unknown destination connection is its own outcome, distinct from "maps nowhere".
+  it('reports destination_connection_unresolved when the sync has no table pair for the referenced folder', () => {
     const db = {
       client: {
         syncTablePair: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -64,9 +68,71 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
       Promise.resolve(),
     );
 
-    return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((mapping) => {
-      expect(mapping?.destinationConnectionFolder).toBeNull();
+    return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((resolution) => {
+      expect(resolution.kind).toBe('destination_connection_unresolved');
+      if (resolution.kind === 'destination_connection_unresolved') {
+        expect(resolution.reason).toContain(SOURCE_REFERENCED_FOLDER);
+      }
     });
+  });
+
+  it('reports destination_connection_unresolved when the destination folder has no connection', () => {
+    const db = {
+      client: {
+        syncTablePair: {
+          findFirst: jest.fn().mockResolvedValue({
+            destinationDataFolderId: 'dfd_dest_authors',
+            destinationDataFolder: { name: 'Authors', connectorAccount: null },
+          }),
+        },
+        syncRemoteIdMapping: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { sourceRemoteId: 'src_1', destinationFilePath: 'Authors/alice.json', destinationRemoteId: null },
+            ]),
+        },
+      },
+    } as unknown as DbService;
+
+    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
+      Promise.resolve(),
+    );
+
+    return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((resolution) => {
+      expect(resolution.kind).toBe('destination_connection_unresolved');
+      if (resolution.kind === 'destination_connection_unresolved') {
+        expect(resolution.reason).toContain('Authors');
+        expect(resolution.reason).toContain('not attached to a connection');
+      }
+    });
+  });
+
+  // A source FK that maps NOWHERE keeps reporting `no_destination_record` even when the
+  // folder's connection is unknown, so `onUnresolved: 'ignore'` still skips it as before.
+  it('still reports no_destination_record for an FK with no destination row, connection unknown or not', () => {
+    const db = {
+      client: {
+        syncTablePair: { findFirst: jest.fn().mockResolvedValue(null) },
+        syncRemoteIdMapping: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { sourceRemoteId: 'src_1', destinationFilePath: 'Authors/alice.json', destinationRemoteId: null },
+            ]),
+        },
+      },
+    } as unknown as DbService;
+
+    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
+      Promise.resolve(),
+    );
+
+    return lookupTools
+      .getDestinationMappingForSourceFk('src_never_mapped', SOURCE_REFERENCED_FOLDER)
+      .then((resolution) => {
+        expect(resolution).toEqual({ kind: 'no_destination_record' });
+      });
   });
 });
 
