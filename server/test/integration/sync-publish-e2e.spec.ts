@@ -466,12 +466,14 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         folderPath: 'dest-tags',
         recordId: `${100 + i}`,
         filename: `tag-match-${i}.json`,
+        connectorAccountId,
       });
       destFileIndexEntries.push({
         workbookId,
         folderPath: 'dest-posts',
         recordId: `${200 + i}`,
         filename: `post-match-${i}.json`,
+        connectorAccountId,
       });
     }
     for (let i = 0; i < ORPHAN_DEST_COUNT; i++) {
@@ -480,12 +482,14 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         folderPath: 'dest-tags',
         recordId: `${900 + i}`,
         filename: `tag-orphan-${i}.json`,
+        connectorAccountId,
       });
       destFileIndexEntries.push({
         workbookId,
         folderPath: 'dest-posts',
         recordId: `${950 + i}`,
         filename: `post-orphan-${i}.json`,
+        connectorAccountId,
       });
     }
     await fileIndexService.upsertBatch(destFileIndexEntries);
@@ -1580,12 +1584,14 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         folderPath: 'dest-tags',
         recordId: `${100 + i}`,
         filename: `tag-match-${i}.json`,
+        connectorAccountId,
       });
       destFileIndexEntries.push({
         workbookId,
         folderPath: 'dest-posts',
         recordId: `${200 + i}`,
         filename: `post-match-${i}.json`,
+        connectorAccountId,
       });
     }
     for (let i = 0; i < ORPHAN_DEST_COUNT; i++) {
@@ -1594,12 +1600,14 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         folderPath: 'dest-tags',
         recordId: `${900 + i}`,
         filename: `tag-orphan-${i}.json`,
+        connectorAccountId,
       });
       destFileIndexEntries.push({
         workbookId,
         folderPath: 'dest-posts',
         recordId: `${950 + i}`,
         filename: `post-orphan-${i}.json`,
+        connectorAccountId,
       });
     }
     await fileIndexService.upsertBatch(destFileIndexEntries);
@@ -1724,6 +1732,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         folderPath: 'dest-tags',
         recordId: `${100 + i}`,
         filename: `tag-match-${i}.json`,
+        connectorAccountId,
       });
     }
     await fileIndexService.upsertBatch(destFileIndexEntries);

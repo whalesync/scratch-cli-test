@@ -11,9 +11,16 @@ export interface FileIndexEntry {
   // The connection this row belongs to. `folderPath` is connection-relative and
   // workbook-global, so this is the discriminator that lets a workspace-absolute
   // pseudo-ref resolve to the right connection when two connections expose an
-  // identically-named folder (DEV-10880). Optional so legacy callers and
-  // connector-less (scratch) folders can omit it (stored NULL).
-  connectorAccountId?: string | null;
+  // identically-named folder (DEV-10880). `null` ONLY for a connector-less (scratch)
+  // folder, which has no connection; every connector-backed row carries one
+  // (DEV-11242 resolved the last legacy NULLs on prod).
+  //
+  // REQUIRED, not optional, even though `null` is a legal value: a scoped lookup is
+  // now a strict match, so a write site that quietly omits this produces a row no
+  // scoped lookup can ever resolve. Optionality hid exactly that bug in three
+  // integration fixtures until publish failed at runtime with "Could not resolve
+  // remote ID"; making it required turns the same mistake into a compile error.
+  connectorAccountId: string | null;
 }
 
 @Injectable()
@@ -58,10 +65,11 @@ export class FileIndexService {
             },
             update: {
               filename: entry.filename, // Filename might change (rename)
-              // Backfill the connection discriminator when a caller supplies one,
-              // but leave an already-set value intact when it doesn't (e.g. the
-              // rename upsert carries no connectorAccountId — `undefined` tells
-              // Prisma to skip the field rather than clobber it back to NULL).
+              // Backfill the connection discriminator when a caller supplies one, but
+              // leave an already-set value intact when it passes null — `undefined` tells
+              // Prisma to skip the field rather than clobber it back to NULL. Every
+              // connector-backed caller now supplies a real id, so in practice this only
+              // skips for a connector-less (scratch) row, whose NULL is already correct.
               connectorAccountId: entry.connectorAccountId ?? undefined,
               lastSeenAt: now,
             },
@@ -116,10 +124,10 @@ export class FileIndexService {
     workbookId: string,
     folderPath: string,
     filename: string,
-    // When provided, prefer the row belonging to this connection so two
-    // connections exposing the same folderPath+filename resolve unambiguously.
-    // Falls back to any matching row when no scoped row exists (legacy /
-    // un-backfilled data). See `pickPreferredRecordId`.
+    // When provided, this is a STRICT scope: the row belonging to this connection,
+    // or null. It never resolves to another connection's row at the same
+    // folderPath+filename. Omit it for a workbook-global lookup (a connector-less
+    // scratch folder). See `pickPreferredRecordId`.
     connectorAccountId?: string | null,
   ): Promise<string | null> {
     const entries = await this.db.client.fileIndex.findMany({
@@ -134,12 +142,12 @@ export class FileIndexService {
    * Bulk `(folderPath, filename) → recordId` lookup, keyed by
    * `${folderPath}:${filename}`.
    *
-   * `connectorAccountId` on a lookup is a **row-preference** hint, not part of
-   * the returned key: when set, the row belonging to that connection wins over
-   * rows from other connections that happen to share the same
-   * `folderPath`+`filename` (the two-connections-share-a-folder case). When it
-   * is absent, or no scoped row exists, behavior is the legacy "first matching
-   * row wins" — so pre-DEV-10880 rows (NULL `connectorAccountId`) still resolve.
+   * `connectorAccountId` on a lookup **scopes** the match, but is not part of the
+   * returned key: when set, only that connection's row can satisfy the key, so a
+   * key claimed by a different connection is simply absent from the result rather
+   * than resolving to that connection's record (the two-connections-share-a-folder
+   * case). When it is absent, the match is workbook-global "first matching row
+   * wins" — the connector-less (scratch) folder case.
    */
   async getRecordIds(
     workbookId: string,
@@ -190,7 +198,10 @@ export class FileIndexService {
 
     const map = new Map<string, string>();
     for (const [key, rows] of rowsByKey) {
-      map.set(key, pickPreferredRecordId(rows, preferredAccountByKey.get(key)));
+      // A key whose rows all belong to some OTHER connection resolves to nothing and
+      // is left out of the map — callers already treat a missing key as "no record id".
+      const recordId = pickPreferredRecordId(rows, preferredAccountByKey.get(key));
+      if (recordId !== null) map.set(key, recordId);
     }
     return map;
   }
@@ -345,19 +356,26 @@ export function isDeeperFolderPathOrphanedByDelete(
 }
 
 /**
- * Choose one recordId from the rows matching a `(folderPath, filename)` key,
- * preferring the row that belongs to `preferredConnectorAccountId` when one is
- * requested. When no scoped row exists (or none was requested) this falls back
- * to the first row — preserving the pre-DEV-10880 "any matching row" behavior
- * so legacy rows (NULL `connectorAccountId`) keep resolving during rollout.
+ * Choose one recordId from the rows matching a `(folderPath, filename)` key.
+ *
+ * A lookup that names a connection is a STRICT match: it resolves to that
+ * connection's row or to `null`. It never falls back to another connection's row,
+ * because two connections can expose the same `folderPath`+`filename` for entirely
+ * different records — returning the other one would point a publish at the wrong
+ * remote record. The pre-DEV-10880 fallback to an unscoped (NULL) row existed only
+ * for rows written before the discriminator column; DEV-11242 drove that population
+ * to zero on prod, so the fallback is gone (see `fileindex-unscoped-row-resolve`).
+ *
+ * A lookup that names NO connection keeps the workbook-global "first matching row"
+ * behavior — the legitimate case for a connector-less (scratch) folder, whose rows
+ * are still stored with a NULL `connectorAccountId`.
  */
 export function pickPreferredRecordId(
   rows: { connectorAccountId: string | null; recordId: string }[],
   preferredConnectorAccountId: string | null | undefined,
-): string {
-  const scoped =
-    preferredConnectorAccountId != null
-      ? rows.find((row) => row.connectorAccountId === preferredConnectorAccountId)
-      : undefined;
-  return (scoped ?? rows[0]).recordId;
+): string | null {
+  if (preferredConnectorAccountId == null) {
+    return rows[0]?.recordId ?? null;
+  }
+  return rows.find((row) => row.connectorAccountId === preferredConnectorAccountId)?.recordId ?? null;
 }

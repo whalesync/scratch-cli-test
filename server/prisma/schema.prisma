@@ -578,11 +578,14 @@ model FileIndex {
   // workbook can expose an identically-named folder (e.g. two HubSpot
   // connections both with `Contacts`); this column is the discriminator that
   // lets a workspace-absolute pseudo-ref (`@/<connection>/…`) resolve to the
-  // right connection. Nullable for legacy rows written before DEV-10880 and for
-  // any connector-less (scratch) folder; the resolver falls back to a
-  // workbook-global lookup when it is null. Populated at every upsert site
-  // (both pull jobs + both publish dispatch sites) and backfilled by the
-  // `fileindex-connector-account-backfill` code-migration.
+  // right connection. Nullable only for a connector-less (scratch) folder, which
+  // has no connection; every connector-backed row carries one, and a lookup that
+  // names a connection is a STRICT match (that connection's row or nothing — see
+  // `pickPreferredRecordId`). Populated at every upsert site (both pull jobs +
+  // both publish dispatch sites); pre-DEV-10880 rows were backfilled by the
+  // `fileindex-connector-account-backfill` code-migration, and the residue it
+  // could not decide by folderPath alone by `fileindex-unscoped-row-resolve`
+  // (DEV-11242), which recovers ownership from the connection repos themselves.
   // No dedicated index on `connectorAccountId`: runtime lookups
   // (getRecordId/getRecordIds) still query by (workbookId, folderPath, filename)
   // and apply the connection preference in JS (pickPreferredRecordId), so they are

@@ -31,7 +31,7 @@ import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 import { pickByShape } from './diff-utils';
 import { collapseFailedOperationsByPath } from './failed-operations.util';
-import { FileIndexService } from './file-index.service';
+import { FileIndexEntry, FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RecreatedIdMapService } from './recreated-id-map.service';
 import { RefCleanerService } from './ref-cleaner.service';
@@ -959,7 +959,7 @@ export class PublishPlanRunService {
           await this.dispatchDeleteBatch(entries, connector, tableSpec, workbookId, planId, repoId);
           break;
         case 'rename-files':
-          await this.dispatchRenameBatch(entries, workbookId, repoId);
+          await this.dispatchRenameBatch(entries, workbookId, repoId, planId);
           break;
         default:
           throw new Error(`Unknown phase: ${phase}`);
@@ -1590,7 +1590,18 @@ export class PublishPlanRunService {
     await this.syncBatchToDirtyIfFinal(workbookId, planId, 'delete', dirtySyncBatch, repoId);
   }
 
-  private async dispatchRenameBatch(entries: PublishOperation[], workbookId: string, repoId: string): Promise<void> {
+  private async dispatchRenameBatch(
+    entries: PublishOperation[],
+    workbookId: string,
+    repoId: string,
+    planId: string,
+  ): Promise<void> {
+    // Scope the rename's index rows to the plan's connection, like the create and edit
+    // dispatch sites do. On the common path the row already exists (the create dispatch
+    // wrote it) and this just re-affirms its connection, but `upsertBatch` can also INSERT
+    // here — and an insert with no connection would write a row no scoped lookup can ever
+    // resolve, which is precisely what DEV-11242 exists to eliminate.
+    const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
     if (entries.length === 0) return;
 
     // Group operations by folderPath
@@ -1618,7 +1629,7 @@ export class PublishPlanRunService {
       const filenameToRecordId = new Map(indexRecords.map((r) => [r.filename, r.recordId]));
 
       const renames: { oldName: string; newName: string }[] = [];
-      const fileIndexUpdates: { workbookId: string; folderPath: string; recordId: string; filename: string }[] = [];
+      const fileIndexUpdates: FileIndexEntry[] = [];
       const refUpdates: { oldPath: string; newPath: string }[] = [];
 
       for (const entry of folderEntries) {
@@ -1643,7 +1654,7 @@ export class PublishPlanRunService {
         if (oldName === newName) continue;
 
         renames.push({ oldName, newName });
-        fileIndexUpdates.push({ workbookId, folderPath, recordId, filename: newName });
+        fileIndexUpdates.push({ workbookId, folderPath, recordId, filename: newName, connectorAccountId });
 
         const oldPathFull = folderPath ? `${folderPath}/${oldName}` : oldName;
         const newPathFull = folderPath ? `${folderPath}/${newName}` : newName;

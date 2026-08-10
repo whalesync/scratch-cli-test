@@ -176,6 +176,9 @@ cleaning test first would look like a broad, confusing product regression.
 - `server/src/publish-plan/__tests__/file-index.service.spec.ts` — invert the "falls back to an
   UNSCOPED row" test into an assertion that it returns `null`.
 
+**Status: implemented, and the gate is now satisfied on both environments** (prod at a literal 0,
+test at A + B = 0 with only its 2 permanent scratch rows). Safe to merge.
+
 ### What the gate actually is
 
 Not "`connectorAccountId IS NULL` returns 0" — it is **zero unscoped rows at a folderPath a live
@@ -207,13 +210,44 @@ to have run there. This ticket's migration only has 82 rows to do on test.
 Both environments, via **Settings → Dev → Migrations** (prod: app.scratch.md). Dry-run each step
 first and check the counts against the table above.
 
-0. **test** — `fileindex-filereference-orphan-gc`. ✅ **DONE 2026-08-09** (see below).
-1. **test** — `fileindex-connector-account-backfill` (clears bucket A: 113,280 rows).
-2. **test** — `fileindex-unscoped-row-resolve` (clears bucket B: 82 rows).
-3. **test** — verify A + B = 0 with the bucket query.
-4. **prod** — `fileindex-unscoped-row-resolve` (clears bucket B: 88 rows; expect scoped 83,
-   dead 5). Prod has no bucket A or C, so its total also reaches literal 0.
-5. Merge Phase 2.
+0. **test** — `fileindex-filereference-orphan-gc`. ✅ **DONE 2026-08-09**.
+1. **test** — `fileindex-connector-account-backfill`. ✅ **DONE**: 113,252 rows scoped, 30
+   workbooks, 3 ambiguous folderPaths left NULL.
+2. **test** — `fileindex-unscoped-row-resolve`. ✅ **DONE**: 81 scoped, 29 deleted, 0 left NULL,
+   0 untouched, 0 skipped.
+3. **test** — verify. ✅ A = 0, B = 0, C = 2, unscoped 112 → 2, `FileIndex` down by exactly 29,
+   **0 mis-scoped rows** in the two migrated workbooks.
+4. **prod** — `fileindex-unscoped-row-resolve`. ✅ **DONE**: 83 scoped, 5 deleted, 0 left NULL,
+   0 untouched, 0 skipped, 7 workbooks — matching the dry-run and the hand-derived prediction
+   exactly. **Unscoped rows fleet-wide: 88 → 0.**
+5. Merge Phase 2. ← only remaining step
+
+#### Executed 2026-08-09 ✅ — both environments
+
+Prod's live run reproduced, to the row, the split derived independently that morning by probing
+the repos with `gitops-git ls-tree`: 83 scoped (82 single-holder + the Notion row the content
+tie-break resolved), 5 dead. Two different tools, two different code paths, same answer.
+
+Verified read-only afterwards, per row rather than per summary — Pipedrive `Notes` 1–4 →
+`coa_RaCsQb2bnI`, WordPress `Pages` → `coa_x3pP2colTZ`, the Notion tie-break row → the lower
+`coa_FuJsG3v2e8`, all five dead rows gone, and **zero mis-scoped rows** across the seven
+workbooks (i.e. every scoped row's `connectorAccountId` genuinely owns its `folderPath`). That
+last check is what actually closes the gate; the rest is corroboration.
+
+Two things the run surfaced that the plan had not predicted:
+
+- **The backfill scoped 113,252, not the 113,280 this doc estimated.** The bucket-A query here
+  matches folderPaths by *prefix*, but the backfill's `updateMany` is **exact-`folderPath` match
+  only**, so 28 rows nested deeper than any DataFolder path were structurally out of its reach.
+  `fileindex-unscoped-row-resolve` then swept them, because its claimant lookup is
+  longest-prefix. Not a failed run — an over-generous estimate.
+- **Those 28 were DEV-11015 artifacts in a slash-collapsed variant** —
+  `Product Variants/gid:/shopify/ProductVariant` (one slash) against a `gid://shopify/…`
+  recordId (two). `isSplitRecordIdArtifactRow` tests
+  `folderPath.includes('/' + recordIdPrefix)`, which needs the double slash, so DEV-10885's
+  pass 2 could never match them. **Prod has zero rows of this shape** (checked), so the gap has
+  no production impact — and asking git rather than pattern-matching the id is precisely why
+  this migration caught what the predicate missed.
 
 ### Optional (not a gate): the orphan GC on test
 

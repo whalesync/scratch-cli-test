@@ -20,9 +20,21 @@ describe('pickPreferredRecordId', () => {
     expect(pickPreferredRecordId(rows, null)).toBe('rec_a');
   });
 
-  it('falls back to the first row when the requested connection has no matching row (legacy data)', () => {
+  // A scoped lookup is a STRICT match: resolving to an UNSCOPED row would hand the
+  // asking connection a record id that belongs to some other connection.
+  it('returns null when the requested connection has no row, rather than taking an UNSCOPED one', () => {
     const rows = [{ connectorAccountId: null, recordId: 'legacy_rec' }];
-    expect(pickPreferredRecordId(rows, 'coa_a')).toBe('legacy_rec');
+    expect(pickPreferredRecordId(rows, 'coa_a')).toBeNull();
+  });
+
+  it('returns null when the requested connection has no row, rather than another connection’s', () => {
+    const rows = [{ connectorAccountId: 'coa_b', recordId: 'rec_b' }];
+    expect(pickPreferredRecordId(rows, 'coa_a')).toBeNull();
+  });
+
+  it('still resolves a connector-less (scratch) row for an unscoped lookup', () => {
+    const rows = [{ connectorAccountId: null, recordId: 'rec_scratch' }];
+    expect(pickPreferredRecordId(rows, undefined)).toBe('rec_scratch');
   });
 });
 
@@ -68,5 +80,18 @@ describe('FileIndexService.getRecordIds', () => {
 
     const result = await service.getRecordIds('wkb_1', [{ folderPath: 'Contacts', filename: 'marcos.json' }]);
     expect(result.get('Contacts:marcos.json')).toBe('rec_first');
+  });
+
+  // Omitting the key (rather than returning another connection's id) is what makes a
+  // scoped lookup strict — callers already treat a missing key as "no record id".
+  it('omits a key whose only row belongs to a different connection', async () => {
+    fileIndexFindMany.mockResolvedValue([
+      { folderPath: 'Contacts', filename: 'marcos.json', recordId: 'rec_hubspot', connectorAccountId: 'coa_hubspot' },
+    ]);
+
+    const result = await service.getRecordIds('wkb_1', [
+      { folderPath: 'Contacts', filename: 'marcos.json', connectorAccountId: 'coa_other' },
+    ]);
+    expect(result.has('Contacts:marcos.json')).toBe(false);
   });
 });
