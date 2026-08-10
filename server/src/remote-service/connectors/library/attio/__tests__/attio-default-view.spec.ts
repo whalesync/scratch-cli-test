@@ -59,6 +59,7 @@ function makeObjectSchema() {
       email_addresses: attr('email-address'),
       phone_numbers: attr('phone-number'),
       categories: attr('select', { readonly: true }),
+      twitter: attr('text'),
       created_by: attr('actor-reference', { readonly: true }),
       record_id: attr('record-id', { readonly: true }),
       primary_location: attr('location'),
@@ -161,9 +162,14 @@ describe('buildAttioDefaultView (object)', () => {
       expect(col.hidden).toBe(true);
     });
 
-    it('should hide categories value field', () => {
+    it('should not hide categories (the company Industry attribute)', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'values.categories') as TableViewCol;
-      expect(col.hidden).toBe(true);
+      expect(col.hidden).toBeUndefined();
+    });
+
+    it('should not hide social-link attributes (e.g. twitter)', () => {
+      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'values.twitter') as TableViewCol;
+      expect(col.hidden).toBeUndefined();
     });
 
     it('should not hide useful value columns', () => {

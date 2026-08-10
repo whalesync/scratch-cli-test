@@ -48,20 +48,16 @@ const ATTIO_TYPE_MAP: Partial<Record<string, TablePropertyType>> = {
 
 // ── Hidden value fields ──
 
-// System attributes that are not useful to show by default.
-const HIDDEN_VALUE_FIELDS = new Set([
-  'created_by',
-  'categories',
-  'record_id',
-  'workspace_id',
-  'object_id',
-  'avatar_url',
-  'twitter',
-  'facebook',
-  'linkedin',
-  'angellist',
-  'instagram',
-]);
+// Internal id / actor plumbing hidden by default because it renders as a duplicate,
+// constant, or opaque column — never as business data the user reads:
+//   - `record_id` flattens to the same UUID already shown by the `id` column (a duplicate);
+//   - `workspace_id` / `object_id` hold the same value on every row in a table (constant);
+//   - `created_by` is an actor-reference that flattens to a raw actor UUID, not a name.
+// Genuine user attributes are intentionally NOT hidden — including `categories` (the
+// company Industry), the social links (`twitter`, `facebook`, `linkedin`, `angellist`,
+// `instagram`), and `avatar_url`. They carry real per-record data and flatten cleanly via
+// their `displayTransformer`, so they show by default like any other attribute.
+const HIDDEN_VALUE_FIELDS = new Set(['created_by', 'record_id', 'workspace_id', 'object_id']);
 
 // ── Always-readonly value fields ──
 
