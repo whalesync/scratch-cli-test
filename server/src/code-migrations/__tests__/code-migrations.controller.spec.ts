@@ -412,6 +412,262 @@ describe('CodeMigrationsController', () => {
     });
   });
 
+  describe('runMigration - fileindex-unscoped-row-resolve (DEV-11242)', () => {
+    // Two connections both expose a `Pages` folder — the case the path-based backfill
+    // cannot decide, so ownership comes from which repo actually holds the file.
+    const twoConnectionsSharingPages = [
+      { path: '/Pages', connectorAccountId: 'coa_shopify' },
+      { path: '/Pages', connectorAccountId: 'coa_wordpress' },
+    ];
+
+    /** Mock repo listings keyed by `${connectorAccountId}|${branch}`. */
+    /**
+     * Mock repo listings keyed by `${connectorAccountId}|${branch}`. A ROOT listing
+     * (folder === '') is the repo-readability probe, not a folder listing: by default
+     * every connection reports the `.scratch` directory there, i.e. "readable". Naming a
+     * connection in `unreadableConnections` makes its root list empty — which is how
+     * scratch-git reports a missing repo (404, swallowed to []) or an unresolvable branch.
+     */
+    function mockRepoFilenames(
+      filenamesByConnectionAndBranch: Record<string, string[]>,
+      options: { unreadableConnections?: string[] } = {},
+    ) {
+      scratchGitService.resolveConnectionRepoPath = jest
+        .fn()
+        .mockImplementation((connectorAccountId: string) => Promise.resolve(`repo/${connectorAccountId}`));
+      scratchGitService.listRepoFiles = jest
+        .fn()
+        .mockImplementation((repoId: string, branch: string, folder: string) => {
+          const connectorAccountId = repoId.replace('repo/', '');
+          if (folder === '') {
+            return Promise.resolve(
+              options.unreadableConnections?.includes(connectorAccountId)
+                ? []
+                : [{ name: '.scratch', path: '.scratch', type: 'directory' as const }],
+            );
+          }
+          const filenames = filenamesByConnectionAndBranch[`${connectorAccountId}|${branch}`] ?? [];
+          return Promise.resolve(filenames.map((name) => ({ name, path: `${folder}/${name}`, type: 'file' as const })));
+        });
+    }
+
+    beforeEach(() => {
+      dbService.client.fileIndex.updateMany = jest.fn().mockResolvedValue({ count: 0 });
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue(twoConnectionsSharingPages);
+    });
+
+    it('scopes a row to the one connection whose repo holds the file', async () => {
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'fi_1', folderPath: 'Pages', filename: 'masthead.json', recordId: '1411' }]);
+      dbService.client.fileIndex.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      mockRepoFilenames({ 'coa_wordpress|main': ['masthead.json'], 'coa_shopify|main': ['contact.json'] });
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-unscoped-row-resolve',
+        ids: ['wkb_1'],
+      });
+
+      expect(dbService.client.fileIndex.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['fi_1'] }, connectorAccountId: null },
+        data: { connectorAccountId: 'coa_wordpress' },
+      });
+      expect(dbService.client.fileIndex.deleteMany).not.toHaveBeenCalled();
+      expect(result.summary?.[0]).toEqual({
+        label: 'Unscoped rows scoped to their owning connection',
+        count: 1,
+      });
+    });
+
+    it('deletes a row only after neither main nor dirty holds the file', async () => {
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'fi_dead', folderPath: 'Pages', filename: 'gone.json', recordId: '27802' }]);
+      dbService.client.fileIndex.deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+      mockRepoFilenames({});
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-unscoped-row-resolve',
+        ids: ['wkb_1'],
+      });
+
+      // Both branches consulted for both claimants before concluding the file is gone.
+      const probedBranches = (scratchGitService.listRepoFiles as jest.Mock).mock.calls.map(
+        (call: [string, string, string]) => call[1],
+      );
+      expect(probedBranches).toContain('main');
+      expect(probedBranches).toContain('dirty');
+      expect(dbService.client.fileIndex.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ['fi_dead'] }, connectorAccountId: null },
+      });
+      expect(result.summary?.[1]).toEqual({
+        label: 'Dead rows deleted (file gone from every claimant repo)',
+        count: 1,
+      });
+    });
+
+    // A row under a connector-less (scratch) folder — or under no live folder at all — has
+    // no repo to probe, so "no claimant holds it" is meaningless. Deleting it would wipe
+    // the one legitimately-NULL population this very change documents, and would poach the
+    // orphan GC's rows (47,113 of them on the test DB) without its FileReference sweep.
+    it('leaves a row alone when no connector-backed folder owns its path', async () => {
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]);
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'fi_scratch', folderPath: 'Notes', filename: 'idea.json', recordId: 'rec_1' }]);
+      mockRepoFilenames({});
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-unscoped-row-resolve',
+        ids: ['wkb_1'],
+      });
+
+      expect(dbService.client.fileIndex.deleteMany).not.toHaveBeenCalled();
+      expect(dbService.client.fileIndex.updateMany).not.toHaveBeenCalled();
+      // No repo was probed at all — there was no connection to probe.
+      expect(scratchGitService.listRepoFiles).not.toHaveBeenCalled();
+      expect(result.summary?.[3]).toEqual({
+        label:
+          'Rows left untouched (no connector folder owns the path — scratch folder, or an orphan for the orphan GC)',
+        count: 1,
+      });
+    });
+
+    it('keeps a row a dirty-only file points at, rather than deleting it', async () => {
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'fi_dirty', folderPath: 'Pages', filename: 'draft.json', recordId: '7' }]);
+      dbService.client.fileIndex.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      mockRepoFilenames({ 'coa_shopify|dirty': ['draft.json'] });
+
+      await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-unscoped-row-resolve',
+        ids: ['wkb_1'],
+      });
+
+      expect(dbService.client.fileIndex.deleteMany).not.toHaveBeenCalled();
+      expect(dbService.client.fileIndex.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['fi_dirty'] }, connectorAccountId: null },
+        data: { connectorAccountId: 'coa_shopify' },
+      });
+    });
+
+    it('scopes a row both connections hold when the two files are identical', async () => {
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'fi_dup', folderPath: 'Pages', filename: 'same.json', recordId: 'rec_1' }]);
+      dbService.client.fileIndex.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      mockRepoFilenames({ 'coa_shopify|main': ['same.json'], 'coa_wordpress|main': ['same.json'] });
+      scratchGitService.getRepoFile = jest.fn().mockResolvedValue({ content: '{"id":"rec_1"}' });
+
+      await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-unscoped-row-resolve',
+        ids: ['wkb_1'],
+      });
+
+      // Lowest connectorAccountId of the two identical candidates.
+      expect(dbService.client.fileIndex.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['fi_dup'] }, connectorAccountId: null },
+        data: { connectorAccountId: 'coa_shopify' },
+      });
+    });
+
+    it('leaves a row NULL, and writes nothing, when the two connections hold DIFFERENT files', async () => {
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'fi_amb', folderPath: 'Pages', filename: 'clash.json', recordId: 'rec_1' }]);
+      mockRepoFilenames({ 'coa_shopify|main': ['clash.json'], 'coa_wordpress|main': ['clash.json'] });
+      scratchGitService.getRepoFile = jest
+        .fn()
+        .mockResolvedValueOnce({ content: '{"id":"rec_1"}' })
+        .mockResolvedValueOnce({ content: '{"id":"rec_999"}' });
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-unscoped-row-resolve',
+        ids: ['wkb_1'],
+      });
+
+      expect(dbService.client.fileIndex.updateMany).not.toHaveBeenCalled();
+      expect(dbService.client.fileIndex.deleteMany).not.toHaveBeenCalled();
+      expect(result.summary?.[2]).toEqual({
+        label: 'Rows left NULL (several connections hold a DIFFERENT file at that path)',
+        count: 1,
+      });
+    });
+
+    // scratch-git reports a missing repo (404, swallowed to []) and an unresolvable branch
+    // (200 with []) as EMPTY listings rather than errors, so nothing throws and the
+    // try/catch below can't see them. Without the root-listing readability probe this row
+    // would classify as dead and be deleted, even though its repo was never readable.
+    it('skips the workbook rather than deleting when a claimant repo lists empty at the root', async () => {
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'fi_1', folderPath: 'Pages', filename: 'masthead.json', recordId: '1411' }]);
+      mockRepoFilenames({}, { unreadableConnections: ['coa_shopify', 'coa_wordpress'] });
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-unscoped-row-resolve',
+        ids: ['wkb_1'],
+      });
+
+      expect(dbService.client.fileIndex.deleteMany).not.toHaveBeenCalled();
+      expect(dbService.client.fileIndex.updateMany).not.toHaveBeenCalled();
+      expect(result.summary?.[4]).toEqual({
+        label: 'Workbooks skipped without changes (could not probe/classify their rows)',
+        count: 1,
+      });
+    });
+
+    // A failed repo read looks exactly like "no claimant holds the file"; treating it that
+    // way would delete live rows, so the whole workbook is skipped without any write.
+    it('skips the workbook without writing when a connection repo cannot be read', async () => {
+      dbService.client.fileIndex.findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'fi_1', folderPath: 'Pages', filename: 'masthead.json', recordId: '1411' }]);
+      scratchGitService.resolveConnectionRepoPath = jest.fn().mockResolvedValue('repo/coa_wordpress');
+      scratchGitService.listRepoFiles = jest.fn().mockRejectedValue(new Error('git service unreachable'));
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-unscoped-row-resolve',
+        ids: ['wkb_1'],
+      });
+
+      expect(dbService.client.fileIndex.updateMany).not.toHaveBeenCalled();
+      expect(dbService.client.fileIndex.deleteMany).not.toHaveBeenCalled();
+      expect(result.migratedIds).toEqual([]);
+      expect(result.summary?.[4]).toEqual({
+        label: 'Workbooks skipped without changes (could not probe/classify their rows)',
+        count: 1,
+      });
+    });
+
+    it('writes nothing on a dry-run but still reports what it would do', async () => {
+      dbService.client.fileIndex.findMany = jest.fn().mockResolvedValue([
+        { id: 'fi_1', folderPath: 'Pages', filename: 'masthead.json', recordId: '1411' },
+        { id: 'fi_dead', folderPath: 'Pages', filename: 'gone.json', recordId: '27802' },
+      ]);
+      mockRepoFilenames({ 'coa_wordpress|main': ['masthead.json'] });
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'fileindex-unscoped-row-resolve',
+        ids: ['wkb_1'],
+        dryRun: true,
+      });
+
+      expect(dbService.client.fileIndex.updateMany).not.toHaveBeenCalled();
+      expect(dbService.client.fileIndex.deleteMany).not.toHaveBeenCalled();
+      expect(result.dryRun).toBe(true);
+      expect(result.summary?.[0]).toEqual({
+        label: 'Unscoped rows that would be scoped to their owning connection',
+        count: 1,
+      });
+      expect(result.summary?.[1]).toEqual({
+        label: 'Dead rows that would be deleted (file gone from every claimant repo)',
+        count: 1,
+      });
+    });
+  });
+
   describe('runMigration - init-workbook-repos', () => {
     it('initializes repos for workbooks by qty', async () => {
       const workbooks = [makeWorkbook('wkb_1', 'org_a'), makeWorkbook('wkb_2', 'org_b')];

@@ -38,8 +38,9 @@ import {
 } from 'src/remote-service/connectors/library/webflow/webflow-folder-paths';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
-import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SYSTEM_ACTOR } from 'src/users/types';
+import { assertUnreachable } from 'src/utils/asserts';
 import { EncryptedData } from 'src/utils/encryption';
 import { escapeLikeWildcards } from 'src/utils/prisma-like';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
@@ -55,6 +56,11 @@ import {
   rootOrphanFolderPaths,
   selectSplitRecordIdArtifactRowIds,
 } from './fileindex-filereference-orphan-gc';
+import {
+  classifyUnscopedRowOwnership,
+  findClaimantConnectorAccountIdsForFolderPath,
+  resolveMultiOwnerUnscopedRowByContent,
+} from './fileindex-unscoped-row-resolve';
 import {
   accumulate,
   AuditLogEntry,
@@ -181,6 +187,30 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'total on a dry-run), not a fleet-wide figure — batch with `ids`/`qty` and verify in the DB.',
   },
   {
+    name: 'fileindex-unscoped-row-resolve',
+    supportsDryRun: true,
+    description:
+      'DEV-11242 — resolves the FileIndex rows still left with connectorAccountId = NULL after ' +
+      'fileindex-connector-account-backfill, by asking git which connection actually holds the file. ' +
+      'Those survivors all sit at a folderPath claimed by 2+ connections (two HubSpot connections both ' +
+      'exposing Products, a Shopify and a WordPress connection both exposing Pages), which is exactly the ' +
+      'case the path-based backfill declares ambiguous and skips. Each connection has its own repo, so the ' +
+      'connection whose repo contains <folderPath>/<filename> IS the owner: exactly one holder scopes the ' +
+      'row to it; no holder on main OR dirty means the file is gone from every claimant and the dead row ' +
+      'is deleted; a row NO connector-backed folder owns is left untouched (no repo was probed, so this ' +
+      'migration has nothing to say — that is either a legitimate connector-less scratch-folder NULL or an ' +
+      'orphan for fileindex-filereference-orphan-gc to sweep); several holders are tie-broken by content — ' +
+      'byte-identical files are the same record ' +
+      'pulled twice (any candidate yields the same recordId, so the lowest connectorAccountId is taken ' +
+      'deterministically), while differing files are left NULL and reported rather than guessing an owner. ' +
+      'Only NULL rows are ever written or deleted, so a scoped row can never be touched. Idempotent, ' +
+      'dry-runnable, and a repo-read failure skips the whole workbook without writing anything — including ' +
+      'the silent kind, where scratch-git reports a missing repo or unresolvable branch as an empty listing ' +
+      'rather than an error (an empty main listing must prove the repo is readable before it counts as ' +
+      'evidence a file is gone). `ids` targets workbooks; `qty` takes that many workbooks that still have ' +
+      'unscoped rows.',
+  },
+  {
     name: 'webflow-folder-restructure-inverse',
     supportsDryRun: true,
     description:
@@ -267,6 +297,8 @@ export class CodeMigrationsController {
         return this.runFileIndexConnectorAccountBackfill(dto);
       case 'fileindex-filereference-orphan-gc':
         return this.runFileIndexFileReferenceOrphanGc(dto);
+      case 'fileindex-unscoped-row-resolve':
+        return this.runFileIndexUnscopedRowResolve(dto);
       case 'webflow-folder-restructure':
         return this.runWebflowFolderRestructure(dto);
       case 'webflow-folder-restructure-inverse':
@@ -980,6 +1012,331 @@ export class CodeMigrationsController {
           count: totalSplitRecordIdArtifactRowsDeleted,
         },
         { label: 'Orphan folderPaths (no live DataFolder owner)', count: totalOrphanFolderPaths },
+        { label: 'Workbooks processed', count: workbookIds.length },
+      ],
+    };
+  }
+
+  /**
+   * DEV-11242 — resolve the FileIndex rows still carrying `connectorAccountId = NULL`
+   * after `fileindex-connector-account-backfill`, by asking git which connection
+   * actually holds the file.
+   *
+   * The backfill infers ownership from `(workbookId, folderPath)` alone, so every row
+   * that survived it sits at a folderPath claimed by 2+ connections — the one case that
+   * inference cannot decide. Each connection has its own repo, so the connection whose
+   * repo contains `<folderPath>/<filename>` is the row's owner; the decision logic lives
+   * in [fileindex-unscoped-row-resolve.ts](./fileindex-unscoped-row-resolve.ts) and this
+   * method supplies the repo listings and does the (dry-run-able) writes.
+   *
+   * Safety: every probe for a workbook runs BEFORE any of its writes, and a repo-read
+   * failure aborts that workbook without writing anything — so an unreachable git service
+   * can never be mistaken for "the file is gone" and delete a live row. That covers
+   * raised failures; scratch-git ALSO reports an unreadable repo or branch as a silent
+   * empty listing, which is why an empty `main` listing additionally has to prove the
+   * repo is readable before it counts as evidence (see `assertConnectionRepoIsReadable`).
+   */
+  private async runFileIndexUnscopedRowResolve(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
+    const migrationName = 'fileindex-unscoped-row-resolve';
+    const dryRun = dto.dryRun ?? false;
+    const ROW_ID_IN_CLAUSE_BATCH_SIZE = 500;
+
+    // Candidate workbooks: `ids` targets them directly; `qty` takes that many distinct
+    // workbooks that still have unscoped rows, in a deterministic order for resumability.
+    let workbookIds: string[];
+    if (dto.ids && dto.ids.length > 0) {
+      workbookIds = dto.ids;
+    } else {
+      const unscopedWorkbookRows = await this.db.client.fileIndex.findMany({
+        where: { connectorAccountId: null },
+        select: { workbookId: true },
+        distinct: ['workbookId'],
+        orderBy: { workbookId: 'asc' },
+        take: dto.qty,
+      });
+      workbookIds = unscopedWorkbookRows.map((row) => row.workbookId);
+    }
+
+    const migratedIds: string[] = [];
+    let totalRowsScoped = 0;
+    let totalDeadRowsDeleted = 0;
+    let totalUnresolvableRows = 0;
+    let totalRowsWithNoConnectorClaimant = 0;
+    let totalWorkbooksSkippedOnRepoReadFailure = 0;
+
+    for (const workbookId of workbookIds) {
+      const unscopedRows = await this.db.client.fileIndex.findMany({
+        where: { workbookId, connectorAccountId: null },
+        select: { id: true, folderPath: true, filename: true, recordId: true },
+      });
+      if (unscopedRows.length === 0) continue;
+
+      // Connector-backed folders only: a connector-less (scratch) folder has no connection
+      // to scope a row TO. A row no folder here owns therefore has no repo to probe, and is
+      // left alone rather than classified — see `classifyUnscopedRowOwnership`.
+      const connectorDataFolders = await this.db.client.dataFolder.findMany({
+        where: { workbookId, connectorAccountId: { not: null }, path: { not: null } },
+        select: { path: true, connectorAccountId: true },
+      });
+      const connectorFolderPathsByConnectorAccountId = connectorDataFolders.flatMap((folder) =>
+        folder.path && folder.connectorAccountId
+          ? [{ connectorAccountId: folder.connectorAccountId, folderPathNoSlash: folder.path.replace(/^\//, '') }]
+          : [],
+      );
+
+      // Probe + classify every row first; only then write. A throw here (an unreachable
+      // git service, an unreadable repo) leaves the workbook completely untouched.
+      const rowIdsToScopeByConnectorAccountId = new Map<string, string[]>();
+      const deadRowIds: string[] = [];
+      let workbookUnresolvableRows = 0;
+      let workbookRowsWithNoConnectorClaimant = 0;
+      try {
+        // An empty listing is AMBIGUOUS, and only one of its three causes means "this
+        // folder holds no such file". scratch-git's read `/list` also returns [] when the
+        // repo directory is missing (`GitRepo::open` → `AppError::not_found` → 404, which
+        // `ScratchGitClient.list` deliberately swallows to []) and when the branch ref
+        // cannot be resolved (`resolve_ref` → `Ok(json!([]))`, a 200). Neither raises, so
+        // neither is caught by the try/catch below — an unreadable repo would read as
+        // "the file is gone" and, if it is the row's only claimant, delete a live row.
+        //
+        // So before an empty folder listing on `main` is allowed to mean anything, prove
+        // the repo+branch is readable by listing its ROOT (raw entries, NOT filtered to
+        // files — a connection repo's root holds the `.scratch` directory). An empty root
+        // means a missing repo, an unresolvable branch, or a never-populated repo; all
+        // three must abort the workbook rather than delete from it. Memoized per
+        // (connection, branch), so this costs at most one extra call per connection.
+        //
+        // Guarding `main` alone is sufficient and deliberate: `main` is always probed
+        // first, so a missing repo trips this before `dirty` is ever consulted, and
+        // `dirty` is only ever used to RESCUE a row from deletion, never to condemn one.
+        // Requiring `dirty` to be readable would risk aborting workbooks over a branch
+        // that some older repo may not have.
+        const connectionBranchesProvenReadable = new Set<string>();
+        const assertConnectionRepoIsReadable = async (connectorAccountId: string, branch: string): Promise<void> => {
+          const readabilityKey = `${connectorAccountId}|${branch}`;
+          if (connectionBranchesProvenReadable.has(readabilityKey)) return;
+          const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+          const rootEntries = await this.scratchGitService.listRepoFiles(repoId, branch, '');
+          if (rootEntries.length === 0) {
+            throw new Error(
+              `connection ${connectorAccountId} (repo ${repoId}) lists an EMPTY ROOT on branch ${branch} — ` +
+                `its repo or branch is unreadable, so an empty folder listing cannot be read as "the file is gone"`,
+            );
+          }
+          connectionBranchesProvenReadable.add(readabilityKey);
+        };
+
+        // One listing per (connection, folderPath, branch) pair, memoized: a folder with
+        // 55 unscoped rows and 2 claimants costs 2 calls, not 110.
+        const recordFilenamesByProbeKey = new Map<string, Set<string>>();
+        const listRecordFilenames = async (
+          connectorAccountId: string,
+          folderPathNoSlash: string,
+          branch: string,
+        ): Promise<Set<string>> => {
+          const probeKey = `${connectorAccountId}|${branch}|${folderPathNoSlash}`;
+          const memoized = recordFilenamesByProbeKey.get(probeKey);
+          if (memoized) return memoized;
+          const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+          const repoFiles = await this.scratchGitService.listRepoFiles(repoId, branch, folderPathNoSlash);
+          if (repoFiles.length === 0 && branch === MAIN_BRANCH) {
+            await assertConnectionRepoIsReadable(connectorAccountId, branch);
+          }
+          const recordFilenames = new Set(repoFiles.filter((file) => file.type === 'file').map((file) => file.name));
+          recordFilenamesByProbeKey.set(probeKey, recordFilenames);
+          return recordFilenames;
+        };
+        const findConnectorAccountIdsHoldingFile = async (
+          claimantConnectorAccountIds: string[],
+          folderPathNoSlash: string,
+          filename: string,
+          branch: string,
+        ): Promise<string[]> => {
+          const holders: string[] = [];
+          for (const claimantConnectorAccountId of claimantConnectorAccountIds) {
+            const recordFilenames = await listRecordFilenames(claimantConnectorAccountId, folderPathNoSlash, branch);
+            if (recordFilenames.has(filename)) holders.push(claimantConnectorAccountId);
+          }
+          return holders;
+        };
+
+        for (const unscopedRow of unscopedRows) {
+          const claimantConnectorAccountIds = findClaimantConnectorAccountIdsForFolderPath(
+            unscopedRow.folderPath,
+            connectorFolderPathsByConnectorAccountId,
+          );
+
+          // `main` is the persisted record set and decides the common case. Only when NO
+          // claimant holds the file there do we consult `dirty`, so an unpublished local
+          // state can rescue a row from deletion but can never manufacture ambiguity.
+          let branchHoldingTheFile = MAIN_BRANCH;
+          let connectorAccountIdsHoldingTheFile = await findConnectorAccountIdsHoldingFile(
+            claimantConnectorAccountIds,
+            unscopedRow.folderPath,
+            unscopedRow.filename,
+            MAIN_BRANCH,
+          );
+          if (connectorAccountIdsHoldingTheFile.length === 0) {
+            branchHoldingTheFile = DIRTY_BRANCH;
+            connectorAccountIdsHoldingTheFile = await findConnectorAccountIdsHoldingFile(
+              claimantConnectorAccountIds,
+              unscopedRow.folderPath,
+              unscopedRow.filename,
+              DIRTY_BRANCH,
+            );
+          }
+
+          let resolution = classifyUnscopedRowOwnership(claimantConnectorAccountIds, connectorAccountIdsHoldingTheFile);
+          if (resolution.kind === 'unresolvable') {
+            // Several claimants hold a file at this path — compare contents to tell "the
+            // same record pulled through two connections" from "two different records
+            // that happen to share a filename".
+            const fileContentByConnectorAccountId = [];
+            for (const candidateConnectorAccountId of resolution.candidateConnectorAccountIds) {
+              const repoId = await this.scratchGitService.resolveConnectionRepoPath(candidateConnectorAccountId);
+              const repoFile = await this.scratchGitService.getRepoFile(
+                repoId,
+                branchHoldingTheFile,
+                `${unscopedRow.folderPath}/${unscopedRow.filename}`,
+              );
+              fileContentByConnectorAccountId.push({
+                connectorAccountId: candidateConnectorAccountId,
+                content: repoFile?.content ?? null,
+              });
+            }
+            resolution = resolveMultiOwnerUnscopedRowByContent(fileContentByConnectorAccountId);
+          }
+
+          switch (resolution.kind) {
+            case 'scope': {
+              const rowIds = rowIdsToScopeByConnectorAccountId.get(resolution.connectorAccountId) ?? [];
+              rowIds.push(unscopedRow.id);
+              rowIdsToScopeByConnectorAccountId.set(resolution.connectorAccountId, rowIds);
+              break;
+            }
+            case 'delete':
+              deadRowIds.push(unscopedRow.id);
+              break;
+            case 'skip-no-connector-claimant':
+              // No connector-backed folder owns this path, so no repo was probed and this
+              // migration has nothing to say about the row. Either a legitimate scratch-folder
+              // NULL, or an orphan for `fileindex-filereference-orphan-gc` to sweep.
+              workbookRowsWithNoConnectorClaimant += 1;
+              break;
+            case 'unresolvable':
+              workbookUnresolvableRows += 1;
+              this.logger.warn(
+                `${migrationName}: workbook ${workbookId} — LEFT NULL ${unscopedRow.folderPath}/` +
+                  `${unscopedRow.filename} (recordId ${unscopedRow.recordId}): ` +
+                  `${resolution.candidateConnectorAccountIds.join(', ')} each hold a DIFFERENT file at that ` +
+                  `path, so the owning connection cannot be determined`,
+              );
+              break;
+            default:
+              assertUnreachable(resolution);
+          }
+        }
+      } catch (error) {
+        // Probing or classifying this workbook failed — most often an unreadable connection
+        // repo. Skip the whole workbook rather than act on partial information: a failed
+        // listing looks exactly like "no claimant holds the file" and would delete live rows.
+        totalWorkbooksSkippedOnRepoReadFailure += 1;
+        this.logger.warn(
+          `${migrationName}: workbook ${workbookId} SKIPPED (no changes written) — could not probe/classify ` +
+            `its rows: ${String(error)}`,
+        );
+        continue;
+      }
+
+      let workbookRowsScoped = 0;
+      for (const [connectorAccountId, rowIds] of rowIdsToScopeByConnectorAccountId) {
+        if (dryRun) {
+          workbookRowsScoped += rowIds.length;
+          continue;
+        }
+        for (const rowIdBatch of chunk(rowIds, ROW_ID_IN_CLAUSE_BATCH_SIZE)) {
+          // `connectorAccountId: null` in the predicate keeps this from touching a row a
+          // concurrent pull scoped since we read it — the pull's value is the fresher truth.
+          const { count } = await this.db.client.fileIndex.updateMany({
+            where: { id: { in: rowIdBatch }, connectorAccountId: null },
+            data: { connectorAccountId },
+          });
+          workbookRowsScoped += count;
+        }
+      }
+
+      let workbookDeadRowsDeleted = 0;
+      if (dryRun) {
+        workbookDeadRowsDeleted = deadRowIds.length;
+      } else {
+        for (const rowIdBatch of chunk(deadRowIds, ROW_ID_IN_CLAUSE_BATCH_SIZE)) {
+          const { count } = await this.db.client.fileIndex.deleteMany({
+            where: { id: { in: rowIdBatch }, connectorAccountId: null },
+          });
+          workbookDeadRowsDeleted += count;
+        }
+      }
+
+      totalRowsScoped += workbookRowsScoped;
+      totalDeadRowsDeleted += workbookDeadRowsDeleted;
+      totalUnresolvableRows += workbookUnresolvableRows;
+      totalRowsWithNoConnectorClaimant += workbookRowsWithNoConnectorClaimant;
+      if (workbookRowsScoped > 0 || workbookDeadRowsDeleted > 0) migratedIds.push(workbookId);
+      this.logger.log(
+        `${migrationName}: workbook ${workbookId} → ${unscopedRows.length} unscoped row(s); ` +
+          `${dryRun ? 'would scope' : 'scoped'} ${workbookRowsScoped}, ` +
+          `${dryRun ? 'would delete' : 'deleted'} ${workbookDeadRowsDeleted} dead, ` +
+          `${workbookUnresolvableRows} left NULL, ` +
+          `${workbookRowsWithNoConnectorClaimant} untouched (no connector folder owns the path)` +
+          `${dryRun ? ' (dry-run)' : ''}`,
+      );
+    }
+
+    // Read against fresh DB state so a live run reflects the rows it just wrote. What is
+    // left is the unresolvable rows and the no-connector-claimant rows (plus any workbook
+    // skipped on a repo-read failure, and any workbook outside this batch). Reaching zero
+    // therefore also needs `fileindex-filereference-orphan-gc` to have swept the orphans.
+    const remainingCount = await this.db.client.fileIndex.count({ where: { connectorAccountId: null } });
+
+    this.logger.log(
+      `${migrationName} complete${dryRun ? ' (dry-run)' : ''}: scoped=${totalRowsScoped}; ` +
+        `deadRowsDeleted=${totalDeadRowsDeleted}; unresolvable=${totalUnresolvableRows}; ` +
+        `noConnectorClaimant=${totalRowsWithNoConnectorClaimant}; ` +
+        `workbooksSkippedOnRepoReadFailure=${totalWorkbooksSkippedOnRepoReadFailure}; ` +
+        `workbooks=${workbookIds.length}; remaining=${remainingCount}`,
+    );
+
+    return {
+      migratedIds,
+      remainingCount,
+      migrationName,
+      dryRun,
+      summary: [
+        {
+          label: dryRun
+            ? 'Unscoped rows that would be scoped to their owning connection'
+            : 'Unscoped rows scoped to their owning connection',
+          count: totalRowsScoped,
+        },
+        {
+          label: dryRun
+            ? 'Dead rows that would be deleted (file gone from every claimant repo)'
+            : 'Dead rows deleted (file gone from every claimant repo)',
+          count: totalDeadRowsDeleted,
+        },
+        {
+          label: 'Rows left NULL (several connections hold a DIFFERENT file at that path)',
+          count: totalUnresolvableRows,
+        },
+        {
+          label:
+            'Rows left untouched (no connector folder owns the path — scratch folder, or an orphan for the orphan GC)',
+          count: totalRowsWithNoConnectorClaimant,
+        },
+        {
+          label: 'Workbooks skipped without changes (could not probe/classify their rows)',
+          count: totalWorkbooksSkippedOnRepoReadFailure,
+        },
         { label: 'Workbooks processed', count: workbookIds.length },
       ],
     };
