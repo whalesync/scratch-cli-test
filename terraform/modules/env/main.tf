@@ -350,7 +350,10 @@ module "gce_instance" {
   enable_oslogin        = true
   service_account_email = module.iam-sa.service_accounts["cloudsql-proxy-service-account"].email
   gcp_project_id        = var.gcp_project_id
-  give_external_ip      = true
+  # No external IP (pentest finding WSG-004, DEV-10985): SSH goes through IAP to the internal IP,
+  # the DB/Redis targets are reached over private peering, and outbound traffic (apt, Google APIs)
+  # egresses via Cloud NAT / Private Google Access.
+  give_external_ip      = false
 
   metadata_startup_script = <<-EOT
     #!/bin/bash
