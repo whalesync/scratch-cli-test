@@ -44,6 +44,37 @@ impl GitRepo {
             return Ok((true, vec![]));
         }
 
+        // 2b. Fast path: `main` has not moved since `dirty` was branched off it
+        //     (merge_base == main), so `dirty` is ALREADY rebased onto `main` and
+        //     there is nothing to merge. The general path below would still walk
+        //     every changed file — reading each blob out of `dirty`, re-reading it
+        //     out of `main`, and re-committing it — only to rebuild a tree
+        //     byte-identical to the one `dirty` already points at. Every one of
+        //     those merges is provably a no-op: with merge_base == main, an edit's
+        //     diff3 base equals main's content, so `merge_file_contents` is never
+        //     reached and `final_content` is always the dirty content verbatim.
+        //
+        //     That is not cheap waste, and it is the same failure class the
+        //     step-4 exclusion below was added for (DEV-11228). A prod Live
+        //     Export staged 130,390 Stripe records on the destination's `dirty`
+        //     over an untouched `main`; this provably-no-op rebase ran ~20
+        //     minutes and blew the git proxy's 300s `proxy_read_timeout`, so the
+        //     publish job died on an HTTP 504 before building a single operation.
+        //     Worse, the orphaned work kept running past the client disconnect
+        //     and force-reset `dirty` to `main` (step 5) before rebuilding it —
+        //     a window where every staged record is missing from the branch.
+        //
+        //     Only valid when nothing is being excluded: a non-empty
+        //     `exclude_paths` asks us to DROP those edits (converge them to
+        //     `main`), which is a real mutation even when main has not moved.
+        if merge_base_oid == main_oid && exclude_set.is_empty() {
+            // `merge_base_oid` may have come from the fallback in
+            // `resolve_merge_base_or_main` (tag missing) — write it so the tag
+            // exists for the next caller.
+            self.write_tag("merge_base", main_oid)?;
+            return Ok((true, vec![]));
+        }
+
         // 3. User has edits (dirty != merge_base). Perform 3-way merge rebase.
         //    Get user changes (compare merge_base → dirty)
         let user_changes = self.compare_commits(merge_base_oid, dirty_oid)?;
@@ -667,6 +698,130 @@ mod tests {
                 .unwrap()
                 .is_empty(),
             "dirty must hold main's tree exactly when every changed path is excluded"
+        );
+    }
+
+    /// When `main` has not moved since `dirty` branched off it (merge_base ==
+    /// main), `dirty` is already rebased and the whole 3-way merge is a no-op.
+    /// It must not touch `dirty` at all — the old code force-reset `dirty` to
+    /// `main` and re-committed every staged record, which on a 130k-record Live
+    /// Export ran ~20 minutes and 504'd the publish job.
+    #[test]
+    fn rebase_is_a_noop_when_main_has_not_moved() {
+        let (_tmp, repo) = setup_repo();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[FileChange {
+                path: "schema.json".to_string(),
+                content: Some("{\"v\":1}".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "seed main",
+        )
+        .unwrap();
+        repo.rebase_dirty("diff3").unwrap(); // dirty == merge_base == main
+
+        // A sync stages records on `dirty`. `main` does NOT advance.
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[
+                FileChange {
+                    path: "recs/a.json".to_string(),
+                    content: Some("{\"id\":\"a\"}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "recs/b.json".to_string(),
+                    content: Some("{\"id\":\"b\"}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "Sync: batch write files",
+        )
+        .unwrap();
+
+        let dirty_oid_before_rebase = repo.resolve_ref(DIRTY_BRANCH).unwrap();
+
+        let (success, conflicts) = repo.rebase_dirty("diff3").unwrap();
+        assert!(success);
+        assert!(conflicts.is_empty());
+
+        // The load-bearing assertion: `dirty` is left completely untouched. Without
+        // the merge_base == main fast path this is a fresh "Rebase dirty on main"
+        // commit, so the OIDs differ.
+        assert_eq!(
+            repo.resolve_ref(DIRTY_BRANCH).unwrap(),
+            dirty_oid_before_rebase,
+            "rebase must not rewrite `dirty` when `main` has not moved"
+        );
+
+        // …and the staged records are all still there.
+        for (path, expected) in [
+            ("recs/a.json", "{\"id\":\"a\"}"),
+            ("recs/b.json", "{\"id\":\"b\"}"),
+            ("schema.json", "{\"v\":1}"),
+        ] {
+            assert_eq!(
+                repo.get_file_content(DIRTY_BRANCH, path)
+                    .unwrap()
+                    .as_deref(),
+                Some(expected),
+                "{path} must survive the no-op rebase"
+            );
+        }
+    }
+
+    /// The fast path must still publish the `merge_base` tag when it was absent —
+    /// `resolve_merge_base_or_main` falls back to `main`, which makes the
+    /// merge_base == main test pass without the tag ever existing on disk.
+    #[test]
+    fn rebase_noop_still_writes_a_missing_merge_base_tag() {
+        let (tmp, repo) = setup_repo();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[FileChange {
+                path: "schema.json".to_string(),
+                content: Some("{\"v\":1}".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "seed main",
+        )
+        .unwrap();
+        let main_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        repo.force_ref(DIRTY_BRANCH, main_oid).unwrap();
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[FileChange {
+                path: "recs/a.json".to_string(),
+                content: Some("{\"id\":\"a\"}".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "Sync: batch write files",
+        )
+        .unwrap();
+
+        // `GitRepo::init` always seeds a merge_base tag, so delete it to reach the
+        // branch where `resolve_merge_base_or_main` falls back to `main`.
+        std::fs::remove_file(tmp.path().join("test.git/refs/tags/merge_base")).unwrap();
+        assert!(
+            repo.resolve_ref("merge_base").is_err(),
+            "precondition: no merge_base tag yet"
+        );
+
+        let (success, _) = repo.rebase_dirty("diff3").unwrap();
+        assert!(success);
+
+        assert_eq!(
+            repo.resolve_ref("merge_base").unwrap(),
+            main_oid,
+            "the fast path must materialize the merge_base tag it inferred"
         );
     }
 }
