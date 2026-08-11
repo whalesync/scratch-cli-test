@@ -1081,7 +1081,16 @@ describe('transformRecordAsync', () => {
           },
         };
         const mapping = map[fk];
-        return Promise.resolve(mapping === undefined ? { kind: 'no_destination_record' } : { kind: 'mapped', mapping });
+        return Promise.resolve(
+          mapping === undefined
+            ? {
+                kind: 'no_destination_record',
+                cause: 'referenced_record_not_synced',
+                referencedFolderName: 'Authors',
+                referencedFolderService: Service.AIRTABLE,
+              }
+            : { kind: 'mapped', mapping },
+        );
       }),
       lookupFieldFromFkRecord: jest.fn(),
       getOrCreateDestinationAssetMapping: jest.fn(),

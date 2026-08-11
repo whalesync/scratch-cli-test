@@ -107,7 +107,12 @@ describe('Notion relation FK chain — sync → strip → backfill (composed)', 
           const mapping = fkMappingBySourceId[sourceFkValue];
           return Promise.resolve(
             mapping === undefined
-              ? ({ kind: 'no_destination_record' } as const)
+              ? ({
+                  kind: 'no_destination_record',
+                  cause: 'referenced_record_not_synced',
+                  referencedFolderName: null,
+                  referencedFolderService: null,
+                } as const)
               : ({ kind: 'mapped', mapping } as const),
           );
         },

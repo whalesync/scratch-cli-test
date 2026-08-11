@@ -1,8 +1,22 @@
 import { Type } from '@sinclair/typebox';
-import { isScratchPendingPublishId, SourceFkToDestFkOptions, TransformerTypes } from '@spinner/shared-types';
+import {
+  DataFolderId,
+  isScratchPendingPublishId,
+  Service,
+  SourceFkToDestFkOptions,
+  TransformerTypes,
+} from '@spinner/shared-types';
+import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
+import { assertUnreachable } from 'src/utils/asserts';
 import { WSLogger } from '../../../logger';
 import { registerTransformer } from '../transformer-registry';
-import { FieldTransformer, FkMappingResult, TransformContext, TransformResult } from '../transformer.types';
+import {
+  FieldTransformer,
+  FkMappingResult,
+  NoDestinationRecordCause,
+  TransformContext,
+  TransformResult,
+} from '../transformer.types';
 
 /**
  * Transforms a source foreign key ID to the corresponding destination foreign key ID.
@@ -156,21 +170,22 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
         };
       }
 
-      // Step 2 — the target's remote id names a destination record.
+      // Step 2 — the target's remote id names a destination record. A step-1 `no_match` produced
+      // no remote id to look one up with, so it skips step 2 (`null`) and reports on its own.
       const destinationResolution =
         target.kind === 'resolved'
           ? await lookupTools.getDestinationMappingForSourceFk(
               target.targetSourceRemoteId,
               typedOptions.referencedDataFolderId,
             )
-          : ({ kind: 'no_destination_record' } as const);
+          : null;
 
       // The destination record is known but the connection it lives in is not, so no
       // workspace-absolute pseudo-ref can be built — and that is the only form we may write.
       // Dropping the link instead would be a silent lie, so fail the field even under
       // `onUnresolved: 'ignore'` (that tolerance is for targets we can't FIND, not for targets
       // we can't ADDRESS).
-      if (destinationResolution.kind === 'destination_connection_unresolved') {
+      if (destinationResolution?.kind === 'destination_connection_unresolved') {
         const message =
           `Could not build a reference for foreign key "${fkStr}": ${destinationResolution.reason}. ` +
           `Re-check the sync's destination table mapping for DataFolder ${typedOptions.referencedDataFolderId}.`;
@@ -183,26 +198,22 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
         return { success: false, error: message };
       }
 
-      if (destinationResolution.kind === 'no_destination_record') {
-        // Three genuinely different causes, each with a different fix — and how much we KNOW
-        // differs with `targetKeyPath`, so the message must not over-claim:
-        //   - no_match: the referenced folder was searched by the declared key and nothing carries
-        //     this value. Only reachable with a `targetKeyPath`.
-        //   - resolved, no key path: step 1 echoed the value back as a remote id WITHOUT verifying
-        //     it exists, so all we know is there's no destination record. The target may be absent
-        //     from the source folder (deleted upstream, never pulled) or present but not synced —
-        //     the mapping table can't tell those apart, so name both.
-        //   - resolved, with a key path: step 1 matched a REAL record in the referenced source
-        //     folder, so "absent from the source folder" is provably false here. The record exists;
-        //     it just hasn't reached the destination. Saying otherwise sends a debugger the wrong way.
+      if (destinationResolution === null || destinationResolution.kind === 'no_destination_record') {
+        // `no_match` (only reachable with a `targetKeyPath`) is its own answer: the referenced
+        // folder was searched by the declared key and nothing carries this value. Everything else
+        // named a target and got no destination record for it, which `SyncRemoteIdMapping` can
+        // now attribute to an actual cause rather than listing the possibilities (DEV-11223).
         const reason =
-          target.kind === 'no_match'
+          destinationResolution === null
             ? `no record in DataFolder ${typedOptions.referencedDataFolderId} has ${describeTargetKey(typedOptions.targetKeyPath)} "${fkStr}"`
-            : typedOptions.targetKeyPath === undefined
-              ? `no record with that id in DataFolder ${typedOptions.referencedDataFolderId} has a destination ` +
-                `record — it is either absent from the source folder (e.g. deleted in the source service) or not synced`
-              : `the record in DataFolder ${typedOptions.referencedDataFolderId} whose ` +
-                `${describeTargetKey(typedOptions.targetKeyPath)} is "${fkStr}" has not been synced to the destination`;
+            : describeMissingDestinationRecord({
+                cause: destinationResolution.cause,
+                referencedFolderName: destinationResolution.referencedFolderName,
+                referencedFolderService: destinationResolution.referencedFolderService,
+                referencedDataFolderId: typedOptions.referencedDataFolderId,
+                targetKeyPath: typedOptions.targetKeyPath,
+                foreignKeyValue: fkStr,
+              });
         if (ignoreUnresolved) {
           // No per-element log line: this is the DEFAULT path now, and a mature source reaches it
           // once per dangling reference across every record of the table (six figures on the run
@@ -324,6 +335,87 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
  */
 function describeTargetKey(targetKeyPath: string | undefined): string {
   return targetKeyPath === undefined ? 'remote id' : `"${targetKeyPath}"`;
+}
+
+/**
+ * Name the service a missing referenced record would have been deleted from. This is the REFERENCED
+ * folder's own service, not the service of the pair being synced: a sync's table pairs are arbitrary
+ * folder pairs, so an Airtable column's foreign key can name a Stripe source folder, and naming the
+ * pair's source service would send the user looking in the wrong product. Falls back to the generic
+ * phrase when the folder's service is unknown rather than guessing.
+ */
+function describeReferencedService(referencedFolderService: Service | null): string {
+  return referencedFolderService === null ? 'the source service' : getServiceDisplayName(referencedFolderService);
+}
+
+/**
+ * Name why a foreign key that named a target reached no destination record, and what the user
+ * would do about it (DEV-11223).
+ *
+ * How much is PROVEN still differs with `targetKeyPath`, so the wording tracks it: with one, step 1
+ * matched a real record in the referenced source folder, so "deleted in the source service" is
+ * provably false and saying it would send a debugger the wrong way. Without one, step 1 echoed the
+ * value back unverified, and `SyncRemoteIdMapping` is the only witness that the record was ever
+ * seen — which is exactly what `cause` reports.
+ */
+function describeMissingDestinationRecord(args: {
+  cause: NoDestinationRecordCause;
+  referencedFolderName: string | null;
+  referencedFolderService: Service | null;
+  referencedDataFolderId: DataFolderId;
+  targetKeyPath: string | undefined;
+  foreignKeyValue: string;
+}): string {
+  // Always carry the DataFolder id, named or not, so a log search or a support thread can key on it.
+  const referencedTable = args.referencedFolderName
+    ? `"${args.referencedFolderName}" (DataFolder ${args.referencedDataFolderId})`
+    : `DataFolder ${args.referencedDataFolderId}`;
+  switch (args.cause) {
+    case 'referenced_folder_synced_nothing': {
+      // What is left UNPROVEN moves on two axes, and advice that reaches past either one is the
+      // same over-claim the other branches avoid:
+      //   - `referencedFolderName` is non-null only when a `SyncTablePair` was found, so a NAMED
+      //     table is already known to be one of this sync's tables.
+      //   - a declared `targetKeyPath` means step 1 streamed that folder off disk and matched a
+      //     record in it, so the folder is already known to hold records.
+      // Both halves being known is reachable: a real table pair produces no rows when the
+      // referenced folder is empty, when its records all lack the match key the pair derives on
+      // (`insertMatchKeys` skips those), or when `syncOneRecord` runs FOREIGN_KEY_MAPPING before
+      // that pair's DATA phase has run for this sync.
+      const matchKeyHint = 'check that its records carry the match key this sync pairs on';
+      if (args.referencedFolderName === null) {
+        return args.targetKeyPath === undefined
+          ? `the referenced table ${referencedTable} synced no records at all — ` +
+              `check that it is one of this sync's tables and has been pulled`
+          : `the referenced table ${referencedTable} has records but synced none of them — ` +
+              `check that it is one of this sync's tables`;
+      }
+      return args.targetKeyPath === undefined
+        ? `the referenced table ${referencedTable} is one of this sync's tables but synced no records ` +
+            `at all — check that it has been pulled, and ${matchKeyHint}`
+        : `the referenced table ${referencedTable} is one of this sync's tables and has records, but ` +
+            `synced none of them — ${matchKeyHint}`;
+    }
+    case 'referenced_record_awaiting_destination':
+      return args.targetKeyPath === undefined
+        ? `the referenced record was synced from ${referencedTable} but has not reached the destination yet`
+        : `the record in ${referencedTable} whose ${describeTargetKey(args.targetKeyPath)} is ` +
+            `"${args.foreignKeyValue}" was synced but has not reached the destination yet`;
+    case 'referenced_record_not_synced':
+      // Three fixes, because this cause has three sources: the target is gone upstream, it was
+      // never pulled, or it IS on disk but the referenced pair's match-key derivation skipped it
+      // (`insertMatchKeys` drops a record whose `deriveCanonicalMatchKey` returns null, so no
+      // `SyncRemoteIdMapping` row is written for it). Listing only the first two would point away
+      // from the third whenever the referenced pair uses `recordMatching`.
+      return args.targetKeyPath === undefined
+        ? `no record with that id was synced from the referenced table ${referencedTable} — ` +
+            `it may have been deleted in ${describeReferencedService(args.referencedFolderService)}, ` +
+            `never pulled into Scratch, or missing the match key this sync pairs on`
+        : `the record in ${referencedTable} whose ${describeTargetKey(args.targetKeyPath)} is ` +
+            `"${args.foreignKeyValue}" is present there but was not synced, so it has no destination record`;
+    default:
+      return assertUnreachable(args.cause);
+  }
 }
 
 /**

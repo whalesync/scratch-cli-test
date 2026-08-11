@@ -35,9 +35,33 @@ import {
  * (a skip the user may have opted into via `onUnresolved: 'ignore'`) stays distinguishable
  * from "this FK maps somewhere we can't name" (a hard failure).
  */
-type ReferencedFolderDestinationMappings =
+type ReferencedFolderDestinationMappings = {
+  /**
+   * The source remote ids `SyncRemoteIdMapping` holds a row for that carries NO destination path —
+   * the rows both shapes below drop, and the reason an FK that mapped nowhere could not say whether
+   * its target was never synced or is merely waiting for its counterpart (DEV-11223).
+   *
+   * Deliberately only the destination-LESS ids, not every row's id: this is read only after the id
+   * has already missed the destination-bearing lookup, so the ids in that lookup could never be
+   * consulted here. Holding them too would duplicate the whole key set of a healthy folder's map —
+   * a second ~35-40k-entry hash table per cached folder, in the path DEV-11192 OOM-killed the
+   * worker in — to answer questions about a handful of ids.
+   */
+  sourceRemoteIdsSyncedWithoutDestination: Set<string>;
+  /** How many rows the folder has in total, so "synced nothing at all" stays distinguishable. */
+  syncedSourceRecordRowCount: number;
+  /** The referenced (source) folder's display name, for messages; null when this sync has no pair for it. */
+  referencedFolderName: string | null;
+  /**
+   * The service the referenced folder is connected to; null when unknown. Why this is the
+   * REFERENCED folder's service and not the synced pair's:
+   * {@link DestinationMappingResolution}'s `referencedFolderService`.
+   */
+  referencedFolderService: Service | null;
+} & (
   | { kind: 'resolved'; mappingBySourceRemoteId: Map<string, FkMappingResult> }
-  | { kind: 'connection_unresolved'; reason: string; sourceRemoteIdsWithDestination: Set<string> };
+  | { kind: 'connection_unresolved'; reason: string; sourceRemoteIdsWithDestination: Set<string> }
+);
 
 /**
  * Stream every source record of a referenced folder, one page at a time, so a foreign key whose
@@ -65,7 +89,14 @@ export function createNullLookupTools(): LookupTools {
           ? ({ kind: 'resolved', targetSourceRemoteId: foreignKeyValue } as const)
           : ({ kind: 'no_match' } as const),
       ),
-    getDestinationMappingForSourceFk: () => Promise.resolve({ kind: 'no_destination_record' as const }),
+    // No sync behind these tools, so no referenced folder has synced anything.
+    getDestinationMappingForSourceFk: () =>
+      Promise.resolve({
+        kind: 'no_destination_record',
+        cause: 'referenced_folder_synced_nothing',
+        referencedFolderName: null,
+        referencedFolderService: null,
+      } as const),
     lookupFieldFromFkRecord: () => Promise.resolve(undefined),
     getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
     matchDestinationAssetByHash: () => Promise.resolve([]),
@@ -167,6 +198,11 @@ export function createLookupTools(
       where: { syncId, sourceDataFolderId: referencedDataFolderId },
       select: {
         destinationDataFolderId: true,
+        // The SOURCE folder's name is the referenced TABLE's name — what an unresolved FK calls
+        // the table it could not find its target in — and its `connectorService` is the service a
+        // missing target would have been deleted FROM, which is not necessarily the service of the
+        // pair currently being synced.
+        sourceDataFolder: { select: { name: true, connectorService: true } },
         destinationDataFolder: { select: { name: true, connectorAccount: { select: { displayName: true } } } },
       },
     });
@@ -179,6 +215,17 @@ export function createLookupTools(
       },
       select: { sourceRemoteId: true, destinationFilePath: true, destinationRemoteId: true },
     });
+
+    // Only the rows BOTH shapes below drop — see `sourceRemoteIdsSyncedWithoutDestination`.
+    const sourceRemoteIdsSyncedWithoutDestination = new Set(
+      rows.filter((row) => !row.destinationFilePath).map((row) => row.sourceRemoteId),
+    );
+    const folderIdentity = {
+      sourceRemoteIdsSyncedWithoutDestination,
+      syncedSourceRecordRowCount: rows.length,
+      referencedFolderName: referencedTablePair?.sourceDataFolder.name ?? null,
+      referencedFolderService: referencedTablePair?.sourceDataFolder.connectorService ?? null,
+    };
 
     if (destinationConnectionDisplayName === undefined) {
       const sourceRemoteIdsWithDestination = new Set<string>();
@@ -193,6 +240,7 @@ export function createLookupTools(
             : `the destination folder "${referencedTablePair.destinationDataFolder.name}" ` +
               `(${referencedTablePair.destinationDataFolderId}) is not attached to a connection`,
         sourceRemoteIdsWithDestination,
+        ...folderIdentity,
       };
     }
 
@@ -206,7 +254,37 @@ export function createLookupTools(
         destinationConnectionFolder,
       });
     }
-    return { kind: 'resolved', mappingBySourceRemoteId };
+    return { kind: 'resolved', mappingBySourceRemoteId, ...folderIdentity };
+  }
+
+  /**
+   * Work out WHY a source remote id reached no destination record in the referenced folder — the
+   * distinction `SyncRemoteIdMapping` can make but `mappingBySourceRemoteId` alone cannot
+   * (DEV-11223). Shared by both folder shapes: an FK that maps nowhere reports the same cause
+   * whether or not the folder's destination connection could be named.
+   *
+   * Named for classification, not description: the sentence a user reads is built from this cause
+   * by `describeMissingDestinationRecord` in `source-fk-to-dest-fk.transformer.ts`.
+   */
+  function classifyMissingDestinationRecordCause(
+    folderMappings: ReferencedFolderDestinationMappings,
+    sourceFkValue: string,
+  ): DestinationMappingResolution {
+    const { sourceRemoteIdsSyncedWithoutDestination, syncedSourceRecordRowCount } = folderMappings;
+    // `sourceFkValue` has already missed the destination-bearing lookup at both call sites, so a
+    // hit here means "a row exists, it just has no destination path yet".
+    const cause =
+      syncedSourceRecordRowCount === 0
+        ? 'referenced_folder_synced_nothing'
+        : sourceRemoteIdsSyncedWithoutDestination.has(sourceFkValue)
+          ? 'referenced_record_awaiting_destination'
+          : 'referenced_record_not_synced';
+    return {
+      kind: 'no_destination_record',
+      cause,
+      referencedFolderName: folderMappings.referencedFolderName,
+      referencedFolderService: folderMappings.referencedFolderService,
+    };
   }
 
   return {
@@ -244,11 +322,13 @@ export function createLookupTools(
         // hard failure.
         return folderMappings.sourceRemoteIdsWithDestination.has(sourceFkValue)
           ? { kind: 'destination_connection_unresolved', reason: folderMappings.reason }
-          : { kind: 'no_destination_record' };
+          : classifyMissingDestinationRecordCause(folderMappings, sourceFkValue);
       }
 
       const mapping = folderMappings.mappingBySourceRemoteId.get(sourceFkValue);
-      return mapping === undefined ? { kind: 'no_destination_record' } : { kind: 'mapped', mapping };
+      return mapping === undefined
+        ? classifyMissingDestinationRecordCause(folderMappings, sourceFkValue)
+        : { kind: 'mapped', mapping };
     },
 
     async lookupFieldFromFkRecord(

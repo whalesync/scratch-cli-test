@@ -11,6 +11,7 @@ const SOURCE_REFERENCED_FOLDER = 'dfd_source_authors' as DataFolderId;
 describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () => {
   it('derives destinationConnectionFolder from the DESTINATION folder of the table pair, not the source', () => {
     const syncTablePairFindFirst = jest.fn().mockResolvedValue({
+      sourceDataFolder: { name: 'Authors', connectorService: Service.AIRTABLE },
       // The DESTINATION folder's connection — this is what must surface, NOT the
       // source folder's connection (whose id is referencedDataFolderId).
       destinationDataFolder: { connectorAccount: { displayName: 'Webflow: Marketing' } },
@@ -82,6 +83,7 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
         syncTablePair: {
           findFirst: jest.fn().mockResolvedValue({
             destinationDataFolderId: 'dfd_dest_authors',
+            sourceDataFolder: { name: 'Authors', connectorService: Service.AIRTABLE },
             destinationDataFolder: { name: 'Authors', connectorAccount: null },
           }),
         },
@@ -131,8 +133,85 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
     return lookupTools
       .getDestinationMappingForSourceFk('src_never_mapped', SOURCE_REFERENCED_FOLDER)
       .then((resolution) => {
-        expect(resolution).toEqual({ kind: 'no_destination_record' });
+        expect(resolution).toEqual({
+          kind: 'no_destination_record',
+          // No table pair, so the referenced table can't be named — but the CAUSE still can be.
+          cause: 'referenced_record_not_synced',
+          referencedFolderName: null,
+          referencedFolderService: null,
+        });
       });
+  });
+});
+
+/**
+ * DEV-11223: an FK that reaches no destination record must say WHICH of the three causes it hit.
+ * `SyncRemoteIdMapping` can tell them apart — a folder's rows are rewritten each run, one per
+ * source record it synced, with the destination columns null until a counterpart exists — but
+ * only the destination-BEARING rows reach `mappingBySourceRemoteId`, so the row-presence set is
+ * what makes "never synced" separable from "synced, still waiting".
+ */
+describe('createLookupTools.getDestinationMappingForSourceFk — no_destination_record causes (DEV-11223)', () => {
+  /** Lookup tools over a stubbed DB holding exactly `rows` for the referenced folder. */
+  function createLookupToolsOverRows(rows: { sourceRemoteId: string; destinationFilePath: string | null }[]) {
+    const db = {
+      client: {
+        syncTablePair: {
+          findFirst: jest.fn().mockResolvedValue({
+            destinationDataFolderId: 'dfd_dest_authors',
+            sourceDataFolder: { name: 'Customers', connectorService: Service.STRIPE },
+            destinationDataFolder: { name: 'Authors', connectorAccount: { displayName: 'Notion' } },
+          }),
+        },
+        syncRemoteIdMapping: {
+          findMany: jest.fn().mockResolvedValue(rows.map((row) => ({ ...row, destinationRemoteId: null }))),
+        },
+      },
+    } as unknown as DbService;
+    // The PAIR being synced is Airtable → Notion while the REFERENCED folder is Stripe, so an
+    // assertion of `referencedFolderService: STRIPE` can only pass by reading the folder.
+    return createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.NOTION, () => Promise.resolve());
+  }
+
+  it('reports an id with NO row as never synced from the referenced folder', async () => {
+    const lookupTools = createLookupToolsOverRows([
+      { sourceRemoteId: 'cus_kept', destinationFilePath: 'Customers/kept.json' },
+    ]);
+
+    await expect(
+      lookupTools.getDestinationMappingForSourceFk('cus_OKBUcB0TIWPk82', SOURCE_REFERENCED_FOLDER),
+    ).resolves.toEqual({
+      kind: 'no_destination_record',
+      cause: 'referenced_record_not_synced',
+      referencedFolderName: 'Customers',
+      // The REFERENCED folder's own service, not the sync pair's — that is the product a deleted
+      // target would have been deleted from.
+      referencedFolderService: Service.STRIPE,
+    });
+  });
+
+  it('reports a row with no destination path as a record still awaiting its counterpart', async () => {
+    // The row `mappingBySourceRemoteId` skips — which is why this used to be indistinguishable
+    // from the case above.
+    const lookupTools = createLookupToolsOverRows([{ sourceRemoteId: 'cus_1', destinationFilePath: null }]);
+
+    await expect(lookupTools.getDestinationMappingForSourceFk('cus_1', SOURCE_REFERENCED_FOLDER)).resolves.toEqual({
+      kind: 'no_destination_record',
+      cause: 'referenced_record_awaiting_destination',
+      referencedFolderName: 'Customers',
+      referencedFolderService: Service.STRIPE,
+    });
+  });
+
+  it('reports a referenced folder with no rows at all separately — no per-record fix applies', async () => {
+    const lookupTools = createLookupToolsOverRows([]);
+
+    await expect(lookupTools.getDestinationMappingForSourceFk('cus_1', SOURCE_REFERENCED_FOLDER)).resolves.toEqual({
+      kind: 'no_destination_record',
+      cause: 'referenced_folder_synced_nothing',
+      referencedFolderName: 'Customers',
+      referencedFolderService: Service.STRIPE,
+    });
   });
 });
 

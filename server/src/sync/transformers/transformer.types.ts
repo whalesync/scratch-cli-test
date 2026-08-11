@@ -42,6 +42,40 @@ export interface FkMappingResult {
 }
 
 /**
+ * Why a foreign key that named a target reached no destination record. All three are skips a user
+ * may have opted into via `onUnresolved: 'ignore'`; they differ in what the user has to DO about
+ * it, which is exactly what the message has to get right (DEV-11223).
+ *
+ * `SyncRemoteIdMapping` is what tells them apart, and only because the folder load keeps the rows
+ * with no destination path instead of dropping them. A referenced folder's rows are cleared and
+ * rewritten at the start of that folder's own `DATA` phase — one per source record it synced, the
+ * destination columns null until a counterpart exists.
+ *
+ * How CURRENT those rows are depends on the entry point, so don't read a cause as a statement about
+ * this call:
+ * - `SyncDataFoldersJob` (the full sync) runs `DATA` for EVERY table mapping in Phase 1 before any
+ *   `FOREIGN_KEY_MAPPING` in Phase 2, so there the rows really are this run's and complete.
+ * - `syncOneRecord` runs both phases for ONE table mapping, so any other referenced folder's rows
+ *   are whatever an earlier run left behind — or absent, if that pair has never been synced. A
+ *   cause derived on that path describes the last state the referenced folder was synced in.
+ */
+export type NoDestinationRecordCause =
+  /**
+   * No row for this remote id: the referenced record was not among the ones synced from that
+   * folder — deleted upstream, filtered out, or never pulled. The ordinary dangling reference,
+   * and the case every connector but Framer actually hits.
+   *
+   * A source record whose match-key field was empty is skipped by the referenced pair's own
+   * match-key derivation and lands here too — which is why this is worded "was not synced from"
+   * rather than claiming the record is absent from the folder.
+   */
+  | 'referenced_record_not_synced'
+  /** A row exists but carries no destination path yet: the record is there, its counterpart is not. */
+  | 'referenced_record_awaiting_destination'
+  /** The referenced folder produced no rows at all — it is empty, or not a table pair of this sync. */
+  | 'referenced_folder_synced_nothing';
+
+/**
  * Result of resolving a source foreign-key value to the DESTINATION record it maps to.
  *
  * `destination_connection_unresolved` is deliberately distinct from `no_destination_record`:
@@ -53,7 +87,20 @@ export interface FkMappingResult {
 export type DestinationMappingResolution =
   | { kind: 'mapped'; mapping: FkMappingResult }
   /** Nothing in the referenced folder maps this source FK to a destination record. */
-  | { kind: 'no_destination_record' }
+  | {
+      kind: 'no_destination_record';
+      cause: NoDestinationRecordCause;
+      /** The referenced (source) folder's display name; null when this sync has no table pair for it. */
+      referencedFolderName: string | null;
+      /**
+       * The service the REFERENCED folder is connected to — which is not necessarily the service of
+       * the pair being synced. A sync's table pairs are arbitrary folder pairs, so an Airtable FK
+       * column can name a Stripe source folder; naming the current pair's source service would tell
+       * the user to look for a deleted record in the wrong product. Null when this sync has no table
+       * pair for the folder, or the folder has no connection.
+       */
+      referencedFolderService: Service | null;
+    }
   /** A destination record exists, but its connection folder could not be determined. */
   | { kind: 'destination_connection_unresolved'; reason: string };
 

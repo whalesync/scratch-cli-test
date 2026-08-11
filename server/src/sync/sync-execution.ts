@@ -166,7 +166,14 @@ export async function transformRecordAsync(
                 ? ({ kind: 'resolved', targetSourceRemoteId: foreignKeyValue } as const)
                 : ({ kind: 'no_match' } as const),
             ),
-          getDestinationMappingForSourceFk: () => Promise.resolve({ kind: 'no_destination_record' as const }),
+          // No sync caches behind these tools, so no referenced folder has synced anything.
+          getDestinationMappingForSourceFk: () =>
+            Promise.resolve({
+              kind: 'no_destination_record',
+              cause: 'referenced_folder_synced_nothing',
+              referencedFolderName: null,
+              referencedFolderService: null,
+            } as const),
           lookupFieldFromFkRecord: () => Promise.resolve(null),
           getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
           matchDestinationAssetByHash: () => Promise.resolve([]),

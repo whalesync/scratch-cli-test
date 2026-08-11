@@ -41,7 +41,14 @@ const NOOP_LOOKUP_TOOLS: LookupTools = {
   resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
     Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
   ),
-  getDestinationMappingForSourceFk: jest.fn(() => Promise.resolve({ kind: 'no_destination_record' as const })),
+  getDestinationMappingForSourceFk: jest.fn(() =>
+    Promise.resolve({
+      kind: 'no_destination_record',
+      cause: 'referenced_folder_synced_nothing',
+      referencedFolderName: null,
+      referencedFolderService: null,
+    } as const),
+  ),
   lookupFieldFromFkRecord: jest.fn(() => Promise.resolve(null)),
   getOrCreateDestinationAssetMapping: jest.fn(() => Promise.reject(new Error('not available'))),
   matchDestinationAssetByHash: jest.fn(() => Promise.resolve([])),
@@ -61,7 +68,16 @@ const FK_LOOKUP_TOOLS: LookupTools = {
       },
     };
     const mapping = map[fk];
-    return Promise.resolve(mapping === undefined ? { kind: 'no_destination_record' } : { kind: 'mapped', mapping });
+    return Promise.resolve(
+      mapping === undefined
+        ? {
+            kind: 'no_destination_record',
+            cause: 'referenced_record_not_synced',
+            referencedFolderName: 'Authors',
+            referencedFolderService: Service.AIRTABLE,
+          }
+        : { kind: 'mapped', mapping },
+    );
   }),
   lookupFieldFromFkRecord: jest.fn(() => Promise.resolve(null)),
   getOrCreateDestinationAssetMapping: jest.fn(() => Promise.reject(new Error('not available'))),

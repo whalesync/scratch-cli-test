@@ -2591,6 +2591,10 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
     expect(fkResult.warningCount).toBe(1);
     expect(fkResult.warnings[0].warning).toContain('Skipped unresolved foreign key');
     expect(fkResult.warnings[0].warning).toContain('non_existent_author');
+    // The Authors table is not one of this sync's pairs, so it synced no records at all. The
+    // warning must say that rather than list the causes it might have been (DEV-11223).
+    expect(fkResult.warnings[0].warning).toContain('synced no records at all');
+    expect(fkResult.warnings[0].warning).not.toContain('either');
 
     // The rest of the record still synced; only the unresolvable link is empty.
     const resolvedPostFiles = writtenFilesByCall[writtenFilesByCall.length - 1];

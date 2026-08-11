@@ -41,7 +41,13 @@ function makeContext(
       resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) =>
         Promise.resolve({ kind: 'resolved', targetSourceRemoteId: value } as const),
       ),
-      getDestinationMappingForSourceFk: () => Promise.resolve({ kind: 'no_destination_record' as const }),
+      getDestinationMappingForSourceFk: () =>
+        Promise.resolve({
+          kind: 'no_destination_record',
+          cause: 'referenced_folder_synced_nothing',
+          referencedFolderName: null,
+          referencedFolderService: null,
+        } as const),
       lookupFieldFromFkRecord: () => Promise.resolve(undefined),
       getOrCreateDestinationAssetMapping:
         overrides?.createFn ?? (() => Promise.reject(new Error('create not configured'))),

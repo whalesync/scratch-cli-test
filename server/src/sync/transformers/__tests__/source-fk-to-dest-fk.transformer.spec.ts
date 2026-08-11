@@ -1,7 +1,14 @@
 import { createScratchPendingPublishId, DataFolderId, SourceFkToDestFkOptions } from '@spinner/shared-types';
+import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { sourceFkToDestFkTransformer } from '../implementations/source-fk-to-dest-fk.transformer';
-import { DestinationMappingResolution, LookupTools, SyncRecord, TransformContext } from '../transformer.types';
+import {
+  DestinationMappingResolution,
+  LookupTools,
+  NoDestinationRecordCause,
+  SyncRecord,
+  TransformContext,
+} from '../transformer.types';
 
 const REFERENCED_FOLDER = 'dfd_dest_authors' as DataFolderId;
 
@@ -9,11 +16,21 @@ const REFERENCED_FOLDER = 'dfd_dest_authors' as DataFolderId;
 // workspace-absolute (DEV-10880). All `@/…` expectations below carry it.
 const DEST_CONN = 'DestConn';
 
+// The referenced table's display name and its OWN service, both of which an unresolved-FK message
+// names (DEV-11223). Deliberately not the source service of the pair being synced — `createContext`
+// uses Airtable for that, so a message naming Stripe proves it read the referenced folder's.
+const REFERENCED_FOLDER_NAME = 'Authors';
+const REFERENCED_FOLDER_SERVICE = Service.STRIPE;
+
 function createLookupTools(
   mapping: Record<
     string,
     { destinationFilePath: string; destinationRemoteId: string | null; destinationConnectionFolder?: string }
   > = {},
+  // What an id NOT in `mapping` means. The default — "the referenced record was never synced from
+  // that folder" — is the ordinary dangling reference (DEV-11223); pass the others to exercise
+  // their messages.
+  unmappedCause: NoDestinationRecordCause = 'referenced_record_not_synced',
 ): LookupTools {
   return {
     // Identity: these fixtures reference targets by remote id, the default contract.
@@ -22,7 +39,14 @@ function createLookupTools(
     ),
     getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<DestinationMappingResolution> => {
       const entry = mapping[fk];
-      if (!entry) return Promise.resolve({ kind: 'no_destination_record' });
+      if (!entry) {
+        return Promise.resolve({
+          kind: 'no_destination_record',
+          cause: unmappedCause,
+          referencedFolderName: REFERENCED_FOLDER_NAME,
+          referencedFolderService: REFERENCED_FOLDER_SERVICE,
+        });
+      }
       return Promise.resolve({
         kind: 'mapped',
         mapping: {
@@ -52,12 +76,15 @@ function createConnectionUnresolvedLookupTools(reason: string): LookupTools {
 }
 
 /** Shorthand: creates lookup tools from a simple fk→filePath mapping (destinationRemoteId defaults to null) */
-function createSimpleLookupTools(mapping: Record<string, string> = {}): LookupTools {
+function createSimpleLookupTools(
+  mapping: Record<string, string> = {},
+  unmappedCause?: NoDestinationRecordCause,
+): LookupTools {
   const full: Record<string, { destinationFilePath: string; destinationRemoteId: string | null }> = {};
   for (const [key, value] of Object.entries(mapping)) {
     full[key] = { destinationFilePath: value, destinationRemoteId: null };
   }
-  return createLookupTools(full);
+  return createLookupTools(full, unmappedCause);
 }
 
 function createContext(
@@ -149,12 +176,13 @@ describe('sourceFkToDestFkTransformer', () => {
       });
     });
 
-    it('names both causes in the warning — absent from the source folder, or not synced', async () => {
+    it('names the actual cause in the warning, not the list of possibilities (DEV-11223)', async () => {
       const result = await sourceFkToDestFkTransformer.transform(createContext('missing', createSimpleLookupTools()));
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.warnings?.[0]).toContain('absent from the source folder');
-        expect(result.warnings?.[0]).toContain('not synced');
+        expect(result.warnings?.[0]).toContain('no record with that id was synced from the referenced table');
+        // The hedge this replaced. Naming both possibilities left the reader to guess which.
+        expect(result.warnings?.[0]).not.toContain('either');
       }
     });
 
@@ -781,8 +809,9 @@ describe('sourceFkToDestFkTransformer', () => {
     function createSlugKeyedLookupTools(
       slugToRemoteId: Record<string, string | { ambiguousMatchCount: number }>,
       remoteIdToDestinationPath: Record<string, string>,
+      unmappedCause?: NoDestinationRecordCause,
     ): LookupTools {
-      const base = createSimpleLookupTools(remoteIdToDestinationPath);
+      const base = createSimpleLookupTools(remoteIdToDestinationPath, unmappedCause);
       return {
         ...base,
         resolveForeignKeyValueToTargetRemoteId: jest.fn((value: string) => {
@@ -851,17 +880,55 @@ describe('sourceFkToDestFkTransformer', () => {
     });
 
     it('distinguishes "found the target but it has no destination row" from "no such key"', async () => {
+      // The default cause, which is what `createLookupTools` really returns for this scenario: the
+      // slug matched a record on disk, but no `SyncRemoteIdMapping` row carries its remote id.
       const lookup = createSlugKeyedLookupTools({ engineering: 'item_aaa' }, {});
       const result = await sourceFkToDestFkTransformer.transform(
         createContext('engineering', lookup, OPTIONS_WITH_SLUG_KEY),
       );
       expect(result.success).toBe(true);
       const warning = (result as { warnings?: string[] }).warnings?.[0] ?? '';
-      expect(warning).toContain('has not been synced to the destination');
+      expect(warning).toContain('is present there but was not synced');
       expect(warning).toContain('"slug"');
       // A declared key path was MATCHED to reach this branch, so the record provably exists in the
-      // referenced source folder. Claiming it might be absent would send a debugger the wrong way.
-      expect(warning).not.toContain('absent from the source folder');
+      // referenced source folder. Claiming it might be deleted upstream — the wording the id path
+      // uses for this same cause — would send a debugger the wrong way.
+      expect(warning).not.toContain('deleted in');
+      expect(warning).not.toContain('never pulled');
+    });
+
+    it('reports a matched target whose destination row is merely pending as awaiting, not unsynced', async () => {
+      const lookup = createSlugKeyedLookupTools(
+        { engineering: 'item_aaa' },
+        {},
+        'referenced_record_awaiting_destination',
+      );
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('engineering', lookup, OPTIONS_WITH_SLUG_KEY),
+      );
+      expect(result.success).toBe(true);
+      const warning = (result as { warnings?: string[] }).warnings?.[0] ?? '';
+      expect(warning).toContain('was synced but has not reached the destination yet');
+      expect(warning).toContain('"slug"');
+      expect(warning).not.toContain('deleted in');
+    });
+
+    it('does not ask whether a key-path folder has been pulled — step 1 just read it', async () => {
+      // Reachable when a key-path FK names a folder that produced no `SyncRemoteIdMapping` rows
+      // (e.g. it is not one of this sync's table pairs). Step 1 streamed that folder off disk and
+      // matched a record in it, so "check that it has been pulled" is already disproved.
+      const lookup = createSlugKeyedLookupTools({ engineering: 'item_aaa' }, {}, 'referenced_folder_synced_nothing');
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('engineering', lookup, OPTIONS_WITH_SLUG_KEY),
+      );
+      expect(result.success).toBe(true);
+      const warning = (result as { warnings?: string[] }).warnings?.[0] ?? '';
+      expect(warning).toContain('has records, but synced none of them');
+      expect(warning).not.toContain('has been pulled');
+      // The folder IS named, so it is known to be one of this sync's tables too — the only thing
+      // left unproved is why its records did not reach the sync.
+      expect(warning).toContain("is one of this sync's tables");
+      expect(warning).not.toContain("check that it is one of this sync's tables");
     });
 
     it('fails on an ambiguous key rather than linking one of the claimants', async () => {
@@ -906,6 +973,114 @@ describe('sourceFkToDestFkTransformer', () => {
       // The declared-key argument is `undefined`, so the resolver stays on its identity path.
       expect(resolveSpy).toHaveBeenCalledWith('src_1', REFERENCED_FOLDER, undefined);
       expect(result).toEqual({ success: true, value: '@/DestConn/dest-authors/alice.json' });
+    });
+  });
+
+  /**
+   * DEV-11223: now that an unresolved FK is a warning rather than a failed table, the warning is
+   * the ONLY thing the user gets — so it has to name the cause it actually found instead of the
+   * list of causes it might have found.
+   */
+  describe('naming the cause of an unresolved foreign key (DEV-11223)', () => {
+    /** The Stripe customer of the ticket's repro: deleted upstream, so never pulled or synced. */
+    // The context's own `sourceService` stays AIRTABLE (createContext's default) while the
+    // referenced folder is STRIPE, so a message naming Stripe can only have come from the
+    // resolution — the pair being synced is not the connection the target was deleted from.
+    function warningForDanglingStripeCustomer(lookup: LookupTools): Promise<string> {
+      return sourceFkToDestFkTransformer
+        .transform(createContext('cus_OKBUcB0TIWPk82', lookup))
+        .then((result) => (result as { warnings?: string[] }).warnings?.[0] ?? '');
+    }
+
+    it('names the referenced table, its id, and the service the record may have been deleted in', async () => {
+      const warning = await warningForDanglingStripeCustomer(createSimpleLookupTools());
+      expect(warning).toContain('no record with that id was synced from the referenced table');
+      expect(warning).toContain(`"${REFERENCED_FOLDER_NAME}"`);
+      expect(warning).toContain(REFERENCED_FOLDER);
+      expect(warning).toContain(getServiceDisplayName(REFERENCED_FOLDER_SERVICE));
+      // Naming the pair's source service instead would send the user to the wrong product.
+      expect(warning).not.toContain(getServiceDisplayName(Service.AIRTABLE));
+      // This cause also covers a record that IS on disk but was skipped by the referenced pair's
+      // match-key derivation, so the remedy list has to reach that reader too.
+      expect(warning).toContain('missing the match key this sync pairs on');
+    });
+
+    it('falls back to "the source service" rather than guessing when the folder has no connection', async () => {
+      const warning = await warningForDanglingStripeCustomer({
+        ...createSimpleLookupTools(),
+        getDestinationMappingForSourceFk: () =>
+          Promise.resolve({
+            kind: 'no_destination_record',
+            cause: 'referenced_record_not_synced',
+            referencedFolderName: null,
+            referencedFolderService: null,
+          }),
+      });
+      expect(warning).toContain('deleted in the source service');
+      expect(warning).not.toContain(getServiceDisplayName(Service.AIRTABLE));
+    });
+
+    it('falls back to the DataFolder id alone when the referenced folder has no name', async () => {
+      const warning = await warningForDanglingStripeCustomer({
+        ...createSimpleLookupTools(),
+        getDestinationMappingForSourceFk: () =>
+          Promise.resolve({
+            kind: 'no_destination_record',
+            cause: 'referenced_record_not_synced',
+            referencedFolderName: null,
+            referencedFolderService: null,
+          }),
+      });
+      expect(warning).toContain(`DataFolder ${REFERENCED_FOLDER}`);
+      expect(warning).not.toContain('""');
+    });
+
+    it('reports a synced-but-uncreated record as awaiting the destination, not as deleted upstream', async () => {
+      const warning = await warningForDanglingStripeCustomer(
+        createSimpleLookupTools({}, 'referenced_record_awaiting_destination'),
+      );
+      expect(warning).toContain('has not reached the destination yet');
+      expect(warning).not.toContain('deleted in');
+    });
+
+    it('reports a referenced table that synced nothing as a sync-configuration problem', async () => {
+      const warning = await warningForDanglingStripeCustomer(
+        createSimpleLookupTools({}, 'referenced_folder_synced_nothing'),
+      );
+      expect(warning).toContain('synced no records at all');
+      // A NAMED table was found as a SyncTablePair, so asking the user to check that it is one of
+      // this sync's tables would point at something already disproved.
+      expect(warning).toContain("is one of this sync's tables but synced no records");
+      expect(warning).not.toContain("check that it is one of this sync's tables");
+      expect(warning).toContain('has been pulled');
+    });
+
+    it('asks whether an UNNAMED referenced table is in the sync at all — that much is unproved', async () => {
+      // No display name means `SyncTablePair.findFirst` found no pair for the referenced folder,
+      // which is exactly the case the "is it one of this sync's tables?" hint is for.
+      const warning = await warningForDanglingStripeCustomer({
+        ...createSimpleLookupTools(),
+        getDestinationMappingForSourceFk: () =>
+          Promise.resolve({
+            kind: 'no_destination_record',
+            cause: 'referenced_folder_synced_nothing',
+            referencedFolderName: null,
+            referencedFolderService: null,
+          }),
+      });
+      expect(warning).toContain("check that it is one of this sync's tables and has been pulled");
+    });
+
+    it('carries the same cause into the hard error under onUnresolved: fail', async () => {
+      const result = await sourceFkToDestFkTransformer.transform({
+        ...createContext('cus_OKBUcB0TIWPk82', createSimpleLookupTools(), {
+          referencedDataFolderId: REFERENCED_FOLDER,
+          onUnresolved: 'fail',
+        }),
+        sourceService: Service.STRIPE,
+      });
+      expect(result.success).toBe(false);
+      expect((result as { error: string }).error).toContain('no record with that id was synced from');
     });
   });
 });
