@@ -24,10 +24,12 @@ function makeDbMock() {
       publishPlan: {
         create: jest.fn().mockResolvedValue({}),
         findUnique: jest.fn().mockResolvedValue({ id: PIPELINE_ID, branchName: BRANCH_NAME }),
+        findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
       },
       publishPlanOperation: {
         createMany: jest.fn().mockResolvedValue({}),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       dataFolder: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -828,6 +830,83 @@ describe('PublishPlanService', () => {
         filePathsWrittenAcrossAllChunks.push(...insertArgs.data.map((op) => op.filePath));
       }
       expect(new Set(filePathsWrittenAcrossAllChunks).size).toBe(LARGE_DELETE_COUNT);
+    });
+  });
+
+  // DEV-11254 — the pieces that let a redelivered self-planning publish job find and reuse
+  // the plan it already created, instead of starting a second one.
+  describe('resuming a plan across a job redelivery (DEV-11254)', () => {
+    const BULL_JOB_ID = 'publish-wkb_test-abc';
+
+    it('finds a live plan by job id, excluding terminal plans and preferring the oldest', async () => {
+      db.client.publishPlan.findFirst.mockResolvedValue({ id: PIPELINE_ID, status: 'creates-running' });
+
+      const found = await service.findResumablePlanForJob(WORKBOOK_ID, BULL_JOB_ID);
+
+      expect(found).toEqual({ id: PIPELINE_ID, status: 'creates-running' });
+      const [query] = db.client.publishPlan.findFirst.mock.calls[0] as [
+        { where: { status: { notIn: string[] } }; orderBy: unknown },
+      ];
+      expect(query).toMatchObject({
+        where: { workbookId: WORKBOOK_ID, activeJobId: BULL_JOB_ID },
+        // Oldest wins: when the bug this fixes left two plans on one job id, the FIRST is
+        // the one carrying the recorded progress.
+        orderBy: { createdAt: 'asc' },
+      });
+
+      // The four genuinely terminal statuses — and ONLY those. The `*-completed` values mark
+      // a finished phase on a plan that is still mid-flight, so they must stay resumable.
+      expect(query.where.status.notIn.sort()).toEqual(
+        ['canceled', 'completed', 'completed-with-errors', 'failed'].sort(),
+      );
+      for (const midFlight of ['edits-completed', 'creates-completed', 'backfill-completed']) {
+        expect(query.where.status.notIn).not.toContain(midFlight);
+      }
+    });
+
+    it('clears a partially-built operation set when the plan is still planning', async () => {
+      db.client.publishPlan.findUnique.mockResolvedValue({ status: 'planning' });
+      db.client.publishPlanOperation.deleteMany.mockResolvedValue({ count: 3000 });
+
+      await expect(service.clearOperationsForReplan(PIPELINE_ID)).resolves.toEqual({
+        outcome: 'cleared',
+        clearedOperationCount: 3000,
+      });
+    });
+
+    it('carries the plan-status check INTO the delete so it can never strip an executed plan', async () => {
+      // The caller may be racing the delivery that is building this plan — BullMQ redelivers a
+      // stalled job while the original processor can still be alive. A read-then-delete could
+      // straddle that delivery's final `status = planned` update and wipe real operations, so
+      // the status predicate has to ride along with the DELETE itself.
+      db.client.publishPlan.findUnique.mockResolvedValue({ status: 'planning' });
+      db.client.publishPlanOperation.deleteMany.mockResolvedValue({ count: 0 });
+
+      await service.clearOperationsForReplan(PIPELINE_ID);
+
+      expect(db.client.publishPlanOperation.deleteMany).toHaveBeenCalledWith({
+        where: { planId: PIPELINE_ID, plan: { status: 'planning' } },
+      });
+    });
+
+    it('reports plan-advanced instead of throwing when another delivery finished the build', async () => {
+      // Jobs are enqueued `attempts: 1`, so throwing would kill the redelivered job outright
+      // and strand a perfectly good plan. The caller runs it instead.
+      db.client.publishPlan.findUnique.mockResolvedValue({ status: 'planned' });
+      db.client.publishPlanOperation.deleteMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.clearOperationsForReplan(PIPELINE_ID)).resolves.toEqual({
+        outcome: 'plan-advanced',
+        status: 'planned',
+        clearedOperationCount: 0,
+      });
+    });
+
+    it('reports plan-missing rather than throwing when the plan is gone', async () => {
+      db.client.publishPlan.findUnique.mockResolvedValue(null);
+      db.client.publishPlanOperation.deleteMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.clearOperationsForReplan(PIPELINE_ID)).resolves.toEqual({ outcome: 'plan-missing' });
     });
   });
 });

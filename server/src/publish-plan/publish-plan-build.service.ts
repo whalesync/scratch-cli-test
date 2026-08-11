@@ -54,6 +54,35 @@ const REVERT_PATH_LOOKUP_CHUNK_SIZE = 1000;
  */
 const PLAN_OPERATION_INSERT_CHUNK_SIZE = 1000;
 
+/**
+ * The four `PublishPlanStatus` values that mean a plan will never run again. Every OTHER
+ * status is live — including the `*-Completed` ones, which mark a finished *phase* on a
+ * plan that is still mid-flight (single-phase execution, e.g. the web's "Execute 1 Phase",
+ * parks a plan there between phases). Treating those as terminal would abandon a plan
+ * partway through its own pipeline.
+ */
+const TERMINAL_PUBLISH_PLAN_STATUSES = [
+  PublishPlanStatus.Completed,
+  PublishPlanStatus.CompletedWithErrors,
+  PublishPlanStatus.Failed,
+  PublishPlanStatus.Canceled,
+];
+
+/**
+ * Outcome of {@link PublishPlanBuildService.clearOperationsForReplan}.
+ *
+ * - `cleared` — the plan was still `planning`; any partial operation set was dropped and the
+ *   caller should go ahead and re-plan into it.
+ * - `plan-advanced` — another delivery of the same job finished the build first. The caller
+ *   must NOT re-plan; the plan is complete and should just be run.
+ * - `plan-missing` — the plan disappeared between reads. The caller should fall through and
+ *   let `buildPipeline` report it as the missing pipeline it is.
+ */
+export type ClearOperationsForReplanResult =
+  | { outcome: 'cleared'; clearedOperationCount: number }
+  | { outcome: 'plan-advanced'; status: string; clearedOperationCount: number }
+  | { outcome: 'plan-missing' };
+
 export class PublishDirtyDriftError extends Error {
   constructor(
     public readonly connectorAccountId: string,
@@ -193,18 +222,87 @@ export class PublishPlanBuildService {
     const result = await this.db.client.publishPlan.updateMany({
       where: {
         connectorAccountId,
-        status: {
-          notIn: [
-            PublishPlanStatus.Completed,
-            PublishPlanStatus.CompletedWithErrors,
-            PublishPlanStatus.Failed,
-            PublishPlanStatus.Canceled,
-          ],
-        },
+        status: { notIn: TERMINAL_PUBLISH_PLAN_STATUSES },
       },
       data: { status: PublishPlanStatus.Canceled },
     });
     return result.count;
+  }
+
+  /**
+   * DEV-11254 — finds the still-live PublishPlan a self-planning publish job already
+   * created for itself on an earlier delivery, so a redelivered job RESUMES it instead
+   * of planning a second one.
+   *
+   * The lookup key is the BullMQ job id, which is the right notion of "same work" here:
+   * BullMQ redelivers a stalled job under its ORIGINAL id, and `setActiveJob` has already
+   * stamped that id onto the plan the first delivery created. A genuinely new enqueue gets
+   * a new job id and so correctly gets a new plan.
+   *
+   * Ordered `createdAt asc` deliberately. In the fixed world there is at most one live plan
+   * per job id, so ordering is moot; it matters only for rows created by the bug this fixes
+   * (prod run `rrn_I7VfxGpZ38` left two plans sharing one job id), where the FIRST is the one
+   * carrying the recorded progress and the later one is the empty artifact. Picking the
+   * oldest converges on the canonical plan instead of orphaning 47k successful operations.
+   * A first plan still stuck in `planning` is fine to return: the caller re-plans into that
+   * row exactly as `buildPipeline` already does for a caller-supplied `planning` pipeline.
+   */
+  async findResumablePlanForJob(workbookId: string, bullJobId: string) {
+    return this.db.client.publishPlan.findFirst({
+      where: {
+        workbookId,
+        activeJobId: bullJobId,
+        status: { notIn: TERMINAL_PUBLISH_PLAN_STATUSES },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /**
+   * Drops every operation on a plan that is about to be re-planned into (DEV-11254).
+   *
+   * `buildPipeline` only ever `createMany`s — it never clears what is already there — and it
+   * writes operations incrementally in chunks. So a plan build that died partway leaves a
+   * `planning` row holding a partial operation set, and replanning into it would DOUBLE those
+   * rows: the same record queued twice in the same phase, published twice.
+   *
+   * Only a plan still in `planning` is safe to clear: past that it holds `success` rows, and
+   * dropping those would re-publish records already shipped. That check rides ALONG WITH the
+   * delete as a relation predicate rather than being a separate read, because the caller may
+   * be racing the very delivery that is building this plan — BullMQ redelivers a stalled job
+   * while the original processor can still be running (`maxStalledCount: 20` exists precisely
+   * because Cloud Run causes false stall detections). A read-then-delete could straddle the
+   * other delivery's final `status = planned` update; this cannot, so the destructive step is
+   * never applied to a plan that has advanced.
+   *
+   * Returns what actually happened rather than throwing. Jobs are enqueued `attempts: 1`
+   * (bull-enqueuer.service.ts:56), so throwing here would kill a redelivered job outright —
+   * including in the benign case where the other delivery simply finished the plan first and
+   * the right move is to run it.
+   *
+   * CAVEAT: this makes the *destructive* step safe, not the whole build. If another delivery
+   * is mid-`buildPipeline`, its remaining chunks still land after this delete and the plan
+   * ends up a partial mix of both builds. Closing that needs real mutual exclusion between
+   * deliveries — see DEV-11254's out-of-scope section.
+   */
+  async clearOperationsForReplan(pipelineId: string): Promise<ClearOperationsForReplanResult> {
+    // Single statement: the plan-status predicate is part of the DELETE, so no window exists
+    // between checking the status and acting on it.
+    const deleted = await this.db.client.publishPlanOperation.deleteMany({
+      where: { planId: pipelineId, plan: { status: PublishPlanStatus.Planning } },
+    });
+
+    const plan = await this.db.client.publishPlan.findUnique({
+      where: { id: pipelineId },
+      select: { status: true },
+    });
+    if (!plan) return { outcome: 'plan-missing' };
+    // `status` is a plain string column; cast to compare against the enum, matching
+    // `PublishRunService.runPipeline`'s `switch (plan.status as PublishPlanStatus)`.
+    if ((plan.status as PublishPlanStatus) !== PublishPlanStatus.Planning) {
+      return { outcome: 'plan-advanced', status: plan.status, clearedOperationCount: deleted.count };
+    }
+    return { outcome: 'cleared', clearedOperationCount: deleted.count };
   }
 
   /**

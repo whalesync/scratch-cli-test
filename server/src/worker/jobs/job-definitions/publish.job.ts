@@ -173,42 +173,140 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       const getPhaseCount = async (planId: string, phase: string) =>
         this.db.client.publishPlanOperation.count({ where: { planId, phase } });
 
+      // The plan this job will work on, however it was resolved (caller-supplied, adopted
+      // from an earlier delivery of this same job, or created fresh below).
+      let existingPlan = data.pipelineId
+        ? await this.db.client.publishPlan.findUnique({ where: { id: data.pipelineId } })
+        : null;
+
       if (!data.pipelineId) {
         // Self-planning publish (DEV-10436, routines): no caller pre-created a pipeline
         // (the UI/CLI/scheduler create one up front so they can navigate to it
-        // immediately; a routine step has no such need). Create it here so the job is a
-        // single self-contained DbJob — enqueued exactly like pull/sync.
-        const created = await this.publishPlanService.createPipeline(
-          data.workbookId,
-          data.userId,
-          data.connectorAccountId,
-        );
-        pipelineId = created.pipelineId;
-
-        // Link the running job back to the new pipeline (the 3rd call of the caller's
-        // createPipeline → enqueue → setActiveJob shape, relocated into the job).
+        // immediately; a routine step has no such need).
+        //
         // activeJobId stores the BullMQ job id (consumers look up the DbJob via
         // `where: { bullJobId: activeJobId }`), but params.jobId is the DbJob id — so
         // resolve our own bullJobId from the DbJob row the enqueuer already created.
-        // Gated on the self-planning case so existing callers (which set activeJobId
-        // themselves) are untouched and we never double-write it.
+        // Read BEFORE planning (DEV-11254): it is both the resume key below and the
+        // value stamped onto a newly created plan.
         const selfDbJob = await this.db.client.dbJob.findUnique({
           where: { id: jobId },
           select: { bullJobId: true },
         });
-        if (selfDbJob?.bullJobId) {
-          await this.publishPlanService.setActiveJob(pipelineId, selfDbJob.bullJobId);
+        const selfBullJobId = selfDbJob?.bullJobId;
+
+        // DEV-11254: a stalled job is redelivered by BullMQ under its ORIGINAL id, and
+        // re-enters here with the same (empty) `pipelineId`. Without this lookup it
+        // created a SECOND plan and replanned from scratch, abandoning everything the
+        // first delivery had already published — prod run `rrn_I7VfxGpZ38` stranded
+        // 47,179 successful operations that way, then died replanning them. Adopt the
+        // live plan this job already owns; only plan fresh when there isn't one.
+        const resumablePlan = selfBullJobId
+          ? await this.publishPlanService.findResumablePlanForJob(data.workbookId, selfBullJobId)
+          : null;
+
+        if (resumablePlan) {
+          existingPlan = resumablePlan;
+          pipelineId = resumablePlan.id;
+
+          WSLogger.info({
+            source: 'PublishJob',
+            message: 'Resuming the publish plan this job already created (redelivered job)',
+            workbookId: data.workbookId,
+            data: { pipelineId, bullJobId: selfBullJobId, planStatus: resumablePlan.status },
+          });
+        } else {
+          const created = await this.publishPlanService.createPipeline(
+            data.workbookId,
+            data.userId,
+            data.connectorAccountId,
+          );
+          pipelineId = created.pipelineId;
+
+          // Link the running job back to the new pipeline (the 3rd call of the caller's
+          // createPipeline → enqueue → setActiveJob shape, relocated into the job).
+          // Gated on the self-planning case so existing callers (which set activeJobId
+          // themselves) are untouched and we never double-write it. This is also what
+          // makes the plan findable by the resume lookup above on a later delivery.
+          if (selfBullJobId) {
+            await this.publishPlanService.setActiveJob(pipelineId, selfBullJobId);
+          }
         }
       }
 
-      // If the pipeline is already planned/partially-run, skip replanning to avoid duplicate entries.
-      const existingPlan = data.pipelineId
-        ? await this.db.client.publishPlan.findUnique({ where: { id: data.pipelineId } })
-        : null;
-      // Skip replanning if the pipeline has already been planned (any status except 'planning').
-      const isAlreadyPlanned = existingPlan && existingPlan.status !== 'planning';
+      // Whether the plan is finished being built and can go straight to execution — any status
+      // except `planning`. Covers both a caller-supplied pipeline and an adopted one: a
+      // redelivered job whose plan reached a run phase skips replanning entirely, and its
+      // per-operation `success` rows make the remaining work self-evident.
+      let planIsAlreadyBuilt = Boolean(existingPlan) && existingPlan?.status !== 'planning';
 
-      if (isAlreadyPlanned) {
+      // DEV-11254: about to plan into a row that ALREADY EXISTED, which means an earlier
+      // delivery of this job may have died mid-build. `buildPipeline` appends operations in
+      // chunks and only flips the status off `planning` at the very end, so a partial set can
+      // be sitting here — and it appends rather than replaces, so replanning would queue the
+      // same record twice in one phase and publish it twice. Drop the partial set first.
+      //
+      // Covers BOTH redelivery paths: a web/CLI/desktop job carries its caller's `pipelineId`
+      // across a redelivery and lands here identically. Skipped when `existingPlan` is null —
+      // a plan this job just created has no operations to clear.
+      if (existingPlan && !planIsAlreadyBuilt) {
+        const clearResult = await this.publishPlanService.clearOperationsForReplan(existingPlan.id);
+
+        if (clearResult.outcome === 'plan-advanced' && clearResult.clearedOperationCount > 0) {
+          // We deleted rows — which proves the plan was still `planning` when the DELETE ran —
+          // and another delivery advanced it immediately afterwards. Those two events can only
+          // interleave in the window between that delivery's last operation insert and its
+          // final `status = planned` update, so the operations it had built up to our delete
+          // are GONE and what remains is a suffix at best.
+          //
+          // Running it would publish a fraction of the records and checkpoint `completed`:
+          // a silent under-publish, the one outcome worse than failing. Cancel the plan so
+          // nothing else can run it (canceled is terminal, so the resume lookup skips it and
+          // `runPipeline` refuses it) and fail loudly. The next publish plans fresh.
+          //
+          // The catch below only cancels for drift/cancel errors, so cancel explicitly here.
+          await this.publishPlanService.cancelPipeline(existingPlan.id);
+          WSLogger.error({
+            source: 'PublishJob',
+            message: 'Concurrent deliveries left the publish plan incomplete — canceled it rather than under-publish',
+            workbookId: data.workbookId,
+            jobId,
+            data: {
+              pipelineId: existingPlan.id,
+              planStatus: clearResult.status,
+              clearedOperationCount: clearResult.clearedOperationCount,
+            },
+          });
+          throw new Error(
+            `Publish aborted: another delivery of this job finished planning while this one cleared ` +
+              `${clearResult.clearedOperationCount} operation(s), leaving plan ${existingPlan.id} incomplete. ` +
+              'The plan was canceled — re-run the publish to build a fresh one.',
+          );
+        }
+
+        if (clearResult.outcome === 'plan-advanced') {
+          // Nothing was deleted, so the other delivery's plan is intact — it simply finished
+          // the build first. Run it rather than rebuilding on top of it.
+          planIsAlreadyBuilt = true;
+          WSLogger.warn({
+            source: 'PublishJob',
+            message: 'Another delivery of this job finished planning first — running its plan instead of replanning',
+            workbookId: data.workbookId,
+            data: { pipelineId: existingPlan.id, planStatus: clearResult.status },
+          });
+        } else if (clearResult.outcome === 'cleared' && clearResult.clearedOperationCount > 0) {
+          WSLogger.info({
+            source: 'PublishJob',
+            message: 'Cleared a partially-built operation set before replanning',
+            workbookId: data.workbookId,
+            data: { pipelineId: existingPlan.id, clearedOperationCount: clearResult.clearedOperationCount },
+          });
+        }
+        // `plan-missing` falls through to buildPipeline, which reports it as the missing
+        // pipeline it is rather than surfacing a confusing error from the clear.
+      }
+
+      if (planIsAlreadyBuilt && existingPlan) {
         pipelineId = existingPlan.id;
       } else {
         const plan = await this.publishPlanService.buildPipeline(
