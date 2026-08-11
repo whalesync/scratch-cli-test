@@ -48,12 +48,49 @@ Attribute the usage: **git repos** under the data mount, **Docker** images/layer
   **mutation** and therefore **break-glass**: the read-only wrappers cannot do it. Escalate to a
   `role_operations@whalesync.com` admin for a root SSH (per [`docs/ops/CLAUDE.md`](CLAUDE.md) and the
   helper's header notes). Do not attempt cleanup from a read-only session.
-- **Grow the disk (durable)** — increase the persistent disk size in Terraform (`modules/env`) and
-  open an MR; hand the apply to the deploy owner. Prefer this over repeated manual cleanup if the disk
-  is simply growing with usage.
+- **Grow the disk (durable)** — increase the data disk size in Terraform and apply, then grow the
+  filesystem online. Prefer this over repeated manual cleanup if the disk is simply growing with usage
+  (e.g. onboarding a data-heavy feature). Full steps: [Grow the data disk](#grow-the-data-disk-durable-fix).
 - **If the disk is already full and scratch-git is unhealthy** — follow
   [Unresponsive scratch-git Server](runbook-scratch-git-unresponsive-production.md) (restart) and, if
   the filesystem is damaged, [Full Scratch-Git Disk Restore](runbook-scratch-git-full-disk-restore.md).
+
+### Grow the data disk (durable fix)
+
+Growing the data disk is an **online, two-step** operation with **no downtime** — the VM keeps running
+and both blue/green containers keep serving. A Terraform bump **alone frees no space**: the startup
+script never runs `resize2fs`, so the filesystem must be grown separately in step 2.
+
+1. **Grow the persistent disk (Terraform).** Increase `scratch_git_disk_size_gb` in
+   [`terraform/envs/eu-production/eu-production.tf`](../../terraform/envs/eu-production/eu-production.tf)
+   to the new target (this value feeds `google_compute_disk.data.size`). Open an MR, then:
+
+   ```bash
+   cd terraform/envs/eu-production
+   terraform plan     # MUST show only: google_compute_disk.data ~ size = <old> -> <new> (update in-place)
+                      # ABORT if it shows the disk or instance being destroyed/recreated (-/+ replacement).
+   terraform apply    # deploy owner; never -auto-approve
+   ```
+
+   A GCE persistent-disk grow is in-place and online (no detach, no VM restart); shrinking is not
+   allowed. (The boot disk is a separate variable, `scratch_git_boot_disk_size_gb`.)
+
+2. **Grow the filesystem online (break-glass root SSH).** The read-only `gitops-*` tier cannot do this
+   — escalate to a `role_operations@whalesync.com` admin for a root SSH.
+
+   ```bash
+   terraform/tools/connect_to_git_service_ssh.sh production
+   # On the VM, key off the mountpoint so you can't target the boot disk by mistake:
+   DEV=$(findmnt -no SOURCE /mnt/disks/data)    # e.g. /dev/sdb  (== /dev/disk/by-id/google-data-disk)
+   lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT "$DEV"  # confirm SIZE already shows the new size, FSTYPE=ext4
+   sudo resize2fs "$DEV"                         # whole-device ext4, no partition → no growpart needed
+   ```
+
+   If `lsblk` still shows the old size after the apply, the kernel hasn't seen the grow yet — force a
+   rescan and retry: `echo 1 | sudo tee /sys/class/block/$(basename "$DEV")/device/rescan`.
+
+3. **Verify.** `df -h /mnt/disks/data` shows the new total and a dropped `Use%`; the alert
+   auto-resolves; `sudo gitops-ps` shows both containers still up (confirms no restart / no downtime).
 
 ## Related
 
