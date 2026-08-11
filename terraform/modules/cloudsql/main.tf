@@ -25,6 +25,11 @@ resource "google_sql_database_instance" "primary" {
     disk_size         = var.disk_size
     user_labels       = var.labels
 
+    # Block deletion at the API level too (pentest finding WSG-006, DEV-10987). The
+    # deletion_protection above only stops terraform destroy; this also stops deletes
+    # from the console and gcloud.
+    deletion_protection_enabled = true
+
     # Expose through a private IP address
     ip_configuration {
       ipv4_enabled    = false
