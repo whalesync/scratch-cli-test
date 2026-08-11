@@ -138,6 +138,15 @@ resource "google_compute_instance" "scratch_git" {
   }
 
   service_account {
+    # `cloud-platform` is retained DELIBERATELY (pentest finding WSG-009, DEV-10990, evaluated 2026-08): this VM fetches
+    # SLACK_NOTIFICATION_WEBHOOK_URL and SCRATCH_GIT_AUTH_TOKEN via `gcloud secrets versions access` both at boot
+    # (startup.sh) and on every blue/green deploy (deploy.sh, run on-VM over SSH), and the Secret Manager API accepts
+    # ONLY the cloud-platform OAuth scope — Google defines no narrower one, so any narrowed scope set breaks the
+    # boot-time secret fetch (ACCESS_TOKEN_SCOPE_INSUFFICIENT) and with it unattended reboot recovery. Everything else
+    # the VM does has a narrow scope available (Artifact Registry pulls: devstorage.read_only; gcplogs/Ops Agent:
+    # logging.write + monitoring.write), so revisit if secret delivery ever moves off Secret Manager. The effective
+    # boundary is the SA's IAM: artifactregistry.reader, logging.logWriter, monitoring.metricWriter, plus
+    # secretAccessor on exactly those two secrets — keep it that narrow.
     email  = var.service_account_email
     scopes = ["cloud-platform"]
   }

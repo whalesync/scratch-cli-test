@@ -340,8 +340,10 @@ module "cloudnat" {
 module "gce_instance" {
   source = "../../modules/gce"
 
-  instance_name         = local.proxy_instance_name
-  machine_type          = "n2-standard-2"
+  instance_name = local.proxy_instance_name
+  # e2 rather than n2 (mirrors whalesync!8454): same 2 vCPU / 8 GB, ~30% cheaper, and e2 is less exposed to the zonal
+  # capacity stockouts that left the stopped wsv1 n2 bastion unable to restart after the WSG-009 scope change.
+  machine_type          = "e2-standard-2"
   image                 = "ubuntu-os-cloud/ubuntu-2204-lts"
   zone                  = var.gcp_zone
   network               = module.vpc.network
@@ -353,7 +355,7 @@ module "gce_instance" {
   # No external IP (pentest finding WSG-004, DEV-10985): SSH goes through IAP to the internal IP,
   # the DB/Redis targets are reached over private peering, and outbound traffic (apt, Google APIs)
   # egresses via Cloud NAT / Private Google Access.
-  give_external_ip      = false
+  give_external_ip = false
 
   metadata_startup_script = <<-EOT
     #!/bin/bash
