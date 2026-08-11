@@ -35,3 +35,15 @@ export interface Job<TPublicProgress = object> {
   failedReason?: string | null;
   runContext?: RunContext | null;
 }
+
+/** Job states where the job has stopped for good. Everything else is still on its way to one of these. */
+const TERMINAL_JOB_STATES: Job['state'][] = ['completed', 'failed', 'canceled'];
+
+/**
+ * Whether a job has NOT finished yet — it is running, queued, delayed, or paused. The counterpart of a
+ * terminal state, and what `deriveJobResult`'s `isRunning` input wants: a job that hasn't reached a
+ * terminal state has no result yet, so its progress must be described in the present tense.
+ */
+export function isJobStillRunning(state: Job['state'] | undefined): boolean {
+  return state != null && !TERMINAL_JOB_STATES.includes(state);
+}

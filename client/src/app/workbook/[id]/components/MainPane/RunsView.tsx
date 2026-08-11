@@ -634,7 +634,7 @@ function ExpandedJobDetails({ job, isDevToolsEnabled }: { job: Job; isDevToolsEn
         )}
 
         {/* Progress details */}
-        {progress && <ProgressDetails type={job.type} progress={progress} />}
+        {progress && <ProgressDetails type={job.type} progress={progress} jobState={job.state} />}
 
         {/* Dev tools: Job ID */}
         {isDevToolsEnabled && job.bullJobId && (

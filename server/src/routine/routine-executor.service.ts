@@ -122,9 +122,12 @@ export class RoutineExecutorService {
       throw new BadRequestException(referenceErrors.join('; '));
     }
 
-    let run: PrismaRoutineRun;
+    let run: PrismaRoutineRun & { steps: PrismaRoutineRunStep[] };
     try {
       run = await this.db.client.routineRun.create({
+        // Return the snapshotted steps so the response can say what the run is about to start on
+        // (`currentStepSummary`) — no step has a job yet, so it reads as the first step's label.
+        include: { steps: { orderBy: { stepIndex: 'asc' } } },
         data: {
           id: createRoutineRunId(),
           workbookId,
@@ -181,7 +184,9 @@ export class RoutineExecutorService {
       }),
     );
 
-    return RoutineRunEntity.from(run);
+    return RoutineRunEntity.from(run, {
+      currentStepSummary: RoutineRunEntity.currentStepSummaryFrom(run, run.steps, new Map()),
+    });
   }
 
   /**

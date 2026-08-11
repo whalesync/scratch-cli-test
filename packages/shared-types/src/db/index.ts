@@ -7,6 +7,7 @@ export * from './job-result';
 export * from './organization';
 export * from './routine';
 export * from './routine-run';
+export * from './routine-run-progress';
 export * from './run-context';
 export * from './schedule';
 export * from './sync';

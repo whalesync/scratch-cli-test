@@ -1122,6 +1122,15 @@ describe('RoutineExecutorService.triggerRun', () => {
       finishedAt: null,
       error: null,
       currentStepIndex: 0,
+      // The create includes the snapshotted steps so the response can say what the run starts on.
+      steps: [
+        {
+          ...makeStep(0, RoutineAction.PULL, { name: 'Pull Source' }),
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+          updatedAt: new Date('2026-01-01T00:00:00Z'),
+          result: null,
+        },
+      ],
     };
     const service = makeTriggerService(jest.fn().mockResolvedValue(created));
     // Don't actually run the loop — assert it was kicked.
@@ -1134,6 +1143,8 @@ describe('RoutineExecutorService.triggerRun', () => {
 
     expect(run.id).toBe(RUN_ID);
     expect(executeSpy).toHaveBeenCalledWith(RUN_ID);
+    // No step has a job yet, so the run reports the step it is about to start (DEV-11256).
+    expect(run.currentStepSummary).toBe('Pull Source…');
   });
 
   it('rejects with 409 when the routine already has an active run (unique-index P2002)', async () => {

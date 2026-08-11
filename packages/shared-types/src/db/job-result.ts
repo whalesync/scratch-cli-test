@@ -16,6 +16,10 @@ import {
 /// frontend a connector's or a job type's quirks (see the "keep connector knowledge out of the
 /// frontends" product principle). A frontend calls {@link deriveJobResult} and renders the result.
 ///
+/// The derivation is aware of whether the job has FINISHED (see `isRunning`): a finished job gets a
+/// past-tense final tally, an in-flight one a present-tense progress line, so a live job never renders
+/// as though its not-yet-started counters were the result.
+///
 
 /** A single headline counter, e.g. `{ label: 'Created', value: 3 }`. */
 export interface JobResultStat {
@@ -127,9 +131,16 @@ function filesFromFolder(
 
 // ── Pull ─────────────────────────────────────────────────────────────────────
 
-function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefined): JobResult {
+function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefined, isRunning: boolean): JobResult {
   if (!progress) {
-    return { summary: 'Pull completed', stats: [], folders: [], files: [], errors: [], warnings: [] };
+    return {
+      summary: isRunning ? 'Pulling…' : 'Pull completed',
+      stats: [],
+      folders: [],
+      files: [],
+      errors: [],
+      warnings: [],
+    };
   }
 
   const folderCount = progress.folderCount ?? 0;
@@ -144,7 +155,7 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
   const isIncrementalPull =
     progress.mode === 'incremental' || (progress.folders ?? []).some((folder) => folder.mode === 'incremental');
   const modeSuffix = isIncrementalPull ? ' (incremental)' : '';
-  const summary =
+  const completedPullSummary =
     changedRecordCount === 0
       ? `Pulled ${pluralize(folderCount, 'folder')} — no changes${modeSuffix}`
       : `Pulled ${pluralize(changedRecordCount, 'record')} across ${pluralize(folderCount, 'folder')}${modeSuffix}`;
@@ -158,14 +169,17 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
   // left untouched on disk (deletes are records that were NOT fetched, so they are not part of this
   // total). So New + Updated + Unchanged = fetched record count. We only surface 'Unchanged' for full
   // pulls — under incremental the fetched count is just the changed subset, so it would read ~0 and
-  // misleadingly imply the rest of the folder doesn't exist.
-  if (!isIncrementalPull) {
+  // misleadingly imply the rest of the folder doesn't exist. It is also meaningless MID-RUN: records
+  // are fetched (Phase 1) long before they are written to disk (Phase 2), so a running pull would
+  // report every record fetched so far as "Unchanged".
+  if (!isIncrementalPull && !isRunning) {
     const unchangedCount = Math.max(0, (progress.totalFiles ?? 0) - createdCount - updatedCount);
     stats.push({ label: 'Unchanged', value: unchangedCount });
   }
 
   // Prefer the per-folder breakdown (enriched server-side). Fall back to a single synthetic row built
   // from the run-wide aggregate so older progress records (no `folders`) still render one folder.
+  const hasPerFolderBreakdown = (progress.folders ?? []).length > 0;
   const breakdown: PullLinkedFolderFilesPublicProgress['folders'] =
     progress.folders && progress.folders.length > 0
       ? progress.folders
@@ -206,21 +220,62 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
   const files = folders.flatMap(filesFromFolder);
   const errors = Object.values(progress.folderErrors ?? {}).map((error) => `${error.folderName}: ${error.message}`);
 
+  const summary = isRunning
+    ? summarizePullInProgress(folders, hasPerFolderBreakdown, folderCount, progress.totalFiles ?? 0)
+    : completedPullSummary;
+
   return { summary, stats, folders, files, errors, warnings: [], mode: isIncrementalPull ? 'incremental' : 'full' };
+}
+
+/**
+ * Present-tense headline for a pull that is STILL RUNNING: what it is pulling right now plus how many
+ * records it has fetched so far. Names the folder when exactly one is in flight (a single-folder pull,
+ * or Phase 2, which processes folders one at a time); Phase 1 fetches several folders concurrently, so
+ * there it reports the folder count rather than arbitrarily picking one of them to name.
+ */
+function summarizePullInProgress(
+  folders: JobResultFolder[],
+  hasPerFolderBreakdown: boolean,
+  folderCount: number,
+  fetchedRecordCount: number,
+): string {
+  const totalFolderCount = Math.max(folderCount, folders.length);
+  // Only a REAL per-folder breakdown can say which folder is in flight. Without one the rows here are a
+  // single synthetic row built from the run-wide aggregate, whose name is just whichever folder the job
+  // happened to be on — it names the pull only when the run is a single folder anyway.
+  const activeFolders = hasPerFolderBreakdown ? folders.filter((folder) => folder.status === 'active') : [];
+  const onlyFolderInFlight =
+    activeFolders.length === 1 ? activeFolders[0] : totalFolderCount === 1 ? folders[0] : undefined;
+  const pullTargetLabel =
+    onlyFolderInFlight?.name || (totalFolderCount > 0 ? pluralize(totalFolderCount, 'folder') : '');
+  if (!pullTargetLabel) {
+    return fetchedRecordCount > 0 ? `Pulling — ${pluralize(fetchedRecordCount, 'record')} fetched` : 'Pulling…';
+  }
+  return fetchedRecordCount > 0
+    ? `Pulling ${pullTargetLabel} — ${pluralize(fetchedRecordCount, 'record')} fetched`
+    : `Pulling ${pullTargetLabel}…`;
 }
 
 // ── Sync ─────────────────────────────────────────────────────────────────────
 
-function deriveSyncResult(progress: SyncDataFoldersPublicProgress | undefined): JobResult {
+function deriveSyncResult(progress: SyncDataFoldersPublicProgress | undefined, isRunning: boolean): JobResult {
   if (!progress) {
-    return { summary: 'Sync completed', stats: [], folders: [], files: [], errors: [], warnings: [] };
+    return {
+      summary: isRunning ? 'Syncing…' : 'Sync completed',
+      stats: [],
+      folders: [],
+      files: [],
+      errors: [],
+      warnings: [],
+    };
   }
 
   const tables = progress.tables ?? [];
   const tableCount = tables.length;
   const totalRecordsSynced = progress.totalFilesSynced ?? 0;
-  const summary =
-    totalRecordsSynced === 0
+  const summary = isRunning
+    ? summarizeSyncInProgress(tables, totalRecordsSynced)
+    : totalRecordsSynced === 0
       ? `Synced ${pluralize(tableCount, 'table')} — no changes`
       : `Synced ${pluralize(totalRecordsSynced, 'record')} across ${pluralize(tableCount, 'table')}`;
 
@@ -262,6 +317,25 @@ function deriveSyncResult(progress: SyncDataFoldersPublicProgress | undefined): 
   return { summary, stats, folders, files, errors, warnings };
 }
 
+/**
+ * Present-tense headline for a sync that is STILL RUNNING. A sync processes its tables one at a time
+ * and marks the one it is on `in_progress`, so the table in flight can be named. `totalFilesSynced`
+ * only advances when a table finishes, so early in a long table this reports the records staged by the
+ * tables before it — which is what "so far" means here.
+ */
+function summarizeSyncInProgress(tables: SyncDataFoldersPublicProgress['tables'], totalRecordsSynced: number): string {
+  const tablesInProgress = tables.filter((table) => table.status === 'in_progress');
+  const onlyTableInFlight =
+    tablesInProgress.length === 1 ? tablesInProgress[0] : tables.length === 1 ? tables[0] : undefined;
+  const syncTargetLabel = onlyTableInFlight?.name || (tables.length > 0 ? pluralize(tables.length, 'table') : '');
+  if (!syncTargetLabel) {
+    return totalRecordsSynced > 0 ? `Syncing — ${pluralize(totalRecordsSynced, 'record')} synced` : 'Syncing…';
+  }
+  return totalRecordsSynced > 0
+    ? `Syncing ${syncTargetLabel} — ${pluralize(totalRecordsSynced, 'record')} synced`
+    : `Syncing ${syncTargetLabel}…`;
+}
+
 // ── Discard pending changes (pre-flight cleanup) ─────────────────────────────
 
 /**
@@ -271,14 +345,22 @@ function deriveSyncResult(progress: SyncDataFoldersPublicProgress | undefined): 
  * reports how many were cleared plus a per-connection/file breakdown for the drill-down — so the
  * user can see exactly what stray state was tidied up before the sync.
  */
-function deriveDiscardResult(progress: DiscardPendingChangesPublicProgress | undefined): JobResult {
+function deriveDiscardResult(progress: DiscardPendingChangesPublicProgress | undefined, isRunning: boolean): JobResult {
   if (!progress) {
-    return { summary: 'Workspace ready', stats: [], folders: [], files: [], errors: [], warnings: [] };
+    return {
+      summary: isRunning ? 'Clearing leftover changes…' : 'Workspace ready',
+      stats: [],
+      folders: [],
+      files: [],
+      errors: [],
+      warnings: [],
+    };
   }
 
   const totalDiscarded = progress.totalDiscarded ?? 0;
-  const summary =
-    totalDiscarded === 0
+  const summary = isRunning
+    ? 'Clearing leftover changes…'
+    : totalDiscarded === 0
       ? 'Workspace ready — no leftover changes to clear'
       : `Cleared ${pluralize(totalDiscarded, 'leftover change')} so the sync starts from a clean slate`;
 
@@ -315,11 +397,37 @@ function deriveDiscardResult(progress: DiscardPendingChangesPublicProgress | und
  * so the summary reads "Staged a publish plan …" vs "Published …"; the default ('run') is correct
  * for a generic completed publish job.
  */
-function derivePublishResult(progress: PublishPublicProgress | undefined, mode: 'plan' | 'run'): JobResult {
+function derivePublishResult(
+  progress: PublishPublicProgress | undefined,
+  mode: 'plan' | 'run',
+  isRunning: boolean,
+): JobResult {
   if (!progress) {
     return {
-      summary: mode === 'plan' ? 'Publish plan staged' : 'Publish completed',
+      summary: isRunning
+        ? inProgressPublishSummary(undefined, mode)
+        : mode === 'plan'
+          ? 'Publish plan staged'
+          : 'Publish completed',
       stats: [],
+      folders: [],
+      files: [],
+      errors: [],
+      warnings: [],
+    };
+  }
+
+  if (isRunning) {
+    // The counters below are what has shipped SO FAR, so neither the plan nor the run headline is a
+    // result yet — report what the job is doing and how far through the plan it is instead.
+    const stats: JobResultStat[] = [
+      { label: 'Created', value: progress.createsExecuted ?? 0 },
+      { label: 'Updated', value: progress.editsExecuted ?? 0 },
+      { label: 'Deleted', value: progress.deletesExecuted ?? 0 },
+    ];
+    return {
+      summary: inProgressPublishSummary(progress, mode),
+      stats: mode === 'plan' ? [] : stats,
       folders: [],
       files: [],
       errors: [],
@@ -382,6 +490,28 @@ function derivePublishResult(progress: PublishPublicProgress | undefined, mode: 
   return { summary, stats, folders: [], files: [], errors, warnings: [] };
 }
 
+/**
+ * Present-tense headline for a publish that is STILL RUNNING. A publish job plans before it ships, so
+ * it reports the planning phase first and then how much of the plan it has executed — the planned
+ * totals are known once planning finishes, which is what makes "120 of 340 changes" possible here
+ * (pull and sync have no comparable up-front total).
+ */
+function inProgressPublishSummary(progress: PublishPublicProgress | undefined, mode: 'plan' | 'run'): string {
+  if (mode === 'plan') {
+    return 'Building the publish plan…';
+  }
+  if (!progress || progress.status === 'planning') {
+    return 'Planning the publish…';
+  }
+  const plannedChangeCount =
+    (progress.createsPlanned ?? 0) + (progress.editsPlanned ?? 0) + (progress.deletesPlanned ?? 0);
+  const executedChangeCount =
+    (progress.createsExecuted ?? 0) + (progress.editsExecuted ?? 0) + (progress.deletesExecuted ?? 0);
+  return plannedChangeCount > 0
+    ? `Publishing ${executedChangeCount.toLocaleString()} of ${pluralize(plannedChangeCount, 'change')}`
+    : 'Publishing changes…';
+}
+
 // ── Dispatcher ─────────────────────────────────────────────────────────────
 
 /** Input for {@link deriveJobResult}. `publishMode` is only consulted for publish jobs. */
@@ -390,6 +520,17 @@ export interface DeriveJobResultInput {
   publicProgress?: unknown;
   /** For publish jobs: whether the step staged a plan or ran it. Defaults to 'run'. */
   publishMode?: 'plan' | 'run';
+  /**
+   * Whether the job is STILL RUNNING. A finished job's summary is a past-tense final tally ("Pulled 3
+   * folders — no changes"); an in-flight job's counters are not a result yet, so it gets a present-tense
+   * progress line instead ("Pulling Companies — 1,200 records fetched"). Defaults to false (finished).
+   *
+   * Pass it from whatever the caller already holds: a frontend has `job.state` ('active' / 'waiting' /
+   * 'delayed' ⇒ running), the routine executor knows whether its step's job is still in flight. Do NOT
+   * infer it from `publicProgress.status` — a pull flips its run-wide status to 'completed' as soon as
+   * the FIRST folder finishes, so it reads 'completed' well before the job is done.
+   */
+  isRunning?: boolean;
 }
 
 /**
@@ -399,15 +540,20 @@ export interface DeriveJobResultInput {
  */
 export function deriveJobResult(input: DeriveJobResultInput): JobResult {
   const kind = categorizeJobType(input.type);
+  const isRunning = input.isRunning ?? false;
   switch (kind) {
     case 'pull':
-      return derivePullResult(input.publicProgress as PullLinkedFolderFilesPublicProgress | undefined);
+      return derivePullResult(input.publicProgress as PullLinkedFolderFilesPublicProgress | undefined, isRunning);
     case 'sync':
-      return deriveSyncResult(input.publicProgress as SyncDataFoldersPublicProgress | undefined);
+      return deriveSyncResult(input.publicProgress as SyncDataFoldersPublicProgress | undefined, isRunning);
     case 'publish':
-      return derivePublishResult(input.publicProgress as PublishPublicProgress | undefined, input.publishMode ?? 'run');
+      return derivePublishResult(
+        input.publicProgress as PublishPublicProgress | undefined,
+        input.publishMode ?? 'run',
+        isRunning,
+      );
     case 'discard':
-      return deriveDiscardResult(input.publicProgress as DiscardPendingChangesPublicProgress | undefined);
+      return deriveDiscardResult(input.publicProgress as DiscardPendingChangesPublicProgress | undefined, isRunning);
     case 'rehost':
     case 'unknown':
     default:

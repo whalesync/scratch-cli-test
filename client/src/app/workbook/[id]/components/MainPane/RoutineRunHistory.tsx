@@ -9,12 +9,15 @@ import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackRoutineRunCancelled } from '@/lib/posthog';
 import { ActionIcon, Badge, Box, Collapse, Group, Loader, Stack, Tooltip, type MantineColor } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import type {
-  RoutineRun,
-  RoutineRunStatus,
-  RoutineRunStep,
-  RoutineRunStepStatus,
-  WorkbookId,
+import {
+  deriveJobResult,
+  isJobStillRunning,
+  publishModeForRoutineAction,
+  type RoutineRun,
+  type RoutineRunStatus,
+  type RoutineRunStep,
+  type RoutineRunStepStatus,
+  type WorkbookId,
 } from '@spinner/shared-types';
 import { ChevronDownIcon, ChevronRightIcon, XCircleIcon } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -143,8 +146,11 @@ function RoutineRunRow({
   // whose publish had connector-rejected records). Mirror the per-step treatment: a yellow "completed*"
   // badge instead of the plain green check, so the whole run doesn't read as a clean success.
   const isWarning = run.status === 'completed' && !!run.resultWarning;
-  // The end-result message: the new resultSummary, falling back to the deprecated error column.
-  const resultMessage = run.resultSummary ?? run.error;
+  // What to show on the row: while the run is active, what it is doing RIGHT NOW (server-derived from
+  // the step in flight) — `resultSummary` describes the last step that FINISHED, so mid-run it names
+  // the previous task. Once the run is terminal `currentStepSummary` is null and the final result (or
+  // the failing step's error) takes over; `error` remains the fallback for pre-`resultSummary` runs.
+  const resultMessage = run.currentStepSummary ?? run.resultSummary ?? run.error;
 
   const handleCancel = async (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -217,8 +223,8 @@ function RoutineRunSteps({ run }: { run: RoutineRun | undefined }) {
   }
 
   const steps = run.steps ?? [];
-  // The end-result message: the new resultSummary, falling back to the deprecated error column.
-  const resultMessage = run.resultSummary ?? run.error;
+  // Same rule as the row above: an active run reports the step in flight, a finished one its result.
+  const resultMessage = run.currentStepSummary ?? run.resultSummary ?? run.error;
   return (
     <Stack gap={0} pb={4} style={{ backgroundColor: 'var(--bg-base)' }}>
       {resultMessage && (
@@ -247,9 +253,19 @@ function RoutineStepRow({ step }: { step: RoutineRunStep }) {
   const target = step.sync ?? folderTarget ?? step.connection ?? 'all';
   // A completed step with a non-null `error` is a "completed with warnings" (e.g. publish rejections).
   const isWarning = step.status === 'completed' && !!step.error;
-  // The step's own headline result ("Pulled 3 records across 2 folders"), computed server-side. Falls
-  // back to the target (folder/sync/connection) when the step hasn't produced a result yet.
-  const stepSummary = step.result?.summary || target;
+  // The step's own headline: its persisted result once it finishes ("Pulled 3 records across 2
+  // folders"), and while it runs its job's live progress in the present tense ("Pulling Companies —
+  // 1,200 records fetched"). Falls back to the target (folder/sync/connection) when it has neither.
+  const liveJobSummary =
+    !step.result && step.job
+      ? deriveJobResult({
+          type: step.job.type,
+          publicProgress: step.job.publicProgress,
+          publishMode: publishModeForRoutineAction(step.action),
+          isRunning: isJobStillRunning(step.job.state),
+        }).summary
+      : '';
+  const stepSummary = step.result?.summary || liveJobSummary || target;
 
   return (
     <Box>

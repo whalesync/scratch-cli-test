@@ -7,6 +7,7 @@ import { Box, Group, Stack, Table } from '@mantine/core';
 import {
   categorizeJobType,
   deriveJobResult,
+  isJobStillRunning,
   type Job,
   type JobResult,
   type JobResultFile,
@@ -23,7 +24,13 @@ import { useParams } from 'next/navigation';
  * means "created", how to phrase the headline) lives in the shared helper, not here.
  */
 export function JobProgressDetail({ job }: { job: Job }) {
-  const result = deriveJobResult({ type: job.type, publicProgress: job.publicProgress });
+  // A job that hasn't reached a terminal state is described in the present tense ("Pulling Companies —
+  // 1,200 records fetched") rather than as a finished tally of counters that are still moving.
+  const result = deriveJobResult({
+    type: job.type,
+    publicProgress: job.publicProgress,
+    isRunning: isJobStillRunning(job.state),
+  });
   // Rehost has no normalized renderer yet — fall back to its bespoke table below.
   const isRehost = categorizeJobType(job.type) === 'rehost';
 
@@ -58,11 +65,24 @@ export function JobProgressDetail({ job }: { job: Job }) {
  * Renders a job's progress detail from its raw `type` + `publicProgress`. Exported for RunsView, which
  * holds the type and progress separately rather than a whole {@link Job}.
  */
-export function ProgressDetails({ type, progress }: { type: string; progress: Record<string, unknown> }) {
+export function ProgressDetails({
+  type,
+  progress,
+  jobState,
+}: {
+  type: string;
+  progress: Record<string, unknown>;
+  /** The job's state, so a job still in flight renders as progress rather than as a final result. */
+  jobState?: Job['state'];
+}) {
   if (categorizeJobType(type) === 'rehost') {
     return <RehostProgressTable progress={progress} />;
   }
-  return <JobResultView result={deriveJobResult({ type, publicProgress: progress })} />;
+  return (
+    <JobResultView
+      result={deriveJobResult({ type, publicProgress: progress, isRunning: isJobStillRunning(jobState) })}
+    />
+  );
 }
 
 /** Renders a normalized job result: headline stats, per-folder breakdown, errors/warnings, and files. */

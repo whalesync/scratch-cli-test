@@ -772,11 +772,26 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         });
         // We don't have pulledPaths from the previous run — mark as resuming
         results.set(folderId, { folderId, pulledPaths: new Set(), fileCount: 0, isResuming: true });
+        // `publicProgress` is rebuilt from scratch on a resumed attempt, so this folder's entry is back
+        // to 'pending' even though a previous attempt already worked on it. Restore what it really is:
+        // done if Phase 2 already processed it (Phase 2 will skip it below), otherwise still in flight.
+        const resumedFolderEntry = findFolderProgress(publicProgress, folderId);
+        if (resumedFolderEntry) {
+          resumedFolderEntry.status = jobProgress.completedFolderIds?.includes(folderId) ? 'completed' : 'active';
+        }
         return;
       }
 
       jobProgress.folderFetchStatus = jobProgress.folderFetchStatus ?? {};
       jobProgress.folderFetchStatus[folderId] = 'fetching';
+
+      // Flip the folder's public status to 'active' for the rest of the pull — it stays active through
+      // Phase 2, which is what finally marks it 'completed'. Without this a folder reads 'pending' for
+      // the whole run and a live view can't tell which folders are actually being worked on.
+      const fetchingFolderEntry = findFolderProgress(publicProgress, folderId);
+      if (fetchingFolderEntry) {
+        fetchingFolderEntry.status = 'active';
+      }
 
       try {
         const resumeProgress = jobProgress.folderCursors?.[folderId] ?? {};

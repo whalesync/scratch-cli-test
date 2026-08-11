@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { RoutineRun as PrismaRoutineRun } from '@prisma/client';
+import { RoutineRun as PrismaRoutineRun, RoutineRunStep as PrismaRoutineRunStep } from '@prisma/client';
 import {
   CreateRoutineFileDto,
+  isActiveRoutineRunStatus,
   Job,
   PushRoutineFilesBlockedStaleDto,
   PushRoutineFilesDto,
@@ -86,6 +87,11 @@ export class RoutineService {
    * Lists run history for a workbook, newest first, optionally filtered to one routine file. When
    * `includeJobs` is set, each run is loaded with its steps and every step carries its job (the
    * pull/sync/publish job in the `/jobs` wire shape); all step jobs are fetched in a single batch.
+   *
+   * Every row carries `currentStepSummary` — what an active run is doing right now — so a polling list
+   * view doesn't have to fetch each active run's detail on every tick just to read that one string.
+   * Terminal runs need no extra query for it (it is null for them), so the common all-finished list
+   * still costs exactly the queries it did before.
    */
   async listRuns(workbookId: WorkbookId, query: RoutineRunListQueryDto): Promise<RoutineRun[]> {
     const where = {
@@ -99,7 +105,10 @@ export class RoutineService {
         orderBy: { createdAt: 'desc' },
         take: ROUTINE_RUNS_LIST_LIMIT,
       });
-      return runs.map((run) => RoutineRunEntity.from(run));
+      const currentStepSummaryByRunId = await this.deriveCurrentStepSummariesForActiveRuns(runs);
+      return runs.map((run) =>
+        RoutineRunEntity.from(run, { currentStepSummary: currentStepSummaryByRunId.get(run.id) ?? null }),
+      );
     }
 
     const runs = await this.db.client.routineRun.findMany({
@@ -109,12 +118,19 @@ export class RoutineService {
       include: { steps: { orderBy: { stepIndex: 'asc' } } },
     });
     const jobsByBullJobId = await this.fetchJobsByBullJobId(runs.flatMap((run) => run.steps));
-    return runs.map((run) => RoutineRunEntity.from(run, jobsByBullJobId));
+    return runs.map((run) =>
+      RoutineRunEntity.from(run, {
+        jobsByBullJobId,
+        currentStepSummary: RoutineRunEntity.currentStepSummaryFrom(run, run.steps, jobsByBullJobId),
+      }),
+    );
   }
 
   /**
    * Fetches a single run with its per-step detail. 404 if missing or in another workbook. When
-   * `includeJobs` is set, each step also carries its job (the `/jobs` wire shape).
+   * `includeJobs` is set, each step also carries its job (the `/jobs` wire shape). An ACTIVE run's
+   * in-flight step job is loaded either way — `currentStepSummary` is derived from its live progress —
+   * but the steps themselves only carry a `job` field when the request asked for it.
    */
   async getRun(workbookId: WorkbookId, runId: string, includeJobs?: boolean): Promise<RoutineRun> {
     const run = await this.db.client.routineRun.findFirst({
@@ -125,10 +141,68 @@ export class RoutineService {
       throw new NotFoundException(`Routine run ${runId} not found`);
     }
     if (!includeJobs) {
-      return RoutineRunEntity.from(run);
+      const jobsForCurrentStep = await this.fetchJobForInFlightStep(run, run.steps);
+      return RoutineRunEntity.from(run, {
+        currentStepSummary: RoutineRunEntity.currentStepSummaryFrom(run, run.steps, jobsForCurrentStep),
+      });
     }
     const jobsByBullJobId = await this.fetchJobsByBullJobId(run.steps);
-    return RoutineRunEntity.from(run, jobsByBullJobId);
+    return RoutineRunEntity.from(run, {
+      jobsByBullJobId,
+      currentStepSummary: RoutineRunEntity.currentStepSummaryFrom(run, run.steps, jobsByBullJobId),
+    });
+  }
+
+  /**
+   * Resolves `currentStepSummary` for every ACTIVE run in a list, keyed by run id. Finished runs are
+   * described by their persisted `resultSummary`, so they are skipped entirely: with no active run
+   * this issues no queries at all, and otherwise it costs one steps query plus one batched job-progress
+   * query for just the in-flight steps (never every step of every listed run).
+   */
+  private async deriveCurrentStepSummariesForActiveRuns(runs: PrismaRoutineRun[]): Promise<Map<string, string>> {
+    const activeRunIds = runs.filter((run) => isActiveRoutineRunStatus(run.status)).map((run) => run.id);
+    if (activeRunIds.length === 0) {
+      return new Map();
+    }
+
+    const steps = await this.db.client.routineRunStep.findMany({
+      where: { runId: { in: activeRunIds } },
+      orderBy: { stepIndex: 'asc' },
+    });
+    const stepsByRunId = new Map<string, PrismaRoutineRunStep[]>();
+    for (const step of steps) {
+      const stepsForRun = stepsByRunId.get(step.runId) ?? [];
+      stepsForRun.push(step);
+      stepsByRunId.set(step.runId, stepsForRun);
+    }
+
+    const inFlightSteps = runs.flatMap((run) => {
+      const inFlightStep = RoutineRunEntity.inFlightStepRowFrom(run, stepsByRunId.get(run.id) ?? []);
+      return inFlightStep ? [inFlightStep] : [];
+    });
+    const jobsByBullJobId = await this.fetchJobsByBullJobId(inFlightSteps);
+
+    const currentStepSummaryByRunId = new Map<string, string>();
+    for (const run of runs) {
+      const summary = RoutineRunEntity.currentStepSummaryFrom(run, stepsByRunId.get(run.id) ?? [], jobsByBullJobId);
+      if (summary) {
+        currentStepSummaryByRunId.set(run.id, summary);
+      }
+    }
+    return currentStepSummaryByRunId;
+  }
+
+  /**
+   * Loads just the job of the step a run is executing right now (empty for a terminal run, or for a
+   * step that hasn't been enqueued yet). Lets the run-detail endpoint describe live progress without
+   * pulling every step's job — that stays behind `includeJobs`.
+   */
+  private async fetchJobForInFlightStep(
+    run: PrismaRoutineRun,
+    steps: PrismaRoutineRunStep[],
+  ): Promise<Map<string, Job>> {
+    const inFlightStep = RoutineRunEntity.inFlightStepRowFrom(run, steps);
+    return this.fetchJobsByBullJobId(inFlightStep ? [inFlightStep] : []);
   }
 
   /**

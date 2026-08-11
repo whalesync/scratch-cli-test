@@ -86,10 +86,25 @@ export interface RoutineRun {
    */
   error: string | null;
   /**
-   * User-facing summary of the LAST step that ran (a concise success summary, or — when a step failed
-   * — that step's clean error). Overwritten as each step finishes. Null until the first step finishes.
+   * User-facing summary of the LAST step that FINISHED (a concise success summary, or — when a step
+   * failed — that step's clean error). Overwritten as each step finishes. Null until the first step
+   * finishes. On a terminal run this is the run's final result — what the success line and the failure
+   * banner render. While a run is still active it describes work that is already done, so render
+   * {@link RoutineRun.currentStepSummary} instead (it is non-null for exactly those runs).
    */
   resultSummary: string | null;
+  /**
+   * What the run is doing RIGHT NOW: the step currently executing, described by its live job progress
+   * ("Pulling Companies — 1,200 records fetched") or by the step's own label before its job reports
+   * anything ("Pull Destination…"). Server-derived on read, NOT a DB column — and present on the run
+   * LIST response as well as run detail, so a list row needs no extra per-poll fetch to say what an
+   * active run is up to.
+   *
+   * Null once the run reaches a terminal state (completed / failed / cancelled) — a finished run is
+   * described by {@link RoutineRun.resultSummary}. So `currentStepSummary ?? resultSummary` is always
+   * the right one-line status for a run.
+   */
+  currentStepSummary: string | null;
   /**
    * Set when the run COMPLETED but a step finished "completed with a warning" (e.g. a publish whose
    * connector rejected some records) — holds the first such step's message. Unlike {@link error}

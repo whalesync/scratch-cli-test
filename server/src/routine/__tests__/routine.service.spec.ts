@@ -101,6 +101,7 @@ function jobEntityFixture(overrides: Record<string, unknown> = {}) {
 describe('RoutineService', () => {
   let routineRunFindMany: jest.Mock;
   let routineRunFindFirst: jest.Mock;
+  let routineRunStepFindMany: jest.Mock;
   let workbookFindFirst: jest.Mock;
   let listRepoFiles: jest.Mock;
   let getRepoFile: jest.Mock;
@@ -119,6 +120,7 @@ describe('RoutineService', () => {
   beforeEach(() => {
     routineRunFindMany = jest.fn().mockResolvedValue([]);
     routineRunFindFirst = jest.fn();
+    routineRunStepFindMany = jest.fn().mockResolvedValue([]);
     workbookFindFirst = jest.fn().mockResolvedValue({ organizationId: 'org_test1234' });
     listRepoFiles = jest.fn().mockResolvedValue([]);
     getRepoFile = jest.fn();
@@ -136,6 +138,7 @@ describe('RoutineService', () => {
     const db = {
       client: {
         routineRun: { findMany: routineRunFindMany, findFirst: routineRunFindFirst },
+        routineRunStep: { findMany: routineRunStepFindMany },
         workbook: { findFirst: workbookFindFirst },
       },
     } as unknown as DbService;
@@ -641,6 +644,71 @@ describe('RoutineService', () => {
       // A step with no jobId resolves to null.
       expect(steps[1].job).toBeNull();
     });
+
+    // DEV-11256: mid-run, `resultSummary` names the step that already FINISHED. Every list row also
+    // carries what the run is doing right now, so a polling list needs no per-run detail fetch for it.
+    it('describes an active run by its in-flight step, loading only that step job', async () => {
+      routineRunFindMany.mockResolvedValue([
+        prismaRunRow({ id: 'rr_active', status: 'running', currentStepIndex: 1, finishedAt: null }),
+        prismaRunRow({ id: 'rr_done', status: 'completed' }),
+      ]);
+      routineRunStepFindMany.mockResolvedValue([
+        prismaStepRow({ id: 'rrs_1', runId: 'rr_active', stepIndex: 0, status: 'completed', jobId: 'bull_done' }),
+        prismaStepRow({ id: 'rrs_2', runId: 'rr_active', stepIndex: 1, status: 'running', jobId: 'bull_active' }),
+      ]);
+      getJobsProgress.mockResolvedValue([
+        jobEntityFixture({
+          bullJobId: 'bull_active',
+          state: 'active',
+          publicProgress: { folderCount: 2, totalFiles: 1200, folders: [] },
+        }),
+      ]);
+
+      const runs = await service.listRuns(WORKBOOK_ID, {});
+
+      // Steps are loaded for the ACTIVE run only, and only its in-flight step's job is fetched.
+      expect(routineRunStepFindMany).toHaveBeenCalledWith({
+        where: { runId: { in: ['rr_active'] } },
+        orderBy: { stepIndex: 'asc' },
+      });
+      expect(getJobsProgress).toHaveBeenCalledWith(['bull_active']);
+      expect(runs[0].currentStepSummary).toBe('Pulling 2 folders — 1,200 records fetched');
+      // The list contract is unchanged otherwise: no steps on the rows, and nothing derived for a
+      // finished run (its `resultSummary` is its result).
+      expect(runs[0].steps).toBeUndefined();
+      expect(runs[1].currentStepSummary).toBeNull();
+    });
+
+    it('falls back to the in-flight step label before its job reports progress', async () => {
+      routineRunFindMany.mockResolvedValue([
+        prismaRunRow({ id: 'rr_active', status: 'running', currentStepIndex: 0, finishedAt: null }),
+      ]);
+      routineRunStepFindMany.mockResolvedValue([
+        prismaStepRow({
+          id: 'rrs_1',
+          runId: 'rr_active',
+          stepIndex: 0,
+          status: 'running',
+          name: 'Pull Source',
+          jobId: null,
+        }),
+      ]);
+
+      const runs = await service.listRuns(WORKBOOK_ID, {});
+
+      expect(getJobsProgress).not.toHaveBeenCalled();
+      expect(runs[0].currentStepSummary).toBe('Pull Source…');
+    });
+
+    it('issues no extra queries when every listed run has finished', async () => {
+      routineRunFindMany.mockResolvedValue([prismaRunRow()]);
+
+      const runs = await service.listRuns(WORKBOOK_ID, {});
+
+      expect(routineRunStepFindMany).not.toHaveBeenCalled();
+      expect(getJobsProgress).not.toHaveBeenCalled();
+      expect(runs[0].currentStepSummary).toBeNull();
+    });
   });
 
   describe('getRun', () => {
@@ -686,6 +754,51 @@ describe('RoutineService', () => {
       expect(getJobsProgress).toHaveBeenCalledWith(['bull_1']);
       expect(run.steps?.[0].job).toMatchObject({ bullJobId: 'bull_1' });
       expect(run.steps?.[1].job).toBeNull();
+    });
+
+    // DEV-11256: the live progress line needs the in-flight step's job even when the caller didn't ask
+    // for jobs — but the steps themselves must still come back without a `job` field.
+    it("describes an active run's current step without attaching jobs to the steps", async () => {
+      routineRunFindFirst.mockResolvedValue(
+        prismaRunRow({
+          status: 'running',
+          currentStepIndex: 1,
+          finishedAt: null,
+          steps: [
+            prismaStepRow({ id: 'rrs_1', stepIndex: 0, status: 'completed', jobId: 'bull_done' }),
+            prismaStepRow({ id: 'rrs_2', stepIndex: 1, status: 'running', action: 'sync', jobId: 'bull_active' }),
+          ],
+        }),
+      );
+      getJobsProgress.mockResolvedValue([
+        jobEntityFixture({
+          bullJobId: 'bull_active',
+          type: 'sync-data-folders',
+          state: 'active',
+          publicProgress: {
+            totalFilesSynced: 450,
+            tables: [{ id: 'dfd_1', name: 'Deals', status: 'in_progress' }],
+          },
+        }),
+      ]);
+
+      const run = await service.getRun(WORKBOOK_ID, 'rr_1');
+
+      expect(getJobsProgress).toHaveBeenCalledWith(['bull_active']);
+      expect(run.currentStepSummary).toBe('Syncing Deals — 450 records synced');
+      expect(run.steps?.[0]).not.toHaveProperty('job');
+    });
+
+    it('reports no current step for a finished run, leaving resultSummary to describe it', async () => {
+      routineRunFindFirst.mockResolvedValue(
+        prismaRunRow({ resultSummary: 'Published 3 changes', steps: [prismaStepRow()] }),
+      );
+
+      const run = await service.getRun(WORKBOOK_ID, 'rr_1');
+
+      expect(run.currentStepSummary).toBeNull();
+      expect(run.resultSummary).toBe('Published 3 changes');
+      expect(getJobsProgress).not.toHaveBeenCalled();
     });
   });
 });
