@@ -7,6 +7,7 @@ pub mod linked;
 pub mod read_records;
 pub mod record_tree;
 pub mod routines;
+pub mod shopify_verbatim_migration;
 pub mod syncs;
 pub mod validation;
 pub mod workspaces;

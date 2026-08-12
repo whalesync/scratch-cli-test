@@ -4393,11 +4393,10 @@ fn migrate_one_shopify_connection(
         };
 
         let entity_type = shopify_entity_type_for_record(rel_path, entity_type_override);
-        let outcome =
-            crate::shared::shopify_verbatim_migration::migrate_shopify_record_to_verbatim_format(
-                record_object,
-                &entity_type,
-            );
+        let outcome = super::shopify_verbatim_migration::migrate_shopify_record_to_verbatim_format(
+            record_object,
+            &entity_type,
+        );
 
         if !outcome.changed {
             summary.skipped += 1;

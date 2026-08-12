@@ -14,7 +14,6 @@ pub mod merge_patch;
 pub mod re_anchor;
 pub mod review_ops;
 pub mod review_stats;
-pub mod shopify_verbatim_migration;
 pub mod unreviewed_changes;
 pub mod validation_stats;
 pub mod validators;
