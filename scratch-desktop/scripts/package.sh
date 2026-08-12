@@ -103,6 +103,15 @@ fi
 echo "Verifying Electron fuses on the packaged binary..."
 node scripts/verify-fuses.cjs "$PLATFORM"
 
+# Hard gate on the packaged binary's REAL macOS entitlements (DEV-10999 / Oneleet SCR-004).
+# The vitest spec only proves the plists DECLARE a safe set; this proves the signed .app we are
+# about to publish doesn't carry disable-library-validation / allow-dyld-environment-variables (the
+# dylib-injection entitlements). mac-only — entitlements don't apply to linux/windows builds.
+if [ "$PLATFORM" = "mac" ]; then
+  echo "Verifying macOS entitlements on the signed app bundle..."
+  node scripts/verify-entitlements.cjs
+fi
+
 # Collect release-ready files into dist-release/ so the downstream upload job
 # has a single, predictable directory to pull into its workspace.
 DIST_DIR="./dist-release"

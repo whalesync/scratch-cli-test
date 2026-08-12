@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  DEV-ONLY entitlements for local AD-HOC macOS builds (yarn build:mac:unsigned /
+  scripts/build_mac_local.sh, wired via electron-builder.unsigned-mac.yml). This profile
+  NEVER ships to users — the Developer ID release uses build/entitlements.mac.plist.
+
+  It is identical to the production build/entitlements.mac.plist EXCEPT it re-adds
+  com.apple.security.cs.disable-library-validation, which ad-hoc-signed builds require:
+  ad-hoc signatures (codesign --sign -) carry no Team ID, so under Hardened Runtime library
+  validation would otherwise reject the app's own Electron frameworks and the build would not
+  launch. See Oneleet SCR-004 (DEV-10999) for why this exception is intentionally kept OUT of
+  the signed release profile and confined here.
+
+  It does NOT re-add com.apple.security.cs.allow-dyld-environment-variables — nothing in the
+  app (dev or prod) reads DYLD_* env vars.
+
+  Source of truth: scripts/expected-entitlements.cjs (RELEASE_REQUIRED + ADHOC_EXTRA).
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

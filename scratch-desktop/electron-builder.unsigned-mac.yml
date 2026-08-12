@@ -5,3 +5,9 @@ mac:
   notarize: false
   # Parent sets forceCodeSigning: true; allow ad-hoc for local unsigned packaging.
   forceCodeSigning: false
+  # Ad-hoc signatures carry no Team ID, so under Hardened Runtime library validation
+  # rejects the app's own Electron frameworks. Point local ad-hoc builds at the dev-only
+  # profile that re-adds com.apple.security.cs.disable-library-validation; the signed
+  # release (base electron-builder.yml) ships WITHOUT it (Oneleet SCR-004 / DEV-10999).
+  entitlements: build/entitlements.mac.adhoc.plist
+  entitlementsInherit: build/entitlements.mac.adhoc.plist

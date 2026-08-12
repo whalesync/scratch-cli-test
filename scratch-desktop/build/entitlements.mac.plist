@@ -1,18 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Production (Developer ID + notarized) Hardened Runtime entitlements for Scratch.app.
+  This is the profile that ships to users, and the one Oneleet pentest finding SCR-004
+  (DEV-10999) examined.
+
+  Deliberately ABSENT (do NOT re-add here — they weaken Hardened Runtime and are unused in
+  the signed release; scripts/verify-entitlements.cjs fails the release build if either
+  reappears in the packaged binary):
+    - com.apple.security.cs.disable-library-validation
+        Only needed to load ad-hoc-signed frameworks. In a Developer ID build every nested
+        Mach-O (including the scratchmd-native.node addon) is signed with our Team ID, so
+        library validation passes without it. Kept ONLY in entitlements.mac.adhoc.plist for
+        local ad-hoc builds (electron-builder.unsigned-mac.yml), which never ship to users.
+    - com.apple.security.cs.allow-dyld-environment-variables
+        A debugging entitlement; the app never reads DYLD_* env vars. Removing it closes the
+        DYLD_INSERT_LIBRARIES dylib-injection vector into this signed, TCC-privileged process.
+
+  Kept (required by Electron; NOT flagged by SCR-004):
+    - allow-jit / allow-unsigned-executable-memory  -> Chromium/V8 JIT.
+    - network.client                                -> the app is a network client.
+    - files.user-selected.read-write                -> user-picked workspace folders.
+
+  Single source of truth for the CI guards: scripts/expected-entitlements.cjs.
+-->
 <plist version="1.0">
 <dict>
   <key>com.apple.security.cs.allow-jit</key>
   <true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
   <true/>
-  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-  <true/>
   <key>com.apple.security.network.client</key>
   <true/>
   <key>com.apple.security.files.user-selected.read-write</key>
-  <true/>
-  <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>
 </plist>
