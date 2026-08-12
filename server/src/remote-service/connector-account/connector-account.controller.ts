@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import {
+  ConnectorAccount,
   CreateDestinationList,
   CreateDestinationLookup,
   CreateDestinationSearchResult,
@@ -28,7 +29,7 @@ import { userToActor } from '../../users/types';
 import { ConnectorAccountService } from './connector-account.service';
 import { CreateConnectorAccountDto, UpdateConnectorAccountDto } from './dto/connector-account.dto';
 import { ApiQuotaResponse } from './entities/api-quota.entity';
-import { ConnectorAccount } from './entities/connector-account.entity';
+import { ConnectorAccountEntity } from './entities/connector-account.entity';
 import { RevealCredentialsResponse } from './entities/reveal-credentials.entity';
 import { TableList, TableSearchResult } from './entities/table-list.entity';
 import { TableSchemaPreview } from './entities/table-schema-preview.entity';
@@ -49,14 +50,15 @@ export class ConnectorAccountController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
     const dto = createDto as ValidatedCreateConnectorAccountDto;
-    return this.service.create(workbookId as WorkbookId, dto, actor);
+    return ConnectorAccountEntity.from(await this.service.create(workbookId as WorkbookId, dto, actor));
   }
 
   @Get()
   async findAll(@Param('workbookId') workbookId: string, @Req() req: RequestWithUser): Promise<ConnectorAccount[]> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
-    return this.service.findAll(workbookId as WorkbookId, actor);
+    const accounts = await this.service.findAll(workbookId as WorkbookId, actor);
+    return accounts.map((account) => ConnectorAccountEntity.from(account));
   }
 
   @Get(':id')
@@ -67,7 +69,7 @@ export class ConnectorAccountController {
   ): Promise<ConnectorAccount> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
-    return this.service.findOne(workbookId as WorkbookId, id, actor);
+    return ConnectorAccountEntity.from(await this.service.findOne(workbookId as WorkbookId, id, actor));
   }
 
   @Get(':connectorAccountId/tables')
@@ -179,7 +181,7 @@ export class ConnectorAccountController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
     const dto = updateDto;
-    return this.service.update(workbookId as WorkbookId, id, dto, actor);
+    return ConnectorAccountEntity.from(await this.service.update(workbookId as WorkbookId, id, dto, actor));
   }
 
   @Delete(':id')
