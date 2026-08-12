@@ -602,6 +602,30 @@ describe('IntercomConnector', () => {
       });
     });
 
+    // DEV-11285: `parent_id` is a declared foreign key, so a sync writing INTO Intercom hands us
+    // whatever the link resolved to — and a resolved record id arrives as a string.
+    it('sends an article parent_id as the integer the write API documents', async () => {
+      mockCreateArticle.mockResolvedValue(makeArticle({ id: '42' }));
+
+      await connector.createRecords(buildTableSpec('articles'), [
+        { title: 'Linked', author_id: 1, parent_id: '19716322' },
+      ]);
+
+      expect(mockCreateArticle).toHaveBeenCalledWith(expect.objectContaining({ parent_id: 19716322 }));
+    });
+
+    it('passes a non-numeric parent_id through so the service rejects it rather than dropping the link', async () => {
+      mockCreateArticle.mockResolvedValue(makeArticle({ id: '42' }));
+
+      await connector.createRecords(buildTableSpec('articles'), [
+        { title: 'Dangling', author_id: 1, parent_id: '@/Intercom/Collections/x.json' },
+      ]);
+
+      expect(mockCreateArticle).toHaveBeenCalledWith(
+        expect.objectContaining({ parent_id: '@/Intercom/Collections/x.json' }),
+      );
+    });
+
     it('creates collections and returns full records', async () => {
       const created = makeCollection({ id: '10', name: 'New Collection' });
       mockCreateCollection.mockResolvedValue(created);

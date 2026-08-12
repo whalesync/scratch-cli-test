@@ -256,6 +256,55 @@ describe('schema-helpers', () => {
       });
     });
 
+    // DEV-11288: read so a view that opts a column into `'select'` gets the destination's native
+    // select with the schema's real choices. Purely additive — nothing changes for an open string.
+    describe('declared string option sets (enumValues)', () => {
+      const fieldAt = (fields: SchemaField[], path: string): SchemaField => {
+        const found = fields.find((f) => f.path === path);
+        if (!found) throw new Error(`No extracted field at path "${path}"`);
+        return found;
+      };
+
+      it('should read a union of string literals (how TypeBox serializes a literal union)', () => {
+        const schema = Type.Object({
+          state: Type.Union([Type.Literal('published'), Type.Literal('draft')]),
+        });
+        expect(fieldAt(extractSchemaFields(schema), 'state').enumValues).toEqual(['published', 'draft']);
+      });
+
+      it('should read a plain JSON-Schema enum', () => {
+        const schema = Type.Object({ state: Type.Unsafe<string>({ type: 'string', enum: ['open', 'closed'] }) });
+        expect(fieldAt(extractSchemaFields(schema), 'state').enumValues).toEqual(['open', 'closed']);
+      });
+
+      it('should see through a nullable wrapper', () => {
+        const schema = Type.Object({
+          state: Type.Union([Type.Union([Type.Literal('open'), Type.Literal('closed')]), Type.Null()]),
+        });
+        expect(fieldAt(extractSchemaFields(schema), 'state').enumValues).toEqual(['open', 'closed']);
+      });
+
+      it('should leave an open string alone', () => {
+        const schema = Type.Object({ title: Type.String(), nullableTitle: Type.Union([Type.String(), Type.Null()]) });
+        const fields = extractSchemaFields(schema);
+        expect(fieldAt(fields, 'title').enumValues).toBeUndefined();
+        expect(fieldAt(fields, 'nullableTitle').enumValues).toBeUndefined();
+      });
+
+      // Half an option set is worse than none: a union mixing literals with a free string or a
+      // number has no closed set, and a destination select built from part of it would reject the
+      // rest of the values.
+      it('should refuse a union that mixes literals with anything else', () => {
+        const schema = Type.Object({
+          mixedWithString: Type.Union([Type.Literal('a'), Type.String()]),
+          mixedWithNumber: Type.Union([Type.Literal('a'), Type.Number()]),
+        });
+        const fields = extractSchemaFields(schema);
+        expect(fieldAt(fields, 'mixedWithString').enumValues).toBeUndefined();
+        expect(fieldAt(fields, 'mixedWithNumber').enumValues).toBeUndefined();
+      });
+    });
+
     describe('virtual fields', () => {
       it('should apply virtual field displayLabel, type, and suggestedTransformer', () => {
         const virtualTransformer = {

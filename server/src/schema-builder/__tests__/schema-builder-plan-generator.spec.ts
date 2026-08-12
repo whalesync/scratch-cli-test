@@ -26,6 +26,45 @@ describe('inferLogicalFieldType', () => {
     expect(inferLogicalFieldType(field({ path: 's', type: 'string' })).fieldType).toEqual({ kind: 'text' });
   });
 
+  // DEV-11288: a view opts a column in with the `'select'` hint; the choices come from the schema's
+  // own declared option set, so a connector never has to restate them.
+  describe("the 'select' view hint", () => {
+    it('builds a select with the schema-declared choices', () => {
+      expect(
+        inferLogicalFieldType(field({ path: 'state', enumValues: ['published', 'draft'] }), 'select'),
+      ).toMatchObject({
+        status: 'mapped',
+        fieldType: { kind: 'select', options: [{ name: 'published' }, { name: 'draft' }] },
+      });
+    });
+
+    it('falls back to the primitive mapping when the field declares no option set', () => {
+      expect(inferLogicalFieldType(field({ path: 'state', type: 'string' }), 'select').fieldType).toEqual({
+        kind: 'text',
+      });
+    });
+
+    // Both would be rejected outright by CreateFieldType's select variant, failing validation of the
+    // WHOLE plan rather than just this field — and a destination select can hold neither.
+    it('drops empty and case-insensitively duplicate choices rather than failing the plan', () => {
+      expect(
+        inferLogicalFieldType(field({ path: 's', enumValues: ['Open', 'open', '', 'Closed'] }), 'select').fieldType,
+      ).toEqual({ kind: 'select', options: [{ name: 'Open' }, { name: 'Closed' }] });
+    });
+
+    it('falls back to text when every declared choice is unusable', () => {
+      expect(inferLogicalFieldType(field({ path: 's', enumValues: [''] }), 'select').fieldType).toEqual({
+        kind: 'text',
+      });
+    });
+
+    it('leaves a field with declared options alone unless the view asks for a select', () => {
+      expect(inferLogicalFieldType(field({ path: 'state', enumValues: ['published', 'draft'] })).fieldType).toEqual({
+        kind: 'text',
+      });
+    });
+  });
+
   it('downgrades structurally complex (object/array) fields to text', () => {
     expect(inferLogicalFieldType(field({ path: 'o', type: 'object' }))).toMatchObject({
       status: 'downgraded',

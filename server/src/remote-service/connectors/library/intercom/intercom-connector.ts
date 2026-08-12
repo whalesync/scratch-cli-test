@@ -64,6 +64,23 @@ export function intercomIncrementalPullSupport(tableKey: string): IncrementalPul
   return tableKey === 'conversations' ? IncrementalPullSupport.SUPPORTED : IncrementalPullSupport.NOT_SUPPORTED;
 }
 
+/**
+ * An article's `parent_id` as Intercom's write API wants it: an integer.
+ *
+ * The field is a declared foreign key to Collections (DEV-11285), so a sync writing INTO Intercom
+ * hands us whatever the link resolved to — and a resolved record id arrives as a STRING even when
+ * the target service numbers its ids. Sending `"19716322"` where the API documents an integer is a
+ * needless rejection, so a numeric string is converted. Anything else (including a `@/…` reference
+ * that reached this far unresolved) is passed through untouched so the service rejects it loudly
+ * rather than us silently dropping the user's link.
+ */
+function asArticleParentId(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) return Number(value);
+  return value as number;
+}
+
 export class IntercomConnector extends Connector {
   readonly service = Service.INTERCOM;
   static readonly displayName = 'Intercom';
@@ -289,7 +306,7 @@ export class IntercomConnector extends Connector {
           description: file.description as string | undefined,
           body: file.body as string | undefined,
           state: file.state as 'published' | 'draft' | undefined,
-          parent_id: file.parent_id as number | undefined,
+          parent_id: asArticleParentId(file.parent_id),
           parent_type: file.parent_type as 'collection' | 'section' | undefined,
           translated_content: file.translated_content as Record<string, unknown> | undefined,
         };
@@ -329,7 +346,7 @@ export class IntercomConnector extends Connector {
           body: changed.body as string | undefined,
           author_id: changed.author_id as number | undefined,
           state: changed.state as 'published' | 'draft' | undefined,
-          parent_id: changed.parent_id as number | undefined,
+          parent_id: asArticleParentId(changed.parent_id),
           parent_type: changed.parent_type as 'collection' | 'section' | undefined,
           translated_content: changed.translated_content as Record<string, unknown> | undefined,
         };

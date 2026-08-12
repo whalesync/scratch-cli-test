@@ -1,6 +1,46 @@
 import { Type } from '@sinclair/typebox';
-import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_LAST_MODIFIED_FIELD, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  X_SCRATCH_AGENT_INSTRUCTIONS,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
+import { INTERCOM_UNIX_TIMESTAMP_DATA_TYPE, intercomForeignKeyLinkedTableId } from './intercom-types';
+
+/**
+ * Schema options for a Unix-epoch timestamp Intercom reports as a bare integer. See
+ * {@link INTERCOM_UNIX_TIMESTAMP_DATA_TYPE} — the default view turns an annotated field into a real
+ * date column instead of a raw number.
+ */
+function unixTimestampOptions(description: string): Record<string, unknown> {
+  return {
+    description,
+    [X_SCRATCH_READONLY]: true,
+    [X_SCRATCH_CONNECTOR_DATA_TYPE]: INTERCOM_UNIX_TIMESTAMP_DATA_TYPE,
+  };
+}
+
+/**
+ * The foreign-key annotation for a `parent_id` that names a Help Center collection.
+ *
+ * Both link fields are single-valued: an article has at most one parent, and so does a collection.
+ * Article `parent_id` is a NUMBER while a collection's own `id` is a STRING — mirrored verbatim
+ * from the API, and harmless because foreign-key resolution compares by string.
+ *
+ * Articles carry one caveat: `parent_type` may be `'section'` rather than `'collection'`, and
+ * sections are not a table this connector syncs. A section-parented article's `parent_id` therefore
+ * names no record in the Collections folder, which the shared FK step reports as an unresolved link
+ * — it warns, leaves that one link empty, and syncs the rest of the record (the DEV-11222 default).
+ * That is strictly better than the alternative of publishing the raw id into a number column, where
+ * it is a relation nobody can follow (DEV-11285).
+ */
+const PARENT_COLLECTION_FOREIGN_KEY = {
+  linkedTableId: intercomForeignKeyLinkedTableId('collections'),
+  linkedTableRemoteId: ['collections'],
+  isSingleValued: true,
+} as const;
 
 // ---------------------------------------------------------------------------
 // Articles (static schema)
@@ -30,6 +70,7 @@ export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableS
       }),
       parent_id: Type.Union([Type.Number(), Type.Null()], {
         description: 'Parent collection or section ID',
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: PARENT_COLLECTION_FOREIGN_KEY,
       }),
       parent_ids: Type.Array(Type.Number(), {
         description: 'All parent collection/section IDs',
@@ -38,36 +79,39 @@ export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableS
       parent_type: Type.Union([Type.String(), Type.Null()], {
         description: 'Parent type (collection or section)',
       }),
-      default_locale: Type.String({ description: 'Default locale', [X_SCRATCH_READONLY]: true }),
-      translated_content: Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()], {
-        description: 'Translated content by locale',
-      }),
-      statistics: Type.Union(
-        [
-          Type.Object(
-            {
-              type: Type.String({ [X_SCRATCH_READONLY]: true }),
-              views: Type.Number({ [X_SCRATCH_READONLY]: true }),
-              conversations: Type.Number({ [X_SCRATCH_READONLY]: true }),
-              reactions: Type.Number({ [X_SCRATCH_READONLY]: true }),
-              happy_reaction_percentage: Type.Number({ [X_SCRATCH_READONLY]: true }),
-              neutral_reaction_percentage: Type.Number({ [X_SCRATCH_READONLY]: true }),
-              sad_reaction_percentage: Type.Number({ [X_SCRATCH_READONLY]: true }),
-            },
-            { [X_SCRATCH_READONLY]: true },
-          ),
-          Type.Null(),
-        ],
-        { description: 'Article statistics', [X_SCRATCH_READONLY]: true },
+      // The three fields below are OPTIONAL because `GET /articles` — the list endpoint the pull
+      // walks — omits them entirely, while `GET /articles/{id}` returns them (DEV-11286). Declaring
+      // them required made every pulled file fail its own schema. `statistics` additionally has
+      // three observed shapes for one article (absent from an older list row, `null` on a freshly
+      // created one, populated by-id), so it is optional AND nullable.
+      default_locale: Type.Optional(Type.String({ description: 'Default locale', [X_SCRATCH_READONLY]: true })),
+      translated_content: Type.Optional(
+        Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()], {
+          description: 'Translated content by locale',
+        }),
       ),
-      created_at: Type.Number({
-        description: 'Creation timestamp (Unix)',
-        [X_SCRATCH_READONLY]: true,
-      }),
-      updated_at: Type.Number({
-        description: 'Last updated timestamp (Unix)',
-        [X_SCRATCH_READONLY]: true,
-      }),
+      statistics: Type.Optional(
+        Type.Union(
+          [
+            Type.Object(
+              {
+                type: Type.String({ [X_SCRATCH_READONLY]: true }),
+                views: Type.Number({ [X_SCRATCH_READONLY]: true }),
+                conversations: Type.Number({ [X_SCRATCH_READONLY]: true }),
+                reactions: Type.Number({ [X_SCRATCH_READONLY]: true }),
+                happy_reaction_percentage: Type.Number({ [X_SCRATCH_READONLY]: true }),
+                neutral_reaction_percentage: Type.Number({ [X_SCRATCH_READONLY]: true }),
+                sad_reaction_percentage: Type.Number({ [X_SCRATCH_READONLY]: true }),
+              },
+              { [X_SCRATCH_READONLY]: true },
+            ),
+            Type.Null(),
+          ],
+          { description: 'Article statistics', [X_SCRATCH_READONLY]: true },
+        ),
+      ),
+      created_at: Type.Number(unixTimestampOptions('Creation timestamp (Unix)')),
+      updated_at: Type.Number(unixTimestampOptions('Last updated timestamp (Unix)')),
     },
     {
       $id: 'intercom/articles',
@@ -115,18 +159,13 @@ export function buildIntercomCollectionsJsonTableSpec(id: EntityId): BaseJsonTab
       }),
       parent_id: Type.Union([Type.String(), Type.Null()], {
         description: 'Parent collection ID (null for top-level)',
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: PARENT_COLLECTION_FOREIGN_KEY,
       }),
       help_center_id: Type.Union([Type.Number(), Type.Null()], {
         description: 'Help Center ID',
       }),
-      created_at: Type.Number({
-        description: 'Creation timestamp (Unix)',
-        [X_SCRATCH_READONLY]: true,
-      }),
-      updated_at: Type.Number({
-        description: 'Last updated timestamp (Unix)',
-        [X_SCRATCH_READONLY]: true,
-      }),
+      created_at: Type.Number(unixTimestampOptions('Creation timestamp (Unix)')),
+      updated_at: Type.Number(unixTimestampOptions('Last updated timestamp (Unix)')),
     },
     {
       $id: 'intercom/collections',
@@ -179,8 +218,8 @@ const conversationPartSchema = Type.Object(
       [X_SCRATCH_READONLY]: true,
       [X_SCRATCH_AGENT_INSTRUCTIONS]: 'HTML does not have a consistent root element',
     }),
-    created_at: Type.Number({ description: 'Part creation timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
-    updated_at: Type.Number({ description: 'Part update timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+    created_at: Type.Number(unixTimestampOptions('Part creation timestamp (Unix)')),
+    updated_at: Type.Number(unixTimestampOptions('Part update timestamp (Unix)')),
     author: authorSchema,
   },
   {
@@ -214,29 +253,39 @@ export function buildIntercomConversationsJsonTableSpec(id: EntityId): BaseJsonT
         description: 'Assigned team ID',
         [X_SCRATCH_READONLY]: true,
       }),
-      waiting_since: Type.Union([Type.Number(), Type.Null()], {
-        description: 'Timestamp since waiting for admin reply',
-        [X_SCRATCH_READONLY]: true,
-      }),
-      snoozed_until: Type.Union([Type.Number(), Type.Null()], {
-        description: 'Timestamp when snoozed conversation reopens',
-        [X_SCRATCH_READONLY]: true,
-      }),
-      source: Type.Object(
-        {
-          type: Type.String({ [X_SCRATCH_READONLY]: true }),
-          id: Type.String({ [X_SCRATCH_READONLY]: true }),
-          delivered_as: Type.String({ description: 'Delivery method', [X_SCRATCH_READONLY]: true }),
-          subject: Type.String({ description: 'Subject line', [X_SCRATCH_READONLY]: true }),
-          body: Type.String({
-            description: 'Source message body (HTML)',
-            contentMediaType: 'text/html',
-            [X_SCRATCH_READONLY]: true,
-          }),
-          author: authorSchema,
-          url: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-          redacted: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
-        },
+      waiting_since: Type.Union(
+        [Type.Number(), Type.Null()],
+        unixTimestampOptions('Timestamp since waiting for admin reply'),
+      ),
+      snoozed_until: Type.Union(
+        [Type.Number(), Type.Null()],
+        unixTimestampOptions('Timestamp when snoozed conversation reopens'),
+      ),
+      // NULLABLE: the API returns `source: null` on real conversations, from both the list and the
+      // by-id endpoint. Declared as a bare object it made every such record fail its own schema, and
+      // the object→text downgrade turned the null into an empty string at every destination
+      // (DEV-11286).
+      source: Type.Union(
+        [
+          Type.Object(
+            {
+              type: Type.String({ [X_SCRATCH_READONLY]: true }),
+              id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              delivered_as: Type.String({ description: 'Delivery method', [X_SCRATCH_READONLY]: true }),
+              subject: Type.String({ description: 'Subject line', [X_SCRATCH_READONLY]: true }),
+              body: Type.String({
+                description: 'Source message body (HTML)',
+                contentMediaType: 'text/html',
+                [X_SCRATCH_READONLY]: true,
+              }),
+              author: authorSchema,
+              url: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+              redacted: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
+            },
+            { [X_SCRATCH_READONLY]: true },
+          ),
+          Type.Null(),
+        ],
         { description: 'The initiating message', [X_SCRATCH_READONLY]: true },
       ),
       contacts: Type.Object(
@@ -286,18 +335,14 @@ export function buildIntercomConversationsJsonTableSpec(id: EntityId): BaseJsonT
         },
         { description: 'Threaded replies, notes, and events', [X_SCRATCH_READONLY]: true },
       ),
-      created_at: Type.Number({
-        description: 'Creation timestamp (Unix)',
-        [X_SCRATCH_READONLY]: true,
-      }),
+      created_at: Type.Number(unixTimestampOptions('Creation timestamp (Unix)')),
       // Annotated as the last-modified field so the UI's last-modified-field
       // picker surfaces it. The connector hardcodes `updated_at` and gates
       // incremental on the conversations table (Notion/Linear-style "hardcoded
       // field, annotated for UI"). Articles/Collections are deliberately not
       // annotated — they have no server-side incremental path.
       updated_at: Type.Number({
-        description: 'Last updated timestamp (Unix)',
-        [X_SCRATCH_READONLY]: true,
+        ...unixTimestampOptions('Last updated timestamp (Unix)'),
         [X_SCRATCH_LAST_MODIFIED_FIELD]: true,
       }),
     },

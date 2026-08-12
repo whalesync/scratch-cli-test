@@ -1,10 +1,16 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
-import { X_SCRATCH_LAST_MODIFIED_FIELD, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import {
   buildIntercomArticlesJsonTableSpec,
   buildIntercomCollectionsJsonTableSpec,
   buildIntercomConversationsJsonTableSpec,
 } from '../intercom-json-schema';
+import { INTERCOM_UNIX_TIMESTAMP_DATA_TYPE } from '../intercom-types';
 
 describe('buildIntercomArticlesJsonTableSpec', () => {
   const entityId = { wsId: 'articles', remoteId: ['articles'] };
@@ -74,6 +80,45 @@ describe('buildIntercomArticlesJsonTableSpec', () => {
     expect(props.state[X_SCRATCH_READONLY]).toBeUndefined();
   });
 
+  // DEV-11286: `GET /articles` (the pull path) omits these keys entirely while `GET /articles/{id}`
+  // returns them, so declaring them required made every pulled file fail its own schema.
+  it('declares the fields absent from list payloads as optional', () => {
+    const required = buildIntercomArticlesJsonTableSpec(entityId).schema.required;
+
+    expect(required).not.toContain('default_locale');
+    expect(required).not.toContain('translated_content');
+    expect(required).not.toContain('statistics');
+  });
+
+  it('keeps the fields the list payload always returns required', () => {
+    const required = buildIntercomArticlesJsonTableSpec(entityId).schema.required;
+
+    expect(required).toContain('title');
+    expect(required).toContain('state');
+    expect(required).toContain('created_at');
+  });
+
+  // DEV-11284: the only signal that separates a timestamp from a genuine number like `author_id`.
+  it('annotates the epoch timestamps as Unix seconds', () => {
+    const props = buildIntercomArticlesJsonTableSpec(entityId).schema.properties;
+
+    expect(props.created_at[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(INTERCOM_UNIX_TIMESTAMP_DATA_TYPE);
+    expect(props.updated_at[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(INTERCOM_UNIX_TIMESTAMP_DATA_TYPE);
+    expect(props.author_id[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBeUndefined();
+  });
+
+  // DEV-11285: an article's parent is a collection (or a section, which this connector does not
+  // sync — those resolve to nothing and warn rather than failing the record).
+  it('declares parent_id as a foreign key to collections', () => {
+    const props = buildIntercomArticlesJsonTableSpec(entityId).schema.properties;
+
+    expect(props.parent_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'collections',
+      linkedTableRemoteId: ['collections'],
+      isSingleValued: true,
+    });
+  });
+
   it('tags body with contentMediaType: text/html', () => {
     const spec = buildIntercomArticlesJsonTableSpec(entityId);
     const props = spec.schema.properties;
@@ -141,6 +186,25 @@ describe('buildIntercomCollectionsJsonTableSpec', () => {
     expect(props.updated_at[X_SCRATCH_LAST_MODIFIED_FIELD]).toBeUndefined();
   });
 
+  it('annotates the epoch timestamps as Unix seconds', () => {
+    const props = buildIntercomCollectionsJsonTableSpec(entityId).schema.properties;
+
+    expect(props.created_at[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(INTERCOM_UNIX_TIMESTAMP_DATA_TYPE);
+    expect(props.updated_at[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(INTERCOM_UNIX_TIMESTAMP_DATA_TYPE);
+    expect(props.order[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBeUndefined();
+  });
+
+  // DEV-11285: a collection's parent is another collection — a clean self-referential link.
+  it('declares parent_id as a self-referential foreign key to collections', () => {
+    const props = buildIntercomCollectionsJsonTableSpec(entityId).schema.properties;
+
+    expect(props.parent_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'collections',
+      linkedTableRemoteId: ['collections'],
+      isSingleValued: true,
+    });
+  });
+
   it('does not mark name, description, icon, parent_id, help_center_id as readonly', () => {
     const spec = buildIntercomCollectionsJsonTableSpec(entityId);
     const props = spec.schema.properties;
@@ -162,6 +226,18 @@ describe('buildIntercomCollectionsJsonTableSpec', () => {
 
 describe('buildIntercomConversationsJsonTableSpec', () => {
   const entityId = { wsId: 'conversations', remoteId: ['conversations'] };
+
+  /** The object arm of the nullable `source` union — where the initiating message's fields live. */
+  interface SchemaObjectNode {
+    type?: string;
+    properties: Record<string, SchemaObjectNode & Record<string, unknown>>;
+  }
+  function sourceObjectArm(sourceSchema: unknown): SchemaObjectNode {
+    const unionArms = (sourceSchema as { anyOf?: SchemaObjectNode[] }).anyOf ?? [];
+    const objectArm = unionArms.find((arm) => arm.type === 'object');
+    if (!objectArm) throw new Error('The conversations `source` union has no object arm');
+    return objectArm;
+  }
 
   it('builds spec with correct metadata', () => {
     const spec = buildIntercomConversationsJsonTableSpec(entityId);
@@ -217,13 +293,34 @@ describe('buildIntercomConversationsJsonTableSpec', () => {
 
   it('includes source with nested author schema', () => {
     const spec = buildIntercomConversationsJsonTableSpec(entityId);
-    const source = spec.schema.properties.source;
+    const source = sourceObjectArm(spec.schema.properties.source);
 
     expect(source.properties).toHaveProperty('subject');
     expect(source.properties).toHaveProperty('body');
     expect(source.properties).toHaveProperty('author');
     expect(source.properties.author.properties).toHaveProperty('name');
     expect(source.properties.author.properties).toHaveProperty('email');
+  });
+
+  // DEV-11286: the API returns `source: null` on real conversations, from the list AND the by-id
+  // endpoint. Declared as a bare object it failed every such record's own schema.
+  it('declares source as nullable', () => {
+    const spec = buildIntercomConversationsJsonTableSpec(entityId);
+    const unionArms = (spec.schema.properties.source as { anyOf?: { type?: string }[] }).anyOf ?? [];
+
+    expect(unionArms.map((arm) => arm.type)).toContain('null');
+  });
+
+  it('annotates every epoch timestamp as Unix seconds, including the nested conversation parts', () => {
+    const props = buildIntercomConversationsJsonTableSpec(entityId).schema.properties;
+    const partProps = props.conversation_parts.properties.conversation_parts.items.properties;
+
+    for (const path of [props.created_at, props.updated_at, props.waiting_since, props.snoozed_until]) {
+      expect(path[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(INTERCOM_UNIX_TIMESTAMP_DATA_TYPE);
+    }
+    expect(partProps.created_at[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(INTERCOM_UNIX_TIMESTAMP_DATA_TYPE);
+    expect(partProps.updated_at[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(INTERCOM_UNIX_TIMESTAMP_DATA_TYPE);
+    expect(props.admin_assignee_id[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBeUndefined();
   });
 
   it('includes conversation_parts with nested part schema', () => {
@@ -236,7 +333,7 @@ describe('buildIntercomConversationsJsonTableSpec', () => {
 
   it('tags source.body and conversation part body with contentMediaType: text/html', () => {
     const spec = buildIntercomConversationsJsonTableSpec(entityId);
-    const sourceBody = spec.schema.properties.source.properties.body;
+    const sourceBody = sourceObjectArm(spec.schema.properties.source).properties.body;
     const partBody = spec.schema.properties.conversation_parts.properties.conversation_parts.items.properties.body;
 
     expect(sourceBody.contentMediaType).toBe('text/html');

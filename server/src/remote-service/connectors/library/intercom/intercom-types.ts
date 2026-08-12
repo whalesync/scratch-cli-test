@@ -1,6 +1,26 @@
 /** String union for the Intercom table types exposed by this connector. */
 export type IntercomTableType = 'articles' | 'collections' | 'conversations';
 
+/**
+ * `x-scratch-connector-data-type` marking a field Intercom reports as a Unix-epoch timestamp in
+ * SECONDS (`created_at`, `updated_at`, `waiting_since`, `snoozed_until`). Intercom has no ISO date
+ * type — every time it reports is a bare integer — so this is a faithful fact about the field, not
+ * a display opinion, and it is the only signal that distinguishes `created_at` from a genuine
+ * number like `author_id`. The default view reads it to build a real date column backed by an
+ * `epoch_to_iso` codec; without it every timestamp exports as a raw number (DEV-11284, the Intercom
+ * sibling of Stripe's DEV-11145).
+ */
+export const INTERCOM_UNIX_TIMESTAMP_DATA_TYPE = 'unix-timestamp-seconds';
+
+/**
+ * The `linkedTableId` a foreign-key annotation uses to name an Intercom table. Intercom's tables
+ * are the fixed entity types, and a table's `DataFolder.tableId` is `[entityType]` — so the entity
+ * type IS the link token, and `linkedTableRemoteId` is the same value wrapped in an array.
+ */
+export function intercomForeignKeyLinkedTableId(tableType: IntercomTableType): string {
+  return tableType;
+}
+
 // ---------------------------------------------------------------------------
 // Articles
 // ---------------------------------------------------------------------------

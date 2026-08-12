@@ -101,6 +101,17 @@ export interface SchemaField {
   format?: string;
   displayLabel?: string;
   description?: string;
+  /**
+   * The closed set of string values this field may take, when the schema declares one — a JSON
+   * Schema `enum`, or an `anyOf`/`oneOf` of string `const` arms (how TypeBox serializes
+   * `Union([Literal('published'), Literal('draft')])`). Absent for an open string.
+   *
+   * Read by the create-schema plan generator to give a column the destination's native select type
+   * with its real choices, instead of free text — but ONLY for a column whose view explicitly asks
+   * for `'select'`, so a connector opts in rather than every declared enum silently changing shape
+   * at every destination (DEV-11288).
+   */
+  enumValues?: string[];
   remoteFieldId?: string;
   /** Unpack transform applied when this field is a sync source (native → plain). */
   suggestedTransformer?: TransformerConfig;
@@ -161,6 +172,44 @@ function resolveSchemaFormat(schema: TSchema): string | undefined {
   return undefined;
 }
 
+/**
+ * Resolve the closed set of STRING values a schema node allows, or undefined when it is an open
+ * string. Two spellings are recognized, both connector-agnostic:
+ *  - a JSON Schema `enum` of strings; and
+ *  - an `anyOf`/`oneOf` whose every non-null arm is a string `const` — how TypeBox serializes
+ *    `Union([Literal('published'), Literal('draft')])`, and how a nullable enum arrives.
+ *
+ * Any non-string arm disqualifies the whole node: a union that mixes an enum with a free string (or
+ * a number) has no closed option set, and half an option set is worse than none. See
+ * {@link SchemaField.enumValues}.
+ */
+function resolveSchemaStringEnumValues(schema: TSchema): string[] | undefined {
+  const declaredEnum: unknown = schema.enum;
+  if (
+    Array.isArray(declaredEnum) &&
+    declaredEnum.length > 0 &&
+    declaredEnum.every((value): value is string => typeof value === 'string')
+  ) {
+    return declaredEnum;
+  }
+
+  const variants = (schema.anyOf || schema.oneOf) as TSchema[] | undefined;
+  if (!variants || variants.length === 0) return undefined;
+
+  const values: string[] = [];
+  for (const variant of variants) {
+    if (variant.type === 'null') continue;
+    const nestedValues = resolveSchemaStringEnumValues(variant);
+    if (nestedValues) {
+      values.push(...nestedValues);
+      continue;
+    }
+    if (typeof variant.const !== 'string') return undefined;
+    values.push(variant.const);
+  }
+  return values.length > 0 ? values : undefined;
+}
+
 /** The child schema at `key` under an object node, unwrapping nullable anyOf/oneOf unions to find `.properties`. */
 function propertySchemaAt(schema: TSchema | undefined, key: string): TSchema | undefined {
   if (!schema) return undefined;
@@ -218,6 +267,8 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     const field: SchemaField = { path: parentPath, type: resolveSchemaType(schema) };
     const format = resolveSchemaFormat(schema);
     if (format) field.format = format;
+    const enumValues = resolveSchemaStringEnumValues(schema);
+    if (enumValues) field.enumValues = enumValues;
     if (schema.description) field.description = schema.description;
     const remoteFieldId = schema[X_SCRATCH_REMOTE_FIELD_ID] as string | undefined;
     if (remoteFieldId) field.remoteFieldId = remoteFieldId;

@@ -196,6 +196,13 @@ export type TablePropertyType =
   // a real datetime destination field instead of silently dropping the time-of-day.
   | 'date'
   | 'datetime'
+  // A string drawn from a CLOSED set the schema declares (Intercom's article `state` is exactly
+  // `published | draft`). Like `'datetime'` this is export-only — use it as a `logicalType`, with
+  // the render `type` staying `'string'`, since the value IS a plain string and no grid cell needs
+  // to know otherwise. The export layer reads it to create the destination's native select field
+  // (Airtable `singleSelect`), taking the choices from the schema's own enum / literal union; a
+  // column that declares it over a field with no declared option set falls back to text.
+  | 'select'
   | 'url'
   | 'checkbox'
   | 'object'

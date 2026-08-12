@@ -878,6 +878,17 @@ export function inferLogicalFieldType(
       // column and drop the time-of-day for the life of the export.
       case 'datetime':
         return { status: 'mapped', fieldType: { kind: 'date', includesTime: true } };
+      // A column whose value set is CLOSED and declared by the schema (Intercom's article `state`
+      // is exactly `published | draft`). The view opts in with `'select'`; the choices come from
+      // the schema's own enum / literal union, so the destination gets a native select with the
+      // real options instead of free text (DEV-11288). A view that asks for a select over a field
+      // with no declared option set gets no choices to create the column from, so it falls through
+      // to the primitive mapping below — text, exactly as before.
+      case 'select': {
+        const choices = buildSelectChoices(field.enumValues ?? []);
+        if (choices.length > 0) return { status: 'mapped', fieldType: { kind: 'select', options: choices } };
+        break;
+      }
       case 'url':
         return { status: 'mapped', fieldType: { kind: 'url' } };
       // A connector that knows a flattened string is an address / number says so
@@ -930,6 +941,30 @@ export function inferLogicalFieldType(
         }field type "${field.type}", syncing as plain text`,
       };
   }
+}
+
+/**
+ * Turn a field's declared enum values into select choices, dropping the ones a destination could
+ * not hold: an empty name, and any that repeats an earlier one case-insensitively.
+ *
+ * `CreateFieldType`'s select variant rejects both outright, so a source whose declared option set
+ * contains one would fail VALIDATION of the whole plan rather than just that field. A destination
+ * select can't hold two case-variant spellings anyway (Airtable's choice names are
+ * case-insensitively unique), so keeping the first is the only outcome available — and it keeps a
+ * quirky source schema from taking down an otherwise-good plan. An empty result means there is no
+ * select to build; the caller falls back to text.
+ */
+function buildSelectChoices(declaredEnumValues: string[]): { name: string }[] {
+  const seenLowercasedNames = new Set<string>();
+  const choices: { name: string }[] = [];
+  for (const name of declaredEnumValues) {
+    if (name.length === 0) continue;
+    const lowercasedName = name.toLowerCase();
+    if (seenLowercasedNames.has(lowercasedName)) continue;
+    seenLowercasedNames.add(lowercasedName);
+    choices.push({ name });
+  }
+  return choices;
 }
 
 /**
