@@ -580,6 +580,8 @@ export class UsersService {
           { stripeCustomerId: { contains: query, mode: 'insensitive' } },
           { name: { contains: query, mode: 'insensitive' } },
           { email: { contains: query, mode: 'insensitive' } },
+          // Exact organization-ID match so admins can paste an org ID and surface every user in that org.
+          { organizationId: { equals: query } },
         ],
       },
       orderBy: {

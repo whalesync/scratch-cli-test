@@ -397,6 +397,8 @@ export class DevToolsController {
         { name: { contains: search, mode: 'insensitive' } },
         { id: { contains: search, mode: 'insensitive' } },
         { organization: { name: { contains: search, mode: 'insensitive' } } },
+        // Exact organization-ID match so admins can paste an org ID and surface every workbook in that org.
+        { organizationId: { equals: search } },
         // Match workbooks whose organization has a user matching the search term
         // (email / name / user ID), so searching a user surfaces every workbook in their org.
         {

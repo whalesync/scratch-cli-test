@@ -507,7 +507,7 @@ export default function WorkbooksDevPage() {
           <Group gap="sm" align="flex-end">
             <TextInput
               label="Search"
-              placeholder="Name, workbook ID, org, or user email..."
+              placeholder="Name, workbook ID, org name, org ID, or user email..."
               value={search}
               onChange={(e) => setSearch(e.currentTarget.value)}
               style={{ flex: 1, maxWidth: 360 }}
