@@ -433,6 +433,46 @@ function windowIconPath(): string {
   return join(root, relative);
 }
 
+/**
+ * SCR-006 / DEV-11001 — pin the renderer to its own document. `will-navigate` / `will-redirect` fire
+ * on page-initiated top-level navigations (link clicks, form submits, `window.location`, meta-refresh)
+ * but NOT on our programmatic `loadFile` / `loadURL`, in-page hash-route changes, or reloads. Anything
+ * that would take the top-level frame off the app's own origin is cancelled; a safe external `https:`
+ * URL is opened in the system browser instead (mirroring `setWindowOpenHandler`), everything else is
+ * blocked. Without this, a renderer XSS could navigate the whole window to attacker-controlled content.
+ */
+function isNavigationWithinApp(targetUrl: string, currentUrl: string): boolean {
+  try {
+    const target = new URL(targetUrl);
+    const current = new URL(currentUrl);
+    if (target.protocol === 'file:' && current.protocol === 'file:') {
+      // file:// URLs have an opaque (null) origin, so compare by the directory the renderer bundle was
+      // loaded from — a `file:///etc/passwd` or any path outside that directory is treated as off-origin.
+      const currentDir = current.pathname.slice(0, current.pathname.lastIndexOf('/') + 1);
+      return target.pathname.startsWith(currentDir);
+    }
+    return target.origin === current.origin;
+  } catch {
+    return false;
+  }
+}
+
+function guardWebContentsNavigation(contents: Electron.WebContents): void {
+  const openExternallyOrBlock = (event: Electron.Event, targetUrl: string): void => {
+    if (isNavigationWithinApp(targetUrl, contents.getURL())) {
+      return;
+    }
+    event.preventDefault();
+    if (isSafeExternalUrl(targetUrl, EXTERNAL_URL_POLICY)) {
+      void shell.openExternal(targetUrl);
+    } else {
+      console.warn(`[security] blocked in-frame navigation to a disallowed URL: ${targetUrl}`);
+    }
+  };
+  contents.on('will-navigate', openExternallyOrBlock);
+  contents.on('will-redirect', openExternallyOrBlock);
+}
+
 function createWindow(): void {
   const windowStart = performance.now();
   const windowState = getRestoredWindowState();
@@ -446,6 +486,10 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
+      // Pin the renderer isolation defaults explicitly so a future edit can't silently regress them
+      // (SCR-006 / DEV-11001). `sandbox: true` is tracked separately under SCR-014 / DEV-11009.
+      contextIsolation: true,
+      nodeIntegration: false,
       // Disable web security in dev so the renderer (served from localhost:5173)
       // can reach the production API without CORS blocking preflight requests.
       webSecurity: !is.dev,
@@ -1640,6 +1684,12 @@ void app.whenReady().then(() => {
   app.on('browser-window-created', (_, window) => {
     // Default toolkit behavior blocks Cmd/Ctrl+Minus and Cmd/Ctrl+Shift+Equal; allow OS zoom shortcuts.
     optimizer.watchWindowShortcuts(window, { zoom: true });
+  });
+
+  // Pin every renderer WebContents to the app's own origin (SCR-006 / DEV-11001). Registered before
+  // createWindow() so it catches the main window's contents at creation time.
+  app.on('web-contents-created', (_event, contents) => {
+    guardWebContentsNavigation(contents);
   });
 
   createWindow();

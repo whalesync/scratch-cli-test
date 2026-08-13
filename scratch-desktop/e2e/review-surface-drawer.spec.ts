@@ -44,8 +44,10 @@ async function openByFieldGroup(window: Page, folderName: string): Promise<void>
   await window.getByText(folderName, { exact: false }).first().click({ timeout: 45_000 });
   await expect(window.getByText(/Review before publishing/i)).toBeVisible({ timeout: 20_000 });
   await window.getByLabel('By field').click();
-  // The records land in one "New" group; its bulk action is the "group loaded" signal.
-  await expect(window.getByRole('button', { name: /Approve all/ })).toBeVisible({ timeout: 20_000 });
+  // The records land in one "New" group; its bulk action is the "group loaded" signal. Match the
+  // per-group "Approve all N" button (ByTypeGroupBlock) specifically — the trailing count distinguishes
+  // it from the review banner's plain "Approve all" (ReviewContextBanner), which is also on screen.
+  await expect(window.getByRole('button', { name: /Approve all \d/ })).toBeVisible({ timeout: 20_000 });
 }
 
 /** The accepted-patches.json record paths. */
