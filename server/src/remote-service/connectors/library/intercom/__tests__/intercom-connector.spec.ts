@@ -29,6 +29,7 @@ const mockGetConversation = jest.fn();
 
 jest.mock('../intercom-api-client', () => {
   return {
+    INTERCOM_MAX_PAGE_SIZE: 250,
     IntercomApiClient: jest.fn().mockImplementation(() => ({
       validateCredentials: mockValidateCredentials,
       listArticles: mockListArticles,
@@ -152,11 +153,16 @@ function makeConversation(overrides: Partial<IntercomConversation> = {}): Interc
   };
 }
 
-/** Helper to create an async generator from an array of pages. */
+/**
+ * Helper to create an async generator of `IntercomPageBatch`es (the faithful
+ * page-walk shape yielded by `listArticles`/`listCollections`): `pages[i]` is
+ * yielded with `resumeFromPage: i + 2` (page walks start at 1, so after
+ * processing page N the primary walk resumes from N + 1).
+ */
 // eslint-disable-next-line @typescript-eslint/require-await
-async function* asyncGen<T>(pages: T[][]): AsyncGenerator<T[], void> {
-  for (const page of pages) {
-    yield page;
+async function* pageBatchGen<T>(pages: T[][]): AsyncGenerator<{ records: T[]; resumeFromPage: number }, void> {
+  for (const [pageIndex, page] of pages.entries()) {
+    yield { records: page, resumeFromPage: pageIndex + 2 };
   }
 }
 
@@ -294,11 +300,13 @@ describe('IntercomConnector', () => {
     it('pulls all articles via pagination', async () => {
       const page1 = [makeArticle({ id: '1' }), makeArticle({ id: '2' })];
       const page2 = [makeArticle({ id: '3' })];
-      mockListArticles.mockReturnValue(asyncGen([page1, page2]));
+      mockListArticles.mockReturnValue(pageBatchGen([page1, page2]));
 
       const collected: ConnectorFile[][] = [];
-      const callback = jest.fn((params: { files: ConnectorFile[] }) => {
+      const progressCheckpoints: unknown[] = [];
+      const callback = jest.fn((params: { files: ConnectorFile[]; connectorProgress?: unknown }) => {
         collected.push(params.files);
+        progressCheckpoints.push(params.connectorProgress);
         return Promise.resolve();
       });
 
@@ -307,11 +315,26 @@ describe('IntercomConnector', () => {
       expect(callback).toHaveBeenCalledTimes(2);
       expect(collected[0]).toHaveLength(2);
       expect(collected[1]).toHaveLength(1);
+      // The crash-resume checkpoint is the client's resumeFromPage, verbatim.
+      expect(progressCheckpoints).toEqual([{ nextPage: 2 }, { nextPage: 3 }]);
+    });
+
+    it('resumes an articles pull from the persisted nextPage', async () => {
+      mockListArticles.mockReturnValue(pageBatchGen([[makeArticle({ id: '9' })]]));
+
+      await connector.pullRecordFiles(
+        buildTableSpec('articles'),
+        jest.fn(() => Promise.resolve()),
+        { nextPage: 4 },
+        { forceFull: false },
+      );
+
+      expect(mockListArticles).toHaveBeenCalledWith(250, 4);
     });
 
     it('pulls all collections via pagination', async () => {
       const collections = [makeCollection({ id: '1' }), makeCollection({ id: '2' })];
-      mockListCollections.mockReturnValue(asyncGen([collections]));
+      mockListCollections.mockReturnValue(pageBatchGen([collections]));
 
       const collected: ConnectorFile[][] = [];
       const callback = jest.fn((params: { files: ConnectorFile[] }) => {
@@ -480,7 +503,7 @@ describe('IntercomConnector', () => {
     });
 
     it('never searches for articles even if incremental options leak through (returns {})', async () => {
-      mockListArticles.mockReturnValue(asyncGen([[makeArticle({ id: '1' })]]));
+      mockListArticles.mockReturnValue(pageBatchGen([[makeArticle({ id: '1' })]]));
 
       const result = await connector.pullRecordFiles(
         buildTableSpec('articles'),

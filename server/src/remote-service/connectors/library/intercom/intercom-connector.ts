@@ -24,7 +24,7 @@ import {
   PullRecordFilesResult,
   TablePreview,
 } from '../../types';
-import { IntercomApiClient, IntercomError } from './intercom-api-client';
+import { INTERCOM_MAX_PAGE_SIZE, IntercomApiClient, IntercomError } from './intercom-api-client';
 import { buildIntercomDefaultView } from './intercom-default-view';
 import { buildIntercomUpdatedSinceQuery, IntercomUpdatedSinceQuery } from './intercom-incremental';
 import {
@@ -201,20 +201,32 @@ export class IntercomConnector extends Connector {
     const resumeProgress = progress as { nextPage?: number; startingAfter?: string };
 
     switch (tableSpec.id.wsId) {
+      // Articles and collections use page-number pagination over an unstable
+      // `updated_at` DESC sort, so the client walks them with dedup +
+      // total_count verification to keep the snapshot faithful (DEV-11283).
+      // `resumeFromPage` is the client's crash-resume checkpoint into the
+      // primary walk; a resumed listing re-verifies coverage itself.
       case 'articles': {
-        let page = resumeProgress?.nextPage ?? 1;
-        for await (const articles of this.client.listArticles(25, page)) {
-          page++;
-          await callback({ files: articles as unknown as ConnectorFile[], connectorProgress: { nextPage: page } });
+        const startPage = resumeProgress?.nextPage ?? 1;
+        for await (const { records, resumeFromPage } of this.client.listArticles(INTERCOM_MAX_PAGE_SIZE, startPage)) {
+          await callback({
+            files: records as unknown as ConnectorFile[],
+            connectorProgress: { nextPage: resumeFromPage },
+          });
         }
         break;
       }
 
       case 'collections': {
-        let page = resumeProgress?.nextPage ?? 1;
-        for await (const collections of this.client.listCollections(20, page)) {
-          page++;
-          await callback({ files: collections as unknown as ConnectorFile[], connectorProgress: { nextPage: page } });
+        const startPage = resumeProgress?.nextPage ?? 1;
+        for await (const { records, resumeFromPage } of this.client.listCollections(
+          INTERCOM_MAX_PAGE_SIZE,
+          startPage,
+        )) {
+          await callback({
+            files: records as unknown as ConnectorFile[],
+            connectorProgress: { nextPage: resumeFromPage },
+          });
         }
         break;
       }

@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
+import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
 import { IntercomUpdatedSinceQuery } from './intercom-incremental';
@@ -89,6 +90,88 @@ export const INTERCOM_RETRY_OPTS: WithRetryOpts = {
 };
 
 /**
+ * Hard ceiling on `per_page` for Intercom's page-number-paginated list
+ * endpoints (`/articles`, `/help_center/collections`). Anything larger is
+ * rejected with `parameter_invalid: "Per Page is too big"` (probed live).
+ *
+ * Listing at the maximum matters for correctness, not just speed: these
+ * endpoints sort by `updated_at` DESC with 1-second granularity and break ties
+ * inconsistently across page requests, so every page boundary is a place where
+ * a tie-group can be split differently between two requests — duplicating one
+ * record and silently skipping its neighbor (DEV-11283). Fewer pages = fewer
+ * boundaries, and any dataset that fits in one page has no boundaries at all.
+ */
+export const INTERCOM_MAX_PAGE_SIZE = 250;
+
+/**
+ * How many complete page walks {@link IntercomApiClient.listArticles} /
+ * `listCollections` will attempt before accepting an unverified (short) walk
+ * and logging a warning. See `listWithFaithfulPageWalk` for why re-walking
+ * with a shifted page size recovers records the previous walk skipped.
+ */
+const MAX_PAGE_WALKS_PER_FAITHFUL_LISTING = 4;
+
+/**
+ * Page-size ratios for the primary walk and each verification re-walk.
+ *
+ * The spread must be LARGE, not adjacent: page boundary k sits at record index
+ * k × per_page, so stepping per_page down by 1 only moves boundary k by k
+ * records — early boundaries barely move, and a tie-group straddling one keeps
+ * straddling it walk after walk. Measured live against a bulk-touched
+ * 60-article tie block (DEV-11283): adjacent sizes (10, 9, 8, 7) stalled at
+ * 212/213 after 4 walks, while this ratio family — (10, 7, 5, 4) and
+ * (25, 17, 11, 7) — recovered 213/213 within 3–4 walks. (A 0.68-power ladder
+ * rounding to (10, 7, 5, 3) also left 1/213 unrecovered, so the exact rungs
+ * matter; these ratios reproduce the empirically complete ladders.)
+ */
+const PAGE_SIZE_LADDER_RATIOS = [1, 0.7, 0.5, 0.36];
+
+/**
+ * Cap on the random per-listing offset subtracted from every verification
+ * rung of the ladder (primary walk stays at the requested size). Jitter is
+ * skipped for small base page sizes, where subtracting up to 7 would collapse
+ * the rung spacing that makes the ladder work (and where unit tests need
+ * deterministic rungs).
+ */
+const VERIFICATION_WALK_MAX_JITTER = 8;
+const MIN_BASE_PAGE_SIZE_FOR_JITTER = 50;
+
+/**
+ * The staggered page-size ladder for one faithful listing: the requested size
+ * first, then widely spaced smaller sizes for each verification re-walk,
+ * clamped to ≥1. For the production {@link INTERCOM_MAX_PAGE_SIZE} this is
+ * [250, 175, 125, 90] minus the jitter on the verification rungs.
+ *
+ * `verificationWalkJitter` exists because even a well-spread ladder can leave
+ * a record unrecovered on an extreme tie block, and the ladder is otherwise
+ * deterministic — the SAME record would then be missing on every subsequent
+ * pull (a permanent hole, the exact DEV-11283 failure mode). Randomizing the
+ * verification rungs per listing makes consecutive pulls walk different
+ * boundary layouts, so a persistent miss heals on the next pull instead.
+ */
+export function buildStaggeredPageSizeLadder(basePageSize: number, verificationWalkJitter: number): number[] {
+  return PAGE_SIZE_LADDER_RATIOS.map((ratio, walkIndex) =>
+    walkIndex === 0 ? basePageSize : Math.max(1, Math.round(basePageSize * ratio) - verificationWalkJitter),
+  );
+}
+
+/**
+ * One batch of records from a faithful page walk over a page-number-paginated
+ * Intercom list endpoint.
+ *
+ * `resumeFromPage` is the crash-resume checkpoint: the next page of the
+ * *primary* walk to fetch. Callers persist it after processing the batch and
+ * pass it back as `startPage` to resume. Batches yielded by a verification
+ * re-walk keep reporting the primary walk's past-the-end page, so a resume
+ * after a mid-verification crash re-enters at "primary walk complete" and the
+ * verification logic re-runs from scratch.
+ */
+export interface IntercomPageBatch<T> {
+  records: T[];
+  resumeFromPage: number;
+}
+
+/**
  * A page of conversations plus the opaque cursor returned by Intercom for the
  * next page (or undefined if this was the last page). Callers persist
  * `nextCursor` for crash-resume — Intercom rejects record ids passed as
@@ -175,29 +258,127 @@ export class IntercomApiClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * List articles with page-based pagination.
-   * Yields pages of article records.
+   * Walk a page-number-paginated list endpoint (`/articles`,
+   * `/help_center/collections`) so that the union of yielded records is a
+   * faithful snapshot of the list, verified against Intercom's `total_count`.
+   *
+   * Why a plain page walk is NOT faithful (DEV-11283): these endpoints sort by
+   * `updated_at` DESC with 1-second timestamp granularity and break ties
+   * inconsistently across page requests. When a tie-group straddles a page
+   * boundary, the two requests can order the group differently — one member
+   * appears on both pages while its neighbor appears on neither. The skip is
+   * deterministic while the list order persists, so it never self-heals, and
+   * downstream full-scan delete-detection turns the skipped record into a
+   * wrongful destination delete.
+   *
+   * Defenses, in order:
+   * 1. Records are deduplicated by id across the whole listing, so a
+   *    boundary-duplicated record is yielded once (a same-pull duplicate
+   *    previously produced a slug-collision twin file).
+   * 2. After each complete walk, the unique-records-seen count is checked
+   *    against the endpoint's own `total_count`. A shortfall triggers a
+   *    re-walk at the next size in {@link buildStaggeredPageSizeLadder},
+   *    which moves every page boundary far enough that the same tie-group
+   *    lands strictly inside a page; only records not yet seen are yielded.
+   *    Verification re-walks run ONLY on a detected shortfall — a clean walk
+   *    costs exactly one walk.
+   * 3. After {@link MAX_PAGE_WALKS_PER_FAITHFUL_LISTING} walks a persistent
+   *    shortfall ABORTS the listing with an {@link IntercomError}: the pull
+   *    fails visibly and the engine never runs full-scan delete-detection
+   *    over an unverified walk, so a missed record cannot become a wrongful
+   *    destination delete. (There is deliberately no engine-side guard —
+   *    DEV-11289 was canceled: walk fidelity is the connector's job, so the
+   *    connector refuses to hand the engine an incomplete snapshot.)
+   *
+   * A shortfall can also be legitimate churn (records created mid-walk appear
+   * in the already-walked region). Failing is still safe there: a failed pull
+   * never runs delete-detection (and a redelivered job resumes with
+   * `isResuming`, which also skips it), so the cost is a visible retry, never
+   * a destructive write. The next pull's verification rungs are jittered
+   * differently, so a deterministic skip does not repeat.
    */
-  async *listArticles(pageSize = 25, startPage = 1): AsyncGenerator<IntercomArticle[], void> {
-    let page = startPage;
-    let totalPages = Infinity;
+  private async *listWithFaithfulPageWalk<T extends { id: string }>(
+    endpointPath: string,
+    basePageSize: number,
+    startPage: number,
+  ): AsyncGenerator<IntercomPageBatch<T>, void> {
+    const recordIdsSeenAcrossAllWalks = new Set<string>();
+    let resumeFromPageInPrimaryWalk = startPage;
+    let totalCountReportedByLatestResponse = 0;
+    const verificationWalkJitter =
+      basePageSize >= MIN_BASE_PAGE_SIZE_FOR_JITTER ? Math.floor(Math.random() * VERIFICATION_WALK_MAX_JITTER) : 0;
+    const staggeredPageSizeLadder = buildStaggeredPageSizeLadder(basePageSize, verificationWalkJitter);
 
-    while (page <= totalPages) {
-      const response = await this.requestWithRateLimitRetry(() =>
-        this.client.get<IntercomPaginatedResponse<IntercomArticle>>('/articles', {
-          params: { page, per_page: pageSize },
-        }),
-      );
+    for (let walkAttemptIndex = 0; walkAttemptIndex < staggeredPageSizeLadder.length; walkAttemptIndex++) {
+      const pageSizeForThisWalk = staggeredPageSizeLadder[walkAttemptIndex];
+      const isPrimaryWalk = walkAttemptIndex === 0;
+      let page = isPrimaryWalk ? startPage : 1;
+      let totalPages = Infinity;
 
-      totalPages = response.data.pages.total_pages;
-      const articles = response.data.data ?? [];
+      while (page <= totalPages) {
+        const response = await this.requestWithRateLimitRetry(() =>
+          this.client.get<IntercomPaginatedResponse<T>>(endpointPath, {
+            params: { page, per_page: pageSizeForThisWalk },
+          }),
+        );
 
-      if (articles.length > 0) {
-        yield articles;
+        totalPages = response.data.pages.total_pages;
+        totalCountReportedByLatestResponse = response.data.total_count;
+        page++;
+        if (isPrimaryWalk) {
+          resumeFromPageInPrimaryWalk = page;
+        }
+
+        const recordsNotYetSeenThisListing = (response.data.data ?? []).filter(
+          (record) => !recordIdsSeenAcrossAllWalks.has(record.id),
+        );
+        for (const record of recordsNotYetSeenThisListing) {
+          recordIdsSeenAcrossAllWalks.add(record.id);
+        }
+
+        if (recordsNotYetSeenThisListing.length > 0) {
+          yield { records: recordsNotYetSeenThisListing, resumeFromPage: resumeFromPageInPrimaryWalk };
+        }
       }
 
-      page++;
+      // A resumed primary walk (startPage > 1) only saw the tail of the list,
+      // so its seen-count is expected to fall short and the verification
+      // re-walk doubles as resume-completion: it re-covers the pages the
+      // crashed run already staged (idempotent) and everything it missed.
+      if (recordIdsSeenAcrossAllWalks.size >= totalCountReportedByLatestResponse) {
+        return;
+      }
     }
+
+    WSLogger.warn({
+      source: 'IntercomApiClient',
+      message:
+        'Faithful page walk still short of total_count after all retries — failing the pull so no records are wrongly deleted (unstable /articles sort, DEV-11283)',
+      endpointPath,
+      uniqueRecordsSeen: recordIdsSeenAcrossAllWalks.size,
+      totalCountReportedByLatestResponse,
+      walkAttempts: MAX_PAGE_WALKS_PER_FAITHFUL_LISTING,
+    });
+    // Surfaced verbatim to the user via extractConnectorErrorDetails, so the
+    // message explains the abort and that no data was harmed.
+    throw new IntercomError(
+      `Intercom returned an unstable record list for ${endpointPath}: after ${MAX_PAGE_WALKS_PER_FAITHFUL_LISTING} ` +
+        `complete walks, only ${recordIdsSeenAcrossAllWalks.size} of the ${totalCountReportedByLatestResponse} records ` +
+        `Intercom reports were seen. The pull was stopped before any records could be wrongly deleted; ` +
+        `the next pull will retry with a different page layout.`,
+    );
+  }
+
+  /**
+   * List articles as a faithful, id-deduplicated snapshot (see
+   * {@link listWithFaithfulPageWalk} for the pagination-instability defenses).
+   * Yields batches of article records with a crash-resume checkpoint.
+   */
+  listArticles(
+    pageSize = INTERCOM_MAX_PAGE_SIZE,
+    startPage = 1,
+  ): AsyncGenerator<IntercomPageBatch<IntercomArticle>, void> {
+    return this.listWithFaithfulPageWalk<IntercomArticle>('/articles', pageSize, startPage);
   }
 
   /**
@@ -255,29 +436,17 @@ export class IntercomApiClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * List collections with page-based pagination.
-   * Yields pages of collection records.
+   * List collections as a faithful, id-deduplicated snapshot (see
+   * {@link listWithFaithfulPageWalk} for the pagination-instability defenses —
+   * `/help_center/collections` has the same unstable `updated_at` DESC order
+   * as `/articles`).
+   * Yields batches of collection records with a crash-resume checkpoint.
    */
-  async *listCollections(pageSize = 20, startPage = 1): AsyncGenerator<IntercomCollection[], void> {
-    let page = startPage;
-    let totalPages = Infinity;
-
-    while (page <= totalPages) {
-      const response = await this.requestWithRateLimitRetry(() =>
-        this.client.get<IntercomPaginatedResponse<IntercomCollection>>('/help_center/collections', {
-          params: { page, per_page: pageSize },
-        }),
-      );
-
-      totalPages = response.data.pages.total_pages;
-      const collections = response.data.data ?? [];
-
-      if (collections.length > 0) {
-        yield collections;
-      }
-
-      page++;
-    }
+  listCollections(
+    pageSize = INTERCOM_MAX_PAGE_SIZE,
+    startPage = 1,
+  ): AsyncGenerator<IntercomPageBatch<IntercomCollection>, void> {
+    return this.listWithFaithfulPageWalk<IntercomCollection>('/help_center/collections', pageSize, startPage);
   }
 
   /**

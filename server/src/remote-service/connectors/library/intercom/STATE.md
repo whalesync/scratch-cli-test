@@ -102,7 +102,7 @@ Max records (or fields) per API request, **per operation** — services often di
 
 | Operation | Max per request | Mechanism (endpoint / cursor) | Notes |
 |---|---|---|---|
-| Read (list) | <N> records/page | <page/offset/cursor> | <field cap? hard ceiling that needs a bulk API?> |
+| Read (list) | 250 records/page (`per_page` > 250 → `parameter_invalid`) | Articles/collections: page-number (`page`+`per_page`); conversations: opaque cursor (`starting_after`) | **Articles/collections page order is UNSTABLE** (`updated_at` DESC, 1-second ties broken inconsistently per request) — a tie-group straddling a page boundary duplicates one record and silently skips its neighbor (DEV-11283). The client walks at the 250 max, dedupes by id, verifies unique-seen against `total_count`, and on shortfall re-walks down a staggered page-size ladder (250 → 170 → 116 → 79, max 4 walks; adjacent −1 steps proven insufficient live — the ~0.68× spread recovered 213/213 on a bulk-touched tie block where −1 steps stalled at 212); a persistent shortfall FAILS the pull with a user-facing IntercomError (never runs delete-detection over an unverified walk; the next pull's jittered ladder retries). |
 | Create | <N> records/request | <endpoint> | |
 | Update | <N> records/request | <endpoint> | |
 | Delete | <N> ids/request | <endpoint> | |

@@ -1,5 +1,12 @@
 import axios from 'axios';
-import { IntercomApiClient, IntercomConversationPage, IntercomError } from '../intercom-api-client';
+import { WSLogger } from 'src/logger';
+import {
+  buildStaggeredPageSizeLadder,
+  IntercomApiClient,
+  IntercomConversationPage,
+  IntercomError,
+  IntercomPageBatch,
+} from '../intercom-api-client';
 
 // Mock create-api-client to return a mock axios instance
 const mockGet = jest.fn();
@@ -62,77 +69,143 @@ describe('IntercomApiClient', () => {
   // listArticles
   // ---------------------------------------------------------------------------
 
-  describe('listArticles', () => {
-    it('yields pages of articles', async () => {
-      const page1 = [
-        { type: 'article', id: '1', title: 'Article 1' },
-        { type: 'article', id: '2', title: 'Article 2' },
-      ];
-      const page2 = [{ type: 'article', id: '3', title: 'Article 3' }];
-
-      mockGet
-        .mockResolvedValueOnce({
-          data: {
-            type: 'list',
-            data: page1,
-            total_count: 3,
-            pages: { type: 'pages', page: 1, per_page: 2, total_pages: 2 },
-          },
-        })
-        .mockResolvedValueOnce({
-          data: {
-            type: 'list',
-            data: page2,
-            total_count: 3,
-            pages: { type: 'pages', page: 2, per_page: 2, total_pages: 2 },
-          },
-        });
-
-      const pages: unknown[][] = [];
-      for await (const page of client.listArticles(2)) {
-        pages.push(page);
-      }
-
-      expect(pages).toHaveLength(2);
-      expect(pages[0]).toHaveLength(2);
-      expect(pages[1]).toHaveLength(1);
-    });
-
-    it('stops after last page', async () => {
-      mockGet.mockResolvedValueOnce({
+  describe('listArticles (faithful page walk)', () => {
+    /** Build one page-based /articles response body. */
+    function articlesPage(params: {
+      ids: string[];
+      page: number;
+      perPage: number;
+      totalPages: number;
+      totalCount: number;
+    }) {
+      return {
         data: {
           type: 'list',
-          data: [{ id: '1' }],
-          total_count: 1,
-          pages: { type: 'pages', page: 1, per_page: 25, total_pages: 1 },
+          data: params.ids.map((id) => ({ type: 'article', id, title: `Article ${id}` })),
+          total_count: params.totalCount,
+          pages: { type: 'pages', page: params.page, per_page: params.perPage, total_pages: params.totalPages },
         },
-      });
+      };
+    }
 
-      const pages: unknown[][] = [];
-      for await (const page of client.listArticles()) {
-        pages.push(page);
+    async function collectBatches(gen: AsyncGenerator<IntercomPageBatch<{ id: string }>, void>) {
+      const batches: IntercomPageBatch<{ id: string }>[] = [];
+      for await (const batch of gen) {
+        batches.push(batch);
       }
+      return batches;
+    }
 
-      expect(pages).toHaveLength(1);
-      expect(mockGet).toHaveBeenCalledTimes(1);
+    it('yields pages of articles with resume checkpoints and stops when total_count is met', async () => {
+      mockGet
+        .mockResolvedValueOnce(articlesPage({ ids: ['1', '2'], page: 1, perPage: 2, totalPages: 2, totalCount: 3 }))
+        .mockResolvedValueOnce(articlesPage({ ids: ['3'], page: 2, perPage: 2, totalPages: 2, totalCount: 3 }));
+
+      const batches = await collectBatches(client.listArticles(2));
+
+      expect(batches).toEqual([
+        { records: expect.arrayContaining([expect.objectContaining({ id: '1' })]) as unknown, resumeFromPage: 2 },
+        { records: [expect.objectContaining({ id: '3' })] as unknown, resumeFromPage: 3 },
+      ]);
+      expect(batches[0].records).toHaveLength(2);
+      // Clean walk (3 unique === total_count 3): no verification re-walk.
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(mockGet).toHaveBeenNthCalledWith(1, '/articles', { params: { page: 1, per_page: 2 } });
+      expect(mockGet).toHaveBeenNthCalledWith(2, '/articles', { params: { page: 2, per_page: 2 } });
+    });
+
+    it('defaults to the 250 max page size', async () => {
+      mockGet.mockResolvedValueOnce(articlesPage({ ids: ['1'], page: 1, perPage: 250, totalPages: 1, totalCount: 1 }));
+
+      await collectBatches(client.listArticles());
+
+      expect(mockGet).toHaveBeenCalledWith('/articles', { params: { page: 1, per_page: 250 } });
+    });
+
+    it('deduplicates a record repeated across a page boundary within one walk', async () => {
+      // Unstable tie-break: article '2' appears on both page 1 and page 2.
+      mockGet
+        .mockResolvedValueOnce(articlesPage({ ids: ['1', '2'], page: 1, perPage: 2, totalPages: 2, totalCount: 4 }))
+        .mockResolvedValueOnce(articlesPage({ ids: ['2', '3'], page: 2, perPage: 2, totalPages: 2, totalCount: 4 }))
+        // 3 unique < total_count 4 → verification re-walk at per_page 1 recovers '4'.
+        .mockResolvedValueOnce(articlesPage({ ids: ['1'], page: 1, perPage: 1, totalPages: 4, totalCount: 4 }))
+        .mockResolvedValueOnce(articlesPage({ ids: ['2'], page: 2, perPage: 1, totalPages: 4, totalCount: 4 }))
+        .mockResolvedValueOnce(articlesPage({ ids: ['4'], page: 3, perPage: 1, totalPages: 4, totalCount: 4 }))
+        .mockResolvedValueOnce(articlesPage({ ids: ['3'], page: 4, perPage: 1, totalPages: 4, totalCount: 4 }));
+
+      const batches = await collectBatches(client.listArticles(2));
+
+      const yieldedIds = batches.flatMap((b) => b.records.map((r) => r.id));
+      expect(yieldedIds).toEqual(['1', '2', '3', '4']); // each exactly once, '4' recovered
+      // The verification walk shifted the page size down by one.
+      expect(mockGet).toHaveBeenNthCalledWith(3, '/articles', { params: { page: 1, per_page: 1 } });
+      // Batches from the verification walk keep the primary walk's resume checkpoint.
+      expect(batches[batches.length - 1].resumeFromPage).toBe(3);
+    });
+
+    it('throws IntercomError after exhausting all walk attempts on a persistent shortfall', async () => {
+      const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+      // Every walk returns the same single article while claiming total_count 2.
+      mockGet.mockResolvedValue(articlesPage({ ids: ['1'], page: 1, perPage: 5, totalPages: 1, totalCount: 2 }));
+
+      const batchesYieldedBeforeAbort: IntercomPageBatch<{ id: string }>[] = [];
+      const consumeUntilAbort = async () => {
+        for await (const batch of client.listArticles(5)) {
+          batchesYieldedBeforeAbort.push(batch);
+        }
+      };
+
+      await expect(consumeUntilAbort()).rejects.toThrow(IntercomError);
+      await expect(consumeUntilAbort()).rejects.toThrow(
+        'only 1 of the 2 records Intercom reports were seen. The pull was stopped before any records could be wrongly deleted',
+      );
+
+      expect(batchesYieldedBeforeAbort.flatMap((b) => b.records.map((r) => r.id))).toEqual(['1', '1']);
+      // Each rejected consume ran 4 walks total (primary + 3 verification
+      // re-walks down the staggered page-size ladder 5 → 4 → 3 → 2).
+      expect(mockGet).toHaveBeenCalledTimes(8);
+      const perPageSeries = mockGet.mock.calls.map(
+        (call: [string, { params: { per_page: number } }]) => call[1].params.per_page,
+      );
+      expect(perPageSeries.slice(0, 4)).toEqual([5, 4, 3, 2]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ endpointPath: '/articles', uniqueRecordsSeen: 1 }),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('builds the staggered page-size ladder from the empirically validated ratios', () => {
+      expect(buildStaggeredPageSizeLadder(250, 0)).toEqual([250, 175, 125, 90]);
+      // Jitter shifts only the verification rungs; the primary walk stays at max.
+      expect(buildStaggeredPageSizeLadder(250, 7)).toEqual([250, 168, 118, 83]);
+      // The scaled-down ladder matches the live-validated complete one.
+      expect(buildStaggeredPageSizeLadder(10, 0)).toEqual([10, 7, 5, 4]);
+    });
+
+    it('completes a resumed walk via the verification re-walk from page 1', async () => {
+      mockGet
+        // Primary walk resumes at page 2 of 2 — sees only the tail.
+        .mockResolvedValueOnce(articlesPage({ ids: ['3', '4'], page: 2, perPage: 2, totalPages: 2, totalCount: 4 }))
+        // Shortfall (2 < 4) → full re-walk at per_page 1 recovers the head.
+        .mockResolvedValueOnce(articlesPage({ ids: ['1'], page: 1, perPage: 1, totalPages: 4, totalCount: 4 }))
+        .mockResolvedValueOnce(articlesPage({ ids: ['2'], page: 2, perPage: 1, totalPages: 4, totalCount: 4 }))
+        .mockResolvedValueOnce(articlesPage({ ids: ['3'], page: 3, perPage: 1, totalPages: 4, totalCount: 4 }))
+        .mockResolvedValueOnce(articlesPage({ ids: ['4'], page: 4, perPage: 1, totalPages: 4, totalCount: 4 }));
+
+      const batches = await collectBatches(client.listArticles(2, 2));
+
+      expect(batches.flatMap((b) => b.records.map((r) => r.id))).toEqual(['3', '4', '1', '2']);
+      expect(mockGet).toHaveBeenNthCalledWith(1, '/articles', { params: { page: 2, per_page: 2 } });
+      expect(mockGet).toHaveBeenNthCalledWith(2, '/articles', { params: { page: 1, per_page: 1 } });
     });
 
     it('handles empty result', async () => {
-      mockGet.mockResolvedValueOnce({
-        data: {
-          type: 'list',
-          data: [],
-          total_count: 0,
-          pages: { type: 'pages', page: 1, per_page: 25, total_pages: 0 },
-        },
-      });
+      mockGet.mockResolvedValueOnce(articlesPage({ ids: [], page: 1, perPage: 250, totalPages: 0, totalCount: 0 }));
 
-      const pages: unknown[][] = [];
-      for await (const page of client.listArticles()) {
-        pages.push(page);
-      }
+      const batches = await collectBatches(client.listArticles());
 
-      expect(pages).toHaveLength(0);
+      expect(batches).toHaveLength(0);
+      expect(mockGet).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -243,24 +316,24 @@ describe('IntercomApiClient', () => {
   // ---------------------------------------------------------------------------
 
   describe('listCollections', () => {
-    it('yields pages of collections', async () => {
+    it('yields batches of collections from the faithful page walk', async () => {
       const collections = [{ type: 'collection', id: '1', name: 'Getting Started' }];
       mockGet.mockResolvedValueOnce({
         data: {
           type: 'list',
           data: collections,
           total_count: 1,
-          pages: { type: 'pages', page: 1, per_page: 20, total_pages: 1 },
+          pages: { type: 'pages', page: 1, per_page: 250, total_pages: 1 },
         },
       });
 
-      const pages: unknown[][] = [];
-      for await (const page of client.listCollections()) {
-        pages.push(page);
+      const batches: IntercomPageBatch<{ id: string }>[] = [];
+      for await (const batch of client.listCollections()) {
+        batches.push(batch);
       }
 
-      expect(pages).toHaveLength(1);
-      expect(pages[0]).toEqual(collections);
+      expect(batches).toEqual([{ records: collections, resumeFromPage: 2 }]);
+      expect(mockGet).toHaveBeenCalledWith('/help_center/collections', { params: { page: 1, per_page: 250 } });
     });
 
     it('handles zero collections', async () => {
@@ -269,16 +342,16 @@ describe('IntercomApiClient', () => {
           type: 'list',
           data: [],
           total_count: 0,
-          pages: { type: 'pages', page: 1, per_page: 20, total_pages: 0 },
+          pages: { type: 'pages', page: 1, per_page: 250, total_pages: 0 },
         },
       });
 
-      const pages: unknown[][] = [];
-      for await (const page of client.listCollections()) {
-        pages.push(page);
+      const batches: unknown[] = [];
+      for await (const batch of client.listCollections()) {
+        batches.push(batch);
       }
 
-      expect(pages).toHaveLength(0);
+      expect(batches).toHaveLength(0);
     });
   });
 
