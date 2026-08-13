@@ -3,6 +3,7 @@ import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -101,7 +102,10 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
   /** Cache of the field api_names to request when pulling each module. */
   private readonly pullFieldNamesCache = new Map<string, string[]>();
 
-  constructor(credentials: ZohoConnectorCredentials, opts?: { rateLimiter?: RateLimiter; oauthAccessToken?: string }) {
+  constructor(
+    credentials: ZohoConnectorCredentials,
+    opts?: { rateLimiter?: RateLimiter; oauthAccessToken?: ConnectorAuthTokenOrProvider },
+  ) {
     super();
     this.client = new ZohoApiClient(credentials, opts);
   }
@@ -430,12 +434,15 @@ connectorRegistry.register({
     // lifecycle — fetch a fresh access token per instantiation; the regional API
     // host is derived from the stored data center (persisted in oauthWorkspaceId).
     if (ctx.connectorAccount?.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
       const dataCenter = normalizeZohoDataCenter(ctx.decryptedCredentials?.oauthWorkspaceId ?? undefined);
       WSLogger.info({ source: LOG_SOURCE, message: 'Instantiating Zoho connector (OAuth)' });
       return new ZohoConnector(
         { clientId: '', clientSecret: '', refreshToken: '', dataCenter },
-        { rateLimiter, oauthAccessToken: accessToken },
+        { rateLimiter, oauthAccessToken: accessTokenProvider },
       );
     }
 

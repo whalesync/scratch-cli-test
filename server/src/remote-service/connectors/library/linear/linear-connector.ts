@@ -470,8 +470,11 @@ connectorRegistry.register({
     }
     const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
     if (ctx.connectorAccount.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new LinearConnector({ accessToken }, { rateLimiter });
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
+      return new LinearConnector({ accessToken: accessTokenProvider }, { rateLimiter });
     } else {
       if (!ctx.decryptedCredentials?.apiKey) {
         throw new ConnectorInstantiationError('API key is required for Linear', Service.LINEAR);

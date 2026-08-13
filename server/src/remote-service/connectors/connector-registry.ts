@@ -10,6 +10,7 @@ import { RateLimiter } from '../../rate-limiter/rate-limiter';
 import { RateLimiterSpec } from '../../rate-limiter/rate-limiter.types';
 import { DecryptedCredentials } from '../connector-account/types/encrypted-credentials.interface';
 import { AuthParser, Connector } from './connector';
+import { ConnectorAuthTokenProvider } from './connector-auth-token';
 import type { BaseJsonTableSpec } from './types';
 
 export interface ConnectorAccountRef {
@@ -27,7 +28,21 @@ export interface ConnectorFactoryContext {
   connectorAccount: ConnectorAccountRef | null;
   decryptedCredentials: DecryptedCredentials | null;
   userId?: string;
-  getOAuthAccessToken: (connectorAccountId: string) => Promise<string>;
+  /**
+   * Build a provider that hands back a **currently valid** OAuth access token for
+   * this connection every time it is called, refreshing it through the host's
+   * OAuth service whenever the stored one is close to expiring.
+   *
+   * Connectors must hold the provider and call it per outbound request (via
+   * `createApiClient`'s `authorizationHeaderValueProvider`) rather than resolving
+   * a token once at instantiation: a job that outlives the provider's token
+   * lifetime — an hour on Google, for many others too — otherwise 401s on every
+   * call from that moment on and can never recover (DEV-11270).
+   *
+   * Calling it eagerly once inside `createConnector` is still the right way to
+   * fail fast when a connection can no longer produce a token at all.
+   */
+  createOAuthAccessTokenProvider: (connectorAccountId: string) => ConnectorAuthTokenProvider;
   createRateLimiter: (connectorAccountId: string) => RateLimiter | undefined;
   /**
    * Look up `DataFolder.options` for a given (connectorAccountId, tableId)

@@ -5,6 +5,8 @@
  * API Documentation: https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities
  */
 
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
+
 /**
  * Supported QuickBooks Online entity types.
  * These are queryable via the QBO SQL-like query: SELECT * FROM <EntityType>
@@ -222,7 +224,14 @@ export const ENTITY_NEW_FILE_TEMPLATES: Partial<Record<QuickBooksEntityType, Rec
  * Credentials required to make QuickBooks API calls.
  */
 export interface QuickBooksCredentials {
-  accessToken: string;
+  /**
+   * A provider that returns the connection's currently valid OAuth access token
+   * (a literal token is also accepted, for tests). QuickBooks access tokens last
+   * an hour, so the client re-resolves this per request rather than baking one in
+   * — a job that outlived the token otherwise 401'd for the rest of its run
+   * (DEV-11270).
+   */
+  accessToken: ConnectorAuthTokenOrProvider;
   realmId: string;
 }
 

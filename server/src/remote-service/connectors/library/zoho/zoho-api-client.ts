@@ -2,6 +2,11 @@ import axios, { AxiosInstance, isAxiosError } from 'axios';
 import { createHash } from 'crypto';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import {
+  ConnectorAuthTokenOrProvider,
+  ConnectorAuthTokenProvider,
+  toConnectorAuthTokenProvider,
+} from '../../connector-auth-token';
 import { ZOHO_DATA_CENTER_HOSTS, ZohoConnectorCredentials, ZohoFieldMetadata, ZohoModuleMetadata } from './zoho-types';
 
 const LOG_SOURCE = 'ZohoApiClient';
@@ -120,36 +125,43 @@ export class ZohoApiClient {
   private readonly rateLimiter?: RateLimiter;
   private readonly http: AxiosInstance;
   /**
-   * Pre-minted access token for the OAuth-redirect auth path. When set, the
+   * Access-token provider for the OAuth-redirect auth path. When set, the
    * OAuthService owns the token lifecycle (refresh + persistence), so this
-   * client skips its own refresh-token mint and uses this token directly. The
-   * API host comes from the data center's `defaultApiDomain` (set below).
+   * client skips its own refresh-token mint and asks the host for the current
+   * token on every request — a job that outlives one token therefore keeps
+   * working instead of 401-ing for the rest of its run (DEV-11270). The API host
+   * comes from the data center's `defaultApiDomain` (set below).
    */
-  private readonly oauthAccessToken?: string;
+  private readonly hostManagedOAuthAccessTokenProvider?: ConnectorAuthTokenProvider;
 
-  constructor(credentials: ZohoConnectorCredentials, opts?: { rateLimiter?: RateLimiter; oauthAccessToken?: string }) {
+  constructor(
+    credentials: ZohoConnectorCredentials,
+    opts?: { rateLimiter?: RateLimiter; oauthAccessToken?: ConnectorAuthTokenOrProvider },
+  ) {
     this.credentials = credentials;
     const hosts = ZOHO_DATA_CENTER_HOSTS[credentials.dataCenter];
     this.accountsDomain = hosts.accountsDomain;
     this.apiDomain = hosts.defaultApiDomain;
     this.rateLimiter = opts?.rateLimiter;
-    this.oauthAccessToken = opts?.oauthAccessToken;
+    this.hostManagedOAuthAccessTokenProvider = opts?.oauthAccessToken
+      ? toConnectorAuthTokenProvider(opts.oauthAccessToken)
+      : undefined;
     this.http = axios.create({ timeout: 60_000 });
   }
 
   // --- Auth ---
 
   /**
-   * Return a valid access token. In the OAuth-redirect path the token is
-   * pre-minted by the OAuthService (which handles refresh + persistence), so we
-   * return it directly. Otherwise (Self-Client params) return a token from the
+   * Return a valid access token. In the OAuth-redirect path the token is minted
+   * by the OAuthService (which handles refresh + persistence), so we ask it for
+   * the current one. Otherwise (Self-Client params) return a token from the
    * process-wide cache, minting a new one from the refresh token only when the
    * cached one is missing or within 60s of expiry. Concurrent first-time callers
    * share a single in-flight mint so a burst of parallel jobs issues one token
    * request, not one per job.
    */
   private async getAccessToken(): Promise<string> {
-    if (this.oauthAccessToken) return this.oauthAccessToken;
+    if (this.hostManagedOAuthAccessTokenProvider) return this.hostManagedOAuthAccessTokenProvider();
     const cacheKey = zohoTokenCacheKey(this.credentials);
     const cached = sharedAccessTokenByCredential.get(cacheKey);
     if (cached && Date.now() < cached.expiresAtMs) {

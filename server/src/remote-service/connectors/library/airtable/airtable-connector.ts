@@ -14,6 +14,7 @@ import { RateLimiter, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema } from '../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -135,9 +136,12 @@ export class AirtableConnector extends Connector {
   private readonly client: AirtableApiClient;
   private readonly schemaParser = new AirtableSchemaParser();
 
-  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter; retryOverrides?: Partial<WithRetryOpts> }) {
+  constructor(
+    apiKeyOrAccessTokenProvider: ConnectorAuthTokenOrProvider,
+    opts?: { rateLimiter?: RateLimiter; retryOverrides?: Partial<WithRetryOpts> },
+  ) {
     super();
-    this.client = new AirtableApiClient(apiKey, {
+    this.client = new AirtableApiClient(apiKeyOrAccessTokenProvider, {
       rateLimiter: opts?.rateLimiter,
       retryOverrides: opts?.retryOverrides,
     });
@@ -744,8 +748,11 @@ connectorRegistry.register({
     }
     const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
     if (ctx.connectorAccount.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new AirtableConnector(accessToken, { rateLimiter });
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
+      return new AirtableConnector(accessTokenProvider, { rateLimiter });
     } else {
       if (!ctx.decryptedCredentials?.apiKey) {
         throw new ConnectorInstantiationError('API key is required for Airtable', Service.AIRTABLE);

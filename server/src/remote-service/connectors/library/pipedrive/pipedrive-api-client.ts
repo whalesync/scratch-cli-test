@@ -1,6 +1,7 @@
 import { AxiosInstance, isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { ConnectorAuthTokenOrProvider, toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 import { ENTITY_CONFIG, PipedriveApiVersion, PipedriveEntityType, PipedriveField } from './pipedrive-types';
 
@@ -128,18 +129,29 @@ export class PipedriveApiClient {
   private readonly http: AxiosInstance;
   private readonly rateLimiter?: RateLimiter;
 
-  constructor(token: string, opts?: { rateLimiter?: RateLimiter; authType?: 'apiKey' | 'oauth' }) {
+  constructor(
+    tokenOrProvider: ConnectorAuthTokenOrProvider,
+    opts?: { rateLimiter?: RateLimiter; authType?: 'apiKey' | 'oauth' },
+  ) {
     // The v2 SDK injected the API key as the `x-api-token` request header and an
     // OAuth token as `Authorization: Bearer` (verified in its generated auth
     // helpers, `setApiKeyToObject` / `setBearerAuthToObject`). Reproduce exactly
-    // so the wire request is unchanged.
+    // so the wire request is unchanged. The OAuth token is resolved per request
+    // (the API key never changes, so it stays a fixed header).
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (opts?.authType === 'oauth') {
-      headers.Authorization = `Bearer ${token}`;
+      const accessTokenProvider = toConnectorAuthTokenProvider(tokenOrProvider);
+      this.http = createApiClient(
+        { baseURL: PIPEDRIVE_API_BASE_URL, headers },
+        { authorizationHeaderValueProvider: async () => `Bearer ${await accessTokenProvider()}` },
+      );
     } else {
-      headers['x-api-token'] = token;
+      if (typeof tokenOrProvider !== 'string') {
+        throw new Error('Pipedrive API-key authentication requires a literal API key');
+      }
+      headers['x-api-token'] = tokenOrProvider;
+      this.http = createApiClient({ baseURL: PIPEDRIVE_API_BASE_URL, headers });
     }
-    this.http = createApiClient({ baseURL: PIPEDRIVE_API_BASE_URL, headers });
     this.rateLimiter = opts?.rateLimiter;
   }
 

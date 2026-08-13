@@ -1047,7 +1047,7 @@ interface ConnectorFactoryContext {
   connectorAccount: { id: string; authType: string; extras: Record<string, unknown> | null } | null;
   decryptedCredentials: DecryptedCredentials | null;
   userId?: string;
-  getOAuthAccessToken: (connectorAccountId: string) => Promise<string>;
+  createOAuthAccessTokenProvider: (connectorAccountId: string) => ConnectorAuthTokenProvider;
   createRateLimiter: (connectorAccountId: string) => RateLimiter | undefined;
 }
 ```
@@ -1068,16 +1068,58 @@ connectorRegistry.register({
 });
 ```
 
-For OAuth services, get a valid access token first:
+### OAuth tokens must be resolved per request, never captured once
+
+**An OAuth access token is not a value your connector may hold — it is a value your connector must
+ask for.** Providers expire access tokens on a timer (an hour for Google, HubSpot, and most others).
+A connector that resolves a token in `createConnector` and bakes it into an `Authorization` header
+works fine for short requests and then fails catastrophically on a long one: the moment the token
+expires, every remaining call 401s and the job cannot recover. That is exactly how a production
+publish shipped 29,637 of 130,570 records and failed the other 100,933 (DEV-11270).
+
+So `ctx.createOAuthAccessTokenProvider(id)` returns a **provider** — `() => Promise<string>` — that
+hands back a currently valid token on every call, refreshing it through `OAuthService` when the
+stored one is close to expiring. Calling it per request is cheap: each connector instance reuses a
+resolved token for a minute, and concurrent resolutions for the same connection are coalesced
+process-wide. Refreshing is safe under concurrency across the whole fleet — `refreshOAuthTokens`
+serializes per connection behind a Postgres advisory lock and re-reads credentials inside it — so
+your connector needs no locking discipline of its own.
+
+Take the credential as `ConnectorAuthTokenOrProvider` (`string | ConnectorAuthTokenProvider`) so the
+API-key path stays a plain string, and hand it to `createApiClient` as
+`authorizationHeaderValueProvider` — which resolves the full header value (scheme included) just
+before each request goes out:
 
 ```typescript
+// my-service-api-client.ts
+constructor(apiKeyOrAccessTokenProvider: ConnectorAuthTokenOrProvider, opts?: { rateLimiter?: RateLimiter }) {
+  const authTokenProvider = toConnectorAuthTokenProvider(apiKeyOrAccessTokenProvider);
+  this.http = createApiClient(
+    { baseURL: MY_SERVICE_API_BASE_URL, headers: { Accept: 'application/json' } },
+    { authorizationHeaderValueProvider: async () => `Bearer ${await authTokenProvider()}` },
+  );
+}
+```
+
+```typescript
+// my-service-connector.ts
 async createConnector(ctx) {
-  const accessToken = ctx.decryptedCredentials?.apiKey
-    ?? (ctx.connectorAccount ? await ctx.getOAuthAccessToken(ctx.connectorAccount.id) : null);
-  if (!accessToken) throw new Error('Missing access token for My Service');
-  return new MyServiceConnector(accessToken);
+  if (ctx.connectorAccount?.authType === 'OAUTH') {
+    const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+    // Resolve once up front so a connection that can no longer mint a token fails
+    // here rather than on the first API call; every later call re-resolves it.
+    await accessTokenProvider();
+    return new MyServiceConnector(accessTokenProvider, { rateLimiter });
+  }
+  if (!ctx.decryptedCredentials?.apiKey) throw new Error('Missing API key for My Service');
+  return new MyServiceConnector(ctx.decryptedCredentials.apiKey, { rateLimiter });
 },
 ```
+
+If your connector talks to an SDK that owns its own client object rather than to `createApiClient`,
+push the current token onto that client before each request instead (Wix Blog does this in its
+`withRetry` wrapper via the SDK's `auth.setTokens`). The rule is the same: **the token that
+authenticates a request is resolved when the request is made, not when the connector is built.**
 
 ### EntityId Conventions
 

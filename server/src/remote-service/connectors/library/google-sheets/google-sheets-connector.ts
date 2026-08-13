@@ -13,6 +13,11 @@ import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
+import {
+  ConnectorAuthTokenOrProvider,
+  ConnectorAuthTokenProvider,
+  toConnectorAuthTokenProvider,
+} from '../../connector-auth-token';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -242,7 +247,7 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
   });
 
   private readonly client: GoogleSheetsApiClient;
-  private readonly accessToken: string;
+  private readonly accessTokenProvider: ConnectorAuthTokenProvider;
   private readonly connectorAccountId?: string;
   private readonly listFolderTableIdsForAccount?: (connectorAccountId: string) => Promise<string[][]>;
   /** Spreadsheet ids from the connect form (ConnectorAccount.extras.spreadsheetIds). */
@@ -269,7 +274,7 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
   private readonly sheetDescriptionMemoByAddressKey = new Map<string, GoogleSheetsSheetDescription>();
 
   constructor(
-    accessToken: string,
+    accessTokenOrProvider: ConnectorAuthTokenOrProvider,
     opts?: {
       rateLimiter?: RateLimiter;
       connectorAccountId?: string;
@@ -278,8 +283,8 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
     },
   ) {
     super();
-    this.accessToken = accessToken;
-    this.client = new GoogleSheetsApiClient(accessToken, { rateLimiter: opts?.rateLimiter });
+    this.accessTokenProvider = toConnectorAuthTokenProvider(accessTokenOrProvider);
+    this.client = new GoogleSheetsApiClient(this.accessTokenProvider, { rateLimiter: opts?.rateLimiter });
     this.connectorAccountId = opts?.connectorAccountId;
     this.listFolderTableIdsForAccount = opts?.listFolderTableIds;
     this.spreadsheetIdsFromConnectExtras = opts?.spreadsheetIdsFromConnectExtras ?? [];
@@ -287,7 +292,7 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
 
   /** Validate the token without touching user data (no Drive scope to list with). */
   async testConnection(): Promise<void> {
-    await this.client.validateAccessToken(this.accessToken);
+    await this.client.validateAccessToken(await this.accessTokenProvider());
   }
 
   override async getApiQuota(): Promise<{ dashboardUrl: string }> {
@@ -1349,12 +1354,14 @@ connectorRegistry.register({
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Google Sheets', Service.GOOGLE_SHEETS);
     }
-    const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-    if (!accessToken) {
+    const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+    // Resolve once up front so a connection that can no longer mint a token fails
+    // here rather than on the first API call; every later call re-resolves it.
+    if (!(await accessTokenProvider())) {
       throw new ConnectorInstantiationError('Missing access token for Google Sheets', Service.GOOGLE_SHEETS);
     }
     const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
-    return new GoogleSheetsConnector(accessToken, {
+    return new GoogleSheetsConnector(accessTokenProvider, {
       rateLimiter,
       connectorAccountId: ctx.connectorAccount.id,
       listFolderTableIds: ctx.listFolderTableIds,

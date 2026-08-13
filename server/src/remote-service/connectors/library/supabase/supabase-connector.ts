@@ -1217,7 +1217,11 @@ connectorRegistry.register({
           Service.SUPABASE,
         );
       }
-      const supabaseAccessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      // Unlike the bearer-token connectors, Supabase's data plane authenticates
+      // with per-project Postgres connection strings, so no request in a running
+      // job carries this token — resolving it once is enough (and still fails
+      // fast when the connection can no longer mint one).
+      const supabaseAccessToken = await ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id)();
       return new SupabaseConnector({
         projects: supabaseProjects.map((p) => ({
           projectRef: p.projectRef,

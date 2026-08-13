@@ -5,14 +5,21 @@
  * API docs: https://developers.linear.app/docs/graphql/working-with-the-graphql-api
  */
 
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
+
 // ============= Credentials =============
 
 /**
  * Credentials for the Linear API.
  */
 export interface LinearCredentials {
-  /** OAuth access token or Personal API key */
-  accessToken: string;
+  /**
+   * Personal API key (a fixed string), or — for OAuth connections — a provider
+   * that returns the connection's currently valid access token. OAuth passes a
+   * provider so a job outliving the token's lifetime picks up the host's refresh
+   * instead of 401-ing for the rest of the run (DEV-11270).
+   */
+  accessToken: ConnectorAuthTokenOrProvider;
 }
 
 // ============= GraphQL Infrastructure =============

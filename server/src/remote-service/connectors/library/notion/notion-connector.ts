@@ -22,6 +22,7 @@ import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams } from '../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -262,9 +263,9 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    */
   private readonly dataSourceIdCache = new Map<string, string>();
 
-  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
+  constructor(apiKeyOrAccessTokenProvider: ConnectorAuthTokenOrProvider, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new NotionApiClient(apiKey, {
+    this.client = new NotionApiClient(apiKeyOrAccessTokenProvider, {
       rateLimiter: opts?.rateLimiter,
       notionVersion: DEFAULT_NOTION_API_VERSION,
     });
@@ -1694,8 +1695,11 @@ connectorRegistry.register({
     }
     const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
     if (ctx.connectorAccount.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new NotionConnector(accessToken, { rateLimiter });
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
+      return new NotionConnector(accessTokenProvider, { rateLimiter });
     } else {
       if (!ctx.decryptedCredentials?.apiKey) {
         throw new ConnectorInstantiationError('API key is required for Notion', Service.NOTION);

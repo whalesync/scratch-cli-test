@@ -650,8 +650,14 @@ connectorRegistry.register({
     }
     const { realmId, sandbox } = ctx.connectorAccount.extras;
     if (ctx.connectorAccount.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new QuickBooksConnector({ accessToken, realmId }, { rateLimiter, sandbox: sandbox ?? false });
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
+      return new QuickBooksConnector(
+        { accessToken: accessTokenProvider, realmId },
+        { rateLimiter, sandbox: sandbox ?? false },
+      );
     } else {
       throw new ConnectorInstantiationError('QuickBooks only supports OAuth authentication', Service.QUICKBOOKS);
     }

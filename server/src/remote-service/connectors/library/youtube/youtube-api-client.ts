@@ -1,6 +1,7 @@
 import { AxiosInstance, isAxiosError } from 'axios';
 import { randomUUID } from 'crypto';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { ConnectorAuthTokenOrProvider, toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 import {
   YouTubeCaption,
@@ -108,18 +109,18 @@ export class YoutubeApiClient {
   private readonly http: AxiosInstance;
   private readonly rateLimiter?: RateLimiter;
 
-  constructor(
-    private readonly accessToken: string,
-    opts?: { rateLimiter?: RateLimiter },
-  ) {
-    this.http = createApiClient({
-      baseURL: YOUTUBE_API_BASE_URL,
-      headers: { Authorization: `Bearer ${this.accessToken}` },
-      // YouTube expects repeated query params (e.g. ?part=id&part=snippet), not
-      // the bracketed default axios uses for arrays — matches the SDK's `repeat`
-      // array serialization.
-      paramsSerializer: { indexes: null },
-    });
+  constructor(accessTokenOrProvider: ConnectorAuthTokenOrProvider, opts?: { rateLimiter?: RateLimiter }) {
+    const accessTokenProvider = toConnectorAuthTokenProvider(accessTokenOrProvider);
+    this.http = createApiClient(
+      {
+        baseURL: YOUTUBE_API_BASE_URL,
+        // YouTube expects repeated query params (e.g. ?part=id&part=snippet), not
+        // the bracketed default axios uses for arrays — matches the SDK's `repeat`
+        // array serialization.
+        paramsSerializer: { indexes: null },
+      },
+      { authorizationHeaderValueProvider: async () => `Bearer ${await accessTokenProvider()}` },
+    );
     this.rateLimiter = opts?.rateLimiter;
   }
 

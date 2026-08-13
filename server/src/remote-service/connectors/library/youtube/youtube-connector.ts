@@ -2,6 +2,7 @@
 import { connectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
 import { ConnectorAccountRef, connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError, ReadonlyFieldEditError, readonlyFieldEditErrorMessage } from '../../error';
 import { Service } from '../../service-constants';
@@ -156,11 +157,11 @@ export class YouTubeConnector extends Connector {
   private readonly apiClient: YoutubeApiClient;
 
   constructor(
-    private readonly accessToken: string,
+    accessTokenOrProvider: ConnectorAuthTokenOrProvider,
     private readonly account: ConnectorAccountRef,
   ) {
     super();
-    this.apiClient = new YoutubeApiClient(accessToken);
+    this.apiClient = new YoutubeApiClient(accessTokenOrProvider);
   }
 
   async testConnection(): Promise<void> {
@@ -1098,8 +1099,11 @@ connectorRegistry.register({
       throw new ConnectorInstantiationError('Connector account is required for YouTube', Service.YOUTUBE);
     }
     if (ctx.connectorAccount.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new YouTubeConnector(accessToken, ctx.connectorAccount);
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
+      return new YouTubeConnector(accessTokenProvider, ctx.connectorAccount);
     } else {
       throw new Error('YouTube only supports OAuth authentication');
     }

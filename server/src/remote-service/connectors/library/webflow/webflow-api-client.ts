@@ -1,6 +1,7 @@
 import { AxiosInstance, isAxiosError } from 'axios';
 import { createHash } from 'node:crypto';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { ConnectorAuthTokenOrProvider, toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 import {
   Asset,
@@ -113,14 +114,15 @@ export class WebflowApiClient {
   private readonly s3UploadHttp: AxiosInstance;
   private readonly rateLimiter?: RateLimiter;
 
-  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
-    this.http = createApiClient({
-      baseURL: BASE_URL,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
+  constructor(accessTokenOrProvider: ConnectorAuthTokenOrProvider, opts?: { rateLimiter?: RateLimiter }) {
+    const accessTokenProvider = toConnectorAuthTokenProvider(accessTokenOrProvider);
+    this.http = createApiClient(
+      {
+        baseURL: BASE_URL,
+        headers: { 'Content-Type': 'application/json' },
       },
-    });
+      { authorizationHeaderValueProvider: async () => `Bearer ${await accessTokenProvider()}` },
+    );
     this.s3UploadHttp = createApiClient();
     this.rateLimiter = opts?.rateLimiter;
   }

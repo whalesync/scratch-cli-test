@@ -11,14 +11,29 @@ const mockPatch = jest.fn();
 const mockPut = jest.fn();
 const mockDelete = jest.fn();
 
+/**
+ * Every `authorizationHeaderValueProvider` handed to `createApiClient`, in call
+ * order. Captured here (rather than dug out of `mock.calls`) so the provider stays
+ * typed — the OAuth path resolves its bearer token per request now, so the
+ * provider is the thing worth asserting on.
+ */
+const mockAuthorizationHeaderValueProviders: (() => Promise<string>)[] = [];
+
 jest.mock('../../../create-api-client', () => ({
-  createApiClient: jest.fn(() => ({
-    get: mockGet,
-    post: mockPost,
-    patch: mockPatch,
-    put: mockPut,
-    delete: mockDelete,
-  })),
+  createApiClient: jest.fn(
+    (_config?: unknown, options?: { authorizationHeaderValueProvider?: () => Promise<string> }) => {
+      if (options?.authorizationHeaderValueProvider) {
+        mockAuthorizationHeaderValueProviders.push(options.authorizationHeaderValueProvider);
+      }
+      return {
+        get: mockGet,
+        post: mockPost,
+        patch: mockPatch,
+        put: mockPut,
+        delete: mockDelete,
+      };
+    },
+  ),
 }));
 
 import { createApiClient } from '../../../create-api-client';
@@ -47,6 +62,7 @@ describe('PipedriveApiClient', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAuthorizationHeaderValueProviders.length = 0;
     client = new PipedriveApiClient('test-key');
   });
 
@@ -61,16 +77,28 @@ describe('PipedriveApiClient', () => {
       });
     });
 
-    it('authenticates an OAuth token via the Authorization Bearer header (no x-api-token)', () => {
+    it('authenticates an OAuth token via the Authorization Bearer header (no x-api-token)', async () => {
       jest.clearAllMocks();
       new PipedriveApiClient('oauth-token', { authType: 'oauth' });
-      expect(createApiClient).toHaveBeenCalledWith({
-        baseURL: 'https://api.pipedrive.com',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer oauth-token',
+      // The OAuth bearer is a provider, not a static header, so a job outliving
+      // the access token picks up the refreshed one (DEV-11270).
+      expect(createApiClient).toHaveBeenCalledWith(
+        {
+          baseURL: 'https://api.pipedrive.com',
+          headers: { 'Content-Type': 'application/json' },
         },
-      });
+        { authorizationHeaderValueProvider: mockAuthorizationHeaderValueProviders[0] },
+      );
+      await expect(mockAuthorizationHeaderValueProviders[0]()).resolves.toBe('Bearer oauth-token');
+    });
+
+    it('re-resolves the OAuth bearer token on every request', async () => {
+      const accessTokens = ['first-token', 'second-token'];
+      new PipedriveApiClient(() => Promise.resolve(accessTokens.shift() ?? 'exhausted'), { authType: 'oauth' });
+
+      const provider = mockAuthorizationHeaderValueProviders[0];
+      await expect(provider()).resolves.toBe('Bearer first-token');
+      await expect(provider()).resolves.toBe('Bearer second-token');
     });
   });
 

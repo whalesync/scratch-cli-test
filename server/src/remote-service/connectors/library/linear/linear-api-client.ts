@@ -8,6 +8,7 @@
 
 import { AxiosInstance, isAxiosError } from 'axios';
 import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
+import { toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 // Generated query fields
 import { CYCLES_QUERY_FIELDS } from './graphql/schemas/cycles.schema';
@@ -115,13 +116,15 @@ export class LinearApiClient {
   constructor(credentials: LinearCredentials, opts?: { rateLimiter?: RateLimiter }) {
     this.rateLimiter = opts?.rateLimiter;
 
-    this.client = createApiClient({
-      baseURL: LINEAR_API_URL,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: credentials.accessToken,
+    // Linear takes the raw token as the Authorization value (no `Bearer` scheme).
+    const accessTokenProvider = toConnectorAuthTokenProvider(credentials.accessToken);
+    this.client = createApiClient(
+      {
+        baseURL: LINEAR_API_URL,
+        headers: { 'Content-Type': 'application/json' },
       },
-    });
+      { authorizationHeaderValueProvider: accessTokenProvider },
+    );
   }
 
   // ============= Core GraphQL Execution =============

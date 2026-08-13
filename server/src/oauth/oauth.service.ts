@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { AuthType, ConnectorAccount, Prisma } from '@prisma/client';
@@ -73,6 +74,118 @@ export interface OAuthCallbackRequest {
    * redirect hands back this id, which we mint the first access token from.
    */
   instanceId?: string;
+}
+
+/**
+ * How early an access token is treated as expired. Refreshing ahead of the real
+ * expiry keeps a token from lapsing between the moment it is handed out and the
+ * moment the request carrying it reaches the provider.
+ */
+const ACCESS_TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+
+/**
+ * Ceiling on a single provider token-endpoint round-trip, enforced by
+ * {@link withProviderTokenRequestTimeout}.
+ *
+ * This is a correctness bound, not a politeness one. The vendor call happens
+ * inside the transaction holding the refresh lock, and if it outran
+ * {@link OAUTH_TOKEN_REFRESH_TRANSACTION_TIMEOUT_MS} Prisma would roll the
+ * transaction back and close it — so the `update` persisting the new tokens would
+ * fail with P2028 *after* the provider had already issued them and retired the old
+ * refresh token. For the rotating providers (Airtable, Intuit, GoHighLevel,
+ * Pipedrive) that strands the connection needing a manual reconnect: precisely the
+ * outcome the lock exists to prevent. Failing first, with the stored credentials
+ * untouched, is strictly better — the next attempt still holds a live refresh
+ * token.
+ *
+ * Kept tight because this is also how long a Prisma pool connection is held across
+ * a network call. Cloud Run runs these services on 1 vCPU and nothing sets
+ * `connection_limit`, so the pool is Prisma's default `cpus * 2 + 1` — only a
+ * handful of connections, and unrelated queries queue behind whatever is held.
+ * Token endpoints answer in well under a second in the normal case.
+ */
+const OAUTH_PROVIDER_TOKEN_REQUEST_TIMEOUT_MS = 8_000;
+
+/**
+ * Ceiling on the refresh transaction, which spans: take the lock (non-blocking),
+ * re-read credentials, one provider round-trip, encrypt and write.
+ *
+ * MUST stay comfortably above {@link OAUTH_PROVIDER_TOKEN_REQUEST_TIMEOUT_MS} —
+ * see that constant for what breaks if the provider call can outlast this. The
+ * margin covers the reads and the write either side of the provider call. Waiting
+ * for a *contended* lock is deliberately not part of this budget: contenders leave
+ * the transaction entirely rather than blocking inside it (see
+ * {@link refreshOAuthTokensUnderConnectionLock}).
+ */
+const OAUTH_TOKEN_REFRESH_TRANSACTION_TIMEOUT_MS = 20_000;
+
+/**
+ * How long a contender keeps retrying for the refresh lock before giving up. Sized
+ * above {@link OAUTH_PROVIDER_TOKEN_REQUEST_TIMEOUT_MS} so a caller normally
+ * outlasts the holder's whole vendor round-trip and gets to use its result.
+ */
+const OAUTH_REFRESH_LOCK_WAIT_TIMEOUT_MS = 15_000;
+
+/** Gap between attempts to take a contended refresh lock. */
+const OAUTH_REFRESH_LOCK_RETRY_INTERVAL_MS = 250;
+
+/**
+ * How long a refresher waits for a free connection from the pool before giving up.
+ * Queueing behind another refresh for the same connection happens *inside* the
+ * transaction (on the advisory lock), not here.
+ */
+const OAUTH_TOKEN_REFRESH_TRANSACTION_MAX_WAIT_MS = 10_000;
+
+/**
+ * Whether these credentials' access token has expired or is about to, within
+ * {@link ACCESS_TOKEN_EXPIRY_BUFFER_MS}. Pure so it can be evaluated against
+ * credentials already read inside a transaction rather than costing another query.
+ *
+ * Returns false when no expiry is recorded — that is the historical behaviour, and
+ * it means such a connection is never proactively refreshed at all.
+ */
+function isAccessTokenExpired(decryptedCredentials: DecryptedCredentials): boolean {
+  if (!decryptedCredentials.oauthExpiresAt) {
+    return false; // No expiration set, assume valid
+  }
+  return Date.now() >= new Date(decryptedCredentials.oauthExpiresAt).getTime() - ACCESS_TOKEN_EXPIRY_BUFFER_MS;
+}
+
+/** Resolve after `durationMs`, used to back off between refresh-lock attempts. */
+function delayMs(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
+/**
+ * Bound a provider token-endpoint call so it can never outlast the transaction
+ * holding the refresh lock. See {@link OAUTH_PROVIDER_TOKEN_REQUEST_TIMEOUT_MS}
+ * for why exceeding that window loses a token pair rather than merely being slow.
+ *
+ * Enforced here, at the one place every provider is invoked from the locked path,
+ * rather than inside each of the twelve provider implementations: this way the
+ * bound holds no matter how a provider makes its request, and a provider added
+ * later cannot forget it. The trade-off is that racing does not abort the
+ * underlying socket, so a vendor that answers late may still have rotated the
+ * refresh token — unavoidable for any external call, and no worse than the network
+ * failures that could already strand a refresh.
+ */
+async function withProviderTokenRequestTimeout<T>(tokenRequest: Promise<T>, description: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const timeoutRejection = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(
+      () =>
+        reject(
+          new Error(`${description} did not respond within ${OAUTH_PROVIDER_TOKEN_REQUEST_TIMEOUT_MS}ms; not retried`),
+        ),
+      OAUTH_PROVIDER_TOKEN_REQUEST_TIMEOUT_MS,
+    );
+  });
+
+  try {
+    return await Promise.race([tokenRequest, timeoutRejection]);
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 @Injectable()
@@ -410,74 +523,188 @@ export class OAuthService {
   }
 
   /**
-   * Refreshes expired OAuth tokens for a connector account using the stored refresh token.
-   * Fetches the account, decrypts credentials, calls the provider's refresh endpoint,
-   * and updates the database with the new access token (and optionally new refresh token).
+   * Refreshes OAuth tokens for a connector account using the stored refresh token,
+   * unconditionally — the caller has decided a refresh is wanted. Serialized per
+   * connection; see {@link refreshOAuthTokensUnderConnectionLock}.
    * Throws if the account is not OAuth-based or lacks a refresh token.
    */
   async refreshOAuthTokens(connectorAccountId: string): Promise<void> {
-    const account = await this.db.client.connectorAccount.findUnique({
-      where: { id: connectorAccountId },
+    await this.refreshOAuthTokensUnderConnectionLock(connectorAccountId, {
+      skipIfAnotherRefreshAlreadySucceeded: false,
     });
+  }
 
-    if (!account || account.authType !== AuthType.OAUTH) {
-      throw new BadRequestException('Invalid OAuth connector account for token refresh');
+  /**
+   * Refresh this connection's tokens while holding a per-connection lock, so only
+   * one refresh anywhere in the fleet is ever in flight for a given connection.
+   *
+   * **Why a database lock and not an in-process guard.** Refreshing is a
+   * read-modify-write of `encryptedCredentials`: read the refresh token, hand it to
+   * the provider, persist what comes back. Most providers issue a *new* refresh
+   * token and retire the one presented — Airtable (single-use), Intuit, GoHighLevel
+   * and Pipedrive all rotate. So two racing refreshes both read refresh token `A`;
+   * the winner exchanges it for `B` and stores it; the loser then exchanges the
+   * already-consumed `A` (failing, or succeeding and yielding `C`) and overwrites
+   * `B`. Either way the connection is left holding a refresh token the provider has
+   * retired, and the user has to reconnect. Prod runs two API and two worker
+   * instances, so an in-process guard cannot see the other three; only a lock in
+   * shared state can. `pg_advisory_xact_lock` is the same primitive
+   * `SyncDraftService` uses, and it releases automatically on commit or rollback.
+   *
+   * Once the lock is held, credentials are re-read **inside** the transaction: the
+   * winner may have just rotated them, so anything read before the lock is
+   * potentially a retired token. With `skipIfAnotherRefreshAlreadySucceeded`, a
+   * caller that only wanted a *usable* token (see {@link getValidAccessToken})
+   * returns without burning a refresh token at all when the winner already
+   * delivered one.
+   *
+   * **Contenders wait outside the transaction.** The lock is taken with
+   * `pg_try_advisory_xact_lock`, which answers immediately, rather than the
+   * blocking `pg_advisory_xact_lock`. Blocking would have queued *inside* the
+   * transaction, which costs two things we can't afford: the wait would eat the
+   * same budget as the provider call (so a caller could acquire the lock with
+   * seconds left, start an 8-second request, and lose the result to P2028 — the
+   * very stranding this guards against), and it would pin a Prisma pool connection
+   * for the whole wait. That pool is Prisma's default `cpus * 2 + 1` on a 1-vCPU
+   * Cloud Run instance, so connections parked on a lock are connections unrelated
+   * queries can't have. Losing the race therefore ends the transaction at once and
+   * retries from outside, holding nothing.
+   */
+  private async refreshOAuthTokensUnderConnectionLock(
+    connectorAccountId: string,
+    options: { skipIfAnotherRefreshAlreadySucceeded: boolean },
+  ): Promise<void> {
+    const waitDeadlineMs = Date.now() + OAUTH_REFRESH_LOCK_WAIT_TIMEOUT_MS;
+
+    for (;;) {
+      if (await this.attemptRefreshWhileHoldingConnectionLock(connectorAccountId, options)) {
+        return;
+      }
+
+      // Someone else holds the lock. Everything below runs with no transaction and
+      // no pool connection held.
+      if (options.skipIfAnotherRefreshAlreadySucceeded && !(await this.isTokenExpired(connectorAccountId))) {
+        // The holder already published a usable token — that is all this caller wanted.
+        return;
+      }
+
+      if (Date.now() >= waitDeadlineMs) {
+        throw new ServiceUnavailableException(
+          `Timed out waiting for another in-progress token refresh for connection ${connectorAccountId}`,
+        );
+      }
+
+      await delayMs(OAUTH_REFRESH_LOCK_RETRY_INTERVAL_MS);
     }
+  }
 
-    const decryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
-      account.encryptedCredentials as unknown as EncryptedData,
+  /**
+   * One attempt at the guarded refresh. Returns false — having done nothing and
+   * released the transaction immediately — when another refresher holds the lock.
+   */
+  private async attemptRefreshWhileHoldingConnectionLock(
+    connectorAccountId: string,
+    options: { skipIfAnotherRefreshAlreadySucceeded: boolean },
+  ): Promise<boolean> {
+    return this.db.client.$transaction(
+      async (tx) => {
+        // Transaction-scoped lock (auto-released on commit/rollback), keyed by the
+        // connection. Non-blocking: see the caller for why we must not queue here.
+        const lockKey = `oauth-token-refresh:${connectorAccountId}`;
+        const [lockAttempt] = await tx.$queryRaw<
+          { acquired: boolean }[]
+        >`SELECT pg_try_advisory_xact_lock(hashtext(${lockKey})::bigint) AS acquired`;
+        if (!lockAttempt?.acquired) {
+          return false;
+        }
+
+        // Re-read under the lock — a refresh that completed while we queued has
+        // already rotated these, and the pre-lock copy would be a retired token.
+        const account = await tx.connectorAccount.findUnique({ where: { id: connectorAccountId } });
+
+        if (!account || account.authType !== AuthType.OAUTH) {
+          throw new BadRequestException('Invalid OAuth connector account for token refresh');
+        }
+
+        const decryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
+          account.encryptedCredentials as unknown as EncryptedData,
+        );
+
+        if (options.skipIfAnotherRefreshAlreadySucceeded && !isAccessTokenExpired(decryptedCredentials)) {
+          // Another process won the race and stored a usable token. Taking our turn
+          // would spend a refresh token for nothing.
+          WSLogger.info({
+            source: 'OAuthService.attemptRefreshWhileHoldingConnectionLock',
+            message: 'Skipping refresh — another refresh for this connection already produced a valid access token',
+            connectorAccountId,
+            service: account.service,
+          });
+          return true;
+        }
+
+        const provider = this.providers.get(account.service);
+        if (!provider) {
+          throw new BadRequestException(`No OAuth provider found for service: ${account.service}`);
+        }
+
+        // Both re-mint and refresh MUST use the credentials of the OAuth app that issued this
+        // connection's tokens — the connection records which app generation that was, so
+        // swapping the current app never breaks existing connections. Custom (BYO) apps use
+        // their stored client id/secret (also fixes the prior bug where custom creds were
+        // ignored on refresh).
+        const credentials = this.resolveOAuthAppCredentialsForConnection(account, decryptedCredentials);
+
+        if (provider.strategyKind?.() === 'client_credentials') {
+          // 2-legged (client-credentials) connectors (e.g. Wix) have no refresh token —
+          // "refresh" is a re-mint from the stored install identifier (oauthWorkspaceId),
+          // using that app generation's credentials.
+          const installIdentifier = decryptedCredentials.oauthWorkspaceId;
+          if (!installIdentifier) {
+            // A connection created before this identifier was captured (e.g. a legacy
+            // Wix custom-auth account) can't be re-minted and must be reconnected.
+            throw new BadRequestException('This connection is missing its install identifier and must be reconnected.');
+          }
+          const tokenResponse = await withProviderTokenRequestTimeout(
+            this.mintClientCredentialsToken(account.service, provider, installIdentifier, credentials),
+            `${account.service} token mint`,
+          );
+          decryptedCredentials.oauthAccessToken = tokenResponse.access_token;
+          decryptedCredentials.oauthExpiresAt = this.expiresInToOAuthExpiresAt(tokenResponse.expires_in);
+          // No refresh token to persist for client-credentials.
+        } else {
+          if (!decryptedCredentials.oauthRefreshToken) {
+            throw new BadRequestException('No refresh token available');
+          }
+          // Multi-region providers (Zoho) need the stored data center to refresh
+          // against the correct regional accounts host (persisted in oauthWorkspaceId).
+          const tokenResponse = await withProviderTokenRequestTimeout(
+            provider.refreshTokens(decryptedCredentials.oauthRefreshToken, credentials, {
+              dataCenter: decryptedCredentials.oauthWorkspaceId,
+            }),
+            `${account.service} token refresh`,
+          );
+          decryptedCredentials.oauthAccessToken = tokenResponse.access_token;
+          decryptedCredentials.oauthRefreshToken =
+            tokenResponse.refresh_token || decryptedCredentials.oauthRefreshToken;
+          decryptedCredentials.oauthExpiresAt = this.expiresInToOAuthExpiresAt(tokenResponse.expires_in);
+        }
+
+        const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(decryptedCredentials);
+        await tx.connectorAccount.update({
+          where: { id: connectorAccountId },
+          data: { encryptedCredentials },
+        });
+        return true;
+      },
+      {
+        // The provider's token endpoint is called while the lock is held, so the
+        // transaction has to outlast a vendor round-trip — but still bound it,
+        // since an indefinitely hung refresh would block every other refresher for
+        // this connection and pin a pool connection while doing it.
+        timeout: OAUTH_TOKEN_REFRESH_TRANSACTION_TIMEOUT_MS,
+        maxWait: OAUTH_TOKEN_REFRESH_TRANSACTION_MAX_WAIT_MS,
+      },
     );
-
-    const provider = this.providers.get(account.service);
-    if (!provider) {
-      throw new BadRequestException(`No OAuth provider found for service: ${account.service}`);
-    }
-
-    // Both re-mint and refresh MUST use the credentials of the OAuth app that issued this
-    // connection's tokens — the connection records which app generation that was, so
-    // swapping the current app never breaks existing connections. Custom (BYO) apps use
-    // their stored client id/secret (also fixes the prior bug where custom creds were
-    // ignored on refresh).
-    const credentials = this.resolveOAuthAppCredentialsForConnection(account, decryptedCredentials);
-
-    if (provider.strategyKind?.() === 'client_credentials') {
-      // 2-legged (client-credentials) connectors (e.g. Wix) have no refresh token —
-      // "refresh" is a re-mint from the stored install identifier (oauthWorkspaceId),
-      // using that app generation's credentials.
-      const installIdentifier = decryptedCredentials.oauthWorkspaceId;
-      if (!installIdentifier) {
-        // A connection created before this identifier was captured (e.g. a legacy
-        // Wix custom-auth account) can't be re-minted and must be reconnected.
-        throw new BadRequestException('This connection is missing its install identifier and must be reconnected.');
-      }
-      const tokenResponse = await this.mintClientCredentialsToken(
-        account.service,
-        provider,
-        installIdentifier,
-        credentials,
-      );
-      decryptedCredentials.oauthAccessToken = tokenResponse.access_token;
-      decryptedCredentials.oauthExpiresAt = this.expiresInToOAuthExpiresAt(tokenResponse.expires_in);
-      // No refresh token to persist for client-credentials.
-    } else {
-      if (!decryptedCredentials.oauthRefreshToken) {
-        throw new BadRequestException('No refresh token available');
-      }
-      // Multi-region providers (Zoho) need the stored data center to refresh
-      // against the correct regional accounts host (persisted in oauthWorkspaceId).
-      const tokenResponse = await provider.refreshTokens(decryptedCredentials.oauthRefreshToken, credentials, {
-        dataCenter: decryptedCredentials.oauthWorkspaceId,
-      });
-      decryptedCredentials.oauthAccessToken = tokenResponse.access_token;
-      decryptedCredentials.oauthRefreshToken = tokenResponse.refresh_token || decryptedCredentials.oauthRefreshToken;
-      decryptedCredentials.oauthExpiresAt = this.expiresInToOAuthExpiresAt(tokenResponse.expires_in);
-    }
-
-    const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(decryptedCredentials);
-    await this.db.client.connectorAccount.update({
-      where: { id: connectorAccountId },
-      data: { encryptedCredentials },
-    });
   }
 
   /**
@@ -717,13 +944,7 @@ export class OAuthService {
       account.encryptedCredentials as unknown as EncryptedData,
     );
 
-    if (!decryptedCredentials.oauthExpiresAt) {
-      return false; // No expiration set, assume valid
-    }
-
-    // Add 5 minute buffer to refresh before actual expiration
-    const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
-    return new Date() >= new Date(new Date(decryptedCredentials.oauthExpiresAt).getTime() - bufferTime);
+    return isAccessTokenExpired(decryptedCredentials);
   }
 
   /**
@@ -750,7 +971,12 @@ export class OAuthService {
 
     // Check if token needs refresh
     if (await this.isTokenExpired(connectorAccountId)) {
-      await this.refreshOAuthTokens(connectorAccountId);
+      // This caller wants a *usable* token, not a refresh for its own sake: if a
+      // concurrent refresh already delivered one, take it rather than spending
+      // another (often single-use) refresh token.
+      await this.refreshOAuthTokensUnderConnectionLock(connectorAccountId, {
+        skipIfAnotherRefreshAlreadySucceeded: true,
+      });
 
       // Fetch updated account with new token
       const updatedAccount = await this.db.client.connectorAccount.findUnique({

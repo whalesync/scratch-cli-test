@@ -30,6 +30,7 @@ import type {
 } from '@notionhq/client';
 import { AxiosInstance, isAxiosError } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { ConnectorAuthTokenOrProvider, toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 
 const BASE_URL = 'https://api.notion.com/v1';
@@ -392,15 +393,19 @@ export class NotionApiClient {
   private readonly http: AxiosInstance;
   private readonly rateLimiter?: RateLimiter;
 
-  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter; notionVersion?: string }) {
-    this.http = createApiClient({
-      baseURL: BASE_URL,
-      timeout: NOTION_REQUEST_TIMEOUT_MS,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Notion-Version': opts?.notionVersion ?? DEFAULT_NOTION_API_VERSION,
+  constructor(
+    apiKeyOrAccessTokenProvider: ConnectorAuthTokenOrProvider,
+    opts?: { rateLimiter?: RateLimiter; notionVersion?: string },
+  ) {
+    const authTokenProvider = toConnectorAuthTokenProvider(apiKeyOrAccessTokenProvider);
+    this.http = createApiClient(
+      {
+        baseURL: BASE_URL,
+        timeout: NOTION_REQUEST_TIMEOUT_MS,
+        headers: { 'Notion-Version': opts?.notionVersion ?? DEFAULT_NOTION_API_VERSION },
       },
-    });
+      { authorizationHeaderValueProvider: async () => `Bearer ${await authTokenProvider()}` },
+    );
     this.rateLimiter = opts?.rateLimiter;
   }
 

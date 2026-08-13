@@ -4,6 +4,7 @@ import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -252,9 +253,13 @@ export class GoHighLevelConnector extends Connector {
 
   private readonly client: GoHighLevelApiClient;
 
-  constructor(privateIntegrationToken: string, locationId: string, opts?: { rateLimiter?: RateLimiter }) {
+  constructor(
+    privateIntegrationTokenOrAccessTokenProvider: ConnectorAuthTokenOrProvider,
+    locationId: string,
+    opts?: { rateLimiter?: RateLimiter },
+  ) {
     super();
-    this.client = new GoHighLevelApiClient(privateIntegrationToken, locationId, opts);
+    this.client = new GoHighLevelApiClient(privateIntegrationTokenOrAccessTokenProvider, locationId, opts);
   }
 
   async testConnection(): Promise<void> {
@@ -1019,8 +1024,11 @@ connectorRegistry.register({
           Service.GOHIGHLEVEL,
         );
       }
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new GoHighLevelConnector(accessToken, locationId, { rateLimiter });
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
+      return new GoHighLevelConnector(accessTokenProvider, locationId, { rateLimiter });
     }
 
     // Private Integration Token: a long-lived bearer token + manually-entered Location ID.

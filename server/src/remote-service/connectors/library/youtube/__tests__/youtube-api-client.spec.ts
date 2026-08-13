@@ -11,14 +11,29 @@ const mockPost = jest.fn();
 const mockDelete = jest.fn();
 const mockRequest = jest.fn();
 
+/**
+ * Every `authorizationHeaderValueProvider` handed to `createApiClient`, in call
+ * order. Captured here (rather than dug out of `mock.calls`) so the provider stays
+ * typed — the client resolves its bearer token per request now, so the provider is
+ * the thing worth asserting on.
+ */
+const mockAuthorizationHeaderValueProviders: (() => Promise<string>)[] = [];
+
 jest.mock('../../../create-api-client', () => ({
-  createApiClient: jest.fn(() => ({
-    get: mockGet,
-    put: mockPut,
-    post: mockPost,
-    delete: mockDelete,
-    request: mockRequest,
-  })),
+  createApiClient: jest.fn(
+    (_config?: unknown, options?: { authorizationHeaderValueProvider?: () => Promise<string> }) => {
+      if (options?.authorizationHeaderValueProvider) {
+        mockAuthorizationHeaderValueProviders.push(options.authorizationHeaderValueProvider);
+      }
+      return {
+        get: mockGet,
+        put: mockPut,
+        post: mockPost,
+        delete: mockDelete,
+        request: mockRequest,
+      };
+    },
+  ),
 }));
 
 import { createApiClient } from '../../../create-api-client';
@@ -54,16 +69,31 @@ describe('YoutubeApiClient', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAuthorizationHeaderValueProviders.length = 0;
     client = new YoutubeApiClient('test-token');
   });
 
   describe('constructor', () => {
-    it('configures the v3 base URL, Bearer auth, and repeated-array query params', () => {
-      expect(createApiClient).toHaveBeenCalledWith({
-        baseURL: 'https://youtube.googleapis.com/youtube/v3',
-        headers: { Authorization: 'Bearer test-token' },
-        paramsSerializer: { indexes: null },
-      });
+    it('configures the v3 base URL, Bearer auth, and repeated-array query params', async () => {
+      // The bearer token is supplied as a provider rather than a static header, so
+      // a job longer than the token's lifetime picks up the refresh (DEV-11270).
+      expect(createApiClient).toHaveBeenCalledWith(
+        {
+          baseURL: 'https://youtube.googleapis.com/youtube/v3',
+          paramsSerializer: { indexes: null },
+        },
+        { authorizationHeaderValueProvider: mockAuthorizationHeaderValueProviders[0] },
+      );
+      await expect(mockAuthorizationHeaderValueProviders[0]()).resolves.toBe('Bearer test-token');
+    });
+
+    it('re-resolves the bearer token on every request so a refreshed OAuth token is used', async () => {
+      const accessTokens = ['first-token', 'second-token'];
+      new YoutubeApiClient(() => Promise.resolve(accessTokens.shift() ?? 'exhausted'));
+
+      const provider = mockAuthorizationHeaderValueProviders[1];
+      await expect(provider()).resolves.toBe('Bearer first-token');
+      await expect(provider()).resolves.toBe('Bearer second-token');
     });
   });
 

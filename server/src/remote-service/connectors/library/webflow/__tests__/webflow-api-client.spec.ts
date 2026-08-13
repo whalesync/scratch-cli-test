@@ -11,14 +11,29 @@ const mockPatch = jest.fn();
 const mockPut = jest.fn();
 const mockDelete = jest.fn();
 
+/**
+ * Every `authorizationHeaderValueProvider` handed to `createApiClient`, in call
+ * order. Captured here (rather than dug out of `mock.calls`) so the provider stays
+ * typed — the client resolves its bearer token per request now, so the provider is
+ * the thing worth asserting on.
+ */
+const mockAuthorizationHeaderValueProviders: (() => Promise<string>)[] = [];
+
 jest.mock('../../../create-api-client', () => ({
-  createApiClient: jest.fn(() => ({
-    get: mockGet,
-    post: mockPost,
-    patch: mockPatch,
-    put: mockPut,
-    delete: mockDelete,
-  })),
+  createApiClient: jest.fn(
+    (_config?: unknown, options?: { authorizationHeaderValueProvider?: () => Promise<string> }) => {
+      if (options?.authorizationHeaderValueProvider) {
+        mockAuthorizationHeaderValueProviders.push(options.authorizationHeaderValueProvider);
+      }
+      return {
+        get: mockGet,
+        post: mockPost,
+        patch: mockPatch,
+        put: mockPut,
+        delete: mockDelete,
+      };
+    },
+  ),
 }));
 
 import { createApiClient } from '../../../create-api-client';
@@ -28,21 +43,35 @@ describe('WebflowApiClient', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAuthorizationHeaderValueProviders.length = 0;
     client = new WebflowApiClient('test-token');
   });
 
   describe('constructor', () => {
-    it('configures the data-API instance with /v2 base URL and bearer auth (no accept-version header)', () => {
-      // First createApiClient call: the authenticated data-API instance.
-      expect(createApiClient).toHaveBeenNthCalledWith(1, {
-        baseURL: 'https://api.webflow.com/v2',
-        headers: {
-          Authorization: 'Bearer test-token',
-          'Content-Type': 'application/json',
+    it('configures the data-API instance with /v2 base URL and bearer auth (no accept-version header)', async () => {
+      // First createApiClient call: the authenticated data-API instance. The
+      // bearer token is supplied as a provider, not a static header, so a long
+      // job picks up a refreshed OAuth access token (DEV-11270).
+      expect(createApiClient).toHaveBeenNthCalledWith(
+        1,
+        {
+          baseURL: 'https://api.webflow.com/v2',
+          headers: { 'Content-Type': 'application/json' },
         },
-      });
+        { authorizationHeaderValueProvider: mockAuthorizationHeaderValueProviders[0] },
+      );
+      await expect(mockAuthorizationHeaderValueProviders[0]()).resolves.toBe('Bearer test-token');
       // Second call: the auth-free instance used only for S3 presigned uploads.
       expect(createApiClient).toHaveBeenNthCalledWith(2);
+    });
+
+    it('re-resolves the bearer token on every request so a refreshed OAuth token is used', async () => {
+      const accessTokens = ['first-token', 'second-token'];
+      new WebflowApiClient(() => Promise.resolve(accessTokens.shift() ?? 'exhausted'));
+
+      const provider = mockAuthorizationHeaderValueProviders[1];
+      await expect(provider()).resolves.toBe('Bearer first-token');
+      await expect(provider()).resolves.toBe('Bearer second-token');
     });
   });
 

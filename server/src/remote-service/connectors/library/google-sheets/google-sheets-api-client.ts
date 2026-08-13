@@ -1,5 +1,6 @@
 import { AxiosInstance, isAxiosError } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { ConnectorAuthTokenOrProvider, toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 import {
   GoogleSheetsBatchUpdateRequest,
@@ -70,15 +71,18 @@ export class GoogleSheetsApiClient {
   private readonly httpClient: AxiosInstance;
   private readonly rateLimiter?: RateLimiter;
 
-  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
-    this.httpClient = createApiClient({
-      baseURL: SHEETS_API_BASE_URL,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
+  constructor(accessTokenOrProvider: ConnectorAuthTokenOrProvider, opts?: { rateLimiter?: RateLimiter }) {
+    const accessTokenProvider = toConnectorAuthTokenProvider(accessTokenOrProvider);
+    this.httpClient = createApiClient(
+      {
+        baseURL: SHEETS_API_BASE_URL,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
       },
-    });
+      { authorizationHeaderValueProvider: async () => `Bearer ${await accessTokenProvider()}` },
+    );
     this.rateLimiter = opts?.rateLimiter;
   }
 

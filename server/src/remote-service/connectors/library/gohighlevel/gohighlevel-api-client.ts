@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, RawAxiosRequestHeaders } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
+import { ConnectorAuthTokenOrProvider, toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 import { GoHighLevelLocationListEntityConfig } from './gohighlevel-entities';
 import {
@@ -216,21 +217,28 @@ export class GoHighLevelApiClient {
   private readonly locationId: string;
   private readonly rateLimiter?: RateLimiter;
 
-  constructor(privateIntegrationToken: string, locationId: string, opts?: { rateLimiter?: RateLimiter }) {
+  constructor(
+    privateIntegrationTokenOrAccessTokenProvider: ConnectorAuthTokenOrProvider,
+    locationId: string,
+    opts?: { rateLimiter?: RateLimiter },
+  ) {
     this.locationId = locationId;
     this.rateLimiter = opts?.rateLimiter;
 
     const headers: RawAxiosRequestHeaders = {
-      Authorization: `Bearer ${privateIntegrationToken}`,
       Version: GOHIGHLEVEL_API_VERSION_HEADER,
       'Content-Type': 'application/json',
       Accept: 'application/json',
     };
 
-    this.client = createApiClient({
-      baseURL: GOHIGHLEVEL_API_BASE_URL,
-      headers,
-    });
+    const authTokenProvider = toConnectorAuthTokenProvider(privateIntegrationTokenOrAccessTokenProvider);
+    this.client = createApiClient(
+      {
+        baseURL: GOHIGHLEVEL_API_BASE_URL,
+        headers,
+      },
+      { authorizationHeaderValueProvider: async () => `Bearer ${await authTokenProvider()}` },
+    );
 
     // Surface HighLevel's actual error body. Axios's default message is just
     // "Request failed with status code 4xx", which hides WHY HighLevel rejected

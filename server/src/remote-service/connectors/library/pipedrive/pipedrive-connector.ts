@@ -3,6 +3,7 @@ import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -76,9 +77,12 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
 
   private readonly client: PipedriveApiClient;
 
-  constructor(token: string, opts?: { rateLimiter?: RateLimiter; authType?: 'apiKey' | 'oauth' }) {
+  constructor(
+    tokenOrProvider: ConnectorAuthTokenOrProvider,
+    opts?: { rateLimiter?: RateLimiter; authType?: 'apiKey' | 'oauth' },
+  ) {
     super();
-    this.client = new PipedriveApiClient(token, opts);
+    this.client = new PipedriveApiClient(tokenOrProvider, opts);
   }
 
   /**
@@ -384,8 +388,11 @@ connectorRegistry.register({
     }
     const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
     if (ctx.connectorAccount.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new PipedriveConnector(accessToken, { rateLimiter, authType: 'oauth' });
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
+      return new PipedriveConnector(accessTokenProvider, { rateLimiter, authType: 'oauth' });
     } else {
       if (!ctx.decryptedCredentials?.apiKey) {
         throw new ConnectorInstantiationError('API key is required for Pipedrive', Service.PIPEDRIVE);

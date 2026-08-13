@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
+import { ConnectorAuthTokenOrProvider, toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 import {
   AirtableApiCreateField,
@@ -32,14 +33,18 @@ export class AirtableApiClient {
   private readonly rateLimiter?: RateLimiter;
   private readonly retryOpts: WithRetryOpts;
 
-  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter; retryOverrides?: Partial<WithRetryOpts> }) {
-    this.client = createApiClient({
-      baseURL: AIRTABLE_API_BASE_URL,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        accept: 'application/json',
+  constructor(
+    apiKeyOrAccessTokenProvider: ConnectorAuthTokenOrProvider,
+    opts?: { rateLimiter?: RateLimiter; retryOverrides?: Partial<WithRetryOpts> },
+  ) {
+    const authTokenProvider = toConnectorAuthTokenProvider(apiKeyOrAccessTokenProvider);
+    this.client = createApiClient(
+      {
+        baseURL: AIRTABLE_API_BASE_URL,
+        headers: { accept: 'application/json' },
       },
-    });
+      { authorizationHeaderValueProvider: async () => `Bearer ${await authTokenProvider()}` },
+    );
     this.rateLimiter = opts?.rateLimiter;
     this.retryOpts = opts?.retryOverrides ? { ...AIRTABLE_RETRY_OPTS, ...opts.retryOverrides } : AIRTABLE_RETRY_OPTS;
   }

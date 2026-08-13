@@ -74,8 +74,12 @@ const tagsQueryBuilder = {
   },
   find: () => mockTagsFind(),
 };
+const mockSetTokens = jest.fn();
 jest.mock('@wix/sdk', () => ({
   createClient: () => ({
+    // The connector installs the connection's current access token on the client
+    // before every request, so a job outliving one token keeps working (DEV-11270).
+    auth: { setTokens: mockSetTokens },
     draftPosts: {
       queryDraftPosts: (options?: { fieldsets?: string[] }) => {
         mockQueryDraftPosts(options);

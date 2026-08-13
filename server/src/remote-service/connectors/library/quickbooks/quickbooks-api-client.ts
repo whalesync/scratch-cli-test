@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { toConnectorAuthTokenProvider } from '../../connector-auth-token';
 import { createApiClient } from '../../create-api-client';
 import { QuickBooksCredentials, QuickBooksQueryResponse } from './quickbooks-types';
 
@@ -83,14 +84,17 @@ export class QuickBooksApiClient {
 
     const baseURL = opts?.sandbox ? QBO_SANDBOX_BASE : QBO_PRODUCTION_BASE;
 
-    this.client = createApiClient({
-      baseURL: `${baseURL}/v3/company/${credentials.realmId}`,
-      headers: {
-        Authorization: `Bearer ${credentials.accessToken}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
+    const accessTokenProvider = toConnectorAuthTokenProvider(credentials.accessToken);
+    this.client = createApiClient(
+      {
+        baseURL: `${baseURL}/v3/company/${credentials.realmId}`,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
       },
-    });
+      { authorizationHeaderValueProvider: async () => `Bearer ${await accessTokenProvider()}` },
+    );
   }
 
   /**

@@ -13,6 +13,7 @@ import {
   extractStandaloneEntity,
 } from '../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
+import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -183,9 +184,12 @@ export class WebflowConnector extends Connector {
    */
   private readonly structureVersion: number;
 
-  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter; structureVersion?: number }) {
+  constructor(
+    accessTokenOrProvider: ConnectorAuthTokenOrProvider,
+    opts?: { rateLimiter?: RateLimiter; structureVersion?: number },
+  ) {
     super();
-    this.client = new WebflowApiClient(accessToken, { rateLimiter: opts?.rateLimiter });
+    this.client = new WebflowApiClient(accessTokenOrProvider, { rateLimiter: opts?.rateLimiter });
     this.structureVersion = opts?.structureVersion ?? 1;
   }
 
@@ -1305,8 +1309,11 @@ connectorRegistry.register({
     // (DEV-9698): v2 nests collections, v1 stays flat.
     const structureVersion = ctx.connectorAccount.version;
     if (ctx.connectorAccount.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new WebflowConnector(accessToken, { rateLimiter, structureVersion });
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
+      return new WebflowConnector(accessTokenProvider, { rateLimiter, structureVersion });
     } else {
       if (!ctx.decryptedCredentials?.apiKey) {
         throw new ConnectorInstantiationError('API key is required for Webflow', Service.WEBFLOW);

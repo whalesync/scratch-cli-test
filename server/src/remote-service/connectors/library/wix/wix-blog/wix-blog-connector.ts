@@ -10,6 +10,11 @@ import { assertUnreachable } from 'src/utils/asserts';
 import { JsonSafeObject } from 'src/utils/objects';
 import { hashUrl } from '../../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../../connector';
+import {
+  ConnectorAuthTokenOrProvider,
+  ConnectorAuthTokenProvider,
+  toConnectorAuthTokenProvider,
+} from '../../../connector-auth-token';
 import { connectorRegistry } from '../../../connector-registry';
 import { ConnectorInstantiationError } from '../../../error';
 import { Service } from '../../../service-constants';
@@ -80,6 +85,20 @@ export const WIX_BULK_UPDATE_MAX_SIZE = 20;
 export const WIX_BULK_DELETE_MAX_SIZE = 100;
 export const WIX_CREATE_BATCH_SIZE = 1;
 
+/**
+ * Wrap a host-minted access token in the token pair the Wix SDK's `OAuthStrategy`
+ * expects. `expiresAt` is only an SDK-side freshness hint — the host owns the
+ * lifecycle and hands us a valid token on demand, and the SDK cannot renew
+ * anything itself because the refresh token's role is NONE.
+ */
+function wixTokensForAccessToken(accessToken: string) {
+  return {
+    // Wix app (client-credentials) access tokens are valid 4 hours.
+    accessToken: { value: accessToken, expiresAt: Date.now() + 4 * 60 * 60 * 1000 },
+    refreshToken: { value: '', role: TokenRole.NONE },
+  };
+}
+
 export class WixBlogConnector extends Connector {
   readonly service = Service.WIX_BLOG;
   static readonly displayName = 'Wix Blog';
@@ -110,26 +129,22 @@ export class WixBlogConnector extends Connector {
   >;
   private readonly schemaParser = new WixBlogSchemaParser();
   private readonly rateLimiter?: RateLimiter;
+  private readonly accessTokenProvider: ConnectorAuthTokenProvider;
+  /**
+   * The access token currently installed on {@link wixClient}, so a request only
+   * pays for `setTokens` when the host has actually handed us a new one.
+   */
+  private accessTokenInstalledOnWixClient: string | null = null;
 
-  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
+  constructor(accessTokenOrProvider: ConnectorAuthTokenOrProvider, opts?: { rateLimiter?: RateLimiter }) {
     super();
+    this.accessTokenProvider = toConnectorAuthTokenProvider(accessTokenOrProvider);
     this.wixClient = createClient({
+      // Seeded empty: the constructor can't await the provider, and every request
+      // installs the current token first (see installCurrentAccessTokenOnWixClient).
       auth: OAuthStrategy({
         clientId: '', // Not needed for just using access tokens
-        tokens: {
-          accessToken: {
-            value: accessToken,
-            // Wix app (client-credentials) access tokens are valid 4 hours. This is
-            // only an SDK-side freshness hint — the host (getValidAccessToken) always
-            // hands us a freshly re-minted token, since the SDK can't refresh here
-            // (refreshToken role is NONE).
-            expiresAt: Date.now() + 4 * 60 * 60 * 1000,
-          },
-          refreshToken: {
-            value: '',
-            role: TokenRole.NONE,
-          },
-        },
+        tokens: wixTokensForAccessToken(''),
       }),
       modules: {
         draftPosts,
@@ -141,7 +156,27 @@ export class WixBlogConnector extends Connector {
     this.rateLimiter = opts?.rateLimiter;
   }
 
+  /**
+   * Push the connection's currently valid access token onto the SDK client.
+   *
+   * Wix app (client-credentials) access tokens are valid 4 hours and the SDK
+   * cannot renew them itself (the refresh token's role is NONE), so the host owns
+   * re-minting. Installing the current token before every request means a job that
+   * outlives one token keeps working, instead of 401-ing for the rest of the run
+   * on the token captured at instantiation (DEV-11270). `setTokens` is skipped
+   * while the token is unchanged, which is the overwhelmingly common case.
+   */
+  private async installCurrentAccessTokenOnWixClient(): Promise<void> {
+    const currentAccessToken = await this.accessTokenProvider();
+    if (currentAccessToken === this.accessTokenInstalledOnWixClient) {
+      return;
+    }
+    this.wixClient.auth.setTokens(wixTokensForAccessToken(currentAccessToken));
+    this.accessTokenInstalledOnWixClient = currentAccessToken;
+  }
+
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    await this.installCurrentAccessTokenOnWixClient();
     if (this.rateLimiter) {
       return this.rateLimiter.withRetry(fn, WIX_RETRY_OPTS);
     }
@@ -669,8 +704,11 @@ connectorRegistry.register({
     }
     const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
     if (ctx.connectorAccount.authType === 'OAUTH') {
-      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new WixBlogConnector(accessToken, { rateLimiter });
+      const accessTokenProvider = ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id);
+      // Resolve once up front so a connection that can no longer mint a token fails
+      // here rather than on the first API call; every later call re-resolves it.
+      await accessTokenProvider();
+      return new WixBlogConnector(accessTokenProvider, { rateLimiter });
     } else {
       throw new Error('Wix requires either OAuth or API key authentication');
     }
