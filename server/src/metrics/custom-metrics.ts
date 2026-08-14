@@ -73,6 +73,14 @@ export enum CustomMetric {
   WORKER_SHUTDOWN_DRAINED = 'worker_shutdown_drained',
   WORKER_SHUTDOWN_TIMED_OUT = 'worker_shutdown_timed_out',
 
+  // Deploy-rollover DB resilience (DEV-11312). On a cold Cloud Run worker revision the private-IP
+  // egress to Cloud SQL is briefly unavailable, so the worker's startup DbJob lookup can throw a
+  // transient Prisma connection error (P1001/P2024). JOB_STARTUP_DB_RETRY fires once per retry;
+  // JOB_STARTUP_DB_RETRY_EXHAUSTED fires when retries run out and the job still fails. The
+  // retried:exhausted ratio is the chartable signal that deploy churn no longer kills real jobs.
+  JOB_STARTUP_DB_RETRY = 'job_startup_db_retry',
+  JOB_STARTUP_DB_RETRY_EXHAUSTED = 'job_startup_db_retry_exhausted',
+
   // Sync — unmatched-destination (Pass 3) accounting. Summed across all table
   // mappings within one sync run.
   SYNC_UNMATCHED_WITH_KEY_COUNT = 'sync_unmatched_with_key_count',
@@ -141,6 +149,8 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL:
     case CustomMetric.WORKER_SHUTDOWN_DRAINED:
     case CustomMetric.WORKER_SHUTDOWN_TIMED_OUT:
+    case CustomMetric.JOB_STARTUP_DB_RETRY:
+    case CustomMetric.JOB_STARTUP_DB_RETRY_EXHAUSTED:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -205,6 +215,8 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL:
     case CustomMetric.WORKER_SHUTDOWN_DRAINED:
     case CustomMetric.WORKER_SHUTDOWN_TIMED_OUT:
+    case CustomMetric.JOB_STARTUP_DB_RETRY:
+    case CustomMetric.JOB_STARTUP_DB_RETRY_EXHAUSTED:
       return CustomMetricUnit.EVENT_COUNT;
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
       // A gauge: how many syncs remain on the frozen v1 column right now, not a

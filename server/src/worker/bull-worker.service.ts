@@ -1,7 +1,9 @@
 import { Inject, Injectable, OnApplicationShutdown, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { DbJob } from '@prisma/client';
 import { Job, Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { isTransientPrismaConnectionError, retryOnTransientDbConnectionError } from 'src/db/prisma-transient-retry';
 import { WSLogger } from 'src/logger';
 import {
   CustomMetric,
@@ -245,7 +247,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicatio
     });
 
     // Look up the DbJob created by the enqueuer, or create one as fallback for test/legacy jobs
-    let dbJob = await this.jobService.getJobByBullJobId(jobId);
+    let dbJob = await this.lookUpDbJobWithTransientConnectionRetry(jobId);
     if (!dbJob) {
       dbJob = await this.jobService.createJob({
         userId: jobData.userId || 'unknown',
@@ -341,6 +343,45 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicatio
       throw error;
     } finally {
       this.activeJobToAbortCtrl.delete(jobId);
+    }
+  }
+
+  /**
+   * Look up the DbJob for a BullMQ job, retrying transient Prisma connection errors (`P1001` /
+   * `P2024`) with bounded backoff. Those transients are common in the first seconds of a fresh Cloud
+   * Run worker revision (cold private-IP egress to Cloud SQL) and would otherwise permanently fail an
+   * idempotent job on *every* deploy (DEV-11312). The lookup is a pure read and both codes mean the
+   * query never executed, so it is unconditionally safe to retry. A non-transient error still fails
+   * fast. Recovery is instrumented per the log-plus-metric convention for recovery paths: a warn +
+   * `JOB_STARTUP_DB_RETRY` per retry, and an error + `JOB_STARTUP_DB_RETRY_EXHAUSTED` if retries run
+   * out and the job still fails.
+   */
+  private async lookUpDbJobWithTransientConnectionRetry(jobId: string): Promise<DbJob | null> {
+    try {
+      return await retryOnTransientDbConnectionError(() => this.jobService.getJobByBullJobId(jobId), {
+        onRetry: ({ attempt, delayMs, error }) => {
+          this.metricsService.logValue(CustomMetric.JOB_STARTUP_DB_RETRY, 1);
+          WSLogger.warn({
+            source: 'QueueService',
+            message: 'Retrying job-startup DB lookup after transient DB connection error',
+            jobId,
+            attempt,
+            delayMs,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        },
+      });
+    } catch (error) {
+      if (isTransientPrismaConnectionError(error)) {
+        this.metricsService.logValue(CustomMetric.JOB_STARTUP_DB_RETRY_EXHAUSTED, 1);
+        WSLogger.error({
+          source: 'QueueService',
+          message: 'Job-startup DB lookup still failing after transient-connection retries; failing job',
+          jobId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+      throw error;
     }
   }
 
