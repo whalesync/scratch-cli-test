@@ -18,6 +18,9 @@ There are several ways to build the app locally, each suited to a different purp
 | `yarn build:mac:prod-local`   | `dist-release/`              | Developer ID             | Yes       | Built     | `*.scratch.md` (prod) | `desktop`      | Mirror the GitLab "Package prod macOS" job |
 | `yarn build:mac`              | `dist/mac-arm64/Scratch.app` | Developer ID (env-based) | Yes       | Not built | from `.env`           | `desktop-test` | Raw electron-builder; you supply the env   |
 | `yarn build:linux`            | `dist/`                      | —                        | —         | Not built | from `.env`           | `desktop-test` | Linux AppImage / .deb                      |
+| `yarn build:win`              | `dist/` (NSIS `Setup.exe`)   | none (unsigned)          | —         | Built     | from `.env`           | `desktop-test` | Windows installer (native Windows host)    |
+
+The Windows build ships **intentionally unsigned** (DEV-11010 / Oneleet SCR-015): the build scripts strip the cross-platform `CSC_LINK`/`CSC_KEY_PASSWORD` (our Apple Developer ID cert) so `electron-builder --win` can't Authenticode-sign the `.exe` with the wrong cert — which would break `electron-updater` on Windows — and `scripts/verify-windows-unsigned.cjs` gates every Windows build to prove it. See [CLAUDE.md → Auto-Update](CLAUDE.md#auto-update-electron-updater) and [`docs/plans/2026-05-30-sign-windows-desktop-builds/`](../docs/plans/2026-05-30-sign-windows-desktop-builds/2026-05-30-sign-windows-desktop-builds.md) for the follow-up that adds real signing.
 
 ### `yarn dev` — development
 
@@ -110,7 +113,7 @@ The security-relevant ones: `runAsNode`, `enableNodeOptionsEnvironmentVariable`,
 
 Two things to know when working on packaging:
 
-- **Never modify `app.asar` from the `afterPack` hook.** electron-builder computes the `app.asar` header hash *before* `afterPack` runs and writes it into `Info.plist` (macOS) / the `.exe` resources (Windows); with the integrity fuse on, a post-hoc edit to the archive makes the packaged app refuse to start. Adding files elsewhere under `Resources/` (as [scripts/afterPack.cjs](scripts/afterPack.cjs) does for `bin/` and `git/`) is fine.
+- **Never modify `app.asar` from the `afterPack` hook.** electron-builder computes the `app.asar` header hash _before_ `afterPack` runs and writes it into `Info.plist` (macOS) / the `.exe` resources (Windows); with the integrity fuse on, a post-hoc edit to the archive makes the packaged app refuse to start. Adding files elsewhere under `Resources/` (as [scripts/afterPack.cjs](scripts/afterPack.cjs) does for `bin/` and `git/`) is fine.
 - **Fuses do not apply to `yarn dev` or the Playwright `_electron` e2e specs.** Both run the unpackaged dev Electron from `node_modules` against `out/main/index.js`, which has its own unflipped fuse wire. Fuse regressions only show up in a packaged build.
 
 Read the real fuse wire out of an artifact:

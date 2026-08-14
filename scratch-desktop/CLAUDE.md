@@ -70,7 +70,6 @@ Before implementing or modifying any React UI in the renderer, read [`UI_SYSTEM.
 - Use `console.debug` for development logging, not `console.log`
 - Do not use non-null assertions (`x!`) in production code — the `@typescript-eslint/no-non-null-assertion` rule is enabled and will fail lint. Use a real guard (`if (!x) throw …` / early return), narrow with a type predicate, or restructure to capture the value during the existence check. Non-null assertions are only permitted in unit/integration test files, and even there must be paired with an `// eslint-disable-next-line @typescript-eslint/no-non-null-assertion` comment.
 
-
 ## API request/response types — always from shared-types
 
 Every type that crosses the REST boundary (request bodies, query params, response shapes, and the data objects inside them) **must be imported from `@spinner/shared-types`** — never re-declared under `src/renderer/src/types/...` or inline in a `lib/*-api.ts` file. A locally-declared copy is a "shadow type" that silently drifts from the server. Read **[`/packages/shared-types/CLAUDE.md`](../packages/shared-types/CLAUDE.md)** for the full rules.
@@ -141,6 +140,8 @@ Always use native Electron context menus — never Mantine `<Menu>` dropdowns �
 ## Auto-Update (`electron-updater`)
 
 The app pulls updates from the `desktop` (stable) or `desktop-test` (test) channels on `whalesync/scratch-desktop` GitHub releases. The channel is baked in at packaging time via the `UPDATE_CHANNEL` env var read by `electron-builder.yml`'s `publish.channel`.
+
+> **Windows ships intentionally unsigned** (DEV-11010 / Oneleet SCR-015) until real Authenticode signing lands (tracked in [`docs/plans/2026-05-30-sign-windows-desktop-builds/`](../docs/plans/2026-05-30-sign-windows-desktop-builds/2026-05-30-sign-windows-desktop-builds.md)). The Windows build scripts strip the cross-platform `CSC_LINK`/`CSC_KEY_PASSWORD` (our **Apple** Developer ID cert) from `electron-builder --win`, because electron-builder falls back to those for the Windows cert and an Apple-signed `.exe` has a chain Windows doesn't trust — which makes `electron-updater` reject every update with `ERR_UPDATER_INVALID_SIGNATURE`. A genuinely unsigned build writes no `publisherName` into `app-update.yml`, so `electron-updater` skips signature verification and updates apply. `scripts/verify-windows-unsigned.cjs` gates every Windows build to prove no cert leaked in.
 
 - **Main**: [src/main/updater.ts](src/main/updater.ts) wires `autoUpdater` and forwards events to the renderer.
 - **Renderer**: [src/renderer/src/providers/UpdaterProvider.tsx](src/renderer/src/providers/UpdaterProvider.tsx) shows a persistent "Restart & install" toast when an update finishes downloading.

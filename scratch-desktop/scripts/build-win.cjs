@@ -39,14 +39,14 @@ const nativeNodeFilename = 'scratchmd-native.win32-x64.node';
 
 process.env.UPDATE_CHANNEL = process.env.UPDATE_CHANNEL || 'desktop-test';
 
-function run(cmd, args, cwd) {
+function run(cmd, args, cwd, env) {
   const where = cwd || desktopDir;
   console.log(`\n> ${cmd} ${args.join(' ')}   (cwd=${where})`);
   const result = spawnSync(cmd, args, {
     cwd: where,
     stdio: 'inherit',
     shell: process.platform === 'win32',
-    env: process.env,
+    env: env || process.env,
   });
   if (result.status !== 0) {
     console.error(`FAILED: ${cmd} ${args.join(' ')} (exit ${result.status})`);
@@ -82,6 +82,20 @@ run('node', ['scripts/download-git.cjs', 'win32-x64'], desktopDir);
 // 5. Bundle the JS (main/preload/renderer), then package the NSIS installer.
 //    Invoked via yarn so the hoisted electron-vite / electron-builder bins resolve.
 run('yarn', ['electron-vite', 'build'], desktopDir);
-run('yarn', ['electron-builder', '--win'], desktopDir);
+
+// Ship the Windows build UNSIGNED on purpose (DEV-11010 / Oneleet SCR-015): strip the
+// cross-platform CSC_* / WIN_CSC_* vars so electron-builder can't Authenticode-sign the .exe with
+// the Apple Developer ID cert. An Apple-signed .exe has an untrusted-on-Windows chain, which
+// makes electron-updater reject every update (ERR_UPDATER_INVALID_SIGNATURE) and kills Windows
+// auto-update. A dev with a signing .env sourced in their shell would otherwise leak that cert
+// into a local build. See scripts/package.sh and docs/plans/2026-05-30-sign-windows-desktop-builds/.
+const envWithoutSigningCerts = { ...process.env };
+for (const signingCertEnvVar of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD']) {
+  delete envWithoutSigningCerts[signingCertEnvVar];
+}
+run('yarn', ['electron-builder', '--win'], desktopDir, envWithoutSigningCerts);
+
+// Prove the artifacts we just built carry no Authenticode signature (the same gate CI runs).
+run('node', ['scripts/verify-windows-unsigned.cjs'], desktopDir);
 
 console.log('\nWindows package complete. Artifacts in scratch-desktop/dist/.');

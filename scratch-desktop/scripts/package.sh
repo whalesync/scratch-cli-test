@@ -88,11 +88,20 @@ if [ "$PLATFORM" = "mac" ]; then
   # shellcheck disable=SC2086  # intentional word splitting for multiple targets
   yarn electron-builder --mac $MAC_TARGETS "${PRODUCT_NAME_OVERRIDE[@]}" --publish never
 elif [ "$PLATFORM" = "windows" ]; then
-  # Unsigned NSIS installer (Setup.exe) for x64. Requires wine in the build
-  # environment because electron-builder invokes the NSIS compiler under wine
-  # when cross-building from Linux. Signing is not configured yet.
-  echo "Packaging Windows x64 targets..."
-  yarn electron-builder --win --x64 "${PRODUCT_NAME_OVERRIDE[@]}" --publish never
+  # Ship the Windows NSIS installer UNSIGNED on purpose (DEV-11010 / Oneleet SCR-015).
+  # electron-builder resolves the Windows cert as WIN_CSC_LINK and *falls back to the
+  # cross-platform CSC_LINK*, which in our pipeline holds the Apple Developer ID .p12 (the mac
+  # signing cert). If that leaks in, the .exe is Authenticode-signed with a cert whose chain is
+  # untrusted on Windows; app-builder-lib then bakes the Apple CN into app-update.yml as the
+  # expected publisherName and electron-updater rejects every update with
+  # ERR_UPDATER_INVALID_SIGNATURE — Windows auto-update dies. So strip every *CSC* var here: no
+  # ambient cert can sign this build, and a genuinely-unsigned build writes no publisherName, so
+  # electron-updater skips signature verification and auto-update works. Real Authenticode signing
+  # is tracked in docs/plans/2026-05-30-sign-windows-desktop-builds/. Requires wine because
+  # electron-builder runs the NSIS compiler under wine when cross-building from Linux.
+  echo "Packaging Windows x64 targets (unsigned)..."
+  env -u CSC_LINK -u CSC_KEY_PASSWORD -u WIN_CSC_LINK -u WIN_CSC_KEY_PASSWORD \
+    yarn electron-builder --win --x64 "${PRODUCT_NAME_OVERRIDE[@]}" --publish never
 else
   echo "Packaging Linux x64 targets..."
   yarn electron-builder --linux --x64 "${PRODUCT_NAME_OVERRIDE[@]}" --publish never
@@ -112,6 +121,15 @@ node scripts/verify-fuses.cjs "$PLATFORM"
 if [ "$PLATFORM" = "mac" ]; then
   echo "Verifying macOS entitlements on the signed app bundle..."
   node scripts/verify-entitlements.cjs
+fi
+
+# Hard gate that the Windows installer + app ship UNSIGNED (DEV-11010 / Oneleet SCR-015).
+# The vitest spec only proves the PE parser works; this proves the real artifacts we are about to
+# publish carry no Authenticode signature, so a leaked Apple CSC_LINK can never regress Windows
+# auto-update again. windows-only — the other platforms don't run signtool.
+if [ "$PLATFORM" = "windows" ]; then
+  echo "Verifying the Windows executables are unsigned (no cert leaked in)..."
+  node scripts/verify-windows-unsigned.cjs
 fi
 
 # Collect release-ready files into dist-release/ so the downstream upload job
