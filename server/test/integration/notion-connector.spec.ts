@@ -333,16 +333,21 @@ describeIfKey('NotionConnector — live API', () => {
   //
   //   (a) Simple user filter, no incremental → filter sent verbatim.
   //   (b) Simple user filter + incremental → wrapped in `{ and: [user, ts] }`
-  //       by combineNotionFilters. Notion accepts one level of compound
-  //       nesting; this is the limit.
-  //   (c) Compound user filter + incremental → combineNotionFilters returns
-  //       `demoteToFull` rather than nesting two compounds (which Notion 400s).
-  //       The connector then runs the user filter alone, no timestamp clause,
-  //       and returns no watermark.
+  //       by combineNotionFilters (1 level of nesting).
+  //   (c) Top-level `and` user filter + incremental → the timestamp clause is
+  //       appended as one more `and` member, so nesting depth is unchanged and
+  //       the pull STAYS incremental (fresh watermark returned).
+  //   (d) Top-level `or` user filter that already contains a nested compound +
+  //       incremental → `{ and: [or, ts] }` would be three levels, which Notion
+  //       400s, so combineNotionFilters returns `demoteToFull`. The connector
+  //       runs the user filter alone, no timestamp clause, no watermark.
   //
-  // Branch (c) is the trickiest custom logic in the connector — easy to break
+  // Branch (d) is the trickiest custom logic in the connector — easy to break
   // in the v5 migration. The test below proves the demotion happened by
   // observing pages older than the would-be watermark in the result set.
+  // Notion permits nesting "up to two levels deep", so an `or` of simple
+  // members is still nestable — only an `or` containing a compound demotes
+  // (see notion-incremental.ts → addRequiredMemberToNotionFilter).
   // -------------------------------------------------------------------------
 
   describe('pullRecordFiles (filter)', () => {
@@ -394,11 +399,12 @@ describeIfKey('NotionConnector — live API', () => {
       }
     });
 
-    it('(c) compound user filter + incremental demotes to full and drops the timestamp clause', async () => {
-      // 1 second ago — restrictive enough that almost no page would qualify if
-      // the timestamp filter were actually applied.
+    it('(c) top-level `and` user filter + incremental stays incremental (timestamp appended as another member)', async () => {
+      // 1 second ago — restrictive enough that almost no page qualifies, so an
+      // (almost) empty result set is itself evidence the timestamp clause was
+      // applied rather than dropped.
       const justNow = new Date(Date.now() - 1000);
-      const compoundFilter = JSON.stringify({
+      const compoundAndFilter = JSON.stringify({
         and: [
           { property: 'Done', checkbox: { equals: true } },
           { property: 'Priority', select: { does_not_equal: 'Low' } },
@@ -407,25 +413,74 @@ describeIfKey('NotionConnector — live API', () => {
 
       const filesAndResult = await pullAllWithResult(connector, primarySpec, {
         excludePageContent: true,
-        filter: compoundFilter,
+        filter: compoundAndFilter,
+        pullMode: 'incremental',
+        since: justNow,
+      });
+
+      // Appending to an existing top-level `and` adds no nesting level, so no
+      // demotion happens and the run reports a fresh watermark. Reaching this
+      // line at all also proves Notion accepted the three-member `and` body —
+      // a malformed combine would have 400'd during the pull.
+      expect(filesAndResult.result.newWatermark).toBeInstanceOf(Date);
+
+      // Same minute-truncation slack as the incremental suite above: Notion
+      // filters on sub-second precision but returns `last_edited_time`
+      // truncated to the minute.
+      const SLACK_MS = 75_000;
+      for (const file of filesAndResult.files) {
+        const props = file.properties as Record<string, { checkbox?: boolean; select?: { name?: string } | null }>;
+        expect(props['Done'].checkbox).toBe(true);
+        expect(props['Priority'].select?.name).not.toBe('Low');
+        const editedAt = new Date(file.last_edited_time as string);
+        expect(editedAt.getTime()).toBeGreaterThanOrEqual(justNow.getTime() - SLACK_MS);
+      }
+    });
+
+    it('(d) `or` user filter containing a nested compound + incremental demotes to full and drops the timestamp clause', async () => {
+      // 1 second ago — restrictive enough that almost no page would qualify if
+      // the timestamp filter were actually applied.
+      const justNow = new Date(Date.now() - 1000);
+      // A top-level `or` whose members include a compound: combining would need
+      // `{ and: [{ or: [simple, { and: [...] }] }, ts] }` — three levels, which
+      // Notion rejects. This is the only un-combinable shape.
+      const orWithNestedCompoundFilter = JSON.stringify({
+        or: [
+          { property: 'Done', checkbox: { equals: false } },
+          {
+            and: [
+              { property: 'Done', checkbox: { equals: true } },
+              { property: 'Priority', select: { does_not_equal: 'Low' } },
+            ],
+          },
+        ],
+      });
+
+      const filesAndResult = await pullAllWithResult(connector, primarySpec, {
+        excludePageContent: true,
+        filter: orWithNestedCompoundFilter,
         pullMode: 'incremental',
         since: justNow,
       });
 
       // Demoted runs return no new watermark (see notion-connector.ts —
-      // newWatermark is only set when combined.demoteToFull is false). This
-      // is the proof the demotion code path ran: had `combineNotionFilters`
-      // produced a `{ demoteToFull: false, filter: ... }` envelope, the
-      // wrapping `and` would have nested two compounds and Notion would have
-      // 400'd before we got here.
+      // newWatermark is only set when combined.demoteToFull is false).
       expect(filesAndResult.result.newWatermark).toBeUndefined();
 
-      // Every returned page must satisfy the user's compound predicate (the
-      // user filter is preserved; only the timestamp clause is dropped).
+      // The user filter is preserved; only the timestamp clause is dropped, so
+      // pages last edited long before `justNow` still come back. That's the
+      // observable proof the demotion path ran.
+      expect(filesAndResult.files.length).toBeGreaterThan(0);
+      expect(
+        filesAndResult.files.some((file) => new Date(file.last_edited_time as string).getTime() < justNow.getTime()),
+      ).toBe(true);
+
+      // Every returned page must satisfy the user's compound predicate.
       for (const file of filesAndResult.files) {
         const props = file.properties as Record<string, { checkbox?: boolean; select?: { name?: string } | null }>;
-        expect(props['Done'].checkbox).toBe(true);
-        expect(props['Priority'].select?.name).not.toBe('Low');
+        const isNotDone = props['Done'].checkbox === false;
+        const isDoneAndNotLowPriority = props['Done'].checkbox === true && props['Priority'].select?.name !== 'Low';
+        expect(isNotDone || isDoneAndNotLowPriority).toBe(true);
       }
     });
   });
