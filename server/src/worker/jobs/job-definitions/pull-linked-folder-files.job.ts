@@ -1035,6 +1035,12 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const usedFileNames = new Set<string>(
       await this.fileIndexService.listFilenamesForFolder(dataFolder.workbookId, folderPathForIndex),
     );
+
+    // Names minted during THIS run, so a record re-delivered by the connector
+    // (e.g. Notion's 10k-continuation boundary minute) resolves to the file it
+    // already got instead of an id-suffixed duplicate. Lives for the whole run,
+    // alongside `usedFileNames`.
+    const fileNamesAssignedByRecordIdInThisRun = new Map<string, string>();
     let fileCount = 0;
 
     const resumeProgress = params.resumeProgress;
@@ -1063,6 +1069,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         usedFileNames,
         existingFileNames,
         suggestedFileNames,
+        fileNamesAssignedByRecordIdInThisRun,
       );
 
       if (builtFiles.length > 0) {

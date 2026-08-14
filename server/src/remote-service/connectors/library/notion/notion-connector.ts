@@ -69,6 +69,7 @@ import { isFullDatabase, isFullDataSource, NotionDataSourceSearchResult } from '
 import { buildNotionDefaultView, buildNotionStandalonePagesDefaultView } from './notion-default-view';
 import { buildNotionLastEditedFilter, combineNotionFilters } from './notion-incremental';
 import { buildNotionJsonTableSpec, buildNotionPageWebUrl, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
+import { combineNotionFilterWithCreatedTimeContinuation } from './notion-query-continuation';
 import { NotionSchemaParser } from './notion-schema-parser';
 import {
   buildNotionStandalonePagesTablePreview,
@@ -95,6 +96,39 @@ export const PAGE_CONTENT_COLUMN_ID = 'WS_PAGE_CONTENT';
 
 type NotionDownloadProgress = {
   nextCursor: string | undefined;
+  /**
+   * ISO `created_time` lower bound (inclusive) of the current query window.
+   * Set once a query has ended incomplete at Notion's 10,000-result per-query
+   * limit and the pull rolled to a new query starting at the last returned
+   * row's `created_time` (DEV-11267). Undefined until the first roll.
+   */
+  createdOnOrAfter?: string | undefined;
+  /**
+   * True when `nextCursor` was issued by a query sorted ascending by
+   * `created_time`. Progress checkpointed by pre-DEV-11267 builds lacks this
+   * flag; those cursors belong to UNSORTED queries and cannot be reused once
+   * the sort is applied, so the pull restarts from scratch instead (safe —
+   * pull commits are idempotent).
+   */
+  sortedByCreatedTime?: boolean | undefined;
+  /**
+   * Which of the standalone-pages pull's two Search sweeps `nextCursor` belongs
+   * to (DEV-11267). Search has the same 10,000-result per-query limit but no
+   * timestamp filter to continue past it, so the pull instead runs the SAME
+   * search twice with opposite `last_edited_time` sort directions — a distinct
+   * (filter, sort) pair, hence a fresh 10,000-result budget — and stops when
+   * the two sweeps meet. Absent on progress checkpointed by builds whose Search
+   * carried no sort at all; such a cursor belongs to a different query and is
+   * discarded.
+   */
+  standalonePagesSearchDirection?: 'ascending' | 'descending' | undefined;
+  /**
+   * The newest `last_edited_time` the ascending Search sweep delivered. The
+   * descending sweep walks back toward it and is provably complete the moment
+   * it reaches it — every page between the two is already pulled. Checkpointed
+   * so the proof survives a job restart mid-sweep.
+   */
+  standalonePagesAscendingSweepNewestLastEditedTime?: string | undefined;
 };
 
 interface NotionPullOptions extends PullRecordFilesOptions {
@@ -545,9 +579,10 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * database page has a server-side `last_edited_time` system field, and
    * `databases.query` can filter on it. There is no per-folder config to
    * inspect (the field is not user-selectable), so database tables always
-   * report supported and a run only demotes to full at pull time if the user's
-   * own filter is a compound `and`/`or` (Notion's single-level nesting limit —
-   * see `pullRecordFiles`).
+   * report supported. A run only demotes to full at pull time in the one shape
+   * Notion cannot express: a user filter whose top-level `or` already contains a
+   * nested compound, where adding the `last_edited_time` filter would exceed
+   * Notion's two-level nesting limit (see `addRequiredMemberToNotionFilter`).
    *
    * The standalone-pages backup table is the exception: it enumerates via the
    * Search endpoint, which has no modified-since filter, so every pull is a
@@ -580,6 +615,22 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     const dataSourceId = await this.resolveDataSourceId(tableSpec.id.remoteId);
     let hasMore = true;
     let nextCursor = progress?.nextCursor;
+    let createdOnOrAfterContinuationBoundary = progress?.createdOnOrAfter;
+
+    if (nextCursor !== undefined && progress?.sortedByCreatedTime !== true) {
+      // Progress checkpointed by a pre-DEV-11267 build, whose queries carried
+      // no sort. A Notion cursor is only valid for the exact query that issued
+      // it, so it cannot be reused now that every query sorts ascending by
+      // created_time — restart the pull from scratch instead (safe: pull
+      // commits are idempotent, so re-pulled pages converge).
+      WSLogger.info({
+        source: 'NotionConnector',
+        message: 'Discarding a pull cursor from an unsorted query; restarting the pull with the created_time sort',
+        tableId: tableSpec.id.wsId,
+      });
+      nextCursor = undefined;
+      createdOnOrAfterContinuationBoundary = undefined;
+    }
 
     let notionFilter: QueryDataSourceParameters['filter'] = undefined;
     if (options.filter) {
@@ -601,14 +652,16 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       const timestampFilter = buildNotionLastEditedFilter(options.since);
       const combined = combineNotionFilters(notionFilter ?? undefined, timestampFilter);
       if (combined.demoteToFull) {
-        // Notion allows only one level of compound nesting. Wrapping a
-        // compound user filter in another `and` would 400, so we skip the
-        // incremental filter and full-scan instead (keeping the user filter).
+        // The user filter's top-level `or` already contains a nested compound,
+        // so wrapping it in another `and` would need a third nesting level and
+        // 400. Skip the incremental filter and full-scan instead (keeping the
+        // user filter).
         WSLogger.warn({
           source: 'NotionConnector',
           message:
-            'Incremental pull demoted to full: the user filter is a compound and/or, so nesting the ' +
-            "last_edited_time filter would exceed Notion's single-level compound-filter limit",
+            "Incremental pull demoted to full: the user filter's top-level `or` already contains a nested " +
+            "compound, so nesting the last_edited_time filter would exceed Notion's two-level compound-filter " +
+            'limit',
           tableId: tableSpec.id.wsId,
         });
       } else {
@@ -621,12 +674,61 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       }
     }
 
+    // Delivery dedup for the inclusive 10k-continuation boundary (DEV-11267):
+    // a rolled query window starts `on_or_after` the previous window's last
+    // created_time, so it re-returns pages sharing that (minute-granular)
+    // timestamp. Only pages at the CURRENT latest created_time can ever be
+    // re-returned this way — the ascending sort means earlier timestamps are
+    // done — so remembering just those ids, and resetting whenever
+    // created_time advances, is enough to skip re-delivered pages without
+    // holding every pulled page id in memory. Skipping also avoids
+    // re-fetching page_content for the whole boundary minute. The set is lost
+    // on a job restart; pages re-delivered across runs are absorbed by the
+    // idempotent commit path instead.
+    let createdTimeCoveredByDeliveredPageIds: string | undefined;
+    const pageIdsAlreadyDeliveredAtCoveredCreatedTime = new Set<string>();
+
+    // The newest `created_time` seen anywhere in the CURRENT query window, not
+    // just in the batch that reported the limit. Notion can report a window
+    // incomplete on a batch that carries no page objects, and in that case the
+    // last row of an earlier batch is still a perfectly good resume boundary —
+    // reading it only from the final batch would abandon a resumable pull.
+    // Reset on every roll, since the boundary must come from the window that
+    // actually hit the limit.
+    let latestCreatedTimeSeenInCurrentWindow: string | undefined;
+
     while (hasMore) {
+      // Re-apply the 10k-continuation boundary to the base filter on every
+      // query (never accumulating): each rolled window replaces the previous
+      // boundary rather than nesting filters deeper.
+      let filterForThisQuery = notionFilter;
+      if (createdOnOrAfterContinuationBoundary !== undefined) {
+        const combinedWithContinuation = combineNotionFilterWithCreatedTimeContinuation(
+          notionFilter,
+          createdOnOrAfterContinuationBoundary,
+        );
+        if (combinedWithContinuation === null) {
+          // Only reachable when a boundary was checkpointed and the folder
+          // filter has since been changed to a nested `or` compound (a boundary
+          // is never set while the filter is un-combinable — see below).
+          throw new Error(
+            "Cannot resume this Notion pull past the 10,000-result query limit: the folder filter's top-level " +
+              '`or` already contains a nested compound, so adding the created_time continuation filter would ' +
+              "exceed Notion's two-level compound-nesting limit. Flatten the folder filter and pull again.",
+          );
+        }
+        filterForThisQuery = combinedWithContinuation;
+      }
+
       const response = await this.client.queryDataSource({
         data_source_id: dataSourceId,
         start_cursor: nextCursor,
         page_size: options.pageSize ?? 100,
-        filter: notionFilter,
+        filter: filterForThisQuery,
+        // Ascending created_time sort — makes the last returned row a stable
+        // resume boundary when a query ends incomplete at Notion's
+        // 10,000-result per-query limit (DEV-11267).
+        sorts: [{ timestamp: 'created_time', direction: 'ascending' }],
       });
 
       // Return raw page objects as ConnectorFiles
@@ -634,6 +736,25 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       const pageResults = response.results.filter((r): r is PageObjectResponse => r.object === 'page');
 
       for (const page of pageResults) {
+        // Tracked for every page, including ones skipped as boundary-minute
+        // duplicates below: the resume boundary is a property of what Notion
+        // returned, not of what we chose to deliver.
+        latestCreatedTimeSeenInCurrentWindow = page.created_time;
+
+        if (page.created_time !== createdTimeCoveredByDeliveredPageIds) {
+          // Ascending sort: a new created_time means the previous timestamp's
+          // pages can never be returned again, so the dedup set resets.
+          createdTimeCoveredByDeliveredPageIds = page.created_time;
+          pageIdsAlreadyDeliveredAtCoveredCreatedTime.clear();
+        }
+        if (pageIdsAlreadyDeliveredAtCoveredCreatedTime.has(page.id)) {
+          // Re-returned by the inclusive on_or_after boundary of a rolled
+          // window — already delivered earlier in this pull. Skip before the
+          // page_content fetch so the boundary minute isn't re-fetched.
+          continue;
+        }
+        pageIdsAlreadyDeliveredAtCoveredCreatedTime.add(page.id);
+
         const connectorFile = page as unknown as ConnectorFile;
 
         if (!options.excludePageContent) {
@@ -656,9 +777,61 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       hasMore = response.has_more;
       nextCursor = response.next_cursor ?? undefined;
 
+      if (!hasMore && response.request_status?.type === 'incomplete') {
+        // The query hit Notion's 10,000-result per-query limit: pagination
+        // stopped (`has_more: false`) with results remaining. Roll to a new
+        // query window starting at the last returned row's created_time — the
+        // ascending created_time sort makes that a valid resume boundary. The
+        // inclusive on_or_after boundary re-returns pages sharing the boundary
+        // minute; the delivery dedup set above skips them (DEV-11267).
+        const lastPageCreatedTime = latestCreatedTimeSeenInCurrentWindow;
+        if (lastPageCreatedTime === undefined) {
+          throw new Error(
+            'Notion reported the data source query incomplete (10,000-result limit) but returned no page ' +
+              'to resume from',
+          );
+        }
+        if (lastPageCreatedTime === createdOnOrAfterContinuationBoundary) {
+          // The entire 10k window shares one created_time (Notion timestamps
+          // are minute-granular), so a new on_or_after query would return the
+          // same window forever. Fail explicitly rather than loop.
+          throw new Error(
+            `Cannot pull past Notion's 10,000-result query limit: more than 10,000 pages share the ` +
+              `created_time ${lastPageCreatedTime}, so the created_time continuation cannot advance`,
+          );
+        }
+        if (combineNotionFilterWithCreatedTimeContinuation(notionFilter, lastPageCreatedTime) === null) {
+          // The folder filter's top-level `or` already contains a nested
+          // compound, so adding the continuation filter would need a third
+          // nesting level, which Notion rejects. Surface the truncation instead
+          // of silently pulling only the first 10,000 rows.
+          throw new Error(
+            "This Notion query returned more than 10,000 results, but the folder filter's top-level `or` " +
+              'already contains a nested compound, so the created_time continuation filter needed to pull the ' +
+              "rest would exceed Notion's two-level compound-nesting limit. Flatten the folder filter's `or` " +
+              'so its members are all simple conditions, or narrow it so it matches at most 10,000 pages.',
+          );
+        }
+        WSLogger.info({
+          source: 'NotionConnector',
+          message: `Notion query hit the 10,000-result limit; continuing with created_time >= ${lastPageCreatedTime}`,
+          tableId: tableSpec.id.wsId,
+        });
+        createdOnOrAfterContinuationBoundary = lastPageCreatedTime;
+        // The boundary must come from the window that hit the limit, so the
+        // next window starts its own observation.
+        latestCreatedTimeSeenInCurrentWindow = undefined;
+        nextCursor = undefined;
+        hasMore = true;
+      }
+
       await callback({
         files,
-        connectorProgress: { nextCursor },
+        connectorProgress: {
+          nextCursor,
+          createdOnOrAfter: createdOnOrAfterContinuationBoundary,
+          sortedByCreatedTime: true,
+        },
       });
     }
     return newWatermark ? { newWatermark } : {};
@@ -676,6 +849,24 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * `incrementalPullSupport`), checkpointed per Search page through the same
    * `nextCursor` progress the database pull uses, and trivially idempotent: a
    * re-run converges on the same one-file-per-page-id folder.
+   *
+   * Search carries the same 10,000-result per-query limit as `dataSources.query`
+   * (DEV-11267), but it accepts no timestamp *filter*, so the database pull's
+   * `created_time` continuation has nothing to bite on. What Search does accept
+   * is a `last_edited_time` **sort direction**, and a Notion query's result
+   * budget is per (filter, sort) pair — so the pull sweeps the same search twice
+   * from opposite ends:
+   *
+   *   1. ascending  — the 10,000 least-recently-edited pages,
+   *   2. descending — the 10,000 most-recently-edited pages, but only if sweep 1
+   *      came back incomplete, so ordinary workspaces never pay for it.
+   *
+   * The sweeps are provably exhaustive the moment the descending one reaches a
+   * page at or older than the newest `last_edited_time` sweep 1 delivered: the
+   * two windows now overlap, so nothing sits between them. That raises the
+   * ceiling from 10,000 to 20,000 pages *and* — unlike a bare page count — tells
+   * us whether the enumeration was actually complete. Past 20,000 it still warns,
+   * because Search offers no third ordering to sweep from.
    */
   private async pullStandalonePageRecordFiles(
     callback: (params: { files: ConnectorFile[]; connectorProgress?: NotionDownloadProgress }) => Promise<void>,
@@ -692,14 +883,39 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       );
     }
 
-    let hasMore = true;
+    let sweepDirection: 'ascending' | 'descending' = progress?.standalonePagesSearchDirection ?? 'ascending';
     let nextCursor = progress?.nextCursor;
+    let newestLastEditedTimeDeliveredByAscendingSweep = progress?.standalonePagesAscendingSweepNewestLastEditedTime;
+
+    if (nextCursor !== undefined && progress?.standalonePagesSearchDirection === undefined) {
+      // Progress checkpointed before the sort was applied. A Notion cursor is
+      // only valid for the exact query that issued it, so it cannot be reused
+      // now that the search is sorted — restart the sweep instead (safe: pull
+      // commits are idempotent, so re-pulled pages converge).
+      WSLogger.info({
+        source: 'NotionConnector',
+        message: 'Discarding a standalone-pages Search cursor from an unsorted query; restarting the sweep',
+      });
+      nextCursor = undefined;
+      sweepDirection = 'ascending';
+      newestLastEditedTimeDeliveredByAscendingSweep = undefined;
+    }
+
+    // Pages the ascending sweep delivered, so the descending sweep can skip
+    // them before paying for their `page_content`. Bounded by that sweep's own
+    // 10,000-result limit, and only populated once a second sweep is needed.
+    const pageIdsDeliveredByAscendingSweep = new Set<string>();
+    let reachedTheAscendingSweepsNewestPage = false;
+    let hasMore = true;
 
     while (hasMore) {
       const response = await this.client.search({
         filter: { property: 'object', value: 'page' },
         start_cursor: nextCursor,
         page_size: options.pageSize ?? 100,
+        // Sorting is what gives the two sweeps distinct 10,000-result budgets,
+        // and what makes "the sweeps have met" a decidable question.
+        sort: { timestamp: 'last_edited_time', direction: sweepDirection },
       });
 
       const standalonePages = response.results
@@ -708,6 +924,29 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
       const files: ConnectorFile[] = [];
       for (const page of standalonePages) {
+        if (sweepDirection === 'ascending') {
+          newestLastEditedTimeDeliveredByAscendingSweep = page.last_edited_time;
+        } else {
+          if (
+            newestLastEditedTimeDeliveredByAscendingSweep !== undefined &&
+            page.last_edited_time <= newestLastEditedTimeDeliveredByAscendingSweep
+          ) {
+            // Walking backwards, we've reached edit times the ascending sweep
+            // already covered. The two windows overlap, so every standalone
+            // page has been delivered — stop rather than re-walk the workspace.
+            // Checked BEFORE the id skip below: the pages that prove the overlap
+            // are precisely the ones the ascending sweep delivered, so skipping
+            // them first would walk straight past the proof.
+            reachedTheAscendingSweepsNewestPage = true;
+            break;
+          }
+          if (pageIdsDeliveredByAscendingSweep.has(page.id)) {
+            // Edited during the pull, so it sorts newer than the watermark yet
+            // is already on disk. Skip before paying for its `page_content`.
+            continue;
+          }
+        }
+
         const connectorFile = page as unknown as ConnectorFile;
 
         if (!options.excludePageContent) {
@@ -724,14 +963,58 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
           }
         }
         files.push(connectorFile);
+        if (sweepDirection === 'ascending') {
+          pageIdsDeliveredByAscendingSweep.add(page.id);
+        }
       }
 
-      hasMore = response.has_more;
+      hasMore = response.has_more && !reachedTheAscendingSweepsNewestPage;
       nextCursor = response.next_cursor ?? undefined;
+
+      if (reachedTheAscendingSweepsNewestPage) {
+        WSLogger.info({
+          source: 'NotionConnector',
+          message:
+            'Notion standalone-pages Search sweeps met: the descending sweep reached the ascending sweep’s ' +
+            'newest page, so the enumeration is complete',
+        });
+        nextCursor = undefined;
+      } else if (!hasMore && response.request_status?.type === 'incomplete') {
+        if (sweepDirection === 'ascending') {
+          // Sweep 1 hit the 10,000-result limit. Re-run the same search sorted
+          // the other way for a fresh budget, covering the workspace from its
+          // most-recently-edited end.
+          WSLogger.info({
+            source: 'NotionConnector',
+            message:
+              'Notion standalone-pages Search hit its 10,000-result limit; sweeping again by descending ' +
+              'last_edited_time to cover the rest',
+          });
+          sweepDirection = 'descending';
+          nextCursor = undefined;
+          hasMore = true;
+        } else {
+          // Both sweeps are exhausted and they never met, so pages in the middle
+          // of the edit-time range were never enumerated. Search offers no third
+          // ordering, so surface the truncation rather than reporting a complete
+          // pull.
+          WSLogger.warn({
+            source: 'NotionConnector',
+            message:
+              'Notion Search hit its 10,000-result limit in BOTH sort directions without the sweeps meeting: ' +
+              'this workspace has more than 20,000 standalone pages and the pull is incomplete. Search ' +
+              'accepts no record filter, so there is no further ordering to continue from.',
+          });
+        }
+      }
 
       await callback({
         files,
-        connectorProgress: { nextCursor },
+        connectorProgress: {
+          nextCursor,
+          standalonePagesSearchDirection: sweepDirection,
+          standalonePagesAscendingSweepNewestLastEditedTime: newestLastEditedTimeDeliveredByAscendingSweep,
+        },
       });
     }
     return {};

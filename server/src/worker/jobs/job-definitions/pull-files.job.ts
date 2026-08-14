@@ -231,6 +231,12 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
       await this.fileIndexService.listFilenamesForFolder(dataFolder.workbookId, folderPathForIndex),
     );
 
+    // Names minted during THIS run, so a record re-delivered by the connector
+    // (e.g. Notion's 10k-continuation boundary minute) resolves to the file it
+    // already got instead of an id-suffixed duplicate. Lives for the whole run,
+    // alongside `usedFileNames`.
+    const fileNamesAssignedByRecordIdInThisRun = new Map<string, string>();
+
     const callback = async (callbackParams: { files: ConnectorFile[] }) => {
       const { files } = callbackParams;
 
@@ -257,6 +263,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         usedFileNames,
         existingFileNames,
         suggestedFileNames,
+        fileNamesAssignedByRecordIdInThisRun,
       );
 
       if (builtFiles.length > 0) {

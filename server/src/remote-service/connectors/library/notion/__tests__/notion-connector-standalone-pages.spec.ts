@@ -92,13 +92,20 @@ const BLOCK_PARENT = { type: 'block_id', block_id: 'blk_1' };
 const DATABASE_PARENT = { type: 'database_id', database_id: 'db_1' };
 const DATA_SOURCE_PARENT = { type: 'data_source_id', data_source_id: 'ds_1' };
 
-type PullCallbackBatch = { files: ConnectorFile[]; connectorProgress?: { nextCursor: string | undefined } };
+type PullCallbackBatch = {
+  files: ConnectorFile[];
+  connectorProgress?: {
+    nextCursor: string | undefined;
+    standalonePagesSearchDirection?: 'ascending' | 'descending';
+    standalonePagesAscendingSweepNewestLastEditedTime?: string;
+  };
+};
 
 /** Run a standalone-pages pull and collect every callback batch. */
 async function runStandalonePagesPull(
   connector: NotionConnector,
   options: PullRecordFilesOptions,
-  progress: { nextCursor: string | undefined } = { nextCursor: undefined },
+  progress: PullCallbackBatch['connectorProgress'] = { nextCursor: undefined },
 ): Promise<PullCallbackBatch[]> {
   const batches: PullCallbackBatch[] = [];
   await connector.pullRecordFiles(
@@ -179,16 +186,20 @@ describe('NotionConnector — standalone-pages backup table', () => {
           next_cursor: null,
         });
 
-      const batches = await runStandalonePagesPull(connector, EXCLUDE_CONTENT_OPTIONS, { nextCursor: 'cursor_1' });
+      // A cursor is only valid for the query that issued it, so resuming needs
+      // the sweep direction that produced it (DEV-11267 — a bare `nextCursor`
+      // from a pre-sort build is discarded instead; see
+      // notion-connector-standalone-pages-query-limit.spec.ts).
+      const batches = await runStandalonePagesPull(connector, EXCLUDE_CONTENT_OPTIONS, {
+        nextCursor: 'cursor_1',
+        standalonePagesSearchDirection: 'ascending',
+      } as PullCallbackBatch['connectorProgress']);
 
       expect(mockSearch).toHaveBeenCalledTimes(2);
       const searchCallArgs = firstArgOfEachCall(mockSearch);
       expect(searchCallArgs[0]).toMatchObject({ start_cursor: 'cursor_1' });
       expect(searchCallArgs[1]).toMatchObject({ start_cursor: 'cursor_2' });
-      expect(batches.map((batch) => batch.connectorProgress)).toEqual([
-        { nextCursor: 'cursor_2' },
-        { nextCursor: undefined },
-      ]);
+      expect(batches.map((batch) => batch.connectorProgress?.nextCursor)).toEqual(['cursor_2', undefined]);
       expect(batches.flatMap((batch) => batch.files.map((file) => file.id))).toEqual(['p_1', 'p_2']);
     });
 

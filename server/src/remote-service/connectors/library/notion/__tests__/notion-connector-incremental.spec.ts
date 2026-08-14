@@ -114,9 +114,32 @@ describe('NotionConnector.pullRecordFiles (incremental)', () => {
     expect(result.newWatermark).toBeInstanceOf(Date);
   });
 
-  it('demotes to full (keeps user filter, no watermark) when the user filter is a compound and/or', async () => {
+  it('stays incremental for a compound `and` user filter, appending the timestamp filter as one more member', async () => {
     const since = new Date('2026-05-01T12:00:00.000Z');
-    const userFilter = { and: [{ property: 'A', checkbox: { equals: true } }] };
+    const memberA = { property: 'A', checkbox: { equals: true } };
+    const options = {
+      pullMode: 'incremental',
+      since,
+      excludePageContent: true,
+      filter: JSON.stringify({ and: [memberA] }),
+    } as PullRecordFilesOptions;
+
+    const result = await connector.pullRecordFiles(buildTableSpec(), callback, { nextCursor: undefined }, options);
+
+    // Appending to the existing top-level `and` adds no nesting level, so there
+    // is nothing to demote for.
+    expect(lastQueryFilter()).toEqual({ and: [memberA, buildNotionLastEditedFilter(since)] });
+    expect(result.newWatermark).toBeInstanceOf(Date);
+  });
+
+  it('stays incremental for a compound `or` user filter of simple members, AND-wrapping it (two levels)', async () => {
+    const since = new Date('2026-05-01T12:00:00.000Z');
+    const userFilter = {
+      or: [
+        { property: 'A', checkbox: { equals: true } },
+        { property: 'B', checkbox: { equals: false } },
+      ],
+    };
     const options = {
       pullMode: 'incremental',
       since,
@@ -126,8 +149,27 @@ describe('NotionConnector.pullRecordFiles (incremental)', () => {
 
     const result = await connector.pullRecordFiles(buildTableSpec(), callback, { nextCursor: undefined }, options);
 
-    // The incremental timestamp filter is NOT applied — the raw user filter is
-    // passed through unchanged and no watermark is returned.
+    expect(lastQueryFilter()).toEqual({ and: [userFilter, buildNotionLastEditedFilter(since)] });
+    expect(result.newWatermark).toBeInstanceOf(Date);
+  });
+
+  it('demotes to full (keeps user filter, no watermark) only when the `or` user filter already nests a compound', async () => {
+    const since = new Date('2026-05-01T12:00:00.000Z');
+    const userFilter = {
+      or: [{ and: [{ property: 'A', checkbox: { equals: true } }] }, { property: 'B', checkbox: { equals: true } }],
+    };
+    const options = {
+      pullMode: 'incremental',
+      since,
+      excludePageContent: true,
+      filter: JSON.stringify(userFilter),
+    } as PullRecordFilesOptions;
+
+    const result = await connector.pullRecordFiles(buildTableSpec(), callback, { nextCursor: undefined }, options);
+
+    // Wrapping this in another `and` would be a third nesting level, which
+    // Notion rejects — the raw user filter is passed through unchanged and no
+    // watermark is returned.
     expect(lastQueryFilter()).toEqual(userFilter);
     expect(result).toEqual({});
   });

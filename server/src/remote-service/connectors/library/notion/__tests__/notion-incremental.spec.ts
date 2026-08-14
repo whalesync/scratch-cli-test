@@ -1,8 +1,10 @@
 import {
+  addRequiredMemberToNotionFilter,
   buildNotionLastEditedFilter,
   combineNotionFilters,
   isCompoundNotionFilter,
   NOTION_INCREMENTAL_CLOCK_SKEW_MS,
+  NOTION_MAX_COMPOUND_FILTER_NESTING_LEVELS,
   type NotionFilter,
 } from '../notion-incremental';
 
@@ -49,13 +51,69 @@ describe('combineNotionFilters', () => {
     });
   });
 
-  it('demotes to full when the user filter is a compound `and` (would exceed Notion nesting limit)', () => {
-    const userFilter: NotionFilter = { and: [{ property: 'A', checkbox: { equals: true } }] };
-    expect(combineNotionFilters(userFilter, ts)).toEqual({ demoteToFull: true });
+  it('appends to a compound `and` user filter without adding a nesting level — stays incremental', () => {
+    const memberA = { property: 'A', checkbox: { equals: true } } as const;
+    expect(combineNotionFilters({ and: [memberA] }, ts)).toEqual({
+      demoteToFull: false,
+      filter: { and: [memberA, ts] },
+    });
   });
 
-  it('demotes to full when the user filter is a compound `or`', () => {
-    const userFilter: NotionFilter = { or: [{ property: 'A', checkbox: { equals: true } }] };
+  it('AND-wraps a compound `or` user filter of simple members — two levels, which Notion allows', () => {
+    const userFilter = {
+      or: [
+        { property: 'A', checkbox: { equals: true } },
+        { property: 'B', checkbox: { equals: false } },
+      ],
+    };
+    expect(combineNotionFilters(userFilter, ts)).toEqual({
+      demoteToFull: false,
+      filter: { and: [userFilter, ts] },
+    });
+  });
+
+  it('appends to an `and` user filter that already nests a compound — still no extra level', () => {
+    const nestedOr = { or: [{ property: 'A', checkbox: { equals: true } }] };
+    expect(combineNotionFilters({ and: [nestedOr] }, ts)).toEqual({
+      demoteToFull: false,
+      filter: { and: [nestedOr, ts] },
+    });
+  });
+
+  it('demotes to full only when the `or` user filter already nests a compound (wrapping would be a third level)', () => {
+    const userFilter: NotionFilter = {
+      or: [{ and: [{ property: 'A', checkbox: { equals: true } }] }, { property: 'B', checkbox: { equals: true } }],
+    };
     expect(combineNotionFilters(userFilter, ts)).toEqual({ demoteToFull: true });
   });
 });
+
+describe('addRequiredMemberToNotionFilter', () => {
+  const ts = buildNotionLastEditedFilter(new Date('2026-05-14T12:00:00.000Z'));
+
+  it('never exceeds Notion two-level nesting limit for any combinable shape', () => {
+    const shapes: NotionFilter[] = [
+      { property: 'A', checkbox: { equals: true } },
+      { and: [{ property: 'A', checkbox: { equals: true } }] },
+      { or: [{ property: 'A', checkbox: { equals: true } }] },
+      { and: [{ or: [{ property: 'A', checkbox: { equals: true } }] }] },
+    ];
+    for (const shape of shapes) {
+      const combined = addRequiredMemberToNotionFilter(shape, ts);
+      expect(combined).not.toBeNull();
+      expect(countCompoundNestingLevels(combined)).toBeLessThanOrEqual(NOTION_MAX_COMPOUND_FILTER_NESTING_LEVELS);
+    }
+  });
+});
+
+/** Test-local depth probe, so the assertion above doesn't just re-run production logic. */
+function countCompoundNestingLevels(filter: unknown): number {
+  if (typeof filter !== 'object' || filter === null) {
+    return 0;
+  }
+  const members = 'and' in filter ? filter.and : 'or' in filter ? filter.or : undefined;
+  if (!Array.isArray(members)) {
+    return 0;
+  }
+  return 1 + Math.max(0, ...members.map((member) => countCompoundNestingLevels(member)));
+}

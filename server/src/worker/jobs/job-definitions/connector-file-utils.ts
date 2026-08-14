@@ -36,6 +36,10 @@ export type BuiltFile = {
  *
  * @param suggestedFileNames - Parallel array from connector.getSuggestedRecordFileNames().
  *   Each element is a suggested name (without extension) or undefined to fall back to the record ID.
+ * @param fileNamesAssignedByRecordIdInThisRun - Names this pull run has already minted, keyed by
+ *   record ID. Created once per run and carried across batches by the caller, exactly like
+ *   `usedFileNames`. See the re-delivery note below for why the `existingFileNames` index lookup
+ *   alone isn't enough.
  */
 export function buildGitFilesFromConnectorFiles(
   parentPath: string,
@@ -44,6 +48,7 @@ export function buildGitFilesFromConnectorFiles(
   usedFileNames: Set<string>,
   existingFileNames: Map<string, string>,
   suggestedFileNames: (string | undefined)[],
+  fileNamesAssignedByRecordIdInThisRun: Map<string, string> = new Map(),
 ): BuiltFile[] {
   const idPath = tableSpec.idPath;
   const processedFiles: BuiltFile[] = [];
@@ -61,7 +66,17 @@ export function buildGitFilesFromConnectorFiles(
     // stripping), so the dedup suffix still disambiguates.
     const sanitizedRecordId = sanitizeRecordIdForFileName(recordId);
 
-    let fileName = existingFileNames.get(recordId);
+    // A connector may deliver the same record twice in one run — most visibly
+    // Notion, whose 10,000-result continuation re-returns the pages sharing the
+    // rolled window's boundary minute, but any connector with an unstable page
+    // boundary can do it. `existingFileNames` comes from the FileIndex, which
+    // knows nothing about a record first seen earlier in THIS run (and, within a
+    // single batch, nothing about one seen moments ago), so a re-delivered new
+    // record would find its own freshly-claimed name already taken and mint an
+    // id-suffixed twin — two files for one record. Resolving through the run's
+    // own assignments first makes re-delivery converge on the same path, which
+    // is what makes the commit genuinely idempotent.
+    let fileName = fileNamesAssignedByRecordIdInThisRun.get(recordId) ?? existingFileNames.get(recordId);
 
     if (!fileName) {
       const suggested = suggestedFileNames[i];
@@ -81,6 +96,7 @@ export function buildGitFilesFromConnectorFiles(
       // so we don't accidentally derive it for another new file.
       usedFileNames.add(fileName);
     }
+    fileNamesAssignedByRecordIdInThisRun.set(recordId, fileName);
 
     const fullPath = fullPathFromFolderAndFileName(parentPath, fileName);
 
