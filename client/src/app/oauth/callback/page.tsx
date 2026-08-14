@@ -185,8 +185,13 @@ function OAuthCallbackContent() {
           return;
         }
 
-        // Otherwise send the result to the web client.
-        window.location.href = `${oAuthState.redirectPrefix}/oauth/callback-step-2${window.location.search}`;
+        // Otherwise send the result back to the web client that started the flow. `redirectPrefix` is a
+        // full origin (e.g. https://test.scratch.md), so this is a cross-origin, full-document navigation
+        // that the Next.js router can't perform — hence the direct window.location assignment, built as a
+        // URL the same way the desktop/Whalesync branches above are.
+        const webClientCallbackUrl = new URL('/oauth/callback-step-2', oAuthState.redirectPrefix);
+        webClientCallbackUrl.search = window.location.search;
+        window.location.href = webClientCallbackUrl.toString();
       } catch (error) {
         console.error('OAuth callback error:', error);
         const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
