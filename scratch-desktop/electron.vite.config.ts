@@ -19,18 +19,47 @@ function originOf(value: string | undefined): string | null {
 }
 
 /**
+ * Derive the PostHog *assets* origin from the configured ingest host. PostHog's JS client fetches its
+ * remote config from the region assets host (`https://<region>-assets.i.posthog.com/array/<token>/config`),
+ * which is a different origin from the ingest host and so needs its own `connect-src` entry. For managed
+ * cloud (`us.i.posthog.com`, `eu.i.posthog.com`, …) that means inserting `-assets` into the region label;
+ * for a self-hosted/custom host, assets are served from the same host, so we return that host's own origin.
+ */
+function posthogAssetsOriginForHost(postHogHostUrl: string | undefined): string | null {
+  if (!postHogHostUrl) return null;
+  let parsedPostHogHostUrl: URL;
+  try {
+    parsedPostHogHostUrl = new URL(postHogHostUrl);
+  } catch {
+    return null;
+  }
+  const managedCloudRegionMatch = parsedPostHogHostUrl.hostname.match(/^([a-z]+)\.i\.posthog\.com$/);
+  if (managedCloudRegionMatch) {
+    return `https://${managedCloudRegionMatch[1]}-assets.i.posthog.com`;
+  }
+  return parsedPostHogHostUrl.origin;
+}
+
+/**
  * Build the renderer's Content-Security-Policy (SCR-006 / DEV-11001, defense-in-depth for renderer
  * XSS). `script-src 'self'` (no `unsafe-inline`/`unsafe-eval`) is the load-bearing directive: it stops
  * an injected/remote script from running even if the HTML sanitizer were ever bypassed. `connect-src`
  * is derived from the SAME build-time env the renderer bundles (`VITE_SCRATCH_API_URL`,
  * `VITE_POSTHOG_HOST`) so it always matches where the app actually talks; PostHog uses the bundled
- * "no-external" build (DEV-10676) so no PostHog script is ever fetched — only its ingest endpoint is a
- * `connect-src`. `style-src 'unsafe-inline'` is required by Mantine's runtime style injection and the
- * rich-text renderer's scoped `<style>`; inline styles are not a script-execution vector.
+ * "no-external" build (DEV-10676) so no PostHog *script* is ever fetched. Two PostHog origins are still
+ * `connect-src`ed: the ingest host (event capture) and the region *assets* host
+ * (`<region>-assets.i.posthog.com`), where the client fetches its remote config JSON — session replay
+ * waits for that config before it starts, so blocking it silently disables replay.
+ * `style-src 'unsafe-inline'` is required by Mantine's runtime style injection and the rich-text
+ * renderer's scoped `<style>`; inline styles are not a script-execution vector.
  */
 function buildContentSecurityPolicy(env: Record<string, string>): string {
-  const connectSrc = new Set<string>(["'self'", 'https://us.i.posthog.com']);
-  for (const origin of [originOf(env.VITE_SCRATCH_API_URL), originOf(env.VITE_POSTHOG_HOST)]) {
+  const connectSrc = new Set<string>(["'self'", 'https://us.i.posthog.com', 'https://us-assets.i.posthog.com']);
+  for (const origin of [
+    originOf(env.VITE_SCRATCH_API_URL),
+    originOf(env.VITE_POSTHOG_HOST),
+    posthogAssetsOriginForHost(env.VITE_POSTHOG_HOST),
+  ]) {
     if (origin) connectSrc.add(origin);
   }
   return [

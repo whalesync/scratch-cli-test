@@ -77,6 +77,15 @@ test('ships a Content-Security-Policy whose script-src/object-src cannot run inj
   expect(directive('script-src')).toBe("script-src 'self'");
   expect(directive('object-src')).toBe("object-src 'none'");
   expect(directive('base-uri')).toBe("base-uri 'none'");
+
+  // PostHog needs BOTH its ingest host (event capture) and its region assets host (remote config, which
+  // session replay waits on) in connect-src. Builds use the checked-in `.env` (us.i.posthog.com), so the
+  // us-assets host is deterministic. Guards against dropping the assets host and re-breaking replay.
+  const connectSrc = directive('connect-src');
+  expect(connectSrc, 'connect-src must whitelist the PostHog ingest host').toContain('https://us.i.posthog.com');
+  expect(connectSrc, 'connect-src must whitelist the PostHog assets host (remote config / session replay)').toContain(
+    'https://us-assets.i.posthog.com',
+  );
 });
 
 test('CSP blocks an injected inline <script> in the renderer', async () => {
