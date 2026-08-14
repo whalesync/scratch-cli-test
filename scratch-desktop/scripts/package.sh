@@ -63,7 +63,9 @@ node -e "
 echo "package.json version set to $SEMVER"
 
 echo "Installing dependencies..."
-yarn install --frozen-lockfile --ignore-engines
+# Retry wrapper — the packaging jobs pull electron + electron-builder binaries
+# from GitHub releases, the same fetches that flake in the other CI jobs.
+bash ../scripts/ci/yarn-install-with-retry.sh --ignore-engines
 
 echo "Building renderer + main + preload bundles..."
 rm -rf ./dist

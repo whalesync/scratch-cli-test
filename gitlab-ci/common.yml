@@ -38,7 +38,13 @@ include:
   script:
     # To get nvm working.
     - . ~/.bashrc
-    - nvm use && yarn install --frozen-lockfile --cache-folder .yarn --prefer-offline
+    # Installs go through the retry wrapper: a single un-retried `yarn install`
+    # turns any registry / GitHub-releases blip (postinstall binary downloads
+    # for electron and @posthog/cli are the usual victims) into a job failure,
+    # and for `run migrations` that silently skips the entire deploy stage.
+    # Absolute path because callers may have cd'd into a workspace first
+    # (see .build_shared_types).
+    - nvm use && bash "${CI_PROJECT_DIR}/scripts/ci/yarn-install-with-retry.sh" --cache-folder .yarn --prefer-offline
 
 .build_shared_types:
   script:
