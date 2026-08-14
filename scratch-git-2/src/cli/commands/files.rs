@@ -809,16 +809,22 @@ async fn run_download(
     // serialization the three-worktree model used to give us.
     let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
 
+    // DEV-10846: one `GET workbooks/{id}` for the whole pull. The structure
+    // sync below and the per-connection server state further down both need the
+    // same payload; fetching it once here removes the second, redundant
+    // round-trip. `workspace_server_url` already applies the marker's
+    // server-url override, matching what `fetch_connection_server_state` resolved.
+    let workbook = fetch_workbook(&workspace_server_url, &workspace_marker.workbook.id).await?;
+
     // Workspace sync phase: detect structural drift and reconcile
     let sync_result = sync_workspace_structure(
         &workspace_dir,
         &workspace_marker,
-        &workspace_server_url,
+        &workbook,
         &token,
         on_delete,
         json,
-    )
-    .await?;
+    )?;
 
     // Re-read marker and rebuild contexts after sync
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
@@ -836,12 +842,10 @@ async fn run_download(
         );
     }
 
-    let server_state = fetch_connection_server_state(
-        &workspace_server_url,
-        &workspace_marker,
-        &workspace_marker.workbook.id,
-    )
-    .await;
+    // Reuse the workbook fetched above instead of re-requesting it (DEV-10846).
+    // `sync_workspace_structure` only mutated local state, so this payload is
+    // still the server's current view.
+    let server_state = connection_server_state_from_workbook(workbook);
 
     // Refuse the pull if the server restructured a folder layout (DEV-9698) for
     // a connection we're about to download — the recorded structure version no
@@ -913,62 +917,70 @@ async fn run_download(
     // workspace pull. Reported (and the process exits non-zero) after every clean
     // sibling has pulled — see the check just before the hard-conflict decision.
     let mut failed_connections: Vec<(String, String)> = Vec::new();
-    for ctx in &contexts {
-        if contexts.len() > 1 && !json {
-            println!("Downloading {}...", ctx.conn_dir_name);
-        }
-        let folders: &[DataFolder] = server_state
-            .get(&ctx.connection_id)
-            .map(|s| s.data_folders.as_slice())
-            .unwrap_or(&[]);
-        let mut download_result =
-            match download_single_repo(ctx, &workspace_dir, &token, folders, None) {
-                Ok(result) => result,
-                Err(err) => {
-                    // Isolate this connection's failure so siblings still pull. Push
-                    // an aligned placeholder result to keep `results` 1:1 with
-                    // `contexts` (the post-loop zip below depends on it), then skip
-                    // the rest of this iteration.
-                    eprintln!(
-                        "  Warning: failed to download {}: {err:#}",
-                        ctx.conn_dir_name
-                    );
-                    failed_connections.push((ctx.conn_dir_name.clone(), format!("{err:#}")));
-                    results.push(DownloadResult {
-                        status: "error".to_string(),
-                        ..Default::default()
-                    });
-                    continue;
-                }
-            };
-        // `update_main_worktree_after_pull` is best-effort — failures here shouldn't
-        // bubble up because the dirty-side download already succeeded. Fall
-        // back to "no master change" on error.
-        let master_update = update_main_worktree_after_pull(ctx, &token).unwrap_or_default();
-        if master_update.moved {
-            // Schema files on master may have moved alongside data files;
-            // resync them into ctx.scratch_dir. Gated on `moved` so unchanged
-            // connections pay zero cost in the per-ctx loop.
-            let _ = sync_schema_files_from_worktree(ctx);
-        }
-        // Merge the master-side path diff into the download result so the
-        // single `changed_paths` field downstream covers any tree the
-        // folder_index needs to recompute its bits against.
-        if !master_update.changed_paths.is_empty() {
-            let mut seen: HashSet<String> = download_result.changed_paths.iter().cloned().collect();
-            for path in master_update.changed_paths {
-                if seen.insert(path.clone()) {
-                    download_result.changed_paths.push(path);
-                }
+
+    // Announce the full connection set before any work starts so a progress UI
+    // can render every row up front instead of discovering them one at a time.
+    emit_pull_progress(
+        json,
+        &PullProgressEvent::Plan {
+            connections: contexts
+                .iter()
+                .map(|ctx| ctx.conn_dir_name.as_str())
+                .collect(),
+        },
+    );
+
+    // DEV-10846: fan the per-connection downloads out across rayon's pool. Each
+    // connection touches only its own bare repo, worktree, and scratch cache, so
+    // there is no shared mutable state (the one workspace-level write,
+    // `conflicts_log::append`, is an atomic O_APPEND line write documented as
+    // parallel-safe). Every connection previously paid its `fetch_origin`
+    // network round-trip strictly after the last one finished; wall time is now
+    // the slowest connection instead of the sum. Mirrors the `par_iter()` clone
+    // fan-out `workspaces::init_v2` already uses.
+    //
+    // Results come back in `contexts` order, so the sequential fold below — and
+    // the `results`/`contexts` 1:1 alignment the post-loop zip depends on — is
+    // unchanged and deterministic regardless of completion order.
+    let announce_connection_to_stdout = contexts.len() > 1 && !json;
+    let per_connection_outcomes: Vec<anyhow::Result<ConnectionDownloadOutcome>> = {
+        use rayon::prelude::*;
+        contexts
+            .par_iter()
+            .map(|ctx| {
+                download_one_connection_for_pull(
+                    ctx,
+                    &workspace_dir,
+                    &token,
+                    &server_state,
+                    announce_connection_to_stdout,
+                    json,
+                )
+            })
+            .collect()
+    };
+
+    for (ctx, outcome) in contexts.iter().zip(per_connection_outcomes) {
+        match outcome {
+            Ok(outcome) => {
+                all_changed_workspace_paths.extend(outcome.changed_workspace_paths);
+                results.push(outcome.result);
+            }
+            Err(err) => {
+                // Isolate this connection's failure so siblings still pull. Push
+                // an aligned placeholder result to keep `results` 1:1 with
+                // `contexts` (the post-loop zip below depends on it).
+                eprintln!(
+                    "  Warning: failed to download {}: {err:#}",
+                    ctx.conn_dir_name
+                );
+                failed_connections.push((ctx.conn_dir_name.clone(), format!("{err:#}")));
+                results.push(DownloadResult {
+                    status: "error".to_string(),
+                    ..Default::default()
+                });
             }
         }
-        // Promote to workspace-relative (prefixed with conn_dir_name) so
-        // the post-loop folder_index reindex can route each path to the
-        // right per-folder table without needing per-ctx attribution.
-        for path in &download_result.changed_paths {
-            all_changed_workspace_paths.push(format!("{}/{}", ctx.conn_dir_name, path));
-        }
-        results.push(download_result);
     }
 
     let wb_name = if workspace_marker.workbook.name.is_empty() {
@@ -1171,21 +1183,35 @@ fn decide_hard_conflict_outcome(
     }
 }
 
-async fn sync_workspace_structure(
+/// Fetch a workbook's server-side state in one `GET workbooks/{id}`.
+///
+/// DEV-10846: `run_download` used to issue this request twice — once inside
+/// `sync_workspace_structure` and again inside `fetch_connection_server_state` —
+/// for the same workbook, microseconds apart. Both callers want the identical
+/// payload, so the request is hoisted here and the single response is shared.
+async fn fetch_workbook(
+    server_url: &str,
+    workbook_id: &str,
+) -> anyhow::Result<crate::api::Workbook> {
+    let client = crate::api::ApiClient::from_credentials(server_url)
+        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd auth login` first."))?;
+    Ok(client.get(&format!("workbooks/{workbook_id}")).await?)
+}
+
+/// Reconcile the local workspace's connection set against the server's.
+///
+/// Takes the already-fetched `workbook` rather than fetching it (see
+/// [`fetch_workbook`]). Every mutation here is local — directories, bare repos,
+/// and the workspace marker — so the caller's copy of the server state stays
+/// valid afterwards and can be reused for the per-connection download.
+fn sync_workspace_structure(
     workspace_dir: &Path,
     workspace_marker: &markers::WorkspaceMarker,
-    server_url: &str,
+    wb: &crate::api::Workbook,
     token: &str,
     on_delete: OnDeleteAction,
     json: bool,
 ) -> anyhow::Result<WorkspaceSyncResult> {
-    let client = crate::api::ApiClient::from_credentials(server_url)
-        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd auth login` first."))?;
-
-    let wb: crate::api::Workbook = client
-        .get(&format!("workbooks/{}", workspace_marker.workbook.id))
-        .await?;
-
     let local_ids: std::collections::HashSet<&str> = workspace_marker
         .connections
         .iter()
@@ -4006,6 +4032,27 @@ struct ConnectionServerState {
     structure_version: i32,
 }
 
+/// Project an already-fetched workbook into the per-connection server state the
+/// download path needs. Pure — split out of [`fetch_connection_server_state`] so
+/// `run_download` can derive this from the workbook it already holds instead of
+/// issuing a second identical GET (DEV-10846).
+fn connection_server_state_from_workbook(
+    wb: crate::api::Workbook,
+) -> HashMap<String, ConnectionServerState> {
+    wb.connector_accounts
+        .into_iter()
+        .map(|ca| {
+            (
+                ca.id,
+                ConnectionServerState {
+                    data_folders: ca.data_folders,
+                    structure_version: ca.version,
+                },
+            )
+        })
+        .collect()
+}
+
 /// Fetch each connection's server-side state (DataFolders + structure version)
 /// in a single workbook GET. Best-effort: on any auth or network error, returns
 /// an empty map — file merge still proceeds, only the empty-folder reconcile +
@@ -4020,26 +4067,8 @@ async fn fetch_connection_server_state(
     } else {
         workspace_marker.workbook.server_url.as_str()
     };
-    let Some(client) = crate::api::ApiClient::from_credentials(server_url) else {
-        return HashMap::new();
-    };
-    match client
-        .get::<crate::api::Workbook>(&format!("workbooks/{}", workbook_id))
-        .await
-    {
-        Ok(wb) => wb
-            .connector_accounts
-            .into_iter()
-            .map(|ca| {
-                (
-                    ca.id,
-                    ConnectionServerState {
-                        data_folders: ca.data_folders,
-                        structure_version: ca.version,
-                    },
-                )
-            })
-            .collect(),
+    match fetch_workbook(server_url, workbook_id).await {
+        Ok(wb) => connection_server_state_from_workbook(wb),
         Err(e) => {
             eprintln!("  Note: could not fetch folder metadata for reconcile: {e}");
             HashMap::new()
@@ -6502,6 +6531,170 @@ async fn run_reconcile_after_publish(
         );
     }
     Ok(())
+}
+
+/// Marker prefixing every machine-readable pull-progress line on stderr, so a
+/// consumer can pick them out of ordinary warn-and-skip notices.
+const PULL_PROGRESS_MARKER: &str = "[pull-progress]";
+
+/// Live per-connection progress for a workspace pull (DEV-10846).
+///
+/// Emitted on **stderr** as `[pull-progress] {json}`, one object per line: the
+/// `--json` result payload owns stdout and has to stay a single parseable
+/// object. Only emitted under `--json` — the machine-facing mode the desktop app
+/// runs — because a human run gets the plain `Downloading X...` lines instead.
+///
+/// `eprintln!` takes the stderr lock for the whole line, so events from
+/// concurrent rayon workers interleave whole and are never garbled.
+enum PullProgressEvent<'a> {
+    /// The full connection set, emitted once before any download begins so a UI
+    /// can render every row as pending up front rather than discovering
+    /// connections one completion at a time.
+    Plan { connections: Vec<&'a str> },
+    /// This connection's download just started on a worker thread.
+    Started { connection: &'a str },
+    /// Terminal event for one connection.
+    Finished {
+        connection: &'a str,
+        /// The `DownloadResult.status` ("downloaded" / "up_to_date"), or
+        /// "error" when the connection failed and its siblings carried on.
+        status: &'a str,
+        /// Record files this connection wrote to disk.
+        changed_records: usize,
+    },
+}
+
+/// The on-the-wire JSON for one progress event. Pure, so the contract the
+/// desktop parses (`parsePullProgressLine` in `scratch-desktop/src/main/scratchmd.ts`)
+/// can be asserted in a test without capturing stderr.
+fn pull_progress_payload(event: &PullProgressEvent<'_>) -> serde_json::Value {
+    match event {
+        PullProgressEvent::Plan { connections } => {
+            serde_json::json!({ "event": "plan", "connections": connections })
+        }
+        PullProgressEvent::Started { connection } => {
+            serde_json::json!({ "event": "started", "connection": connection })
+        }
+        PullProgressEvent::Finished {
+            connection,
+            status,
+            changed_records,
+        } => serde_json::json!({
+            "event": "finished",
+            "connection": connection,
+            "status": status,
+            "changedRecords": changed_records,
+        }),
+    }
+}
+
+fn emit_pull_progress(json: bool, event: &PullProgressEvent<'_>) {
+    if !json {
+        return;
+    }
+    eprintln!("{PULL_PROGRESS_MARKER} {}", pull_progress_payload(event));
+}
+
+/// What one connection contributes back to the workspace-level pull.
+struct ConnectionDownloadOutcome {
+    result: DownloadResult,
+    /// `result.changed_paths` promoted to workspace-relative (`<conn>/<path>`)
+    /// so the post-loop folder_index reindex can route each path to the right
+    /// per-folder table without needing per-ctx attribution.
+    changed_workspace_paths: Vec<String>,
+}
+
+/// Download one connection and run its per-connection post-pull bookkeeping.
+///
+/// Lifted out of `run_download`'s loop body so the whole unit can run on a rayon
+/// worker (DEV-10846). Everything here is scoped to this connection's own bare
+/// repo, worktree, and scratch cache — the workspace-level fold (changed-path
+/// accumulation, failure reporting, reindex) stays in the caller, which
+/// processes outcomes in `contexts` order so ordering stays deterministic.
+///
+/// `announce_connection_to_stdout` prints the human "Downloading X..." line, and
+/// is set for a multi-connection non-`--json` run. Those lines now report which
+/// connections *started* rather than implying a sequential order; `println!`
+/// holds the stdout lock per line, so concurrent workers can't garble them.
+fn download_one_connection_for_pull(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    token: &str,
+    server_state: &HashMap<String, ConnectionServerState>,
+    announce_connection_to_stdout: bool,
+    json: bool,
+) -> anyhow::Result<ConnectionDownloadOutcome> {
+    emit_pull_progress(
+        json,
+        &PullProgressEvent::Started {
+            connection: &ctx.conn_dir_name,
+        },
+    );
+    if announce_connection_to_stdout {
+        println!("Downloading {}...", ctx.conn_dir_name);
+    }
+
+    let folders: &[DataFolder] = server_state
+        .get(&ctx.connection_id)
+        .map(|s| s.data_folders.as_slice())
+        .unwrap_or(&[]);
+
+    let mut download_result = match download_single_repo(ctx, workspace_dir, token, folders, None) {
+        Ok(result) => result,
+        Err(err) => {
+            emit_pull_progress(
+                json,
+                &PullProgressEvent::Finished {
+                    connection: &ctx.conn_dir_name,
+                    status: "error",
+                    changed_records: 0,
+                },
+            );
+            return Err(err);
+        }
+    };
+
+    // `update_main_worktree_after_pull` is best-effort — failures here shouldn't
+    // bubble up because the dirty-side download already succeeded. Fall
+    // back to "no master change" on error.
+    let master_update = update_main_worktree_after_pull(ctx, token).unwrap_or_default();
+    if master_update.moved {
+        // Schema files on master may have moved alongside data files;
+        // resync them into ctx.scratch_dir. Gated on `moved` so unchanged
+        // connections pay zero cost.
+        let _ = sync_schema_files_from_worktree(ctx);
+    }
+    // Merge the master-side path diff into the download result so the
+    // single `changed_paths` field downstream covers any tree the
+    // folder_index needs to recompute its bits against.
+    if !master_update.changed_paths.is_empty() {
+        let mut seen: HashSet<String> = download_result.changed_paths.iter().cloned().collect();
+        for path in master_update.changed_paths {
+            if seen.insert(path.clone()) {
+                download_result.changed_paths.push(path);
+            }
+        }
+    }
+
+    let changed_workspace_paths: Vec<String> = download_result
+        .changed_paths
+        .iter()
+        .map(|path| format!("{}/{}", ctx.conn_dir_name, path))
+        .collect();
+
+    emit_pull_progress(
+        json,
+        &PullProgressEvent::Finished {
+            connection: &ctx.conn_dir_name,
+            status: &download_result.status,
+            changed_records: changed_workspace_paths.len(),
+        },
+    );
+
+    Ok(ConnectionDownloadOutcome {
+        result: download_result,
+        changed_workspace_paths,
+    })
 }
 
 /// Pull the latest server state for one connection.

@@ -46,6 +46,19 @@ const PULL_JOB_TYPES = new Set(['RefreshRecords', 'pull-linked-folder-files']);
 
 export type PullPhase = 'idle' | 'starting' | 'polling' | 'downloading' | 'done' | 'error' | 'download-error';
 
+/**
+ * One connection's row in the local-download phase (DEV-10846). Built from the
+ * CLI's per-connection progress events; `pending` means announced by the `plan`
+ * event but not yet picked up by a worker.
+ */
+export interface ConnectionDownloadProgress {
+  /** Workspace directory name of the connection, as the CLI reports it. */
+  connection: string;
+  state: 'pending' | 'active' | 'done' | 'error';
+  /** Record files written to disk. Only set once the connection finishes. */
+  changedRecords?: number;
+}
+
 export interface StartPullOptions {
   /** Title shown in the progress modal header. */
   title: string;
@@ -70,6 +83,11 @@ export interface PullTracker {
   error: string | null;
   downloadError: string | null;
   emptyMessage: string | null;
+  /**
+   * Per-connection rows for the local-download phase, in the order the CLI
+   * announced them. Empty until the download starts (DEV-10846).
+   */
+  connectionDownloads: ConnectionDownloadProgress[];
   /** Start-and-track: enqueue a pull on the server, then watch + download. */
   startPull: (options: StartPullOptions) => Promise<void>;
   /**
@@ -91,6 +109,25 @@ function isActivePhase(phase: PullPhase): boolean {
   return phase === 'starting' || phase === 'polling' || phase === 'downloading';
 }
 
+/**
+ * Apply an update to one connection's download row, appending it if the `plan`
+ * event didn't list it. Appending rather than dropping the update keeps the view
+ * honest if a future CLI version reports a connection the plan missed.
+ */
+function upsertConnectionDownload(
+  rows: ConnectionDownloadProgress[],
+  connection: string,
+  update: Partial<Omit<ConnectionDownloadProgress, 'connection'>>,
+): ConnectionDownloadProgress[] {
+  const index = rows.findIndex((row) => row.connection === connection);
+  if (index === -1) {
+    return [...rows, { connection, state: 'active', ...update }];
+  }
+  const next = [...rows];
+  next[index] = { ...next[index], ...update };
+  return next;
+}
+
 export function usePullTracker(args: {
   workbookId: string;
   localPath: string | null;
@@ -108,6 +145,7 @@ export function usePullTracker(args: {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [emptyMessage, setEmptyMessage] = useState<string | null>(null);
   const [downloadAttempt, setDownloadAttempt] = useState(0);
+  const [connectionDownloads, setConnectionDownloads] = useState<ConnectionDownloadProgress[]>([]);
 
   // Latest-value refs so the long-lived polling / download effects don't have to
   // re-subscribe when these change, and so callbacks can read the current phase
@@ -158,6 +196,7 @@ export function usePullTracker(args: {
       setDownloadAttempt(0);
       setJobs([]);
       setTrackedJobIds([]);
+      setConnectionDownloads([]);
     },
     [clearPolling, clearDownloadRetry, clearDoneDismiss],
   );
@@ -172,6 +211,7 @@ export function usePullTracker(args: {
     setDownloadError(null);
     setEmptyMessage(null);
     setDownloadAttempt(0);
+    setConnectionDownloads([]);
     setPhase('idle');
   }, [clearPolling, clearDownloadRetry, clearDoneDismiss, setPhase]);
 
@@ -290,6 +330,29 @@ export function usePullTracker(args: {
     };
   }, [phase, trackedJobIds, clearPolling, setPhase]);
 
+  // DEV-10846: `files download` fans its connections out in parallel and reports
+  // each one's progress, so the download phase can show real per-connection rows
+  // instead of an indeterminate spinner. Subscribed for the hook's lifetime (the
+  // main process only emits during a pull) and keyed by connection name, since
+  // concurrent connections finish in arbitrary order.
+  useEffect(() => {
+    return window.scratchDesktop.onPullProgress((progress) => {
+      setConnectionDownloads((current) => {
+        switch (progress.event) {
+          case 'plan':
+            return progress.connections.map((connection) => ({ connection, state: 'pending' as const }));
+          case 'started':
+            return upsertConnectionDownload(current, progress.connection, { state: 'active' });
+          case 'finished':
+            return upsertConnectionDownload(current, progress.connection, {
+              state: progress.status === 'error' ? 'error' : 'done',
+              changedRecords: progress.changedRecords,
+            });
+        }
+      });
+    });
+  }, []);
+
   // After all pull jobs complete, materialize files locally. The records are
   // already on the server; this writes the new/updated files into the local
   // workspace so they show up in the file tree. Failures are surfaced (never
@@ -304,6 +367,12 @@ export function usePullTracker(args: {
       setPhase('download-error');
       return;
     }
+
+    // Drop the previous attempt's rows so a retry (the DEV-10421 auto-retry and
+    // the "Try again" button both re-enter here) doesn't show a full table of
+    // `done`/`error` rows at 100% while the download is actually restarting.
+    // Falls back to the spinner until the new run's `plan` event lands.
+    setConnectionDownloads([]);
 
     let cancelled = false;
 
@@ -392,6 +461,7 @@ export function usePullTracker(args: {
     error,
     downloadError,
     emptyMessage,
+    connectionDownloads,
     startPull,
     watchActivePulls,
     retryDownload,

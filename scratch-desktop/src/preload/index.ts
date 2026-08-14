@@ -4,6 +4,7 @@ import type { AgentDeepLinkProduct } from '../shared/agent-deep-links';
 import { AUTO_DOWNLOAD_COMPLETED_CHANNEL, type AutoDownloadCompletedEvent } from '../shared/auto-download-events';
 import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-install-events';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
+import { PULL_PROGRESS_CHANNEL, type PullConnectionProgressEvent } from '../shared/pull-progress-events';
 import {
   REVIEW_STATS_MAY_HAVE_CHANGED_CHANNEL,
   type ReviewStatsMayHaveChangedEvent,
@@ -217,6 +218,18 @@ const scratchDesktop = {
     workspacePath: string,
     opts?: { onDelete?: string; filePath?: string; connectionId?: string },
   ) => invoke('scratch:pull-workspace-changes', workspacePath, opts),
+  /**
+   * Subscribe to per-connection progress from an in-flight `files download`
+   * (DEV-10846). Returns an unsubscribe function.
+   */
+  onPullProgress: (callback: (event: PullConnectionProgressEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: PullConnectionProgressEvent): void =>
+      callback(progress);
+    ipcRenderer.on(PULL_PROGRESS_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(PULL_PROGRESS_CHANNEL, listener);
+    };
+  },
   listLocalSyncs: (workspacePath: string): Promise<string[]> => invoke('scratch:list-local-syncs', workspacePath),
   validateLocalSync: (
     workspacePath: string,

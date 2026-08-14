@@ -17,6 +17,11 @@ import { randomUUID } from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import { join, relative, resolve } from 'path';
 import { performance } from 'perf_hooks';
+import {
+  isPullProgressLine,
+  PULL_PROGRESS_MARKER,
+  type PullConnectionProgressEvent,
+} from '../shared/pull-progress-events';
 import type { ReviewStat } from '../shared/review-types';
 import type {
   RerunValidationScope,
@@ -220,6 +225,35 @@ export interface DownloadWorkspaceBlockedConflict {
 export type DownloadWorkspaceResult = DownloadWorkspaceSuccess | DownloadWorkspaceBlockedConflict;
 
 /**
+ * Recognize a `[pull-progress] {json}` stderr line, or `null` for any other
+ * line (ordinary warn-and-skip notices share the stream).
+ *
+ * @internal — exported for vitest.
+ */
+export function parsePullProgressLine(line: string): PullConnectionProgressEvent | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith(PULL_PROGRESS_MARKER)) return null;
+  try {
+    const parsed = JSON.parse(trimmed.slice(PULL_PROGRESS_MARKER.length)) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const { event } = parsed as { event?: unknown };
+    if (event === 'plan' && Array.isArray((parsed as { connections?: unknown }).connections)) {
+      return parsed as PullConnectionProgressEvent;
+    }
+    if (
+      (event === 'started' || event === 'finished') &&
+      typeof (parsed as { connection?: unknown }).connection === 'string'
+    ) {
+      return parsed as PullConnectionProgressEvent;
+    }
+  } catch {
+    // Malformed progress line — progress is advisory, so drop it silently
+    // rather than failing a pull that is otherwise succeeding.
+  }
+  return null;
+}
+
+/**
  * Shape of the CLI's `workspace_needs_reinit` JSON payload (slice F.1, see
  * `scratch-git-2/src/cli/commands/files.rs::print_workspace_needs_reinit_result`).
  * Detected centrally in `runScratchmdCapture` and broadcast over IPC; per-call
@@ -368,26 +402,35 @@ export function runScratchmdCapture(
 
     let stdout = '';
     let stderr = '';
-    let stderrBuf = '';
+    let stderrLineBuffer = '';
 
     child.stdout.on('data', (chunk: Buffer | string) => {
       stdout += chunk.toString();
     });
 
+    /**
+     * Route one complete stderr line. Progress lines still reach `onProgress`
+     * (existing consumers, e.g. `rerunValidation`'s `[rerun]` lines, expect
+     * every line) but are kept OUT of the captured `stderr`, which is what
+     * builds a command's error message, `logCliCommand`'s `errorSummary`, and
+     * the `stderr` field the renderer surfaces (DEV-10846). No other command
+     * emits the marker, so this is a no-op for them.
+     */
+    const routeStderrLine = (line: string): void => {
+      if (onProgress && line.trim()) onProgress(line);
+      if (isPullProgressLine(line)) return;
+      stderr += `${line}\n`;
+    };
+
     child.stderr.on('data', (chunk: Buffer | string) => {
       const text = chunk.toString();
-      stderr += text;
       if (args.includes('--debug')) {
         console.debug('[scratchmd]', text.trimEnd());
       }
-      if (onProgress) {
-        stderrBuf += text;
-        const lines = stderrBuf.split('\n');
-        stderrBuf = lines.pop() ?? '';
-        for (const line of lines) {
-          if (line.trim()) onProgress(line);
-        }
-      }
+      stderrLineBuffer += text;
+      const lines = stderrLineBuffer.split('\n');
+      stderrLineBuffer = lines.pop() ?? '';
+      for (const line of lines) routeStderrLine(line);
     });
 
     child.on('error', (error: NodeJS.ErrnoException) => {
@@ -408,6 +451,12 @@ export function runScratchmdCapture(
     });
 
     child.on('close', (code) => {
+      // Flush a trailing line the CLI wrote without a newline, before anything
+      // below reads `stderr` — the old raw `stderr += text` never dropped it.
+      if (stderrLineBuffer) {
+        routeStderrLine(stderrLineBuffer);
+        stderrLineBuffer = '';
+      }
       const exitCode = code ?? -1;
       logCliCommand(cwd, {
         args,
@@ -913,10 +962,16 @@ export function parseUploadRefusalPayload(
  * does the same at connection granularity: the pull returns `blocked_conflict`
  * iff a record in the TARGET CONNECTION hard-conflicts. The two are mutually
  * exclusive (the CLI also rejects the combination).
+ *
+ * `onProgress` receives per-connection progress events as the parallel download
+ * runs (DEV-10846), so the caller can drive a live view instead of an
+ * indeterminate spinner. Optional — the background auto-download has no renderer
+ * to notify.
  */
 export async function pullWorkspaceChanges(
   workspacePath: string,
   opts?: { onDelete?: string; filePath?: string; connectionId?: string },
+  onProgress?: (event: PullConnectionProgressEvent) => void,
 ): Promise<DownloadWorkspaceResult> {
   const args = ['--json', 'files', 'download'];
   if (opts?.onDelete) {
@@ -927,7 +982,16 @@ export async function pullWorkspaceChanges(
   } else if (opts?.connectionId) {
     args.push('--connection', opts.connectionId);
   }
-  const result = await runScratchmdCapture(args, workspacePath);
+  const result = await runScratchmdCapture(
+    args,
+    workspacePath,
+    onProgress
+      ? (line) => {
+          const event = parsePullProgressLine(line);
+          if (event) onProgress(event);
+        }
+      : undefined,
+  );
   if (result.exitCode !== 0) {
     // The CLI exits non-zero for a `blocked_conflict` refusal (DEV-10523),
     // printing the payload to stdout. Return it typed (non-throwing) so the

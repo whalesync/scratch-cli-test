@@ -4,7 +4,7 @@ import type { Job } from '@spinner/shared-types';
 import { Text12Regular, Text13Regular, TextMono12Regular } from '../../components/base/text';
 import { useCurrentUser } from '../../hooks/use-current-user';
 import { JobRawJsonButton } from './JobRawJsonButton';
-import type { PullTracker } from './use-pull-tracker';
+import type { ConnectionDownloadProgress, PullTracker } from './use-pull-tracker';
 
 type PullProgress = {
   totalFiles: number;
@@ -47,6 +47,25 @@ function getConnectionLabel(job: Job, progress?: PullProgress): string {
   return progress?.connectionName ?? progress?.folderName ?? job.bullJobId ?? '—';
 }
 
+/**
+ * User-facing wording and badge color per connection download state
+ * (DEV-10846). Keyed `Record`s rather than switches so adding a state to
+ * `ConnectionDownloadProgress` is a compile error here.
+ */
+const CONNECTION_STATE_LABELS: Record<ConnectionDownloadProgress['state'], string> = {
+  pending: 'queued',
+  active: 'downloading',
+  done: 'complete',
+  error: 'failed',
+};
+
+const CONNECTION_STATE_COLORS: Record<ConnectionDownloadProgress['state'], string> = {
+  pending: 'gray',
+  active: 'blue',
+  done: 'green',
+  error: 'red',
+};
+
 interface PullProgressModalProps {
   opened: boolean;
   onClose: () => void;
@@ -64,6 +83,13 @@ export function PullProgressModal({ opened, onClose, tracker }: PullProgressModa
   const showJobDebug = user?.isAdmin === true;
 
   const { phase, jobs, progress, completedCount, totalCount, title, error, downloadError, emptyMessage } = tracker;
+  const { connectionDownloads } = tracker;
+
+  const finishedConnectionCount = connectionDownloads.filter(
+    (row) => row.state === 'done' || row.state === 'error',
+  ).length;
+  const connectionDownloadProgress =
+    connectionDownloads.length > 0 ? Math.round((finishedConnectionCount / connectionDownloads.length) * 100) : 0;
 
   return (
     <Modal opened={opened} onClose={onClose} title={title} size="lg">
@@ -99,13 +125,57 @@ export function PullProgressModal({ opened, onClose, tracker }: PullProgressModa
           <Text13Regular c="dimmed">{emptyMessage ?? 'No active pull jobs found.'}</Text13Regular>
         )}
 
-        {phase === 'downloading' && (
+        {/* DEV-10846: the local download reports per-connection progress, so show
+            real rows once they arrive. The spinner is the fallback for the brief
+            window before the CLI's first event (and for an older CLI that emits
+            none). */}
+        {phase === 'downloading' && connectionDownloads.length === 0 && (
           <Center py="sm">
             <Stack align="center" gap="sm">
               <Loader size="sm" />
               <Text13Regular c="dimmed">Downloading files to local workspace…</Text13Regular>
             </Stack>
           </Center>
+        )}
+
+        {phase === 'downloading' && connectionDownloads.length > 0 && (
+          <Box>
+            <Group justify="space-between" mb={4}>
+              <Text12Regular c="dimmed">
+                Downloading files to local workspace — {finishedConnectionCount.toLocaleString()} /{' '}
+                {connectionDownloads.length.toLocaleString()} connections
+              </Text12Regular>
+            </Group>
+            <Progress value={connectionDownloadProgress} animated mb="sm" />
+            <ScrollArea.Autosize mah={240}>
+              <Table fz="xs" withRowBorders={false}>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Connection</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th style={{ textAlign: 'right' }}>Records Written</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {connectionDownloads.map((row) => (
+                    <Table.Tr key={row.connection}>
+                      <Table.Td>
+                        <Text13Regular>{row.connection}</Text13Regular>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge color={CONNECTION_STATE_COLORS[row.state]} size="xs" variant="light">
+                          {CONNECTION_STATE_LABELS[row.state]}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td style={{ textAlign: 'right' }}>
+                        {row.changedRecords === undefined ? '—' : row.changedRecords.toLocaleString()}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea.Autosize>
+          </Box>
         )}
 
         {(phase === 'polling' || phase === 'downloading' || phase === 'done' || phase === 'download-error') &&

@@ -10,6 +10,7 @@ import { performance } from 'perf_hooks';
 import type { AgentDeepLinkProduct } from '../shared/agent-deep-links';
 import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-install-events';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
+import { PULL_PROGRESS_CHANNEL, type PullConnectionProgressEvent } from '../shared/pull-progress-events';
 import { UPDATER_EVENT_CHANNEL, UpdaterEvent } from '../shared/updater-events';
 import { buildAgentDeepLinkUrl } from './agent-deep-link';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
@@ -691,9 +692,10 @@ async function seedSchemaValidatorsAndPopulateProblems(workspacePath: string): P
 async function performWorkspaceDownload(
   workspacePath: string,
   opts?: { onDelete?: string; filePath?: string; connectionId?: string },
+  onProgress?: (event: PullConnectionProgressEvent) => void,
 ): Promise<DownloadWorkspaceResult> {
   return withWorkspaceInternalMutation(workspacePath, async () => {
-    const downloadResult = await pullWorkspaceChanges(workspacePath, opts);
+    const downloadResult = await pullWorkspaceChanges(workspacePath, opts, onProgress);
     await seedSchemaValidatorsAndPopulateProblems(workspacePath);
     return downloadResult;
   });
@@ -1162,8 +1164,14 @@ confinedIpc.handle(
 );
 confinedIpc.handle(
   'scratch:pull-workspace-changes',
-  async (_, workspacePath: string, opts?: { onDelete?: string; filePath?: string; connectionId?: string }) =>
-    performWorkspaceDownload(workspacePath, opts),
+  async (event, workspacePath: string, opts?: { onDelete?: string; filePath?: string; connectionId?: string }) =>
+    // Forward per-connection progress so the pull modal can show live rows
+    // instead of an indeterminate spinner (DEV-10846).
+    performWorkspaceDownload(workspacePath, opts, (progress) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(PULL_PROGRESS_CHANNEL, progress);
+      }
+    }),
 );
 confinedIpc.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
 confinedIpc.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>

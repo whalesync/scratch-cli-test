@@ -3,6 +3,7 @@ import type { AgentDeepLinkProduct } from '../shared/agent-deep-links';
 import type { AutoDownloadCompletedEvent } from '../shared/auto-download-events';
 import type { CliInstallEvent } from '../shared/cli-install-events';
 import type { AppWillQuitPayload } from '../shared/lifecycle-events';
+import type { PullConnectionProgressEvent } from '../shared/pull-progress-events';
 import type { RecordTreeResult } from '../shared/record-tree-types';
 import type { ReviewStatsMayHaveChangedEvent } from '../shared/review-stats-events';
 import type { ReviewStat } from '../shared/review-types';
@@ -273,6 +274,11 @@ interface ScratchDesktopAPI {
         stderr?: string;
       }
   >;
+  /**
+   * Subscribe to per-connection progress from an in-flight `files download`
+   * (DEV-10846). Returns an unsubscribe function.
+   */
+  onPullProgress: (callback: (event: PullConnectionProgressEvent) => void) => () => void;
   listLocalSyncs: (workspacePath: string) => Promise<string[]>;
   validateLocalSync: (
     workspacePath: string,

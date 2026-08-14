@@ -6694,3 +6694,130 @@ fn reconcile_published_record_drops_patch_when_value_was_normalized() {
         serde_json::json!(["SaaS", "normalized"])
     );
 }
+
+// ── DEV-10846: pull progress + workbook reuse ──
+
+/// The `[pull-progress]` payloads are a cross-language contract: the desktop's
+/// `parsePullProgressLine` (scratch-desktop/src/main/scratchmd.ts) keys off
+/// these exact field names, and its sibling spec asserts the same strings from
+/// the consumer side. Changing a key here without changing it there silently
+/// downgrades the pull modal back to an indeterminate spinner, so pin the shape.
+#[test]
+fn pull_progress_payloads_match_the_desktop_contract() {
+    assert_eq!(
+        pull_progress_payload(&PullProgressEvent::Plan {
+            connections: vec!["Stripe", "HubSpot"],
+        }),
+        serde_json::json!({ "event": "plan", "connections": ["Stripe", "HubSpot"] })
+    );
+
+    assert_eq!(
+        pull_progress_payload(&PullProgressEvent::Started {
+            connection: "Stripe",
+        }),
+        serde_json::json!({ "event": "started", "connection": "Stripe" })
+    );
+
+    assert_eq!(
+        pull_progress_payload(&PullProgressEvent::Finished {
+            connection: "Stripe",
+            status: "downloaded",
+            changed_records: 59,
+        }),
+        serde_json::json!({
+            "event": "finished",
+            "connection": "Stripe",
+            "status": "downloaded",
+            "changedRecords": 59,
+        })
+    );
+
+    // The failure branch: a connection whose download errored still reports a
+    // terminal event so its row doesn't hang at "downloading" forever.
+    assert_eq!(
+        pull_progress_payload(&PullProgressEvent::Finished {
+            connection: "Webflow",
+            status: "error",
+            changed_records: 0,
+        }),
+        serde_json::json!({
+            "event": "finished",
+            "connection": "Webflow",
+            "status": "error",
+            "changedRecords": 0,
+        })
+    );
+}
+
+/// Emitting is gated on `--json`: a human run gets the plain `Downloading X...`
+/// lines instead, and the marker must never appear on stdout (which carries the
+/// single `--json` result object).
+#[test]
+fn pull_progress_marker_is_stable_and_distinct() {
+    assert_eq!(PULL_PROGRESS_MARKER, "[pull-progress]");
+    // The desktop matches on a `startsWith` against a trimmed line, so the
+    // marker must not collide with the other stderr notices on that stream.
+    for notice in [
+        "  Warning: failed to download Stripe: boom",
+        "  Note: could not fetch folder metadata for reconcile: timeout",
+        "  Warning: failed to set up connection Airtable: repo not ready",
+    ] {
+        assert!(!notice.trim().starts_with(PULL_PROGRESS_MARKER));
+    }
+}
+
+/// DEV-10846 item 3: `run_download` fetches the workbook once and derives the
+/// per-connection server state from that same payload instead of issuing a
+/// second identical `GET workbooks/{id}`. This is the pure projection that made
+/// the dedupe possible — it must carry both fields the download path reads.
+#[test]
+fn connection_server_state_is_derived_from_an_already_fetched_workbook() {
+    let workbook = crate::api::Workbook {
+        id: "wkb_test".to_string(),
+        name: "Test".to_string(),
+        org_id: "org123".to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        table_count: 0,
+        version: 0,
+        git_url: String::new(),
+        connector_accounts: vec![
+            crate::api::ConnectorAccount {
+                id: "ca_stripe".to_string(),
+                display_name: "Stripe".to_string(),
+                service: "STRIPE".to_string(),
+                repo_path: "repo_stripe".to_string(),
+                git_url: String::new(),
+                version: 3,
+                data_folders: vec![DataFolder {
+                    id: "df_charges".to_string(),
+                    name: "Charges".to_string(),
+                    path: Some("/Charges".to_string()),
+                }],
+            },
+            crate::api::ConnectorAccount {
+                id: "ca_webflow".to_string(),
+                display_name: "Webflow".to_string(),
+                service: "WEBFLOW".to_string(),
+                repo_path: "repo_webflow".to_string(),
+                git_url: String::new(),
+                version: 0,
+                data_folders: vec![],
+            },
+        ],
+    };
+
+    let state = connection_server_state_from_workbook(workbook);
+
+    assert_eq!(state.len(), 2);
+    let stripe = state.get("ca_stripe").expect("stripe state");
+    assert_eq!(stripe.structure_version, 3);
+    assert_eq!(stripe.data_folders.len(), 1);
+    assert_eq!(stripe.data_folders[0].path.as_deref(), Some("/Charges"));
+
+    // A connection with no folders still gets an entry — the download path
+    // reads `structure_version` from it for the DEV-9698 drift check.
+    let webflow = state.get("ca_webflow").expect("webflow state");
+    assert_eq!(webflow.structure_version, 0);
+    assert!(webflow.data_folders.is_empty());
+}
