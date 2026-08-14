@@ -38,7 +38,7 @@ module "eu_production" {
   scratch_git_machine_type            = "e2-highmem-4" # 4 vCPUs, 2 cores, 32 GB memory
   scratch_git_boot_disk_size_gb       = 30
   scratch_git_snapshot_hours_in_cycle = 1
-  scratch_git_disk_size_gb            = 250
+  scratch_git_disk_size_gb            = 2000
 
   # Services
   force_reload_services             = var.force_reload_services
