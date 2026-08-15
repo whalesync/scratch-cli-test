@@ -3,7 +3,7 @@ import './setup-userdata';
 
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { spawn } from 'child_process';
-import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItemConstructorOptions, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItemConstructorOptions, shell } from 'electron';
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'fs/promises';
 import { dirname, join, relative, resolve, sep } from 'path';
 import { performance } from 'perf_hooks';
@@ -1222,6 +1222,12 @@ confinedIpc.handle('scratch:show-workspace-log', async (_, workspacePath: string
   } catch {
     void shell.openPath(workspacePath);
   }
+});
+// Copying happens in main rather than via `navigator.clipboard` in the renderer: the click arrives
+// as an IPC callback from a native context menu, and Chromium rejects a clipboard write while the
+// document is still unfocused after the menu closes.
+confinedIpc.handle('scratch:copy-path-to-clipboard', (_, folderPath: string) => {
+  clipboard.writeText(folderPath);
 });
 confinedIpc.handle('scratch:open-in-terminal', (_, folderPath: string) => {
   if (process.platform === 'win32') {

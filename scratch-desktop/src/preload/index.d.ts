@@ -303,6 +303,8 @@ interface ScratchDesktopAPI {
     onClick: (id: string) => void,
   ) => void;
   openInTerminal: (folderPath: string) => Promise<void>;
+  /** Puts an absolute workspace path on the system clipboard. */
+  copyPathToClipboard: (folderPath: string) => Promise<void>;
   openAgentDeepLink: (
     product: AgentDeepLinkProduct,
     workspacePath: string,

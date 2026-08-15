@@ -117,6 +117,9 @@ export const IPC_PATH_ARGUMENT_POLICIES: Readonly<Record<string, readonly PathAr
   'scratch:show-item-in-folder': [insideWorkspace(0)],
   'scratch:show-workspace-log': [workspaceRoot(0)],
   'scratch:open-in-terminal': [insideWorkspace(0)],
+  // Nothing is launched, but the path still leaves the app (onto the clipboard), so it stays
+  // confined to the workspace like the reveal/launch channels above.
+  'scratch:copy-path-to-clipboard': [insideWorkspace(0)],
 
   // ── File reads / writes ──
   'files:workspace-config': [workspaceRoot(0)],

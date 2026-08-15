@@ -285,6 +285,7 @@ function FolderTreeNodeRow({
       items.push(
         { id: 'reveal', label: isMac ? 'Open in Finder' : 'Open in Explorer' },
         { id: 'terminal', label: isMac ? 'Open in Terminal' : 'Open in PowerShell' },
+        { id: 'copy-path', label: 'Copy Path' },
       );
 
       if (mappedFolder && node.folder) {
@@ -357,6 +358,11 @@ function FolderTreeNodeRow({
         }
         if (id === 'reveal') void window.scratchDesktop.showInFolder(path);
         if (id === 'terminal') void window.scratchDesktop.openInTerminal(path);
+        if (id === 'copy-path') {
+          void window.scratchDesktop.copyPathToClipboard(path).then(() => {
+            notifications.show({ message: `Copied path: ${path}` });
+          });
+        }
         if (id === 'open-views-folder') {
           if (!workspacePath) {
             console.error('Missing  workspacePath');

@@ -266,6 +266,8 @@ const scratchDesktop = {
     ipcRenderer.once('scratch:native-context-menu-click', handler);
   },
   openInTerminal: (folderPath: string): Promise<void> => invoke('scratch:open-in-terminal', folderPath),
+  /** Puts an absolute workspace path on the system clipboard (main-process write — see the handler). */
+  copyPathToClipboard: (folderPath: string): Promise<void> => invoke('scratch:copy-path-to-clipboard', folderPath),
   // Takes a product and data values rather than a URL or a prompt: main assembles both the
   // `claude://` / `codex://` scheme and the prompt text, so the renderer can neither choose the
   // target application nor author the instruction the agent receives (DEV-10998).
