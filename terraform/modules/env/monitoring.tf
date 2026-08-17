@@ -21,6 +21,7 @@ locals {
   runbook_scratch_git_vm           = "${local.runbook_base}/runbook-scratch-git-unresponsive-production.md"
   runbook_scratch_git_disk         = "${local.runbook_base}/runbook-scratch-git-disk-usage.md"
   runbook_flow_log_alerts          = "${local.runbook_base}/runbook-gcp-vpc-flow-log-alerts.md"
+  runbook_desktop_release          = "${local.runbook_base}/runbook-desktop-release-download-broken.md"
 
   # --- VPC Flow Log anomaly detection ---
   # VPC Flow Logs are already emitted on every subnet (see modules/vpc). These filters
@@ -1178,4 +1179,445 @@ resource "google_monitoring_alert_policy" "flow_log_external_egress_spike_alert"
   notification_channels = local.warning_notification_channels
   severity              = "WARNING"
   depends_on            = [google_logging_metric.flow_log_external_egress_bytes]
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Desktop / CLI download health (DEV-11324)
+## ---------------------------------------------------------------------------------------------------------------------
+## The public downloads page (client/src/app/downloads) reads GET /desktop-release/{latest,cli/latest} from our own
+## server, which resolves the newest matching GitHub release from whalesync/{scratch-desktop,scratch-cli}. A plain
+## HTTP-200 uptime check is INSUFFICIENT: when the newest release is missing per-platform installers the endpoint still
+## returns 200 with an assets array that has no .dmg/.exe/.AppImage|.deb, and the page renders an empty download area
+## with no error. So we content-match the response body to assert the per-platform download assets are present. A 404
+## (no matching release at all) also fails the check via the 2xx status assertion.
+##
+## IMPORTANT: Cloud Monitoring currently allows only ONE content_matcher per uptime check, so we cannot assert all
+## three platform installers in a single check. Instead we run one check per (surface, platform) installer pattern via
+## for_each. This is more faithful anyway: it independently catches a *partial* release (e.g. the macOS-only release
+## that shipped once as v1.0.49, which is exactly why scratch-desktop/scripts/finalize_release.sh's installer gate
+## exists). The regexes mirror that finalize gate and the client-side asset grouping in downloads/page.tsx.
+##
+## We check two sources:
+##   1. Our own server endpoints (300s cadence) — exactly what the downloads page consumes.
+##   2. The public GitHub release endpoints directly (900s cadence, anonymous — ~4 req/hr/region across the uptime
+##      prober regions, well under GitHub's 60 req/hr/IP anonymous limit). This bypasses the server's 30-day
+##      last-known-good cache, so a GitHub outage or a malformed newest release is caught even while our cached server
+##      response stays green.
+## Runbook: local.runbook_desktop_release.
+
+locals {
+  # One entry per platform installer pattern. Shared between the server-endpoint checks and the GitHub-source checks
+  # (only the host/path differ, which are set on each resource). regex is RE2; backslashes are doubled for HCL.
+  desktop_installer_checks = {
+    "desktop-macos"   = { label = "desktop macOS installer (.dmg)", regex = "\\.dmg" }
+    "desktop-windows" = { label = "desktop Windows installer (.exe)", regex = "\\.exe" }
+    "desktop-linux"   = { label = "desktop Linux installer (.AppImage/.deb)", regex = "\\.(AppImage|deb)" }
+  }
+  cli_installer_checks = {
+    "cli-darwin"  = { label = "CLI macOS archive (scratchmd_darwin_)", regex = "scratchmd_darwin_" }
+    "cli-windows" = { label = "CLI Windows archive (scratchmd_windows_)", regex = "scratchmd_windows_" }
+    "cli-linux"   = { label = "CLI Linux archive (scratchmd_linux_)", regex = "scratchmd_linux_" }
+  }
+}
+
+# --- 1. Server endpoint: desktop app installers (one check per platform) ---
+resource "google_monitoring_uptime_check_config" "desktop_download_server" {
+  for_each     = var.enable_desktop_release_monitoring ? local.desktop_installer_checks : {}
+  display_name = "Scratch ${local.display_env} Download server - ${each.value.label} present"
+  timeout      = "10s"
+  period       = "300s"
+
+  http_check {
+    request_method = "GET"
+    path           = "/desktop-release/latest"
+    port           = 443
+    use_ssl        = true
+    validate_ssl   = true
+    accepted_response_status_codes {
+      status_class = "STATUS_CLASS_2XX"
+    }
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.gcp_project_id
+      host       = var.api_domain
+    }
+  }
+
+  content_matchers {
+    content = each.value.regex
+    matcher = "MATCHES_REGEX"
+  }
+}
+
+# --- 2. Server endpoint: scratchmd CLI archives (one check per platform) ---
+resource "google_monitoring_uptime_check_config" "cli_download_server" {
+  for_each     = var.enable_desktop_release_monitoring ? local.cli_installer_checks : {}
+  display_name = "Scratch ${local.display_env} Download server - ${each.value.label} present"
+  timeout      = "10s"
+  period       = "300s"
+
+  http_check {
+    request_method = "GET"
+    path           = "/desktop-release/cli/latest"
+    port           = 443
+    use_ssl        = true
+    validate_ssl   = true
+    accepted_response_status_codes {
+      status_class = "STATUS_CLASS_2XX"
+    }
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.gcp_project_id
+      host       = var.api_domain
+    }
+  }
+
+  content_matchers {
+    content = each.value.regex
+    matcher = "MATCHES_REGEX"
+  }
+}
+
+# --- 3. GitHub source: desktop app releases/latest (bypasses our server cache) ---
+resource "google_monitoring_uptime_check_config" "github_desktop_release" {
+  for_each     = var.enable_github_release_monitoring ? local.desktop_installer_checks : {}
+  display_name = "Scratch ${local.display_env} Download GitHub - scratch-desktop ${each.value.label} present"
+  timeout      = "10s"
+  period       = "900s"
+
+  http_check {
+    request_method = "GET"
+    path           = "/repos/whalesync/scratch-desktop/releases/latest"
+    port           = 443
+    use_ssl        = true
+    validate_ssl   = true
+    accepted_response_status_codes {
+      status_class = "STATUS_CLASS_2XX"
+    }
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.gcp_project_id
+      host       = "api.github.com"
+    }
+  }
+
+  content_matchers {
+    content = each.value.regex
+    matcher = "MATCHES_REGEX"
+  }
+}
+
+# --- 4. GitHub source: scratchmd CLI releases/latest (separate repo, bypasses our server cache) ---
+resource "google_monitoring_uptime_check_config" "github_cli_release" {
+  for_each     = var.enable_github_release_monitoring ? local.cli_installer_checks : {}
+  display_name = "Scratch ${local.display_env} Download GitHub - scratch-cli ${each.value.label} present"
+  timeout      = "10s"
+  period       = "900s"
+
+  http_check {
+    request_method = "GET"
+    path           = "/repos/whalesync/scratch-cli/releases/latest"
+    port           = 443
+    use_ssl        = true
+    validate_ssl   = true
+    accepted_response_status_codes {
+      status_class = "STATUS_CLASS_2XX"
+    }
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.gcp_project_id
+      host       = "api.github.com"
+    }
+  }
+
+  content_matchers {
+    content = each.value.regex
+    matcher = "MATCHES_REGEX"
+  }
+}
+
+# --- 5. GitHub source: the releases HTML page renders (belt-and-suspenders availability of the GitHub UI) ---
+resource "google_monitoring_uptime_check_config" "github_desktop_releases_page" {
+  count        = var.enable_github_release_monitoring ? 1 : 0
+  display_name = "Scratch ${local.display_env} Desktop Release - GitHub releases page loads"
+  timeout      = "10s"
+  period       = "900s"
+
+  http_check {
+    request_method = "GET"
+    path           = "/whalesync/scratch-desktop/releases"
+    port           = 443
+    use_ssl        = true
+    validate_ssl   = true
+    accepted_response_status_codes {
+      status_class = "STATUS_CLASS_2XX"
+    }
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.gcp_project_id
+      host       = "github.com"
+    }
+  }
+
+  # The repo path is in the <title> near the top of the server-rendered HTML, inside the body-inspection window.
+  content_matchers {
+    content = "whalesync/scratch-desktop"
+    matcher = "CONTAINS_STRING"
+  }
+}
+
+## The alert policies below fire on the uptime_check/check_passed metric. Each condition pins one check via
+## metric.label.check_id, aligns each region's latest sample (ALIGN_NEXT_OLDER) and counts how many regions report
+## FALSE (REDUCE_COUNT_FALSE); COMPARISON_GT threshold_value = 1 fires only when >= 2 regions fail, ignoring a
+## single-region blip. Warn tier (email + Slack #feed-gcp-alerts, no page), matching the flow-log "tune before paging"
+## philosophy — escalation to page is a two-line swap documented in the runbook. One policy per surface keeps the Slack
+## alert name specific and stays well under the 6-conditions-per-policy limit.
+
+# --- Alert A: desktop app, our server endpoint ---
+resource "google_monitoring_alert_policy" "scratch_desktop_download_server_broken" {
+  count        = var.enable_desktop_release_monitoring && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Download - desktop server endpoint broken"
+  documentation {
+    subject = "Scratch ${local.display_env} Download - /desktop-release/latest is missing a platform installer"
+    content = <<-EOF
+    The public desktop download endpoint failed its uptime check: it did not return 2xx, or its JSON body is missing a
+    required per-platform installer (macOS .dmg, Windows .exe, Linux .AppImage/.deb). The condition name identifies the
+    missing platform. ${var.client_domain}/downloads renders an empty or partial download area in this state. If this
+    fires but the GitHub-source alert does not, suspect our own server/cache rather than the release itself.
+    Confirm: curl -s https://${var.api_domain}/desktop-release/latest | jq '.assets[].name'
+    Runbook: ${local.runbook_desktop_release}
+    EOF
+  }
+  combiner = "OR"
+  dynamic "conditions" {
+    for_each = google_monitoring_uptime_check_config.desktop_download_server
+    content {
+      display_name = "Missing ${conditions.key} from multiple regions"
+      condition_threshold {
+        filter = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id = \"${conditions.value.uptime_check_id}\""
+        aggregations {
+          alignment_period     = "600s"
+          per_series_aligner   = "ALIGN_NEXT_OLDER"
+          cross_series_reducer = "REDUCE_COUNT_FALSE"
+          group_by_fields      = ["resource.label.project_id", "resource.label.host"]
+        }
+        comparison      = "COMPARISON_GT"
+        threshold_value = 1
+        duration        = "300s"
+        trigger {
+          count = 1
+        }
+      }
+    }
+  }
+
+  alert_strategy {
+    notification_channel_strategy {
+      renotify_interval = local.renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
+}
+
+# --- Alert B: scratchmd CLI, our server endpoint ---
+resource "google_monitoring_alert_policy" "scratch_cli_download_server_broken" {
+  count        = var.enable_desktop_release_monitoring && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Download - CLI server endpoint broken"
+  documentation {
+    subject = "Scratch ${local.display_env} Download - /desktop-release/cli/latest is missing a platform archive"
+    content = <<-EOF
+    The public scratchmd CLI download endpoint failed its uptime check: it did not return 2xx, or its JSON body is
+    missing a required per-platform archive (scratchmd_darwin_/_windows_/_linux_). The condition name identifies the
+    missing platform. If this fires but the GitHub-source alert does not, suspect our own server/cache.
+    Confirm: curl -s https://${var.api_domain}/desktop-release/cli/latest | jq '.assets[].name'
+    Runbook: ${local.runbook_desktop_release}
+    EOF
+  }
+  combiner = "OR"
+  dynamic "conditions" {
+    for_each = google_monitoring_uptime_check_config.cli_download_server
+    content {
+      display_name = "Missing ${conditions.key} from multiple regions"
+      condition_threshold {
+        filter = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id = \"${conditions.value.uptime_check_id}\""
+        aggregations {
+          alignment_period     = "600s"
+          per_series_aligner   = "ALIGN_NEXT_OLDER"
+          cross_series_reducer = "REDUCE_COUNT_FALSE"
+          group_by_fields      = ["resource.label.project_id", "resource.label.host"]
+        }
+        comparison      = "COMPARISON_GT"
+        threshold_value = 1
+        duration        = "300s"
+        trigger {
+          count = 1
+        }
+      }
+    }
+  }
+
+  alert_strategy {
+    notification_channel_strategy {
+      renotify_interval = local.renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
+}
+
+# --- Alert C: desktop app, GitHub release source ---
+resource "google_monitoring_alert_policy" "github_desktop_release_source_broken" {
+  count        = var.enable_github_release_monitoring && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Download - GitHub desktop release source broken"
+  documentation {
+    subject = "Scratch ${local.display_env} Download - GitHub scratch-desktop release is unreachable or missing an installer"
+    content = <<-EOF
+    A direct uptime check against the public GitHub scratch-desktop release source failed: GitHub did not return 2xx
+    (possible GitHub outage), or the latest release is missing a required per-platform installer. The condition name
+    identifies the missing platform. This bypasses our server's 30-day last-known-good cache, so it can fire while the
+    server endpoint alert stays green (users may still get the cached-good release, but the newest one is bad or GitHub
+    is down). GitHub anonymous rate limits are the main false-alarm source — see runbook.
+    Confirm: curl -s https://api.github.com/repos/whalesync/scratch-desktop/releases/latest | jq '.assets[].name'
+    Runbook: ${local.runbook_desktop_release}
+    EOF
+  }
+  combiner = "OR"
+  dynamic "conditions" {
+    for_each = google_monitoring_uptime_check_config.github_desktop_release
+    content {
+      display_name = "Missing ${conditions.key} from multiple regions"
+      condition_threshold {
+        filter = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id = \"${conditions.value.uptime_check_id}\""
+        aggregations {
+          alignment_period     = "1800s"
+          per_series_aligner   = "ALIGN_NEXT_OLDER"
+          cross_series_reducer = "REDUCE_COUNT_FALSE"
+          group_by_fields      = ["resource.label.project_id", "resource.label.host"]
+        }
+        comparison      = "COMPARISON_GT"
+        threshold_value = 1
+        duration        = "600s"
+        trigger {
+          count = 1
+        }
+      }
+    }
+  }
+
+  alert_strategy {
+    notification_channel_strategy {
+      renotify_interval = local.renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
+}
+
+# --- Alert D: scratchmd CLI, GitHub release source ---
+resource "google_monitoring_alert_policy" "github_cli_release_source_broken" {
+  count        = var.enable_github_release_monitoring && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Download - GitHub CLI release source broken"
+  documentation {
+    subject = "Scratch ${local.display_env} Download - GitHub scratch-cli release is unreachable or missing an archive"
+    content = <<-EOF
+    A direct uptime check against the public GitHub scratch-cli release source failed: GitHub did not return 2xx
+    (possible GitHub outage), or the latest release is missing a required per-platform archive
+    (scratchmd_darwin_/_windows_/_linux_). The condition name identifies the missing platform. This bypasses our
+    server's cache. GitHub anonymous rate limits are the main false-alarm source — see runbook.
+    Confirm: curl -s https://api.github.com/repos/whalesync/scratch-cli/releases/latest | jq '.assets[].name'
+    Runbook: ${local.runbook_desktop_release}
+    EOF
+  }
+  combiner = "OR"
+  dynamic "conditions" {
+    for_each = google_monitoring_uptime_check_config.github_cli_release
+    content {
+      display_name = "Missing ${conditions.key} from multiple regions"
+      condition_threshold {
+        filter = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id = \"${conditions.value.uptime_check_id}\""
+        aggregations {
+          alignment_period     = "1800s"
+          per_series_aligner   = "ALIGN_NEXT_OLDER"
+          cross_series_reducer = "REDUCE_COUNT_FALSE"
+          group_by_fields      = ["resource.label.project_id", "resource.label.host"]
+        }
+        comparison      = "COMPARISON_GT"
+        threshold_value = 1
+        duration        = "600s"
+        trigger {
+          count = 1
+        }
+      }
+    }
+  }
+
+  alert_strategy {
+    notification_channel_strategy {
+      renotify_interval = local.renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
+}
+
+# --- Alert E: the GitHub releases HTML page loads ---
+resource "google_monitoring_alert_policy" "github_releases_page_broken" {
+  count        = var.enable_github_release_monitoring && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Download - GitHub releases page not loading"
+  documentation {
+    subject = "Scratch ${local.display_env} Download - GitHub scratch-desktop releases page failed to load"
+    content = <<-EOF
+    The public GitHub releases page (github.com/whalesync/scratch-desktop/releases) — the downloads page's "Browse all
+    releases" fallback — failed its uptime check (non-2xx or the expected content was absent). Usually a GitHub outage.
+    Runbook: ${local.runbook_desktop_release}
+    EOF
+  }
+  combiner = "OR"
+  conditions {
+    display_name = "GitHub releases page failing from multiple regions"
+    condition_threshold {
+      filter = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id = \"${google_monitoring_uptime_check_config.github_desktop_releases_page[0].uptime_check_id}\""
+      aggregations {
+        alignment_period     = "1800s"
+        per_series_aligner   = "ALIGN_NEXT_OLDER"
+        cross_series_reducer = "REDUCE_COUNT_FALSE"
+        group_by_fields      = ["resource.label.project_id", "resource.label.host"]
+      }
+      comparison      = "COMPARISON_GT"
+      threshold_value = 1
+      duration        = "600s"
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  alert_strategy {
+    notification_channel_strategy {
+      renotify_interval = local.renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
 }

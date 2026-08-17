@@ -175,6 +175,18 @@ variable "enable_flow_log_monitoring" {
   description = "Create log-based metrics and alerts on VPC Flow Logs anomalies (replaces Cloud IDS). Metrics are near-free; alerts additionally honor var.enable_alerts."
 }
 
+variable "enable_desktop_release_monitoring" {
+  type        = bool
+  default     = false
+  description = "Create Cloud Monitoring uptime checks + a warn-tier alert on the public /desktop-release/{latest,cli/latest} endpoints (served from var.api_domain), asserting the macOS (.dmg), Windows (.exe) and Linux (.AppImage/.deb) desktop installers and the scratchmd CLI archives are present in the JSON body. A plain HTTP-200 check is insufficient: a release missing installers still returns 200 and the downloads page renders an empty download area. Alerts additionally honor var.enable_alerts. Off by default; enable in prod (DEV-11324)."
+}
+
+variable "enable_github_release_monitoring" {
+  type        = bool
+  default     = false
+  description = "Create Cloud Monitoring uptime checks + a warn-tier alert directly against the public GitHub release endpoints (api.github.com/repos/whalesync/{scratch-desktop,scratch-cli}/releases/latest and the scratch-desktop releases HTML page), asserting the latest release still carries the per-platform download assets. Bypasses the server's 30-day last-known-good cache so a GitHub outage or a malformed newest release is caught even while our own endpoint stays green. Alerts additionally honor var.enable_alerts. Off by default; enable in prod (DEV-11324)."
+}
+
 variable "client_service_min_instance_count" {
   type        = number
   default     = 1

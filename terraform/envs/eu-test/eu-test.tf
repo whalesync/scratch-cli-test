@@ -36,6 +36,11 @@ module "eu_test" {
   enable_email_notifications     = true
   enable_pagerduty_notifications = false
 
+  # Download-link health (DEV-11324): kept off in test — the -test channel republishes hourly and is frequently
+  # mid-publish, so the content-match checks would be noisy. Flip on if test-channel coverage is ever wanted.
+  enable_desktop_release_monitoring = false
+  enable_github_release_monitoring  = false
+
   # Scratch Git
   enable_scratch_git                  = true
   scratch_git_boot_disk_size_gb       = 30

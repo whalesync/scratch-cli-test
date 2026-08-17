@@ -33,6 +33,11 @@ module "eu_production" {
   enable_pagerduty_notifications = true
   enable_slack_notifications     = true
 
+  # Download-link health (DEV-11324): uptime checks + warn-tier alerts on the desktop/CLI download endpoints and the
+  # public GitHub release source. Prod only — test publishes the -test channel hourly and would be noisy.
+  enable_desktop_release_monitoring = true
+  enable_github_release_monitoring  = true
+
   # Scratch Git
   enable_scratch_git                  = true
   scratch_git_machine_type            = "e2-highmem-4" # 4 vCPUs, 2 cores, 32 GB memory
