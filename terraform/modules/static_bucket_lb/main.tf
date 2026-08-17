@@ -21,6 +21,32 @@ resource "google_storage_bucket" "static" {
     max_age_seconds = 3600
   }
 
+  # Versioning + access logs per Oneleet finding WSG-014 (DEV-10995). Noncurrent versions exist only to recover from
+  # accidental overwrite/deletion, so they are dropped after 30 days to bound storage growth.
+  versioning {
+    enabled = true
+  }
+
+  soft_delete_policy {
+    retention_duration_seconds = 604800 # 7 days
+  }
+
+  lifecycle_rule {
+    condition {
+      days_since_noncurrent_time = 30
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  dynamic "logging" {
+    for_each = var.log_bucket != "" ? [1] : []
+    content {
+      log_bucket = var.log_bucket
+    }
+  }
+
   labels = {
     "vanta-contains-user-data" = "false"
   }

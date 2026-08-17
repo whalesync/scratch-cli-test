@@ -29,3 +29,9 @@ variable "log_sample_rate" {
   default     = 1.0
   description = "Sample rate for load balancer logs (0.0 to 1.0)"
 }
+
+variable "log_bucket" {
+  type        = string
+  default     = ""
+  description = "Destination bucket for GCS usage/access logs. Empty string disables logging."
+}

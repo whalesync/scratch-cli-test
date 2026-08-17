@@ -41,3 +41,8 @@ output "static_assets_lb_ip" {
   description = "IP address of the static assets load balancer"
   value       = var.enable_static_assets_lb ? module.static_bucket_lb[0].ip_address : null
 }
+
+output "gcs_access_logs_bucket" {
+  description = "Per-project destination bucket for GCS usage/access logs. Point every bucket in this project at it."
+  value       = google_storage_bucket.gcs_access_logs.name
+}

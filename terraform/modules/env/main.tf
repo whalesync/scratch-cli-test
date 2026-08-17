@@ -550,6 +550,51 @@ resource "google_secret_manager_secret_version" "READONLY_DB_PASSWORD" {
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
+## GCS Access Logs Bucket
+##
+## Destination for GCS usage/access logs from every other bucket in this
+## project (DEV-10995, Oneleet WSG-014). GCS itself delivers the hourly log
+## objects, and Google recommends against a bucket logging to itself, so this
+## bucket has no logging block of its own.
+## ---------------------------------------------------------------------------------------------------------------------
+
+resource "google_storage_bucket" "gcs_access_logs" {
+  name          = "${var.gcp_project_id}-gcs-access-logs"
+  location      = var.gcp_region
+  force_destroy = false
+
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  versioning {
+    enabled = true
+  }
+
+  # Pin GCS's default 7-day soft delete so it can't be silently disabled.
+  soft_delete_policy {
+    retention_duration_seconds = 604800 # 7 days
+  }
+
+  lifecycle_rule {
+    condition {
+      age = 365
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  labels = local.default_labels
+}
+
+# GCS writes usage/access logs as this Google-managed group; it needs create access on the destination bucket.
+resource "google_storage_bucket_iam_member" "gcs_access_logs_writer" {
+  bucket = google_storage_bucket.gcs_access_logs.name
+  role   = "roles/storage.objectCreator"
+  member = "group:cloud-storage-analytics@google.com"
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
 ## Asset Rehosting Bucket
 ## ---------------------------------------------------------------------------------------------------------------------
 
@@ -563,7 +608,33 @@ resource "google_storage_bucket" "assets" {
     method = ["GET"]
     origin = [var.client_domain]
   }
+
+  # Versioning + access logs per Oneleet finding WSG-014 (DEV-10995). Noncurrent versions exist only to recover from
+  # accidental overwrite/deletion, so they are dropped after 30 days to bound storage growth.
+  versioning {
+    enabled = true
+  }
+
+  soft_delete_policy {
+    retention_duration_seconds = 604800 # 7 days
+  }
+
+  lifecycle_rule {
+    condition {
+      days_since_noncurrent_time = 30
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  logging {
+    log_bucket = google_storage_bucket.gcs_access_logs.name
+  }
+
   labels = merge(local.default_labels, local.vanta_user_data_labels)
+
+  depends_on = [google_storage_bucket_iam_member.gcs_access_logs_writer]
 }
 
 resource "google_storage_bucket_iam_member" "assets_cloudrun" {
@@ -609,6 +680,8 @@ resource "google_storage_bucket" "upload_patches" {
 
   uniform_bucket_level_access = true
 
+  # The age rule applies to live and noncurrent objects alike, so with versioning enabled (Oneleet WSG-014,
+  # DEV-10995) noncurrent patch payloads are still purged a day after the live copy is deleted.
   lifecycle_rule {
     condition {
       age = 1 # days — patches are processed within minutes
@@ -616,6 +689,18 @@ resource "google_storage_bucket" "upload_patches" {
     action {
       type = "Delete"
     }
+  }
+
+  versioning {
+    enabled = true
+  }
+
+  soft_delete_policy {
+    retention_duration_seconds = 604800 # 7 days
+  }
+
+  logging {
+    log_bucket = google_storage_bucket.gcs_access_logs.name
   }
 
   cors {
@@ -626,6 +711,8 @@ resource "google_storage_bucket" "upload_patches" {
   }
 
   labels = merge(local.default_labels, local.vanta_user_data_labels)
+
+  depends_on = [google_storage_bucket_iam_member.gcs_access_logs_writer]
 }
 
 resource "google_storage_bucket_iam_member" "upload_patches_cloudrun" {
@@ -648,5 +735,8 @@ module "static_bucket_lb" {
   bucket_location = var.gcp_region
   domain          = var.static_assets_domain
   cors_origins    = ["https://${var.client_domain}"]
+  log_bucket      = google_storage_bucket.gcs_access_logs.name
+
+  depends_on = [google_storage_bucket_iam_member.gcs_access_logs_writer]
 }
 

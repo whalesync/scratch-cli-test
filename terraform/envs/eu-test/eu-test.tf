@@ -91,3 +91,44 @@ variable "maintenance_mode_enabled" {
   default     = false
   description = "When set to true, sets the MAINTENANCE_MODE_ENABLED environment variable on the client Cloud Run service."
 }
+
+# The bucket holding this very config's Terraform state. Created by hand long before it was managed here; the import
+# below adopts it so versioning, access logging, and noncurrent-version cleanup are enforced in code (DEV-10995,
+# Oneleet WSG-014).
+# The project/name import id form matters: importing by bare name leaves `project` unset in state, which makes the
+# explicit project below plan as a forced replacement of the bucket.
+import {
+  id = "spv1eu-test/spv1eu-test-tfstate"
+  to = google_storage_bucket.tfstate
+}
+
+resource "google_storage_bucket" "tfstate" {
+  name          = "spv1eu-test-tfstate"
+  project       = "spv1eu-test"
+  location      = "EUROPE-WEST1"
+  force_destroy = false
+
+  uniform_bucket_level_access = true
+
+  versioning {
+    enabled = true
+  }
+
+  soft_delete_policy {
+    retention_duration_seconds = 604800 # 7 days
+  }
+
+  # Keep noncurrent state versions for 30 days as a rollback window, then delete them.
+  lifecycle_rule {
+    condition {
+      days_since_noncurrent_time = 30
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  logging {
+    log_bucket = module.eu_test.gcs_access_logs_bucket
+  }
+}
