@@ -7,10 +7,16 @@
 
   It is identical to the production build/entitlements.mac.plist EXCEPT it re-adds
   com.apple.security.cs.disable-library-validation, which ad-hoc-signed builds require:
-  ad-hoc signatures (codesign --sign -) carry no Team ID, so under Hardened Runtime library
+  an ad-hoc signature (codesign -s -) carries no Team ID, so under Hardened Runtime library
   validation would otherwise reject the app's own Electron frameworks and the build would not
   launch. See Oneleet SCR-004 (DEV-10999) for why this exception is intentionally kept OUT of
   the signed release profile and confined here.
+
+  NB: this comment must not contain two adjacent hyphen-minus characters. codesign's AMFI
+  entitlements parser is spec-strict and rejects a doubled hyphen inside an XML comment
+  ("AMFIUnserializeXML: syntax error"), even though `plutil -lint` accepts it. So write a POSIX
+  long flag as "the sign flag", never with its literal leading hyphen pair, or every ad-hoc
+  build breaks at signing.
 
   It does NOT re-add com.apple.security.cs.allow-dyld-environment-variables — nothing in the
   app (dev or prod) reads DYLD_* env vars.

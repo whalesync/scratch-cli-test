@@ -31,6 +31,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
+const { EXPECTED_ATS_DICT } = require('./expected-ats.cjs');
 
 // electron-builder Arch enum: 0 = ia32, 1 = x64, 2 = armv7l, 3 = arm64, 4 = universal
 const ARCH_NAMES = { 0: 'ia32', 1: 'x64', 2: 'armv7l', 3: 'arm64', 4: 'universal' };
@@ -49,6 +51,59 @@ function nativeFilenameFor(platform, arch) {
   if (platform === 'linux' && arch === 'x64') return `scratchmd-native.linux-x64-gnu.node`;
   if (platform === 'win32' && arch === 'x64') return `scratchmd-native.win32-x64.node`;
   return null;
+}
+
+// Read a container (dict/array) Info.plist key as parsed JSON via `plutil -extract … json`. Returns
+// undefined if the key is absent (plutil exits non-zero). Mirrors verify-ats.cjs's extractor — we go
+// per-key rather than converting the whole plist, because a whole-plist `-convert json` errors on any
+// <data>/<date> value elsewhere in the file.
+function readPlistContainerKeyAsJson(infoPlistPath, key) {
+  try {
+    const json = execFileSync('plutil', ['-extract', key, 'json', '-o', '-', infoPlistPath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+}
+
+// Normalize the packaged macOS Info.plist's App Transport Security back to the canonical, reviewed
+// posture (Oneleet SCR-009 / DEV-11004). electron-builder's configureLocalhostAts() unconditionally
+// re-injects NSAllowsArbitraryLoads:true plus weak-TLS (TLS 1.0) NSExceptionDomains for
+// localhost/127.0.0.1 — for the Squirrel.Mac updater's cleartext loopback proxy — AFTER our
+// electron-builder.yml mac.extendInfo merge, so the shipped plist would otherwise carry the exact global
+// ATS kill-switch the remediation removed. (On macOS 11+ NSAllowsArbitraryLoads is ignored while
+// NSAllowsLocalNetworking is present, so those injected keys are redundant at runtime — but they still
+// fail the literal-plist audit gate and shouldn't ship.) This hook runs after the plist is written and
+// immediately BEFORE code signing, so the signature covers the corrected plist and scripts/verify-ats.cjs
+// passes. We rewrite ONLY the NSAppTransportSecurity key via targeted plutil — ElectronAsarIntegrity and
+// every other key (and app.asar itself) are left untouched. EXPECTED_ATS_DICT is the single source of
+// truth shared with the verifier, so the hook and the gate can never drift.
+function normalizeMacAppTransportSecurityInPlist(infoPlistPath) {
+  if (!fs.existsSync(infoPlistPath)) {
+    throw new Error(`afterPack: Info.plist not found at ${infoPlistPath}; cannot normalize App Transport Security.`);
+  }
+  const before = readPlistContainerKeyAsJson(infoPlistPath, 'NSAppTransportSecurity');
+  // -remove tolerates an absent key (exits non-zero); ignore that so the -insert below always runs.
+  try {
+    execFileSync('plutil', ['-remove', 'NSAppTransportSecurity', infoPlistPath], { stdio: 'ignore' });
+  } catch {
+    // key absent — fine, we insert it fresh below
+  }
+  execFileSync(
+    'plutil',
+    ['-insert', 'NSAppTransportSecurity', '-json', JSON.stringify(EXPECTED_ATS_DICT), infoPlistPath],
+    {
+      stdio: 'ignore',
+    },
+  );
+  console.log(
+    `afterPack: normalized NSAppTransportSecurity in ${infoPlistPath}\n` +
+      `  before: ${JSON.stringify(before)}\n` +
+      `  after:  ${JSON.stringify(EXPECTED_ATS_DICT)}`,
+  );
 }
 
 exports.default = async function afterPack(context) {
@@ -88,6 +143,8 @@ exports.default = async function afterPack(context) {
     // Find the .app bundle inside appOutDir
     const appName = context.packager.appInfo.productFilename + '.app';
     resourcesDir = path.join(context.appOutDir, appName, 'Contents', 'Resources');
+    // Undo electron-builder's re-introduction of the SCR-009 ATS kill-switch before signing seals it.
+    normalizeMacAppTransportSecurityInPlist(path.join(context.appOutDir, appName, 'Contents', 'Info.plist'));
   } else {
     resourcesDir = path.join(context.appOutDir, 'resources');
   }
