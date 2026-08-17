@@ -93,6 +93,20 @@ export enum CustomMetric {
   // counts rows migrated per backfill batch.
   BACKFILL_SYNC_MAPPING_V1_REMAINING = 'backfill_sync_mapping_v1_remaining',
   BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL = 'backfill_sync_mapping_v2_transformed_total',
+
+  // scratch-git disk observability (DEV-11315 / parent DEV-11253 RC5). The three gauges are set by the
+  // read-only `ScratchGitDiskObservabilityService` sweep; only `SCRATCH_GIT_REPO_LOOSE_OBJECTS` is emitted
+  // from Phase 1 (the others are reserved — see below). The three GC/reaper counters are registered here
+  // now but EMITTED by the Phase 2–4 remediations at call sites that already exist; keeping them in the
+  // enum from Phase 1 keeps both exhaustive switches below complete so those phases don't touch the
+  // metric plumbing. Do NOT add a `_TOTAL` suffix to the counters — the Managed-Prometheus exporter
+  // appends `_total` to counters at query time.
+  SCRATCH_GIT_REPO_LOOSE_OBJECTS = 'scratch_git_repo_loose_objects', // gauge: max loose objects across all repos
+  SCRATCH_GIT_STAGING_ORPHAN_BYTES = 'scratch_git_staging_orphan_bytes', // gauge: reserved, emitted in Phase 3 (DEV-11317)
+  SCRATCH_GIT_DISK_PERCENT = 'scratch_git_disk_percent', // gauge: reserved — the Ops-Agent disk metric already covers alerting
+  GC_MAINTENANCE_RUN = 'gc_maintenance_run', // counter: emitted in Phase 2 (DEV-11316)
+  STAGING_DIR_REAPED = 'staging_dir_reaped', // counter: emitted in Phase 3 (DEV-11317)
+  PLAN_TAGS_REAPED = 'plan_tags_reaped', // counter: emitted in Phase 4 (DEV-11318)
 }
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
@@ -151,6 +165,12 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.WORKER_SHUTDOWN_TIMED_OUT:
     case CustomMetric.JOB_STARTUP_DB_RETRY:
     case CustomMetric.JOB_STARTUP_DB_RETRY_EXHAUSTED:
+    case CustomMetric.SCRATCH_GIT_REPO_LOOSE_OBJECTS:
+    case CustomMetric.SCRATCH_GIT_STAGING_ORPHAN_BYTES:
+    case CustomMetric.SCRATCH_GIT_DISK_PERCENT:
+    case CustomMetric.GC_MAINTENANCE_RUN:
+    case CustomMetric.STAGING_DIR_REAPED:
+    case CustomMetric.PLAN_TAGS_REAPED:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -217,10 +237,19 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.WORKER_SHUTDOWN_TIMED_OUT:
     case CustomMetric.JOB_STARTUP_DB_RETRY:
     case CustomMetric.JOB_STARTUP_DB_RETRY_EXHAUSTED:
+    case CustomMetric.GC_MAINTENANCE_RUN:
+    case CustomMetric.STAGING_DIR_REAPED:
+    case CustomMetric.PLAN_TAGS_REAPED:
       return CustomMetricUnit.EVENT_COUNT;
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
       // A gauge: how many syncs remain on the frozen v1 column right now, not a
       // per-event tally.
+      return CustomMetricUnit.INSTANTANEOUS_COUNT;
+    case CustomMetric.SCRATCH_GIT_REPO_LOOSE_OBJECTS:
+    case CustomMetric.SCRATCH_GIT_STAGING_ORPHAN_BYTES:
+    case CustomMetric.SCRATCH_GIT_DISK_PERCENT:
+      // Gauges: the current disk-observability reading (worst-repo loose objects, orphaned staging
+      // bytes, disk percent) at scan time — not a per-event tally. `..._BYTES` holds raw bytes.
       return CustomMetricUnit.INSTANTANEOUS_COUNT;
     default:
       return assertUnreachable(metric);

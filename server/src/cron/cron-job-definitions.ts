@@ -41,6 +41,11 @@ export const CRON_JOB_DEFINITIONS: CronJobSummaryDto[] = [
     description: 'Delete expired Whalesync session tokens.',
     schedule: 'EVERY_HOUR',
   },
+  {
+    slug: 'scratch-git-disk-observability',
+    description: "Emit scratch-git's worst-repo loose-object gauge for disk-bloat observability.",
+    schedule: 'EVERY_HOUR',
+  },
 ];
 
 /**
