@@ -22,6 +22,7 @@ locals {
   runbook_scratch_git_disk         = "${local.runbook_base}/runbook-scratch-git-disk-usage.md"
   runbook_flow_log_alerts          = "${local.runbook_base}/runbook-gcp-vpc-flow-log-alerts.md"
   runbook_desktop_release          = "${local.runbook_base}/runbook-desktop-release-download-broken.md"
+  runbook_config_change_alerts     = "${local.runbook_base}/runbook-gcp-config-change-spike.md"
 
   # --- VPC Flow Log anomaly detection ---
   # VPC Flow Logs are already emitted on every subnet (see modules/vpc). These filters
@@ -1620,4 +1621,77 @@ resource "google_monitoring_alert_policy" "github_releases_page_broken" {
 
   notification_channels = local.warning_notification_channels
   severity              = "WARNING"
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Configuration-change spike detection (Oneleet DEV-10978)
+## ---------------------------------------------------------------------------------------------------------------------
+## Counts Admin Activity audit-log entries — every create/update/delete of resource config and every
+## SetIamPolicy. A sudden burst can indicate a compromised account or automation mass-modifying or
+## deleting infrastructure. Prod-only via var.enable_config_change_alerts; the alert also honors
+## var.enable_alerts and routes to warning_notification_channels (Slack + email, no PagerDuty — a
+## warning, not a page, so the threshold can be tuned against real baselines first).
+##
+## A log-based metric inherits the monitored resource of each log entry, and a Cloud Monitoring alert
+## filter must restrict resource.type to a descriptor Monitoring knows — there is no "match any type", and
+## some audit-log resource.types (e.g. "project") are not Monitoring descriptors and fail the apply. So the
+## alert watches each surface in var.config_change_alert_resource_types with its own condition and fires if
+## ANY exceeds the threshold; the default "audited_resource" is the Cloud Audit Logs surface (IAM /
+## service-account / admin API activity). "%2F" is the literal "/" in the log name.
+resource "google_logging_metric" "config_change_count" {
+  count  = var.enable_config_change_alerts ? 1 : 0
+  name   = "config-change-count"
+  filter = "logName=\"projects/${var.gcp_project_id}/logs/cloudaudit.googleapis.com%2Factivity\""
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+  }
+
+  depends_on = [google_project_service.services]
+}
+
+resource "google_monitoring_alert_policy" "config_change_spike_alert" {
+  count        = var.enable_config_change_alerts && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Cloud Audit Logs - Configuration-change spike"
+  documentation {
+    subject = "Scratch ${local.display_env} Cloud Audit Logs - Unusually high number of configuration changes"
+    content = <<-EOF
+    An unusually high number of configuration changes (Admin Activity audit-log entries: resource create/update/delete and IAM policy changes) occurred in a 10-minute window. This can indicate a compromised account or automation mass-modifying or deleting infrastructure. Review the recent audit logs for the acting principal(s) and confirm the changes were intended.
+    Runbook: ${local.runbook_config_change_alerts}
+    EOF
+  }
+  combiner = "OR"
+  dynamic "conditions" {
+    for_each = toset(var.config_change_alert_resource_types)
+    content {
+      display_name = "Configuration changes on ${conditions.value} over ${var.config_change_alert_threshold} in 10m"
+      condition_threshold {
+        filter          = "resource.type = \"${conditions.value}\" AND metric.type = \"logging.googleapis.com/user/${google_logging_metric.config_change_count[0].name}\""
+        duration        = "0s"
+        comparison      = "COMPARISON_GT"
+        threshold_value = var.config_change_alert_threshold
+        trigger {
+          count = 1
+        }
+        aggregations {
+          alignment_period     = "600s"
+          per_series_aligner   = "ALIGN_SUM"
+          cross_series_reducer = "REDUCE_SUM"
+        }
+      }
+    }
+  }
+
+  alert_strategy {
+    # See note on auto_close in flow_log_suspicious_egress_ports_alert: pin to the GCP
+    # max (7 days) so a security incident does not self-resolve before a human triages.
+    auto_close = "604800s"
+    notification_channel_strategy {
+      renotify_interval = local.extended_renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
+  depends_on            = [google_logging_metric.config_change_count]
 }

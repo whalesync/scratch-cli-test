@@ -17,6 +17,10 @@ module "eu_test" {
   # Cloud IDS.
   enable_intrusion_detection = false
 
+  # Alert on a spike in configuration changes — Admin Activity audit-log entries (Oneleet DEV-10978).
+  # Threshold is tunable; keep it above a normal deploy / terraform-apply burst (config_change_alert_threshold).
+  enable_config_change_alerts = true
+
   # Load Balancer
   enable_client_load_balancer = true
   client_domain               = "test.scratch.md"
