@@ -87,17 +87,51 @@ curl_releases_page() {
 #    test line compare on the same bare-semver axis (VERSION_SELECT_PATTERN lets
 #    the test variant see both). The result is the highest base semver across the
 #    lines the variant cares about.
-HIGHEST_EXISTING_BASE_SEMVER=$(
-  {
-    for page in 1 2 3; do
-      curl_releases_page "$page"
-      printf '\n'
-    done
-  } | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$VERSION_SELECT_PATTERN" -r \
+# Fetch the first 3 pages of releases ONCE. `curl_releases_page` uses
+# `--fail-with-body`, so a non-2xx response makes the command substitution return
+# non-zero; we check that explicitly and ABORT rather than let an empty/error
+# result silently flow into the FALLBACK_TAG path below. A release job that cannot
+# read the existing releases must never guess a version — that is exactly how a
+# prod bootstrap once fell back to v0.1.0, cut v0.1.1, and shadowed the real
+# "latest" (v1.0.104), wedging every client's auto-update (DEV-10749 class).
+#
+# We intentionally do NOT `set -o pipefail`: the `sort -V | head -n1` pipeline
+# below relies on `head` closing the pipe early, which would SIGPIPE `sort` and
+# abort the script under pipefail+`set -e`. Instead we validate each page here.
+ALL_RELEASES_JSON=""
+for page in 1 2 3; do
+  if ! PAGE_JSON=$(curl_releases_page "$page"); then
+    echo "ERROR: failed to fetch releases page $page from GitHub (${GITHUB_REPO})." >&2
+    echo "       Refusing to compute a release version from an incomplete list." >&2
+    exit 1
+  fi
+  if ! printf '%s' "$PAGE_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "ERROR: GitHub releases page $page was not a JSON array (auth/rate-limit/API error?). Response:" >&2
+    printf '%s\n' "$PAGE_JSON" >&2
+    exit 1
+  fi
+  ALL_RELEASES_JSON+="${PAGE_JSON}"$'\n'
+done
+
+# Total releases of ANY tag shape. Distinguishes a genuinely empty repo (a real
+# first release, where FALLBACK_TAG is correct) from "the fetch worked but no tag
+# matched our variant" — on a populated repo the latter must NOT fall back, or we
+# would again ship a version far below the live line.
+TOTAL_RELEASE_COUNT=$(printf '%s' "$ALL_RELEASES_JSON" | jq -s 'add | length')
+
+HIGHEST_EXISTING_BASE_SEMVER=$(printf '%s' "$ALL_RELEASES_JSON" \
+  | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$VERSION_SELECT_PATTERN" -r \
   | sed 's/-test$//' \
   | sort -V -r \
   | head -n1)
+
 if [ -z "$HIGHEST_EXISTING_BASE_SEMVER" ]; then
+  if [ "${TOTAL_RELEASE_COUNT:-0}" -gt 0 ]; then
+    echo "ERROR: ${TOTAL_RELEASE_COUNT} releases exist on ${GITHUB_REPO} but none match ${VERSION_SELECT_PATTERN}." >&2
+    echo "       Refusing to fall back to ${FALLBACK_TAG} on a non-empty repo (would ship below 'latest')." >&2
+    exit 1
+  fi
+  echo "No existing releases found — using fallback ${FALLBACK_TAG} (genuine first release)."
   HIGHEST_EXISTING_BASE_SEMVER=$(echo "$FALLBACK_TAG" | sed 's/-test$//')
 fi
 echo "Highest existing base semver (drafts included): $HIGHEST_EXISTING_BASE_SEMVER"
@@ -115,6 +149,18 @@ esac
 SEMVER="$MAJOR.$MINOR.$PATCH"
 NEW_VERSION="v${SEMVER}${TAG_SUFFIX}"
 echo "Target version: $NEW_VERSION"
+
+# Safety floor (defense in depth): the computed version MUST be strictly greater
+# than the highest existing release we actually observed. Even if the bump or
+# fallback logic regresses, this refuses to publish a version at/below "latest" —
+# the exact failure that let v0.1.1 shadow v1.0.104. Both sides are bare semver
+# (any `-test` suffix was stripped above), so `sort -V` orders them correctly.
+GREATEST_SEMVER=$(printf '%s\n%s\n' "$SEMVER" "$HIGHEST_EXISTING_BASE_SEMVER" | sort -V | tail -n1)
+if [ "$SEMVER" = "$HIGHEST_EXISTING_BASE_SEMVER" ] || [ "$SEMVER" != "$GREATEST_SEMVER" ]; then
+  echo "ERROR: computed version $SEMVER is not greater than the highest existing release $HIGHEST_EXISTING_BASE_SEMVER." >&2
+  echo "       Refusing to publish a release that would sit at or below 'latest'." >&2
+  exit 1
+fi
 
 # 2b. Hourly-schedule no-op guard (test variant only). Bootstrap is the gate for
 #     the whole desktop chain, so skipping here skips every downstream job. We

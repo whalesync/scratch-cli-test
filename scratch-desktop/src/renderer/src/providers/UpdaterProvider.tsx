@@ -77,7 +77,10 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
           if (event.manual) {
             showManualToast({
               title: "You're up to date",
-              message: `Running version ${event.version}.`,
+              // `runningVersion` is the installed build (app.getVersion()), NOT `event.version`
+              // (the feed's latest, which can be lower than what we're running if the channel is
+              // wedged). See updater-events.ts for why this distinction matters.
+              message: `Running version ${event.runningVersion}.`,
               color: 'green',
               loading: false,
               autoClose: 4000,

@@ -65,17 +65,38 @@ curl_releases_page() {
 # Highest base semver matching VERSION_SELECT_PATTERN (regex), version-sorted
 # descending with any `-test` suffix stripped so the prod and test lines compare
 # on the same axis; drafts included.
-HIGHEST_EXISTING_BASE_SEMVER=$(
-  {
-    for page in 1 2 3 4 5; do
-      curl_releases_page "$page"
-      printf '\n'
-    done
-  } | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$VERSION_SELECT_PATTERN" -r \
+# Fetch pages ONCE and fail closed if the API is unreachable or returns non-array
+# JSON, instead of letting an empty/error result silently fall back to
+# FALLBACK_TAG and print a misleading next version. Mirrors bootstrap_release.sh
+# (which cut a real v0.1.1 this way, DEV-10749). We do NOT `set -o pipefail` — the
+# `sort -V | head -n1` pipeline relies on head closing the pipe early.
+ALL_RELEASES_JSON=""
+for page in 1 2 3 4 5; do
+  if ! PAGE_JSON=$(curl_releases_page "$page"); then
+    echo "ERROR: failed to fetch releases page $page from GitHub (${GITHUB_REPO})." >&2
+    echo "       (An unauthenticated call is rate-limited to 60/hr — set GITHUB_TOKEN.)" >&2
+    exit 1
+  fi
+  if ! printf '%s' "$PAGE_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "ERROR: GitHub releases page $page was not a JSON array. Response:" >&2
+    printf '%s\n' "$PAGE_JSON" >&2
+    exit 1
+  fi
+  ALL_RELEASES_JSON+="${PAGE_JSON}"$'\n'
+done
+
+TOTAL_RELEASE_COUNT=$(printf '%s' "$ALL_RELEASES_JSON" | jq -s 'add | length')
+
+HIGHEST_EXISTING_BASE_SEMVER=$(printf '%s' "$ALL_RELEASES_JSON" \
+  | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$VERSION_SELECT_PATTERN" -r \
   | sed 's/-test$//' \
   | sort -V -r \
   | head -n1)
 if [ -z "$HIGHEST_EXISTING_BASE_SEMVER" ]; then
+  if [ "${TOTAL_RELEASE_COUNT:-0}" -gt 0 ]; then
+    echo "ERROR: ${TOTAL_RELEASE_COUNT} releases exist but none match ${VERSION_SELECT_PATTERN} — refusing to fall back to ${FALLBACK_TAG}." >&2
+    exit 1
+  fi
   HIGHEST_EXISTING_BASE_SEMVER=$(echo "$FALLBACK_TAG" | sed 's/-test$//')
 fi
 LATEST_TAG="$HIGHEST_EXISTING_BASE_SEMVER"
@@ -91,6 +112,15 @@ esac
 
 SEMVER="$MAJOR.$MINOR.$PATCH"
 NEW_VERSION="v${SEMVER}${TAG_SUFFIX}"
+
+# Safety floor (mirrors bootstrap_release.sh): the computed version must be
+# strictly greater than the highest existing release observed, so a preview can
+# never confidently print a version that would sit at/below "latest".
+GREATEST_SEMVER=$(printf '%s\n%s\n' "$SEMVER" "$HIGHEST_EXISTING_BASE_SEMVER" | sort -V | tail -n1)
+if [ "$SEMVER" = "$HIGHEST_EXISTING_BASE_SEMVER" ] || [ "$SEMVER" != "$GREATEST_SEMVER" ]; then
+  echo "ERROR: computed version $SEMVER is not greater than the highest existing release $HIGHEST_EXISTING_BASE_SEMVER." >&2
+  exit 1
+fi
 
 echo "Variant: ${VARIANT} (${RELEASE_TYPE} bump)"
 echo "Latest tag (including drafts): ${LATEST_TAG}"

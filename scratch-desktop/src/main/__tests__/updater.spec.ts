@@ -121,7 +121,35 @@ describe('initAutoUpdater event forwarding', () => {
         releaseDate: '2026-04-24',
         releaseNotes: null,
       },
-      { type: 'update-not-available', manual: false, version: '1.2.3' },
+      { type: 'update-not-available', manual: false, version: '1.2.3', runningVersion: '1.0.0' },
+    ]);
+
+    controller?.dispose();
+  });
+
+  it('reports the running version, not the feed version, on update-not-available (the 1.0.104/0.1.1 wedge)', async () => {
+    // Regression for the 2026-08-17 incident: a wedged stable channel offered an
+    // OLDER feed version (0.1.1) than the running build (1.0.104). The emitted event
+    // must carry runningVersion = app.getVersion(), independent of the feed version,
+    // so the "You're up to date" toast shows what the user is actually running.
+    electronAppStub.getVersion = () => '1.0.104';
+    const sentEvents: UpdaterEvent[] = [];
+    const fakeWindow = {
+      isDestroyed: () => false,
+      webContents: {
+        send: vi.fn((_channel: string, payload: UpdaterEvent) => {
+          sentEvents.push(payload);
+        }),
+      },
+    };
+
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => fakeWindow as never });
+
+    eventHandlers.get('update-not-available')?.({ version: '0.1.1' });
+
+    expect(sentEvents).toEqual([
+      { type: 'update-not-available', manual: false, version: '0.1.1', runningVersion: '1.0.104' },
     ]);
 
     controller?.dispose();
@@ -153,7 +181,7 @@ describe('initAutoUpdater event forwarding', () => {
 
     expect(sentEvents).toEqual([
       { type: 'checking-for-update', manual: true },
-      { type: 'update-not-available', manual: true, version: '1.0.0' },
+      { type: 'update-not-available', manual: true, version: '1.0.0', runningVersion: '1.0.0' },
       { type: 'checking-for-update', manual: false },
     ]);
 
@@ -324,7 +352,9 @@ describe('initAutoUpdater version-already-installed guard', () => {
 
     eventHandlers.get('update-available')?.({ version: '1.4.0', releaseDate: '2026-04-24' });
 
-    expect(sentEvents).toEqual([{ type: 'update-not-available', manual: false, version: '1.4.0' }]);
+    expect(sentEvents).toEqual([
+      { type: 'update-not-available', manual: false, version: '1.4.0', runningVersion: '1.4.0' },
+    ]);
 
     controller?.dispose();
   });
@@ -338,7 +368,9 @@ describe('initAutoUpdater version-already-installed guard', () => {
 
     eventHandlers.get('update-downloaded')?.({ version: '2.0.0', releaseDate: '2026-04-24' });
 
-    expect(sentEvents).toEqual([{ type: 'update-not-available', manual: false, version: '2.0.0' }]);
+    expect(sentEvents).toEqual([
+      { type: 'update-not-available', manual: false, version: '2.0.0', runningVersion: '2.0.0' },
+    ]);
 
     controller?.dispose();
   });
@@ -352,7 +384,9 @@ describe('initAutoUpdater version-already-installed guard', () => {
 
     eventHandlers.get('update-downloaded')?.({ version: ' v1.4.0+build.9 ' });
 
-    expect(sentEvents).toEqual([{ type: 'update-not-available', manual: false, version: ' v1.4.0+build.9 ' }]);
+    expect(sentEvents).toEqual([
+      { type: 'update-not-available', manual: false, version: ' v1.4.0+build.9 ', runningVersion: '1.4.0' },
+    ]);
 
     controller?.dispose();
   });

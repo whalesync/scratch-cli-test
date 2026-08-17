@@ -120,7 +120,7 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
       );
       // Tell the renderer there's nothing to install so it clears any stale
       // "Restart & install" prompt instead of surfacing a re-offer.
-      emit({ type: 'update-not-available', manual: manualCheckInFlight, version: info.version });
+      emit({ type: 'update-not-available', manual: manualCheckInFlight, version: info.version, runningVersion });
       endCycle();
       return;
     }
@@ -137,7 +137,7 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
 
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
     electronLog.info(`[updater] update-not-available manifest=${info.version} running=${runningVersion}`);
-    emit({ type: 'update-not-available', manual: manualCheckInFlight, version: info.version });
+    emit({ type: 'update-not-available', manual: manualCheckInFlight, version: info.version, runningVersion });
     endCycle();
   });
 
@@ -161,7 +161,7 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
       electronLog.warn(
         `[updater] update-downloaded offered=${info.version} running=${runningVersion} decision=SUPPRESS (already installed; likely a stale cached download)`,
       );
-      emit({ type: 'update-not-available', manual: manualCheckInFlight, version: info.version });
+      emit({ type: 'update-not-available', manual: manualCheckInFlight, version: info.version, runningVersion });
       endCycle();
       return;
     }
