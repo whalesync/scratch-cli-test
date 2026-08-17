@@ -92,6 +92,7 @@ import {
   getValidationConfigs,
   writeValidationConfig,
 } from './validation-config';
+import { buildSecureWebPreferences } from './window-security';
 import { attachWindowStatePersistence, getRestoredWindowState } from './window-state';
 import { WorkspaceFileWatchService } from './workspace-file-watch';
 import {
@@ -484,17 +485,12 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     icon: windowIconPath(),
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      // Pin the renderer isolation defaults explicitly so a future edit can't silently regress them
-      // (SCR-006 / DEV-11001). `sandbox: true` is tracked separately under SCR-014 / DEV-11009.
-      contextIsolation: true,
-      nodeIntegration: false,
-      // Disable web security in dev so the renderer (served from localhost:5173)
-      // can reach the production API without CORS blocking preflight requests.
-      webSecurity: !is.dev,
-    },
+    // Security-critical renderer isolation lives in buildSecureWebPreferences so a spec can guard it
+    // (SCR-006 / DEV-11001, SCR-014 / DEV-11009). See src/main/window-security.ts.
+    webPreferences: buildSecureWebPreferences({
+      preloadPath: join(__dirname, '../preload/index.js'),
+      isDev: is.dev,
+    }),
   });
   logPerf('main createBrowserWindow', performance.now() - windowStart);
 
