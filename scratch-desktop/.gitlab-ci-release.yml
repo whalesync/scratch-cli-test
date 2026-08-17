@@ -39,6 +39,8 @@ include:
     - scratch-desktop/scripts/expected-fuses.cjs
     - scratch-desktop/scripts/verify-entitlements.cjs
     - scratch-desktop/scripts/expected-entitlements.cjs
+    - scratch-desktop/scripts/verify-ats.cjs
+    - scratch-desktop/scripts/expected-ats.cjs
     - scratch-desktop/build/entitlements.mac.plist
     - scratch-desktop/build/entitlements.mac.adhoc.plist
     - scratch-desktop/scripts/upload_assets.sh

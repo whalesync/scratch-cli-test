@@ -88,6 +88,11 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
   // on background checks — a failed download is meaningful regardless of how
   // the check started.
   let downloadInFlight = false;
+  // True once the user triggers "Restart & install" (quitAndInstall). The download cycle already
+  // ended (endCycle ran at update-downloaded, clearing downloadInFlight), so without this an
+  // install-handoff failure — e.g. Squirrel.Mac's cleartext loopback fetch being blocked — would be
+  // mis-tagged phase='check'. Reset by endCycle once the resulting error is handled.
+  let installInFlight = false;
 
   function emit(payload: UpdaterEvent): void {
     const win = opts.getMainWindow();
@@ -101,6 +106,7 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
     manualCheckInFlight = false;
     downloadInFlight = false;
     checkInFlight = false;
+    installInFlight = false;
   }
 
   autoUpdater.on('checking-for-update', () => {
@@ -171,10 +177,18 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
   });
 
   autoUpdater.on('error', (error: Error) => {
+    // Attribute the failure to the phase actually in flight. installInFlight takes precedence:
+    // by the time a "Restart & install" handoff fails, the download cycle has already ended.
+    let phase: 'check' | 'download' | 'install' = 'check';
+    if (installInFlight) {
+      phase = 'install';
+    } else if (downloadInFlight) {
+      phase = 'download';
+    }
     emit({
       type: 'error',
       manual: manualCheckInFlight,
-      phase: downloadInFlight ? 'download' : 'check',
+      phase,
       message: error?.message ?? String(error),
     });
     endCycle();
@@ -217,6 +231,10 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
   return {
     checkForUpdates: () => runCheck(true),
     quitAndInstall: () => {
+      // Mark the install handoff in flight so a failure applying the update (e.g. Squirrel.Mac's
+      // cleartext loopback fetch being blocked) is tagged phase='install', not 'check' — the
+      // download cycle already ended at update-downloaded, clearing downloadInFlight.
+      installInFlight = true;
       // Logged so a repeated "quitAndInstall invoked" across restarts with no
       // version bump afterward fingerprints a Squirrel.Mac apply that silently
       // refuses the staged update (signing/notarization/permission mismatch).

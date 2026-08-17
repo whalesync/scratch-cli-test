@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import type { UpdaterEvent } from '../../../shared/updater-events';
 import { ButtonPrimaryLight, ButtonSecondaryGhost } from '../components/base/buttons';
 import { Text13Regular } from '../components/base/text';
-import { trackCheckForUpdates, trackInstallUpdate } from '../lib/posthog';
+import { trackCheckForUpdates, trackInstallUpdate, trackUpdateError } from '../lib/posthog';
 
 const UPDATE_DOWNLOADED_NOTIFICATION_ID = 'updater-update-downloaded';
 const MANUAL_CHECK_NOTIFICATION_ID = 'updater-manual-check';
@@ -132,14 +132,18 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         case 'error': {
-          // Check-phase auto errors stay quiet — they're noisy on flaky
-          // networks and the next scheduled check will retry. Download-phase
-          // errors always surface: an update was found, the user has a
-          // pending install, and silently dropping it means they sit on an
+          // Fleet-wide signal for a broken updater (DEV-11004 follow-up): the check + download run
+          // over HTTPS via Node and succeed, so a failed download/install handoff — e.g. the macOS
+          // Squirrel.Mac loopback install being blocked — is otherwise silent. Track every phase;
+          // the `phase` property lets us isolate the meaningful ones.
+          void trackUpdateError({ phase: event.phase, manual: event.manual, message: event.message });
+          // Check-phase auto errors stay quiet — they're noisy on flaky networks and the next
+          // scheduled check will retry. Download- and install-phase errors always surface: an update
+          // was found, the user has a pending install, and silently dropping it means they sit on an
           // old version with no signal anything went wrong.
-          if (event.phase === 'download') {
+          if (event.phase === 'download' || event.phase === 'install') {
             showManualToast({
-              title: 'Update download failed',
+              title: event.phase === 'install' ? 'Update install failed' : 'Update download failed',
               message: event.message,
               color: 'red',
               loading: false,

@@ -29,6 +29,7 @@ export enum PostHogEvents {
   APP_EXITED = 'app_exited',
   CHECK_FOR_UPDATES = 'check_for_updates',
   INSTALL_UPDATE = 'install_update',
+  UPDATE_ERROR = 'update_error',
   FORCE_UPGRADE_REQUIRED = 'force_upgrade_required',
   DEEP_LINK_PROCESSED = 'deep_link_processed',
   WORKSPACE_CLOUD_SYNC_DETECTED = 'workspace_cloud_sync_detected',
@@ -261,6 +262,20 @@ export async function trackInstallUpdate(props: { targetVersion: string }): Prom
   // sendImmediately: quitAndInstall() restarts the app moments after the click,
   // so we need the request to leave via sendBeacon rather than the batch queue.
   await captureEvent(PostHogEvents.INSTALL_UPDATE, props, { sendImmediately: true });
+}
+
+/**
+ * An auto-update cycle failed (DEV-11004 follow-up). A broken updater is otherwise silent — the
+ * check + download run over HTTPS via Node and succeed, so a 'download'/'install' failure (e.g. the
+ * macOS Squirrel.Mac loopback install handoff being blocked) never surfaces in aggregate. This is
+ * the chartable signal for such a regression. Carries only the failure shape, no user data.
+ */
+export async function trackUpdateError(props: {
+  phase: 'check' | 'download' | 'install';
+  manual: boolean;
+  message: string;
+}): Promise<void> {
+  await captureEvent(PostHogEvents.UPDATE_ERROR, props);
 }
 
 export async function trackForceUpgradeRequired(props: {

@@ -260,6 +260,36 @@ describe('initAutoUpdater event forwarding', () => {
     controller?.dispose();
   });
 
+  it('tags errors after quitAndInstall as phase=install (the deferred install handoff)', async () => {
+    const sentEvents: UpdaterEvent[] = [];
+    const fakeWindow = {
+      isDestroyed: () => false,
+      webContents: {
+        send: vi.fn((_channel: string, payload: UpdaterEvent) => {
+          sentEvents.push(payload);
+        }),
+      },
+    };
+
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => fakeWindow as never });
+
+    // A completed download ends the cycle (downloadInFlight resets); the user then clicks
+    // "Restart & install". A failure applying the update must be phase=install, not check.
+    eventHandlers.get('update-downloaded')?.({ version: '1.5.0' });
+    controller?.quitAndInstall();
+    eventHandlers.get('error')?.(new Error('-1022 ATS blocked the loopback install'));
+
+    expect(sentEvents).toContainEqual({
+      type: 'error',
+      manual: false,
+      phase: 'install',
+      message: '-1022 ATS blocked the loopback install',
+    });
+
+    controller?.dispose();
+  });
+
   it('runs the initial check after the 5s delay', async () => {
     const { initAutoUpdater } = await import('../updater');
     const controller = initAutoUpdater({ getMainWindow: () => null });

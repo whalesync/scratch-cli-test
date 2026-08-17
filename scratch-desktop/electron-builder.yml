@@ -138,8 +138,21 @@ mac:
   # Notarization + stapling are done by the afterSign hook (scripts/notarize.cjs),
   # which adds retry/backoff + a per-attempt timeout that the built-in path lacks.
   notarize: false
+  # extendInfo is merged onto the Info.plist via Object.assign(plist, extendInfo) — so it must be a
+  # MAP, not a YAML list (a list would assign an index-"0" key and silently drop these entries).
   extendInfo:
-    - NSDocumentsFolderUsageDescription: Scratch needs access to manage your workspace files.
+    NSDocumentsFolderUsageDescription: Scratch needs access to manage your workspace files.
+    # App Transport Security (Oneleet SCR-009 / DEV-11004). Electron's stock Info.plist ships
+    # NSAppTransportSecurity={NSAllowsArbitraryLoads:true}, disabling ATS globally; declaring the key
+    # here fully replaces that inherited dict so ATS enforces HTTPS + TLS>=1.2 for every public host.
+    # The ONLY ATS-governed traffic in the app is the Squirrel.Mac auto-updater's cleartext loopback
+    # proxy (electron-updater's MacUpdater points native NSURLSession at http://127.0.0.1:<random>);
+    # NSAllowsLocalNetworking keeps that one path working. Everything else (Scratch API, PostHog,
+    # external links, scratchmd) is Chromium/Node/Rust, not NSURLSession, so ATS never touches it.
+    # This value is asserted against scripts/expected-ats.cjs by src/main/__tests__/ats.spec.ts and,
+    # on the packaged Info.plist, by scripts/verify-ats.cjs — change the ATS posture there, not here.
+    NSAppTransportSecurity:
+      NSAllowsLocalNetworking: true
   protocols:
     - name: Scratch
       schemes:

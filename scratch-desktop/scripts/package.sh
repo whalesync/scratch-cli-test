@@ -121,6 +121,13 @@ node scripts/verify-fuses.cjs "$PLATFORM"
 if [ "$PLATFORM" = "mac" ]; then
   echo "Verifying macOS entitlements on the signed app bundle..."
   node scripts/verify-entitlements.cjs
+
+  # Hard gate on the packaged Info.plist's App Transport Security (DEV-11004 / Oneleet SCR-009).
+  # The vitest spec only proves electron-builder.yml DECLARES a safe NSAppTransportSecurity; this
+  # proves the packaged plist actually has one — no NSAllowsArbitraryLoads / weak-TLS exception, and
+  # the NSAllowsLocalNetworking the Squirrel.Mac updater's cleartext loopback needs. mac-only.
+  echo "Verifying macOS App Transport Security on the packaged Info.plist..."
+  node scripts/verify-ats.cjs
 fi
 
 # Hard gate that the Windows installer + app ship UNSIGNED (DEV-11010 / Oneleet SCR-015).
