@@ -153,10 +153,14 @@ echo "Target version: $NEW_VERSION"
 # Safety floor (defense in depth): the computed version MUST be strictly greater
 # than the highest existing release we actually observed. Even if the bump or
 # fallback logic regresses, this refuses to publish a version at/below "latest" —
-# the exact failure that let v0.1.1 shadow v1.0.104. Both sides are bare semver
-# (any `-test` suffix was stripped above), so `sort -V` orders them correctly.
-GREATEST_SEMVER=$(printf '%s\n%s\n' "$SEMVER" "$HIGHEST_EXISTING_BASE_SEMVER" | sort -V | tail -n1)
-if [ "$SEMVER" = "$HIGHEST_EXISTING_BASE_SEMVER" ] || [ "$SEMVER" != "$GREATEST_SEMVER" ]; then
+# the exact failure that let v0.1.1 shadow v1.0.104. Compare BARE semver on both
+# sides: $VERSION is the v-stripped, `-test`-stripped form of
+# $HIGHEST_EXISTING_BASE_SEMVER (which retains its leading `v`, e.g. `v1.0.116`).
+# Feeding a `v`-prefixed operand into `sort -V` mis-ranks it — `sort -V` orders a
+# numeric-leading token before an alphabetic-leading one, so `v1.0.116` sorts
+# AFTER `1.0.117` and the check falsely fires (DEV: this rejected every release).
+GREATEST_SEMVER=$(printf '%s\n%s\n' "$SEMVER" "$VERSION" | sort -V | tail -n1)
+if [ "$SEMVER" = "$VERSION" ] || [ "$SEMVER" != "$GREATEST_SEMVER" ]; then
   echo "ERROR: computed version $SEMVER is not greater than the highest existing release $HIGHEST_EXISTING_BASE_SEMVER." >&2
   echo "       Refusing to publish a release that would sit at or below 'latest'." >&2
   exit 1

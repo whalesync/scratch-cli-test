@@ -115,9 +115,12 @@ NEW_VERSION="v${SEMVER}${TAG_SUFFIX}"
 
 # Safety floor (mirrors bootstrap_release.sh): the computed version must be
 # strictly greater than the highest existing release observed, so a preview can
-# never confidently print a version that would sit at/below "latest".
-GREATEST_SEMVER=$(printf '%s\n%s\n' "$SEMVER" "$HIGHEST_EXISTING_BASE_SEMVER" | sort -V | tail -n1)
-if [ "$SEMVER" = "$HIGHEST_EXISTING_BASE_SEMVER" ] || [ "$SEMVER" != "$GREATEST_SEMVER" ]; then
+# never confidently print a version that would sit at/below "latest". Compare
+# BARE semver on both sides: $VERSION is the v-stripped form of
+# $HIGHEST_EXISTING_BASE_SEMVER (which keeps its leading `v`). A `v`-prefixed
+# operand mis-ranks under `sort -V` (`v1.0.116` sorts after `1.0.117`).
+GREATEST_SEMVER=$(printf '%s\n%s\n' "$SEMVER" "$VERSION" | sort -V | tail -n1)
+if [ "$SEMVER" = "$VERSION" ] || [ "$SEMVER" != "$GREATEST_SEMVER" ]; then
   echo "ERROR: computed version $SEMVER is not greater than the highest existing release $HIGHEST_EXISTING_BASE_SEMVER." >&2
   exit 1
 fi
