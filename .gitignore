@@ -30,6 +30,9 @@ local
 # Claude local files.
 settings.local.json
 
+# Agent/editor local context directories (at any depth) — never commit their contents.
+.context/
+
 # Node.js compiled output and packages.
 dist/
 node_modules/
