@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Background GC for scratch-git</title>
+<style>
+  :root {
+    --bg: #F6F7F5;
+    --surface: #FFFFFF;
+    --ink: #1A2028;
+    --muted: #5A6470;
+    --rule: #D9DED9;
+    --accent: #0E7369;        /* petrol: the new / next path */
+    --accent-soft: #DCEFEC;
+    --amber: #A85A08;         /* the rare, expensive full GC */
+    --amber-soft: #F6E7D2;
+    --danger: #B3261E;        /* today's broken path */
+    --danger-soft: #F7DDDA;
+    --code-bg: #EEF1EE;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --serif: "Charter", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10161A; --surface: #171E23; --ink: #E5E9EA; --muted: #9AA6AE; --rule: #2A343B;
+      --accent: #3FC1AE; --accent-soft: #10302D; --amber: #F0A24A; --amber-soft: #3A2A14;
+      --danger: #F0776D; --danger-soft: #3B1F1D; --code-bg: #1C252B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #10161A; --surface: #171E23; --ink: #E5E9EA; --muted: #9AA6AE; --rule: #2A343B;
+    --accent: #3FC1AE; --accent-soft: #10302D; --amber: #F0A24A; --amber-soft: #3A2A14;
+    --danger: #F0776D; --danger-soft: #3B1F1D; --code-bg: #1C252B;
+  }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.55; margin: 0; }
+  main { max-width: 76ch; margin: 0 auto; padding: 48px 24px 96px; }
+  header.top { border-bottom: 1px solid var(--rule); padding-bottom: 20px; margin-bottom: 40px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1 { font-family: var(--serif); font-weight: 500; font-size: 38px; line-height: 1.15; margin: 8px 0 12px; text-wrap: balance; }
+  h2 { font-family: var(--serif); font-weight: 500; font-size: 26px; line-height: 1.2; margin: 56px 0 12px; text-wrap: balance; }
+  h3 { font-family: var(--sans); font-weight: 600; font-size: 16px; margin: 28px 0 8px; }
+  p { margin: 0 0 14px; }
+  .lede { font-size: 18px; color: var(--muted); max-width: 66ch; }
+  .status { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .chip { font-family: var(--mono); font-size: 12px; padding: 4px 10px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); }
+  .chip.done { border-color: var(--accent); color: var(--accent); }
+  .chip.next { border-color: var(--amber); color: var(--amber); }
+  figure { margin: 24px 0 28px; }
+  figure svg { max-width: 100%; height: auto; display: block; color: var(--ink); }
+  figcaption { font-size: 14px; color: var(--muted); margin-top: 8px; }
+  .wide { margin-left: -24px; margin-right: -24px; padding: 0 24px; overflow-x: auto; }
+  pre { font-family: var(--mono); font-size: 13px; line-height: 1.5; background: var(--code-bg); border: 1px solid var(--rule); border-radius: 4px; padding: 14px 16px; overflow-x: auto; margin: 0 0 16px; }
+  code { font-family: var(--mono); font-size: .92em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 0 0 18px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+  th { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+  td.num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 13px; }
+  .tablewrap { overflow-x: auto; }
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; margin: 18px 0; border-radius: 0 4px 4px 0; }
+  .callout.amber { border-color: var(--amber); background: var(--amber-soft); }
+  .callout p:last-child { margin: 0; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 720px) { .two { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 14px 16px; }
+  .card h3 { margin-top: 0; }
+  .card .eyebrow { margin-bottom: 4px; display: block; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .mr { display: grid; grid-template-columns: 64px 1fr; gap: 14px; align-items: start; margin: 18px 0; }
+  .mr .tag { font-family: var(--mono); font-size: 13px; color: var(--accent); padding-top: 3px; }
+  .k { color: var(--accent); }
+  .a { color: var(--amber); }
+  .d { color: var(--danger); }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 40px 0; }
+  .small { font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<header class="top">
+  <div class="eyebrow">DEV-11316 · scratch-git · plan for MR 2 → 4</div>
+  <h1>Background GC for scratch-git</h1>
+  <p class="lede">Unlink repo operations from garbage collection. Compact cheaply and incrementally after every job; run a full, pruning <code>git gc</code> only from a background sweep, on idle repos, one at a time — without giving up pack quality.</p>
+  <div class="status">
+    <span class="chip done">MR 1 · !3253 · locks + marker + exit check + prune grace</span>
+    <span class="chip next">MR 2 · scratch-git detached /gc</span>
+    <span class="chip next">MR 3 · server client + callers</span>
+    <span class="chip next">MR 4 · maintenance sweep</span>
+  </div>
+</header>
+
+<h2>1. The shift in one picture</h2>
+<p>Today every pull and every sync destination ends with a synchronous <code>POST /gc</code> that runs a <em>full</em> <code>git gc</code> — O(entire history), ~12.5 h/day of repack I/O on the box, and the Stripe repo's ~5-minute run sits right on the 300 s proxy cliff. After MR 2–4, jobs make one cheap, bounded call and get on with their lives; the expensive work moves to a sweep nobody is waiting on.</p>
+
+<figure class="wide">
+<svg viewBox="0 0 900 330" role="img" aria-label="Before: pull and sync jobs call POST /gc synchronously, which runs a full git gc on the request path. After: jobs call POST /gc mode=compact (bounded, seconds); a maintenance sweep calls mode=full detached, and the GC task owns its own lock and marker.">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+  <g font-family="ui-monospace, Menlo, monospace" font-size="12" fill="currentColor">
+    <!-- BEFORE -->
+    <text x="20" y="24" font-size="11" letter-spacing="1" opacity=".7">TODAY</text>
+    <rect x="20" y="40" width="130" height="44" rx="3" fill="none" stroke="currentColor"/>
+    <text x="85" y="66" text-anchor="middle">pull / sync job</text>
+    <line x1="150" y1="62" x2="250" y2="62" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="200" y="54" text-anchor="middle" font-size="11">POST /gc</text>
+    <text x="200" y="78" text-anchor="middle" font-size="11" opacity=".7">waits… up to 300 s</text>
+    <rect x="250" y="40" width="130" height="44" rx="3" fill="none" stroke="currentColor"/>
+    <text x="315" y="66" text-anchor="middle">scratch-git</text>
+    <line x1="380" y1="62" x2="470" y2="62" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="425" y="54" text-anchor="middle" font-size="11">spawns</text>
+    <rect x="470" y="40" width="200" height="44" rx="3" fill="none" stroke="#B3261E" stroke-width="1.5"/>
+    <text x="570" y="59" text-anchor="middle" fill="#B3261E">git gc  (full repack)</text>
+    <text x="570" y="76" text-anchor="middle" font-size="11" fill="#B3261E">O(history) · every job · ~12.5 h/day</text>
+    <text x="700" y="66" font-size="11" opacity=".8">→ 504 at 300 s, then orphaned</text>
+
+    <line x1="20" y1="120" x2="880" y2="120" stroke="currentColor" stroke-dasharray="3 5" opacity=".4"/>
+
+    <!-- AFTER -->
+    <text x="20" y="150" font-size="11" letter-spacing="1" opacity=".7">AFTER MR 2–4</text>
+    <rect x="20" y="166" width="130" height="44" rx="3" fill="none" stroke="currentColor"/>
+    <text x="85" y="192" text-anchor="middle">pull / sync / publish</text>
+    <line x1="150" y1="188" x2="250" y2="188" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="200" y="180" text-anchor="middle" font-size="11">POST /gc</text>
+    <text x="200" y="204" text-anchor="middle" font-size="11" fill="#0E7369">mode=compact</text>
+    <rect x="250" y="166" width="130" height="44" rx="3" fill="none" stroke="currentColor"/>
+    <text x="315" y="192" text-anchor="middle">scratch-git</text>
+    <line x1="380" y1="188" x2="470" y2="188" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="425" y="180" text-anchor="middle" font-size="11">bounded step</text>
+    <rect x="470" y="166" width="200" height="44" rx="3" fill="none" stroke="#0E7369" stroke-width="1.5"/>
+    <text x="570" y="185" text-anchor="middle" fill="#0E7369">pack loose + roll up small packs</text>
+    <text x="570" y="202" text-anchor="middle" font-size="11" fill="#0E7369">O(new objects) · seconds · no exclusion</text>
+    <text x="700" y="192" font-size="11" opacity=".8">→ done | more_needed</text>
+
+    <rect x="20" y="256" width="130" height="44" rx="3" fill="none" stroke="currentColor"/>
+    <text x="85" y="275" text-anchor="middle">maintenance sweep</text>
+    <text x="85" y="291" text-anchor="middle" font-size="11" opacity=".7">hourly cron, 1 repo at a time</text>
+    <line x1="150" y1="278" x2="250" y2="278" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="200" y="270" text-anchor="middle" font-size="11">POST /gc</text>
+    <text x="200" y="294" text-anchor="middle" font-size="11" fill="#A85A08">mode=full, wait=0</text>
+    <rect x="250" y="256" width="130" height="44" rx="3" fill="none" stroke="currentColor"/>
+    <text x="315" y="282" text-anchor="middle">scratch-git</text>
+    <line x1="380" y1="278" x2="470" y2="278" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="425" y="270" text-anchor="middle" font-size="11">detached task</text>
+    <rect x="470" y="256" width="200" height="44" rx="3" fill="none" stroke="#A85A08" stroke-width="1.5"/>
+    <text x="570" y="275" text-anchor="middle" fill="#A85A08">git gc --prune=1.hour.ago</text>
+    <text x="570" y="292" text-anchor="middle" font-size="11" fill="#A85A08">exclusive lock · idle repo · rarely</text>
+    <text x="700" y="275" font-size="11" opacity=".8">→ running; GET /gc polls</text>
+    <text x="700" y="291" font-size="11" opacity=".8">task owns lock + marker</text>
+  </g>
+</svg>
+<figcaption>Today the expensive path is on every job's critical path. After: jobs call the cheap step; only the sweep triggers a full GC, and it never waits for it.</figcaption>
+</figure>
+
+<h2>2. Two modes, two very different budgets</h2>
+<p>The whole design turns on the fact that git's maintenance work splits cleanly into steps that are <em>bounded and safe next to writers</em> and one step that is <em>neither</em>. We use the first kind constantly and the second kind rarely.</p>
+
+<div class="two">
+  <div class="card">
+    <span class="eyebrow">mode: compact · the hot path</span>
+    <h3 class="k">Pack what's new, keep the pack count small</h3>
+    <ul>
+      <li>Skip outright when <code>loose &lt; 500</code> — most publishes end here in ~5 ms.</li>
+      <li>Otherwise one bounded step: pack loose objects (batch-limited), then roll the small packs together geometrically so lookups stay fast.</li>
+      <li><strong>Deletes nothing.</strong> Unreachable objects get packed, not dropped → safe while other writers are mid-build. No exclusive lock; the marker just keeps two compacts off the same repo.</li>
+      <li>Cost O(new objects). Kill it mid-way and you lose only that few-second run.</li>
+      <li>Reports <code>done</code> or <code>more_needed</code> from <code>count-objects</code>.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <span class="eyebrow">mode: full · the sweep only</span>
+    <h3 class="a">Real <code>git gc</code>, with a grace, when idle</h3>
+    <ul>
+      <li><code>git gc --prune=1.hour.ago</code>: rewrite all reachable objects into one pack with fresh deltas, prune unreachable objects older than the grace, write commit-graph.</li>
+      <li>The only step that <strong>reclaims disk</strong> and the one that gives the best deltas + fastest clones.</li>
+      <li>All-or-nothing (temp pack renamed at the end): kill it and nothing was gained. So: detached, never on a request, never behind nginx.</li>
+      <li>Under the repo's <strong>exclusive lock</strong>; writers wait ≤10 s then get 409 <code>gc_in_progress</code>. Cron only starts it on idle repos, so that 409 is the exception.</li>
+      <li>Runs on already-compacted repos, so it's fast — the 300 s cliff stops mattering.</li>
+    </ul>
+  </div>
+</div>
+
+<h3>What each primitive actually does (git 2.39)</h3>
+<div class="tablewrap">
+<table>
+  <tr><th>Command</th><th>Does</th><th>Cost / run</th><th>Deletes?</th><th>Bounded?</th></tr>
+  <tr><td><code>git maintenance run --task=loose-objects</code></td><td><code>prune-packed</code> (drop loose copies already in a pack), then write ≤ 50 000 loose objects into one new pack, no deltas, reachability ignored</td><td class="num">O(batch)</td><td>No</td><td>Yes — repeat until loose ≈ 0</td></tr>
+  <tr><td><code>git maintenance run --task=incremental-repack</code></td><td>Refresh multi-pack-index, expire packs fully covered by newer ones, roll several small packs into one; batch size auto-picked so the largest pack is never rewritten</td><td class="num">O(batch)</td><td>No</td><td>Yes — repeat until packs are few</td></tr>
+  <tr><td><code>git repack -d --geometric=2</code></td><td>Keep pack sizes in a ×2 progression: roll all packs below the split + all loose (reachable and not) into one pack; delete what was rolled</td><td class="num">small; occasionally a big roll-up</td><td>No</td><td>Yes — pack count stays O(log n)</td></tr>
+  <tr><td><code>git gc --prune=1.hour.ago</code></td><td>pack-refs → <code>repack -A -d</code> everything reachable into ONE pack (+bitmap) → <code>prune</code> unreachable loose older than 1 h → commit-graph</td><td class="num">O(history) · minutes on big repos</td><td><strong>Yes</strong></td><td><strong>No</strong> — all-or-nothing</td></tr>
+</table>
+</div>
+<p class="small">Choice for <code>compact</code>: the two <code>git maintenance</code> tasks (batch-limited by design, built to run beside other git commands). <code>repack -d --geometric=2</code> is the alternative to measure on the two big repos; either is fine — the property we need is "bounded, non-deleting, converges over repeats".</p>
+
+<h2>3. MR 2 — scratch-git: a GC that isn't a request</h2>
+<p>The endpoint stays <code>POST /api/repo/manage/{id}/gc</code>, so today's callers keep working. What changes: the run is a detached task that owns its guard and marker; the HTTP call is a window onto it, not its lifetime.</p>
+
+<h3>Request and response</h3>
+<div class="two">
+<div>
+<pre><code>// after a pull / sync / publish (MR 3)
+POST /gc
+{ "mode": "compact",
+  "waitSeconds": 60,          // 0..240, &lt; nginx 300
+  "looseThreshold": 500 }
+
+// 200 — nothing to do (most publishes)
+{ "state": "skipped", "mode": "compact",
+  "loose": 12, "packs": 1, "durationMs": 4 }
+
+// 200 — did one bounded step, still work left
+{ "state": "more_needed", "mode": "compact",
+  "looseBefore": 212341, "looseAfter": 162341,
+  "packs": 7, "durationMs": 9800 }</code></pre>
+</div>
+<div>
+<pre><code>// from the maintenance sweep (MR 4)
+POST /gc
+{ "mode": "full", "waitSeconds": 0 }
+
+// 200 — task started, nobody waits for it
+{ "state": "running", "mode": "full",
+  "startedAt": 1786998754461 }
+
+// GET /gc — the sweep polls every 30 s
+{ "running": false,
+  "last": { "mode": "full", "state": "completed",
+            "exitCode": 0, "durationMs": 288104,
+            "statsBefore": "…", "statsAfter": "…" } }
+
+// second POST while one runs
+{ "state": "already_running", "startedAt": … }
+// other blue/green container holds the flock
+{ "state": "running_elsewhere" }</code></pre>
+</div>
+</div>
+
+<h3>Who blocks whom</h3>
+<figure class="wide">
+<svg viewBox="0 0 900 250" role="img" aria-label="Lock model: writers take the per-repo shared lock plus their branch mutex; compact takes only the marker; full GC takes the exclusive repo lock, the flock on the repo directory, and the marker. Writers wait up to 10 seconds for the shared lock and then get 409 gc_in_progress.">
+  <g font-family="ui-monospace, Menlo, monospace" font-size="12" fill="currentColor">
+    <text x="20" y="24" font-size="11" letter-spacing="1" opacity=".7">PER REPO</text>
+    <!-- lock column -->
+    <rect x="360" y="44" width="180" height="40" rx="3" fill="none" stroke="currentColor"/>
+    <text x="450" y="61" text-anchor="middle">repo RwLock</text>
+    <text x="450" y="76" text-anchor="middle" font-size="11" opacity=".7">shared ↔ exclusive</text>
+    <rect x="360" y="104" width="180" height="40" rx="3" fill="none" stroke="currentColor"/>
+    <text x="450" y="121" text-anchor="middle">branch mutex</text>
+    <text x="450" y="136" text-anchor="middle" font-size="11" opacity=".7">main | dirty (MR 1)</text>
+    <rect x="360" y="164" width="180" height="40" rx="3" fill="none" stroke="currentColor"/>
+    <text x="450" y="181" text-anchor="middle">gcInProgress marker</text>
+    <text x="450" y="196" text-anchor="middle" font-size="11" opacity=".7">RAII, in the task (MR 1)</text>
+    <!-- writers -->
+    <rect x="20" y="44" width="200" height="40" rx="3" fill="none" stroke="currentColor"/>
+    <text x="120" y="61" text-anchor="middle">any writer</text>
+    <text x="120" y="76" text-anchor="middle" font-size="11" opacity=".7">commit, rebase, tag, publish…</text>
+    <line x1="220" y1="58" x2="360" y2="58" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="290" y="51" text-anchor="middle" font-size="11">shared · wait ≤10 s</text>
+    <line x1="220" y1="72" x2="360" y2="120" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="300" y="104" text-anchor="middle" font-size="11">then branch</text>
+    <text x="120" y="102" text-anchor="middle" font-size="11" fill="#B3261E">timeout → 409 gc_in_progress</text>
+    <!-- compact -->
+    <rect x="20" y="164" width="200" height="40" rx="3" fill="none" stroke="#0E7369" stroke-width="1.5"/>
+    <text x="120" y="181" text-anchor="middle" fill="#0E7369">compact</text>
+    <text x="120" y="196" text-anchor="middle" font-size="11" fill="#0E7369">no exclusion needed</text>
+    <line x1="220" y1="184" x2="360" y2="184" stroke="#0E7369" marker-end="url(#ar)"/>
+    <text x="290" y="177" text-anchor="middle" font-size="11" fill="#0E7369">marker only</text>
+    <!-- full -->
+    <rect x="680" y="104" width="200" height="40" rx="3" fill="none" stroke="#A85A08" stroke-width="1.5"/>
+    <text x="780" y="121" text-anchor="middle" fill="#A85A08">full GC</text>
+    <text x="780" y="136" text-anchor="middle" font-size="11" fill="#A85A08">detached task</text>
+    <line x1="680" y1="112" x2="540" y2="64" stroke="#A85A08" marker-end="url(#ar)"/>
+    <text x="620" y="74" text-anchor="middle" font-size="11" fill="#A85A08">exclusive</text>
+    <line x1="680" y1="136" x2="540" y2="184" stroke="#A85A08" marker-end="url(#ar)"/>
+    <text x="620" y="176" text-anchor="middle" font-size="11" fill="#A85A08">marker</text>
+    <rect x="680" y="164" width="200" height="40" rx="3" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
+    <text x="780" y="181" text-anchor="middle">flock scratch-git-gc.lock</text>
+    <text x="780" y="196" text-anchor="middle" font-size="11" opacity=".7">across blue/green containers</text>
+    <line x1="780" y1="144" x2="780" y2="164" stroke="#A85A08" marker-end="url(#ar)"/>
+    <text x="20" y="236" font-size="11" opacity=".8">tokio RwLock is write-preferring: once full GC is queued, new writers line up behind it; in-flight writers finish first.</text>
+  </g>
+</svg>
+<figcaption>Writers and full GC exclude each other inside the one process that owns the disk. Compact needs no exclusion because it never deletes.</figcaption>
+</figure>
+
+<h3>Lifecycle of one <code>full</code> run</h3>
+<figure class="wide">
+<svg viewBox="0 0 900 200" role="img" aria-label="Timeline: POST /gc mode=full spawns a detached task that acquires flock, exclusive lock and marker, runs git gc as a tokio child with kill_on_drop, then releases all and records the outcome. The HTTP handler returns after waitSeconds with state running if the task is still going. SIGTERM kills the child.">
+  <g font-family="ui-monospace, Menlo, monospace" font-size="12" fill="currentColor">
+    <line x1="20" y1="60" x2="880" y2="60" stroke="currentColor" opacity=".35"/>
+    <text x="20" y="48" font-size="11" letter-spacing="1" opacity=".7">HTTP REQUEST</text>
+    <rect x="20" y="66" width="220" height="30" rx="3" fill="none" stroke="currentColor"/>
+    <text x="130" y="85" text-anchor="middle">handler: select!(task done, timer)</text>
+    <text x="250" y="85" font-size="11">→ returns after waitSeconds: "running"</text>
+    <text x="250" y="100" font-size="11" opacity=".7">or "completed"/"failed" if it finished first</text>
+
+    <line x1="20" y1="130" x2="880" y2="130" stroke="#A85A08" opacity=".5"/>
+    <text x="20" y="120" font-size="11" letter-spacing="1" fill="#A85A08">DETACHED TASK (tokio::spawn) — outlives the request</text>
+    <rect x="20" y="136" width="130" height="30" rx="3" fill="none" stroke="#A85A08"/>
+    <text x="85" y="155" text-anchor="middle" font-size="11">flock + excl lock</text>
+    <line x1="150" y1="151" x2="180" y2="151" stroke="currentColor" marker-end="url(#ar)"/>
+    <rect x="180" y="136" width="90" height="30" rx="3" fill="none" stroke="#A85A08"/>
+    <text x="225" y="155" text-anchor="middle" font-size="11">marker</text>
+    <line x1="270" y1="151" x2="300" y2="151" stroke="currentColor" marker-end="url(#ar)"/>
+    <rect x="300" y="136" width="260" height="30" rx="3" fill="none" stroke="#A85A08" stroke-width="1.5"/>
+    <text x="430" y="155" text-anchor="middle" font-size="11">git gc … (tokio child, kill_on_drop)</text>
+    <line x1="560" y1="151" x2="590" y2="151" stroke="currentColor" marker-end="url(#ar)"/>
+    <rect x="590" y="136" width="130" height="30" rx="3" fill="none" stroke="#A85A08"/>
+    <text x="655" y="155" text-anchor="middle" font-size="11">exit status + stderr</text>
+    <line x1="720" y1="151" x2="750" y2="151" stroke="currentColor" marker-end="url(#ar)"/>
+    <rect x="750" y="136" width="130" height="30" rx="3" fill="none" stroke="#A85A08"/>
+    <text x="815" y="155" text-anchor="middle" font-size="11">drop all → last_gc</text>
+    <text x="300" y="188" font-size="11" opacity=".8">SIGTERM (deploy) → shutdown watch fires → child killed → nothing orphaned in the old slot. git gc is crash-safe.</text>
+  </g>
+</svg>
+<figcaption>The request only observes. Guards, marker and the child process belong to the task; the client can vanish at any point without changing what happens on disk.</figcaption>
+</figure>
+
+<p>Also in MR 2: <code>[GC] start/end</code> lines already exist from MR 1; add <code>state=</code> and <code>mode=</code>. <code>/repair</code> takes the same exclusive guard as <code>full</code>.</p>
+
+<h2>4. MR 3 — server: one choke point for "GC is running"</h2>
+<p>No per-call-site plumbing. <code>ScratchGitClient.callGitApi</code> learns exactly one new thing: a 409 whose body carries <code>code: "gc_in_progress"</code> means <em>wait, this is transient</em> — and how long to wait depends on who's asking.</p>
+
+<figure class="wide">
+<svg viewBox="0 0 900 190" role="img" aria-label="Sequence: a worker job calls scratch-git during a full GC, receives 409 gc_in_progress, callGitApi sleeps 10 seconds and retries up to a 5 minute budget, then succeeds. An API-role request receives the same 409 and fails fast with 'connection is being maintained'.">
+  <g font-family="ui-monospace, Menlo, monospace" font-size="12" fill="currentColor">
+    <text x="20" y="24" font-size="11" letter-spacing="1" opacity=".7">WORKER ROLE (jobs)</text>
+    <rect x="20" y="36" width="120" height="30" rx="3" fill="none" stroke="currentColor"/><text x="80" y="55" text-anchor="middle">pull job</text>
+    <line x1="140" y1="51" x2="290" y2="51" stroke="currentColor" marker-end="url(#ar)"/><text x="215" y="44" text-anchor="middle" font-size="11">write/files</text>
+    <rect x="290" y="36" width="120" height="30" rx="3" fill="none" stroke="currentColor"/><text x="350" y="55" text-anchor="middle">scratch-git</text>
+    <line x1="290" y1="61" x2="140" y2="61" stroke="#B3261E" marker-end="url(#ar)"/><text x="215" y="76" text-anchor="middle" font-size="11" fill="#B3261E">409 gc_in_progress</text>
+    <text x="430" y="48" font-size="11">callGitApi: sleep 10 s × N, budget 5 min</text>
+    <text x="430" y="64" font-size="11" opacity=".7">(SCRATCH_GIT_GC_WAIT_BUDGET_MS)</text>
+    <line x1="140" y1="88" x2="290" y2="88" stroke="#0E7369" marker-end="url(#ar)"/><text x="215" y="102" text-anchor="middle" font-size="11" fill="#0E7369">retry → 200</text>
+
+    <text x="20" y="134" font-size="11" letter-spacing="1" opacity=".7">API ROLE (user request)</text>
+    <rect x="20" y="146" width="120" height="30" rx="3" fill="none" stroke="currentColor"/><text x="80" y="165" text-anchor="middle">controller</text>
+    <line x1="140" y1="161" x2="290" y2="161" stroke="currentColor" marker-end="url(#ar)"/>
+    <rect x="290" y="146" width="120" height="30" rx="3" fill="none" stroke="currentColor"/><text x="350" y="165" text-anchor="middle">scratch-git</text>
+    <line x1="290" y1="171" x2="140" y2="171" stroke="#B3261E" marker-end="url(#ar)"/><text x="215" y="185" text-anchor="middle" font-size="11" fill="#B3261E">409 gc_in_progress</text>
+    <text x="430" y="158" font-size="11">no retry → ScratchGitConflictError</text>
+    <text x="430" y="174" font-size="11" opacity=".7">→ 409 "Connection is being maintained, retry shortly"</text>
+  </g>
+</svg>
+<figcaption>Jobs sleep through a GC (it's rare and short after compaction); interactive calls fail fast with a clear message rather than hanging.</figcaption>
+</figure>
+
+<ul>
+  <li><strong>Callers:</strong> <code>pull-linked-folder-files.job.ts</code>, <code>sync-data-folders.job.ts</code>, and — new — <code>publish.job.ts</code> call <code>runGitGc(repo, { mode: 'compact', waitSeconds: 60 })</code>. Publish was the one loose-object producer nobody ever compacted. <code>running</code>/<code>more_needed</code> is a debug log, not an error.</li>
+  <li><strong>Timeouts:</strong> per-call <code>AbortSignal.timeout(...)</code> (DEV-11235) so no call ever silently waits the full 300 s.</li>
+  <li><strong>Remove</strong> the "409 from /gc means already running, skip" special-casing — <code>/gc</code> now returns 200 <code>already_running</code>.</li>
+</ul>
+
+<h2>5. MR 4 — the sweep: cycle repos, bounded steps, done or not</h2>
+<p>An hourly cron (<code>server/src/cron/git-maintenance.service.ts</code>) that treats the repo itself as the state. It never stores "progress" — <code>count-objects</code> says whether a repo is done, and a repo that isn't goes back in the queue. Crash it anywhere; the next run continues correctly.</p>
+
+<figure class="wide">
+<svg viewBox="0 0 900 300" role="img" aria-label="Loop: enumerate repos from ConnectorAccount.repoPath; for each, read count-objects; if below thresholds and full GC recent, mark done; if the workbook has a running job, skip this cycle; else run one bounded compact step, and if compact is done but packs are many or last full GC is over 7 days old, run full GC detached and poll GET /gc; then requeue if more_needed.">
+  <g font-family="ui-monospace, Menlo, monospace" font-size="12" fill="currentColor">
+    <rect x="20" y="20" width="200" height="40" rx="3" fill="none" stroke="currentColor"/>
+    <text x="120" y="37" text-anchor="middle">enumerate repos</text><text x="120" y="52" text-anchor="middle" font-size="11" opacity=".7">ConnectorAccount.repoPath</text>
+    <line x1="220" y1="40" x2="270" y2="40" stroke="currentColor" marker-end="url(#ar)"/>
+    <rect x="270" y="20" width="200" height="40" rx="3" fill="none" stroke="currentColor"/>
+    <text x="370" y="37" text-anchor="middle">GET count-objects</text><text x="370" y="52" text-anchor="middle" font-size="11" opacity=".7">loose · packs · last full gc</text>
+    <line x1="470" y1="40" x2="520" y2="40" stroke="currentColor" marker-end="url(#ar)"/>
+    <rect x="520" y="20" width="200" height="40" rx="3" fill="none" stroke="#0E7369" stroke-width="1.5"/>
+    <text x="620" y="37" text-anchor="middle" fill="#0E7369">done?</text><text x="620" y="52" text-anchor="middle" font-size="11" fill="#0E7369">loose&lt;L ∧ packs&lt;P ∧ full≤7d</text>
+    <line x1="720" y1="40" x2="770" y2="40" stroke="#0E7369" marker-end="url(#ar)"/>
+    <text x="745" y="33" text-anchor="middle" font-size="11" fill="#0E7369">yes</text>
+    <rect x="770" y="20" width="110" height="40" rx="3" fill="none" stroke="#0E7369"/>
+    <text x="825" y="44" text-anchor="middle" fill="#0E7369">next repo</text>
+
+    <line x1="620" y1="60" x2="620" y2="100" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="640" y="84" font-size="11">no</text>
+    <rect x="520" y="100" width="200" height="40" rx="3" fill="none" stroke="currentColor"/>
+    <text x="620" y="117" text-anchor="middle">idle gate</text><text x="620" y="132" text-anchor="middle" font-size="11" opacity=".7">running DbJob / RoutineRun?</text>
+    <line x1="720" y1="120" x2="770" y2="120" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="745" y="113" text-anchor="middle" font-size="11">busy</text>
+    <rect x="770" y="100" width="110" height="40" rx="3" fill="none" stroke="currentColor"/>
+    <text x="825" y="117" text-anchor="middle">skip cycle</text><text x="825" y="132" text-anchor="middle" font-size="11" opacity=".7">try next hour</text>
+
+    <line x1="620" y1="140" x2="620" y2="180" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="640" y="164" font-size="11">idle</text>
+    <rect x="520" y="180" width="200" height="40" rx="3" fill="none" stroke="#0E7369" stroke-width="1.5"/>
+    <text x="620" y="197" text-anchor="middle" fill="#0E7369">POST /gc compact</text><text x="620" y="212" text-anchor="middle" font-size="11" fill="#0E7369">one bounded step, ≤60 s wait</text>
+    <line x1="520" y1="200" x2="470" y2="200" stroke="currentColor" marker-end="url(#ar)"/>
+    <text x="495" y="193" text-anchor="middle" font-size="11">more_needed</text>
+    <rect x="270" y="180" width="200" height="40" rx="3" fill="none" stroke="currentColor"/>
+    <text x="370" y="197" text-anchor="middle">requeue</text><text x="370" y="212" text-anchor="middle" font-size="11" opacity=".7">back of the line, same run</text>
+    <path d="M370,180 C370,120 250,80 240,60" fill="none" stroke="currentColor" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+
+    <line x1="620" y1="220" x2="620" y2="256" stroke="#A85A08" marker-end="url(#ar)"/>
+    <text x="640" y="242" font-size="11" fill="#A85A08">compact done, but packs ≥ P or full &gt; 7 d</text>
+    <rect x="520" y="256" width="200" height="40" rx="3" fill="none" stroke="#A85A08" stroke-width="1.5"/>
+    <text x="620" y="273" text-anchor="middle" fill="#A85A08">POST /gc full, wait=0</text><text x="620" y="288" text-anchor="middle" font-size="11" fill="#A85A08">then poll GET /gc every 30 s</text>
+    <text x="20" y="284" font-size="11" opacity=".8">concurrency 1 · metric GC_MAINTENANCE_RUN · WSLogger before/after loose counts · failures at error level</text>
+  </g>
+</svg>
+<figcaption>The sweep does one bounded thing per repo per visit and lets <code>count-objects</code> decide "done". Full GC is a decision the sweep makes about an already-compact, idle repo — never a reaction to a job.</figcaption>
+</figure>
+
+<h3>Worked example: the eight Whalesync Internal repos, one cycle</h3>
+<p class="small">State read from the prod VM on 2026-08-18 (all packed, 0 loose, 1 pack) — plus one hypothetical repo in the shape of the DEV-11266 one (~200 k loose) to show the incremental path.</p>
+<div class="tablewrap">
+<table>
+  <tr><th>Repo</th><th>count-objects</th><th>Sweep decision</th><th>Cost</th></tr>
+  <tr><td>Stripe <code>coa_mVhiLW2yS6</code> (3.1 GiB, 5.2 M objects)</td><td class="num">loose 0 · packs 1 · full 3 d ago</td><td><span class="k">done → next</span></td><td class="num">~5 ms</td></tr>
+  <tr><td>Intercom, HubSpot, Webflow, Notion, Airtable, Shopify, HubSpot-2</td><td class="num">loose 0 · packs 1</td><td><span class="k">done → next</span></td><td class="num">~5 ms each</td></tr>
+  <tr><td>Hypothetical: a Notion repo after weeks of pulls</td><td class="num">loose 212 000 · packs 3</td><td>compact → <code>more_needed</code> (loose 162 k) → requeue → compact → … 5 visits → loose 0, packs 8 → compact rolls up → packs 3 → <span class="a">full</span> next visit if &gt;7 d</td><td class="num">5 × ~10 s + 1 × ~30 s, then one full ~90 s, idle</td></tr>
+</table>
+</div>
+<p>Compare with today, where the Stripe repo gets a ~5-minute full repack on <em>every</em> pull for zero benefit, and the 200 k-loose repo gets one 300 s+ attempt that is cut and orphaned.</p>
+
+<h2>6. Where we don't compromise on compaction quality</h2>
+<div class="callout">
+<p><strong>Incremental ≠ sloppy.</strong> The trade is <em>when</em> we pay for the best pack, not <em>whether</em>.</p>
+</div>
+<ul>
+  <li><strong>Pack count stays logarithmic.</strong> Geometric roll-ups (or <code>incremental-repack</code>) mean a repo never drifts into "hundreds of small packs, every lookup checks all of them". Loose objects — the actual bloat and the actual read-performance killer — go to ≈0 continuously.</li>
+  <li><strong>Deltas are recomputed inside every roll-up</strong>, so most objects get good deltas soon after they land. What incremental cannot do is cross-pack deltas against the whole history and prune — that is exactly what the periodic <code>full</code> pass is for.</li>
+  <li><strong>Every repo still gets a real <code>git gc</code></strong> — at least every 7 days, sooner if the pack count says so — but on a repo that is already compact, so it is fast, and idle, so it costs nobody a wait.</li>
+  <li><strong>Disk is reclaimed by <code>full</code> only</strong>, with a 1 h grace (env-tunable, <code>now</code> refused). Garbage a few hours old is not the disk problem (DEV-11253's is loose objects and unswept staging), so the grace costs nothing measurable.</li>
+  <li><strong>Bitmaps:</strong> <code>git gc</code> writes a bitmap index by default — a big share of full-repack cost and only clones benefit. Decision to take with the first measurements: <code>repack.writeBitmaps=false</code> for hot repos.</li>
+</ul>
+
+<h2>7. Open decisions (small, measure-then-choose)</h2>
+<ol>
+  <li><code>compact</code> = <code>maintenance loose-objects + incremental-repack</code> vs <code>repack -d --geometric=2</code>. Lean geometric; measure on Stripe + the incident repo first.</li>
+  <li>Thresholds: <code>L</code> loose (500 for hot-path skip, 5 000 for sweep candidacy), <code>P</code> packs (≈20–50), full-GC age (7 d).</li>
+  <li>Worker retry budget 5 min vs 2 min — after compaction a full GC on the Stripe repo should be well under either.</li>
+  <li><code>GET /gc</code> history in memory + logs (v1) vs persisted <code>lastFullGcAt</code> column.</li>
+</ol>
+
+<h2>8. Order and what to watch</h2>
+<div class="mr"><div class="tag">MR 2</div><div>scratch-git: <code>mode</code>, <code>waitSeconds</code>, <code>state</code>, <code>GET /gc</code>, RwLock + <code>GcGuard</code>, flock, SIGTERM kill, tests (writer 409 after wait, second <code>/gc</code> → <code>already_running</code>, compact skips below threshold, unreachable object survives compact and full, SIGTERM kills child). Compatible with today's callers.</div></div>
+<div class="mr"><div class="tag">MR 3</div><div>server: <code>callGitApi</code> 409-gc retry by role, <code>AbortSignal</code> timeouts, <code>compact</code> after pull/sync/<strong>publish</strong>. Ships with or right after MR 2.</div></div>
+<div class="mr"><div class="tag">MR 4</div><div>server: <code>GitMaintenanceService</code> cron — hourly, idle-gated, serialized, metrics; one-off <code>full</code> on the two big repos through the new endpoint instead of break-glass.</div></div>
+<p><strong>Live checks after each:</strong> nginx log — <code>/gc</code> 504s and 409 storms go to zero; <code>[GC] end … state=</code> lines present for every start; <code>gitops-git &lt;repo&gt; count-objects -v</code> on Stripe stays <code>count: 0 · packs: 1</code> while its per-pull cost drops from ~288 s to ~5 ms; box-wide time in <code>git gc</code> falls from ~12.5 h/day to minutes.</p>
+
+<hr>
+<p class="small">Sources: <code>.ivan/plans/DEV-11316-gc-locking-and-maintenance.md</code> (§1 evidence, §3 design), <code>.ivan/plans/DEV-11266-gc-prunes-in-flight-writes.md</code>, MR !3253, prod reads on 2026-08-18. Numbers: 30-day container logs (<code>SLOW API CALL … /gc</code>), nginx access log, <code>du</code>/<code>count-objects</code> on the prod VM.</p>
+</main>
+</body>
+</html>
