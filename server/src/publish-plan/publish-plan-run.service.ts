@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  type DataFolderOptions,
   formatRecordJson,
   isScratchPendingPublishId,
   isScratchPendingRecreateId,
@@ -185,6 +186,9 @@ export class PublishPlanRunService {
     const tableSpecCache = new Map<string, BaseJsonTableSpec>();
     // Cache tableSpecs per dataFolderId
     const dataFolderSpecCache = new Map<string, BaseJsonTableSpec | null>();
+    // Cache folder options per dataFolderId — handed to the connector's write calls
+    // so their read-back honors the folder's settings (e.g. Notion `excludePageContent`).
+    const dataFolderOptionsCache = new Map<string, DataFolderOptions | undefined>();
 
     try {
       const allPhases = ['asset-upload', 'edit', 'create', 'delete', 'backfill', 'rename-files'] as const;
@@ -314,6 +318,7 @@ export class PublishPlanRunService {
               [entry as PublishOperation],
               connector,
               null as unknown as BaseJsonTableSpec, // TODO: Make tableSpec optional instead
+              undefined,
               plan.workbookId,
               plan.id,
               repoId,
@@ -374,8 +379,9 @@ export class PublishPlanRunService {
 
             if (folderEntryIds.length === 0) continue;
 
-            // Resolve table spec
+            // Resolve table spec + folder options
             const tableSpec = await this.schemaService.getTableSpecById(dataFolderId, dataFolderSpecCache);
+            const folderOptions = await this.getFolderOptionsById(dataFolderId, dataFolderOptionsCache);
             if (!tableSpec) {
               WSLogger.warn({
                 source: 'PublishRunService.runPipeline',
@@ -418,6 +424,7 @@ export class PublishPlanRunService {
                 batch as PublishOperation[],
                 connector,
                 tableSpec,
+                folderOptions,
                 plan.workbookId,
                 plan.id,
                 repoId,
@@ -473,8 +480,10 @@ export class PublishPlanRunService {
             if (!entry) continue;
 
             let tableSpec: BaseJsonTableSpec | null = null;
+            let folderOptions: DataFolderOptions | undefined;
             if (entry.dataFolderId) {
               tableSpec = await this.schemaService.getTableSpecById(entry.dataFolderId, dataFolderSpecCache);
+              folderOptions = await this.getFolderOptionsById(entry.dataFolderId, dataFolderOptionsCache);
             }
             if (!tableSpec) {
               // Fallback to path lookup if dataFolderId missing (old entries?)
@@ -488,6 +497,7 @@ export class PublishPlanRunService {
               [entry],
               connector,
               tableSpec,
+              folderOptions,
               plan.workbookId,
               plan.id,
               repoId,
@@ -906,6 +916,27 @@ export class PublishPlanRunService {
   /**
    * Get the BaseJsonTableSpec for a given folder.
    */
+  /**
+   * The folder's persisted `DataFolderOptions` (undefined when the folder is gone or
+   * has none), cached per run alongside the table specs. Handed to the connector's
+   * write calls so a read-back matches a pull of the same folder.
+   */
+  private async getFolderOptionsById(
+    dataFolderId: string,
+    cache: Map<string, DataFolderOptions | undefined>,
+  ): Promise<DataFolderOptions | undefined> {
+    if (cache.has(dataFolderId)) {
+      return cache.get(dataFolderId);
+    }
+    const dataFolder = await this.db.client.dataFolder.findUnique({
+      where: { id: dataFolderId },
+      select: { options: true },
+    });
+    const options = (dataFolder?.options ?? undefined) as DataFolderOptions | undefined;
+    cache.set(dataFolderId, options);
+    return options;
+  }
+
   private async getTableSpecForFolder(
     workbookId: string,
     folderPath: string,
@@ -929,6 +960,7 @@ export class PublishPlanRunService {
     entries: PublishOperation[], // Type explicitly if possible, but 'any' avoids circular dep issues for now
     connector: Connector,
     tableSpec: BaseJsonTableSpec,
+    folderOptions: DataFolderOptions | undefined,
     workbookId: string,
     planId: string,
     repoId: string,
@@ -946,6 +978,7 @@ export class PublishPlanRunService {
             narrowToUpdateOps(entries),
             connector,
             tableSpec,
+            folderOptions,
             workbookId,
             planId,
             repoId,
@@ -1078,6 +1111,7 @@ export class PublishPlanRunService {
     entries: UpdatePublishOperation[],
     connector: Connector,
     tableSpec: BaseJsonTableSpec,
+    folderOptions: DataFolderOptions | undefined,
     workbookId: string,
     planId: string,
     repoId: string,
@@ -1248,7 +1282,7 @@ export class PublishPlanRunService {
 
     if (contents.length === 0) return;
 
-    const persistedContents = await connector.updateRecords(tableSpec, contents, changedFieldsArray);
+    const persistedContents = await connector.updateRecords(tableSpec, contents, changedFieldsArray, folderOptions);
 
     // Flag-gated swap: when `UPDATE_RECORDS_RETURNS_REMOTE_DATA` is on,
     // use the row the connector actually persisted (DB triggers, server

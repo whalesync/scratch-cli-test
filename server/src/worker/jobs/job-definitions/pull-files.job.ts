@@ -1,5 +1,12 @@
 import type { PrismaClient } from '@prisma/client';
-import { type DataFolderId, type JobTrigger, JobType, Service, type WorkbookId } from '@spinner/shared-types';
+import {
+  type DataFolderId,
+  type DataFolderOptions,
+  type JobTrigger,
+  JobType,
+  Service,
+  type WorkbookId,
+} from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import {
   type BaseJsonTableSpec,
@@ -387,7 +394,10 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
     };
 
     try {
-      await connector.pullRecordFilesByIds(tableSpec, recordIds, callback);
+      // Pass the folder's options so a targeted pull honors the same per-folder
+      // settings as the full pull (e.g. Notion's `excludePageContent`).
+      const folderOptions = (dataFolder.options ?? undefined) as DataFolderOptions | undefined;
+      await connector.pullRecordFilesByIds(tableSpec, recordIds, callback, folderOptions);
 
       // Rebase dirty once at the end of the job (not after every batch)
       await this.scratchGitService.rebaseDirty(repoId);

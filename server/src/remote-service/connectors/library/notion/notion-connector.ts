@@ -11,6 +11,7 @@ import {
   ConnectorSettingDefinition,
   type CreateFieldResult,
   type CreateTableResult,
+  type DataFolderOptions,
   IncrementalPullSupport,
   type SchemaCreationCapabilities,
   TableDiscoveryMode,
@@ -136,6 +137,19 @@ interface NotionPullOptions extends PullRecordFilesOptions {
   excludePageContent?: boolean | undefined;
   childContentMaxDepth?: number | undefined;
   pageSize?: number | undefined;
+}
+
+/**
+ * How much of a page's body (`page_content`) to fetch alongside its properties —
+ * the folder's `excludePageContent` / `childContentMaxDepth` advanced settings.
+ * Every path that builds a ConnectorFile (the full-table pull, targeted pulls,
+ * the post-update refetch) reads them off the folder options its caller passes,
+ * via {@link pageContentSettingsFrom}, so they all shape `page_content` the same
+ * way (DEV-11258).
+ */
+interface NotionPageContentSettings {
+  excludePageContent: boolean;
+  childContentMaxDepth: number;
 }
 
 /**
@@ -303,6 +317,24 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       rateLimiter: opts?.rateLimiter,
       notionVersion: DEFAULT_NOTION_API_VERSION,
     });
+  }
+
+  /**
+   * The page-content settings carried by a folder's options. Absent options (a
+   * caller with no folder at hand) mean full page content — the historical
+   * behavior of the per-page paths, which until DEV-11258 ignored these settings
+   * altogether: a sync that only writes Notion properties still had every
+   * updated page's block tree walked by the post-update refetch, and every
+   * targeted pull did the same, while the one setting meant to switch that off
+   * only reached the full-table pull.
+   */
+  private static pageContentSettingsFrom(options: DataFolderOptions | undefined): NotionPageContentSettings {
+    const notionOptions = options as NotionPullOptions | undefined;
+    // Same truthiness the full-table pull applies to its `options.excludePageContent`.
+    return {
+      excludePageContent: Boolean(notionOptions?.excludePageContent),
+      childContentMaxDepth: notionOptions?.childContentMaxDepth ?? NotionConnector.PAGE_CONTENT_MAX_DEPTH,
+    };
   }
 
   /**
@@ -1024,30 +1056,17 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     _tableSpec: BaseJsonTableSpec,
     ids: string[],
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+    options?: DataFolderOptions,
   ): Promise<void> {
     const BATCH_SIZE = 10;
     const buffer: ConnectorFile[] = [];
+    const pageContentSettings = NotionConnector.pageContentSettingsFrom(options);
 
     for (const pageId of ids) {
       try {
         const page = (await this.client.retrievePage({ page_id: pageId })) as PageObjectResponse;
         const connectorFile = this.pageResponseToConnectorFile(page);
-
-        try {
-          const childrenData = await this.pollRecordPageContentChildren(
-            page.id,
-            NotionConnector.PAGE_CONTENT_MAX_DEPTH,
-            page.id,
-          );
-          connectorFile['page_content'] = childrenData.children;
-        } catch (error) {
-          WSLogger.error({
-            source: 'NotionConnector',
-            message: `Failed to fetch content for page ${pageId}`,
-            error,
-          });
-        }
-
+        await this.attachPageContent(connectorFile, page.id, pageContentSettings);
         buffer.push(connectorFile);
 
         if (buffer.length >= BATCH_SIZE) {
@@ -1359,32 +1378,52 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   }
 
   /**
+   * Populate `connectorFile.page_content` with the page's block tree, per the
+   * folder's page-content settings: skipped entirely when the folder excludes
+   * page content, otherwise walked to `childContentMaxDepth`. A failed walk is
+   * logged and leaves the file without `page_content` (the page's properties are
+   * still worth returning). Shared by every per-page path so they shape
+   * `page_content` exactly like the full-table pull.
+   */
+  private async attachPageContent(
+    connectorFile: ConnectorFile,
+    pageId: string,
+    settings: NotionPageContentSettings,
+  ): Promise<void> {
+    if (settings.excludePageContent) {
+      return;
+    }
+    try {
+      const childrenData = await this.pollRecordPageContentChildren(pageId, settings.childContentMaxDepth, pageId);
+      connectorFile['page_content'] = childrenData.children;
+    } catch (error) {
+      WSLogger.error({
+        source: 'NotionConnector',
+        message: `Failed to fetch content for page ${pageId}`,
+        error,
+      });
+    }
+  }
+
+  /**
    * Refetch a single page as a ConnectorFile in the same shape `pullRecordFiles`
    * / `pullRecordFilesByIds` would produce: `pages.retrieve` for the page
-   * properties + `pollRecordPageContentChildren` for `page_content`. Used by
+   * properties + the folder's page-content settings for `page_content`. Used by
    * `updateRecords` so the post-publish commit blob is byte-equal to what a
    * fresh pull would return, sidestepping every shape-divergence class —
    * properties Notion server-normalizes (date timezones, select option ids),
    * `last_edited_time` / `last_edited_by` that change on write, FK relations
    * Notion truncates to 25 on response, blocks the update API never touches.
+   * Byte-equality includes `page_content`: a folder that excludes it pulls
+   * without it, so the refetch must leave it out too (and not pay for it).
    */
-  private async refetchPageAsConnectorFile(pageId: string): Promise<ConnectorFile> {
+  private async refetchPageAsConnectorFile(
+    pageId: string,
+    pageContentSettings: NotionPageContentSettings,
+  ): Promise<ConnectorFile> {
     const page = (await this.client.retrievePage({ page_id: pageId })) as PageObjectResponse;
     const connectorFile = this.pageResponseToConnectorFile(page);
-    try {
-      const childrenData = await this.pollRecordPageContentChildren(
-        page.id,
-        NotionConnector.PAGE_CONTENT_MAX_DEPTH,
-        page.id,
-      );
-      connectorFile['page_content'] = childrenData.children;
-    } catch (error) {
-      WSLogger.error({
-        source: 'NotionConnector',
-        message: `Failed to fetch content for page ${pageId} during post-update refetch`,
-        error,
-      });
-    }
+    await this.attachPageContent(connectorFile, page.id, pageContentSettings);
     return connectorFile;
   }
 
@@ -1396,6 +1435,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     _tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
+    options?: DataFolderOptions,
   ): Promise<ConnectorFile[]> {
     const results: ConnectorFile[] = new Array<ConnectorFile>(files.length);
     const updatedIndexes: number[] = [];
@@ -1470,9 +1510,10 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     // the same path as `pullRecordFilesByIds` so the returned ConnectorFile is
     // 100% byte-equal to a fresh pull. Refetch is per-page (Notion has no bulk
     // endpoint) but only fires for indexes that had a real write.
+    const pageContentSettings = NotionConnector.pageContentSettingsFrom(options);
     for (const index of updatedIndexes) {
       const pageId = files[index].id as string;
-      results[index] = await this.refetchPageAsConnectorFile(pageId);
+      results[index] = await this.refetchPageAsConnectorFile(pageId, pageContentSettings);
     }
 
     return results;

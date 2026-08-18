@@ -72,6 +72,11 @@ function makeDbMock() {
           encryptedCredentials: {},
         }),
       },
+      // The dispatch loop reads each folder's options to hand to the connector's
+      // write calls (e.g. Notion `excludePageContent`).
+      dataFolder: {
+        findUnique: jest.fn().mockResolvedValue({ options: null }),
+      },
       fileReference: {
         deleteMany: jest.fn().mockResolvedValue({}),
       },
@@ -867,6 +872,29 @@ describe('PublishPlanRunService', () => {
       const updateMock = jest.mocked(connector.updateRecords);
       const [, , cfArg] = updateMock.mock.calls[0];
       expect(cfArg).toEqual([{ title: 'New' }]);
+    });
+
+    it("passes the folder's options to connector.updateRecords (DEV-11258)", async () => {
+      db.client.dataFolder.findUnique.mockResolvedValue({ options: { excludePageContent: true } });
+      setupEditPhaseEntries([
+        {
+          id: 'op_1',
+          filePath: 'articles/a1.json',
+          content: { id: 'rec_1', title: 'New', body: 'Same' },
+          changedFields: { title: 'New' },
+          remoteRecordId: 'rec_1',
+        },
+      ]);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(connector.updateRecords).toHaveBeenCalledTimes(1);
+      const [, , , folderOptions] = jest.mocked(connector.updateRecords).mock.calls[0];
+      expect(folderOptions).toEqual({ excludePageContent: true });
+      expect(db.client.dataFolder.findUnique).toHaveBeenCalledWith({
+        where: { id: DATA_FOLDER_ID },
+        select: { options: true },
+      });
     });
 
     it('aligns changedFields parallel array with files', async () => {

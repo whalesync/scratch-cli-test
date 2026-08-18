@@ -327,11 +327,16 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * @param tableSpec The JSON table spec for the target table.
    * @param ids Array of record IDs to fetch.
    * @param callback Receives batches of fetched files, same pattern as pullRecordFiles.
+   * @param options The folder's persisted `DataFolderOptions`, so a targeted pull
+   *   honors the same per-folder settings the full pull does (e.g. Notion's
+   *   `excludePageContent`). Callers with no folder at hand may omit it; connectors
+   *   then apply their defaults.
    */
   abstract pullRecordFilesByIds(
     tableSpec: BaseJsonTableSpec,
     ids: string[],
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+    options?: DataFolderOptions,
   ): Promise<void>;
 
   /**
@@ -438,12 +443,17 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    *   flag is wired through to the caller, connectors that don't yet have read-back support
    *   are allowed to return `files` (the sent payload) as a placeholder — the caller still
    *   uses the sent payload in that case.
+   * @param options - The folder's persisted `DataFolderOptions`, for connectors whose
+   *   read-back must match what a pull of that folder returns (e.g. Notion leaves out
+   *   `page_content` when the folder's `excludePageContent` is set). Callers with no
+   *   folder at hand may omit it; connectors then apply their defaults.
    * @throws Error if there is a problem updating the records.
    */
   abstract updateRecords(
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
+    options?: DataFolderOptions,
   ): Promise<ConnectorFile[]>;
 
   /**

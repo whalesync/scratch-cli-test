@@ -49,10 +49,12 @@ export interface ConnectorFactoryContext {
    * pair. Used by connectors whose `fetchJsonTableSpec` needs persisted
    * per-folder state instead of fetching schema from a remote API.
    *
-   * The only consumer today is GENERIC_API, which stores per-endpoint probe
-   * results in `DataFolder.options.genericApi` and reads them back at pull
-   * time. Native connectors that derive schema from a remote schema endpoint
-   * (Airtable, Notion, etc.) ignore the callback entirely.
+   * GENERIC_API stores per-endpoint probe results in
+   * `DataFolder.options.genericApi` and reads them back at pull time. NOTION
+   * reads the folder's page-content settings (`excludePageContent`,
+   * `childContentMaxDepth`) on the per-page paths that get no pull options —
+   * targeted pulls and the post-update refetch. Native connectors with no
+   * per-folder behavior outside the pull (Airtable, etc.) ignore the callback.
    *
    * Returns null when no folder exists with that tableId for that account.
    */
