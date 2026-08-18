@@ -96,6 +96,18 @@ services:
       timeout: 5s
       retries: 10
 
+  fake-webflow:
+    build:
+      context: ../test-api-fakes/webflow
+    ports:
+      - "4665:4655"
+    healthcheck:
+      test:
+        ["CMD-SHELL", "wget -qO- http://localhost:4655/test/health || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
   # Fake GCS for the /upload-patch flow. fake-gcs validates that V4-signed
   # URLs carry a host matching `-public-host`, otherwise returns 404. We set
   # it to `fake-gcs:4443` (the in-docker-network hostname) so the URLs the
@@ -186,7 +198,7 @@ services:
       REDIS_PORT: 6379
       SCRATCH_GIT_API_URL: http://scratch-git-2:3100
       SCRATCH_GIT_BACKEND_URL: http://scratch-git-2:3101
-      API_URL_OVERRIDES: "https://api.airtable.com=http://fake-airtable:4646,https://admin.memberstack.com=http://fake-memberstack:4652,https://api.hubapi.com=http://fake-hubspot:4653,https://api.affinity.co=http://fake-affinity:4654"
+      API_URL_OVERRIDES: "https://api.airtable.com=http://fake-airtable:4646,https://admin.memberstack.com=http://fake-memberstack:4652,https://api.hubapi.com=http://fake-hubspot:4653,https://api.affinity.co=http://fake-affinity:4654,https://api.webflow.com=http://fake-webflow:4655"
       ENCRYPTION_MASTER_KEY: "12345678901234567890123456789012"
       # /upload-patch GCS wiring (smoke-only fake — see fake-gcs service above).
       # GCS_API_ENDPOINT (NOT STORAGE_EMULATOR_HOST): the SDK's emulator mode
@@ -238,6 +250,8 @@ services:
         condition: service_healthy
       fake-affinity:
         condition: service_healthy
+      fake-webflow:
+        condition: service_healthy
       fake-gcs:
         condition: service_healthy
       fake-gcs-bucket-init:
@@ -265,6 +279,7 @@ services:
       FAKE_MEMBERSTACK_URL: http://fake-memberstack:4652
       FAKE_HUBSPOT_URL: http://fake-hubspot:4653
       FAKE_AFFINITY_URL: http://fake-affinity:4654
+      FAKE_WEBFLOW_URL: http://fake-webflow:4655
       # CI test-runner is INSIDE the docker network, so `fake-gcs:4443` resolves
       # natively — no URL rewrite needed (run.sh sets the rewrite var for the
       # local-dev host-side runner).
@@ -281,4 +296,6 @@ services:
       fake-hubspot:
         condition: service_healthy
       fake-affinity:
+        condition: service_healthy
+      fake-webflow:
         condition: service_healthy

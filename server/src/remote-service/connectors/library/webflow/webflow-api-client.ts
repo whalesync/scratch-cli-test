@@ -29,8 +29,10 @@ const BASE_URL = 'https://api.webflow.com/v2';
  * Custom error for Webflow API failures surfaced by the client. Mirrors the
  * shape of the other house api-client errors (`{ message, statusCode,
  * responseData }`). Most call sites let raw axios errors propagate (the
- * connector branches on `isAxiosError`); this is thrown only where a friendlier,
- * classified error is useful (e.g. `testConnection` auth failures).
+ * connector branches on `isAxiosError`, and the shared classifier in
+ * `connectors/error.ts` turns a 401/403 into an actionable auth error that
+ * quotes Webflow's own explanation); this is thrown only where the failure has
+ * no HTTP response to classify (e.g. a malformed asset-upload reply).
  */
 export class WebflowError extends Error {
   public readonly statusCode?: number;
@@ -132,19 +134,6 @@ export class WebflowApiClient {
       return this.rateLimiter.withRetry(fn, WEBFLOW_RETRY_OPTS);
     }
     return standaloneWithRetry(fn, WEBFLOW_RETRY_OPTS);
-  }
-
-  // --- Connection test ---
-
-  async testConnection(): Promise<void> {
-    try {
-      await this.withRetry(() => this.http.get<SiteList>('/sites'));
-    } catch (error) {
-      if (isAxiosError(error) && (error.response?.status === 401 || error.response?.status === 403)) {
-        throw new WebflowError('Invalid Webflow access token', error.response.status, error.response.data);
-      }
-      throw error;
-    }
   }
 
   // --- Sites ---

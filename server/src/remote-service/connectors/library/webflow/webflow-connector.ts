@@ -167,7 +167,27 @@ export class WebflowConnector extends Connector {
     incrementalPullInstructions:
       'Incremental pull using Webflow’s last-updated filter. The Assets, Pages, and Ecommerce Orders tables are not supported.',
     credentialFields: {
-      user_provided_params: [{ key: 'apiKey', type: 'password', label: 'API Token', required: true }],
+      user_provided_params: [
+        {
+          key: 'apiKey',
+          type: 'password',
+          label: 'API Token',
+          // Webflow site tokens carry only the scopes ticked when they are
+          // generated, and a token missing `cms:read` still lists sites — so it
+          // connects successfully and then fails on every collection (DEV-11321).
+          // Name the scopes at the point of entry, and name ALL of them: every
+          // site gets an Assets table (`assets:read`, plus `assets:write` for
+          // uploads) and an ecommerce site gets an Orders table
+          // (`ecommerce:read`/`ecommerce:write`), so a token granted only the CMS
+          // scopes clears the connect-time probe and then 403s on those folders —
+          // the very failure this text exists to prevent.
+          description:
+            'A Webflow site token (Site settings → Apps & integrations → API access). ' +
+            'Grant read and write on CMS, Sites, Pages, and Assets — and on Ecommerce if the site sells products. ' +
+            'Without CMS access Scratch cannot load your collections; without Assets access the Assets folder fails.',
+          required: true,
+        },
+      ],
     },
   });
   override supportsFileUpload = true;
@@ -193,9 +213,31 @@ export class WebflowConnector extends Connector {
     this.structureVersion = opts?.structureVersion ?? 1;
   }
 
+  /**
+   * Prove the token can do what the connection is actually for — not merely that
+   * it authenticates.
+   *
+   * Listing sites only exercises `sites:read`. The wizard's very next step is
+   * {@link listTables}, whose per-site `GET /sites/{id}/collections` needs
+   * `cms:read`, and a Webflow site token is generated with a hand-picked scope
+   * set. A token carrying `sites:read` but not `cms:read` therefore passed a
+   * sites-only check, was stored with `healthStatus: OK`, and then 403'd on
+   * every single table listing — which reached the user as an unexplained
+   * "Couldn't load tables" they could not fix by retrying (DEV-11321).
+   *
+   * So the probe covers both calls. One site is enough: scopes are a property of
+   * the token, not of the site, so a second `collections` call would re-test the
+   * same permission at the cost of another round trip on a page the user is
+   * waiting on. A token with zero sites has nothing to probe and passes on the
+   * sites call alone.
+   */
   public async testConnection(): Promise<void> {
-    // Test connection by listing sites
-    await this.client.testConnection();
+    const sitesResponse = await this.client.listSites();
+    const firstSite = sitesResponse.sites?.[0];
+    if (!firstSite) {
+      return;
+    }
+    await this.client.listCollections(firstSite.id);
   }
 
   async listTables(): Promise<TablePreview[]> {

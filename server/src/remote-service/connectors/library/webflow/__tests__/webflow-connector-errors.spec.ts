@@ -10,10 +10,14 @@ jest.mock('../../../display-names', () => ({
 // Mock the WebflowApiClient so the connector's `this.client` is the mock.
 const mockDeleteItemsLive = jest.fn();
 const mockDeleteItems = jest.fn();
+const mockListSites = jest.fn();
+const mockListCollections = jest.fn();
 jest.mock('../webflow-api-client', () => ({
   WebflowApiClient: jest.fn().mockImplementation(() => ({
     deleteItemsLive: mockDeleteItemsLive,
     deleteItems: mockDeleteItems,
+    listSites: mockListSites,
+    listCollections: mockListCollections,
   })),
   WebflowError: class WebflowError extends Error {},
 }));
@@ -80,6 +84,53 @@ describe('WebflowConnector error handling', () => {
       const message = connector.extractConnectorErrorDetails(error).userFriendlyMessage;
       expect(message).toMatch(/permission/i);
       expect(message).not.toMatch(/no longer valid/);
+    });
+
+    // DEV-11321: the scope name is the entire fix, and it only exists in Webflow's
+    // own response body. Dropping it left the user with a message they could not act on.
+    it("quotes Webflow's missing-scopes explanation on a 403", () => {
+      const error = makeAxiosError(403, {
+        message: "OAuthForbidden: You are missing the following scopes - 'cms:read'",
+        code: 'missing_scopes',
+      });
+      const details = connector.extractConnectorErrorDetails(error);
+      expect(details.userFriendlyMessage).toContain("You are missing the following scopes - 'cms:read'");
+      expect(details.userFriendlyMessage).toMatch(/permission/i);
+      expect(details.description).toBe("OAuthForbidden: You are missing the following scopes - 'cms:read'");
+    });
+
+    it('does not paste an HTML error page into the user-facing message', () => {
+      const error = makeAxiosError(403, '<html><body>Forbidden</body></html>');
+      expect(connector.extractConnectorErrorDetails(error).userFriendlyMessage).not.toContain('<html>');
+    });
+  });
+
+  describe('testConnection', () => {
+    // DEV-11321: a sites-only probe accepted a token that could never list a
+    // collection, so the connection stored `healthStatus: OK` and every later
+    // table listing 403'd.
+    it('probes collections as well as sites', async () => {
+      mockListSites.mockResolvedValue({ sites: [{ id: 'site1', displayName: 'Site One' }] });
+      mockListCollections.mockResolvedValue({ collections: [] });
+
+      await expect(connector.testConnection()).resolves.toBeUndefined();
+      expect(mockListCollections).toHaveBeenCalledWith('site1');
+    });
+
+    it('fails when the token can list sites but not collections', async () => {
+      mockListSites.mockResolvedValue({ sites: [{ id: 'site1', displayName: 'Site One' }] });
+      mockListCollections.mockRejectedValue(
+        makeAxiosError(403, { message: "OAuthForbidden: You are missing the following scopes - 'cms:read'" }),
+      );
+
+      await expect(connector.testConnection()).rejects.toThrow(/status code 403/);
+    });
+
+    it('passes on the sites call alone when the token sees no sites', async () => {
+      mockListSites.mockResolvedValue({ sites: [] });
+
+      await expect(connector.testConnection()).resolves.toBeUndefined();
+      expect(mockListCollections).not.toHaveBeenCalled();
     });
   });
 

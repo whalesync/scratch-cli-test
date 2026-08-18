@@ -48,7 +48,12 @@ import {
   getServiceDisplayName,
   getServiceMetadata,
 } from '../connectors/display-names';
-import { ConnectorAuthError, exceptionForConnectorError, isUserFriendlyError } from '../connectors/error';
+import {
+  ConnectorAuthError,
+  ConnectorInstantiationError,
+  exceptionForConnectorError,
+  isUserFriendlyError,
+} from '../connectors/error';
 import { probeAuthOnly } from '../connectors/library/generic-api/generic-api-probe';
 import { ApiQuotaResponse } from './entities/api-quota.entity';
 import { TableList, TableSearchResult } from './entities/table-list.entity';
@@ -62,6 +67,25 @@ import { DecryptedCredentials } from './types/encrypted-credentials.interface';
  * Postgres schemas). Search-backed connectors (Notion) apply their own cap.
  */
 const CREATE_DESTINATION_SEARCH_RESULT_CAP = 50;
+
+/**
+ * Rethrow a failure from `ConnectorsService.getConnector` in the form the HTTP
+ * layer can actually act on.
+ *
+ * `ConnectorInstantiationError` and `ConnectorAuthError` each have a global
+ * exception filter (registered in `main.ts`) that renders an actionable message
+ * for the user. Re-wrapping them in an `InternalServerErrorException` here
+ * defeated both filters and turned a fixable connection problem into an opaque
+ * 500 (DEV-11321). Only a genuinely unrecognised failure becomes a 500.
+ */
+function rethrowConnectorInstantiationFailure(error: unknown): never {
+  if (error instanceof ConnectorInstantiationError || error instanceof ConnectorAuthError) {
+    throw error;
+  }
+  throw new InternalServerErrorException(error instanceof Error ? error.message : String(error), {
+    cause: error instanceof Error ? error : new Error(String(error)),
+  });
+}
 
 @Injectable()
 export class ConnectorAccountService {
@@ -737,9 +761,7 @@ export class ConnectorAccountService {
         userId: actor.userId,
       });
     } catch (error) {
-      throw new InternalServerErrorException(error instanceof Error ? error.message : String(error), {
-        cause: error instanceof Error ? error : new Error(String(error)),
-      });
+      rethrowConnectorInstantiationFailure(error);
     }
 
     try {
@@ -789,9 +811,7 @@ export class ConnectorAccountService {
         userId: actor.userId,
       });
     } catch (error) {
-      throw new InternalServerErrorException(error instanceof Error ? error.message : String(error), {
-        cause: error instanceof Error ? error : new Error(String(error)),
-      });
+      rethrowConnectorInstantiationFailure(error);
     }
 
     if (!connector.listCreateDestinations) {
@@ -976,9 +996,7 @@ export class ConnectorAccountService {
       });
       return { account, connector };
     } catch (error) {
-      throw new InternalServerErrorException(error instanceof Error ? error.message : String(error), {
-        cause: error instanceof Error ? error : new Error(String(error)),
-      });
+      rethrowConnectorInstantiationFailure(error);
     }
   }
 
@@ -1001,9 +1019,7 @@ export class ConnectorAccountService {
         userId: actor.userId,
       });
     } catch (error) {
-      throw new InternalServerErrorException(error instanceof Error ? error.message : String(error), {
-        cause: error instanceof Error ? error : new Error(String(error)),
-      });
+      rethrowConnectorInstantiationFailure(error);
     }
 
     if (connector.tableDiscoveryMode !== TableDiscoveryMode.SEARCH) {
@@ -1040,9 +1056,7 @@ export class ConnectorAccountService {
         userId: actor.userId,
       });
     } catch (error) {
-      throw new InternalServerErrorException(error instanceof Error ? error.message : String(error), {
-        cause: error instanceof Error ? error : new Error(String(error)),
-      });
+      rethrowConnectorInstantiationFailure(error);
     }
 
     try {

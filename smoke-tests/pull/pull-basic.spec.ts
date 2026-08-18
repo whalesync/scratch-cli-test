@@ -4,6 +4,7 @@ import { affinityFixture } from "../helpers/connector-fixtures/affinity.fixture"
 import { airtableFixture } from "../helpers/connector-fixtures/airtable.fixture";
 import { hubspotFixture } from "../helpers/connector-fixtures/hubspot.fixture";
 import { ConnectorFixture } from "../helpers/connector-fixtures/types";
+import { webflowFixture } from "../helpers/connector-fixtures/webflow.fixture";
 import { createTestWorkspace, pullAndWait } from "../helpers/test-fixtures";
 
 const SERVER_URL = process.env.SMOKE_TEST_SERVER_URL ?? "http://localhost:3020";
@@ -12,6 +13,9 @@ const fixtures: ConnectorFixture[] = [
   airtableFixture,
   hubspotFixture,
   affinityFixture,
+  // Webflow had no smoke fixture at all until DEV-11321 — its pull path went
+  // unexercised through the refactor that the outage was initially blamed on.
+  webflowFixture,
 ];
 
 describe.each(fixtures)("Pull: $displayName", (fixture) => {
