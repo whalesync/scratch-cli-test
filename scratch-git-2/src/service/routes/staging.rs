@@ -327,20 +327,13 @@ pub async fn commit_staged(
     let batch_size = body.batch_size.unwrap_or(1000);
 
     let folder_name = body.folder.clone();
-    let result = {
-        let repos_dir = state.repos_dir.clone();
-        let write_locks = state.write_locks.clone();
-        let branch_clone = branch.clone();
-        let repo_id_clone = repo_id.clone();
-
-        write_locks
-            .with_lock(&repo_id_clone, &branch_clone, || {
-                let repos_dir = repos_dir.clone();
-                let repo_id = repo_id_clone.clone();
-                let branch = branch_clone.clone();
-                let folder_name = folder_name.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
+    let result = state
+        .repo_locks
+        .run_write(&repo_id, &branch, {
+            let repos_dir = state.repos_dir.clone();
+            let repo_id = repo_id.clone();
+            let branch = branch.clone();
+            move || {
                         let git_repo = GitRepo::open(&repos_dir, &repo_id)?;
 
                         // No index.db means phase 1 had nothing to stage (e.g. an
@@ -451,13 +444,9 @@ pub async fn commit_staged(
                             "updated": stats.updated,
                             "unchanged": stats.unchanged,
                         }))
-                    })
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?
-                }
-            })
-            .await
-    };
+            }
+        })
+        .await;
 
     match result {
         Ok(data) => envelope(&state, Some(&repo_id), data),
@@ -512,166 +501,141 @@ pub async fn commit_staged_atomic(
     let batch_size = body.batch_size.unwrap_or(5000);
 
     let folder_name = body.folder.clone();
-    let result = {
-        let repos_dir = state.repos_dir.clone();
-        let write_locks = state.write_locks.clone();
-        let branch_clone = branch.clone();
-        let repo_id_clone = repo_id.clone();
+    let result = state
+        .repo_locks
+        .run_write(&repo_id, &branch, {
+            let repos_dir = state.repos_dir.clone();
+            let repo_id = repo_id.clone();
+            let branch = branch.clone();
+            move || {
+                let git_repo = GitRepo::open(&repos_dir, &repo_id)?;
 
-        write_locks
-            .with_lock(&repo_id_clone, &branch_clone, || {
-                let repos_dir = repos_dir.clone();
-                let repo_id = repo_id_clone.clone();
-                let branch = branch_clone.clone();
-                let folder_name = folder_name.clone();
-                let message = message.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        let git_repo = GitRepo::open(&repos_dir, &repo_id)?;
+                // No index.db means nothing was ever staged — report an
+                // empty success rather than a 404 so callers can treat
+                // "no writes" uniformly.
+                let db_path = staging_dir.join("index.db");
+                if !db_path.exists() {
+                    return Ok(json!({
+                        "success": true,
+                        "committed": 0,
+                        "createdCount": 0,
+                        "updatedCount": 0,
+                        "unchangedCount": 0,
+                    }));
+                }
 
-                        // No index.db means nothing was ever staged — report an
-                        // empty success rather than a 404 so callers can treat
-                        // "no writes" uniformly.
-                        let db_path = staging_dir.join("index.db");
-                        if !db_path.exists() {
-                            return Ok(json!({
-                                "success": true,
-                                "committed": 0,
-                                "createdCount": 0,
-                                "updatedCount": 0,
-                                "unchangedCount": 0,
-                            }));
-                        }
+                let conn = open_staging_db(&staging_dir)?;
 
-                        let conn = open_staging_db(&staging_dir)?;
+                // Resolve the tip ONCE; every batch folds into a tree that
+                // descends from it, and the single commit at the end gets it
+                // as sole parent. The write lock held around this closure is
+                // what keeps the tip from moving underneath us.
+                let parent_oid = git_repo.resolve_ref(&branch)?;
+                let tip_tree_oid = git_repo.get_commit_tree_oid(parent_oid)?;
 
-                        // Resolve the tip ONCE; every batch folds into a tree that
-                        // descends from it, and the single commit at the end gets it
-                        // as sole parent. The write lock held around this closure is
-                        // what keeps the tip from moving underneath us.
-                        let parent_oid = git_repo.resolve_ref(&branch)?;
-                        let tip_tree_oid = git_repo.get_commit_tree_oid(parent_oid)?;
+                let mut current_tree_oid = tip_tree_oid;
+                let mut total_committed = 0usize;
+                let mut created_count = 0usize;
+                let mut updated_count = 0usize;
+                let mut unchanged_count = 0usize;
 
-                        let mut current_tree_oid = tip_tree_oid;
-                        let mut total_committed = 0usize;
-                        let mut created_count = 0usize;
-                        let mut updated_count = 0usize;
-                        let mut unchanged_count = 0usize;
-
-                        // Walk uncommitted rows by rowid so batching stays stable —
-                        // rows are only marked committed after the ref moves.
-                        let mut last_rowid: i64 = 0;
-                        loop {
-                            let mut stmt = conn
-                                .prepare(
-                                    "SELECT rowid, path FROM staged_files \
+                // Walk uncommitted rows by rowid so batching stays stable —
+                // rows are only marked committed after the ref moves.
+                let mut last_rowid: i64 = 0;
+                loop {
+                    let mut stmt = conn
+                        .prepare(
+                            "SELECT rowid, path FROM staged_files \
                                      WHERE folder = ?1 AND committed = 0 AND rowid > ?2 \
                                      ORDER BY rowid LIMIT ?3",
-                                )
-                                .map_err(|e| {
-                                    AppError::internal(format!(
-                                        "Failed to query uncommitted files: {}",
-                                        e
-                                    ))
-                                })?;
+                        )
+                        .map_err(|e| {
+                            AppError::internal(format!("Failed to query uncommitted files: {}", e))
+                        })?;
 
-                            let rows: Vec<(i64, String)> = stmt
-                                .query_map(
-                                    params![folder_name, last_rowid, batch_size as i64],
-                                    |row| Ok((row.get(0)?, row.get(1)?)),
-                                )
-                                .map_err(|e| {
-                                    AppError::internal(format!(
-                                        "Failed to read uncommitted files: {}",
-                                        e
-                                    ))
-                                })?
-                                .collect::<Result<Vec<_>, _>>()
-                                .map_err(|e| {
-                                    AppError::internal(format!(
-                                        "Failed to collect uncommitted paths: {}",
-                                        e
-                                    ))
-                                })?;
+                    let rows: Vec<(i64, String)> = stmt
+                        .query_map(params![folder_name, last_rowid, batch_size as i64], |row| {
+                            Ok((row.get(0)?, row.get(1)?))
+                        })
+                        .map_err(|e| {
+                            AppError::internal(format!("Failed to read uncommitted files: {}", e))
+                        })?
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| {
+                            AppError::internal(format!(
+                                "Failed to collect uncommitted paths: {}",
+                                e
+                            ))
+                        })?;
 
-                            if rows.is_empty() {
-                                break;
-                            }
-                            last_rowid = rows.last().map(|(rowid, _)| *rowid).unwrap_or(last_rowid);
+                    if rows.is_empty() {
+                        break;
+                    }
+                    last_rowid = rows.last().map(|(rowid, _)| *rowid).unwrap_or(last_rowid);
 
-                            let changes: Vec<FileChange> = rows
-                                .iter()
-                                .map(|(_, rel_path)| {
-                                    let full_path = folder_dir.join(rel_path);
-                                    let content =
-                                        std::fs::read_to_string(&full_path).map_err(|e| {
-                                            AppError::internal(format!(
-                                                "Failed to read staged file: {}",
-                                                e
-                                            ))
-                                        })?;
-                                    Ok(FileChange {
-                                        path: format!("{}/{}", folder_name, rel_path),
-                                        content: Some(content),
-                                        oid: None,
-                                        change_type: ChangeType::Modify,
-                                    })
-                                })
-                                .collect::<Result<Vec<_>, AppError>>()?;
-
-                            let (next_tree_oid, stats) =
-                                git_repo.apply_changes_to_tree(current_tree_oid, &changes, "")?;
-                            current_tree_oid = next_tree_oid;
-                            total_committed += rows.len();
-                            created_count += stats.created.len();
-                            updated_count += stats.updated.len();
-                            unchanged_count += stats.unchanged.len();
-                        }
-
-                        // Write the single commit — skipped when every staged file
-                        // matched the tip byte-for-byte (tree unchanged), mirroring
-                        // commit_changes_to_ref's no-op behavior.
-                        if total_committed > 0 && current_tree_oid != tip_tree_oid {
-                            let new_commit_oid =
-                                git_repo.write_commit(current_tree_oid, &[parent_oid], &message)?;
-                            // Compare-and-swap: if the tip moved while this build
-                            // ran (only possible when a dropped request released
-                            // the write lock but this spawn_blocking closure kept
-                            // going), fail rather than erase the newer commits.
-                            git_repo.force_ref_expecting_current(
-                                &branch,
-                                new_commit_oid,
-                                parent_oid,
-                            )?;
-                        }
-
-                        // Mark everything committed only after the ref moved, so a
-                        // crash mid-fold re-commits (idempotent) instead of dropping
-                        // files.
-                        if total_committed > 0 {
-                            conn.execute(
-                                "UPDATE staged_files SET committed = 1 WHERE folder = ?1 AND committed = 0",
-                                params![folder_name],
-                            )
-                            .map_err(|e| {
-                                AppError::internal(format!("Failed to mark files committed: {}", e))
+                    let changes: Vec<FileChange> = rows
+                        .iter()
+                        .map(|(_, rel_path)| {
+                            let full_path = folder_dir.join(rel_path);
+                            let content = std::fs::read_to_string(&full_path).map_err(|e| {
+                                AppError::internal(format!("Failed to read staged file: {}", e))
                             })?;
-                        }
+                            Ok(FileChange {
+                                path: format!("{}/{}", folder_name, rel_path),
+                                content: Some(content),
+                                oid: None,
+                                change_type: ChangeType::Modify,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, AppError>>()?;
 
-                        Ok::<_, AppError>(json!({
-                            "success": true,
-                            "committed": total_committed,
-                            "createdCount": created_count,
-                            "updatedCount": updated_count,
-                            "unchangedCount": unchanged_count,
-                        }))
-                    })
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?
+                    let (next_tree_oid, stats) =
+                        git_repo.apply_changes_to_tree(current_tree_oid, &changes, "")?;
+                    current_tree_oid = next_tree_oid;
+                    total_committed += rows.len();
+                    created_count += stats.created.len();
+                    updated_count += stats.updated.len();
+                    unchanged_count += stats.unchanged.len();
                 }
-            })
-            .await
-    };
+
+                // Write the single commit — skipped when every staged file
+                // matched the tip byte-for-byte (tree unchanged), mirroring
+                // commit_changes_to_ref's no-op behavior.
+                if total_committed > 0 && current_tree_oid != tip_tree_oid {
+                    let new_commit_oid =
+                        git_repo.write_commit(current_tree_oid, &[parent_oid], &message)?;
+                    // Compare-and-swap: if the tip moved while this build
+                    // ran, fail rather than erase the newer commits. The
+                    // write lock now lives inside this blocking task
+                    // (`RepoLocks::run_write`), so this is belt-and-braces
+                    // against any future lock gap rather than the primary
+                    // defence it used to be.
+                    git_repo.force_ref_expecting_current(&branch, new_commit_oid, parent_oid)?;
+                }
+
+                // Mark everything committed only after the ref moved, so a
+                // crash mid-fold re-commits (idempotent) instead of dropping
+                // files.
+                if total_committed > 0 {
+                    conn.execute(
+                        "UPDATE staged_files SET committed = 1 WHERE folder = ?1 AND committed = 0",
+                        params![folder_name],
+                    )
+                    .map_err(|e| {
+                        AppError::internal(format!("Failed to mark files committed: {}", e))
+                    })?;
+                }
+
+                Ok::<_, AppError>(json!({
+                    "success": true,
+                    "committed": total_committed,
+                    "createdCount": created_count,
+                    "updatedCount": updated_count,
+                    "unchangedCount": unchanged_count,
+                }))
+            }
+        })
+        .await;
 
     match result {
         Ok(data) => envelope(&state, Some(&repo_id), data),
@@ -900,7 +864,7 @@ mod tests {
     // (AppState + axum extractors + a real git repo) end-to-end.
     // -----------------------------------------------------------------------
 
-    use crate::service::git::lock::WriteLockManager;
+    use crate::service::git::lock::RepoLocks;
     use crate::service::git::repo::GitRepo;
     use crate::service::state::AppState;
     use axum::body::to_bytes;
@@ -928,7 +892,7 @@ mod tests {
             staging_dir: staging_dir.path().to_path_buf(),
             build_version: "test".to_string(),
             gc_state: Arc::new(DashMap::new()),
-            write_locks: Arc::new(WriteLockManager::new()),
+            repo_locks: Arc::new(RepoLocks::new()),
         };
 
         (state, repos_dir, staging_dir, index_dir)

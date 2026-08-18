@@ -39,51 +39,40 @@ pub async fn commit_files(
     let branch = query.branch.unwrap_or_else(|| MAIN_BRANCH.to_string());
     let message = body.message.unwrap_or_else(|| "Update files".to_string());
 
-    let result = {
-        let repos_dir = state.repos_dir.clone();
-        let id = id.clone();
-        let write_locks = state.write_locks.clone();
-        let branch_clone = branch.clone();
+    let result = state
+        .repo_locks
+        .run_write(&id, &branch, {
+            let repos_dir = state.repos_dir.clone();
+            let id = id.clone();
+            let branch = branch.clone();
+            move || {
+                let git_repo = GitRepo::open(&repos_dir, &id)?;
 
-        write_locks
-            .with_lock(&id, &branch_clone, || {
-                let repos_dir = repos_dir.clone();
-                let id = id.clone();
-                let branch = branch_clone.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        let git_repo = GitRepo::open(&repos_dir, &id)?;
-
-                        let changes: Vec<FileChange> = body
-                            .files
-                            .iter()
-                            .map(|f| {
-                                let path = f.path.strip_prefix('/').unwrap_or(&f.path);
-                                FileChange {
-                                    path: path.to_string(),
-                                    content: Some(f.content.clone()),
-                                    oid: None,
-                                    change_type: ChangeType::Modify,
-                                }
-                            })
-                            .collect();
-
-                        let (_, stats) =
-                            git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
-
-                        Ok::<_, AppError>(json!({
-                            "success": true,
-                            "created": stats.created,
-                            "updated": stats.updated,
-                            "unchanged": stats.unchanged,
-                        }))
+                let changes: Vec<FileChange> = body
+                    .files
+                    .iter()
+                    .map(|f| {
+                        let path = f.path.strip_prefix('/').unwrap_or(&f.path);
+                        FileChange {
+                            path: path.to_string(),
+                            content: Some(f.content.clone()),
+                            oid: None,
+                            change_type: ChangeType::Modify,
+                        }
                     })
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?
-                }
-            })
-            .await
-    };
+                    .collect();
+
+                let (_, stats) = git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
+
+                Ok::<_, AppError>(json!({
+                    "success": true,
+                    "created": stats.created,
+                    "updated": stats.updated,
+                    "unchanged": stats.unchanged,
+                }))
+            }
+        })
+        .await;
 
     envelope_result(&state, &id, result)
 }
@@ -103,46 +92,36 @@ pub async fn delete_files(
     let branch = query.branch.unwrap_or_else(|| MAIN_BRANCH.to_string());
     let message = body.message.unwrap_or_else(|| "Delete files".to_string());
 
-    let result = {
-        let repos_dir = state.repos_dir.clone();
-        let id = id.clone();
-        let write_locks = state.write_locks.clone();
-        let branch_clone = branch.clone();
+    let result = state
+        .repo_locks
+        .run_write(&id, &branch, {
+            let repos_dir = state.repos_dir.clone();
+            let id = id.clone();
+            let branch = branch.clone();
+            move || {
+                let git_repo = GitRepo::open(&repos_dir, &id)?;
 
-        write_locks
-            .with_lock(&id, &branch_clone, || {
-                let repos_dir = repos_dir.clone();
-                let id = id.clone();
-                let branch = branch_clone.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        let git_repo = GitRepo::open(&repos_dir, &id)?;
-
-                        let changes: Vec<FileChange> = body
-                            .files
-                            .iter()
-                            .map(|p| {
-                                let path = p.strip_prefix('/').unwrap_or(p);
-                                FileChange {
-                                    path: path.to_string(),
-                                    content: None,
-                                    oid: None,
-                                    change_type: ChangeType::Delete,
-                                }
-                            })
-                            .collect();
-
-                        git_repo
-                            .commit_changes_to_ref(&branch, &changes, &message)?
-                            .0;
-                        Ok::<_, AppError>(json!({ "success": true }))
+                let changes: Vec<FileChange> = body
+                    .files
+                    .iter()
+                    .map(|p| {
+                        let path = p.strip_prefix('/').unwrap_or(p);
+                        FileChange {
+                            path: path.to_string(),
+                            content: None,
+                            oid: None,
+                            change_type: ChangeType::Delete,
+                        }
                     })
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?
-                }
-            })
-            .await
-    };
+                    .collect();
+
+                git_repo
+                    .commit_changes_to_ref(&branch, &changes, &message)?
+                    .0;
+                Ok::<_, AppError>(json!({ "success": true }))
+            }
+        })
+        .await;
 
     envelope_result(&state, &id, result)
 }
@@ -177,41 +156,30 @@ pub async fn delete_folder(
     let branch = query.branch.unwrap_or_else(|| DIRTY_BRANCH.to_string());
     let message = body.message.unwrap_or_else(|| "Delete folder".to_string());
 
-    let result = {
-        let repos_dir = state.repos_dir.clone();
-        let id = id.clone();
-        let write_locks = state.write_locks.clone();
-        let branch_clone = branch.clone();
+    let result = state
+        .repo_locks
+        .run_write(&id, &branch, {
+            let repos_dir = state.repos_dir.clone();
+            let id = id.clone();
+            let branch = branch.clone();
+            move || {
+                let git_repo = GitRepo::open(&repos_dir, &id)?;
+                let target_folder = folder.strip_prefix('/').unwrap_or(&folder).to_string();
 
-        write_locks
-            .with_lock(&id, &branch_clone, || {
-                let repos_dir = repos_dir.clone();
-                let id = id.clone();
-                let branch = branch_clone.clone();
-                let folder = folder.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        let git_repo = GitRepo::open(&repos_dir, &id)?;
-                        let target_folder = folder.strip_prefix('/').unwrap_or(&folder).to_string();
+                let changes = vec![FileChange {
+                    path: target_folder,
+                    content: None,
+                    oid: None,
+                    change_type: ChangeType::Delete,
+                }];
 
-                        let changes = vec![FileChange {
-                            path: target_folder,
-                            content: None,
-                            oid: None,
-                            change_type: ChangeType::Delete,
-                        }];
-
-                        git_repo
-                            .commit_changes_to_ref(&branch, &changes, &message)?
-                            .0;
-                        Ok::<_, AppError>(json!({ "success": true }))
-                    })
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?
-                }
-            })
-            .await
-    };
+                git_repo
+                    .commit_changes_to_ref(&branch, &changes, &message)?
+                    .0;
+                Ok::<_, AppError>(json!({ "success": true }))
+            }
+        })
+        .await;
 
     envelope_result(&state, &id, result)
 }
@@ -257,77 +225,35 @@ pub async fn delete_data_folder(
         }
     };
 
-    let result: Result<serde_json::Value, AppError> = async {
-        let repos_dir = state.repos_dir.clone();
-        let id = id.clone();
-        let write_locks = state.write_locks.clone();
-
-        let changes = data_folder_delete_changes(&folder_path);
-        let target_folder = folder_path
-            .strip_prefix('/')
-            .unwrap_or(&folder_path)
-            .to_string();
-        let message = format!("Remove data folder {}", target_folder);
-
-        // Delete from main
-        write_locks
-            .with_lock(&id, MAIN_BRANCH, || {
-                let repos_dir = repos_dir.clone();
-                let id = id.clone();
-                let changes = changes.clone();
-                let message = message.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        let git_repo = GitRepo::open(&repos_dir, &id)?;
-                        git_repo
-                            .commit_changes_to_ref(MAIN_BRANCH, &changes, &message)?
-                            .0;
-                        Ok::<_, AppError>(())
-                    })
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?
-                }
-            })
-            .await?;
-
-        // Delete from dirty
-        let changes = data_folder_delete_changes(&folder_path);
-        let message = format!("Remove data folder {}", target_folder);
-
-        write_locks
-            .with_lock(&id, DIRTY_BRANCH, || {
-                let repos_dir = repos_dir.clone();
-                let id = id.clone();
-                let changes = changes.clone();
-                let message = message.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        let git_repo = GitRepo::open(&repos_dir, &id)?;
-                        git_repo
-                            .commit_changes_to_ref(DIRTY_BRANCH, &changes, &message)?
-                            .0;
-                        Ok::<_, AppError>(())
-                    })
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?
-                }
-            })
-            .await?;
-
-        // Rebase
-        tokio::task::spawn_blocking({
-            let repos_dir = repos_dir.clone();
+    // One blocking closure under main+dirty for all three phases (delete on
+    // main, delete on dirty, rebase). Running the phases as separate awaited
+    // steps meant a client disconnect between them left main deleted but
+    // dirty untouched — and the deleted data republishable from dirty.
+    let result = state
+        .repo_locks
+        .run_write_main_and_dirty(&id, {
+            let repos_dir = state.repos_dir.clone();
             let id = id.clone();
             move || {
+                let target_folder = folder_path
+                    .strip_prefix('/')
+                    .unwrap_or(&folder_path)
+                    .to_string();
+                let message = format!("Remove data folder {}", target_folder);
+                let changes = data_folder_delete_changes(&folder_path);
+
                 let git_repo = GitRepo::open(&repos_dir, &id)?;
+                git_repo
+                    .commit_changes_to_ref(MAIN_BRANCH, &changes, &message)?
+                    .0;
+                git_repo
+                    .commit_changes_to_ref(DIRTY_BRANCH, &changes, &message)?
+                    .0;
                 git_repo.rebase_dirty("diff3")?;
                 Ok::<_, AppError>(json!({ "success": true }))
             }
         })
-        .await
-        .map_err(|e| AppError::internal(e.to_string()))?
-    }
-    .await;
+        .await;
 
     envelope_result(&state, &id, result)
 }
@@ -351,54 +277,33 @@ pub async fn publish(
 ) -> Response {
     let message = body.message.unwrap_or_else(|| "Publish file".to_string());
 
-    let result: Result<serde_json::Value, AppError> = async {
-        let repos_dir = state.repos_dir.clone();
-        let id = id.clone();
-        let write_locks = state.write_locks.clone();
-
-        // Commit to main
-        write_locks
-            .with_lock(&id, MAIN_BRANCH, || {
-                let repos_dir = repos_dir.clone();
-                let id = id.clone();
-                let path = body.file.path.clone();
-                let content = body.file.content.clone();
-                let message = message.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        let git_repo = GitRepo::open(&repos_dir, &id)?;
-                        let file_path = path.strip_prefix('/').unwrap_or(&path).to_string();
-                        let changes = vec![FileChange {
-                            path: file_path,
-                            content: Some(content),
-                            oid: None,
-                            change_type: ChangeType::Modify,
-                        }];
-                        git_repo
-                            .commit_changes_to_ref(MAIN_BRANCH, &changes, &message)?
-                            .0;
-                        Ok::<_, AppError>(())
-                    })
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?
-                }
-            })
-            .await?;
-
-        // Rebase dirty
-        tokio::task::spawn_blocking({
-            let repos_dir = repos_dir.clone();
+    // Commit to main and rebase dirty in ONE blocking closure under
+    // main+dirty, so a client disconnect can never leave main advanced with
+    // dirty un-rebased.
+    let result = state
+        .repo_locks
+        .run_write_main_and_dirty(&id, {
+            let repos_dir = state.repos_dir.clone();
             let id = id.clone();
+            let path = body.file.path;
+            let content = body.file.content;
             move || {
                 let git_repo = GitRepo::open(&repos_dir, &id)?;
+                let file_path = path.strip_prefix('/').unwrap_or(&path).to_string();
+                let changes = vec![FileChange {
+                    path: file_path,
+                    content: Some(content),
+                    oid: None,
+                    change_type: ChangeType::Modify,
+                }];
+                git_repo
+                    .commit_changes_to_ref(MAIN_BRANCH, &changes, &message)?
+                    .0;
                 git_repo.rebase_dirty("diff3")?;
                 Ok::<_, AppError>(json!({ "success": true }))
             }
         })
-        .await
-        .map_err(|e| AppError::internal(e.to_string()))?
-    }
-    .await;
+        .await;
 
     envelope_result(&state, &id, result)
 }
@@ -413,90 +318,81 @@ pub async fn discard_changes(
     Path(id): Path<String>,
     Json(body): Json<DiscardChangesBody>,
 ) -> Response {
-    let result = {
-        let repos_dir = state.repos_dir.clone();
-        let id = id.clone();
-        let write_locks = state.write_locks.clone();
+    let result = state
+        .repo_locks
+        .run_write(&id, DIRTY_BRANCH, {
+            let repos_dir = state.repos_dir.clone();
+            let id = id.clone();
+            let path = body.path;
+            move || {
+                let git_repo = GitRepo::open(&repos_dir, &id)?;
+                let normalized_target = path.strip_prefix('/').unwrap_or(&path).to_string();
 
-        write_locks
-            .with_lock(&id, DIRTY_BRANCH, || {
-                let repos_dir = repos_dir.clone();
-                let id = id.clone();
-                let path = body.path.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        let git_repo = GitRepo::open(&repos_dir, &id)?;
-                        let normalized_target = path.strip_prefix('/').unwrap_or(&path).to_string();
+                let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
+                let dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
 
-                        let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
-                        let dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
+                if main_oid != dirty_oid {
+                    let changes = git_repo.compare_commits(main_oid, dirty_oid)?;
+                    let changes_to_discard: Vec<_> = changes
+                        .iter()
+                        .filter(|c| {
+                            c.path == normalized_target
+                                || c.path.starts_with(&format!("{}/", normalized_target))
+                        })
+                        .collect();
 
-                        if main_oid != dirty_oid {
-                            let changes = git_repo.compare_commits(main_oid, dirty_oid)?;
-                            let changes_to_discard: Vec<_> = changes
-                                .iter()
-                                .filter(|c| {
-                                    c.path == normalized_target
-                                        || c.path.starts_with(&format!("{}/", normalized_target))
-                                })
-                                .collect();
-
-                            let mut revert_changes = Vec::new();
-                            for change in changes_to_discard {
-                                if change.status == "added" {
-                                    revert_changes.push(FileChange {
-                                        path: change.path.clone(),
-                                        content: None,
-                                        oid: None,
-                                        change_type: ChangeType::Delete,
-                                    });
-                                } else {
-                                    let main_content =
-                                        git_repo.get_file_content(MAIN_BRANCH, &change.path)?;
-                                    if let Some(content) = main_content {
-                                        revert_changes.push(FileChange {
-                                            path: change.path.clone(),
-                                            content: Some(content),
-                                            oid: None,
-                                            change_type: ChangeType::Modify,
-                                        });
-                                    }
-                                }
-                            }
-
-                            if !revert_changes.is_empty() {
-                                git_repo
-                                    .commit_changes_to_ref(
-                                        DIRTY_BRANCH,
-                                        &revert_changes,
-                                        &format!("Discard changes to {}", normalized_target),
-                                    )?
-                                    .0;
+                    let mut revert_changes = Vec::new();
+                    for change in changes_to_discard {
+                        if change.status == "added" {
+                            revert_changes.push(FileChange {
+                                path: change.path.clone(),
+                                content: None,
+                                oid: None,
+                                change_type: ChangeType::Delete,
+                            });
+                        } else {
+                            let main_content =
+                                git_repo.get_file_content(MAIN_BRANCH, &change.path)?;
+                            if let Some(content) = main_content {
+                                revert_changes.push(FileChange {
+                                    path: change.path.clone(),
+                                    content: Some(content),
+                                    oid: None,
+                                    change_type: ChangeType::Modify,
+                                });
                             }
                         }
+                    }
 
-                        // If dirty now visibly matches main, advance
-                        // merge_base so the review list (compare
-                        // merge_base ↔ dirty) reflects reality. Without
-                        // this, ghost files persist whenever main has
-                        // drifted ahead of merge_base — see
-                        // `resolve_merge_base_or_main`.
-                        let new_dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
-                        if git_repo
-                            .compare_commits(main_oid, new_dirty_oid)?
-                            .is_empty()
-                        {
-                            git_repo.write_tag("merge_base", main_oid)?;
-                        }
-
-                        Ok::<_, AppError>(json!({ "success": true }))
-                    })
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?
+                    if !revert_changes.is_empty() {
+                        git_repo
+                            .commit_changes_to_ref(
+                                DIRTY_BRANCH,
+                                &revert_changes,
+                                &format!("Discard changes to {}", normalized_target),
+                            )?
+                            .0;
+                    }
                 }
-            })
-            .await
-    };
+
+                // If dirty now visibly matches main, advance
+                // merge_base so the review list (compare
+                // merge_base ↔ dirty) reflects reality. Without
+                // this, ghost files persist whenever main has
+                // drifted ahead of merge_base — see
+                // `resolve_merge_base_or_main`.
+                let new_dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
+                if git_repo
+                    .compare_commits(main_oid, new_dirty_oid)?
+                    .is_empty()
+                {
+                    git_repo.write_tag("merge_base", main_oid)?;
+                }
+
+                Ok::<_, AppError>(json!({ "success": true }))
+            }
+        })
+        .await;
 
     envelope_result(&state, &id, result)
 }
@@ -519,24 +415,21 @@ pub async fn rebase(
     let strategy = body.strategy.unwrap_or_else(|| "diff3".to_string());
     let exclude_paths = body.exclude_paths;
 
-    let _guard = state.write_locks.acquire(&id, DIRTY_BRANCH).await;
+    let result = state
+        .repo_locks
+        .run_write(&id, DIRTY_BRANCH, {
+            let repos_dir = state.repos_dir.clone();
+            let id = id.clone();
+            move || {
+                let git_repo = GitRepo::open(&repos_dir, &id)?;
+                let (rebased, conflicts) =
+                    git_repo.rebase_dirty_excluding(&strategy, &exclude_paths)?;
+                Ok::<_, AppError>(json!({ "rebased": rebased, "conflicts": conflicts }))
+            }
+        })
+        .await;
 
-    let result = tokio::task::spawn_blocking({
-        let repos_dir = state.repos_dir.clone();
-        let id = id.clone();
-        move || {
-            let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let (rebased, conflicts) =
-                git_repo.rebase_dirty_excluding(&strategy, &exclude_paths)?;
-            Ok::<_, AppError>(json!({ "rebased": rebased, "conflicts": conflicts }))
-        }
-    })
-    .await;
-
-    match result {
-        Ok(inner) => envelope_result(&state, &id, inner),
-        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
-    }
+    envelope_result(&state, &id, result)
 }
 
 #[derive(Deserialize)]
@@ -564,142 +457,139 @@ pub async fn rename(
         .message
         .unwrap_or_else(|| format!("Rename batch in {}", body.folder_path));
 
-    // Acquire main before dirty to maintain consistent lock ordering and prevent deadlocks.
-    let _main_guard = state.write_locks.acquire(&id, MAIN_BRANCH).await;
-    let _dirty_guard = state.write_locks.acquire(&id, DIRTY_BRANCH).await;
+    // Rewrites main AND dirty: `run_write_main_and_dirty` takes main before
+    // dirty (the service-wide lock ordering) and holds both inside the task.
+    let result = state
+        .repo_locks
+        .run_write_main_and_dirty(&id, {
+            let repos_dir = state.repos_dir.clone();
+            let id = id.clone();
+            let folder_path = body.folder_path.clone();
+            let renames = body.renames;
+            move || {
+                let git_repo = GitRepo::open(&repos_dir, &id)?;
+                let normalized_folder = folder_path
+                    .strip_prefix('/')
+                    .unwrap_or(&folder_path)
+                    .to_string();
+                let clean_folder = normalized_folder
+                    .strip_suffix('/')
+                    .unwrap_or(&normalized_folder)
+                    .to_string();
 
-    let result = tokio::task::spawn_blocking({
-        let repos_dir = state.repos_dir.clone();
-        let id = id.clone();
-        let folder_path = body.folder_path.clone();
-        let renames = body.renames;
-        move || {
-            let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let normalized_folder = folder_path
-                .strip_prefix('/')
-                .unwrap_or(&folder_path)
-                .to_string();
-            let clean_folder = normalized_folder
-                .strip_suffix('/')
-                .unwrap_or(&normalized_folder)
-                .to_string();
+                // Read dirty tree at folder to get OIDs
+                let dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
+                let dirty_entries = git_repo.read_tree_at_path(dirty_oid, &clean_folder)?;
 
-            // Read dirty tree at folder to get OIDs
-            let dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
-            let dirty_entries = git_repo.read_tree_at_path(dirty_oid, &clean_folder)?;
+                // Read main tree at folder
+                let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
+                let main_entries = git_repo
+                    .read_tree_at_path(main_oid, &clean_folder)
+                    .unwrap_or_default();
 
-            // Read main tree at folder
-            let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
-            let main_entries = git_repo
-                .read_tree_at_path(main_oid, &clean_folder)
-                .unwrap_or_default();
+                let mut changes_for_dirty: Vec<FileChange> = Vec::new();
+                let mut changes_for_main: Vec<FileChange> = Vec::new();
 
-            let mut changes_for_dirty: Vec<FileChange> = Vec::new();
-            let mut changes_for_main: Vec<FileChange> = Vec::new();
+                for rename in &renames {
+                    let entry_in_dirty = dirty_entries
+                        .iter()
+                        .find(|(name, _, _)| name == &rename.old_name);
+                    let entry_in_dirty = match entry_in_dirty {
+                        Some(e) => e,
+                        None => {
+                            return Err(AppError::internal(format!(
+                                "File {} not found in {}",
+                                rename.old_name, clean_folder
+                            )));
+                        }
+                    };
 
-            for rename in &renames {
-                let entry_in_dirty = dirty_entries
-                    .iter()
-                    .find(|(name, _, _)| name == &rename.old_name);
-                let entry_in_dirty = match entry_in_dirty {
-                    Some(e) => e,
-                    None => {
-                        return Err(AppError::internal(format!(
-                            "File {} not found in {}",
-                            rename.old_name, clean_folder
-                        )));
-                    }
-                };
+                    let old_file_path = if clean_folder.is_empty() {
+                        rename.old_name.clone()
+                    } else {
+                        format!("{}/{}", clean_folder, rename.old_name)
+                    };
+                    let new_file_path = if clean_folder.is_empty() {
+                        rename.new_name.clone()
+                    } else {
+                        format!("{}/{}", clean_folder, rename.new_name)
+                    };
 
-                let old_file_path = if clean_folder.is_empty() {
-                    rename.old_name.clone()
-                } else {
-                    format!("{}/{}", clean_folder, rename.old_name)
-                };
-                let new_file_path = if clean_folder.is_empty() {
-                    rename.new_name.clone()
-                } else {
-                    format!("{}/{}", clean_folder, rename.new_name)
-                };
-
-                // Always apply to dirty
-                changes_for_dirty.push(FileChange {
-                    path: old_file_path.clone(),
-                    content: None,
-                    oid: None,
-                    change_type: ChangeType::Delete,
-                });
-                changes_for_dirty.push(FileChange {
-                    path: new_file_path.clone(),
-                    content: None,
-                    oid: Some(entry_in_dirty.1.to_string()),
-                    change_type: ChangeType::Add,
-                });
-
-                // Only apply to main if it existed in main
-                let entry_in_main = main_entries
-                    .iter()
-                    .find(|(name, _, _)| name == &rename.old_name);
-                if let Some(main_entry) = entry_in_main {
-                    changes_for_main.push(FileChange {
-                        path: old_file_path,
+                    // Always apply to dirty
+                    changes_for_dirty.push(FileChange {
+                        path: old_file_path.clone(),
                         content: None,
                         oid: None,
                         change_type: ChangeType::Delete,
                     });
-                    changes_for_main.push(FileChange {
-                        path: new_file_path,
+                    changes_for_dirty.push(FileChange {
+                        path: new_file_path.clone(),
                         content: None,
-                        oid: Some(main_entry.1.to_string()),
+                        oid: Some(entry_in_dirty.1.to_string()),
                         change_type: ChangeType::Add,
                     });
+
+                    // Only apply to main if it existed in main
+                    let entry_in_main = main_entries
+                        .iter()
+                        .find(|(name, _, _)| name == &rename.old_name);
+                    if let Some(main_entry) = entry_in_main {
+                        changes_for_main.push(FileChange {
+                            path: old_file_path,
+                            content: None,
+                            oid: None,
+                            change_type: ChangeType::Delete,
+                        });
+                        changes_for_main.push(FileChange {
+                            path: new_file_path,
+                            content: None,
+                            oid: Some(main_entry.1.to_string()),
+                            change_type: ChangeType::Add,
+                        });
+                    }
                 }
+
+                // Apply to main
+                let mut new_main_commit_oid = main_oid;
+                if !changes_for_main.is_empty() {
+                    (new_main_commit_oid, _) =
+                        git_repo.commit_changes_to_ref(MAIN_BRANCH, &changes_for_main, &message)?;
+                }
+
+                // Apply to dirty with efficient squashed rebase
+                let dirty_commit_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
+                let dirty_tree_oid = git_repo.get_commit_tree_oid(dirty_commit_oid)?;
+                let (new_dirty_tree_oid, _) =
+                    git_repo.apply_changes_to_tree(dirty_tree_oid, &changes_for_dirty, "")?;
+
+                let new_main_tree_oid = git_repo.get_commit_tree_oid(new_main_commit_oid)?;
+
+                if new_dirty_tree_oid == new_main_tree_oid {
+                    // Fast-forward
+                    git_repo.force_ref(DIRTY_BRANCH, new_main_commit_oid)?;
+                } else {
+                    // Create squashed commit
+                    let new_dirty_commit = git_repo.write_commit(
+                        new_dirty_tree_oid,
+                        &[new_main_commit_oid],
+                        "Uncommitted changes after rename",
+                    )?;
+                    git_repo.force_ref(DIRTY_BRANCH, new_dirty_commit)?;
+                }
+
+                // Rename is a lockstep operation: the same paths are rewritten
+                // on both main and dirty. Advance merge_base to the new main so
+                // the renames don't appear as ghost delete+add entries in the
+                // review list. Any remaining merge_base ↔ dirty diffs after this
+                // are genuine user edits — see `resolve_merge_base_or_main`.
+                git_repo.write_tag("merge_base", new_main_commit_oid)?;
+
+                Ok(json!({ "success": true }))
             }
+        })
+        .await;
 
-            // Apply to main
-            let mut new_main_commit_oid = main_oid;
-            if !changes_for_main.is_empty() {
-                (new_main_commit_oid, _) =
-                    git_repo.commit_changes_to_ref(MAIN_BRANCH, &changes_for_main, &message)?;
-            }
-
-            // Apply to dirty with efficient squashed rebase
-            let dirty_commit_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
-            let dirty_tree_oid = git_repo.get_commit_tree_oid(dirty_commit_oid)?;
-            let (new_dirty_tree_oid, _) =
-                git_repo.apply_changes_to_tree(dirty_tree_oid, &changes_for_dirty, "")?;
-
-            let new_main_tree_oid = git_repo.get_commit_tree_oid(new_main_commit_oid)?;
-
-            if new_dirty_tree_oid == new_main_tree_oid {
-                // Fast-forward
-                git_repo.force_ref(DIRTY_BRANCH, new_main_commit_oid)?;
-            } else {
-                // Create squashed commit
-                let new_dirty_commit = git_repo.write_commit(
-                    new_dirty_tree_oid,
-                    &[new_main_commit_oid],
-                    "Uncommitted changes after rename",
-                )?;
-                git_repo.force_ref(DIRTY_BRANCH, new_dirty_commit)?;
-            }
-
-            // Rename is a lockstep operation: the same paths are rewritten
-            // on both main and dirty. Advance merge_base to the new main so
-            // the renames don't appear as ghost delete+add entries in the
-            // review list. Any remaining merge_base ↔ dirty diffs after this
-            // are genuine user edits — see `resolve_merge_base_or_main`.
-            git_repo.write_tag("merge_base", new_main_commit_oid)?;
-
-            Ok(json!({ "success": true }))
-        }
-    })
-    .await;
-
-    match result {
-        Ok(inner) => envelope_result(&state, &id, inner),
-        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
-    }
+    envelope_result(&state, &id, result)
 }
 
 #[derive(Deserialize)]
@@ -1001,30 +891,27 @@ pub async fn move_folder(
         )
     });
 
-    // Acquire main before dirty to maintain consistent lock ordering and prevent deadlocks.
-    let _main_guard = state.write_locks.acquire(&id, MAIN_BRANCH).await;
-    let _dirty_guard = state.write_locks.acquire(&id, DIRTY_BRANCH).await;
+    // Rewrites main AND dirty: `run_write_main_and_dirty` takes main before
+    // dirty (the service-wide lock ordering) and holds both inside the task.
+    let result = state
+        .repo_locks
+        .run_write_main_and_dirty(&id, {
+            let repos_dir = state.repos_dir.clone();
+            let id = id.clone();
+            move || {
+                let git_repo = GitRepo::open(&repos_dir, &id)?;
+                let moved = perform_move_folder(
+                    &git_repo,
+                    &old_normalized_path,
+                    &new_normalized_path,
+                    &message,
+                )?;
+                Ok::<_, AppError>(json!({ "success": true, "moved": moved }))
+            }
+        })
+        .await;
 
-    let result = tokio::task::spawn_blocking({
-        let repos_dir = state.repos_dir.clone();
-        let id = id.clone();
-        move || {
-            let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let moved = perform_move_folder(
-                &git_repo,
-                &old_normalized_path,
-                &new_normalized_path,
-                &message,
-            )?;
-            Ok::<_, AppError>(json!({ "success": true, "moved": moved }))
-        }
-    })
-    .await;
-
-    match result {
-        Ok(inner) => envelope_result(&state, &id, inner),
-        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
-    }
+    envelope_result(&state, &id, result)
 }
 
 #[cfg(test)]
@@ -1580,5 +1467,384 @@ mod tests {
             sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Collections"),
             Some(vec!["rec1.json".to_string()])
         );
+    }
+
+    // ── Handler-level contracts for the routes converted to RepoLocks::run_write ──
+    //
+    // These pin the HTTP status + envelope shape of each converted route so a
+    // moved body field or changed error mapping cannot slip through unnoticed.
+
+    use crate::service::git::lock::RepoLocks;
+    use crate::service::state::AppState;
+    use axum::http::StatusCode;
+
+    fn make_state(repos_dir: &std::path::Path) -> AppState {
+        AppState {
+            repos_dir: repos_dir.to_path_buf(),
+            index_dir: repos_dir.to_path_buf(),
+            staging_dir: repos_dir.to_path_buf(),
+            build_version: "test".to_string(),
+            gc_state: std::sync::Arc::new(dashmap::DashMap::new()),
+            repo_locks: std::sync::Arc::new(RepoLocks::new()),
+        }
+    }
+
+    async fn response_json(response: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// Envelope always has `status.gcInProgress` (null when no gc) — the shape
+    /// the NestJS client parses.
+    fn assert_envelope_status_present(body: &serde_json::Value) {
+        assert!(
+            body["status"].is_object() && body["status"].get("gcInProgress").is_some(),
+            "envelope missing status.gcInProgress: {body}"
+        );
+    }
+
+    fn state_with_repo(repo_id: &str) -> (TempDir, AppState) {
+        let tmp = TempDir::new().unwrap();
+        let repo = GitRepo::init(tmp.path(), repo_id).unwrap();
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                add("Companies/a.json", "{\"n\":1}"),
+                add("Companies/b.json", "{\"n\":2}"),
+            ],
+            "seed",
+        )
+        .unwrap();
+        // dirty = main after seeding
+        let main_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        repo.force_ref(DIRTY_BRANCH, main_oid).unwrap();
+        repo.write_tag("merge_base", main_oid).unwrap();
+        let state = make_state(tmp.path());
+        (tmp, state)
+    }
+
+    #[tokio::test]
+    async fn commit_files_handler_success_and_missing_repo_contract() {
+        let (tmp, state) = state_with_repo("wt/commit");
+        let response = commit_files(
+            State(state.clone()),
+            Path("wt/commit".to_string()),
+            Query(BranchQuery {
+                branch: Some(DIRTY_BRANCH.to_string()),
+            }),
+            Json(CommitFilesBody {
+                files: vec![FileInput {
+                    path: "/Companies/c.json".to_string(),
+                    content: "{\"n\":3}".to_string(),
+                }],
+                message: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["success"], true);
+        assert_eq!(body["data"]["created"].as_array().unwrap().len(), 1);
+        assert_envelope_status_present(&body);
+        let repo = GitRepo::open(tmp.path(), "wt/commit").unwrap();
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "Companies/c.json")
+                .unwrap()
+                .as_deref(),
+            Some("{\"n\":3}")
+        );
+
+        // Missing repo → 404 envelope, not 500.
+        let response = commit_files(
+            State(state.clone()),
+            Path("wt/missing".to_string()),
+            Query(BranchQuery { branch: None }),
+            Json(CommitFilesBody {
+                files: vec![],
+                message: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = response_json(response).await;
+        assert!(body["data"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("not found"));
+        assert_envelope_status_present(&body);
+    }
+
+    #[tokio::test]
+    async fn delete_files_and_delete_folder_handlers_contract() {
+        let (tmp, state) = state_with_repo("wt/del");
+        let response = delete_files(
+            State(state.clone()),
+            Path("wt/del".to_string()),
+            Query(BranchQuery {
+                branch: Some(DIRTY_BRANCH.to_string()),
+            }),
+            Json(DeleteFilesBody {
+                files: vec!["/Companies/a.json".to_string()],
+                message: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await["data"]["success"], true);
+        let repo = GitRepo::open(tmp.path(), "wt/del").unwrap();
+        assert!(repo
+            .get_file_content(DIRTY_BRANCH, "Companies/a.json")
+            .unwrap()
+            .is_none());
+
+        let response = delete_folder(
+            State(state.clone()),
+            Path("wt/del".to_string()),
+            Query(DeleteFolderQuery {
+                folder: Some("/Companies".to_string()),
+                branch: None, // defaults to dirty
+            }),
+            Json(DeleteFolderBody { message: None }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(repo
+            .get_file_content(DIRTY_BRANCH, "Companies/b.json")
+            .unwrap()
+            .is_none());
+        // main untouched
+        assert!(repo
+            .get_file_content(MAIN_BRANCH, "Companies/b.json")
+            .unwrap()
+            .is_some());
+
+        // Missing `folder` → 400.
+        let response = delete_folder(
+            State(state.clone()),
+            Path("wt/del".to_string()),
+            Query(DeleteFolderQuery {
+                folder: None,
+                branch: None,
+            }),
+            Json(DeleteFolderBody { message: None }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// publish = commit to main + rebase dirty, atomically under main+dirty.
+    #[tokio::test]
+    async fn publish_handler_commits_main_and_rebases_dirty() {
+        let (tmp, state) = state_with_repo("wt/pub");
+        // A pending local edit on dirty that must survive the rebase.
+        let repo = GitRepo::open(tmp.path(), "wt/pub").unwrap();
+        repo.commit_changes_to_ref(DIRTY_BRANCH, &[add("Companies/local.json", "{}")], "local")
+            .unwrap();
+
+        let response = publish(
+            State(state.clone()),
+            Path("wt/pub".to_string()),
+            Json(PublishBody {
+                file: PublishFileInput {
+                    path: "/Companies/a.json".to_string(),
+                    content: "{\"n\":100}".to_string(),
+                },
+                message: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["success"], true);
+        assert_envelope_status_present(&body);
+
+        let repo = GitRepo::open(tmp.path(), "wt/pub").unwrap();
+        assert_eq!(
+            repo.get_file_content(MAIN_BRANCH, "Companies/a.json")
+                .unwrap()
+                .as_deref(),
+            Some("{\"n\":100}")
+        );
+        // dirty rebased: sees the published value AND keeps the local edit.
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "Companies/a.json")
+                .unwrap()
+                .as_deref(),
+            Some("{\"n\":100}")
+        );
+        assert!(repo
+            .get_file_content(DIRTY_BRANCH, "Companies/local.json")
+            .unwrap()
+            .is_some());
+        // Locks all released.
+        state
+            .repo_locks
+            .run_write_main_and_dirty("wt/pub", || Ok::<_, AppError>(()))
+            .await
+            .unwrap();
+    }
+
+    /// delete_data_folder = delete on main + delete on dirty + rebase, in one
+    /// guarded closure: both branches converge.
+    #[tokio::test]
+    async fn delete_data_folder_handler_removes_from_both_branches() {
+        let (tmp, state) = state_with_repo("wt/ddf");
+        let response = delete_data_folder(
+            State(state.clone()),
+            Path("wt/ddf".to_string()),
+            Json(DeleteDataFolderBody {
+                path: Some("/Companies".to_string()),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let repo = GitRepo::open(tmp.path(), "wt/ddf").unwrap();
+        for branch in [MAIN_BRANCH, DIRTY_BRANCH] {
+            assert!(
+                repo.get_file_content(branch, "Companies/a.json")
+                    .unwrap()
+                    .is_none(),
+                "{branch} still has the deleted folder"
+            );
+        }
+        // Missing path → 400.
+        let response = delete_data_folder(
+            State(state.clone()),
+            Path("wt/ddf".to_string()),
+            Json(DeleteDataFolderBody { path: None }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn discard_changes_and_rebase_handlers_contract() {
+        let (tmp, state) = state_with_repo("wt/disc");
+        let repo = GitRepo::open(tmp.path(), "wt/disc").unwrap();
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[add("Companies/a.json", "{\"n\":999}")],
+            "edit",
+        )
+        .unwrap();
+
+        let response = discard_changes(
+            State(state.clone()),
+            Path("wt/disc".to_string()),
+            Json(DiscardChangesBody {
+                path: "/Companies/a.json".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await["data"]["success"], true);
+        let repo = GitRepo::open(tmp.path(), "wt/disc").unwrap();
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "Companies/a.json")
+                .unwrap()
+                .as_deref(),
+            Some("{\"n\":1}")
+        );
+
+        let response = rebase(
+            State(state.clone()),
+            Path("wt/disc".to_string()),
+            Json(RebaseBody {
+                strategy: None,
+                exclude_paths: vec![],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert!(body["data"]["rebased"].is_boolean());
+        assert!(body["data"]["conflicts"].is_array());
+        assert_envelope_status_present(&body);
+    }
+
+    #[tokio::test]
+    async fn rename_and_move_folder_handlers_contract() {
+        let (tmp, state) = state_with_repo("wt/ren");
+        let response = rename(
+            State(state.clone()),
+            Path("wt/ren".to_string()),
+            Json(RenameBody {
+                folder_path: "/Companies".to_string(),
+                renames: vec![RenameInput {
+                    old_name: "a.json".to_string(),
+                    new_name: "aa.json".to_string(),
+                }],
+                message: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await["data"]["success"], true);
+        let repo = GitRepo::open(tmp.path(), "wt/ren").unwrap();
+        for branch in [MAIN_BRANCH, DIRTY_BRANCH] {
+            assert!(repo
+                .get_file_content(branch, "Companies/aa.json")
+                .unwrap()
+                .is_some());
+            assert!(repo
+                .get_file_content(branch, "Companies/a.json")
+                .unwrap()
+                .is_none());
+        }
+        // Renaming a missing file → 500 (unchanged contract: internal error).
+        let response = rename(
+            State(state.clone()),
+            Path("wt/ren".to_string()),
+            Json(RenameBody {
+                folder_path: "/Companies".to_string(),
+                renames: vec![RenameInput {
+                    old_name: "nope.json".to_string(),
+                    new_name: "x.json".to_string(),
+                }],
+                message: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let response = move_folder(
+            State(state.clone()),
+            Path("wt/ren".to_string()),
+            Json(MoveFolderBody {
+                old_path: "/Companies".to_string(),
+                new_path: "/Orgs".to_string(),
+                message: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["success"], true);
+        assert!(!body["data"]["moved"].is_null(), "{body}");
+        let repo = GitRepo::open(tmp.path(), "wt/ren").unwrap();
+        assert!(repo
+            .get_file_content(MAIN_BRANCH, "Orgs/aa.json")
+            .unwrap()
+            .is_some());
+        // Root move → 400.
+        let response = move_folder(
+            State(state.clone()),
+            Path("wt/ren".to_string()),
+            Json(MoveFolderBody {
+                old_path: "/".to_string(),
+                new_path: "/Orgs".to_string(),
+                message: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        // Both locks free afterwards.
+        state
+            .repo_locks
+            .run_write_main_and_dirty("wt/ren", || Ok::<_, AppError>(()))
+            .await
+            .unwrap();
     }
 }

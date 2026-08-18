@@ -4,7 +4,8 @@ use std::sync::Arc;
 use dashmap::DashMap;
 
 use crate::service::config::Config;
-use crate::service::git::lock::WriteLockManager;
+use crate::service::gc_marker::GcStateMap;
+use crate::service::git::lock::RepoLocks;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -12,9 +13,10 @@ pub struct AppState {
     pub index_dir: PathBuf,
     pub staging_dir: PathBuf,
     pub build_version: String,
-    /// Map of repo_id → GC start timestamp (millis since epoch)
-    pub gc_state: Arc<DashMap<String, i64>>,
-    pub write_locks: Arc<WriteLockManager>,
+    /// Map of repo_id → GC start timestamp (millis since epoch). Only ever
+    /// set/cleared through `gc_marker::GcMarkerGuard` (RAII), never by hand.
+    pub gc_state: GcStateMap,
+    pub repo_locks: Arc<RepoLocks>,
 }
 
 impl AppState {
@@ -25,7 +27,7 @@ impl AppState {
             staging_dir: config.staging_dir.clone(),
             build_version: config.build_version.clone(),
             gc_state: Arc::new(DashMap::new()),
-            write_locks: Arc::new(WriteLockManager::new()),
+            repo_locks: Arc::new(RepoLocks::new()),
         }
     }
 

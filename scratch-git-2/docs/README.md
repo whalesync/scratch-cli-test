@@ -74,6 +74,12 @@ SCRATCH_GIT_AUTH_TOKEN=   # Shared bearer token the NestJS server must present (
                           # Unset/empty → APIs are unauthenticated (local dev / tests). When
                           # set, requests to anything other than `/` and `/health` must carry
                           # `Authorization: Bearer <token>`.
+SCRATCH_GIT_GC_PRUNE_EXPIRY=1.hour.ago
+                          # `--prune=<expiry>` passed to `git gc` by `/gc` and `/repair` (DEV-11316).
+                          # Any value git accepts (`2.weeks.ago`, `1.day.ago`, `1.minute.ago`, …).
+                          # `now`/`all` are REFUSED (logged, default used): a zero grace deletes
+                          # objects a concurrent write is still building (DEV-11266). Default
+                          # `1.hour.ago`.
 ```
 
 ### Running Locally

@@ -1,6 +1,7 @@
 pub mod config;
 pub mod envelope;
 pub mod error;
+pub mod gc_marker;
 pub mod git;
 pub mod graceful_shutdown;
 pub mod routes;

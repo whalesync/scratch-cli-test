@@ -115,10 +115,11 @@ impl GitRepo {
 
     /// Update a branch ref ONLY if it still points at `expected_current` — a
     /// compare-and-swap. Long-running commit builders (the atomic staged
-    /// commit) use this so a build orphaned by a dropped request (the axum
-    /// handler future is cancelled, releasing the write lock, but its
-    /// spawn_blocking closure keeps running) loses the race instead of
-    /// clobbering commits that landed after its lock was released.
+    /// commit) use this as a last line of defence: the write lock now lives
+    /// inside the blocking task (`RepoLocks::run_write`, DEV-11316), so a
+    /// dropped request no longer releases it early — but should any future
+    /// lock gap let another writer land in between, the orphaned build loses
+    /// the race instead of clobbering the newer commits.
     pub fn force_ref_expecting_current(
         &self,
         branch: &str,

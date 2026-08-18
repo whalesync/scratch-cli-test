@@ -60,8 +60,9 @@ pub async fn git_backend(
         .unwrap_or("");
 
     // git-receive-pack is a write operation (git push). Acquire the dirty-branch write lock
-    // before spawning the subprocess and hold it until the child exits, preventing concurrent
-    // writes from the port-3100 REST API and the port-3101 git HTTP backend.
+    // before spawning the subprocess; it is handed to the child-supervisor task right after
+    // spawn and held until the child exits, preventing concurrent writes from the port-3100
+    // REST API and the port-3101 git HTTP backend — even if this request is dropped.
     // git-upload-pack (fetch/clone) is read-only and does not need a lock.
     let is_receive_pack =
         content_type.contains("git-receive-pack") || repo_id_and_path.contains("git-receive-pack");
@@ -69,8 +70,8 @@ pub async fn git_backend(
     let write_guard = if is_receive_pack {
         Some(
             state
-                .write_locks
-                .acquire(&repo_id_owned, DIRTY_BRANCH)
+                .repo_locks
+                .acquire_branch_write_guard(&repo_id_owned, DIRTY_BRANCH)
                 .await,
         )
     } else {
@@ -228,6 +229,44 @@ pub async fn git_backend(
     let child_stdout = child.stdout.take().unwrap();
     let mut reader = BufReader::new(child_stdout);
 
+    // Hand the child — and the dirty write guard, for git-receive-pack — to a
+    // supervisor task NOW, before this handler awaits anything else. If the
+    // client disconnects while we are still reading CGI headers, axum drops
+    // this future; the child keeps running (it already has its whole stdin),
+    // and the guard must keep the dirty branch locked until it exits. Holding
+    // the guard here in the handler would release it early — the exact
+    // guard-lifetime bug behind DEV-11266.
+    let child_exit_task = tokio::spawn({
+        let write_guard = write_guard;
+        let stderr_lines = stderr_lines.clone();
+        let log_path_info = path_info.clone();
+        let log_method = method.to_string();
+        async move {
+            let _guard_held_until_the_child_exits = write_guard;
+            let wait_result = child.wait().await;
+            if let Ok(status) = &wait_result {
+                if !status.success() {
+                    // Give stderr reader a moment to finish collecting output
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    let collected = stderr_lines.lock().await;
+                    let stderr_output = if collected.is_empty() {
+                        "(no stderr output)".to_string()
+                    } else {
+                        collected.join("\n")
+                    };
+                    tracing::error!(
+                        "[GIT] git http-backend exited with {} | method={} path={} | stderr:\n{}",
+                        status,
+                        log_method,
+                        log_path_info,
+                        stderr_output
+                    );
+                }
+            }
+            wait_result
+        }
+    });
+
     // Read and parse CGI headers
     let mut cgi_headers = Vec::new();
     let mut raw_stdout_before_headers = Vec::new();
@@ -291,10 +330,11 @@ pub async fn git_backend(
             }
         };
 
-        // Wait for exit status
-        let exit_status = match child.wait().await {
-            Ok(status) => format!("{}", status),
-            Err(e) => format!("(failed to get status: {})", e),
+        // Wait for exit status (the supervisor task owns the child)
+        let exit_status = match child_exit_task.await {
+            Ok(Ok(status)) => format!("{}", status),
+            Ok(Err(e)) => format!("(failed to get status: {})", e),
+            Err(join_error) => format!("(supervisor task failed: {})", join_error),
         };
 
         tracing::error!(
@@ -364,37 +404,10 @@ pub async fn git_backend(
         }
     }
 
-    // Body is the remaining stdout stream
+    // Body is the remaining stdout stream. The child (and the write guard) is
+    // owned by `child_exit_task`, spawned above, which outlives this handler.
     let stream = ReaderStream::new(reader);
     let body = Body::from_stream(stream);
-
-    // Wait for process in background and log stderr on failure.
-    // The write_guard (if held for git-receive-pack) is moved into this task so the lock
-    // is held for the entire subprocess lifetime and released when the child exits.
-    let log_path_info = path_info.clone();
-    let log_method = method.to_string();
-    tokio::spawn(async move {
-        let _guard = write_guard;
-        if let Ok(status) = child.wait().await {
-            if !status.success() {
-                // Give stderr reader a moment to finish collecting output
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                let collected = stderr_lines.lock().await;
-                let stderr_output = if collected.is_empty() {
-                    "(no stderr output)".to_string()
-                } else {
-                    collected.join("\n")
-                };
-                tracing::error!(
-                    "[GIT] git http-backend exited with {} | method={} path={} | stderr:\n{}",
-                    status,
-                    log_method,
-                    log_path_info,
-                    stderr_output
-                );
-            }
-        }
-    });
 
     response_builder.body(body).unwrap().into_response()
 }
@@ -405,7 +418,7 @@ mod tests {
     use tempfile::TempDir;
     use tower::ServiceExt;
 
-    use crate::service::git::lock::WriteLockManager;
+    use crate::service::git::lock::RepoLocks;
     use crate::service::state::AppState;
     use crate::shared::git_exec::git_command as std_git_command;
 
@@ -417,7 +430,7 @@ mod tests {
             staging_dir: repos_dir.to_path_buf(),
             build_version: "test".to_string(),
             gc_state: std::sync::Arc::new(dashmap::DashMap::new()),
-            write_locks: std::sync::Arc::new(WriteLockManager::new()),
+            repo_locks: std::sync::Arc::new(RepoLocks::new()),
         };
         Router::new()
             .route(
@@ -793,5 +806,52 @@ mod tests {
         let body = body_bytes(resp.into_body()).await;
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("refs/heads/main"));
+    }
+
+    /// git-receive-pack (push) takes the dirty write lock and hands it to the
+    /// child-supervisor task. Even a request that makes http-backend fail
+    /// (garbage pkt-line body) must release the lock once the child exits —
+    /// and never leak it.
+    #[tokio::test]
+    async fn receive_pack_releases_dirty_lock_after_child_exits() {
+        let tmp = TempDir::new().unwrap();
+        create_test_repo(tmp.path(), "pushrepo");
+        let state = AppState {
+            repos_dir: tmp.path().to_path_buf(),
+            index_dir: tmp.path().to_path_buf(),
+            staging_dir: tmp.path().to_path_buf(),
+            build_version: "test".to_string(),
+            gc_state: std::sync::Arc::new(dashmap::DashMap::new()),
+            repo_locks: std::sync::Arc::new(RepoLocks::new()),
+        };
+        let app = Router::new()
+            .route(
+                "/{*repo_id_and_path}",
+                axum::routing::any(super::git_backend),
+            )
+            .with_state(state.clone());
+
+        // A flush-only body: receive-pack reads it, does nothing, exits 0.
+        let resp = app
+            .oneshot(
+                Request::post("/pushrepo.git/git-receive-pack")
+                    .header("content-type", "application/x-git-receive-pack-request")
+                    .body(Body::from("0000"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Drain the body so the child runs to completion.
+        let _ = body_bytes(resp.into_body()).await;
+
+        // The lock must become available once the child has exited.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            state
+                .repo_locks
+                .acquire_branch_write_guard("pushrepo", crate::service::types::DIRTY_BRANCH),
+        )
+        .await
+        .expect("dirty lock leaked after git-receive-pack finished");
     }
 }
