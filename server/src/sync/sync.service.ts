@@ -1081,6 +1081,78 @@ export class SyncService {
   }
 
   /**
+   * Pages through every file in a destination folder on the dirty branch, yielding
+   * one page at a time so no caller has to hold the whole folder in memory.
+   *
+   * Both Pass 1 (match keys + filename dedupe set) and Pass 3 (unmatched-destination
+   * classification) stream the folder independently through this generator rather
+   * than sharing one whole-folder map of parsed records — that map was ~700 MB on a
+   * 42k-record destination and OOM-killed the sync worker (DEV-11194).
+   *
+   * Re-reading is safe because nothing a sync run writes reaches the dirty branch
+   * until the single atomic commit in step 8: Pass 2's output buffers to the git
+   * service's staging area and Pass 3's deletions are applied afterwards. Every
+   * pass therefore sees the same pre-sync destination bytes.
+   */
+  private async *pageThroughDestinationFolderFiles(
+    workbookId: WorkbookId,
+    destinationDataFolderId: DataFolderId,
+    actor: Actor,
+    syncId: SyncId,
+    logContext: { passLabel: string; destinationFolderPath: string | null },
+  ): AsyncGenerator<FileContent[]> {
+    let destinationPageCursor: string | undefined;
+    let destinationPageCounter = 0;
+
+    do {
+      let page: { files: FileContent[]; nextCursor?: string };
+      try {
+        page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
+          workbookId,
+          destinationDataFolderId,
+          actor,
+          DIRTY_BRANCH,
+          destinationPageCursor,
+        );
+      } catch (error) {
+        // An empty (or not-yet-populated) destination folder has zero files, so git
+        // tracks no directory for it and a path-scoped read returns 404. Treat that as
+        // "no existing destination records" rather than failing the whole sync — e.g.
+        // syncing into a brand-new or empty Webflow collection. Every source record
+        // then falls into the unmatched-source (create) path, and Pass 3 sees no
+        // unmatched-destination records. A 404 after pagination has already advanced
+        // (cursor set) is a genuine anomaly and is rethrown.
+        if (error instanceof ScratchGitNotFoundError && destinationPageCursor === undefined) {
+          WSLogger.info({
+            source: 'SyncService.syncTableMapping',
+            message: 'Destination folder not found in git; treating as empty (0 existing records)',
+            syncId,
+            destinationDataFolderId,
+            destinationFolderPath: logContext.destinationFolderPath,
+            pass: logContext.passLabel,
+          });
+          return;
+        }
+        throw error;
+      }
+
+      WSLogger.info({
+        source: 'SyncService.syncTableMapping',
+        message: `${logContext.passLabel}: destination batch`,
+        syncId,
+        records: page.files.length,
+        cursor: destinationPageCursor ?? 'initial',
+        batch: destinationPageCounter,
+      });
+
+      yield page.files;
+
+      destinationPageCursor = page.nextCursor;
+      destinationPageCounter++;
+    } while (destinationPageCursor);
+  }
+
+  /**
    * Syncs records from source to destination DataFolder based on a TableMapping.
    * Creates new records in destination for unmatched source records,
    * and updates existing destination records for matched ones.
@@ -1194,7 +1266,9 @@ export class SyncService {
     // Skipped in FOREIGN_KEY_MAPPING phase — it reuses caches built by the DATA phase.
     // ===========================================================================================
 
-    const destinationRecordsByPath = new Map<string, SyncRecord>();
+    // Filename strings only — the parsed destination records themselves are never
+    // retained across pages (DEV-11194). Pass 2 re-reads the handful it needs per
+    // source page; Pass 3 streams the folder again.
     const usedDestFileNames = new Set<string>();
     const fkValuesByFolder = new Map<DataFolderId, Set<string>>();
 
@@ -1242,45 +1316,19 @@ export class SyncService {
       } while (sourceCursor);
     }
 
-    // Page through destination files — insert match keys and build lookup maps per batch
-    let destCursor: string | undefined;
-    let batchCounter = 0;
-    do {
-      let page: { files: { folderId: DataFolderId; path: string; content: string }[]; nextCursor?: string };
-      try {
-        page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
-          workbookId,
-          tableMapping.destinationDataFolderId,
-          actor,
-          DIRTY_BRANCH,
-          destCursor,
-        );
-      } catch (error) {
-        // An empty (or not-yet-populated) destination folder has zero files, so git
-        // tracks no directory for it and a path-scoped read returns 404. Treat that as
-        // "no existing destination records" rather than failing the whole sync — e.g.
-        // syncing into a brand-new or empty Webflow collection. Every source record
-        // then falls into the unmatched-source (create) path, and Pass 3 sees no
-        // unmatched-destination records. A 404 after pagination has already advanced
-        // (destCursor set) is a genuine anomaly and is rethrown.
-        if (error instanceof ScratchGitNotFoundError && destCursor === undefined) {
-          WSLogger.info({
-            source: 'SyncService.syncTableMapping',
-            message: 'Destination folder not found in git; treating as empty (0 existing records)',
-            syncId,
-            destinationDataFolderId: tableMapping.destinationDataFolderId,
-            destinationFolderPath: destinationFolder.path,
-          });
-          break;
-        }
-        throw error;
-      }
-
+    // Page through destination files — insert match keys and collect used filenames
+    // per batch. Each page's parsed records are discarded once the page is handled.
+    for await (const destinationFilePage of this.pageThroughDestinationFolderFiles(
+      workbookId,
+      tableMapping.destinationDataFolderId,
+      actor,
+      syncId,
+      { passLabel: 'Pass 1', destinationFolderPath: destinationFolder.path },
+    )) {
       const batchRecords: SyncRecord[] = [];
-      for (const file of page.files) {
+      for (const file of destinationFilePage) {
         const record = parseFileToRecord(file, destinationIdColumn);
         batchRecords.push(record);
-        destinationRecordsByPath.set(file.path, record);
         const filename = file.path.split('/').pop();
         if (filename !== undefined) {
           usedDestFileNames.add(filename);
@@ -1294,23 +1342,11 @@ export class SyncService {
         }
       }
 
-      WSLogger.info({
-        source: 'SyncService.syncTableMapping',
-        message: `Pass 1: destination batch`,
-        syncId,
-        records: batchRecords.length,
-        cursor: destCursor ?? 'initial',
-        batch: batchCounter,
-      });
-
       if (phase === 'DATA') {
         // Only need to fill the caches in the first phase
         await this.fillSyncCachesBatch(syncId, tableMapping, [], batchRecords, matchKeyTransformContext);
       }
-
-      destCursor = page.nextCursor;
-      batchCounter++;
-    } while (destCursor);
+    }
 
     if (phase === 'DATA') {
       // Finalize caches — join match keys to create remote ID mappings
@@ -1431,6 +1467,7 @@ export class SyncService {
 
     // Page through source files again for transformation
     let sourceCursor: string | undefined;
+    let sourcePageCounter = 0;
     do {
       const page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
         workbookId,
@@ -1450,7 +1487,7 @@ export class SyncService {
         batchRecordsById = new Map([...batchRecordsById].filter(([, r]) => r.filePath === onlySourceFilePath));
         if (batchRecordsById.size === 0) {
           sourceCursor = page.nextCursor;
-          batchCounter++;
+          sourcePageCounter++;
           continue;
         }
       }
@@ -1461,7 +1498,7 @@ export class SyncService {
         syncId,
         records: batchRecordsById.size,
         cursor: sourceCursor ?? 'initial',
-        batch: batchCounter,
+        batch: sourcePageCounter,
       });
 
       // Get mappings for this batch
@@ -1470,6 +1507,43 @@ export class SyncService {
         tableMapping.sourceDataFolderId,
         Array.from(batchRecordsById.keys()),
       );
+
+      // Read the existing destination records this page's matched mappings point at,
+      // and hold them only for the page (DEV-11194 — the whole-folder map this
+      // replaces was the sync worker's largest allocation). `readRepoFilesByFolder`
+      // groups the paths by folder, so a page costs one optimized tree walk.
+      // Nothing this run has written is on the branch yet (Pass 2 buffers to staging
+      // and lands in step 8), so these are the same bytes Pass 1 read.
+      const matchedDestinationPathsInPage = Array.from(
+        new Set(
+          Array.from(batchMappings.values())
+            .map((mapping) => mapping.destinationFilePath)
+            .filter((destinationFilePath): destinationFilePath is string => destinationFilePath !== null),
+        ),
+      );
+      const existingDestinationRecordsByPathInPage = new Map<string, SyncRecord>();
+      if (matchedDestinationPathsInPage.length > 0) {
+        const existingDestinationFilesInPage = await this.scratchGitService.readRepoFilesByFolder(
+          destinationRepoId,
+          DIRTY_BRANCH,
+          matchedDestinationPathsInPage,
+        );
+        for (const file of existingDestinationFilesInPage) {
+          // A null content means the mapping points at a file that is no longer in
+          // git. Leaving it out of the map reproduces the old behaviour exactly: the
+          // record gets no `baseFields` and is rewritten from the mappings alone.
+          if (file.content === null) {
+            continue;
+          }
+          existingDestinationRecordsByPathInPage.set(
+            file.path,
+            parseFileToRecord(
+              { folderId: tableMapping.destinationDataFolderId, path: file.path, content: file.content },
+              destinationIdColumn,
+            ),
+          );
+        }
+      }
 
       // Skip source records with missing or empty match key — this is expected
       // when source data has incomplete records and is not an error condition.
@@ -1564,7 +1638,7 @@ export class SyncService {
             // surgically updates only the mapped fields. This is critical to preserve the
             // original JSON key ordering in the destination file (see baseFields param docs).
             destinationPath = mapping.destinationFilePath;
-            const existingRecord = destinationRecordsByPath.get(mapping.destinationFilePath);
+            const existingRecord = existingDestinationRecordsByPathInPage.get(mapping.destinationFilePath);
 
             const transformResult = await applyColumnMappings({
               bucket: 'matched',
@@ -1632,7 +1706,7 @@ export class SyncService {
       await flushNewRecordMappings();
 
       sourceCursor = page.nextCursor;
-      batchCounter++;
+      sourcePageCounter++;
     } while (sourceCursor);
 
     // ===========================================================================================
@@ -1696,7 +1770,6 @@ export class SyncService {
           message: 'Pass 3: starting unmatched-destination write',
           syncId,
           sourceMatchKeyCount: sourceMatchKeySet.size,
-          destinationRecordCount: destinationRecordsByPath.size,
           policy: tableMapping.unmatchedDestinationPolicy,
         });
 
@@ -1706,84 +1779,103 @@ export class SyncService {
         const destinationMatchKeyUnpackTransformer = getFieldUnpackTransformer(destinationTableSpec, matchColPath);
 
         const policy = tableMapping.unmatchedDestinationPolicy;
-        for (const [destPath, destRecord] of destinationRecordsByPath) {
-          const destinationMatchKey = await deriveCanonicalMatchKey(
-            {
-              record: destRecord,
-              fieldPath: matchColPath,
-              tableSpec: destinationTableSpec,
-              service: destinationFolder.connectorService as Service,
-            },
-            destinationMatchKeyUnpackTransformer,
-          );
-          const classification = classifyDestinationRecord(destinationMatchKey, sourceMatchKeySet);
-          if (classification === 'matched') {
-            continue;
-          }
 
-          // Resolve the per-bucket action for this unmatched record.
-          let action: UnmatchedDestinationAction;
-          if (classification === 'unmatchedWithMatchKey') {
-            result.unmatchedDestinationCounts.withMatchKey++;
-            action = policy.withMatchKey;
-          } else {
-            result.unmatchedDestinationCounts.withoutMatchKey++;
-            action = policy.withoutMatchKey;
-          }
+        // Stream the destination folder a second time rather than iterating a
+        // whole-folder map (DEV-11194). Pass 2's writes are still buffered/staged
+        // at this point, so this sees the same pre-sync records Pass 1 classified
+        // against — records created by this run cannot leak into the classification.
+        let destinationRecordsVisitedInPass3 = 0;
+        for await (const destinationFilePage of this.pageThroughDestinationFolderFiles(
+          workbookId,
+          tableMapping.destinationDataFolderId,
+          actor,
+          syncId,
+          { passLabel: 'Pass 3', destinationFolderPath: destinationFolder.path },
+        )) {
+          for (const destinationFile of destinationFilePage) {
+            const destRecord = parseFileToRecord(destinationFile, destinationIdColumn);
+            const destPath = destinationFile.path;
+            destinationRecordsVisitedInPass3++;
 
-          if (action === 'ignore') continue;
-
-          if (action === 'delete') {
-            // The source record is gone — remove its destination counterpart.
-            // No column mappings are applied; the file is deleted outright.
-            // Committed as a batch in step 9 (after the Pass 2/3 writes land).
-            result.unmatchedDestinationCounts.deleted++;
-            result.recordsDeleted++;
-            pushSample(result.deletedPaths, destPath);
-            filesToDelete.push(destPath);
-            continue;
-          }
-
-          // action === 'apply' — apply the unmatched-bucket constant mappings.
-          try {
-            const transformResult = await applyColumnMappings({
-              bucket: 'unmatched',
-              sourceRecord: null,
-              baseFields: destRecord.fields,
-              mappings: mappingsForPass3,
-              sourceTableSpec,
-              destinationTableSpec,
-              lookupTools,
-              phase: 'DATA',
-              syncContext: {
-                sourceService: sourceFolder.connectorService as Service,
-                destinationService: destinationFolder.connectorService as Service,
+            const destinationMatchKey = await deriveCanonicalMatchKey(
+              {
+                record: destRecord,
+                fieldPath: matchColPath,
+                tableSpec: destinationTableSpec,
+                service: destinationFolder.connectorService as Service,
               },
-            });
-            for (const w of transformResult.warnings) {
-              recordWarning(destRecord.id, w);
-            }
-            if (isEqual(transformResult.fields, destRecord.fields)) {
-              // No effective change — the unmatched rules produced the same
-              // bytes already on disk. Skip the write (mirrors Pass 2).
+              destinationMatchKeyUnpackTransformer,
+            );
+            const classification = classifyDestinationRecord(destinationMatchKey, sourceMatchKeySet);
+            if (classification === 'matched') {
               continue;
             }
-            result.unmatchedDestinationCounts.archived++;
-            result.recordsUpdated++;
-            pushSample(result.updatedPaths, destPath);
-            bufferedFilesToWrite.push({ path: destPath, content: serializeRecord(transformResult.fields) });
-            queueFilePathForErrorReporting(destPath);
-          } catch (error) {
-            recordError(destRecord.id, error instanceof Error ? error.message : String(error));
-          }
 
-          await spillBufferedFilesToStagingIfThresholdReached();
+            // Resolve the per-bucket action for this unmatched record.
+            let action: UnmatchedDestinationAction;
+            if (classification === 'unmatchedWithMatchKey') {
+              result.unmatchedDestinationCounts.withMatchKey++;
+              action = policy.withMatchKey;
+            } else {
+              result.unmatchedDestinationCounts.withoutMatchKey++;
+              action = policy.withoutMatchKey;
+            }
+
+            if (action === 'ignore') continue;
+
+            if (action === 'delete') {
+              // The source record is gone — remove its destination counterpart.
+              // No column mappings are applied; the file is deleted outright.
+              // Committed as a batch in step 9 (after the Pass 2/3 writes land).
+              result.unmatchedDestinationCounts.deleted++;
+              result.recordsDeleted++;
+              pushSample(result.deletedPaths, destPath);
+              filesToDelete.push(destPath);
+              continue;
+            }
+
+            // action === 'apply' — apply the unmatched-bucket constant mappings.
+            try {
+              const transformResult = await applyColumnMappings({
+                bucket: 'unmatched',
+                sourceRecord: null,
+                baseFields: destRecord.fields,
+                mappings: mappingsForPass3,
+                sourceTableSpec,
+                destinationTableSpec,
+                lookupTools,
+                phase: 'DATA',
+                syncContext: {
+                  sourceService: sourceFolder.connectorService as Service,
+                  destinationService: destinationFolder.connectorService as Service,
+                },
+              });
+              for (const w of transformResult.warnings) {
+                recordWarning(destRecord.id, w);
+              }
+              if (isEqual(transformResult.fields, destRecord.fields)) {
+                // No effective change — the unmatched rules produced the same
+                // bytes already on disk. Skip the write (mirrors Pass 2).
+                continue;
+              }
+              result.unmatchedDestinationCounts.archived++;
+              result.recordsUpdated++;
+              pushSample(result.updatedPaths, destPath);
+              bufferedFilesToWrite.push({ path: destPath, content: serializeRecord(transformResult.fields) });
+              queueFilePathForErrorReporting(destPath);
+            } catch (error) {
+              recordError(destRecord.id, error instanceof Error ? error.message : String(error));
+            }
+
+            await spillBufferedFilesToStagingIfThresholdReached();
+          }
         }
 
         WSLogger.info({
           source: 'SyncService.syncTableMapping',
           message: 'Pass 3: completed',
           syncId,
+          destinationRecordsVisited: destinationRecordsVisitedInPass3,
           counts: result.unmatchedDestinationCounts,
         });
       }

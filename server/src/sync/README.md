@@ -100,7 +100,7 @@ syncTableMapping(tableMapping, phase)
 │
 ├─ Pass 1 — build caches              [DATA phase only]
 │    walk source pages → SyncMatchKeys (source)
-│    walk dest pages   → SyncMatchKeys (dest) + destinationRecordsByPath
+│    walk dest pages   → SyncMatchKeys (dest) + usedDestFileNames  (records dropped per page)
 │    LEFT JOIN         → SyncRemoteIdMapping (source→dest, null dest for unmatched)
 │    populateForeignKeyRecordCache    (for lookup_field transformers)
 │
@@ -111,7 +111,7 @@ syncTableMapping(tableMapping, phase)
 │
 ├─ Pass 3 — unmatched-destination write   [DATA phase only; gated, see below]
 │    sourceMatchKeySet ← SELECT matchId FROM SyncMatchKeys WHERE dataFolderId = <source>
-│    for each (path, record) in destinationRecordsByPath:
+│    walk dest pages again (streamed, no whole-folder map) → for each record:
 │      key ← deriveCanonicalMatchKey(record, destMatchCol)   (same reducer as Pass 1)
 │      classifyDestinationRecord(key, sourceMatchKeySet):
 │        matched                  → skip (Pass 2 handled it)
@@ -127,13 +127,15 @@ syncTableMapping(tableMapping, phase)
 
 ### Pass 1: build caches
 
-Files are read and parsed from both source and destination DataFolders into `ConnectorRecord` objects. Match-column values are reduced to **canonical match keys** (see [Record matching](#record-matching)) and inserted into `SyncMatchKeys` for both sides; a SQL LEFT JOIN then creates `SyncRemoteIdMapping` entries for all source records (null destination for unmatched). For `lookup_field` transformers, records from each referenced DataFolder are fetched and cached in `SyncForeignKeyRecord` (grouped by referenced folder so each `(dataFolderId, foreignKeyValue)` pair is stored once). The destination records are also retained in an in-memory `destinationRecordsByPath` map for the lifetime of the call — Pass 3 reuses it with no extra query.
+Files are read and parsed from both source and destination DataFolders into `ConnectorRecord` objects. Match-column values are reduced to **canonical match keys** (see [Record matching](#record-matching)) and inserted into `SyncMatchKeys` for both sides; a SQL LEFT JOIN then creates `SyncRemoteIdMapping` entries for all source records (null destination for unmatched). For `lookup_field` transformers, records from each referenced DataFolder are fetched and cached in `SyncForeignKeyRecord` (grouped by referenced folder so each `(dataFolderId, foreignKeyValue)` pair is stored once).
+
+Parsed destination records are **not** retained past the page they were read on. The only whole-folder state that survives the walk is `usedDestFileNames` — filename strings, used to deduplicate filenames when Pass 2 creates records. Keeping every parsed destination record for the lifetime of the call cost ~700 MB on a 42k-record destination folder and OOM-killed the sync worker, so instead Pass 2 re-reads only the matched records of the source page it is on (`ScratchGitService.readRepoFilesByFolder`, one optimized tree walk per page) and Pass 3 streams the destination folder a second time (DEV-11194). Re-reading is safe because nothing a run writes reaches the dirty branch until the single commit at the end — Pass 2's output buffers to the git service's staging area and Pass 3's deletions are applied afterwards — so every pass sees the same pre-sync destination bytes.
 
 ### Pass 2: source-driven write
 
 Iterate source records:
 
-- **Matched record** → `applyColumnMappings({ bucket: 'matched', ... })` merges the transformed source fields into the existing destination file (source-mapped fields win; destination fields not covered by a matched/`always` mapping are preserved). A write is skipped when the merge is byte-identical to the existing record (the `isEqual` no-op skip), **unless** archive-repair fires (below).
+- **Matched record** → `applyColumnMappings({ bucket: 'matched', ... })` merges the transformed source fields into the existing destination file (source-mapped fields win; destination fields not covered by a matched/`always` mapping are preserved). The existing file is read back per source page — the matched paths of that page only — so at most one page of destination records is held at a time. A write is skipped when the merge is byte-identical to the existing record (the `isEqual` no-op skip), **unless** archive-repair fires (below).
 - **Unmatched-source record** → a new destination file is created: a temporary ID is generated via `createScratchPendingPublishId()` and injected, the filename is resolved from the destination schema's `slugColumnRemoteId` (falling back to the temp ID, deduplicated), and the match key is auto-injected. Skipped entirely when `unmatchedSourcePolicy.type === 'ignore'`.
 
 In the `DATA` phase `source_fk_to_dest_fk` passes through raw values while `lookup_field` resolves from the FK cache (see [Transformers](#transformers)).

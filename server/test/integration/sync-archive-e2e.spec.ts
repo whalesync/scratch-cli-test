@@ -34,6 +34,7 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { createReadRepoFilesByFolderMock } from './sync-test-helpers';
 
 // Destination schema that DECLARES the match-key column (`email`), so Pass 3's
 // "match-key column exists in destination schema" gate passes.
@@ -135,6 +136,12 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
       resolveConnectionRepoPath: jest
         .fn()
         .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      readRepoFilesByFolder: createReadRepoFilesByFolderMock({
+        prisma,
+        dataFolderService,
+        getWorkbookId: () => workbookId,
+        getActor: () => actor,
+      }),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         return Promise.resolve(gitSchemasByPath[folderPath] ?? null);
       }),

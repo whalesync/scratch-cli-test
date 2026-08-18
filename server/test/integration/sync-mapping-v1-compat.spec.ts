@@ -37,6 +37,7 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { createReadRepoFilesByFolderMock } from './sync-test-helpers';
 
 describe('SyncService - v1 compatibility regression gate', () => {
   let prisma: PrismaClient;
@@ -114,6 +115,12 @@ describe('SyncService - v1 compatibility regression gate', () => {
       resolveConnectionRepoPath: jest
         .fn()
         .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      readRepoFilesByFolder: createReadRepoFilesByFolderMock({
+        prisma,
+        dataFolderService,
+        getWorkbookId: () => workbookId,
+        getActor: () => actor,
+      }),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         return Promise.resolve(gitSchemasByPath[folderPath] ?? null);
       }),

@@ -9,6 +9,7 @@ import {
   DataFolderId,
   SyncId,
   TableMapping,
+  TableMappingV2,
   WorkbookId,
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
@@ -18,6 +19,7 @@ import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.ser
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { createReadRepoFilesByFolderMock } from './sync-test-helpers';
 
 describe('SyncService - fillSyncCaches', () => {
   let prisma: PrismaClient;
@@ -386,6 +388,9 @@ describe('SyncService - syncTableMapping', () => {
   // Track files spilled to the scratch-git staging area (large-table write path)
   let stagedFiles: Array<{ folder: string; path: string; content: string }>;
 
+  // Track paths removed by the Pass 3 'delete' policy
+  let deletedPaths: string[];
+
   // Schema map keyed by folder path — readSchemaFromGit returns the right schema per folder
   let gitSchemasByPath: Record<string, Record<string, unknown>>;
 
@@ -396,6 +401,7 @@ describe('SyncService - syncTableMapping', () => {
   beforeEach(async () => {
     writtenFiles = [];
     stagedFiles = [];
+    deletedPaths = [];
     gitSchemasByPath = {
       '/src': { idPath: 'id' },
       '/dest': { idPath: 'id' },
@@ -432,6 +438,12 @@ describe('SyncService - syncTableMapping', () => {
       resolveConnectionRepoPath: jest
         .fn()
         .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      readRepoFilesByFolder: createReadRepoFilesByFolderMock({
+        prisma,
+        dataFolderService,
+        getWorkbookId: () => workbookId,
+        getActor: () => actor,
+      }),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         return Promise.resolve(gitSchemasByPath[folderPath] ?? null);
       }),
@@ -460,6 +472,10 @@ describe('SyncService - syncTableMapping', () => {
           }),
         ),
       cleanupStaging: jest.fn().mockResolvedValue(undefined),
+      deleteFilesFromBranch: jest.fn().mockImplementation((_repoId, _branch, paths: string[]) => {
+        deletedPaths.push(...paths);
+        return Promise.resolve();
+      }),
     } as unknown as ScratchGitService;
 
     const scheduleService = { create: jest.fn(), update: jest.fn(), delete: jest.fn() } as unknown as ScheduleService;
@@ -1067,6 +1083,138 @@ describe('SyncService - syncTableMapping', () => {
     expect(result.errors).toHaveLength(100);
     expect(result.errors[0].error).toContain('staging state was lost');
   }, 60_000);
+
+  // -------------------------------------------------------------------------
+  // Per-page destination reads (DEV-11194): the executor no longer keeps a map
+  // of every parsed destination record. Pass 2 reads back only the matched
+  // records of the source page it is on, and Pass 3 streams the folder again.
+  // Both fixtures below serve EVERY folder in several pages — a single-page
+  // fixture cannot tell a per-page read from a whole-folder one.
+  // -------------------------------------------------------------------------
+
+  /** Serves each folder's files through the paginated reader in pages of `pageSize`. */
+  function mockFolderPages(
+    filesByFolderId: Record<string, Array<{ path: string; content: string }>>,
+    pageSize: number,
+  ) {
+    (dataFolderService.getFileContentsByFolderIdPaginated as jest.Mock).mockImplementation(
+      (_wbId, folderId: DataFolderId, _actorArg, _branch, cursor?: string) => {
+        const filesInFolder = filesByFolderId[folderId] ?? [];
+        const pageIndex = cursor === undefined ? 0 : Number(cursor);
+        const firstIndexInPage = pageIndex * pageSize;
+        const filesInPage = filesInFolder
+          .slice(firstIndexInPage, firstIndexInPage + pageSize)
+          .map((file) => ({ folderId, ...file }));
+        const hasMorePages = firstIndexInPage + pageSize < filesInFolder.length;
+        return Promise.resolve({
+          files: filesInPage,
+          nextCursor: hasMorePages ? String(pageIndex + 1) : undefined,
+        });
+      },
+    );
+  }
+
+  it('reads matched destination records per source page and preserves their key order', async () => {
+    const sourceFiles = [
+      { path: 'src/s1.json', content: '{"id":"s1","email":"a@example.com","name":"Ada"}' },
+      { path: 'src/s2.json', content: '{"id":"s2","email":"b@example.com","name":"Bo"}' },
+      { path: 'src/s3.json', content: '{"id":"s3","email":"c@example.com","name":"Cy"}' },
+    ];
+    // Destination key order deliberately differs from the source's, and every
+    // record carries a `notes` field no mapping touches. Both survive the write
+    // only if the existing record was read back and used as its base.
+    const destFiles = [
+      {
+        path: 'dest/d1.json',
+        content: '{"notes":"keep 1","full_name":"OLD","id":"d1","email_address":"a@example.com"}',
+      },
+      {
+        path: 'dest/d2.json',
+        content: '{"notes":"keep 2","full_name":"OLD","id":"d2","email_address":"b@example.com"}',
+      },
+      {
+        path: 'dest/d3.json',
+        content: '{"notes":"keep 3","full_name":"OLD","id":"d3","email_address":"c@example.com"}',
+      },
+    ];
+    mockFolderPages({ [sourceFolderId]: sourceFiles, [destFolderId]: destFiles }, 2);
+
+    const tableMapping: TableMapping = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: [{ sourceColumnId: 'name', destinationColumnId: 'full_name' }],
+      recordMatching: { sourceColumnId: 'email', destinationColumnId: 'email_address' },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.recordsUpdated).toBe(3);
+
+    // d3 is on the SECOND destination page and is matched from the SECOND source
+    // page — the record a per-page read gets wrong if it only ever reads page 1.
+    const writtenD3 = writtenFiles.find((file) => file.path === 'dest/d3.json');
+    expect(writtenD3).toBeDefined();
+    expect(Object.keys(JSON.parse(writtenD3?.content ?? '{}') as Record<string, unknown>)).toEqual([
+      'notes',
+      'full_name',
+      'id',
+      'email_address',
+    ]);
+    expect(JSON.parse(writtenD3?.content ?? '{}')).toMatchObject({ notes: 'keep 3', full_name: 'Cy' });
+
+    // One read per source page, each scoped to that page's matched paths. This is
+    // the memory invariant: it fails the moment the read is hoisted out of the loop
+    // or widened to the whole folder.
+    const readCalls = (scratchGitService.readRepoFilesByFolder as jest.Mock).mock.calls;
+    expect(readCalls).toHaveLength(2);
+    expect(new Set(readCalls[0][2] as string[])).toEqual(new Set(['dest/d1.json', 'dest/d2.json']));
+    expect(new Set(readCalls[1][2] as string[])).toEqual(new Set(['dest/d3.json']));
+  });
+
+  it('classifies unmatched destination records on every destination page in Pass 3', async () => {
+    // Pass 3's gate needs the match-key column declared in the destination schema.
+    gitSchemasByPath['/dest'] = {
+      idPath: 'id',
+      schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          email_address: { type: 'string' },
+          full_name: { type: 'string' },
+        },
+      },
+    };
+
+    const sourceFiles = [{ path: 'src/s1.json', content: '{"id":"s1","email":"a@example.com","name":"Ada"}' }];
+    // Only d1 has a source counterpart. d2 and d3 are orphans, and they sit on
+    // DIFFERENT destination pages.
+    const destFiles = [
+      { path: 'dest/d1.json', content: '{"id":"d1","email_address":"a@example.com","full_name":"OLD"}' },
+      { path: 'dest/d2.json', content: '{"id":"d2","email_address":"b@example.com","full_name":"Bo"}' },
+      { path: 'dest/d3.json', content: '{"id":"d3","email_address":"c@example.com","full_name":"Cy"}' },
+    ];
+    mockFolderPages({ [sourceFolderId]: sourceFiles, [destFolderId]: destFiles }, 2);
+
+    const tableMapping: TableMappingV2 = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: [{ destinationColumnId: 'full_name', source: { kind: 'column', columnId: 'name' } }],
+      recordMatching: { sourceColumnId: 'email', destinationColumnId: 'email_address' },
+      unmatchedDestinationPolicy: { withMatchKey: 'delete', withoutMatchKey: 'ignore' },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    expect(result.errors).toHaveLength(0);
+    // d3 is only reachable on the SECOND destination page: it is classified and
+    // deleted, so Pass 3 streamed past page 1 rather than stopping there.
+    expect(new Set(deletedPaths)).toEqual(new Set(['dest/d2.json', 'dest/d3.json']));
+    expect(result.recordsDeleted).toBe(2);
+    expect(result.unmatchedDestinationCounts.withMatchKey).toBe(2);
+    // The matched record is left alone — classification is not confused by paging.
+    expect(deletedPaths).not.toContain('dest/d1.json');
+  });
 
   it('should return error when source record is missing match key field', async () => {
     const sourceFiles = [
@@ -1990,6 +2138,12 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
       resolveConnectionRepoPath: jest
         .fn()
         .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      readRepoFilesByFolder: createReadRepoFilesByFolderMock({
+        prisma,
+        dataFolderService,
+        getWorkbookId: () => workbookId,
+        getActor: () => actor,
+      }),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-authors': { idPath: 'id' },
@@ -2865,6 +3019,12 @@ describe('SyncService - lookup_field transformer', () => {
       resolveConnectionRepoPath: jest
         .fn()
         .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      readRepoFilesByFolder: createReadRepoFilesByFolderMock({
+        prisma,
+        dataFolderService,
+        getWorkbookId: () => workbookId,
+        getActor: () => actor,
+      }),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-categories': { idPath: 'id' },
