@@ -2,9 +2,10 @@ use axum::extract::{Path, Query, State};
 use axum::response::Response;
 use axum::Json;
 use rusqlite::{params, Connection};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path as StdPath;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::service::envelope::{envelope, envelope_error};
 use crate::service::error::AppError;
@@ -714,6 +715,162 @@ pub async fn cleanup_staging(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Staging observability + reaper (DEV-11317)
+//
+// Staging dirs (`{staging_dir}/{jobId}`) are normally removed by the caller's
+// `finally` after a commit. A crash/redeploy between `stage_files` and that
+// DELETE strands the dir forever (no Drop, no TTL). `list_staging` exposes each
+// dir's age and size so the server's hourly cron can reap age + job-liveness
+// orphans; `reap_stale_staging_dirs` is an age-only boot-time backstop for dirs
+// orphaned by a redeploy before the cron next ticks. Neither is a boot-wipe:
+// both respect the deliberate crash-resume design above via a generous max age.
+// ---------------------------------------------------------------------------
+
+/// One entry of the `GET /api/staging` listing: a `{staging_dir}/{jobId}` directory,
+/// its last-modified time (millis since the Unix epoch), and its total on-disk size.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StagingDirInfo {
+    pub job_id: String,
+    pub mtime_ms: i64,
+    pub size_bytes: i64,
+}
+
+/// Outcome of an age-only staging sweep, for logging.
+#[derive(Debug, Default)]
+pub struct StagingReapSummary {
+    pub scanned: usize,
+    pub reaped_job_ids: Vec<String>,
+    pub reaped_bytes: i64,
+}
+
+/// Milliseconds since the Unix epoch for a filesystem mtime, or 0 if it predates the epoch.
+fn system_time_to_millis(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Total size in bytes of all regular files under `path`, recursively. A directory's own
+/// `len()` is not its tree size, so we descend and sum file lengths. Best-effort: an
+/// unreadable entry is skipped rather than failing the whole scan, since this feeds
+/// observability (the orphan-bytes gauge), not correctness.
+fn dir_size_bytes(path: &StdPath) -> i64 {
+    let mut total: i64 = 0;
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return total;
+    };
+    for entry in entries.flatten() {
+        match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => total += dir_size_bytes(&entry.path()),
+            Ok(_) => {
+                if let Ok(metadata) = entry.metadata() {
+                    total += metadata.len() as i64;
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    total
+}
+
+/// Enumerate the immediate child directories of `staging_dir` (one per job), returning each
+/// job's id (directory name), mtime, and recursive size. A missing/unreadable staging root
+/// yields an empty list (nothing has been staged yet). An entry whose mtime can't be read is
+/// reported with `mtime_ms == 0` so the reaper can treat it as unknown rather than ancient.
+fn scan_staging_dirs(staging_dir: &StdPath) -> Vec<StagingDirInfo> {
+    let mut dirs = Vec::new();
+    let Ok(entries) = std::fs::read_dir(staging_dir) else {
+        return dirs;
+    };
+    for entry in entries.flatten() {
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if !is_dir {
+            continue;
+        }
+        let job_id = entry.file_name().to_string_lossy().to_string();
+        let mtime_ms = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(system_time_to_millis)
+            .unwrap_or(0);
+        dirs.push(StagingDirInfo {
+            size_bytes: dir_size_bytes(&entry.path()),
+            job_id,
+            mtime_ms,
+        });
+    }
+    dirs
+}
+
+/// Age-only reap of orphaned staging dirs: remove every `{staging_dir}/{jobId}` whose mtime is
+/// older than `max_age`. This is the git service's boot-time backstop — it has no knowledge of
+/// BullMQ/DbJob, so it cannot check liveness; the generous `max_age` (default 72h,
+/// `GIT_STAGING_REAP_MAX_AGE_HOURS`) is what keeps it from racing the crash-resume design. The
+/// server's hourly cron does the age + job-liveness reap. A dir whose mtime we couldn't read
+/// (`mtime_ms == 0`) is skipped, never assumed ancient.
+pub fn reap_stale_staging_dirs(staging_dir: &StdPath, max_age: Duration) -> StagingReapSummary {
+    let mut summary = StagingReapSummary::default();
+    let now_ms = system_time_to_millis(SystemTime::now());
+    let max_age_ms = max_age.as_millis() as i64;
+
+    for info in scan_staging_dirs(staging_dir) {
+        summary.scanned += 1;
+
+        if info.mtime_ms <= 0 {
+            // Unknown mtime — don't risk deleting a dir we couldn't stat.
+            continue;
+        }
+        // `saturating_sub` makes a future-dated mtime (clock skew) read as age 0 → left alone.
+        let age_ms = now_ms.saturating_sub(info.mtime_ms);
+        if age_ms <= max_age_ms {
+            continue;
+        }
+
+        let job_dir = staging_dir.join(&info.job_id);
+        // Mirror `cleanup_staging`: retry once after a brief pause for the transient macOS
+        // "Directory not empty" (os error 66) from a just-closed SQLite WAL.
+        if let Err(_first_err) = std::fs::remove_dir_all(&job_dir) {
+            std::thread::sleep(Duration::from_millis(100));
+            if let Err(second_err) = std::fs::remove_dir_all(&job_dir) {
+                tracing::warn!(
+                    "Failed to reap stale staging dir {:?}: {}",
+                    job_dir,
+                    second_err
+                );
+                continue;
+            }
+        }
+
+        summary.reaped_bytes += info.size_bytes;
+        summary.reaped_job_ids.push(info.job_id);
+    }
+
+    summary
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/staging — list staging directories (jobId + mtime + size) so the
+// server's hourly reaper can find age + job-liveness orphans.
+// ---------------------------------------------------------------------------
+
+pub async fn list_staging(State(state): State<AppState>) -> Response {
+    let staging_dir = state.staging_dir.clone();
+
+    let result: Result<serde_json::Value, AppError> = tokio::task::spawn_blocking(move || {
+        Ok(json!({ "stagingDirs": scan_staging_dirs(&staging_dir) }))
+    })
+    .await
+    .map_err(|e| AppError::internal(e.to_string()))
+    .and_then(|r| r);
+
+    match result {
+        Ok(data) => envelope(&state, None, data),
+        Err(err) => envelope_error(&state, None, err),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -807,6 +964,76 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // -----------------------------------------------------------------------
+    // Staging reaper / listing (DEV-11317)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn reap_stale_staging_dirs_removes_old_orphan() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+        let job_id = "pull_job_old";
+        do_stage_files(&state, job_id, "Products", vec![("a.json", r#"{"id":1}"#)]).await;
+
+        let job_dir = state.staging_job_path(job_id);
+        assert!(job_dir.exists());
+
+        // Sleep so the dir's (millisecond-truncated) age is comfortably non-zero, then reap
+        // everything older than 0 → this dir qualifies. Exercises the real dir-mtime read
+        // without a mtime-backdating dependency.
+        std::thread::sleep(Duration::from_millis(10));
+        let summary = reap_stale_staging_dirs(&state.staging_dir, Duration::ZERO);
+
+        assert!(
+            !job_dir.exists(),
+            "old orphaned staging dir should be reaped"
+        );
+        assert_eq!(summary.scanned, 1);
+        assert_eq!(summary.reaped_job_ids, vec![job_id.to_string()]);
+        assert!(
+            summary.reaped_bytes > 0,
+            "reaped bytes should reflect the staged file"
+        );
+    }
+
+    #[tokio::test]
+    async fn reap_stale_staging_dirs_keeps_fresh_dir() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+        let job_id = "pull_job_fresh";
+        do_stage_files(&state, job_id, "Products", vec![("a.json", r#"{"id":1}"#)]).await;
+
+        let job_dir = state.staging_job_path(job_id);
+        // A 24h max age dwarfs the dir's real age (a few ms) → it must be left alone.
+        let summary = reap_stale_staging_dirs(&state.staging_dir, Duration::from_secs(24 * 3600));
+
+        assert!(job_dir.exists(), "a fresh staging dir must not be reaped");
+        assert_eq!(summary.scanned, 1);
+        assert!(summary.reaped_job_ids.is_empty());
+        assert_eq!(summary.reaped_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn scan_staging_dirs_reports_job_id_mtime_and_size() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+        let job_id = "pull_job_scan";
+        do_stage_files(&state, job_id, "Products", vec![("a.json", r#"{"id":1}"#)]).await;
+
+        let dirs = scan_staging_dirs(&state.staging_dir);
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].job_id, job_id);
+        assert!(dirs[0].size_bytes > 0);
+        assert!(dirs[0].mtime_ms > 0);
+    }
+
+    #[tokio::test]
+    async fn scan_staging_dirs_empty_when_nothing_staged() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+        assert!(scan_staging_dirs(&state.staging_dir).is_empty());
     }
 
     #[tokio::test]

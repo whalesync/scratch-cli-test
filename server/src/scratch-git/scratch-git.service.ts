@@ -4,6 +4,7 @@ import {
   FileDiffStatus,
   formatRecordJson,
   GitObjectCountsResponse,
+  GitStagingDirsResponse,
   HasDirtyFilesResponse,
   TableView,
   WorkbookId,
@@ -742,5 +743,11 @@ export class ScratchGitService {
 
   async cleanupStaging(jobId: string): Promise<void> {
     await this.scratchGitClient.cleanupStaging(jobId);
+  }
+
+  /** List every staging directory (jobId + mtime + size) so the hourly reaper can find
+   *  age + job-liveness orphans (DEV-11317). */
+  async listStaging(): Promise<GitStagingDirsResponse> {
+    return this.scratchGitClient.listStaging();
   }
 }

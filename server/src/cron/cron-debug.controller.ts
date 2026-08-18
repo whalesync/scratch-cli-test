@@ -19,6 +19,7 @@ import { OldJobCleanupService } from './old-job-cleanup.service';
 import { RecordCountRefreshService } from './record-count-refresh.service';
 import { RoutineRunReaperService } from './routine-run-reaper.service';
 import { ScratchGitDiskObservabilityService } from './scratch-git-disk-observability.service';
+import { StagingDirReaperService } from './staging-dir-reaper.service';
 import { StaleJobReaperService } from './stale-job-reaper.service';
 
 const LOG_SOURCE = 'CronDebugController';
@@ -40,6 +41,7 @@ export class CronDebugController {
     private readonly routineRunReaper: RoutineRunReaperService,
     private readonly expiredApiTokenCleanup: ExpiredApiTokenCleanupService,
     private readonly scratchGitDiskObservability: ScratchGitDiskObservabilityService,
+    private readonly stagingDirReaper: StagingDirReaperService,
   ) {}
 
   /**
@@ -56,6 +58,7 @@ export class CronDebugController {
       'routine-run-reaper': () => this.routineRunReaper.reapStuckRoutineRuns(),
       'expired-api-token-cleanup': () => this.expiredApiTokenCleanup.cleanupExpiredWhalesyncSessionTokens(),
       'scratch-git-disk-observability': () => this.scratchGitDiskObservability.emitDiskObservabilityMetrics(),
+      'staging-dir-reaper': () => this.stagingDirReaper.reapStagingDirs(),
     };
   }
 

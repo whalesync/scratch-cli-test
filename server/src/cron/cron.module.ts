@@ -14,6 +14,7 @@ import { OldJobCleanupService } from './old-job-cleanup.service';
 import { RecordCountRefreshService } from './record-count-refresh.service';
 import { RoutineRunReaperService } from './routine-run-reaper.service';
 import { ScratchGitDiskObservabilityService } from './scratch-git-disk-observability.service';
+import { StagingDirReaperService } from './staging-dir-reaper.service';
 import { StaleJobReaperService } from './stale-job-reaper.service';
 
 @Module({
@@ -37,6 +38,7 @@ import { StaleJobReaperService } from './stale-job-reaper.service';
     RoutineRunReaperService,
     RecordCountRefreshService,
     ScratchGitDiskObservabilityService,
+    StagingDirReaperService,
   ],
   exports: [
     StaleJobReaperService,
@@ -45,6 +47,7 @@ import { StaleJobReaperService } from './stale-job-reaper.service';
     RoutineRunReaperService,
     RecordCountRefreshService,
     ScratchGitDiskObservabilityService,
+    StagingDirReaperService,
   ],
 })
 export class CronModule {}

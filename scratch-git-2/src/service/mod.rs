@@ -291,6 +291,7 @@ pub async fn run() {
             "/api/staging/{jobId}",
             delete(routes::staging::cleanup_staging),
         )
+        .route("/api/staging", get(routes::staging::list_staging))
         // Debug
         .route("/api/repo/debug/{id}/graph", get(routes::debug::graph))
         .route(
@@ -330,17 +331,19 @@ pub async fn run() {
     let git_addr = format!("0.0.0.0:{}", config.git_backend_port);
 
     tracing::info!(
-        "ScratchGit API listening at http://localhost:{} (build: {}, repos: {}, env: {})",
+        "ScratchGit API listening at http://localhost:{} (build: {}, repos: {}, staging: {}, env: {})",
         config.port,
         config.build_version,
         config.repos_dir.display(),
+        config.staging_dir.display(),
         std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string()),
     );
     tracing::info!(
-        "ScratchGit Git Backend listening at http://localhost:{} (build: {}, repos: {}, env: {})",
+        "ScratchGit Git Backend listening at http://localhost:{} (build: {}, repos: {}, staging: {}, env: {})",
         config.git_backend_port,
         config.build_version,
         config.repos_dir.display(),
+        config.staging_dir.display(),
         std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string()),
     );
 
@@ -348,6 +351,41 @@ pub async fn run() {
         let build_version = config.build_version.clone();
         tokio::spawn(async move {
             slack::send_startup_notification(&url, &build_version).await;
+        });
+    }
+
+    // Age-only startup sweep of orphaned staging dirs (DEV-11317). A crash/redeploy between
+    // `stage_files` and the caller's cleanup strands `{staging_dir}/{jobId}` forever; this reaps
+    // any dir older than `GIT_STAGING_REAP_MAX_AGE_HOURS` (default 72h) at boot, before the
+    // server's hourly (age + job-liveness) cron next ticks. Age-only because the git service has no
+    // BullMQ/DbJob knowledge; the generous threshold keeps it clear of the crash-resume design.
+    {
+        let staging_dir = config.staging_dir.clone();
+        let max_age = std::time::Duration::from_secs(config.staging_reap_max_age_hours * 3600);
+        tokio::spawn(async move {
+            let summary = tokio::task::spawn_blocking(move || {
+                routes::staging::reap_stale_staging_dirs(&staging_dir, max_age)
+            })
+            .await;
+            match summary {
+                Ok(summary) => {
+                    if !summary.reaped_job_ids.is_empty() {
+                        tracing::info!(
+                            "Staging startup sweep reaped {} orphaned dir(s) ({} bytes) of {} scanned: {:?}",
+                            summary.reaped_job_ids.len(),
+                            summary.reaped_bytes,
+                            summary.scanned,
+                            summary.reaped_job_ids,
+                        );
+                    } else {
+                        tracing::info!(
+                            "Staging startup sweep found no orphaned dirs ({} scanned)",
+                            summary.scanned,
+                        );
+                    }
+                }
+                Err(e) => tracing::warn!("Staging startup sweep failed: {}", e),
+            }
         });
     }
 

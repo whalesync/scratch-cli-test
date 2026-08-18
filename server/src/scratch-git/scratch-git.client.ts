@@ -6,6 +6,7 @@ import {
   GitGcResponse,
   GitObjectCountsResponse,
   GitRepairResponse,
+  GitStagingDirsResponse,
   HasDirtyFilesResponse,
 } from '@spinner/shared-types';
 // Trigger reload
@@ -203,6 +204,14 @@ export class ScratchGitClient {
       `/api/repo/manage/${this.encodeRepoId(repoId)}/count-objects`,
       'GET',
     ) as Promise<GitObjectCountsResponse>;
+  }
+
+  /**
+   * List every `{staging_dir}/{jobId}` directory on scratch-git with its jobId, mtime, and total
+   * size, so the server's hourly reaper can delete age + job-liveness orphans (DEV-11317).
+   */
+  async listStaging(): Promise<GitStagingDirsResponse> {
+    return this.callGitApi('/api/staging', 'GET') as Promise<GitStagingDirsResponse>;
   }
 
   /**

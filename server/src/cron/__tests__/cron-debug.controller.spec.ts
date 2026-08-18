@@ -7,6 +7,7 @@ import { OldJobCleanupService } from '../old-job-cleanup.service';
 import { RecordCountRefreshService } from '../record-count-refresh.service';
 import { RoutineRunReaperService } from '../routine-run-reaper.service';
 import { ScratchGitDiskObservabilityService } from '../scratch-git-disk-observability.service';
+import { StagingDirReaperService } from '../staging-dir-reaper.service';
 import { StaleJobReaperService } from '../stale-job-reaper.service';
 
 const ADMIN_REQ = { user: { id: 'usr_admin', role: UserRole.ADMIN, authType: 'jwt' } } as unknown as RequestWithUser;
@@ -19,6 +20,7 @@ describe('CronDebugController', () => {
   let routineRunReaper: { reapStuckRoutineRuns: jest.Mock };
   let expiredApiTokenCleanup: { cleanupExpiredWhalesyncSessionTokens: jest.Mock };
   let scratchGitDiskObservability: { emitDiskObservabilityMetrics: jest.Mock };
+  let stagingDirReaper: { reapStagingDirs: jest.Mock };
   let controller: CronDebugController;
 
   const originalRunningInCloud = process.env.RUNNING_IN_CLOUD;
@@ -42,6 +44,7 @@ describe('CronDebugController', () => {
     routineRunReaper = { reapStuckRoutineRuns: jest.fn().mockResolvedValue(undefined) };
     expiredApiTokenCleanup = { cleanupExpiredWhalesyncSessionTokens: jest.fn().mockResolvedValue(undefined) };
     scratchGitDiskObservability = { emitDiskObservabilityMetrics: jest.fn().mockResolvedValue(undefined) };
+    stagingDirReaper = { reapStagingDirs: jest.fn().mockResolvedValue(undefined) };
     controller = new CronDebugController(
       recordCountRefresh as unknown as RecordCountRefreshService,
       oldJobCleanup as unknown as OldJobCleanupService,
@@ -49,6 +52,7 @@ describe('CronDebugController', () => {
       routineRunReaper as unknown as RoutineRunReaperService,
       expiredApiTokenCleanup as unknown as ExpiredApiTokenCleanupService,
       scratchGitDiskObservability as unknown as ScratchGitDiskObservabilityService,
+      stagingDirReaper as unknown as StagingDirReaperService,
     );
   });
 
@@ -72,6 +76,13 @@ describe('CronDebugController', () => {
     const result = await controller.triggerCronJob('scratch-git-disk-observability', ADMIN_REQ);
     expect(scratchGitDiskObservability.emitDiskObservabilityMetrics).toHaveBeenCalledTimes(1);
     expect(result.slug).toBe('scratch-git-disk-observability');
+    expect(result.ran).toBe(true);
+  });
+
+  it('triggers the staging-dir reaper by slug', async () => {
+    const result = await controller.triggerCronJob('staging-dir-reaper', ADMIN_REQ);
+    expect(stagingDirReaper.reapStagingDirs).toHaveBeenCalledTimes(1);
+    expect(result.slug).toBe('staging-dir-reaper');
     expect(result.ran).toBe(true);
   });
 

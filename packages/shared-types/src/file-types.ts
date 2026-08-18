@@ -63,6 +63,25 @@ export interface GitGcResponse {
 }
 
 /**
+ * One staging directory reported by scratch-git's `GET /api/staging`: the per-job
+ * `{staging_dir}/{jobId}` dir, its last-modified time (ms since the Unix epoch), and its total
+ * on-disk size in bytes.
+ */
+export interface GitStagingDir {
+  jobId: string;
+  mtimeMs: number;
+  sizeBytes: number;
+}
+
+/**
+ * Response from the scratch-git `GET /api/staging` listing endpoint. Consumed by the server's
+ * hourly staging-dir reaper (DEV-11317) to find age + job-liveness orphans.
+ */
+export interface GitStagingDirsResponse {
+  stagingDirs: GitStagingDir[];
+}
+
+/**
  * Per-ref walkability snapshot from `git fsck`. `walkable` is the clonability
  * signal: a `git clone --bare` mirrors every ref, so one unwalkable ref (one
  * that reaches a missing/corrupt object) makes the whole clone abort.

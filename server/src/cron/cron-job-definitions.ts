@@ -46,6 +46,11 @@ export const CRON_JOB_DEFINITIONS: CronJobSummaryDto[] = [
     description: "Emit scratch-git's worst-repo loose-object gauge for disk-bloat observability.",
     schedule: 'EVERY_HOUR',
   },
+  {
+    slug: 'staging-dir-reaper',
+    description: 'Delete orphaned scratch-git staging dirs (older than the threshold, no live job).',
+    schedule: 'EVERY_HOUR',
+  },
 ];
 
 /**

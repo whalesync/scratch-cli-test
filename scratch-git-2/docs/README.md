@@ -62,6 +62,12 @@ PORT=3100                 # Port for REST API
 GIT_BACKEND_PORT=3101     # Port for Git HTTP Backend
 GIT_REPOS_DIR=repos       # Absolute or relative path to repository storage
 GIT_REPOS_V2_DIR=repos-v2 # Path to v2 repositories (future)
+GIT_STAGING_DIR=          # Per-job staging root (default: a `staging` sibling of GIT_REPOS_DIR)
+GIT_STAGING_REAP_MAX_AGE_HOURS=72
+                          # Age (hours) after which the boot-time sweep reaps an orphaned
+                          # `{staging_dir}/{jobId}` directory (DEV-11317). Age-only backstop; the
+                          # server's hourly cron adds a job-liveness gate on top. 72h covers
+                          # multi-day pulls and leaves a window to debug a failed pull's dir.
 BUILD_VERSION=0.0.0-local # Build version label
 RUST_LOG=info             # Log level (debug, trace, etc.)
 SCRATCH_GIT_AUTH_TOKEN=   # Shared bearer token the NestJS server must present (DEV-10600).

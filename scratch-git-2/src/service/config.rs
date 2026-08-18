@@ -16,6 +16,14 @@ pub struct Config {
     /// today's behavior, used for local dev, tests, and the smoke-test stack. When `Some`,
     /// the `require_auth` middleware enforces it on the `:3100` and `:3101` routers.
     pub shared_auth_token: Option<String>,
+    /// Maximum age (in hours) a `{staging_dir}/{jobId}` directory may reach before the age-only
+    /// startup sweep reaps it as orphaned (DEV-11317, default 72h). A crash/redeploy between
+    /// `stage_files` and the caller's cleanup strands the dir forever; this bounds that leak. The
+    /// server-side hourly cron adds a job-liveness gate on top of the same age threshold — this value
+    /// is only the git service's own boot-time backstop, deliberately generous (72h) so it never races
+    /// the crash-resume design: it covers pulls that legitimately run for days and leaves a window to
+    /// debug a failed pull's staging dir before it is swept.
+    pub staging_reap_max_age_hours: u64,
 }
 
 impl Config {
@@ -70,6 +78,11 @@ impl Config {
             }
         });
 
+        let staging_reap_max_age_hours = env::var("GIT_STAGING_REAP_MAX_AGE_HOURS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(72);
+
         Self {
             port,
             git_backend_port,
@@ -79,6 +92,7 @@ impl Config {
             build_version,
             slack_notification_webhook_url,
             shared_auth_token,
+            staging_reap_max_age_hours,
         }
     }
 }

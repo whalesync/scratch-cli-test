@@ -43,6 +43,7 @@ describe('CronController', () => {
       'record-count-refresh',
       'routine-run-reaper',
       'scratch-git-disk-observability',
+      'staging-dir-reaper',
       'stale-active-job-reaper',
       'stale-job-reaper',
     ]);
