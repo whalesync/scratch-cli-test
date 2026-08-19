@@ -1,7 +1,9 @@
 # tools/github
 
 Scripts for managing GitHub releases of the Scratch apps published under the
-`whalesync` org (`scratch-desktop`, `scratch-cli`).
+`whalesync` org. Each app publishes prod and test releases to SEPARATE repos
+(DEV-11320): desktop → `scratch-desktop` (prod) / `scratch-desktop-test` (test);
+CLI → `scratch-cli` (prod) / `scratch-cli-test` (test).
 
 ## Authentication
 

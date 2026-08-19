@@ -5,7 +5,10 @@ cd "$(dirname "$0")/.."
 
 # Usage: ./scripts/release_test.sh [patch|minor|major]
 RELEASE_TYPE=$1
-GITHUB_REPO="whalesync/scratch-cli"
+# Test releases live in their OWN GitHub repo, split from prod's whalesync/scratch-cli
+# (DEV-11320) so the test channel has an unambiguous, "test only" release stream. Prod
+# releases (release_public.sh) stay on whalesync/scratch-cli.
+GITHUB_REPO="whalesync/scratch-cli-test"
 GITHUB_AUTH_URL="https://${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git"
 GITHUB_REPO_URL="https://github.com/${GITHUB_REPO}.git"
 
@@ -24,7 +27,7 @@ git fetch --tags
 # Hourly-schedule no-op guard: when run by the "Hourly Test Releases" schedule,
 # skip the whole build if nothing under scratch-git-2/ changed since the commit
 # the last *-test release was built from. The vX.Y.Z-test tag we push to the
-# scratch-cli GitHub repo (see step 6) points at that monorepo commit, so it is
+# scratch-cli-test GitHub repo (see step 6) points at that monorepo commit, so it is
 # the marker. Runs BEFORE any build or GitHub mutation, so a skip has zero side
 # effects. Fails open (builds) if the marker is missing/unreachable. Non-schedule
 # runs (manual master, MR) always build; FORCE_RELEASE=1 forces a build.

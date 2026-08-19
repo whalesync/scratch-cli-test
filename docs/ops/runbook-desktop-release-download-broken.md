@@ -66,7 +66,7 @@ The server caches a fresh response for **5 minutes**, so once a good release is 
 
 - **GitHub anonymous rate limits** (60 req/hr/IP): the GitHub checks run anonymously at a 15-min cadence (~4 req/hr per prober region), well under the limit, but Cloud Monitoring prober IPs are shared across GCP customers, so an occasional `403` is possible. The alert requires **≥2 regions failing** to reduce this. If rate-limit 403s become a recurring false alarm, lengthen the GitHub check `period`, or add an authenticated `Authorization: Bearer …` header (note: uptime-check headers are stored in plaintext in Terraform state — use a fine-grained, read-only, public-repo-scoped token if you do).
 - **Asset renames**: the content matchers are coupled to filename conventions. A legitimate rename of the installers/archives will trip the alert — update the `content_matchers` in `monitoring.tf` alongside any such rename.
-- **Test channel**: not monitored (toggles off in `envs/eu-test`) because the `-test` channel republishes hourly and is frequently mid-publish.
+- **Test channel**: not monitored (toggles off in `envs/eu-test`) because the `-test` channel republishes hourly and is frequently mid-publish. Test releases live in their own repos — `whalesync/scratch-desktop-test` and `whalesync/scratch-cli-test` (DEV-11320) — separate from the prod repos monitored above.
 
 ## Escalate to page (if warn tier proves insufficient)
 

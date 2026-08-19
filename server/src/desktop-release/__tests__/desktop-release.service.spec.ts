@@ -53,6 +53,10 @@ function makeDesktopRelease(tag: string, overrides: Partial<FakeRelease> = {}): 
   return makeRelease(tag, overrides, 'whalesync/scratch-desktop');
 }
 
+function makeCliTestRelease(tag: string, overrides: Partial<FakeRelease> = {}): FakeRelease {
+  return makeRelease(tag, overrides, 'whalesync/scratch-cli-test');
+}
+
 function mockFetchOnce(releases: FakeRelease[]): jest.Mock {
   const fetchMock = jest.fn().mockResolvedValueOnce({
     ok: true,
@@ -120,15 +124,13 @@ describe('DesktopReleaseService', () => {
   });
 
   describe('getLatestCliRelease — test channel', () => {
-    it('picks up -test tags but never -desktop-test', async () => {
-      mockFetchOnce([
-        // Newest is a desktop-test — must NOT be picked up by CLI test predicate.
-        makeRelease('v0.5.0-desktop-test'),
-        // Then a CLI test — this is the match.
-        makeRelease('v0.4.2-test'),
-        // Older entries
-        makeRelease('v0.4.1'),
-        makeRelease('v0.4.0-desktop-test'),
+    it('returns the latest -test tag from the dedicated scratch-cli-test repo', async () => {
+      const fetchMock = mockFetchOnce([
+        // A bare (prod-shaped) tag must be skipped — the test predicate requires the -test suffix.
+        makeCliTestRelease('v0.4.3'),
+        // Newest matching CLI test release — this is the match.
+        makeCliTestRelease('v0.4.2-test'),
+        makeCliTestRelease('v0.4.1-test'),
       ]);
 
       const service = makeService(false);
@@ -137,6 +139,11 @@ describe('DesktopReleaseService', () => {
       expect(result.tagName).toBe('v0.4.2-test');
       expect(result.version).toBe('0.4.2');
       expect(result.channel).toBe('test');
+      // CLI test releases live in their own GitHub repo, split from production (DEV-11320).
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('whalesync/scratch-cli-test/releases'),
+        expect.anything(),
+      );
     });
   });
 

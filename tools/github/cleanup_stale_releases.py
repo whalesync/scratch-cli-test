@@ -26,11 +26,11 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 def repo_for(app, variant):
-    # Test and production DESKTOP releases live in SEPARATE GitHub repos (DEV-11320); the CLI still
-    # shares one repo across both channels (unchanged).
+    # Test and production releases live in SEPARATE GitHub repos (DEV-11320) for both the desktop app
+    # and the CLI, so each channel has its own "latest" pointer.
     if app == "desktop":
         return "whalesync/scratch-desktop-test" if variant == "test" else "whalesync/scratch-desktop"
-    return "whalesync/scratch-cli"
+    return "whalesync/scratch-cli-test" if variant == "test" else "whalesync/scratch-cli"
 
 
 TAG_PATTERNS = {
@@ -67,7 +67,8 @@ def parse_args():
         required=True,
         help=(
             "Which app's releases to scan. Desktop test releases live in whalesync/scratch-desktop-test, "
-            "desktop prod in whalesync/scratch-desktop, CLI (both channels) in whalesync/scratch-cli."
+            "desktop prod in whalesync/scratch-desktop, CLI test in whalesync/scratch-cli-test, "
+            "CLI prod in whalesync/scratch-cli."
         ),
     )
     p.add_argument(

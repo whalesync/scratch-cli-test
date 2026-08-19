@@ -8,12 +8,13 @@ const RELEASES_PER_PAGE = 30;
 const MAX_RELEASE_PAGES = 5;
 
 function githubReleaseRepoForKindAndChannel(kind: ReleaseKind, channel: Channel): string {
+  // Production and test releases live in SEPARATE GitHub repos (DEV-11320) so each channel has its
+  // own "latest" pointer and an unambiguous, "test only" release stream — for both the desktop app
+  // and the CLI.
   if (kind === 'desktop') {
-    // Production and test desktop releases live in SEPARATE GitHub repos (DEV-11320) so each channel
-    // has its own "latest" pointer. The CLI still shares one repo across both channels (unchanged).
     return channel === 'production' ? 'whalesync/scratch-desktop' : 'whalesync/scratch-desktop-test';
   }
-  return 'whalesync/scratch-cli';
+  return channel === 'production' ? 'whalesync/scratch-cli' : 'whalesync/scratch-cli-test';
 }
 
 function releasesListUrl(kind: ReleaseKind, channel: Channel, page: number): string {
@@ -76,13 +77,13 @@ function lookupFor(kind: ReleaseKind, channel: Channel): ReleaseLookup {
       notFoundMessage: `No desktop release found for channel "${channel}"`,
     };
   }
-  // kind === 'cli' — prod tags have no suffix (vX.Y.Z); test tags end in -test.
-  // Legacy desktop tags (-desktop, -desktop-test) may still exist on the CLI repo
-  // and must be excluded from the test predicate.
+  // kind === 'cli' — prod tags (whalesync/scratch-cli) have no suffix (vX.Y.Z); test tags
+  // (whalesync/scratch-cli-test) are vX.Y.Z-test. Each channel now has its own repo (DEV-11320),
+  // so the test predicate no longer needs to exclude legacy -desktop-test tags.
   const matchTag =
     channel === 'production'
       ? (t: string) => /^v\d+\.\d+\.\d+$/.test(t)
-      : (t: string) => t.endsWith('-test') && !t.endsWith('-desktop-test');
+      : (t: string) => /^v\d+\.\d+\.\d+-test$/.test(t);
   return {
     kind,
     channel,
