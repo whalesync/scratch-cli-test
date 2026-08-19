@@ -141,8 +141,8 @@ describe('DesktopReleaseService', () => {
   });
 
   describe('getLatestDesktopRelease', () => {
-    it('returns the latest tag matching ^v\\d+\\.\\d+\\.\\d+$ for production', async () => {
-      mockFetchOnce([
+    it('returns the latest tag matching ^v\\d+\\.\\d+\\.\\d+$ for production, from the main repo', async () => {
+      const fetchMock = mockFetchOnce([
         makeDesktopRelease('v1.5.0-test'),
         makeDesktopRelease('v1.4.8', {
           assets: [
@@ -164,6 +164,11 @@ describe('DesktopReleaseService', () => {
       expect(result.channel).toBe('production');
       expect(result.assets).toHaveLength(1);
       expect(result.assets[0].name).toBe('Scratch-1.4.8-arm64.dmg');
+      // Production desktop releases come from the main repo, never the -test repo (DEV-11320).
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('whalesync/scratch-desktop/releases'),
+        expect.anything(),
+      );
     });
 
     it('skips production releases marked as prerelease', async () => {
@@ -175,8 +180,8 @@ describe('DesktopReleaseService', () => {
       expect(result.tagName).toBe('v1.4.8');
     });
 
-    it('returns the latest -test tag for test channel', async () => {
-      mockFetchOnce([
+    it('returns the latest -test tag for test channel, from the dedicated test repo', async () => {
+      const fetchMock = mockFetchOnce([
         makeDesktopRelease('v1.4.8'),
         makeDesktopRelease('v0.5.1-test'),
         makeDesktopRelease('v0.5.0-test'),
@@ -188,6 +193,11 @@ describe('DesktopReleaseService', () => {
       expect(result.tagName).toBe('v0.5.1-test');
       expect(result.version).toBe('0.5.1');
       expect(result.channel).toBe('test');
+      // Test desktop releases live in their own GitHub repo, split from production (DEV-11320).
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('whalesync/scratch-desktop-test/releases'),
+        expect.anything(),
+      );
     });
   });
 

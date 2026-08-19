@@ -28,13 +28,13 @@
     "test:e2e": "yarn build && playwright test",
     "test:e2e:live": "VITE_SCRATCH_API_URL=https://test-api.scratch.md VITE_SCRATCH_WEB_URL=https://test.scratch.md yarn build && SCRATCH_E2E_LIVE=1 playwright test e2e/live.spec.ts",
     "postinstall": "node scripts/ensure-electron-binary.cjs && node scripts/install-app-deps.cjs",
-    "build:mac": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --mac",
-    "build:mac:unsigned": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} CSC_IDENTITY='-' electron-builder --mac --config electron-builder.unsigned-mac.yml",
+    "build:mac": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} UPDATE_REPO=${UPDATE_REPO:-scratch-desktop-test} electron-builder --mac",
+    "build:mac:unsigned": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} UPDATE_REPO=${UPDATE_REPO:-scratch-desktop-test} CSC_IDENTITY='-' electron-builder --mac --config electron-builder.unsigned-mac.yml",
     "build:mac:local": "bash scripts/build_mac_local.sh",
     "build:mac:local-signed": "bash scripts/build_mac_local_signed.sh",
     "build:mac:prod-local": "bash scripts/build_mac_prod_local.sh",
     "run:mac": "OPEN_DEVTOOLS=1 ./dist/mac/Scratch.app/Contents/MacOS/Scratch",
-    "build:linux": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --linux",
+    "build:linux": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} UPDATE_REPO=${UPDATE_REPO:-scratch-desktop-test} electron-builder --linux",
     "build:win": "node scripts/build-win.cjs"
   },
   "dependencies": {

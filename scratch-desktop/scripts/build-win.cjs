@@ -38,6 +38,10 @@ const cliBinariesDir = join(scratchGit2Dir, 'cli-binaries', RUST_TARGET_CLI);
 const nativeNodeFilename = 'scratchmd-native.win32-x64.node';
 
 process.env.UPDATE_CHANNEL = process.env.UPDATE_CHANNEL || 'desktop-test';
+// Baked into app-update.yml as publish.repo (DEV-11320): the test channel lives in its own GitHub
+// repo so its "latest" pointer resolves to test builds. Mirrors the UPDATE_CHANNEL default above; the
+// GitLab pipeline sets both explicitly.
+process.env.UPDATE_REPO = process.env.UPDATE_REPO || 'scratch-desktop-test';
 
 function run(cmd, args, cwd, env) {
   const where = cwd || desktopDir;

@@ -123,6 +123,9 @@ Bootstrap test desktop release:
   extends: .bootstrap_release
   variables:
     VARIANT: 'test'
+    # Test channel publishes to its own GitHub repo (DEV-11320). The release scripts read GITHUB_REPO
+    # (defaulting to the prod repo), so only the test jobs set it.
+    GITHUB_REPO: 'whalesync/scratch-desktop-test'
   inputs:
     RELEASE_TYPE:
       description: 'Release version type'
@@ -425,6 +428,8 @@ Upload prod Windows assets:
 
 Upload test macOS assets:
   extends: .upload_assets
+  variables:
+    GITHUB_REPO: 'whalesync/scratch-desktop-test'
   needs:
     - job: Bootstrap test desktop release
       artifacts: true
@@ -434,6 +439,8 @@ Upload test macOS assets:
 
 Upload test Linux assets:
   extends: .upload_assets
+  variables:
+    GITHUB_REPO: 'whalesync/scratch-desktop-test'
   needs:
     - job: Bootstrap test desktop release
       artifacts: true
@@ -443,6 +450,8 @@ Upload test Linux assets:
 
 Upload test Windows assets:
   extends: .upload_assets
+  variables:
+    GITHUB_REPO: 'whalesync/scratch-desktop-test'
   needs:
     - job: Bootstrap test desktop release
       artifacts: true
@@ -486,6 +495,8 @@ Finalize prod release:
 
 Finalize test release:
   extends: .finalize_release
+  variables:
+    GITHUB_REPO: 'whalesync/scratch-desktop-test'
   needs:
     - job: Bootstrap test desktop release
       artifacts: true
@@ -534,7 +545,7 @@ Notify slack prod desktop release started:
     # Skip the "published" ping on a no-op hourly run (test variant only).
     - '[ "${RELEASE_SKIP:-}" = "true" ] && { echo "RELEASE_SKIP=true — skipping notify."; exit 0; }'
     - |
-      RELEASE_URL="https://github.com/whalesync/scratch-desktop/releases/tag/${NEW_VERSION}"
+      RELEASE_URL="https://github.com/${GITHUB_REPO:-whalesync/scratch-desktop}/releases/tag/${NEW_VERSION}"
       curl -X POST -H 'Content-type: application/json' \
       --data "{\"text\":\"${SLACK_DESKTOP_RELEASE_SLACK_PREFIX} Scratch Desktop ${SLACK_DESKTOP_RELEASE_LABEL} release published\n>${CI_COMMIT_TITLE}\n<${RELEASE_URL}|Release ${NEW_VERSION}> | <${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
       "${SLACK_DESKTOP_RELEASE_WEBHOOK_URL}"
@@ -559,6 +570,8 @@ Notify slack test desktop release published:
     SLACK_DESKTOP_RELEASE_LABEL: 'test'
     SLACK_DESKTOP_RELEASE_SLACK_PREFIX: '✅'
     SLACK_DESKTOP_RELEASE_WEBHOOK_URL: $SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL
+    # Test releases live in the test repo (DEV-11320) — link the Slack message there.
+    GITHUB_REPO: 'whalesync/scratch-desktop-test'
   needs:
     - job: Bootstrap test desktop release
       artifacts: true
@@ -596,6 +609,8 @@ Cleanup prod desktop release:
 
 Cleanup test desktop release:
   extends: .cleanup_failed_release
+  variables:
+    GITHUB_REPO: 'whalesync/scratch-desktop-test'
   dependencies:
     - Bootstrap test desktop release
   rules:

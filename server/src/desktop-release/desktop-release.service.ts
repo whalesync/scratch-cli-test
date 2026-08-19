@@ -7,13 +7,17 @@ import { WSLogger } from 'src/logger';
 const RELEASES_PER_PAGE = 30;
 const MAX_RELEASE_PAGES = 5;
 
-const GITHUB_REPO_BY_KIND: Record<ReleaseKind, string> = {
-  desktop: 'whalesync/scratch-desktop',
-  cli: 'whalesync/scratch-cli',
-};
+function githubReleaseRepoForKindAndChannel(kind: ReleaseKind, channel: Channel): string {
+  if (kind === 'desktop') {
+    // Production and test desktop releases live in SEPARATE GitHub repos (DEV-11320) so each channel
+    // has its own "latest" pointer. The CLI still shares one repo across both channels (unchanged).
+    return channel === 'production' ? 'whalesync/scratch-desktop' : 'whalesync/scratch-desktop-test';
+  }
+  return 'whalesync/scratch-cli';
+}
 
-function releasesListUrl(kind: ReleaseKind, page: number): string {
-  return `https://api.github.com/repos/${GITHUB_REPO_BY_KIND[kind]}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`;
+function releasesListUrl(kind: ReleaseKind, channel: Channel, page: number): string {
+  return `https://api.github.com/repos/${githubReleaseRepoForKindAndChannel(kind, channel)}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`;
 }
 const CACHE_KEY_PREFIX = 'desktop-release:latest:v4:';
 const FRESH_CACHE_TTL_SECONDS = 5 * 60;
@@ -280,7 +284,7 @@ export class DesktopReleaseService implements OnModuleDestroy {
   ): Promise<FetchReleaseResult> {
     try {
       for (let page = 1; page <= MAX_RELEASE_PAGES; page++) {
-        const res = await fetch(releasesListUrl(kind, page), {
+        const res = await fetch(releasesListUrl(kind, channel, page), {
           headers: this.githubRequestHeaders(),
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });

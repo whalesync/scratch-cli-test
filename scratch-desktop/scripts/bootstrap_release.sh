@@ -5,10 +5,10 @@ cd "$(dirname "$0")/.."
 
 # Usage: ./scripts/bootstrap_release.sh <prod|test> <patch|minor|major>
 #
-# Computes the next desktop-release version, creates a DRAFT GitHub release on
-# whalesync/scratch-desktop, updates scratch-desktop/package.json with the new
-# semver, and writes scratch-desktop/release.env. The .env is consumed by
-# downstream GitLab jobs via `artifacts.reports.dotenv`.
+# Computes the next desktop-release version, creates a DRAFT GitHub release on the channel's repo
+# ($GITHUB_REPO: prod -> whalesync/scratch-desktop, test -> whalesync/scratch-desktop-test; DEV-11320),
+# updates scratch-desktop/package.json with the new semver, and writes scratch-desktop/release.env.
+# The .env is consumed by downstream GitLab jobs via `artifacts.reports.dotenv`.
 
 VARIANT=${1:-}
 RELEASE_TYPE=${2:-}
@@ -27,20 +27,23 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
-GITHUB_REPO="whalesync/scratch-desktop"
+# Target repo for this channel's releases (DEV-11320). Defaults to the prod repo so prod jobs need not
+# set it; the test CI jobs pass GITHUB_REPO=whalesync/scratch-desktop-test.
+GITHUB_REPO="${GITHUB_REPO:-whalesync/scratch-desktop}"
 
-# Tags on the dedicated desktop repo are bare semver (prod) or semver-test (test).
-# TAG_PATTERN is a regex passed to jq's test() so we can require an exact shape;
-# `endswith` is too loose now that prod has no suffix at all.
+# Prod and test now publish to SEPARATE GitHub repos, selected by $GITHUB_REPO above. Each repo holds
+# only its own channel's releases, so each has its own "latest" pointer and the version floor is
+# computed from that one repo alone — the test line is INDEPENDENT of prod, not floored at it.
 #
-# VERSION_SELECT_PATTERN is what we scan to pick the version to bump FROM. For
-# prod it's just the prod tags. For test it is deliberately BROADER than
-# TAG_PATTERN: it also matches the prod bare-semver tags, so the test version is
-# floored at the prod line and can never regress below the latest prod release
-# (a test build is "prod plus in-flight changes"). This also self-heals a
-# missing/reset test line — the DEV-10749 failure, where the test channel was
-# never seeded on the new repo, so the first bootstrap fell back to v0.0.0-test
-# and shipped a v0.0.1-test sitting far below prod's v1.0.62.
+# TAG_PATTERN is a regex passed to jq's test() to require an exact tag shape. VERSION_SELECT_PATTERN is
+# what we scan to pick the version to bump FROM. For prod it's the bare prod tags. For test it stays
+# broad (bare-or-`-test`) so it floors correctly whether the test repo was seeded with a `vX.Y.Z-test`
+# or a bare `vX.Y.Z` release; in practice the test repo carries only `-test` tags.
+#
+# The test repo must be SEEDED with a published release >= the current fleet version before its first
+# release. An empty test repo ABORTS below (it never falls back to v0.0.0-test) — the safe form of the
+# DEV-10749 failure, where an unseeded new repo once cut v0.0.1-test far below prod's v1.0.62 and
+# wedged auto-update.
 if [ "$VARIANT" = "prod" ]; then
   TAG_SUFFIX=""
   TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
@@ -52,7 +55,9 @@ else
   TAG_SUFFIX="-test"
   TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-test$'
   VERSION_SELECT_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+(-test)?$'
-  IS_PRERELEASE=true
+  # Full (non-prerelease) release so GitHub's "latest" pointer resolves to it in the dedicated test
+  # repo — electron-updater resolves via /releases/latest, which ignores prereleases (DEV-11320).
+  IS_PRERELEASE=false
   FALLBACK_TAG="v0.0.0-test"
   # Stamp the monorepo commit into the body so the next hourly run can tell
   # whether anything changed since this release (see the no-op guard below).
@@ -83,10 +88,9 @@ curl_releases_page() {
 #    likely to be missed than with a single page (same pattern as
 #    preview_desktop_release_version.sh).
 #
-#    We strip a trailing `-test` before version-sorting so the prod line and the
-#    test line compare on the same bare-semver axis (VERSION_SELECT_PATTERN lets
-#    the test variant see both). The result is the highest base semver across the
-#    lines the variant cares about.
+#    We strip a trailing `-test` before version-sorting so a seed's bare tag and
+#    the `-test` releases compare on the same bare-semver axis. The result is the
+#    highest base semver in this channel's repo.
 # Fetch the first 3 pages of releases ONCE. `curl_releases_page` uses
 # `--fail-with-body`, so a non-2xx response makes the command substitution return
 # non-zero; we check that explicitly and ABORT rather than let an empty/error
@@ -129,6 +133,16 @@ if [ -z "$HIGHEST_EXISTING_BASE_SEMVER" ]; then
   if [ "${TOTAL_RELEASE_COUNT:-0}" -gt 0 ]; then
     echo "ERROR: ${TOTAL_RELEASE_COUNT} releases exist on ${GITHUB_REPO} but none match ${VERSION_SELECT_PATTERN}." >&2
     echo "       Refusing to fall back to ${FALLBACK_TAG} on a non-empty repo (would ship below 'latest')." >&2
+    exit 1
+  fi
+  if [ "$VARIANT" = "test" ]; then
+    # The test channel has its own repo now (DEV-11320) with an INDEPENDENT version line. An empty
+    # test repo means it was never seeded — falling back to ${FALLBACK_TAG} here would cut a version
+    # far below the running test fleet and wedge auto-update (the DEV-10749 failure). Refuse and make
+    # the operator seed the repo first.
+    echo "ERROR: ${GITHUB_REPO} has no releases — the test channel is not seeded." >&2
+    echo "       Seed it with a published (non-prerelease) release at >= the current test-fleet" >&2
+    echo "       version before cutting the first test release. Refusing to fall back to ${FALLBACK_TAG}." >&2
     exit 1
   fi
   echo "No existing releases found — using fallback ${FALLBACK_TAG} (genuine first release)."

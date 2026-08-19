@@ -180,8 +180,14 @@ linux:
   mimeTypes:
     - x-scheme-handler/scratch
 
+# owner is static; repo and channel are baked at package time from the environment so the two
+# release channels resolve to different GitHub projects (DEV-11320): production -> scratch-desktop,
+# test -> scratch-desktop-test. Splitting the repos gives each channel its own "latest" pointer, so a
+# test build's newest release is always the right one (electron-updater resolves via /releases/latest,
+# which ignores prereleases and other channels). scripts/package.sh sets both env vars and hard-fails
+# if either is unset.
 publish:
   provider: github
   owner: whalesync
-  repo: scratch-desktop
+  repo: ${env.UPDATE_REPO}
   channel: ${env.UPDATE_CHANNEL}

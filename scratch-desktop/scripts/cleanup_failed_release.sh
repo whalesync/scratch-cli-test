@@ -34,7 +34,8 @@ if ! command -v jq &>/dev/null; then
   exit 0
 fi
 
-GITHUB_REPO="whalesync/scratch-desktop"
+# Channel's release repo (DEV-11320); the test cleanup job passes whalesync/scratch-desktop-test.
+GITHUB_REPO="${GITHUB_REPO:-whalesync/scratch-desktop}"
 
 # Best-effort reaper for OTHER pipelines' abandoned drafts whose own cleanup job
 # never ran (pipeline cancelled, or a job sat pending and the cleanup stage was

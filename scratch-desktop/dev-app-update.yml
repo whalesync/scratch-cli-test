@@ -1,4 +1,6 @@
 provider: github
 owner: whalesync
-repo: scratch-desktop
+# The desktop-test channel lives in its own GitHub repo (DEV-11320); local unpackaged builds exercise
+# the test channel, so point the dev updater feed at the test repo too.
+repo: scratch-desktop-test
 channel: desktop-test

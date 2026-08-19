@@ -52,7 +52,8 @@ fi
 . "$(dirname "$0")/ensure_draft_release.sh"
 ensure_draft_release
 
-GITHUB_REPO="whalesync/scratch-desktop"
+# Channel's release repo (DEV-11320); test CI jobs pass whalesync/scratch-desktop-test.
+GITHUB_REPO="${GITHUB_REPO:-whalesync/scratch-desktop}"
 DIST_DIR="./dist-release"
 
 if [ ! -d "$DIST_DIR" ]; then

@@ -44,6 +44,21 @@ if [ -z "$UPDATE_CHANNEL" ]; then
 fi
 export UPDATE_CHANNEL
 
+# Baked into app-update.yml via electron-builder's ${env.UPDATE_REPO} in publish.repo. The test and
+# production channels live in SEPARATE GitHub repos (DEV-11320) so each has its own "latest" pointer;
+# without a per-channel repo a test build would resolve production's "latest" and 404 fetching its
+# channel manifest. Derive the repo NAME (publish.owner is separate) from the channel, but let an
+# explicit UPDATE_REPO win so a one-off build can target another repo.
+if [ -z "$UPDATE_REPO" ]; then
+  if [ "$UPDATE_CHANNEL" = "desktop-test" ]; then
+    UPDATE_REPO="scratch-desktop-test"
+  else
+    UPDATE_REPO="scratch-desktop"
+  fi
+fi
+export UPDATE_REPO
+echo "Publishing metadata baked into app-update.yml: channel=$UPDATE_CHANNEL repo=whalesync/$UPDATE_REPO"
+
 # Test builds get a distinct app name so users can tell them apart from production.
 if [ "$UPDATE_CHANNEL" = "desktop-test" ]; then
   PRODUCT_NAME_OVERRIDE=(-c.productName="Scratch (Test)")

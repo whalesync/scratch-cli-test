@@ -10,7 +10,9 @@
 # Inputs (env):
 #   RELEASE_ID            from bootstrap dotenv (may be stale)
 #   NEW_VERSION           release tag, e.g. v1.2.3-test
-#   IS_PRERELEASE         "true" for test variant, "false" for prod
+#   IS_PRERELEASE         "false" for both channels (test releases are full releases so the dedicated
+#                         test repo's "latest" pointer resolves to them — DEV-11320)
+#   GITHUB_REPO           channel's release repo (defaults to whalesync/scratch-desktop)
 #   GITHUB_TOKEN          required to read/create releases
 #
 # Outputs (exported env):
@@ -27,7 +29,7 @@ ensure_draft_release() {
   : "${NEW_VERSION:?NEW_VERSION required}"
   : "${GITHUB_TOKEN:?GITHUB_TOKEN required}"
 
-  local repo="whalesync/scratch-desktop"
+  local repo="${GITHUB_REPO:-whalesync/scratch-desktop}"
   local lookup_http
 
   # 1. Try the RELEASE_ID we were handed. If it resolves to a live draft, we

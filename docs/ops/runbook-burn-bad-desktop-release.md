@@ -6,7 +6,7 @@ Guide for "burning" (withdrawing) a corrupted or otherwise broken production rel
 2. The bad version no longer appears on the **downloads page** of the web client at [https://app.scratch.md/downloads](https://app.scratch.md/downloads).
 3. Users who have not yet updated stay on the previous good version, and users who have already updated have a path back.
 
-This runbook only covers the **production** (`desktop`) channel. The same mechanics apply to the `desktop-test` channel, but the urgency and blast radius are different — adapt as needed.
+This runbook only covers the **production** (`desktop`) channel on [`whalesync/scratch-desktop`](https://github.com/whalesync/scratch-desktop). The same mechanics apply to the `desktop-test` channel, but it lives in its **own** repo — [`whalesync/scratch-desktop-test`](https://github.com/whalesync/scratch-desktop-test) (DEV-11320) — so point the `gh --repo …` commands there; the urgency and blast radius are also different. Adapt as needed.
 
 ## Context
 

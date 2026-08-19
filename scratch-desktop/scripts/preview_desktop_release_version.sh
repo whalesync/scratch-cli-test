@@ -32,12 +32,13 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "      Drafts will be invisible and private repos will 404. Rate limit is 60 req/hr per IP." >&2
 fi
 
-GITHUB_REPO="whalesync/scratch-desktop"
+# Channel's release repo (DEV-11320). Defaults to prod; for a test preview pass
+# GITHUB_REPO=whalesync/scratch-desktop-test. Mirrors bootstrap_release.sh.
+GITHUB_REPO="${GITHUB_REPO:-whalesync/scratch-desktop}"
 
-# VERSION_SELECT_PATTERN is what we scan to pick the version to bump FROM. For
-# the test variant it is broader than TAG_PATTERN: it also matches the prod
-# bare-semver tags so the test version is floored at the prod line and can never
-# regress below the latest prod release. Mirrors bootstrap_release.sh (DEV-10749).
+# VERSION_SELECT_PATTERN is what we scan to pick the version to bump FROM. Prod and test read their
+# own repos now (each channel has its own repo), so the test line is independent — the pattern stays
+# broad (bare-or-`-test`) only so a seed's bare tag also floors it. Mirrors bootstrap_release.sh.
 if [ "$VARIANT" = "prod" ]; then
   TAG_SUFFIX=""
   TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'

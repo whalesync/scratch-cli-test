@@ -50,7 +50,9 @@ fi
 . "$(dirname "$0")/ensure_draft_release.sh"
 ensure_draft_release
 
-GITHUB_REPO="whalesync/scratch-desktop"
+# Channel's release repo (DEV-11320); test CI jobs pass whalesync/scratch-desktop-test. The public
+# RELEASE_URL emitted below derives from it, so the Slack/annotations links point at the right repo.
+GITHUB_REPO="${GITHUB_REPO:-whalesync/scratch-desktop}"
 UPLOAD_URL_BASE="${RELEASE_UPLOAD_URL%%\{*}"
 
 echo "Fetching assets on draft release $NEW_VERSION..."

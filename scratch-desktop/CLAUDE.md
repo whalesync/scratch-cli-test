@@ -139,7 +139,7 @@ Always use native Electron context menus — never Mantine `<Menu>` dropdowns �
 
 ## Auto-Update (`electron-updater`)
 
-The app pulls updates from the `desktop` (stable) or `desktop-test` (test) channels on `whalesync/scratch-desktop` GitHub releases. The channel is baked in at packaging time via the `UPDATE_CHANNEL` env var read by `electron-builder.yml`'s `publish.channel`.
+The app pulls updates from GitHub releases: the `desktop` (stable) channel from `whalesync/scratch-desktop`, and the `desktop-test` (test) channel from its **own** repo, `whalesync/scratch-desktop-test` (DEV-11320). Each channel having its own repo gives it its own "latest" pointer, so a test build's newest release is always the right one — `electron-updater` resolves via `/releases/latest`, which ignores prereleases and other channels. Both the channel and the repo are baked into `app-update.yml` at packaging time via the `UPDATE_CHANNEL` / `UPDATE_REPO` env vars read by `electron-builder.yml`'s `publish.channel` / `publish.repo`; `scripts/package.sh` derives `UPDATE_REPO` from the channel (test → `scratch-desktop-test`, else `scratch-desktop`). Because the test repo is dedicated, test releases are cut as **full** (non-prerelease) releases so their "latest" pointer resolves.
 
 > **Windows ships intentionally unsigned** (DEV-11010 / Oneleet SCR-015) until real Authenticode signing lands (tracked in [`docs/plans/2026-05-30-sign-windows-desktop-builds/`](../docs/plans/2026-05-30-sign-windows-desktop-builds/2026-05-30-sign-windows-desktop-builds.md)). The Windows build scripts strip the cross-platform `CSC_LINK`/`CSC_KEY_PASSWORD` (our **Apple** Developer ID cert) from `electron-builder --win`, because electron-builder falls back to those for the Windows cert and an Apple-signed `.exe` has a chain Windows doesn't trust — which makes `electron-updater` reject every update with `ERR_UPDATER_INVALID_SIGNATURE`. A genuinely unsigned build writes no `publisherName` into `app-update.yml`, so `electron-updater` skips signature verification and updates apply. `scripts/verify-windows-unsigned.cjs` gates every Windows build to prove no cert leaked in.
 
@@ -154,9 +154,9 @@ Skipped automatically when:
 
 ### Local testing
 
-`dev-app-update.yml` in this directory points at the `desktop-test` channel. To exercise the update flow without notarization:
+`dev-app-update.yml` in this directory points at the `desktop-test` channel in `whalesync/scratch-desktop-test`. To exercise the update flow without notarization:
 
-1. Bump a `*-desktop-test` release to a higher version on GitHub (or pick an existing one).
+1. Publish (or pick) a higher-versioned `vX.Y.Z-test` release in `whalesync/scratch-desktop-test`.
 2. Set `package.json#version` to a value _lower_ than that release.
 3. Run a packaged build (`yarn build:linux` or `yarn build:mac:local`) and launch it. The updater is gated on `app.isPackaged`, so `yarn dev` won't trigger it — temporarily flip the guard in `updater.ts` if you need to test the IPC surface in dev.
 
