@@ -1,0 +1,69 @@
+Scratch Software License
+
+Copyright (c) 2021-2026 Whaleform Inc. (DBA Whalesync). All rights reserved.
+
+This repository distributes the compiled release artifacts for Scratch Desktop and the
+scratchmd command-line interface (together, the "Software"), products of Whaleform Inc.
+(doing business as Whalesync) ("Whaleform"). The Software is proprietary. By downloading,
+installing, accessing, or using the Software you agree to the terms below. If you do not
+agree, do not download, install, or use the Software.
+
+1. Ownership. The Software, all copies, and all intellectual property rights in and to it
+   are and remain the exclusive property of Whaleform Inc. No title to or ownership of the
+   Software is transferred to you. All rights not expressly granted are reserved.
+
+2. License grant. Subject to your continuous compliance with these terms and your
+   maintenance of an active, paid subscription to the Scratch platform
+   (https://scratch.md), Whaleform grants you a limited, personal, non-exclusive,
+   non-transferable, non-sublicensable, revocable license to download and install the
+   Software and to run it in unmodified form solely to access your own Scratch
+   subscription. The release artifacts in this repository may be downloaded at no charge,
+   but access to and use of the Software requires an active Scratch subscription.
+
+3. Subscription condition. The license in Section 2 is conditioned on, and coextensive
+   with, an active Scratch subscription. It begins when your subscription becomes active
+   and terminates automatically, without notice, when your subscription lapses, is
+   suspended, or is terminated. Use of the Software without an active subscription is not
+   licensed and is prohibited.
+
+4. Restrictions. You may not, and may not permit any third party to: (a) copy,
+   redistribute, resell, sublicense, rent, lease, lend, or otherwise make the Software or
+   any release artifact available to any third party; (b) modify, adapt, translate, or
+   create derivative works of the Software or any artifact in this repository; (c) reverse
+   engineer, decompile, disassemble, or otherwise attempt to derive the source code,
+   structure, or underlying ideas of the Software, except to the limited extent this
+   restriction is prohibited by applicable law; (d) remove, alter, or obscure any
+   proprietary notices, labels, or marks; (e) use the Software to build or improve a
+   competing product or service; or (f) use the Software except as expressly permitted
+   herein.
+
+5. Third-party components. The Software may include third-party open-source components
+   licensed under their own terms, which govern your use of those components; nothing here
+   limits your rights under them. A list is available on request.
+
+6. Feedback. Any feedback you provide about the Software may be used by Whaleform without
+   restriction or obligation to you.
+
+7. Termination. This license terminates automatically if you breach any term or when your
+   Scratch subscription ends. On termination you must stop using and delete all copies of
+   the Software. Sections 1 and 4-11 survive termination.
+
+8. No warranty. THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTY OF
+   ANY KIND, EXPRESS OR IMPLIED, INCLUDING THE IMPLIED WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+9. Limitation of liability. TO THE MAXIMUM EXTENT PERMITTED BY LAW, WHALEFORM WILL NOT BE
+   LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY
+   LOSS OF PROFITS, DATA, OR GOODWILL, ARISING OUT OF OR RELATED TO THE SOFTWARE.
+
+10. Relationship to other agreements. This license supplements, and is subordinate to, the
+    Scratch Terms of Service (https://www.scratch.md/terms-of-service), the Scratch Privacy
+    Policy (https://www.scratch.md/privacy-policy), and your Scratch subscription agreement
+    with Whaleform. Those agreements govern your use of the Scratch platform and control in
+    the event of any conflict with this license.
+
+11. Governing law. This license is governed by the laws of the State of Delaware, without
+    regard to its conflict-of-laws rules.
+
+Contact: support@whalesync.com
+Whaleform Inc. (DBA Whalesync), 390 NE 191st St STE 8026, Miami, FL 33179, USA.
