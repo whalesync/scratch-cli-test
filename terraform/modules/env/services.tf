@@ -21,6 +21,11 @@ resource "google_cloud_run_v2_service" "client_service" {
 
   deletion_protection = false
 
+  # Browser traffic already arrives through the app.scratch.md CDN/load balancer (serverless NEG).
+  # Restrict to load-balancer + internal ingress so the raw run.app URL can no longer bypass the
+  # load balancer (DEV-10984 / WSG-003). The allUsers invoker binding below stays.
+  ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+
   template {
     # Use gen1 environment for faster cold starts.
     execution_environment = "EXECUTION_ENVIRONMENT_GEN1"
@@ -156,6 +161,11 @@ resource "google_cloud_run_v2_service" "api_service" {
   location = var.gcp_region
 
   deletion_protection = false
+
+  # Public API traffic already arrives through the api.scratch.md load balancer (serverless NEG).
+  # Restrict to load-balancer + internal ingress so the raw run.app URL can no longer bypass the
+  # load balancer (DEV-10984 / WSG-003). The allUsers invoker binding below stays.
+  ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   template {
     # Use gen1 environment for faster cold starts, but gen2 is required for sidecar containers (e.g. OTel collector).
