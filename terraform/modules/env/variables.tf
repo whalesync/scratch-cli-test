@@ -215,6 +215,35 @@ variable "config_change_alert_resource_types" {
   description = "Monitored-resource types the configuration-change spike alert watches (one condition each, OR-combined)."
 }
 
+variable "enable_secret_access_alerts" {
+  type        = bool
+  default     = false
+  description = "Create a log-based metric + alert that fires on a spike of Secret Manager AccessSecretVersion Data Access audit-log entries (Oneleet WSG-008 / DEV-10989). The Secret Manager DATA_READ audit config in audit.tf is always applied, so the metric has entries to match. Prod-only — eu-test reads test secrets routinely (grant_readonly_sa_all_secrets + dev cloudrun-SA impersonation), so it would be noisy there. Alert additionally honors var.enable_alerts."
+}
+
+variable "secret_access_alert_threshold" {
+  type    = number
+  default = 50
+  # Normal baseline is a handful of AccessSecretVersion calls per Cloud Run container start (the value is
+  # then a mounted env var), so a busy 10-minute window of deploys/scale events is still low tens. 50 sits
+  # above that; a spike well beyond flags mass secret reads. Tune after observing prod volume.
+  description = "Fire the Secret Manager access-spike alert when more than this many AccessSecretVersion audit-log entries occur in a 10-minute window."
+}
+
+variable "enable_log_ingestion_alerts" {
+  type        = bool
+  default     = false
+  description = "Create an alert that fires when month-to-date Cloud Logging ingestion exceeds log_ingestion_alert_threshold_gib. Uses the built-in logging.googleapis.com/billing/monthly_bytes_ingested metric (no log-based metric). A cost guardrail on the Data Access audit-log volume added by WSG-008 / DEV-10989 and on log volume generally. Alert additionally honors var.enable_alerts."
+}
+
+variable "log_ingestion_alert_threshold_gib" {
+  type    = number
+  default = 300
+  # Cloud Logging bills in GiB and includes 50 GiB/month free. 300 GiB is a cost guardrail well above
+  # normal volume; lower it once real monthly volume is known.
+  description = "Fire the monthly log-ingestion alert when month-to-date Cloud Logging ingestion exceeds this many GiB."
+}
+
 variable "client_service_min_instance_count" {
   type        = number
   default     = 1

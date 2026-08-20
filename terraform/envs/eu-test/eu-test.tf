@@ -21,6 +21,10 @@ module "eu_test" {
   # Threshold is tunable; keep it above a normal deploy / terraform-apply burst (config_change_alert_threshold).
   enable_config_change_alerts = true
 
+  # Data Access audit logs (Oneleet WSG-008 / DEV-10989) are applied to every env by the module (audit.tf,
+  # ungated) so eu-test validates the SetIamPolicy apply first. The secret-access + log-ingestion alerts are
+  # prod-only, so no alert toggles are set here.
+
   # Load Balancer
   enable_client_load_balancer = true
   client_domain               = "test.scratch.md"

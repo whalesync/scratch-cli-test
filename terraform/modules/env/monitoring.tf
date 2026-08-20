@@ -23,6 +23,8 @@ locals {
   runbook_flow_log_alerts          = "${local.runbook_base}/runbook-gcp-vpc-flow-log-alerts.md"
   runbook_desktop_release          = "${local.runbook_base}/runbook-desktop-release-download-broken.md"
   runbook_config_change_alerts     = "${local.runbook_base}/runbook-gcp-config-change-spike.md"
+  runbook_secret_access_alerts     = "${local.runbook_base}/runbook-gcp-secret-access-alerts.md"
+  runbook_log_ingestion            = "${local.runbook_base}/runbook-gcp-log-ingestion-high.md"
 
   # --- VPC Flow Log anomaly detection ---
   # VPC Flow Logs are already emitted on every subnet (see modules/vpc). These filters
@@ -1694,4 +1696,113 @@ resource "google_monitoring_alert_policy" "config_change_spike_alert" {
   notification_channels = local.warning_notification_channels
   severity              = "WARNING"
   depends_on            = [google_logging_metric.config_change_count]
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Secret Manager access spike detection (Oneleet WSG-008 / DEV-10989)
+## ---------------------------------------------------------------------------------------------------------------------
+## Counts Secret Manager AccessSecretVersion entries from the Data Access audit log (enabled in audit.tf). A
+## secret value is read at Cloud Run instance startup and then lives as a mounted env var, so a spike of
+## AccessSecretVersion calls can indicate a compromised principal reading secrets in bulk. Prod-only via
+## var.enable_secret_access_alerts (eu-test reads test secrets routinely — grant_readonly_sa_all_secrets +
+## dev cloudrun-SA impersonation — so it would be noisy); the alert also honors var.enable_alerts and routes
+## to warning_notification_channels (Slack + email, no PagerDuty — a warning, tune the threshold first).
+resource "google_logging_metric" "secret_access_count" {
+  count = var.enable_secret_access_alerts ? 1 : 0
+  name  = "secret-access-count"
+  filter = join(" AND ", [
+    "logName=\"projects/${var.gcp_project_id}/logs/cloudaudit.googleapis.com%2Fdata_access\"",
+    "protoPayload.serviceName=\"secretmanager.googleapis.com\"",
+    "protoPayload.methodName:\"AccessSecretVersion\"",
+  ])
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+  }
+
+  depends_on = [google_project_service.services]
+}
+
+resource "google_monitoring_alert_policy" "secret_access_spike_alert" {
+  count        = var.enable_secret_access_alerts && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Cloud Audit Logs - Secret access spike"
+  documentation {
+    subject = "Scratch ${local.display_env} Cloud Audit Logs - Unusually high number of Secret Manager accesses"
+    content = <<-EOF
+    An unusually high number of Secret Manager AccessSecretVersion events (Data Access audit-log entries) occurred in a 10-minute window. A secret value is read at Cloud Run instance startup and then lives as a mounted env var, so a spike can indicate a compromised principal reading secrets in bulk. Review the recent data-access audit logs for the acting principal(s) and which secrets were accessed.
+    Runbook: ${local.runbook_secret_access_alerts}
+    EOF
+  }
+  combiner = "OR"
+  conditions {
+    display_name = "Secret accesses over ${var.secret_access_alert_threshold} in 10m"
+    condition_threshold {
+      filter          = "resource.type = \"audited_resource\" AND metric.type = \"logging.googleapis.com/user/${google_logging_metric.secret_access_count[0].name}\""
+      duration        = "0s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.secret_access_alert_threshold
+      trigger {
+        count = 1
+      }
+      aggregations {
+        alignment_period     = "600s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+    }
+  }
+
+  alert_strategy {
+    # See config_change_spike_alert: pin auto_close to the GCP max (7 days) so a security incident does not
+    # self-resolve before a human triages.
+    auto_close = "604800s"
+    notification_channel_strategy {
+      renotify_interval = local.extended_renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
+  depends_on            = [google_logging_metric.secret_access_count]
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Monthly Cloud Logging ingestion cost guardrail (Oneleet WSG-008 / DEV-10989 follow-on)
+## ---------------------------------------------------------------------------------------------------------------------
+## logging.googleapis.com/billing/monthly_bytes_ingested is a built-in GAUGE reporting month-to-date billable
+## ingestion; it resets each calendar month, so once it crosses the threshold it stays high until month-end —
+## we notify once (no renotify) and let GCP auto-close the incident at reset. A cost guardrail on the audit-log
+## volume enabled above (and on log volume generally). Prod-only via var.enable_log_ingestion_alerts; honors
+## var.enable_alerts and routes to warning_notification_channels (Slack + email).
+resource "google_monitoring_alert_policy" "monthly_log_ingestion_alert" {
+  count        = var.enable_log_ingestion_alerts && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Cloud Logging - Monthly ingestion volume high"
+  documentation {
+    subject = "Scratch ${local.display_env} Cloud Logging - Month-to-date ingestion above ${var.log_ingestion_alert_threshold_gib} GiB"
+    content = <<-EOF
+    Month-to-date Cloud Logging ingestion has exceeded ${var.log_ingestion_alert_threshold_gib} GiB. Cloud Logging bills per GiB ingested (first 50 GiB/month free), so sustained high volume drives cost. Review which resource types and log sources are contributing (Logs Explorer / the Log Router "Bytes ingested" chart) and add or tighten exclusion filters if the volume is not needed. This resets at the start of the next calendar month.
+    Runbook: ${local.runbook_log_ingestion}
+    EOF
+  }
+  combiner = "OR"
+  conditions {
+    display_name = "Month-to-date log ingestion over ${var.log_ingestion_alert_threshold_gib} GiB"
+    condition_threshold {
+      filter          = "resource.type = \"global\" AND metric.type = \"logging.googleapis.com/billing/monthly_bytes_ingested\""
+      duration        = "0s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.log_ingestion_alert_threshold_gib * 1073741824
+      trigger {
+        count = 1
+      }
+      aggregations {
+        alignment_period     = "3600s"
+        per_series_aligner   = "ALIGN_MAX"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
 }

@@ -21,6 +21,15 @@ module "eu_production" {
   # Threshold is tunable; keep it above a normal deploy / terraform-apply burst (config_change_alert_threshold).
   enable_config_change_alerts = true
 
+  # Alert on a spike in Secret Manager accesses — Data Access audit-log entries (Oneleet WSG-008 /
+  # DEV-10989). Prod-only (eu-test reads test secrets routinely). Threshold is tunable
+  # (secret_access_alert_threshold); tune after observing prod volume.
+  enable_secret_access_alerts = true
+
+  # Warn when month-to-date Cloud Logging ingestion exceeds log_ingestion_alert_threshold_gib (default
+  # 300 GiB) — a cost guardrail on the audit-log volume added by WSG-008 / DEV-10989. Resets monthly.
+  enable_log_ingestion_alerts = true
+
   # Load Balancer
   enable_client_load_balancer = true
   client_domain               = "app.scratch.md"
