@@ -11,6 +11,7 @@ import { RateLimiterSpec } from '../../rate-limiter/rate-limiter.types';
 import { DecryptedCredentials } from '../connector-account/types/encrypted-credentials.interface';
 import { AuthParser, Connector } from './connector';
 import { ConnectorAuthTokenProvider } from './connector-auth-token';
+import type { FieldValueCanonicalizer, FieldValueCanonicalizerContext } from './field-value-canonicalization';
 import type { BaseJsonTableSpec } from './types';
 
 export interface ConnectorAccountRef {
@@ -150,6 +151,30 @@ export interface ConnectorRegistration {
    * the registry helper returns `null` (like `resolveIncrementalPullSupport`).
    */
   resolveMatchedRecordArchiveRepairFields?: (recordFields: Record<string, unknown>) => Record<string, unknown> | null;
+  /**
+   * Pure (no credentials, no network) hook that declares, per destination field,
+   * how to reduce any stored value of that field to the CANONICAL form the
+   * service holds after a write round-trip — so a value the sync wrote in the
+   * connector's minimal write shape and the richer / re-rendered shape the
+   * service reads back compare EQUAL instead of re-publishing on every run
+   * (DEV-10556: Notion decorates every rich-text span, Airtable omits empty
+   * fields on read, Postgres re-renders `timestamptz` and floats).
+   *
+   * Called once per field of a destination table (via
+   * `resolveFieldValueCanonicalizersForTable`). Return a canonicalizer for a
+   * field whose read shape differs from its write shape; return `undefined` for
+   * a field that should compare structurally. The canonicalizer must be pure,
+   * total and synchronous, and is used for EQUALITY ONLY — the sync's per-field
+   * overlay consults it to decide whether a field changed; its output is never
+   * written or sent anywhere. (Sync-only for now — the publish plan's
+   * `computeChangedFields` deliberately does not consult it yet.)
+   *
+   * Connectors whose read and write shapes already match (a store that returns
+   * exactly what it was given) omit the hook and keep the structural compare.
+   * See `field-value-canonicalizers.ts` for reusable building blocks, and
+   * CONNECTOR_GUIDE.md § "Field value canonicalizers".
+   */
+  resolveFieldValueCanonicalizer?: (context: FieldValueCanonicalizerContext) => FieldValueCanonicalizer | undefined;
 }
 
 class ConnectorRegistry {

@@ -114,6 +114,32 @@ export enum UserFlag {
    * flag-service blip never locks users out.
    */
   MINIMUM_SUPPORTED_DESKTOP_VERSION = 'MINIMUM_SUPPORTED_DESKTOP_VERSION',
+  /**
+   * DEV-10556 rollout gate for field-value canonicalizers. A canonicalizer
+   * teaches the sync that two differently-shaped values mean the same thing to
+   * the destination service (e.g. Notion returns a decorated copy of the title
+   * we wrote). Without them, a sync sees those values as different, rewrites
+   * every record, and re-publishes unchanged data on every Live Export run.
+   * See CONNECTOR_GUIDE → "Field Value Canonicalizers".
+   *
+   * When TRUE for the acting user: during a sync, a field whose new value is
+   * canonically equal to the stored value is left untouched
+   * (`SyncService.syncTableMapping`). When FALSE (default): values are
+   * compared exactly as before DEV-10556.
+   *
+   * This flag only affects the sync. The publish diff (`computeChangedFields`)
+   * never uses canonicalizers, so a local edit always publishes.
+   *
+   * Named for Notion because only Notion registers canonicalizers today. The
+   * Airtable and Postgres/Supabase implementations exist but are not
+   * registered — their `resolveFieldValueCanonicalizer` lines are commented
+   * out in their `connectorRegistry.register` blocks. Registering another
+   * connector should come with its own flag, or a rename of this one.
+   *
+   * Fail-closed: defaults to false; an unmatched user or a PostHog outage
+   * also yields false. Checked server-side only — not exposed to the client.
+   */
+  ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS = 'ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS',
 }
 
 /**

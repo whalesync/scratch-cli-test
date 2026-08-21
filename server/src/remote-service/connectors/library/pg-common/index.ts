@@ -31,6 +31,10 @@ export {
   replaceEmptyStringsWithNullForPgTypedColumns,
 } from './pg-empty-string-coercion';
 export {
+  pgFieldValueCanonicalizerForColumnType,
+  resolvePgFieldValueCanonicalizer,
+} from './pg-field-value-canonicalizer';
+export {
   PG_INCREMENTAL_CLOCK_SKEW_MS,
   applyPgClockSkew,
   assertModifiedAtColumnExists,

@@ -1173,3 +1173,185 @@ describe('transformRecordAsync — dotted field names', () => {
     });
   });
 });
+
+describe('transformRecordAsync — destination field-value canonicalizers (DEV-10556)', () => {
+  // A Notion-style title: the sync packs the minimal write shape, the record on
+  // disk holds Notion's decorated read shape. Their plain text is identical.
+  const DECORATED_TITLE = {
+    id: 'title',
+    type: 'title',
+    title: [
+      {
+        type: 'text',
+        text: { content: 'getguru', link: null },
+        annotations: {
+          bold: false,
+          italic: false,
+          strikethrough: false,
+          underline: false,
+          code: false,
+          color: 'default',
+        },
+        plain_text: 'getguru',
+        href: null,
+      },
+    ],
+  };
+  const titleMappings: ColumnMappingV1[] = [
+    {
+      sourceColumnId: 'name',
+      destinationColumnId: 'properties.Name',
+      transformer: {
+        type: 'wrap_object',
+        options: {
+          template: { type: 'title', title: [{ type: 'text', text: { content: '$value' }, plain_text: '$value' }] },
+          emptyTemplate: { type: 'title', title: [] },
+        },
+      },
+    },
+  ];
+  const plainTextCanonicalizer = (value: unknown): unknown => {
+    const spans = (value as { title?: { plain_text?: string }[] } | null)?.title;
+    return Array.isArray(spans) ? spans.map((span) => span.plain_text ?? '').join('') : value;
+  };
+  const canonicalizers = new Map([['properties.Name', plainTextCanonicalizer]]);
+
+  it('keeps the stored (decorated) value when the packed value is canonically equal', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { name: 'getguru' } };
+    const baseFields = { id: 'page_1', properties: { Name: DECORATED_TITLE } };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      titleMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+      canonicalizers,
+    );
+
+    expect(fields).toEqual(baseFields);
+  });
+
+  it('still replaces the stored value wholesale when the packed value is canonically different', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { name: 'getguru 2' } };
+    const baseFields = { id: 'page_1', properties: { Name: DECORATED_TITLE } };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      titleMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+      canonicalizers,
+    );
+
+    expect(fields).toEqual({
+      id: 'page_1',
+      properties: {
+        Name: { type: 'title', title: [{ type: 'text', text: { content: 'getguru 2' }, plain_text: 'getguru 2' }] },
+      },
+    });
+  });
+
+  it('still clears the stored value when the source was cleared (empty template is canonically different)', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: {} };
+    const baseFields = { id: 'page_1', properties: { Name: DECORATED_TITLE } };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      titleMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+      canonicalizers,
+    );
+
+    expect(fields).toEqual({ id: 'page_1', properties: { Name: { type: 'title', title: [] } } });
+  });
+
+  it('overlays as before when no canonicalizer is declared for the field', async () => {
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { name: 'getguru' } };
+    const baseFields = { id: 'page_1', properties: { Name: DECORATED_TITLE } };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      titleMappings,
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+      new Map(),
+    );
+
+    expect(fields).toEqual({
+      id: 'page_1',
+      properties: {
+        Name: { type: 'title', title: [{ type: 'text', text: { content: 'getguru' }, plain_text: 'getguru' }] },
+      },
+    });
+  });
+
+  it('does not overlay an Airtable-style "" onto an absent key when the canonicalizer treats both as empty', async () => {
+    const emptyAsNull = (value: unknown) => (value === undefined || value === null || value === '' ? null : value);
+    const sourceRecord = { id: 'r1', filePath: 'p', fields: { notes: '' } };
+    const baseFields = { id: 'rec1', fields: { Name: 'A' } };
+
+    const { fields } = await transformRecordAsync(
+      sourceRecord,
+      [{ sourceColumnId: 'notes', destinationColumnId: 'fields.Notes' }],
+      null,
+      null,
+      NOOP_LOOKUP_TOOLS,
+      'DATA',
+      baseFields,
+      SYNC_CONTEXT,
+      new Map([['fields.Notes', emptyAsNull]]),
+    );
+
+    expect(fields).toEqual(baseFields);
+  });
+
+  it('applies the same skip to constant mappings on the update path via applyColumnMappings', async () => {
+    const emptyAsNull = (value: unknown) => (value === undefined || value === null || value === '' ? null : value);
+    const mappings: ColumnMappingV2[] = [
+      { destinationColumnId: 'fields.Source', source: { kind: 'constant', value: '' }, when: 'matched' },
+    ];
+    const result = await applyColumnMappings({
+      bucket: 'matched',
+      sourceRecord: { id: 'r1', filePath: 'p', fields: {} },
+      baseFields: { id: 'rec1', fields: { Name: 'A' } },
+      mappings,
+      sourceTableSpec: null,
+      destinationTableSpec: null,
+      lookupTools: NOOP_LOOKUP_TOOLS,
+      phase: 'DATA',
+      syncContext: SYNC_CONTEXT,
+      destinationFieldCanonicalizers: new Map([['fields.Source', emptyAsNull]]),
+    });
+    expect(result.fields).toEqual({ id: 'rec1', fields: { Name: 'A' } });
+
+    const withoutCanonicalizer = await applyColumnMappings({
+      bucket: 'matched',
+      sourceRecord: { id: 'r1', filePath: 'p', fields: {} },
+      baseFields: { id: 'rec1', fields: { Name: 'A' } },
+      mappings,
+      sourceTableSpec: null,
+      destinationTableSpec: null,
+      lookupTools: NOOP_LOOKUP_TOOLS,
+      phase: 'DATA',
+      syncContext: SYNC_CONTEXT,
+    });
+    expect(withoutCanonicalizer.fields).toEqual({ id: 'rec1', fields: { Name: 'A', Source: '' } });
+  });
+});

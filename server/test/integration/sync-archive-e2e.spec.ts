@@ -26,6 +26,7 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
 import { ScheduleService } from 'src/schedule/schedule.service';
@@ -162,6 +163,8 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      // DEV-10556 canonicalizer rollout flag: default OFF (fail-closed).
+      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
     );
 
     const org = await prisma.organization.create({

@@ -1202,6 +1202,71 @@ async updateRecords(
 }
 ```
 
+### Field Value Canonicalizers (diff stability)
+
+> **Why this exists (DEV-10556).** A Live Export sync writes a destination field in the connector's minimal _write_ shape, but many services store and read back a richer or differently-rendered shape: Notion decorates every rich-text span with `annotations`/`href`/`plain_text` and re-renders dates; Airtable _omits_ empty fields from the read entirely; Postgres re-renders `timestamptz` and floats. Compared structurally, "what we wrote" and "what the service holds" never match, so every record looked changed on every run and re-published forever.
+
+A connector can declare, per destination field, how to reduce any stored value of that field to a **canonical form** — ideally a primitive — such that two values the service treats as the same value have deep-equal canonical forms. The sync's per-field overlay (`sync-execution.ts`) consults it for **equality only**: a mapped value canonically equal to what the matched record already holds is **not overlaid**, so the stored value (the service's own read shape) stays and a no-op sync leaves the record byte-identical.
+
+A canonical value is **never written to disk and never sent to a service** — when a field _is_ different it is replaced exactly as before. **Sync-only for now:** the publish plan's diff (`computeChangedFields`) deliberately does not consult canonicalizers yet, so a local (non-sync) edit that only differs canonically from `main` still publishes; extending the same equality to the publish diff is a possible follow-up.
+
+**Opting in** is one optional function on the connector's `ConnectorRegistration` (`connector-registry.ts`); **opting out is omitting it** — a connector whose read and write shapes already match (a store that returns what it was given) keeps the structural compare and needs no code:
+
+```ts
+// connector-registry.ts — ConnectorRegistration
+resolveFieldValueCanonicalizer?: (context: FieldValueCanonicalizerContext) => FieldValueCanonicalizer | undefined;
+
+// field-value-canonicalization.ts
+type FieldValueCanonicalizer = (value: unknown) => unknown; // pure, total, sync; `undefined` input = key absent
+interface FieldValueCanonicalizerContext {
+  fieldPath: string; // 'properties.Name', 'fields.Notes', 'created_at'
+  fieldSchema: TSchema | undefined; // the field's schema node — x-scratch-connector-data-type, format, …
+  schemaField: SchemaField; // the same node as extractSchemaFields reports it
+  tableSpec: BaseJsonTableSpec;
+}
+```
+
+The hook is called once per field of a destination table (`resolveFieldValueCanonicalizersForTable`, memoised per table spec); return a canonicalizer for a field whose read shape differs from its write shape, `undefined` for one that should compare structurally. Typical resolvers switch on the field's `x-scratch-connector-data-type` annotation:
+
+```ts
+// library/notion/notion-field-value-canonicalizer.ts (abridged)
+export function resolveNotionFieldValueCanonicalizer({ fieldSchema }: FieldValueCanonicalizerContext) {
+  switch (fieldSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE]) {
+    case 'title':
+    case 'rich_text':
+      return composeCanonicalizers(
+        unpackedWithClientSafeTransformer({
+          type: 'jsonpath',
+          options: { expression: '$.title[*].plain_text', arrayHandling: 'concat' },
+        }),
+        emptyAsNull(),
+      );
+    case 'select':
+      return composeCanonicalizers(notionPropertyPayload('select'), optionName, emptyAsNull());
+    case 'date':
+      return composeCanonicalizers(
+        notionPropertyPayload('date'),
+        pickedAndCanonicalized({ start: instantToMinute, end: instantToMinute, time_zone: emptyAsNull() }),
+        emptyAsNull(),
+      );
+    default:
+      return undefined; // people, files, formula, rollup, … compare structurally
+  }
+}
+```
+
+Reusable building blocks live in `field-value-canonicalizers.ts` — `composeCanonicalizers`, `emptyAsNull({ falseIsEmpty?, emptyArrayIsEmpty? })`, `isoInstantTruncatedTo('millisecond' | 'second' | 'minute' | 'day')`, `numberRoundedToSignificantDigits(n)`, `decimalTextNormalized()`, `parsedJsonText()`, `unpackedWithClientSafeTransformer(config)` (reuse your declared `x-scratch-suggested-transformer` unpack), `pickedAndCanonicalized({ key: canonicalizer })`. Each passes through any shape it doesn't recognise, so unknown inputs still compare structurally.
+
+Rules of thumb:
+
+- **Pure, total, synchronous.** No I/O, no credentials, never throw (a throwing canonicalizer is logged and that field falls back to structural compare).
+- **Reduce to what the service itself treats as the value** — the same plain value your outbound unpack and record matching use — so diffing, matching and display agree on what a field "is".
+- **Be only as lossy as the service is.** Canonicalising a Notion rich-text to its plain text means a raw-JSON edit that only changes bold/italic is treated as "no change"; that is accepted and must be documented in the connector's `STATE.md`. Do **not** use a canonicalizer to hide real data loss — a `date` column receiving a timestamp (DEV-11086) is a schema bug, not a comparison bug.
+- **Declare nothing for read-only / computed fields** (they are never written) and for values that rotate on their own (expiring file URLs).
+- **Test it against real shapes**: a pulled value vs the packed write shape → equal; a content change → different; a clear → different. See `notion-field-value-canonicalizer.spec.ts`, `airtable-field-value-canonicalizer.spec.ts`, `pg-field-value-canonicalizer.spec.ts`.
+
+**Rollout status:** the comparison path is gated per acting user by the fail-closed `ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS` user flag (`experiments/flags.ts`), evaluated once per sync table mapping; with the flag off the compare stays purely structural. **Only Notion's hook is registered today** (envelopes, dates, options, relations). The Airtable (omitted-empty fields, date precision, numbers) and Postgres/Supabase (`pg-common`: timestamps, floats, numeric strings, json) canonicalizers are implemented and tested but deliberately NOT registered yet — their `resolveFieldValueCanonicalizer` lines are commented out in their `connectorRegistry.register` blocks; activating one should come with its own rollout flag (or a rename of the Notion one).
+
 ### Read-Only Fields on Publish
 
 > **Legacy behavior (do not replicate):** Several existing connectors silently strip read-only fields before sending data to the API. This masks user errors and should be removed. With `changedFields` now available on `updateRecords`, connectors can send only the fields the user actually changed, avoiding API rejections from unchanged read-only fields without silently masking real edits.

@@ -1,3 +1,4 @@
+import type { TSchema } from '@sinclair/typebox';
 import {
   ColumnMapping,
   ColumnMappingV1,
@@ -13,6 +14,10 @@ import {
   transformV1ToV2,
 } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
+import {
+  areFieldValuesCanonicallyEqual,
+  FieldValueCanonicalizerMap,
+} from 'src/remote-service/connectors/field-value-canonicalization';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import {
   applyTransformerPipeline,
@@ -70,6 +75,12 @@ function forceAutoConvertToPreserveNullForClear(configs: TransformerConfig[]): T
  *   preserving the original JSON key ordering. Do NOT replace this with
  *   merge/spread/Object.assign — those reorder keys and corrupt the destination
  *   file layout. When omitted (new record), builds a fresh object the same way.
+ * @param destinationFieldCanonicalizers - The destination connector's declared
+ *   field-value canonicalizers (see `field-value-canonicalization.ts`). On the
+ *   update path a mapped value that is canonically EQUAL to what the record
+ *   already holds is NOT overlaid — the stored value (the service's own read
+ *   shape) is kept, so a no-op sync leaves the record byte-identical instead of
+ *   rewriting every field in the minimal write shape (DEV-10556).
  */
 export async function transformRecordAsync(
   sourceRecord: SyncRecord,
@@ -80,6 +91,7 @@ export async function transformRecordAsync(
   phase: SyncPhase = 'DATA',
   baseFields?: Record<string, unknown>,
   syncContext?: { sourceService: Service; destinationService: Service },
+  destinationFieldCanonicalizers?: FieldValueCanonicalizerMap,
 ): Promise<TransformRecordResult> {
   const definedPaths: string[] = [];
   const definedValues: unknown[] = [];
@@ -250,7 +262,13 @@ export async function transformRecordAsync(
   if (baseFields) {
     const fields = structuredClone(baseFields);
     for (let i = 0; i < definedPaths.length; i++) {
-      setFieldValueAtPath(fields, definedPaths[i], definedValues[i], destinationSchema);
+      overlayFieldValueUnlessCanonicallyEqual(
+        fields,
+        definedPaths[i],
+        definedValues[i],
+        destinationSchema,
+        destinationFieldCanonicalizers,
+      );
     }
     return { fields, warnings };
   }
@@ -264,6 +282,33 @@ export async function transformRecordAsync(
     setFieldValueAtPath(fields, definedPaths[i], definedValues[i], destinationSchema);
   }
   return { fields, warnings };
+}
+
+/**
+ * Overlay `value` at `path` on an EXISTING record's fields — unless the
+ * destination connector declares a canonicalizer for that field and the value
+ * already stored is canonically equal to `value`, in which case the stored
+ * value (the service's own read shape) is kept and nothing is written.
+ *
+ * This is the sync half of DEV-10556: without it, a Notion title the sync
+ * re-derives as `{ type: 'title', title: [{ text: { content: 'x' } }] }`
+ * overwrites the pulled `{ id, type, title: [{ …, annotations, href, plain_text }] }`
+ * on every run, the record differs from disk, and it re-publishes forever. A
+ * canonically DIFFERENT value still replaces the stored one wholesale — the
+ * canonical form is only ever compared, never written.
+ */
+export function overlayFieldValueUnlessCanonicallyEqual(
+  fields: Record<string, unknown>,
+  path: string,
+  value: unknown,
+  destinationSchema: TSchema | undefined,
+  destinationFieldCanonicalizers: FieldValueCanonicalizerMap | undefined,
+): void {
+  const canonicalizer = destinationFieldCanonicalizers?.get(path);
+  if (canonicalizer && areFieldValuesCanonicallyEqual(canonicalizer, readFieldValueAtPath(fields, path), value)) {
+    return;
+  }
+  setFieldValueAtPath(fields, path, value, destinationSchema);
 }
 
 // ============================================================================
@@ -358,6 +403,12 @@ export interface ApplyColumnMappingsArgs {
   lookupTools?: LookupTools;
   phase: SyncPhase;
   syncContext?: { sourceService: Service; destinationService: Service };
+  /**
+   * The destination connector's declared field-value canonicalizers (from
+   * `resolveFieldValueCanonicalizersForTable`). With `baseFields` present, a
+   * mapped value canonically equal to the stored one is not overlaid.
+   */
+  destinationFieldCanonicalizers?: FieldValueCanonicalizerMap;
 }
 
 /**
@@ -406,6 +457,7 @@ export async function applyColumnMappings(args: ApplyColumnMappingsArgs): Promis
       args.phase,
       args.baseFields,
       args.syncContext,
+      args.destinationFieldCanonicalizers,
     );
   } else {
     result = {
@@ -416,7 +468,17 @@ export async function applyColumnMappings(args: ApplyColumnMappingsArgs): Promis
 
   if (args.phase === 'DATA' && constantMappings.length > 0) {
     for (const c of constantMappings) {
-      setFieldValueAtPath(result.fields, c.destinationColumnId, c.value, args.destinationTableSpec?.schema);
+      if (args.baseFields) {
+        overlayFieldValueUnlessCanonicallyEqual(
+          result.fields,
+          c.destinationColumnId,
+          c.value,
+          args.destinationTableSpec?.schema,
+          args.destinationFieldCanonicalizers,
+        );
+      } else {
+        setFieldValueAtPath(result.fields, c.destinationColumnId, c.value, args.destinationTableSpec?.schema);
+      }
     }
   }
 

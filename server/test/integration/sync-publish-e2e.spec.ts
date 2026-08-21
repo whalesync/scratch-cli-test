@@ -299,6 +299,8 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       scratchGitService,
       {} as never,
       {} as WorkbookService,
+      // DEV-10556 canonicalizer rollout flag: default OFF (fail-closed).
+      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
     );
 
     // ---- Instantiate Publish services (real, with mocked I/O) ----
@@ -1454,6 +1456,8 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       scratchGitService,
       {} as never,
       {} as WorkbookService,
+      // DEV-10556 canonicalizer rollout flag: default OFF (fail-closed).
+      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
     );
 
     // ---- Instantiate Publish services ----

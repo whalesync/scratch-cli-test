@@ -43,9 +43,12 @@ import {
 import chunk from 'lodash/chunk';
 import isEqual from 'lodash/isEqual';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
+import { UserFlag } from 'src/experiments/flags';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { resolveMatchedRecordArchiveRepairFieldsForService } from 'src/remote-service/connectors/connector-registry';
+import { resolveFieldValueCanonicalizersForTable } from 'src/remote-service/connectors/field-value-canonicalization';
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { BaseJsonTableSpec, DotPath, dotPath, readRecordIdAsString } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
@@ -253,7 +256,25 @@ export class SyncService {
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookRepoService: WorkbookRepoService,
     private readonly workbookService: WorkbookService,
+    private readonly experimentsService: ExperimentsService,
   ) {}
+
+  /**
+   * Whether DEV-10556 field-value canonicalizers are enabled for the acting
+   * user (`ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS`, fail-closed). Evaluated
+   * once per table mapping against the actor's user row, mirroring how the
+   * publish run service evaluates UPDATE_RECORDS_RETURNS_REMOTE_DATA.
+   */
+  private async fieldValueCanonicalizersEnabledForActor(actor: Actor): Promise<boolean> {
+    const actingUser = await this.db.client.user.findUnique({
+      where: { id: actor.userId },
+      select: { id: true, role: true },
+    });
+    if (!actingUser) {
+      return false;
+    }
+    return this.experimentsService.getBooleanFlag(UserFlag.ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS, false, actingUser);
+  }
 
   /**
    * Read choke point — fetches a Sync row and resolves its on-disk mappings
@@ -1261,6 +1282,22 @@ export class SyncService {
     const sourceIdColumn = this.getIdColumnFromSchema(sourceTableSpec);
     const destinationIdColumn = this.getIdColumnFromSchema(destinationTableSpec);
 
+    // The destination connector's declared field-value canonicalizers (DEV-10556):
+    // a mapped value canonically equal to what the matched record already holds is
+    // NOT overlaid in Pass 2 / Pass 3, so a no-op sync leaves the record untouched
+    // instead of rewriting every field in the minimal write shape and re-publishing.
+    // Rollout-gated per acting user by ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS
+    // (fail-closed): when the flag is off, the compare stays purely structural.
+    const destinationFieldCanonicalizers = (await this.fieldValueCanonicalizersEnabledForActor(actor))
+      ? resolveFieldValueCanonicalizersForTable(destinationFolder.connectorService ?? '', destinationTableSpec)
+      : new Map<string, never>();
+    if (destinationFieldCanonicalizers.size > 0) {
+      WSLogger.debug({
+        source: 'SyncService.syncTableMapping',
+        message: `Destination ${destinationFolder.connectorService} declares field-value canonicalizers for ${destinationFieldCanonicalizers.size} field(s) of ${destinationFolder.path}`,
+      });
+    }
+
     // ===========================================================================================
     // Pass 1: Populate caches (match keys, FK records, remote ID mappings)
     // Skipped in FOREIGN_KEY_MAPPING phase — it reuses caches built by the DATA phase.
@@ -1653,6 +1690,7 @@ export class SyncService {
                 sourceService: sourceFolder.connectorService as Service,
                 destinationService: destinationFolder.connectorService as Service,
               },
+              destinationFieldCanonicalizers,
             });
             transformedFields = transformResult.fields;
             for (const w of transformResult.warnings) {
@@ -1849,6 +1887,7 @@ export class SyncService {
                   sourceService: sourceFolder.connectorService as Service,
                   destinationService: destinationFolder.connectorService as Service,
                 },
+                destinationFieldCanonicalizers,
               });
               for (const w of transformResult.warnings) {
                 recordWarning(destRecord.id, w);

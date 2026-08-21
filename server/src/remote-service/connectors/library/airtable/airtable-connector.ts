@@ -742,6 +742,12 @@ connectorRegistry.register({
   rateLimiterSpec: { points: 5, duration: 1 },
   resolveIncrementalPullSupport: ({ options, tableSpec }) => airtableIncrementalPullSupport(options, tableSpec),
   incrementalPullAutoDetectsFromSchema: true,
+  // DEV-10556: Airtable's field-value canonicalizers are implemented
+  // (`airtable-field-value-canonicalizer.ts`, covered by its spec) but NOT in
+  // use yet — only Notion's are registered, gated by the
+  // ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS user flag. Uncomment to activate
+  // (and add a rollout flag or fold into a renamed shared one):
+  // resolveFieldValueCanonicalizer: resolveAirtableFieldValueCanonicalizer,
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Airtable', Service.AIRTABLE);

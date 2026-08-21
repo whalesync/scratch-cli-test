@@ -9,6 +9,7 @@
 
 # Dev env
 /client/.env
+/client/.env.local
 /server/.env
 /scratch-desktop/.env
 

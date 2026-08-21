@@ -68,6 +68,7 @@ import {
 } from './notion-create-schema';
 import { isFullDatabase, isFullDataSource, NotionDataSourceSearchResult } from './notion-data-source-types';
 import { buildNotionDefaultView, buildNotionStandalonePagesDefaultView } from './notion-default-view';
+import { resolveNotionFieldValueCanonicalizer } from './notion-field-value-canonicalizer';
 import { buildNotionLastEditedFilter, combineNotionFilters } from './notion-incremental';
 import { buildNotionJsonTableSpec, buildNotionPageWebUrl, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
 import { combineNotionFilterWithCreatedTimeContinuation } from './notion-query-continuation';
@@ -2013,6 +2014,7 @@ connectorRegistry.register({
   supportedAuthMethods: ['oauth', 'user_provided_params'],
   rateLimiterSpec: { points: 3, duration: 1 }, // Notion: 3 req/s per integration
   resolveMatchedRecordArchiveRepairFields: resolveNotionMatchedRecordArchiveRepairFields,
+  resolveFieldValueCanonicalizer: resolveNotionFieldValueCanonicalizer,
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Notion', Service.NOTION);

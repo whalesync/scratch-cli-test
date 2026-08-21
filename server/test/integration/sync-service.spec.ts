@@ -13,6 +13,7 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -68,6 +69,8 @@ describe('SyncService - fillSyncCaches', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      // DEV-10556 canonicalizer rollout flag: default OFF (fail-closed).
+      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
     );
 
     // Create test organization
@@ -487,6 +490,8 @@ describe('SyncService - syncTableMapping', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      // DEV-10556 canonicalizer rollout flag: default OFF (fail-closed).
+      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
     );
 
     // Create test organization
@@ -2170,6 +2175,8 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      // DEV-10556 canonicalizer rollout flag: default OFF (fail-closed).
+      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
     );
 
     // Create test organization
@@ -3050,6 +3057,8 @@ describe('SyncService - lookup_field transformer', () => {
       scratchGitService,
       {} as never,
       {} as never,
+      // DEV-10556 canonicalizer rollout flag: default OFF (fail-closed).
+      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
     );
 
     // Create test organization
