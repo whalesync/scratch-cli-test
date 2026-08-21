@@ -1390,6 +1390,11 @@ resource "google_monitoring_uptime_check_config" "github_desktop_releases_page" 
 ## single-region blip. Warn tier (email + Slack #feed-gcp-alerts, no page), matching the flow-log "tune before paging"
 ## philosophy — escalation to page is a two-line swap documented in the runbook. One policy per surface keeps the Slack
 ## alert name specific and stays well under the 6-conditions-per-policy limit.
+##
+## The GitHub-source alerts (C/D/E) additionally set duration = 2x alignment_period = 2 check periods, so a failure must
+## persist across ~2 consecutive 15-min checks before firing — this rides out transient GitHub 403/5xx blips that
+## recover by the next check (the >= 2-region guard alone can't, since a GitHub-side failure trips all regions at once).
+## The server-tier alerts (A/B) fire faster (duration < alignment_period) because our own endpoint is reliable.
 
 # --- Alert A: desktop app, our server endpoint ---
 resource "google_monitoring_alert_policy" "scratch_desktop_download_server_broken" {
@@ -1497,7 +1502,8 @@ resource "google_monitoring_alert_policy" "github_desktop_release_source_broken"
     (possible GitHub outage), or the latest release is missing a required per-platform installer. The condition name
     identifies the missing platform. This bypasses our server's 30-day last-known-good cache, so it can fire while the
     server endpoint alert stays green (users may still get the cached-good release, but the newest one is bad or GitHub
-    is down). GitHub anonymous rate limits are the main false-alarm source — see runbook.
+    is down). GitHub anonymous rate limits are the main false-alarm source — see runbook. This alert only fires after
+    the failure persists across ~2 consecutive checks (~30 min), so momentary blips that recover by the next check self-clear.
     Confirm: curl -s https://api.github.com/repos/whalesync/scratch-desktop/releases/latest | jq '.assets[].name'
     Runbook: ${local.runbook_desktop_release}
     EOF
@@ -1510,14 +1516,14 @@ resource "google_monitoring_alert_policy" "github_desktop_release_source_broken"
       condition_threshold {
         filter = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id = \"${conditions.value.uptime_check_id}\""
         aggregations {
-          alignment_period     = "1800s"
+          alignment_period     = "900s"
           per_series_aligner   = "ALIGN_NEXT_OLDER"
           cross_series_reducer = "REDUCE_COUNT_FALSE"
           group_by_fields      = ["resource.label.project_id", "resource.label.host"]
         }
         comparison      = "COMPARISON_GT"
         threshold_value = 1
-        duration        = "600s"
+        duration        = "1800s"
         trigger {
           count = 1
         }
@@ -1545,7 +1551,8 @@ resource "google_monitoring_alert_policy" "github_cli_release_source_broken" {
     A direct uptime check against the public GitHub scratch-cli release source failed: GitHub did not return 2xx
     (possible GitHub outage), or the latest release is missing a required per-platform archive
     (scratchmd_darwin_/_windows_/_linux_). The condition name identifies the missing platform. This bypasses our
-    server's cache. GitHub anonymous rate limits are the main false-alarm source — see runbook.
+    server's cache. GitHub anonymous rate limits are the main false-alarm source — see runbook. This alert only fires
+    after the failure persists across ~2 consecutive checks (~30 min), so momentary blips that recover by the next check self-clear.
     Confirm: curl -s https://api.github.com/repos/whalesync/scratch-cli/releases/latest | jq '.assets[].name'
     Runbook: ${local.runbook_desktop_release}
     EOF
@@ -1558,14 +1565,14 @@ resource "google_monitoring_alert_policy" "github_cli_release_source_broken" {
       condition_threshold {
         filter = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id = \"${conditions.value.uptime_check_id}\""
         aggregations {
-          alignment_period     = "1800s"
+          alignment_period     = "900s"
           per_series_aligner   = "ALIGN_NEXT_OLDER"
           cross_series_reducer = "REDUCE_COUNT_FALSE"
           group_by_fields      = ["resource.label.project_id", "resource.label.host"]
         }
         comparison      = "COMPARISON_GT"
         threshold_value = 1
-        duration        = "600s"
+        duration        = "1800s"
         trigger {
           count = 1
         }
@@ -1601,14 +1608,14 @@ resource "google_monitoring_alert_policy" "github_releases_page_broken" {
     condition_threshold {
       filter = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id = \"${google_monitoring_uptime_check_config.github_desktop_releases_page[0].uptime_check_id}\""
       aggregations {
-        alignment_period     = "1800s"
+        alignment_period     = "900s"
         per_series_aligner   = "ALIGN_NEXT_OLDER"
         cross_series_reducer = "REDUCE_COUNT_FALSE"
         group_by_fields      = ["resource.label.project_id", "resource.label.host"]
       }
       comparison      = "COMPARISON_GT"
       threshold_value = 1
-      duration        = "600s"
+      duration        = "1800s"
       trigger {
         count = 1
       }
