@@ -223,11 +223,42 @@ variable "enable_secret_access_alerts" {
 
 variable "secret_access_alert_threshold" {
   type    = number
-  default = 50
-  # Normal baseline is a handful of AccessSecretVersion calls per Cloud Run container start (the value is
-  # then a mounted env var), so a busy 10-minute window of deploys/scale events is still low tens. 50 sits
-  # above that; a spike well beyond flags mass secret reads. Tune after observing prod volume.
-  description = "Fire the Secret Manager access-spike alert when more than this many AccessSecretVersion audit-log entries occur in a 10-minute window."
+  default = 500
+  # Gross-volume signal (all principals). A production release cold-starts the whole Cloud Run fleet (api 2,
+  # worker 2, cron 1, client 1) at ~40-59 AccessSecretVersion reads each ≈ 250 in one 10-minute window, and the
+  # old default of 50 sat below that — which is why it false-alarmed on every deploy. 500 (~2x that fleet peak)
+  # sits above any legitimate deploy/scale burst so a breach is a genuine bulk read. Confirm the real peak from
+  # the metric's own history (Metrics Explorer: logging.googleapis.com/user/secret-access-count) before
+  # finalizing; lower toward ~300 if the observed peak is comfortably under. Low-volume access by an unexpected
+  # caller is caught separately by secret_access_unexpected_principal_threshold, not this one.
+  description = "Fire the Secret Manager access-spike alert when total AccessSecretVersion audit-log entries exceed this many in a 10-minute window (gross-volume signal, all principals)."
+}
+
+variable "secret_access_allowlisted_principals" {
+  type    = list(string)
+  default = []
+  # The app service account (cloudrun-service-account) and the GitLab deploy service account are always
+  # allowlisted in code (see local.secret_access_allowlisted_principals in monitoring.tf), so this list is only
+  # for extra expected readers: break-glass human admins or other CI that legitimately read prod secrets. Use
+  # bare principal emails. Do NOT add a whole domain (e.g. @whalesync.com) — a leaked human credential is exactly
+  # the threat the unexpected-principal alert is meant to catch.
+  description = "Extra principals (beyond the always-included app and deploy service accounts) whose Secret Manager AccessSecretVersion reads are expected and excluded from the unexpected-principal alert."
+}
+
+variable "secret_access_unexpected_principal_threshold" {
+  type    = number
+  default = 5
+  # Evaluated per principal. Any AccessSecretVersion by a non-allowlisted principal is already suspicious, so
+  # this is low. A leaked human or rogue SA reading the app secrets (dozens) is well over 5 and fires; a full
+  # deploy cannot trip it (deploy reads are all cloudrun-service-account, excluded from the metric). Set to 0 to
+  # alert on any single non-allowlisted read once the allowlist is confirmed complete.
+  description = "Fire the unexpected-principal secret-access alert when a single non-allowlisted principal makes more than this many AccessSecretVersion reads in a 10-minute window."
+}
+
+variable "enable_secret_access_unexpected_principal_alert" {
+  type        = bool
+  default     = false
+  description = "Create a log-based metric + alert that fires when a principal NOT on the allowlist (the app SA + GitLab deploy SA, plus secret_access_allowlisted_principals) reads a Secret Manager secret (DEV-10989 follow-up). Prod-only — eu-test grants readonly-SA/dev reads of test secrets (grant_readonly_sa_all_secrets + dev cloudrun-SA impersonation), which are non-allowlisted principals and would make it noisy there. Alert additionally honors var.enable_alerts."
 }
 
 variable "enable_log_ingestion_alerts" {

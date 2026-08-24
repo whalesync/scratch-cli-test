@@ -22,9 +22,14 @@ module "eu_production" {
   enable_config_change_alerts = true
 
   # Alert on a spike in Secret Manager accesses — Data Access audit-log entries (Oneleet WSG-008 /
-  # DEV-10989). Prod-only (eu-test reads test secrets routinely). Threshold is tunable
-  # (secret_access_alert_threshold); tune after observing prod volume.
+  # DEV-10989). Gross-volume signal (all principals); threshold is tunable (secret_access_alert_threshold,
+  # default 500 ≈ 2x the full-fleet deploy peak). Also enabled in eu-test.
   enable_secret_access_alerts = true
+
+  # Alert when a principal NOT on the allowlist (the app SA + GitLab deploy SA) reads a secret — a leaked human
+  # credential or rogue SA, caught even at low volume (DEV-10989 follow-up). Prod-only: eu-test's routine
+  # readonly-SA/dev secret reads are non-allowlisted principals that would make it noisy.
+  enable_secret_access_unexpected_principal_alert = true
 
   # Warn when month-to-date Cloud Logging ingestion exceeds log_ingestion_alert_threshold_gib (default
   # 300 GiB) — a cost guardrail on the audit-log volume added by WSG-008 / DEV-10989. Resets monthly.

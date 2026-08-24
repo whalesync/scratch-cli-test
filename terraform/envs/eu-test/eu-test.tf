@@ -22,8 +22,14 @@ module "eu_test" {
   enable_config_change_alerts = true
 
   # Data Access audit logs (Oneleet WSG-008 / DEV-10989) are applied to every env by the module (audit.tf,
-  # ungated) so eu-test validates the SetIamPolicy apply first. The secret-access + log-ingestion alerts are
-  # prod-only, so no alert toggles are set here.
+  # ungated) so eu-test validates the SetIamPolicy apply first.
+  #
+  # Gross-volume secret-access alert (all principals, threshold 500 ≈ 2x the full-fleet deploy peak) is robust
+  # against test's routine reads, so it runs here too. The unexpected-principal alert
+  # (enable_secret_access_unexpected_principal_alert) stays prod-only: eu-test grants readonly-SA/dev reads of
+  # test secrets (grant_readonly_sa_all_secrets + dev cloudrun-SA impersonation), which are non-allowlisted
+  # principals and would trip its low per-principal threshold. The log-ingestion alert also stays prod-only.
+  enable_secret_access_alerts = true
 
   # Load Balancer
   enable_client_load_balancer = true

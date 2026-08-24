@@ -26,6 +26,23 @@ locals {
   runbook_secret_access_alerts     = "${local.runbook_base}/runbook-gcp-secret-access-alerts.md"
   runbook_log_ingestion            = "${local.runbook_base}/runbook-gcp-log-ingestion-high.md"
 
+  # --- Secret Manager access allowlist (DEV-10989 follow-up, unexpected-principal signal) ---
+  # Legitimate AccessSecretVersion callers are the shared Cloud Run app SA (all four services run as it and read
+  # ~40-59 secrets each at cold start) and the GitLab deploy SA (terraform reads the pagerduty secret value via a
+  # data source on every prod apply — see secrets.tf `pagerduty_integration_key`). Both are derived from the module
+  # so the project id is always correct and the list is never empty; var.secret_access_allowlisted_principals adds
+  # any extra expected readers (e.g. break-glass admins). The unexpected-principal metric below excludes these so it
+  # is empty in normal operation; a match names a principal that should not be reading secrets.
+  secret_access_allowlisted_principals = distinct(concat(
+    [
+      module.iam-sa.service_accounts["cloudrun-service-account"].email,
+      module.gl_oidc.oidc_service_account_email,
+    ],
+    var.secret_access_allowlisted_principals,
+  ))
+  # Rendered "(\"a\" OR \"b\")" clause for the log filter, mirroring the flow-log country clauses below.
+  secret_access_allowlist_principal_clause = "(${join(" OR ", [for p in local.secret_access_allowlisted_principals : "\"${p}\""])})"
+
   # --- VPC Flow Log anomaly detection ---
   # VPC Flow Logs are already emitted on every subnet (see modules/vpc). These filters
   # power log-based security metrics that replaced the (expensive) Cloud IDS appliance.
@@ -1736,7 +1753,7 @@ resource "google_monitoring_alert_policy" "secret_access_spike_alert" {
   documentation {
     subject = "Scratch ${local.display_env} Cloud Audit Logs - Unusually high number of Secret Manager accesses"
     content = <<-EOF
-    An unusually high number of Secret Manager AccessSecretVersion events (Data Access audit-log entries) occurred in a 10-minute window. A secret value is read at Cloud Run instance startup and then lives as a mounted env var, so a spike can indicate a compromised principal reading secrets in bulk. Review the recent data-access audit logs for the acting principal(s) and which secrets were accessed.
+    An unusually high number of Secret Manager AccessSecretVersion events (Data Access audit-log entries) occurred in a 10-minute window. This is the gross-volume signal (all principals): a secret value is read at Cloud Run instance startup and then lives as a mounted env var, the threshold sits above a full-fleet deploy, so a firing means a genuine bulk read. Review the recent data-access audit logs for the acting principal(s) and which secrets were accessed. Low-volume access by an unexpected caller is caught separately by the "Secret access by unexpected principal" alert.
     Runbook: ${local.runbook_secret_access_alerts}
     EOF
   }
@@ -1771,6 +1788,86 @@ resource "google_monitoring_alert_policy" "secret_access_spike_alert" {
   notification_channels = local.warning_notification_channels
   severity              = "WARNING"
   depends_on            = [google_logging_metric.secret_access_count]
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Secret access by an UNEXPECTED principal (DEV-10989 follow-up — the deploy-proof signal)
+## ---------------------------------------------------------------------------------------------------------------------
+## Counts AccessSecretVersion entries whose principal is NOT on the allowlist (normally only the shared app SA + the
+## GitLab deploy SA). Legitimate reads all come from the single shared app SA, so a read by anyone else can indicate a
+## leaked human credential or a rogue/compromised SA — anomalous even at low volume. A full-fleet deploy cannot trip it
+## (deploy reads are all cloudrun-service-account, excluded here). The exclusion is in the logging filter so the metric
+## is empty in normal operation; the principal label names who accessed the secret. Prod-only via
+## var.enable_secret_access_unexpected_principal_alert — eu-test grants readonly-SA/dev reads of test secrets
+## (grant_readonly_sa_all_secrets + dev cloudrun-SA impersonation), which are non-allowlisted principals and would make
+## this noisy there; eu-test runs only the gross-volume alert above.
+resource "google_logging_metric" "secret_access_unexpected_principal_count" {
+  count = var.enable_secret_access_unexpected_principal_alert ? 1 : 0
+  name  = "secret-access-unexpected-principal-count"
+  filter = join(" AND ", [
+    "logName=\"projects/${var.gcp_project_id}/logs/cloudaudit.googleapis.com%2Fdata_access\"",
+    "protoPayload.serviceName=\"secretmanager.googleapis.com\"",
+    "protoPayload.methodName:\"AccessSecretVersion\"",
+    "NOT protoPayload.authenticationInfo.principalEmail=${local.secret_access_allowlist_principal_clause}",
+  ])
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+    labels {
+      key         = "principal"
+      value_type  = "STRING"
+      description = "Email of the non-allowlisted principal that accessed a secret"
+    }
+  }
+  label_extractors = {
+    "principal" = "EXTRACT(protoPayload.authenticationInfo.principalEmail)"
+  }
+
+  depends_on = [google_project_service.services]
+}
+
+resource "google_monitoring_alert_policy" "secret_access_unexpected_principal_alert" {
+  count        = var.enable_secret_access_unexpected_principal_alert && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Cloud Audit Logs - Secret access by unexpected principal"
+  documentation {
+    subject = "Scratch ${local.display_env} Cloud Audit Logs - Secret Manager accessed by a non-allowlisted principal"
+    content = <<-EOF
+    A principal that is NOT on the expected allowlist read a Secret Manager secret (AccessSecretVersion). Legitimate secret reads come only from the shared Cloud Run application service account (and the GitLab deploy service account during a terraform apply), so a read by any other principal can indicate leaked human credentials or a rogue/compromised service account. Review the data-access audit logs for the named principal and which secrets were accessed. If the access was intended (a break-glass admin or a CI job), add that principal to secret_access_allowlisted_principals.
+    Runbook: ${local.runbook_secret_access_alerts}
+    EOF
+  }
+  combiner = "OR"
+  conditions {
+    display_name = "Non-allowlisted principal secret accesses over ${var.secret_access_unexpected_principal_threshold} in 10m"
+    condition_threshold {
+      filter          = "resource.type = \"audited_resource\" AND metric.type = \"logging.googleapis.com/user/${google_logging_metric.secret_access_unexpected_principal_count[0].name}\""
+      duration        = "0s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.secret_access_unexpected_principal_threshold
+      trigger {
+        count = 1
+      }
+      aggregations {
+        alignment_period     = "600s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        group_by_fields      = ["metric.label.principal"]
+      }
+    }
+  }
+
+  alert_strategy {
+    # See secret_access_spike_alert: pin auto_close to the GCP max (7 days) so a security incident does not
+    # self-resolve before a human triages.
+    auto_close = "604800s"
+    notification_channel_strategy {
+      renotify_interval = local.extended_renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
+  depends_on            = [google_logging_metric.secret_access_unexpected_principal_count]
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------

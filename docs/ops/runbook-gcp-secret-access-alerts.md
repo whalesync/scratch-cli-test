@@ -1,20 +1,26 @@
-# Runbook: GCP Secret Manager Access Spike Alert
+# Runbook: GCP Secret Manager Access Alerts
 
-Guide for investigating the **Secret access spike** security alert that Google Cloud Monitoring posts to Slack **`#feed-gcp-alerts`** for the EU-production project `spv1eu-production`. It fires when an unusually high number of Secret Manager **`AccessSecretVersion`** entries (Data Access audit-log entries) occur in a 10-minute window. A secret value is read at Cloud Run instance **startup** and then lives as a mounted env var, so most bursts are **benign** — a deploy or a scale-up restarting containers — but each one needs a look, because the same signal is what would surface a compromised principal reading secrets in bulk. This is the detective control Oneleet asked for in **DEV-10989 / WSG-008**.
+Guide for investigating the two Secret Manager **Data Access** security alerts that Google Cloud Monitoring posts to Slack **`#feed-gcp-alerts`**. Both count **`AccessSecretVersion`** entries (Data Access audit-log entries) over a 10-minute window. This is the detective control Oneleet asked for in **DEV-10989 / WSG-008**.
+
+- **Secret access spike** (gross-volume, all principals) — fires when the total `AccessSecretVersion` count exceeds the threshold. A secret value is read at Cloud Run instance **startup** and then lives as a mounted env var, so most bursts are **benign** — a deploy or scale-up restarting containers — but the same signal surfaces a compromised principal reading secrets in bulk. The threshold sits above a full-fleet deploy, so a firing means a genuine bulk read. Runs in **eu-production and eu-test**.
+- **Secret access by unexpected principal** (per-principal) — fires when a principal that is **not** on the allowlist reads any secret at even low volume. The allowlist is the shared Cloud Run app SA (`cloudrun-service-account`) + the GitLab deploy SA (`gitlab-service-account`), plus anything in `secret_access_allowlisted_principals`. Since legitimate reads come only from those SAs, a match points at a leaked human credential or a rogue/compromised SA. A full-fleet deploy cannot trip it (deploy reads are all the app SA, excluded from the metric). **Prod-only** — see the note below.
 
 ## Context
 
 | Item | Value |
 | --- | --- |
-| GCP project | `spv1eu-production` (region `europe-west1`) |
-| Audit-log name | `projects/spv1eu-production/logs/cloudaudit.googleapis.com%2Fdata_access` (Data Access) |
-| Alert definition | [`terraform/modules/env/monitoring.tf`](../../terraform/modules/env/monitoring.tf) — `google_logging_metric.secret_access_count` + `google_monitoring_alert_policy.secret_access_spike_alert` |
+| GCP project | `spv1eu-production` (region `europe-west1`); the spike alert also runs in `spv1eu-test` |
+| Audit-log name | `projects/<project>/logs/cloudaudit.googleapis.com%2Fdata_access` (Data Access) |
+| Spike alert definition | [`terraform/modules/env/monitoring.tf`](../../terraform/modules/env/monitoring.tf) — `google_logging_metric.secret_access_count` + `google_monitoring_alert_policy.secret_access_spike_alert` |
+| Unexpected-principal alert definition | [`terraform/modules/env/monitoring.tf`](../../terraform/modules/env/monitoring.tf) — `google_logging_metric.secret_access_unexpected_principal_count` + `google_monitoring_alert_policy.secret_access_unexpected_principal_alert` |
 | Audit-config posture | [`terraform/modules/env/audit.tf`](../../terraform/modules/env/audit.tf) — `google_project_iam_audit_config.data_access_full` (`secretmanager.googleapis.com`, `DATA_READ` + `DATA_WRITE`) |
-| Threshold | `var.secret_access_alert_threshold` (default **50** `AccessSecretVersion` entries / 10-min window) |
+| Spike threshold | `var.secret_access_alert_threshold` (default **500** `AccessSecretVersion` entries / 10-min window, all principals) |
+| Unexpected-principal threshold | `var.secret_access_unexpected_principal_threshold` (default **5** reads / 10-min window, **per principal**, non-allowlisted only) |
+| Allowlist | `local.secret_access_allowlisted_principals` = app SA + GitLab deploy SA + `var.secret_access_allowlisted_principals` |
 | Slack channel | `#feed-gcp-alerts` |
 | Notification | Cloud Monitoring → Slack + email. Severity **WARNING** (no PagerDuty). Auto-closes after 7 days; renotifies every 6 h |
 
-> The Secret Manager Data Access audit config is applied in every environment (audit.tf, ungated); this alert is **prod-only** (`var.enable_secret_access_alerts`) because eu-test reads test secrets routinely (`grant_readonly_sa_all_secrets` + dev cloudrun-SA impersonation). The only routine reader in prod is the Cloud Run runtime SA (`cloudrun-service-account`) at container start.
+> The Secret Manager Data Access audit config is applied in every environment (audit.tf, ungated). The **spike** alert (`var.enable_secret_access_alerts`) runs in both eu-production and eu-test — its threshold sits above a full-fleet deploy, so test's routine reads don't trip it. The **unexpected-principal** alert (`var.enable_secret_access_unexpected_principal_alert`) is **prod-only** because eu-test reads test secrets routinely under non-allowlisted identities (`grant_readonly_sa_all_secrets` + dev cloudrun-SA impersonation), which would spam its low per-principal threshold. The only routine reader in prod is the Cloud Run runtime SA (`cloudrun-service-account`) at container start (and the GitLab deploy SA during a terraform apply).
 
 ## Prerequisites
 
@@ -66,7 +72,8 @@ jq -r '.[].protoPayload.resourceName' /tmp/secret-access.json | sort | uniq -c |
 
 ## Remediation
 
-- **Benign, recurring deploy trips it** — raise `secret_access_alert_threshold` in [`variables.tf`](../../terraform/modules/env/variables.tf) and open an MR. Do **not** `terraform apply`; that stays with whoever owns the deploy.
+- **Benign, recurring deploy trips the spike alert** — raise `secret_access_alert_threshold` in [`variables.tf`](../../terraform/modules/env/variables.tf) and open an MR. Do **not** `terraform apply`; that stays with whoever owns the deploy.
+- **Unexpected-principal alert, but the access was intended** (a break-glass admin or a CI job you can confirm) — add that principal's bare email to `secret_access_allowlisted_principals` in the relevant env (e.g. [`eu-production.tf`](../../terraform/envs/eu-production/eu-production.tf)) and open an MR. Never allowlist a whole domain — a leaked human credential is exactly what this alert exists to catch.
 - **Malicious** — do **not** contain it from a read-only session. Preserve evidence (keep `/tmp/secret-access.json`), escalate to a `role_operations@whalesync.com` admin, **rotate the accessed secrets** (and `ENCRYPTION_MASTER_KEY` / DB creds if touched), and scaffold an incident report with the `create-incident-report` skill.
 
 ## Related
