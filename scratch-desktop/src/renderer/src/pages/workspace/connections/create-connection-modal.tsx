@@ -25,7 +25,6 @@ import {
   TextInput,
   UnstyledButton,
 } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
 import type { ConnectorAccount, ConnectorSettingDefinition, OAuthInitiateOptionsDto } from '@spinner/shared-types';
 import { ConnectorHealthStatus } from '@spinner/shared-types';
 import { Check } from 'lucide-react';
@@ -73,7 +72,7 @@ export function CreateConnectionModal({
   const [customClientSecret, setCustomClientSecret] = useState('');
   const [showOAuthCustom, setShowOAuthCustom] = useState(false);
   const { data: metadata } = useConnectorsMetadata();
-  const { connectorAccounts, createConnectorAccount } = useConnectorAccounts(workbookId);
+  const { connectorAccounts, createConnectorAccount, deleteConnectorAccount } = useConnectorAccounts(workbookId);
   const { getDefaultAuthMethod, getSupportedAuthMethods, availableServices } = useConnectors();
 
   const currentFields: ConnectorSettingDefinition[] =
@@ -94,6 +93,7 @@ export function CreateConnectionModal({
     setCustomClientId('');
     setCustomClientSecret('');
     setFieldValues({});
+    setError(null);
   };
 
   const handleClearForm = () => {
@@ -102,6 +102,14 @@ export function CreateConnectionModal({
     setNewDisplayName(null);
     setAuthMethod('oauth');
     setError(null);
+  };
+
+  // Every close path (Cancel button, the modal's own close, the GENERIC_API
+  // sub-modal) must reset the form first, so reopening starts clean rather than
+  // reviving the previous service/API-key selection.
+  const handleClose = () => {
+    handleClearForm();
+    onClose();
   };
 
   const handleOAuthInitiate = async () => {
@@ -190,12 +198,22 @@ export function CreateConnectionModal({
       });
 
       if (createdAccount.healthStatus === ConnectorHealthStatus.FAILED) {
-        notifications.show({
-          title: 'Connection Created with Errors',
-          message: createdAccount.healthStatusMessage || 'The connection was created but failed a health check.',
-          color: 'red',
-          autoClose: 8000,
-        });
+        // The server persists a connection even when its credential check fails.
+        // Roll it back so this failed attempt leaves nothing behind — retries stay
+        // clean re-creates and the duplicate-name guard doesn't trip on a lingering
+        // errored row. A rollback failure degrades to an errored connection the user
+        // can still edit/remove from the list, so it must not throw.
+        try {
+          await deleteConnectorAccount(createdAccount.id);
+        } catch (deleteError) {
+          console.debug('Failed to roll back connection that failed its health check:', deleteError);
+        }
+        // Keep the modal open with the entered values intact and surface the failure
+        // inline, so the user can correct the credential and reconnect immediately.
+        setError(
+          createdAccount.healthStatusMessage || "We couldn't connect with those credentials. Check them and try again.",
+        );
+        return;
       }
 
       handleClearForm();
@@ -262,10 +280,7 @@ export function CreateConnectionModal({
     return (
       <GenericApiConnectionModal
         opened={opened}
-        onClose={() => {
-          handleClearForm();
-          onClose();
-        }}
+        onClose={handleClose}
         workbookId={workbookId}
         onConnectionCreated={(account) => {
           handleClearForm();
@@ -276,16 +291,7 @@ export function CreateConnectionModal({
   }
 
   return (
-    <Modal
-      opened={opened}
-      onClose={() => {
-        handleClearForm();
-        onClose();
-      }}
-      title="Create Connection"
-      size="lg"
-      centered
-    >
+    <Modal opened={opened} onClose={handleClose} title="Create Connection" size="lg" centered>
       {isOAuthLoading || isCreating ? (
         <Center py="xl">
           <Stack align="center" gap="md">
@@ -431,7 +437,7 @@ export function CreateConnectionModal({
           </Stack>
 
           <Group justify="flex-end" gap="sm" mt="md">
-            <ButtonSecondaryOutline onClick={onClose}>Cancel</ButtonSecondaryOutline>
+            <ButtonSecondaryOutline onClick={handleClose}>Cancel</ButtonSecondaryOutline>
             <ButtonPrimaryLight onClick={() => void handleCreate()} loading={isCreating} disabled={isDisplayNameTaken}>
               {authMethod === 'oauth' && newService ? 'Connect with ' + serviceName : 'Create'}
             </ButtonPrimaryLight>

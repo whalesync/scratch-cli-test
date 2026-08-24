@@ -8,6 +8,7 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { initiateDesktopOAuth } from '@/lib/oauth-helpers';
 import { ActionIcon, Box, Menu, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { notifications } from '@mantine/notifications';
 import type { ConnectorAccount, DataFolder, DataFolderGroup, DataFolderOptions } from '@spinner/shared-types';
 import { AuthType, ConnectorHealthStatus } from '@spinner/shared-types';
 import {
@@ -96,6 +97,7 @@ export function ConnectionsList({
 }: ConnectionsListProps) {
   const { connectorAccounts, isLoading: isLoadingConnections } = useConnectorAccounts(workbookId);
   const { dataFolderGroups, isLoading: isLoadingFolders } = useDataFolders(workbookId);
+  const { data: metadata } = useConnectorsMetadata();
   const connectorAccountMap = useMemo(
     () => new Map((connectorAccounts ?? []).map((account) => [account.id, account])),
     [connectorAccounts],
@@ -113,11 +115,35 @@ export function ConnectionsList({
     const account = connectorAccounts.find((ca) => ca.id === newConnectionId);
     if (account) {
       consumedConnectionRef.current = newConnectionId;
-      setNewlyCreatedAccount(account);
-      openChooseTablesAfterCreate();
+      // A failed OAuth grant still persists the connection, so don't present it as a
+      // success. Unlike the API-key modal there's nothing to keep open (the grant
+      // happened in the system browser), so surface the failure with a persistent
+      // notification and skip Choose Tables — the connection stays in the list below
+      // with a "Reconnect" action.
+      if (account.healthStatus === ConnectorHealthStatus.FAILED) {
+        const connectionName = account.displayName || getServiceName(metadata, account.service);
+        notifications.show({
+          title: 'Connection not established',
+          message: account.healthStatusMessage
+            ? `Connection "${connectionName}" was not established. ${account.healthStatusMessage} Reconnect or remove it from Connections.`
+            : `Connection "${connectionName}" was not established. Reconnect or remove it from Connections.`,
+          color: 'red',
+          autoClose: false,
+        });
+      } else {
+        setNewlyCreatedAccount(account);
+        openChooseTablesAfterCreate();
+      }
       onNewConnectionConsumed?.();
     }
-  }, [newConnectionId, isLoadingConnections, connectorAccounts, openChooseTablesAfterCreate, onNewConnectionConsumed]);
+  }, [
+    newConnectionId,
+    isLoadingConnections,
+    connectorAccounts,
+    metadata,
+    openChooseTablesAfterCreate,
+    onNewConnectionConsumed,
+  ]);
 
   const handleConnectionCreated = useCallback(
     (account: ConnectorAccount) => {
