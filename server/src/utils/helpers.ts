@@ -56,6 +56,32 @@ function fileExtensionOf(text: string): string {
 }
 
 /**
+ * The outcome of {@link safeJsonParse}: either the parsed value, or the error that
+ * `JSON.parse` threw. A discriminated union (not `T | null`) is used deliberately —
+ * `JSON.parse('null')` is a *successful* parse yielding `null`, which a nullable
+ * return could not tell apart from a failure.
+ */
+export type SafeJsonParseResult<T> = { ok: true; value: T } | { ok: false; error: Error };
+
+/**
+ * Parse `text` as JSON without letting a `SyntaxError` escape to the caller.
+ *
+ * Reach for this whenever the JSON comes from an untrusted or fallible source —
+ * a file read from disk or git (which may be truncated by an interrupted pull,
+ * DEV-9981), a network/connector response, a store like Redis, or unvalidated
+ * request input. Returning a result lets each caller decide whether a malformed
+ * payload should be skipped, defaulted, or surfaced as a clear error, rather than
+ * crashing with an opaque `Unexpected end of JSON input`.
+ */
+export function safeJsonParse<T = unknown>(text: string): SafeJsonParseResult<T> {
+  try {
+    return { ok: true, value: JSON.parse(text) as T };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+  }
+}
+
+/**
  * Return the enum value in string enum `T` named `strVal`, or `defaultValue` if it isn't recognized.
  * Accepts values of `strVal` that are either case name ('FOO') OR case value ('foo').
  */

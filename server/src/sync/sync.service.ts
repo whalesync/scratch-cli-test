@@ -81,6 +81,7 @@ import {
 import { MappingTypeTrace, traceMappingType } from 'src/sync/transformers/type-validator';
 import { Actor } from 'src/users/types';
 import { readFieldValueAtPath, setFieldValueAtPath } from 'src/utils/field-path';
+import { safeJsonParse } from 'src/utils/helpers';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { deduplicateFileName, resolveBaseFileName } from 'src/workbook/util';
@@ -2972,9 +2973,17 @@ function parseFileToRecord(file: FileContent, idPath: DotPath): SyncRecord {
   const fields: Record<string, unknown> = {};
 
   if (file.content) {
-    const parsed = JSON.parse(file.content) as object;
+    // A record file that isn't valid JSON is corrupt or truncated — e.g. an
+    // interrupted pull (ECONNRESET) left partial content (DEV-9981). Surface a
+    // clear, path-annotated error instead of an opaque `Unexpected end of JSON
+    // input`, consistent with the missing-id throw below; the sync's top-level
+    // handler reports the failure and a re-pull restores the file.
+    const parsed = safeJsonParse<object>(file.content);
+    if (!parsed.ok) {
+      throw new Error(`Record in file ${file.path} is not valid JSON: ${parsed.error.message}`);
+    }
     // Add metadata fields from front matter
-    Object.assign(fields, parsed);
+    Object.assign(fields, parsed.value);
   }
 
   const recordId = readRecordIdAsString(fields, idPath);

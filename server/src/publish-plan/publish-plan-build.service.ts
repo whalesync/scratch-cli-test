@@ -4,6 +4,7 @@ import { type DataFolderOptions, isScratchPendingPublishId, WorkbookId } from '@
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash';
 import { AssetIndexService } from 'src/asset/asset-index.service';
+import { safeJsonParse } from 'src/utils/helpers';
 import { ParsedContent, Schema } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
 import { DbService } from '../db/db.service';
@@ -692,22 +693,17 @@ export class PublishPlanBuildService {
           try {
             contentObj = JSON.parse(rawContent) as ParsedContent;
           } catch {
-            // Not JSON? Just commit as is if it was user-modified.
-            if (modifiedFilePaths.has(filePath)) {
-              const { folderPath } = parsePath(filePath);
-              const info = await getDataFolderInfo(folderPath);
-
-              planOperations.push({
-                filePath,
-                phase: 'edit',
-                content: JSON.parse(rawContent) as ParsedContent,
-                changedFields: {},
-                dataFolderId: info?.id,
-                status: 'pending',
-              });
-              editCount++;
-              liveCounts.editsPlanned++;
-            }
+            // A record file that isn't valid JSON is corrupt or truncated (e.g. an
+            // interrupted pull left partial content, DEV-9981). We can't build an
+            // edit op from it — `content` must be a JSON object (ParsedContent) —
+            // and re-parsing `rawContent` here would just re-throw the same error.
+            // Warn and skip; a re-pull restores the file. Publishing a truncated
+            // record would also violate data fidelity, so skipping is the safe path.
+            WSLogger.warn({
+              source: 'PublishPlanService.buildPipeline',
+              message: `Skipping edit for file with invalid JSON: ${filePath}`,
+              workbookId,
+            });
             continue;
           }
 
@@ -753,9 +749,24 @@ export class PublishPlanBuildService {
           const isRevertFkStripped = pass4ContentStr !== pass3ContentStr;
 
           if (isUserModified || isRefCleared || isPseudoStripped || isAssetStripped || isRevertFkStripped) {
-            // Compute changedFields by diffing main vs dirty (after stripping)
+            // Compute changedFields by diffing main vs dirty (after stripping).
+            // If the main-branch copy is truncated/corrupt (DEV-9981), don't crash
+            // the whole plan build — warn and treat it as absent, which diffs the
+            // record as fully-changed (non-destructive: publishes more, loses nothing).
             const mainRaw = mainMap.get(filePath);
-            const mainObj = mainRaw ? (JSON.parse(mainRaw) as Record<string, unknown>) : null;
+            let mainObj: Record<string, unknown> | null = null;
+            if (mainRaw) {
+              const parsedMain = safeJsonParse<Record<string, unknown>>(mainRaw);
+              if (parsedMain.ok) {
+                mainObj = parsedMain.value;
+              } else {
+                WSLogger.warn({
+                  source: 'PublishPlanService.buildPipeline',
+                  message: `Main-branch content for ${filePath} is not valid JSON; treating as new for diff`,
+                  workbookId,
+                });
+              }
+            }
             const changed = mainObj
               ? computeChangedFields(mainObj, pass4ContentObj as Record<string, unknown>, schema)
               : (pass4ContentObj as Record<string, unknown>);
@@ -849,25 +860,15 @@ export class PublishPlanBuildService {
           try {
             contentObj = JSON.parse(rawContent) as ParsedContent;
           } catch {
-            planOperations.push({
-              filePath: add.path,
-              phase: 'create',
-              content: JSON.parse(rawContent) as ParsedContent,
-              dataFolderId: info?.id || null,
-              status: 'pending',
+            // Corrupt or truncated record file (e.g. an interrupted pull, DEV-9981).
+            // A create op's `content` must be a JSON object (ParsedContent), and
+            // re-parsing `rawContent` here would just re-throw. Warn and skip; a
+            // re-pull restores the file, and we never publish a truncated record.
+            WSLogger.warn({
+              source: 'PublishPlanService.buildPipeline',
+              message: `Skipping create for file with invalid JSON: ${add.path}`,
+              workbookId,
             });
-            createCount++;
-            liveCounts.createsPlanned++;
-            if (isScratchPendingPublishId(filename)) {
-              planOperations.push({
-                filePath: add.path,
-                phase: 'rename-files',
-                content: {},
-                dataFolderId: info?.id || null,
-                status: 'pending',
-              });
-              liveCounts.renameFilesPlanned++;
-            }
             continue;
           }
 

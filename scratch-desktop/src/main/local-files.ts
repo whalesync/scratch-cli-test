@@ -2016,16 +2016,33 @@ export async function acceptFieldEditFromInputText(
   return { value: parsed };
 }
 
-/** Reads `filePath` as a JSON object. Returns `{}` when the file is missing or is not a JSON object. */
-async function readWorkingFileObject(filePath: string): Promise<Record<string, unknown>> {
+/**
+ * Reads `filePath` as a JSON object. Returns `{}` when the file is missing or parses
+ * to something other than a JSON object.
+ *
+ * A file that exists but contains invalid JSON (corrupt or truncated, e.g. an
+ * interrupted write/pull — DEV-9981) throws a descriptive error rather than an opaque
+ * `Unexpected end of JSON input`. It deliberately does NOT fall back to `{}` in that
+ * case: the only caller writes the returned object straight back to disk, so returning
+ * `{}` for a corrupt file would overwrite and destroy the rest of the record.
+ */
+export async function readWorkingFileObject(filePath: string): Promise<Record<string, unknown>> {
+  let content: string;
   try {
-    const content = await readFile(filePath, 'utf-8');
-    const parsed: unknown = JSON.parse(content);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
+    content = await readFile(filePath, 'utf-8');
   } catch (err) {
-    if (!isFileNotFoundError(err)) throw err;
+    if (isFileNotFoundError(err)) return {};
+    throw err;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Working file ${filePath} contains invalid JSON: ${detail}`);
+  }
+  if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
   }
   return {};
 }

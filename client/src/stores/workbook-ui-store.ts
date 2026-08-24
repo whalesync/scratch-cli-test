@@ -192,22 +192,30 @@ export const useWorkbookUIStore = create<WorkbookUIStore>()(
         getItem: (name) => {
           const str = localStorage.getItem(name);
           if (!str) return null;
-          const parsed = JSON.parse(str) as {
-            state: {
-              expandedNodes?: string[];
-              showHiddenConnections?: string[];
-              hiddenFileFolders?: string[];
+          try {
+            const parsed = JSON.parse(str) as {
+              state: {
+                expandedNodes?: string[];
+                showHiddenConnections?: string[];
+                hiddenFileFolders?: string[];
+              };
             };
-          };
-          return {
-            ...parsed,
-            state: {
-              ...parsed.state,
-              expandedNodes: new Set(parsed.state.expandedNodes ?? []),
-              showHiddenConnections: new Set(parsed.state.showHiddenConnections ?? []),
-              hiddenFileFolders: new Set(parsed.state.hiddenFileFolders ?? []),
-            },
-          };
+            return {
+              ...parsed,
+              state: {
+                ...parsed.state,
+                expandedNodes: new Set(parsed.state.expandedNodes ?? []),
+                showHiddenConnections: new Set(parsed.state.showHiddenConnections ?? []),
+                hiddenFileFolders: new Set(parsed.state.hiddenFileFolders ?? []),
+              },
+            };
+          } catch (error) {
+            // Corrupt or truncated persisted state (e.g. a partial write or quota
+            // eviction, DEV-9981) must not crash store rehydration on load. Drop it
+            // and fall back to INITIAL_STATE — persist reads null as "nothing stored".
+            console.debug('workbook-ui-store: ignoring corrupt persisted state', error);
+            return null;
+          }
         },
         setItem: (name, value) => {
           const toStore = {

@@ -1,4 +1,4 @@
-import { elideToMaxLength, stringToEnum } from './helpers';
+import { elideToMaxLength, safeJsonParse, stringToEnum } from './helpers';
 
 enum TestEnum {
   FOO = 'foo',
@@ -171,6 +171,36 @@ describe('Utility Helpers', () => {
 
     it('treats a negative maxLength as zero', () => {
       expect(elideToMaxLength('anything', -5)).toBe('');
+    });
+  });
+
+  describe('safeJsonParse', () => {
+    it('parses valid JSON and returns the value', () => {
+      const result = safeJsonParse<{ a: number }>('{"a":1}');
+      expect(result).toEqual({ ok: true, value: { a: 1 } });
+    });
+
+    it('treats a valid `null` payload as a successful parse, not a failure', () => {
+      // The whole reason for the discriminated union: JSON.parse('null') succeeds.
+      const result = safeJsonParse('null');
+      expect(result).toEqual({ ok: true, value: null });
+    });
+
+    it('returns an error result for truncated JSON instead of throwing', () => {
+      // The DEV-9981 case: an interrupted write leaves partial content.
+      const result = safeJsonParse('{"a":1');
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('returns an error result for empty string', () => {
+      expect(safeJsonParse('').ok).toBe(false);
+    });
+
+    it('returns an error result for non-JSON garbage', () => {
+      expect(safeJsonParse('not json at all').ok).toBe(false);
     });
   });
 });

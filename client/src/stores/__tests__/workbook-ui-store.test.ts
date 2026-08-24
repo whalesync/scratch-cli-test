@@ -45,3 +45,25 @@ describe('toggleHiddenFiles', () => {
     expect(parsed.state.showHiddenConnections).toContain('conn-1');
   });
 });
+
+describe('corrupt persisted state (DEV-9981)', () => {
+  it('rehydrates without throwing and keeps the store usable when localStorage is truncated', async () => {
+    // Simulate a partially-written / corrupt persisted blob.
+    localStorage.setItem('workbook-ui-store', '{"state":{"expandedNodes":[');
+
+    await expect(useWorkbookUIStore.persist.rehydrate()).resolves.not.toThrow();
+
+    // The store falls back to its initial (valid) Set-typed state instead of crashing.
+    const state = useWorkbookUIStore.getState();
+    expect(state.expandedNodes).toBeInstanceOf(Set);
+    expect(state.showHiddenConnections).toBeInstanceOf(Set);
+    expect(state.hiddenFileFolders).toBeInstanceOf(Set);
+  });
+
+  it('rehydrates without throwing when localStorage holds valid JSON of the wrong shape', async () => {
+    localStorage.setItem('workbook-ui-store', 'null');
+
+    await expect(useWorkbookUIStore.persist.rehydrate()).resolves.not.toThrow();
+    expect(useWorkbookUIStore.getState().expandedNodes).toBeInstanceOf(Set);
+  });
+});
