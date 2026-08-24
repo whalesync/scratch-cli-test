@@ -102,6 +102,19 @@ export enum UserFlag {
    */
   DESKTOP_REVIEW_SURFACE_V2 = 'DESKTOP_REVIEW_SURFACE_V2',
   /**
+   * DEV-10200 migration gate for HubSpot association writes. HubSpot retires the
+   * v4 APIs on 2027-03-30; the replacement is the date-versioned `2026-03` API.
+   * When TRUE for the publishing user, the HubSpot connector writes associations
+   * through the `2026-03` URLs; when FALSE (default), it keeps using v4. The two
+   * endpoints are 1:1 (same default-association create, same delete-all
+   * semantics), so this flag exists to catch HubSpot-side behavior differences
+   * during rollout, not to gate a feature. Fail-closed to v4: unmatched users
+   * and a PostHog outage both keep the old URLs. Evaluated inside the HubSpot
+   * connector via `ConnectorFactoryContext.isFeatureEnabled`; server-only, so
+   * NOT in `ClientUserFlags`. Delete after the migration bakes in.
+   */
+  HUBSPOT_ASSOCIATIONS_API_2026_03 = 'HUBSPOT_ASSOCIATIONS_API_2026_03',
+  /**
    * DEV-10735 minimum supported desktop-app version. The flag's PostHog JSON
    * payload is a semver string (e.g. `"0.2.0"`); when set, the desktop app locks
    * its UI and forces an upgrade for any build older than that version. Evaluated

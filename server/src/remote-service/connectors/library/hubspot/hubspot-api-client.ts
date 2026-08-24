@@ -24,6 +24,14 @@ const PAGE_SIZE = 100;
 const BATCH_READ_SIZE = 100;
 
 /**
+ * Which API the association writes go through. HubSpot retires v4 on 2027-03-30;
+ * '2026-03' is its date-versioned replacement with identical semantics for the two
+ * endpoints we use (DEV-10200). The connector resolves the version from the
+ * HUBSPOT_ASSOCIATIONS_API_2026_03 flag and passes it per call.
+ */
+export type HubspotAssociationsApiVersion = 'v4' | '2026-03';
+
+/**
  * Custom error class for HubSpot API errors.
  */
 export class HubspotError extends Error {
@@ -55,7 +63,9 @@ const HUBSPOT_RETRY_OPTS: WithRetryOpts = {
 };
 
 /**
- * Low-level HTTP client for the HubSpot CRM v3/v4 REST APIs.
+ * Low-level HTTP client for the HubSpot CRM REST APIs (v3, plus v4 or the
+ * date-versioned 2026-03 API for association writes — see
+ * {@link HubspotAssociationsApiVersion}).
  * Uses axios with bearer token auth, rate limiting, and retry on 429.
  */
 export class HubspotApiClient {
@@ -400,24 +410,47 @@ export class HubspotApiClient {
     }
   }
 
-  // --- Associations (v4 API) ---
+  // --- Associations (v4 / 2026-03 API) ---
 
   /**
-   * Create a default association between two records.
+   * The two association APIs differ only in the URL prefix: v4 puts the version
+   * before `objects`, the date-versioned API after it.
    */
-  async createAssociation(fromObjectType: string, fromId: string, toObjectType: string, toId: string): Promise<void> {
+  private associationsPathPrefix(apiVersion: HubspotAssociationsApiVersion): string {
+    return apiVersion === '2026-03' ? '/crm/objects/2026-03' : '/crm/v4/objects';
+  }
+
+  /**
+   * Create a default (unlabeled) association between two records.
+   */
+  async createAssociation(
+    fromObjectType: string,
+    fromId: string,
+    toObjectType: string,
+    toId: string,
+    apiVersion: HubspotAssociationsApiVersion = 'v4',
+  ): Promise<void> {
+    const prefix = this.associationsPathPrefix(apiVersion);
     await this.withRetry(async () =>
-      this.http.put(`/crm/v4/objects/${fromObjectType}/${fromId}/associations/default/${toObjectType}/${toId}`),
+      this.http.put(`${prefix}/${fromObjectType}/${fromId}/associations/default/${toObjectType}/${toId}`),
     );
   }
 
   /**
-   * Delete an association between two records.
+   * Delete an association between two records. Removes every association type
+   * between the pair, on both API versions.
    */
-  async deleteAssociation(fromObjectType: string, fromId: string, toObjectType: string, toId: string): Promise<void> {
+  async deleteAssociation(
+    fromObjectType: string,
+    fromId: string,
+    toObjectType: string,
+    toId: string,
+    apiVersion: HubspotAssociationsApiVersion = 'v4',
+  ): Promise<void> {
+    const prefix = this.associationsPathPrefix(apiVersion);
     try {
       await this.withRetry(async () =>
-        this.http.delete(`/crm/v4/objects/${fromObjectType}/${fromId}/associations/${toObjectType}/${toId}`),
+        this.http.delete(`${prefix}/${fromObjectType}/${fromId}/associations/${toObjectType}/${toId}`),
       );
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 404) {

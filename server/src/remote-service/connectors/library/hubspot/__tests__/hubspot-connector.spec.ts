@@ -407,14 +407,14 @@ describe('HubspotConnector', () => {
       await connector.updateRecords(tableSpec, [file], [{ associations: file.associations }]);
 
       expect(mockCreateAssociation).toHaveBeenCalledTimes(1);
-      expect(mockCreateAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C2');
+      expect(mockCreateAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C2', 'v4');
       expect(mockDeleteAssociation).toHaveBeenCalledTimes(1);
-      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C1');
+      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C1', 'v4');
       // Association-only changeset → no property PATCH.
       expect(mockUpdateRecord).not.toHaveBeenCalled();
     });
 
-    it('makes no v4 calls when desired associations equal current (no-op)', async () => {
+    it('makes no association calls when desired associations equal current (no-op)', async () => {
       const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
       mockGetRecord.mockResolvedValue({
         id: '7',
@@ -450,8 +450,97 @@ describe('HubspotConnector', () => {
 
       expect(mockCreateAssociation).not.toHaveBeenCalled();
       expect(mockDeleteAssociation).toHaveBeenCalledTimes(2);
-      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '9', 'companies', 'C1');
-      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '9', 'companies', 'C2');
+      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '9', 'companies', 'C1', 'v4');
+      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '9', 'companies', 'C2', 'v4');
+    });
+  });
+
+  // DEV-10200: association writes resolve their API version from the explicit
+  // override, then the HUBSPOT_ASSOCIATIONS_API_2026_03 flag, defaulting to v4
+  // when no flag check is wired (the cases above).
+  describe('associations API version (DEV-10200)', () => {
+    const CONTACTS = 'contacts';
+
+    function fileWithAssociations(id: string, companyIds: string[]): ConnectorFile {
+      return {
+        ...makeFile(id, {}),
+        associations: { companies: { results: companyIds.map((cid) => ({ id: cid })) } },
+      };
+    }
+
+    /** Remote state: linked to C1; the desired edit swaps it for C2. */
+    function seedSwapScenario(): ConnectorFile {
+      mockGetRecord.mockResolvedValue({
+        id: '42',
+        properties: {},
+        associations: { companies: { results: [{ id: 'C1', type: 'contact_to_company' }] } },
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-02T00:00:00Z',
+        archived: false,
+      });
+      return fileWithAssociations('42', ['C2']);
+    }
+
+    it('uses 2026-03 when the flag is enabled for the user', async () => {
+      const isFeatureEnabled = jest.fn().mockResolvedValue(true);
+      connector = new HubspotConnector('test-token', { isFeatureEnabled });
+
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const file = seedSwapScenario();
+      await connector.updateRecords(tableSpec, [file], [{ associations: file.associations }]);
+
+      expect(isFeatureEnabled).toHaveBeenCalledWith('HUBSPOT_ASSOCIATIONS_API_2026_03');
+      expect(mockCreateAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C2', '2026-03');
+      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C1', '2026-03');
+    });
+
+    it('stays on v4 when the flag is disabled', async () => {
+      const isFeatureEnabled = jest.fn().mockResolvedValue(false);
+      connector = new HubspotConnector('test-token', { isFeatureEnabled });
+
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const file = seedSwapScenario();
+      await connector.updateRecords(tableSpec, [file], [{ associations: file.associations }]);
+
+      expect(mockCreateAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C2', 'v4');
+      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C1', 'v4');
+    });
+
+    it('explicit associationsApiVersion override wins over the flag', async () => {
+      const isFeatureEnabled = jest.fn().mockResolvedValue(false);
+      connector = new HubspotConnector('test-token', { isFeatureEnabled, associationsApiVersion: '2026-03' });
+
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const file = seedSwapScenario();
+      await connector.updateRecords(tableSpec, [file], [{ associations: file.associations }]);
+
+      expect(isFeatureEnabled).not.toHaveBeenCalled();
+      expect(mockCreateAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C2', '2026-03');
+    });
+
+    it('falls back to v4 when the flag lookup rejects (never fails the publish)', async () => {
+      const isFeatureEnabled = jest.fn().mockRejectedValue(new Error('posthog down'));
+      connector = new HubspotConnector('test-token', { isFeatureEnabled });
+
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const file = seedSwapScenario();
+      await connector.updateRecords(tableSpec, [file], [{ associations: file.associations }]);
+
+      expect(mockCreateAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C2', 'v4');
+      expect(mockDeleteAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C1', 'v4');
+    });
+
+    it('resolves the flag once per connector instance', async () => {
+      const isFeatureEnabled = jest.fn().mockResolvedValue(true);
+      connector = new HubspotConnector('test-token', { isFeatureEnabled });
+
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const first = seedSwapScenario();
+      await connector.updateRecords(tableSpec, [first], [{ associations: first.associations }]);
+      const second = seedSwapScenario();
+      await connector.updateRecords(tableSpec, [second], [{ associations: second.associations }]);
+
+      expect(isFeatureEnabled).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -610,7 +699,7 @@ describe('HubspotConnector', () => {
       // The association write happened strictly before the final re-publish PATCH.
       const republishInvocationOrder =
         mockUpdateRecord.mock.invocationCallOrder[mockUpdateRecord.mock.invocationCallOrder.length - 1];
-      expect(mockCreateAssociation).toHaveBeenCalledWith(QUOTES, '900', 'deals', 'D1');
+      expect(mockCreateAssociation).toHaveBeenCalledWith(QUOTES, '900', 'deals', 'D1', 'v4');
       expect(mockCreateAssociation.mock.invocationCallOrder[0]).toBeLessThan(republishInvocationOrder);
     });
 

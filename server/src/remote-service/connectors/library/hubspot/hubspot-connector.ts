@@ -28,7 +28,7 @@ import {
   PullRecordFilesResult,
   TablePreview,
 } from '../../types';
-import { HubspotApiClient, HubspotError } from './hubspot-api-client';
+import { HubspotApiClient, HubspotAssociationsApiVersion, HubspotError } from './hubspot-api-client';
 import { buildHubspotDefaultView } from './hubspot-default-view';
 import { buildHubspotJsonTableSpec, isReadonlyHubspotProperty } from './hubspot-json-schema';
 import {
@@ -94,7 +94,7 @@ function isQuotePublishedAndLocked(remoteQuote: HubspotRecord): boolean {
  * Whether the remote quote has e-signature enabled. HubSpot rejects publishing
  * such a quote (`hs_status` → published) unless it has ≥1 contact with the
  * "Signer" **labeled** association. Our association sync can't yet round-trip
- * that label (it diffs by id only and creates via the v4 `default` endpoint —
+ * that label (it diffs by id only and creates via the `default` endpoint —
  * see {@link syncAssociations} / DEV-10902), so recalling and re-publishing an
  * e-sign quote would strip its signers and leave a live quote stuck unpublished.
  */
@@ -106,7 +106,7 @@ function isQuoteEsignEnabled(remoteQuote: HubspotRecord): boolean {
  * Whether re-running {@link HubspotConnector#syncAssociations} for `desired` would
  * actually create or delete an association — i.e. the by-id set of some association
  * type differs from `current`. Mirrors that method's id-only diff exactly, so it's
- * `true` precisely when a v4 write would fire. A no-op resync (desired set matches
+ * `true` precisely when an association write would fire. A no-op resync (desired set matches
  * remote by id) returns `false`: it touches nothing and leaves existing labels — a
  * quote's "Signer" association included — intact. Used by the e-sign guard so a
  * full publish that doesn't change associations isn't refused as if it would.
@@ -195,7 +195,8 @@ export function hubspotIncrementalPullSupport(
  * custom objects, and associations between objects.
  *
  * Associations are stored on the record as part of the raw API response.
- * On publish, the connector diffs associations and writes them via the v4 API.
+ * On publish, the connector diffs associations and writes them via the associations
+ * API (v4, or 2026-03 behind the HUBSPOT_ASSOCIATIONS_API_2026_03 flag — DEV-10200).
  */
 export class HubspotConnector extends Connector<string, HubspotDownloadProgress> {
   readonly service = Service.HUBSPOT;
@@ -237,9 +238,63 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   /** Cache of property names per object type (populated during fetchJsonTableSpec). */
   private propertyNamesCache = new Map<string, string[]>();
 
-  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
+  /**
+   * Host-provided, per-user feature-flag check (see `ConnectorFactoryContext`).
+   * Used to resolve which associations API version to write with. When
+   * undefined (direct construction, e.g. tests), writes stay on v4 unless
+   * `associationsApiVersion` is passed explicitly.
+   */
+  private readonly isFeatureEnabled?: (flagKey: string) => Promise<boolean>;
+
+  /** Explicit version override — for tests and the live spec; wins over the flag. */
+  private readonly associationsApiVersionOverride?: HubspotAssociationsApiVersion;
+
+  private associationsApiVersionPromise?: Promise<HubspotAssociationsApiVersion>;
+
+  constructor(
+    accessToken: string,
+    opts?: {
+      rateLimiter?: RateLimiter;
+      isFeatureEnabled?: (flagKey: string) => Promise<boolean>;
+      associationsApiVersion?: HubspotAssociationsApiVersion;
+    },
+  ) {
     super();
-    this.client = new HubspotApiClient(accessToken, opts);
+    this.client = new HubspotApiClient(accessToken, { rateLimiter: opts?.rateLimiter });
+    this.isFeatureEnabled = opts?.isFeatureEnabled;
+    this.associationsApiVersionOverride = opts?.associationsApiVersion;
+  }
+
+  /**
+   * Which API version association writes go through (DEV-10200): the explicit
+   * override first, then the per-user HUBSPOT_ASSOCIATIONS_API_2026_03 flag,
+   * defaulting to v4 — the flag's fail-closed value — when no flag check is
+   * wired. Resolved once per connector instance: the host's flag lookup does a
+   * DB user read, and a publish syncs associations per record.
+   */
+  private getAssociationsApiVersion(): Promise<HubspotAssociationsApiVersion> {
+    this.associationsApiVersionPromise ??= (async () => {
+      if (this.associationsApiVersionOverride) {
+        return this.associationsApiVersionOverride;
+      }
+      if (!this.isFeatureEnabled) {
+        return 'v4';
+      }
+      try {
+        return (await this.isFeatureEnabled('HUBSPOT_ASSOCIATIONS_API_2026_03')) ? '2026-03' : 'v4';
+      } catch (error) {
+        // Never let version resolution throw: syncAssociations awaits it after the record POST
+        // in createRecords, so a rejection would fail the publish post-side-effect and the retry
+        // would create a duplicate record. (It would also stay cached as a rejected promise.)
+        WSLogger.warn({
+          source: LOG_SOURCE,
+          message: 'HUBSPOT_ASSOCIATIONS_API_2026_03 flag lookup failed; falling back to the v4 associations API',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return 'v4';
+      }
+    })();
+    return this.associationsApiVersionPromise;
   }
 
   async testConnection(): Promise<void> {
@@ -498,7 +553,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
 
   /**
    * Update records in HubSpot.
-   * Updates properties via PATCH, then diffs and syncs associations via v4 API.
+   * Updates properties via PATCH, then diffs and syncs associations.
    *
    * Published quotes are a special case: HubSpot locks them and rejects the
    * property PATCH, so their writes route through a recall → edit → re-publish
@@ -976,6 +1031,8 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     current: Record<string, { results: HubspotAssociation[] }>,
     desired: Record<string, { results: HubspotAssociation[] }>,
   ): Promise<void> {
+    const apiVersion = await this.getAssociationsApiVersion();
+
     // Collect all association types from both current and desired
     const allAssocTypes = new Set([...Object.keys(current), ...Object.keys(desired)]);
 
@@ -987,7 +1044,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
       for (const id of desiredIds) {
         if (!currentIds.has(id)) {
           try {
-            await this.client.createAssociation(objectType, recordId, assocType, id);
+            await this.client.createAssociation(objectType, recordId, assocType, id, apiVersion);
           } catch (error) {
             WSLogger.warn({
               source: LOG_SOURCE,
@@ -1002,7 +1059,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
       for (const id of currentIds) {
         if (!desiredIds.has(id)) {
           try {
-            await this.client.deleteAssociation(objectType, recordId, assocType, id);
+            await this.client.deleteAssociation(objectType, recordId, assocType, id, apiVersion);
           } catch (error) {
             WSLogger.warn({
               source: LOG_SOURCE,
@@ -1032,6 +1089,9 @@ connectorRegistry.register({
       throw new ConnectorInstantiationError('Private app access token is required for HubSpot', Service.HUBSPOT);
     }
     const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount?.id ?? 'default');
-    return new HubspotConnector(ctx.decryptedCredentials.apiKey, { rateLimiter });
+    return new HubspotConnector(ctx.decryptedCredentials.apiKey, {
+      rateLimiter,
+      isFeatureEnabled: ctx.isFeatureEnabled,
+    });
   },
 });

@@ -3,7 +3,10 @@ import { store } from "./store";
 import { authMiddleware } from "./middleware/auth";
 import testAdminRouter from "./routes/test-admin";
 import crmRouter from "./routes/crm";
-import associationsRouter from "./routes/associations";
+import {
+  associations202603Router,
+  associationsV4Router,
+} from "./routes/associations";
 
 export function createApp(): express.Express {
   const app = express();
@@ -44,7 +47,10 @@ export function createApp(): express.Express {
   // CRM v3 routes: /crm/v3/properties/:objectType, /crm/v3/objects/:objectType, /crm/v3/schemas
   app.use("/crm/v3", crmRouter);
   // Associations v4 routes: /crm/v4/objects/:fromObjectType/:fromId/associations/...
-  app.use("/crm/v4", associationsRouter);
+  app.use("/crm/v4", associationsV4Router);
+  // Date-versioned associations routes (DEV-10200):
+  // /crm/objects/2026-03/:fromObjectType/:fromId/associations/...
+  app.use("/crm/objects/2026-03", associations202603Router);
 
   return app;
 }

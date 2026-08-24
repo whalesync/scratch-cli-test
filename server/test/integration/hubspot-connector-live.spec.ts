@@ -130,4 +130,45 @@ describeIfKey('HubspotConnector — live API (associations)', () => {
     // 5. Verify removal.
     expect(associatedIds(await refetch(contactsSpec, contactId), 'companies')).not.toContain(companyId);
   });
+
+  // DEV-10200: the same associate → dissociate round-trip through the
+  // date-versioned 2026-03 endpoints, proving the migration target behaves
+  // identically against the real API before the flag ramps.
+  it('associates and dissociates via the 2026-03 API', async () => {
+    const suffix = Date.now();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const dbvConnector = new HubspotConnector(API_KEY!, { associationsApiVersion: '2026-03' });
+
+    const [company] = await dbvConnector.createRecords(companiesSpec, [
+      { properties: { name: `Scratch DBV Co ${suffix}` } } as ConnectorFile,
+    ]);
+    const companyId = String((company as { id: unknown }).id);
+    cleanups.push(async () => {
+      await connector.deleteRecords(companiesSpec, [{ id: companyId } as ConnectorFile]);
+    });
+
+    const [contact] = await dbvConnector.createRecords(contactsSpec, [
+      { properties: { email: `scratch-dbv-${suffix}@example.com` } } as ConnectorFile,
+    ]);
+    const contactId = String((contact as { id: unknown }).id);
+    cleanups.push(async () => {
+      await connector.deleteRecords(contactsSpec, [{ id: contactId } as ConnectorFile]);
+    });
+
+    const desiredAssociations = { companies: { results: [{ id: companyId }] } };
+    await dbvConnector.updateRecords(
+      contactsSpec,
+      [{ ...contact, associations: desiredAssociations }],
+      [{ associations: desiredAssociations }],
+    );
+    expect(associatedIds(await refetch(contactsSpec, contactId), 'companies')).toContain(companyId);
+
+    const clearedAssociations = { companies: { results: [] as { id: string }[] } };
+    await dbvConnector.updateRecords(
+      contactsSpec,
+      [{ ...contact, associations: clearedAssociations }],
+      [{ associations: clearedAssociations }],
+    );
+    expect(associatedIds(await refetch(contactsSpec, contactId), 'companies')).not.toContain(companyId);
+  });
 });

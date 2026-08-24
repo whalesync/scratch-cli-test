@@ -563,6 +563,67 @@ describe('HubspotConnector with fake API', () => {
     });
   });
 
+  // DEV-10200: the same association flows through the date-versioned 2026-03
+  // URLs (/crm/objects/2026-03/...), which the connector uses when the
+  // HUBSPOT_ASSOCIATIONS_API_2026_03 flag is on for the publishing user. The
+  // fake mounts both URL shapes over one store, so these prove the new paths
+  // end-to-end with unchanged semantics.
+  describe('associations via the 2026-03 API (DEV-10200)', () => {
+    function createConnector202603(): HubspotConnector {
+      return new HubspotConnector('fake-test-token', { associationsApiVersion: '2026-03' });
+    }
+
+    it('creates associations for new records', async () => {
+      const company = store.addRecord('companies', { name: 'DBV Partner Corp' });
+
+      const connector = createConnector202603();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+
+      const files: ConnectorFile[] = [
+        {
+          properties: { email: 'dbv-linked@example.com', firstname: 'DbvLinked' },
+          associations: {
+            companies: { results: [{ id: company.id, type: 'contacts_to_companies' }] },
+          },
+        } as unknown as ConnectorFile,
+      ];
+
+      const created = await connector.createRecords(spec, files);
+      expect(created).toHaveLength(1);
+
+      const createdRecord = store.getRecord('contacts', (created[0] as unknown as { id: string }).id);
+      expect(createdRecord?.associations?.companies?.results).toHaveLength(1);
+      expect(createdRecord?.associations?.companies?.results[0].id).toBe(company.id);
+    });
+
+    it('syncs association changes on update (create + delete)', async () => {
+      const contact = store.addRecord('contacts', { email: 'dbv-assoc@example.com', firstname: 'DbvAssoc' });
+      const company1 = store.addRecord('companies', { name: 'DBV Old Corp' });
+      const company2 = store.addRecord('companies', { name: 'DBV New Corp' });
+      store.addAssociation('contacts', contact.id, 'companies', company1.id);
+
+      const connector = createConnector202603();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+
+      const files: ConnectorFile[] = [
+        {
+          id: contact.id,
+          properties: { email: 'dbv-assoc@example.com', firstname: 'DbvAssoc' },
+          associations: {
+            companies: { results: [{ id: company2.id, type: 'contacts_to_companies' }] },
+          },
+        } as unknown as ConnectorFile,
+      ];
+
+      await connector.updateRecords(spec, files);
+
+      const updated = store.getRecord('contacts', contact.id);
+      const companyAssocs = updated?.associations?.companies?.results ?? [];
+      expect(companyAssocs).toHaveLength(1);
+      expect(companyAssocs[0].id).toBe(company2.id);
+    });
+  });
+
   // A published HubSpot quote is locked and rejects a property PATCH with
   // "Published Quote cannot be edited" (DEV-10886). The fake models that lock; the
   // connector must recall → edit → re-publish to get the change through.
