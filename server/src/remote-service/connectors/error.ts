@@ -2,6 +2,7 @@ import { InternalServerErrorException } from '@nestjs/common';
 import { AxiosError, HttpStatusCode, isAxiosError } from 'axios';
 import _, { isString } from 'lodash';
 import { WSLogger } from '../../logger';
+import { assertUnreachable } from '../../utils/asserts';
 import { Connector } from './connector';
 import { describeRequestUrlForLogging } from './connector-http-logging';
 import { getServiceDisplayName } from './display-names';
@@ -39,8 +40,26 @@ export function isUserFriendlyError(error: unknown): error is UserFriendlyError 
 }
 
 /**
+ * Why a field the user edited cannot be published by this connector. Each
+ * category gets its own user-facing wording (see
+ * {@link nonWritableFieldEditErrorMessage}) so we don't mislabel an editable
+ * field as "read-only".
+ */
+export enum NonWritableFieldReason {
+  /** (a) Service-computed, never writable — e.g. `createdAt`, Airtable lookups, YouTube `statistics`. "Read-only" is accurate. */
+  ReadOnly = 'READ_ONLY',
+  /** (b) Write-once: settable when the record is created, rejected on update — e.g. Linear `createdAt`, Shopify article `blog`/`author`. */
+  SetOnCreateOnly = 'SET_ON_CREATE_ONLY',
+  /** (c) Writable in the service, but this connector version does not emit it — e.g. ClickUp `assignees`/`tags`/`parent`, Zoho `Tag`. */
+  NotYetSupported = 'NOT_YET_SUPPORTED',
+}
+
+/**
  * Thrown by a connector's `updateRecords` / `createRecords` when a user's
- * publish payload changes a field the service treats as read-only / non-writable.
+ * publish payload changes a field this connector will not write back — whether
+ * because the service treats it as read-only, because it is write-once
+ * (settable only at create), or because this connector version does not yet
+ * emit it. See {@link NonWritableFieldReason} for the three categories.
  *
  * Per the product principle "Surface failures; never silently succeed" (root
  * `CLAUDE.md`) and the connector guide ("Do NOT silently strip read-only
@@ -54,26 +73,67 @@ export function isUserFriendlyError(error: unknown): error is UserFriendlyError 
  * `extractConnectorErrorDetails` fallback prefixes the service name (e.g.
  * "Airtable error: Field …"), so the message must not repeat it.
  */
-export class ReadonlyFieldEditError extends Error implements UserFriendlyError {
+export class NonWritableFieldEditError extends Error implements UserFriendlyError {
   public readonly userFriendlyMessage: string;
   constructor(message: string) {
     super(message);
-    this.name = 'ReadonlyFieldEditError';
+    this.name = 'NonWritableFieldEditError';
     this.userFriendlyMessage = message;
   }
 }
 
 /**
- * Build the standard user-facing message for {@link ReadonlyFieldEditError}.
- * Service-agnostic — the connector error-detail fallback adds the service name.
+ * The order categories appear in a multi-category message. Fixed so the output
+ * is deterministic (and unit-testable) regardless of object key order.
  */
-export function readonlyFieldEditErrorMessage(readonlyFieldNames: string[]): string {
-  const quotedFieldNames = readonlyFieldNames.map((fieldName) => `"${fieldName}"`).join(', ');
-  const isPlural = readonlyFieldNames.length > 1;
-  return (
-    `${isPlural ? 'Fields' : 'Field'} ${quotedFieldNames} ${isPlural ? 'are' : 'is'} read-only and cannot be published. ` +
-    `Undo the change to ${isPlural ? 'these fields' : 'this field'}, then publish again.`
-  );
+const NON_WRITABLE_FIELD_REASON_ORDER: NonWritableFieldReason[] = [
+  NonWritableFieldReason.ReadOnly,
+  NonWritableFieldReason.SetOnCreateOnly,
+  NonWritableFieldReason.NotYetSupported,
+];
+
+/** The clause naming the offending fields for one category, pluralized on that category's own count. */
+function clauseForNonWritableFieldReason(reason: NonWritableFieldReason, fieldNames: string[]): string {
+  const quotedFieldNames = fieldNames.map((fieldName) => `"${fieldName}"`).join(', ');
+  const isPlural = fieldNames.length > 1;
+  const fieldLabel = isPlural ? 'Fields' : 'Field';
+  switch (reason) {
+    case NonWritableFieldReason.ReadOnly:
+      return `${fieldLabel} ${quotedFieldNames} ${isPlural ? 'are' : 'is'} read-only and cannot be published.`;
+    case NonWritableFieldReason.SetOnCreateOnly:
+      return `${fieldLabel} ${quotedFieldNames} cannot be edited after the record is created.`;
+    case NonWritableFieldReason.NotYetSupported:
+      return `${fieldLabel} ${quotedFieldNames} cannot be published because editing ${isPlural ? 'them' : 'it'} is not yet supported.`;
+    default:
+      return assertUnreachable(reason);
+  }
+}
+
+/**
+ * Build the standard user-facing message for {@link NonWritableFieldEditError},
+ * emitting one clause per non-empty category (in a fixed order) followed by a
+ * shared closing sentence. Service-agnostic — the connector error-detail
+ * fallback adds the service name.
+ *
+ * A single publish can touch fields in more than one category (e.g. a
+ * truly-read-only field and a write-once field), so callers pass their field
+ * names bucketed by reason.
+ */
+export function nonWritableFieldEditErrorMessage(
+  fieldNamesByReason: Partial<Record<NonWritableFieldReason, string[]>>,
+): string {
+  const clauses: string[] = [];
+  let totalFieldCount = 0;
+  for (const reason of NON_WRITABLE_FIELD_REASON_ORDER) {
+    const fieldNames = fieldNamesByReason[reason];
+    if (!fieldNames || fieldNames.length === 0) {
+      continue;
+    }
+    clauses.push(clauseForNonWritableFieldReason(reason, fieldNames));
+    totalFieldCount += fieldNames.length;
+  }
+  const undoSentence = `Undo the change to ${totalFieldCount > 1 ? 'these fields' : 'this field'}, then publish again.`;
+  return `${clauses.join(' ')} ${undoSentence}`;
 }
 
 export class ErrorMessageTemplates {

@@ -319,6 +319,19 @@ describe('ClickUpConnector', () => {
       );
       expect(mockUpdateTask).not.toHaveBeenCalled();
     });
+
+    // DEV-10607: assignees/tags/parent ARE writable in ClickUp but this connector
+    // version does not emit them yet, so editing them surfaces "not yet supported"
+    // wording rather than "read-only".
+    it('throws with not-yet-supported wording when an unsupported-but-writable field changes', async () => {
+      const file: ConnectorFile = { id: 't1', assignees: [] };
+      const changed = { assignees: [{ id: 42 }] };
+
+      await expect(connector.updateRecords(tableSpec(), [file], [changed])).rejects.toThrow(
+        /"assignees" cannot be published because editing it is not yet supported/,
+      );
+      expect(mockUpdateTask).not.toHaveBeenCalled();
+    });
   });
 
   describe('deleteRecords', () => {

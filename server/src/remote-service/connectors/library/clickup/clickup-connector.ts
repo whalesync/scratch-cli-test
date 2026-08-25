@@ -8,8 +8,9 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
-  ReadonlyFieldEditError,
-  readonlyFieldEditErrorMessage,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
 } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
 import { Service } from '../../service-constants';
@@ -64,8 +65,10 @@ interface ClickUpCustomFieldWrite {
  * and `/{Workspace}/Docs/…` for the others.
  *
  * Auth is a personal API token (`user_provided_params`), CLI-connectable. Task
- * writes cover the core editable fields + custom-field values; `assignees`/`tags`/
- * `parent` and the Users/Docs entities are read-only in v1 — see STATE.md.
+ * writes cover the core editable fields + custom-field values. `assignees`/`tags`/
+ * `parent` are writable in ClickUp but not yet emitted by this connector, so
+ * editing them surfaces a "not yet supported" publish error (DEV-10607); the
+ * Users/Docs entities are read-only in v1 — see STATE.md.
  */
 export class ClickUpConnector extends Connector<string, ClickUpDownloadProgress> {
   readonly service = Service.CLICKUP;
@@ -477,25 +480,46 @@ const CLICKUP_WRITABLE_STANDARD_FIELD_KEYS = new Set<string>([
 ]);
 
 /**
+ * Standard top-level task fields that ClickUp's API *does* let you write, but
+ * that this connector version does not yet emit (see {@link buildTaskWritePayload}).
+ * Editing them can't be published today, but they are NOT read-only in the
+ * service — so they surface with "not yet supported" wording rather than
+ * "read-only". Everything else non-writable at the top level (dates, creator, …)
+ * is genuinely read-only.
+ */
+const CLICKUP_UNSUPPORTED_WRITABLE_STANDARD_FIELD_KEYS = new Set<string>(['assignees', 'tags', 'parent']);
+
+/**
  * Throw if the user's sparse changedFields include a non-writable standard
  * field (DEV-10597). Standard top-level keys ARE deep-diffed, so a non-writable
- * key here means the user genuinely edited a read-only field — surface it
- * instead of silently dropping it. `custom_fields` is skipped: ClickUp arrays
- * aren't deep-diffed, so the whole array (including unchanged read-only formula
- * / rollup fields) is always present whenever ANY custom field changes — there
- * is no reliable signal of WHICH custom field the user touched, so read-only
- * custom-field types stay silently skipped by {@link extractCustomFieldWrites}.
+ * key here means the user genuinely edited a field we won't publish — surface it
+ * instead of silently dropping it, distinguishing truly read-only fields from
+ * writable-but-unsupported ones (DEV-10607). `custom_fields` is skipped: ClickUp
+ * arrays aren't deep-diffed, so the whole array (including unchanged read-only
+ * formula / rollup fields) is always present whenever ANY custom field changes —
+ * there is no reliable signal of WHICH custom field the user touched, so
+ * read-only custom-field types stay silently skipped by
+ * {@link extractCustomFieldWrites}.
  */
 function assertNoReadonlyStandardFieldsChanged(changed: Record<string, unknown>): void {
-  const readonlyChangedFieldKeys: string[] = [];
+  const readOnlyChangedFieldKeys: string[] = [];
+  const notYetSupportedChangedFieldKeys: string[] = [];
   for (const key of Object.keys(changed)) {
     if (key === 'id' || key === 'custom_fields') continue;
-    if (!CLICKUP_WRITABLE_STANDARD_FIELD_KEYS.has(key)) {
-      readonlyChangedFieldKeys.push(key);
+    if (CLICKUP_WRITABLE_STANDARD_FIELD_KEYS.has(key)) continue;
+    if (CLICKUP_UNSUPPORTED_WRITABLE_STANDARD_FIELD_KEYS.has(key)) {
+      notYetSupportedChangedFieldKeys.push(key);
+    } else {
+      readOnlyChangedFieldKeys.push(key);
     }
   }
-  if (readonlyChangedFieldKeys.length > 0) {
-    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldKeys));
+  if (readOnlyChangedFieldKeys.length > 0 || notYetSupportedChangedFieldKeys.length > 0) {
+    throw new NonWritableFieldEditError(
+      nonWritableFieldEditErrorMessage({
+        [NonWritableFieldReason.ReadOnly]: readOnlyChangedFieldKeys,
+        [NonWritableFieldReason.NotYetSupported]: notYetSupportedChangedFieldKeys,
+      }),
+    );
   }
 }
 

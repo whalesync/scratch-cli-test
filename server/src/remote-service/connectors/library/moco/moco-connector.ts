@@ -9,8 +9,9 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
-  ReadonlyFieldEditError,
-  readonlyFieldEditErrorMessage,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -435,7 +436,9 @@ export class MocoConnector extends Connector {
     }
 
     if (readonlyChangedFieldNames.length > 0) {
-      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+      throw new NonWritableFieldEditError(
+        nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedFieldNames }),
+      );
     }
     return result;
   }

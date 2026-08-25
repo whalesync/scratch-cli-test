@@ -17,8 +17,9 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
-  ReadonlyFieldEditError,
-  readonlyFieldEditErrorMessage,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -526,21 +527,34 @@ export class ShopifyConnector extends Connector {
     const readOnly = READ_ONLY_FIELDS_MAP[entityType] ?? new Set<string>();
     const updateOnly = STRIP_ON_UPDATE_MAP[entityType];
     const writableFields: Record<string, unknown> = {};
-    const readonlyChangedFieldNames: string[] = [];
+    const readOnlyChangedFieldNames: string[] = [];
+    const setOnCreateOnlyChangedFieldNames: string[] = [];
 
     for (const [key, value] of Object.entries(changedFile)) {
       if (value === undefined) {
         continue;
       }
-      if (readOnly.has(key) || (updateOnly && updateOnly.has(key))) {
-        readonlyChangedFieldNames.push(key);
+      // A read-only field is service-computed and never writable; a STRIP_ON_UPDATE
+      // field (e.g. an article's `blog` / `author`) is settable on create but rejected
+      // on update. Both are surfaced, but with wording that matches the reason.
+      if (readOnly.has(key)) {
+        readOnlyChangedFieldNames.push(key);
+        continue;
+      }
+      if (updateOnly && updateOnly.has(key)) {
+        setOnCreateOnlyChangedFieldNames.push(key);
         continue;
       }
       writableFields[key] = value;
     }
 
-    if (readonlyChangedFieldNames.length > 0) {
-      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+    if (readOnlyChangedFieldNames.length > 0 || setOnCreateOnlyChangedFieldNames.length > 0) {
+      throw new NonWritableFieldEditError(
+        nonWritableFieldEditErrorMessage({
+          [NonWritableFieldReason.ReadOnly]: readOnlyChangedFieldNames,
+          [NonWritableFieldReason.SetOnCreateOnly]: setOnCreateOnlyChangedFieldNames,
+        }),
+      );
     }
 
     return writableFields;

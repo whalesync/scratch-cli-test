@@ -4,7 +4,12 @@ import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
 import { ConnectorAccountRef, connectorRegistry } from '../../connector-registry';
-import { ConnectorInstantiationError, ReadonlyFieldEditError, readonlyFieldEditErrorMessage } from '../../error';
+import {
+  ConnectorInstantiationError,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
+} from '../../error';
 import { Service } from '../../service-constants';
 import {
   BaseJsonTableSpec,
@@ -997,7 +1002,9 @@ export class YouTubeConnector extends Connector {
       (key) => !ignoredKeys.has(key) && !writablePartSet.has(key),
     );
     if (readonlyChangedPartNames.length > 0) {
-      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedPartNames));
+      throw new NonWritableFieldEditError(
+        nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedPartNames }),
+      );
     }
   }
 
@@ -1067,7 +1074,9 @@ export class YouTubeConnector extends Connector {
     }
 
     if (readonlyChangedFieldNames.length > 0) {
-      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+      throw new NonWritableFieldEditError(
+        nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedFieldNames }),
+      );
     }
   }
 

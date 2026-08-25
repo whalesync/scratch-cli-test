@@ -19,8 +19,9 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
-  ReadonlyFieldEditError,
-  readonlyFieldEditErrorMessage,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -133,7 +134,9 @@ function assertNoReadonlyWebflowOrderFieldsChanged(changed: Record<string, unkno
     (key) => key !== 'orderId' && !WEBFLOW_ORDER_WRITABLE_FIELD_KEYS.has(key),
   );
   if (readonlyChangedFieldNames.length > 0) {
-    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+    throw new NonWritableFieldEditError(
+      nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedFieldNames }),
+    );
   }
 }
 
@@ -149,7 +152,9 @@ function assertNoReadonlyWebflowPageFieldsChanged(changed: Record<string, unknow
     (key) => key !== 'id' && !WEBFLOW_PAGE_WRITABLE_FIELD_KEYS.has(key),
   );
   if (readonlyChangedFieldNames.length > 0) {
-    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+    throw new NonWritableFieldEditError(
+      nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedFieldNames }),
+    );
   }
 }
 

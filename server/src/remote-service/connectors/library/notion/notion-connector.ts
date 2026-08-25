@@ -28,8 +28,9 @@ import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
   ErrorMessageTemplates,
-  ReadonlyFieldEditError,
-  readonlyFieldEditErrorMessage,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
 } from '../../error';
 import {
   type NormalizedCreateFieldsPlan,
@@ -1469,7 +1470,9 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         writableChangedProperties[key] = value;
       }
       if (readonlyChangedPropertyNames.length > 0) {
-        throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedPropertyNames));
+        throw new NonWritableFieldEditError(
+          nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedPropertyNames }),
+        );
       }
 
       const properties = this.transformPropertiesForUpdate(writableChangedProperties);

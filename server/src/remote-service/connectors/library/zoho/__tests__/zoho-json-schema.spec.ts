@@ -236,6 +236,7 @@ describe('buildZohoUpdatePayloadOrThrowOnReadonly', () => {
     makeField({ api_name: 'Last_Name', data_type: 'text', operation_type: { api_update: true } }),
     makeField({ api_name: 'Modified_Time', data_type: 'datetime', operation_type: { api_update: false } }),
     makeField({ api_name: 'Account_Name', data_type: 'lookup', lookup: { module: { api_name: 'Accounts' } } }),
+    makeField({ api_name: 'Tag', data_type: 'text' }),
   ];
   const spec = buildZohoJsonTableSpec({ wsId: 'Leads', remoteId: ['Leads'] }, 'Leads', 'Leads', fields);
 
@@ -252,6 +253,15 @@ describe('buildZohoUpdatePayloadOrThrowOnReadonly', () => {
   it('throws when a changed field is read-only', () => {
     expect(() => buildZohoUpdatePayloadOrThrowOnReadonly({ Modified_Time: '2026-06-04T00:00:00+00:00' }, spec)).toThrow(
       /"Modified_Time" is read-only/,
+    );
+  });
+
+  // DEV-10607: `Tag` is writable in Zoho (via add_tags/remove_tags) but this
+  // connector version doesn't route it yet, so it surfaces with "not yet
+  // supported" wording rather than "read-only".
+  it('throws with not-yet-supported wording when the Tag field is changed', () => {
+    expect(() => buildZohoUpdatePayloadOrThrowOnReadonly({ Tag: [{ name: 'urgent' }] }, spec)).toThrow(
+      /"Tag" cannot be published because editing it is not yet supported/,
     );
   });
 });

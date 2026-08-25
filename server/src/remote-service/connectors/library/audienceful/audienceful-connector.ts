@@ -8,8 +8,9 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
-  ReadonlyFieldEditError,
-  readonlyFieldEditErrorMessage,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -209,7 +210,9 @@ export class AudiencefulConnector extends Connector {
       // the write payload (DEV-10597).
       const readonlyChangedFieldNames = Object.keys(changed).filter((key) => AUDIENCEFUL_READONLY_FIELD_KEYS.has(key));
       if (readonlyChangedFieldNames.length > 0) {
-        throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+        throw new NonWritableFieldEditError(
+          nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedFieldNames }),
+        );
       }
       // Email is the lookup key for updatePerson — always include it, even when unchanged.
       const payload: Record<string, unknown> = { ...changed, email: changed.email ?? file.email };

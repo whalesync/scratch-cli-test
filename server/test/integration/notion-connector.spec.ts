@@ -622,7 +622,7 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     // Build a `changedFields` bag that ONLY mutates read-only props. Per
     // DEV-10597 (commit 4c5b626f), a sparse diff that edits a read-only
     // property means the user genuinely edited a read-only field, so the
-    // connector surfaces a `ReadonlyFieldEditError` rather than silently
+    // connector surfaces a `NonWritableFieldEditError` rather than silently
     // dropping the PATCH and reporting success.
     const readOnlyChange = {
       properties: {

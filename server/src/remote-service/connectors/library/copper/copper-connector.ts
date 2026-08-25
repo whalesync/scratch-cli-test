@@ -8,8 +8,9 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
-  ReadonlyFieldEditError,
-  readonlyFieldEditErrorMessage,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -369,7 +370,9 @@ function extractChangedWritableFieldsOrThrowOnReadonly(
     writableFields[key] = value;
   }
   if (readonlyChangedFieldKeys.length > 0) {
-    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldKeys));
+    throw new NonWritableFieldEditError(
+      nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedFieldKeys }),
+    );
   }
   return writableFields;
 }

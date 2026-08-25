@@ -20,8 +20,9 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
-  ReadonlyFieldEditError,
-  readonlyFieldEditErrorMessage,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
 } from '../../error';
 import {
   type NormalizedCreateFieldsPlan,
@@ -661,7 +662,9 @@ export class AirtableConnector extends Connector {
     }
 
     if (readonlyChangedFieldNames.length > 0) {
-      throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+      throw new NonWritableFieldEditError(
+        nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedFieldNames }),
+      );
     }
 
     return writableFields;

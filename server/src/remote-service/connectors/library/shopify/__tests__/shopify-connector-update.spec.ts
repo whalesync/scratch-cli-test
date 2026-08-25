@@ -39,6 +39,11 @@ function pagesTableSpec(): BaseJsonTableSpec {
   return { id, slug: 'pages', name: 'Pages', idPath: 'id', schema: {} } as unknown as BaseJsonTableSpec;
 }
 
+function articlesTableSpec(): BaseJsonTableSpec {
+  const id: EntityId = { wsId: 'articles', remoteId: ['articles'] };
+  return { id, slug: 'articles', name: 'Articles', idPath: 'id', schema: {} } as unknown as BaseJsonTableSpec;
+}
+
 describe('ShopifyConnector.updateRecords', () => {
   let connector: ShopifyConnector;
 
@@ -91,6 +96,19 @@ describe('ShopifyConnector.updateRecords', () => {
 
     await expect(connector.updateRecords(productsTableSpec(), files, changedFields)).rejects.toThrow(
       /read-only and cannot be published/,
+    );
+    expect(mockUpdateEntity).not.toHaveBeenCalled();
+  });
+
+  // DEV-10607: an article's `blog` / `author` is writable on create but not on
+  // update, so it surfaces with set-on-create-only wording rather than "read-only"
+  // (both are editable in the Shopify admin).
+  it('throws with set-on-create-only wording when an article write-once field changes', async () => {
+    const files: ConnectorFile[] = [{ id: 'gid://shopify/Article/1', author: { name: 'Old' } }];
+    const changedFields: Record<string, unknown>[] = [{ author: { name: 'New' } }];
+
+    await expect(connector.updateRecords(articlesTableSpec(), files, changedFields)).rejects.toThrow(
+      /"author" cannot be edited after the record is created/,
     );
     expect(mockUpdateEntity).not.toHaveBeenCalled();
   });

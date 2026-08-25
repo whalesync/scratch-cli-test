@@ -14,8 +14,9 @@ import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
-  ReadonlyFieldEditError,
-  readonlyFieldEditErrorMessage,
+  NonWritableFieldEditError,
+  nonWritableFieldEditErrorMessage,
+  NonWritableFieldReason,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -734,7 +735,9 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
         }
       }
       if (readonlyChangedPropertyNames.length > 0) {
-        throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedPropertyNames));
+        throw new NonWritableFieldEditError(
+          nonWritableFieldEditErrorMessage({ [NonWritableFieldReason.ReadOnly]: readonlyChangedPropertyNames }),
+        );
       }
       return properties;
     }

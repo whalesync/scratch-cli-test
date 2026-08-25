@@ -9,7 +9,7 @@ import {
   X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
-import { ReadonlyFieldEditError, readonlyFieldEditErrorMessage } from '../../error';
+import { NonWritableFieldEditError, NonWritableFieldReason, nonWritableFieldEditErrorMessage } from '../../error';
 import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { ZohoFieldMetadata } from './zoho-types';
 
@@ -438,11 +438,19 @@ export function buildZohoUpdatePayloadOrThrowOnReadonly(
   tableSpec: BaseJsonTableSpec,
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
-  const readonlyChangedFieldNames: string[] = [];
+  const readOnlyChangedFieldNames: string[] = [];
+  const notYetSupportedChangedFieldNames: string[] = [];
   for (const [key, value] of Object.entries(changedRecord)) {
     if (key === 'id') continue;
     if (isReadonlyFieldInSchema(tableSpec, key)) {
-      readonlyChangedFieldNames.push(key);
+      // `Tag` is writable in Zoho (via the add_tags/remove_tags endpoints) but this
+      // connector version doesn't route it yet, so it gets "not yet supported"
+      // wording (DEV-10607); every other schema-read-only field is genuinely read-only.
+      if (key === ZOHO_TAG_FIELD_API_NAME) {
+        notYetSupportedChangedFieldNames.push(key);
+      } else {
+        readOnlyChangedFieldNames.push(key);
+      }
       continue;
     }
 
@@ -454,8 +462,13 @@ export function buildZohoUpdatePayloadOrThrowOnReadonly(
 
     payload[key] = value;
   }
-  if (readonlyChangedFieldNames.length > 0) {
-    throw new ReadonlyFieldEditError(readonlyFieldEditErrorMessage(readonlyChangedFieldNames));
+  if (readOnlyChangedFieldNames.length > 0 || notYetSupportedChangedFieldNames.length > 0) {
+    throw new NonWritableFieldEditError(
+      nonWritableFieldEditErrorMessage({
+        [NonWritableFieldReason.ReadOnly]: readOnlyChangedFieldNames,
+        [NonWritableFieldReason.NotYetSupported]: notYetSupportedChangedFieldNames,
+      }),
+    );
   }
   return payload;
 }

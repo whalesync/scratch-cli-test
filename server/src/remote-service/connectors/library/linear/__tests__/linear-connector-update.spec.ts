@@ -49,15 +49,15 @@ describe('LinearConnector.updateRecords', () => {
     expect(mockUpdateIssue).toHaveBeenCalledWith('issue_1', { title: 'New' });
   });
 
-  // DEV-10597: a read-only field in the sparse changedFields is a genuine
-  // read-only edit. Surface it instead of stripping it to an empty/partial
-  // mutation and reporting success.
-  it('throws when a changed field is read-only, and does not call the API', async () => {
+  // DEV-10597 / DEV-10607: `createdAt` is a write-once field (settable on create,
+  // rejected on update), not truly read-only. Surface it — with wording that says
+  // so — instead of stripping it to an empty/partial mutation and reporting success.
+  it('throws with set-on-create-only wording when a changed field is write-once, and does not call the API', async () => {
     const files: ConnectorFile[] = [{ id: 'issue_1', createdAt: '2026-01-01T00:00:00Z' }];
     const changedFields: Record<string, unknown>[] = [{ createdAt: '2026-02-02T00:00:00Z' }];
 
     await expect(connector.updateRecords(issuesTableSpec(), files, changedFields)).rejects.toThrow(
-      /"createdAt" is read-only/,
+      /"createdAt" cannot be edited after the record is created/,
     );
     expect(mockUpdateIssue).not.toHaveBeenCalled();
   });
@@ -69,6 +69,20 @@ describe('LinearConnector.updateRecords', () => {
     await expect(connector.updateRecords(issuesTableSpec(), files, changedFields)).rejects.toThrow(
       /read-only and cannot be published/,
     );
+    expect(mockUpdateIssue).not.toHaveBeenCalled();
+  });
+
+  // DEV-10607: a truly read-only field and a write-once field changed in the same
+  // publish surface as one message with a distinct clause per category.
+  it('throws with both read-only and set-on-create-only clauses when both kinds of field change', async () => {
+    const files: ConnectorFile[] = [{ id: 'issue_1', archivedAt: null, createdAt: '2026-01-01T00:00:00Z' }];
+    const changedFields: Record<string, unknown>[] = [
+      { archivedAt: '2026-02-02T00:00:00Z', createdAt: '2026-02-02T00:00:00Z' },
+    ];
+
+    const updatePromise = connector.updateRecords(issuesTableSpec(), files, changedFields);
+    await expect(updatePromise).rejects.toThrow(/"archivedAt" is read-only and cannot be published/);
+    await expect(updatePromise).rejects.toThrow(/"createdAt" cannot be edited after the record is created/);
     expect(mockUpdateIssue).not.toHaveBeenCalled();
   });
 });
