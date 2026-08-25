@@ -172,6 +172,96 @@ describe('notionFieldValueCanonicalizerForPropertyType', () => {
     });
   });
 
+  describe('people', () => {
+    const pulledUser = {
+      object: 'user',
+      id: 'u1',
+      name: 'Ada',
+      avatar_url: 'https://img.example.com/ada.png',
+      type: 'person',
+      person: { email: 'ada@example.com' },
+    };
+
+    it('ignores the property-level id and the user decorations Notion adds on read, comparing user ids in order', () => {
+      expectSame(
+        'people',
+        { id: 'eTyO', type: 'people', people: [pulledUser, { ...pulledUser, id: 'u2', name: 'Bob' }] },
+        {
+          type: 'people',
+          people: [
+            { object: 'user', id: 'u1' },
+            { object: 'user', id: 'u2' },
+          ],
+        },
+      );
+      // The full-row.json repro: an empty pulled value vs the sync's packed empty value.
+      expectSame('people', { id: 'eTyO', type: 'people', people: [] }, { type: 'people', people: [] });
+    });
+
+    it('sees a changed, added, removed and reordered user', () => {
+      const written = { type: 'people', people: [{ object: 'user', id: 'u1' }] };
+      expectDifferent('people', { type: 'people', people: [{ ...pulledUser, id: 'u9' }] }, written);
+      expectDifferent('people', { type: 'people', people: [pulledUser, { ...pulledUser, id: 'u2' }] }, written);
+      expectDifferent('people', { type: 'people', people: [] }, written);
+      expectDifferent(
+        'people',
+        { type: 'people', people: [{ ...pulledUser, id: 'u2' }, pulledUser] },
+        {
+          type: 'people',
+          people: [
+            { object: 'user', id: 'u1' },
+            { object: 'user', id: 'u2' },
+          ],
+        },
+      );
+    });
+  });
+
+  describe('files', () => {
+    const externalUrl = 'https://cdn.example.com/brochure.pdf';
+    const pulledExternalFile = { name: externalUrl, type: 'external', external: { url: externalUrl } };
+    const pulledHostedFile = (signature: string) => ({
+      name: 'photo.png',
+      type: 'file',
+      file: { url: `https://s3.amazonaws.com/notion/photo.png?X-Amz-Signature=${signature}`, expiry_time: signature },
+    });
+
+    it('ignores the property-level id and compares external files by URL', () => {
+      expectSame(
+        'files',
+        { id: 'ifWr', type: 'files', files: [pulledExternalFile] },
+        { type: 'files', files: [{ type: 'external', name: externalUrl, external: { url: externalUrl } }] },
+      );
+      // The full-row.json repro: an empty pulled value vs the sync's packed empty value.
+      expectSame('files', { id: 'ifWr', type: 'files', files: [] }, { type: 'files', files: [] });
+    });
+
+    it('compares a Notion-hosted file by name, never by its signed URL that rotates on every read', () => {
+      expectSame(
+        'files',
+        { type: 'files', files: [pulledHostedFile('sig-from-first-read')] },
+        { type: 'files', files: [pulledHostedFile('sig-from-second-read')] },
+      );
+    });
+
+    it('sees a changed URL, an added file, a removed file and a reordered list', () => {
+      const written = {
+        type: 'files',
+        files: [{ type: 'external', name: externalUrl, external: { url: externalUrl } }],
+      };
+      const otherUrl = 'https://cdn.example.com/other.pdf';
+      const otherFile = { name: otherUrl, type: 'external', external: { url: otherUrl } };
+      expectDifferent('files', { type: 'files', files: [otherFile] }, written);
+      expectDifferent('files', { type: 'files', files: [pulledExternalFile, otherFile] }, written);
+      expectDifferent('files', { type: 'files', files: [] }, written);
+      expectDifferent(
+        'files',
+        { type: 'files', files: [otherFile, pulledExternalFile] },
+        { type: 'files', files: [pulledExternalFile, otherFile] },
+      );
+    });
+  });
+
   describe('number / checkbox / url / email / phone_number', () => {
     it('compares the payload, tolerating float64 round-trip noise and the null/absent spellings', () => {
       expectSame('number', { id: 'n', type: 'number', number: 0.1 + 0.2 }, { type: 'number', number: 0.3 });
@@ -225,10 +315,8 @@ describe('notionFieldValueCanonicalizerForPropertyType', () => {
     });
   });
 
-  it('declares nothing for read-only and file-bearing types (structural compare)', () => {
+  it('declares nothing for read-only types (structural compare)', () => {
     for (const notionType of [
-      'people',
-      'files',
       'formula',
       'rollup',
       'created_time',
@@ -267,9 +355,8 @@ describe('Notion registry hook on a real built table spec', () => {
     const canonicalizers = resolveFieldValueCanonicalizersForTable(Service.NOTION, spec);
 
     expect([...canonicalizers.keys()].sort()).toEqual(
-      ['properties.Name', 'properties.Notes', 'properties.Stage', 'properties.When'].sort(),
+      ['properties.Name', 'properties.Notes', 'properties.Stage', 'properties.When', 'properties.Owner'].sort(),
     );
-    expect(canonicalizers.has('properties.Owner')).toBe(false);
     expect(canonicalizers.has('properties.Total')).toBe(false);
     expect(canonicalizers.has('id')).toBe(false);
     expect(canonicalizers.has('properties')).toBe(false);

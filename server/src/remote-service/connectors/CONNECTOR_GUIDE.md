@@ -1250,7 +1250,7 @@ export function resolveNotionFieldValueCanonicalizer({ fieldSchema }: FieldValue
         emptyAsNull(),
       );
     default:
-      return undefined; // people, files, formula, rollup, … compare structurally
+      return undefined; // formula, rollup, created_time, … (read-only) compare structurally
   }
 }
 ```

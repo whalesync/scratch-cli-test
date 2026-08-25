@@ -32,9 +32,13 @@ import {
  *
  * Deliberately lossy, and documented as such: a rich-text canonical form is its
  * concatenated plain text, so a raw-JSON edit that only changes bold/italic/link
- * formatting is treated as "no change". Read-only property types (formula, rollup,
- * created_time/last_edited_*, people, unique_id, …) and `files` (expiring URLs)
- * declare nothing and keep the structural compare.
+ * formatting is treated as "no change"; a `people` value is its user ids (Notion
+ * decorates each user with `name`/`avatar_url`/`person`/`bot` on read); a `files`
+ * value is each file's stable identity — an external file's URL, a Notion-hosted
+ * file's name — never the hosted file's signed `file.url`, which rotates on every
+ * read. Read-only property types (formula, rollup, created_time/last_edited_*,
+ * unique_id, …) declare nothing and keep the structural compare — they are never
+ * written, so their envelope decorations (the property-level `id`) never diff.
  */
 
 /**
@@ -59,6 +63,23 @@ function arrayOfKey(key: string): FieldValueCanonicalizer {
   return (value) =>
     Array.isArray(value) ? value.map((item) => (item as Record<string, unknown> | null)?.[key]) : value;
 }
+
+/**
+ * `[{ name, type: 'external', external: { url } } | { name, type: 'file', file: { url, expiry_time } }]`
+ * (files) → one stable identity per file, order kept: an external file's URL (the sync's
+ * pack names an external file after its URL, and Notion echoes that name back), a
+ * Notion-hosted file's `name` — its `file.url` is a signed URL that rotates on every
+ * read and `expiry_time` with it, so neither can take part in the compare.
+ */
+const fileIdentities: FieldValueCanonicalizer = (value) =>
+  Array.isArray(value)
+    ? (value as unknown[]).map((item: unknown) => {
+        if (item === null || typeof item !== 'object') return item;
+        const file = item as { name?: unknown; external?: { url?: unknown } | null };
+        const externalUrl = file.external?.url;
+        return typeof externalUrl === 'string' ? externalUrl : file.name;
+      })
+    : value;
 
 /** `{ id, name, color } | null` (select/status option) → `name | null`. */
 const optionName: FieldValueCanonicalizer = (value) =>
@@ -102,7 +123,11 @@ export function notionFieldValueCanonicalizerForPropertyType(notionType: string)
     case 'multi_select':
       return composeCanonicalizers(notionPropertyPayload(notionType), arrayOfKey('name'));
     case 'relation':
+    case 'people':
+      // `[{ id }]` (relation) / `[{ object: 'user', id, name, avatar_url, … }]` (people) → `[id…]`.
       return composeCanonicalizers(notionPropertyPayload(notionType), arrayOfKey('id'));
+    case 'files':
+      return composeCanonicalizers(notionPropertyPayload(notionType), fileIdentities);
     case 'number':
       return composeCanonicalizers(
         notionPropertyPayload(notionType),
@@ -123,8 +148,8 @@ export function notionFieldValueCanonicalizerForPropertyType(notionType: string)
         emptyAsNull(),
       );
     default:
-      // people, files, formula, rollup, created_time, last_edited_time, created_by,
-      // last_edited_by, unique_id, verification, button, … — structural compare.
+      // formula, rollup, created_time, last_edited_time, created_by, last_edited_by,
+      // unique_id, verification, button, … — read-only, structural compare.
       return undefined;
   }
 }
