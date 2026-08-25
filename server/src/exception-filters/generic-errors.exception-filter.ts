@@ -28,14 +28,27 @@ export class NotFoundExceptionFilter implements ExceptionFilter {
   catch(exception: NotFoundException, host: ArgumentsHost): void {
     const request = host.switchToHttp().getRequest<Request>();
 
-    WSLogger.error({
+    // NestJS's built-in not-found handler throws NotFoundException with a message of the form
+    // `Cannot ${METHOD} ${path}` for any unmatched route. These are overwhelmingly internet
+    // vulnerability scanners probing for WordPress files, `.env`/`.git` secrets, and webshells,
+    // so they are logged at WARN to keep them out of Cloud Error Reporting. A NotFoundException
+    // thrown deliberately by application code carries its own message and stays at ERROR.
+    const isUnmatchedRouteFromScannerTraffic = /^Cannot [A-Z]+ /.test(exception.message);
+
+    const notFoundLogFields = {
       source: 'ExceptionFilters',
       message: `Caught NotFoundException`,
       error: exception.message,
       stack: exception.stack,
       method: request.method,
       path: request.url,
-    });
+    };
+
+    if (isUnmatchedRouteFromScannerTraffic) {
+      WSLogger.warn(notFoundLogFields);
+    } else {
+      WSLogger.error(notFoundLogFields);
+    }
 
     const response = host.switchToHttp().getResponse<Response>();
     response.status(exception.getStatus()).json(exception.getResponse());
