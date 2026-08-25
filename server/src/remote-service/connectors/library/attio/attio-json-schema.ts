@@ -4,6 +4,7 @@ import {
   VirtualFieldDef,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_MULTI_VALUED,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_VIRTUAL_FIELDS,
@@ -13,11 +14,16 @@ import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, dotPath, EntityId } from '../../types';
 import { AttioApiClient } from './attio-api-client';
 import { AttioAttribute, AttioAttributeType, STANDARD_OBJECT_DISPLAY, type AttioStandardObject } from './attio-types';
-import { ATTIO_VALUE_EXPRESSION } from './attio-value-expressions';
+import { attioValueJsonPathExpression } from './attio-value-expressions';
 
 /** Build a virtual field definition for an Attio attribute, if applicable. */
 function buildVirtualField(attr: AttioAttribute): VirtualFieldDef[] | undefined {
-  const expression = ATTIO_VALUE_EXPRESSION[attr.type];
+  // A multi-valued (`is_multiselect`) attribute stores one value-array ELEMENT PER VALUE, so
+  // its extraction must keep every element's payload as an array (`$[*].option.title` with
+  // `arrayHandling: 'array'`) — extracting only `$[0]` silently dropped every value past the
+  // first when this hint drove a sync (DEV-11377). The array output also declares the field's
+  // multi cardinality to the transform picker (`transformerOutputCardinality`).
+  const expression = attioValueJsonPathExpression(attr.type, attr.is_multiselect ? 'every-element' : 'first-element');
   if (!expression) return undefined;
 
   // Map the extracted value to a display type
@@ -46,10 +52,11 @@ function buildVirtualField(attr: AttioAttribute): VirtualFieldDef[] | undefined 
   return [
     {
       displayLabel: attr.title,
-      type: typeMap[attr.type] ?? 'string',
+      // A multi-valued attribute's extracted value is the ARRAY of payload scalars.
+      type: attr.is_multiselect ? 'array' : (typeMap[attr.type] ?? 'string'),
       suggestedTransformer: {
         type: TransformerTypes.JSONPath,
-        options: { expression, arrayHandling: 'first' as const },
+        options: { expression, arrayHandling: attr.is_multiselect ? ('array' as const) : ('first' as const) },
       },
     },
   ];
@@ -166,6 +173,9 @@ function valueArraySchemaForAttribute(
     description: attr.description ?? attr.title,
     [X_SCRATCH_REMOTE_FIELD_ID]: attr.api_slug,
     [X_SCRATCH_CONNECTOR_DATA_TYPE]: attr.type,
+    // The default-view builder runs off the STORED schema (no live attribute list), so the
+    // multiselect fact must ride the schema for it to extract/display every value (DEV-11377).
+    ...(attr.is_multiselect ? { [X_SCRATCH_MULTI_VALUED]: true } : {}),
     ...(opts?.forceReadonly || isAttributeReadonly(attr) ? { [X_SCRATCH_READONLY]: true } : {}),
     ...(virtualFields ? { [X_SCRATCH_VIRTUAL_FIELDS]: virtualFields } : {}),
     ...(foreignKey ? { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: foreignKey } : {}),

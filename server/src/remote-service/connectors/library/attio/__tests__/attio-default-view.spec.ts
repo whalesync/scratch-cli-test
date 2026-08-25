@@ -3,6 +3,7 @@ import {
   TableView,
   TableViewCol,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_MULTI_VALUED,
   X_SCRATCH_READONLY,
   X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
@@ -31,11 +32,12 @@ function colAt(view: TableView, path: string): TableViewCol | undefined {
 }
 
 /** Build an Attio attribute value-array schema with annotations. */
-function attr(connectorDataType: string, opts: { readonly?: boolean } = {}) {
+function attr(connectorDataType: string, opts: { readonly?: boolean; multiValued?: boolean } = {}) {
   const annotations: Record<string, unknown> = {
     [X_SCRATCH_CONNECTOR_DATA_TYPE]: connectorDataType,
   };
   if (opts.readonly) annotations[X_SCRATCH_READONLY] = true;
+  if (opts.multiValued) annotations[X_SCRATCH_MULTI_VALUED] = true;
   return Type.Array(Type.Object({}, { additionalProperties: true }), annotations);
 }
 
@@ -62,6 +64,8 @@ function makeObjectSchema() {
       twitter: attr('text'),
       created_by: attr('actor-reference', { readonly: true }),
       record_id: attr('record-id', { readonly: true }),
+      // The system ATTRIBUTE — duplicates the envelope's fixed `created_at` column.
+      created_at: attr('timestamp', { readonly: true }),
       primary_location: attr('location'),
       estimated_arr: attr('currency'),
       founded_date: attr('date'),
@@ -160,6 +164,16 @@ describe('buildAttioDefaultView (object)', () => {
     it('should hide record_id value field', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'values.record_id') as TableViewCol;
       expect(col.hidden).toBe(true);
+    });
+
+    it('should hide the created_at system ATTRIBUTE (duplicates the fixed created_at column)', () => {
+      // Both would otherwise be named "Created At", and Live Export's name-collision
+      // rename turned the second into a junk "Created At 2" destination column.
+      const attributeCol = view.cols.find((c) => c.kind === 'col' && c.path === 'values.created_at') as TableViewCol;
+      expect(attributeCol.hidden).toBe(true);
+      // The record envelope's fixed created_at column stays the single visible one.
+      const fixedCol = view.cols.find((c) => c.kind === 'col' && c.path === 'created_at') as TableViewCol;
+      expect(fixedCol.hidden).toBeUndefined();
     });
 
     it('should not hide categories (the company Industry attribute)', () => {
@@ -277,7 +291,7 @@ describe('buildAttioDefaultView (object)', () => {
     });
 
     it('does not attach a transformer to types without an extraction expression', () => {
-      // `record_id` (attribute type `record-id`) has no entry in ATTIO_VALUE_EXPRESSION.
+      // `record_id` (attribute type `record-id`) has no payload path in ATTIO_VALUE_ELEMENT_PAYLOAD_PATH.
       const recordId = view.cols.find((c) => c.kind === 'col' && c.path === 'values.record_id') as TableViewCol;
       expect(recordId.displayTransformer).toBeUndefined();
     });
@@ -287,6 +301,13 @@ describe('buildAttioDefaultView (object)', () => {
       const createdAt = view.cols.find((c) => c.kind === 'col' && c.path === 'created_at') as TableViewCol;
       expect(id.displayTransformer).toBeUndefined();
       expect(createdAt.displayTransformer).toBeUndefined();
+    });
+
+    it('does not attach a codec to single-valued columns (displayTransformer doubles as toCore)', () => {
+      for (const path of ['values.name', 'values.categories', 'values.email_addresses']) {
+        const col = view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol;
+        expect(col.codec).toBeUndefined();
+      }
     });
 
     it('extracts a personal-name title via full_name', () => {
@@ -382,6 +403,63 @@ describe('buildAttioDefaultView (object)', () => {
     });
     const noValuesView = buildAttioDefaultView(noValuesSchema, { valuesKey: 'values' });
     expect(noValuesView.cols.length).toBe(1); // just id
+  });
+});
+
+describe('buildAttioDefaultView (multi-valued attributes) — DEV-11377', () => {
+  const schema = Type.Object({
+    id: Type.Object({ workspace_id: Type.String(), object_id: Type.String(), record_id: Type.String() }),
+    values: Type.Object({
+      name: attr('text'),
+      categories: attr('select', { multiValued: true }),
+      domains: attr('domain', { multiValued: true }),
+      email_addresses: attr('email-address', { multiValued: true }),
+      linked_companies: attr('record-reference', { multiValued: true }),
+    }),
+  });
+  const view = buildAttioDefaultView(schema, { valuesKey: 'values', titleField: 'name' });
+
+  it('joins every value comma-separated for display instead of showing only the first', () => {
+    const categories = colAt(view, 'values.categories');
+    expect(categories?.displayTransformer).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$[*].option.title', arrayHandling: 'join_comma' },
+    });
+    const domains = colAt(view, 'values.domains');
+    expect(domains?.displayTransformer).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$[*].domain', arrayHandling: 'join_comma' },
+    });
+  });
+
+  it('declares a codec.toCore that keeps every value as an array for sync/export', () => {
+    const categories = colAt(view, 'values.categories');
+    expect(categories?.codec).toEqual({
+      toCore: { type: 'jsonpath', options: { expression: '$[*].option.title', arrayHandling: 'array' } },
+    });
+    // The FK id-extraction path resolves the same toCore, so a multi-record
+    // reference links EVERY referenced record, not just the first.
+    const linkedCompanies = colAt(view, 'values.linked_companies');
+    expect(linkedCompanies?.codec).toEqual({
+      toCore: { type: 'jsonpath', options: { expression: '$[*].target_record_id', arrayHandling: 'array' } },
+    });
+  });
+
+  it('exports a multi-valued column as text — no per-element logicalType like url', () => {
+    // Single-valued `domain` carries logicalType 'url'; the multi-valued one must not
+    // ("a.com, b.com" is not a url), so it stays at the render type 'string' (text).
+    const domains = colAt(view, 'values.domains');
+    expect(domains?.type).toBe('string');
+    expect(domains?.logicalType).toBeUndefined();
+  });
+
+  it('keeps single-valued columns byte-identical (first-element extraction, no codec)', () => {
+    const name = colAt(view, 'values.name');
+    expect(name?.displayTransformer).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$[0].value', arrayHandling: 'first' },
+    });
+    expect(name?.codec).toBeUndefined();
   });
 });
 

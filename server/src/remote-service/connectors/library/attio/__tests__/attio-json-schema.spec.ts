@@ -3,6 +3,7 @@ import {
   TransformerTypes,
   VirtualFieldDef,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_MULTI_VALUED,
   X_SCRATCH_READONLY,
   X_SCRATCH_VIRTUAL_FIELDS,
   X_SCRATCH_WRITE_ONCE,
@@ -170,6 +171,63 @@ describe('attio-json-schema virtual fields', () => {
       type: TransformerTypes.JSONPath,
       options: { expression: '$[0].status.title', arrayHandling: 'first' },
     });
+  });
+});
+
+describe('attio-json-schema multi-valued (is_multiselect) attributes — DEV-11377', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('extracts EVERY option title of a multiselect select attribute as an array', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({ api_slug: 'categories', type: 'select', title: 'Categories', is_multiselect: true }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'companies', mockClient);
+    const vf = spec.schema.properties.values.properties.categories[X_SCRATCH_VIRTUAL_FIELDS] as VirtualFieldDef[];
+    expect(vf[0]).toEqual({
+      displayLabel: 'Categories',
+      type: 'array',
+      suggestedTransformer: {
+        type: TransformerTypes.JSONPath,
+        options: { expression: '$[*].option.title', arrayHandling: 'array' },
+      },
+    });
+  });
+
+  it('extracts every email / phone / domain of a multiselect attribute', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({ api_slug: 'email_addresses', type: 'email-address', is_multiselect: true }),
+      makeAttribute({ api_slug: 'phone_numbers', type: 'phone-number', is_multiselect: true }),
+      makeAttribute({ api_slug: 'domains', type: 'domain', is_multiselect: true }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'companies', mockClient);
+    const expressionOf = (slug: string) =>
+      (spec.schema.properties.values.properties[slug][X_SCRATCH_VIRTUAL_FIELDS] as VirtualFieldDef[])[0]
+        .suggestedTransformer.options;
+    expect(expressionOf('email_addresses')).toEqual({ expression: '$[*].email_address', arrayHandling: 'array' });
+    expect(expressionOf('phone_numbers')).toEqual({ expression: '$[*].phone_number', arrayHandling: 'array' });
+    expect(expressionOf('domains')).toEqual({ expression: '$[*].domain', arrayHandling: 'array' });
+  });
+
+  it('extracts every target record id of a multiselect record-reference attribute', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({ api_slug: 'linked_companies', type: 'record-reference', is_multiselect: true }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'people', mockClient);
+    const vf = spec.schema.properties.values.properties.linked_companies[X_SCRATCH_VIRTUAL_FIELDS] as VirtualFieldDef[];
+    expect(vf[0].suggestedTransformer).toEqual({
+      type: TransformerTypes.JSONPath,
+      options: { expression: '$[*].target_record_id', arrayHandling: 'array' },
+    });
+  });
+
+  it('annotates a multiselect attribute with x-scratch-multi-valued (and omits it for single)', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({ api_slug: 'categories', type: 'select', is_multiselect: true }),
+      makeAttribute({ api_slug: 'industry', type: 'select', is_multiselect: false }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'companies', mockClient);
+    expect(spec.schema.properties.values.properties.categories[X_SCRATCH_MULTI_VALUED]).toBe(true);
+    expect(spec.schema.properties.values.properties.industry[X_SCRATCH_MULTI_VALUED]).toBeUndefined();
   });
 });
 

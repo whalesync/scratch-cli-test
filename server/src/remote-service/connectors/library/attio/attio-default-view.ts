@@ -4,10 +4,15 @@ import {
   TableView,
   TableViewCol,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_MULTI_VALUED,
   X_SCRATCH_READONLY,
   X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
-import { attioExportLogicalType, buildAttioDisplayTransformer } from './attio-value-expressions';
+import {
+  attioExportLogicalType,
+  buildAttioDisplayTransformer,
+  buildAttioMultiValueToCoreCodec,
+} from './attio-value-expressions';
 
 // ── Top-level fixed fields ──
 
@@ -52,12 +57,18 @@ const ATTIO_TYPE_MAP: Partial<Record<string, TablePropertyType>> = {
 // constant, or opaque column — never as business data the user reads:
 //   - `record_id` flattens to the same UUID already shown by the `id` column (a duplicate);
 //   - `workspace_id` / `object_id` hold the same value on every row in a table (constant);
-//   - `created_by` is an actor-reference that flattens to a raw actor UUID, not a name.
+//   - `created_by` is an actor-reference that flattens to a raw actor UUID, not a name;
+//   - `created_at` (the system ATTRIBUTE) holds the same creation timestamp as the record
+//     envelope's fixed `created_at` column, so showing both put a duplicate "Created At" on
+//     every object table — and Live Export's name-collision rename turned the second one
+//     into a junk "Created At 2" destination column. The fixed envelope column (typed
+//     `date`, read-only) stays as the single visible "Created At"; mirrors
+//     HIDDEN_PARENT_VALUE_FIELDS, which already hid the parent's copy for the same reason.
 // Genuine user attributes are intentionally NOT hidden — including `categories` (the
 // company Industry), the social links (`twitter`, `facebook`, `linkedin`, `angellist`,
 // `instagram`), and `avatar_url`. They carry real per-record data and flatten cleanly via
 // their `displayTransformer`, so they show by default like any other attribute.
-const HIDDEN_VALUE_FIELDS = new Set(['created_by', 'record_id', 'workspace_id', 'object_id']);
+const HIDDEN_VALUE_FIELDS = new Set(['created_by', 'created_at', 'record_id', 'workspace_id', 'object_id']);
 
 // ── Always-readonly value fields ──
 
@@ -456,16 +467,18 @@ function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): Table
 /** Build a TableViewCol for an Attio attribute value field (under values.* or entry_values.*). */
 function buildValueCol(attrSlug: string, attrSchema: TSchema | undefined, valuesKey: string): TableViewCol {
   const connectorDataType = attrSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
+  const isMultiValuedAttribute = attrSchema?.[X_SCRATCH_MULTI_VALUED] === true;
   const isReadonly = attrSchema?.[X_SCRATCH_READONLY] === true || isAlwaysReadonlyValueField(attrSlug);
   const isWriteOnce = attrSchema?.[X_SCRATCH_WRITE_ONCE] === true;
   const hidden = isHiddenValueField(attrSlug) || undefined;
 
   // Every Attio attribute is stored verbatim as a value array
   // (`[{ attribute_type, active_from, ..., <payload>: X }]`). A `displayTransformer`
-  // flattens that array to the single scalar the user cares about so the grid
-  // renders clean values instead of raw JSON. Display-only: the stored value
-  // stays the verbatim array for edit / copy / publish.
-  const displayTransformer = buildAttioDisplayTransformer(connectorDataType);
+  // flattens that array to what the user cares about — the single payload scalar,
+  // or the comma-joined payloads of EVERY element for a multi-valued attribute
+  // (DEV-11377) — so the grid renders clean values instead of raw JSON.
+  // Display-only: the stored value stays the verbatim array for edit / copy / publish.
+  const displayTransformer = buildAttioDisplayTransformer(connectorDataType, isMultiValuedAttribute);
 
   const col: TableViewCol = {
     kind: 'col',
@@ -490,9 +503,19 @@ function buildValueCol(attrSlug: string, attrSchema: TSchema | undefined, values
     // as `logicalType` so sync / Live Export creates the destination field with
     // the right type and doesn't export the value as text (DEV-11040). Only
     // attach it when it actually differs from the rendered `type` (text-like
-    // extractions like status / email are already 'string').
-    const logicalType = attioExportLogicalType(connectorDataType);
+    // extractions like status / email are already 'string'; a multi-valued
+    // attribute is always 'string' — its joined export value is text).
+    const logicalType = attioExportLogicalType(connectorDataType, isMultiValuedAttribute);
     if (logicalType && logicalType !== col.type) col.logicalType = logicalType;
+    // A multi-valued attribute's sync/export value is the ARRAY of payloads, not the
+    // comma-joined display string — declared as an explicit `codec.toCore` (which the
+    // resolver prefers over deriving from the joining `displayTransformer`), so the
+    // transform picker sees the column's true multi cardinality and keeps every value,
+    // and a multi-record reference links every referenced record (DEV-11377).
+    if (isMultiValuedAttribute) {
+      const multiValueCodec = buildAttioMultiValueToCoreCodec(connectorDataType);
+      if (multiValueCodec) col.codec = multiValueCodec;
+    }
   }
   return col;
 }

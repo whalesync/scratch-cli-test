@@ -1,55 +1,78 @@
-import { TablePropertyType, TableViewCol, TransformerTypes } from '@spinner/shared-types';
+import { JSONPathArrayHandling, TablePropertyType, TableViewCol, TransformerTypes } from '@spinner/shared-types';
 import { AttioAttributeType } from './attio-types';
 
 /**
- * JSONPath expression to extract the primary scalar value from a single-element
- * Attio value array, keyed by attribute type. Each attribute type stores its
- * useful payload at a different key inside the array element object (Attio wraps
- * every value in `{ attribute_type, active_from, active_until, created_by_actor,
- * <payload key>: ... }`).
+ * Path — INSIDE one element of an Attio value array — of the useful payload, keyed by
+ * attribute type. Attio wraps every value in `{ attribute_type, active_from, active_until,
+ * created_by_actor, <payload key>: ... }`, and each attribute type stores its payload at a
+ * different key inside that element object.
  *
- * Two layers share this one map so "where the displayable value lives" has a
- * single source of truth:
+ * The full extraction expression is built by {@link attioValueJsonPathExpression}: `$[0].<path>`
+ * for a single-valued attribute, `$[*].<path>` for a multi-valued (`is_multiselect`) one — a
+ * multi-select, multiple emails/phones/domains, or a multi-record reference stores ONE ARRAY
+ * ELEMENT PER VALUE, so extracting only `$[0]` silently dropped every value past the first
+ * (DEV-11377).
+ *
+ * Three layers share this one map so "where the displayable value lives" has a single source
+ * of truth:
  *   - the schema's `x-scratch-virtual-fields` (sync editor) in attio-json-schema.ts
  *   - the default view's per-column `displayTransformer` (grid) via
  *     `buildAttioDisplayTransformer` below, consumed in attio-default-view.ts
+ *   - the default view's per-column `codec.toCore` (sync/export of multi-valued columns) via
+ *     `buildAttioMultiValueToCoreCodec` below
  *
- * Types not listed here are too complex for a simple extraction and are left as
- * raw arrays (rendered as JSON in the grid).
+ * Types not listed here are too complex for a simple extraction and are left as raw arrays
+ * (rendered as JSON in the grid).
  */
-export const ATTIO_VALUE_EXPRESSION: Partial<Record<AttioAttributeType, string>> = {
-  text: '$[0].value',
-  number: '$[0].value',
-  checkbox: '$[0].value',
+const ATTIO_VALUE_ELEMENT_PAYLOAD_PATH: Partial<Record<AttioAttributeType, string>> = {
+  text: 'value',
+  number: 'value',
+  checkbox: 'value',
   // Attio stores a currency amount under `currency_value` (a decimal), NOT `value`.
   // Reading `$[0].value` silently dropped every currency field in the grid AND on
   // export (this expression is reused as the sync `toCore` extract). See DEV-11039.
-  currency: '$[0].currency_value',
-  date: '$[0].value',
-  timestamp: '$[0].value',
-  rating: '$[0].value',
-  domain: '$[0].domain',
-  'email-address': '$[0].email_address',
-  'phone-number': '$[0].phone_number',
-  status: '$[0].status.title',
-  select: '$[0].option.title',
-  'record-reference': '$[0].target_record_id',
-  'actor-reference': '$[0].referenced_actor_id',
-  location: '$[0].locality',
-  'personal-name': '$[0].full_name',
+  currency: 'currency_value',
+  date: 'value',
+  timestamp: 'value',
+  rating: 'value',
+  domain: 'domain',
+  'email-address': 'email_address',
+  'phone-number': 'phone_number',
+  status: 'status.title',
+  select: 'option.title',
+  'record-reference': 'target_record_id',
+  'actor-reference': 'referenced_actor_id',
+  location: 'locality',
+  'personal-name': 'full_name',
   // An `interaction` value (the computed `first/last/next email|calendar interaction`
   // fields) is `{ interaction_type, interacted_at, owner_actor, ... }`. The single
   // scalar a user cares about is WHEN it happened, so flatten to the `interacted_at`
   // timestamp. Read-only/system-managed (no write key). Before DEV-11052 this type
   // had no expression, so the grid showed raw JSON and Live Export downgraded it to
   // text ("Can't unpack this Attio object field"); it now flattens to a date.
-  interaction: '$[0].interacted_at',
+  interaction: 'interacted_at',
 };
 
 /**
- * The SEMANTIC (logical) type of the scalar an attribute's {@link ATTIO_VALUE_EXPRESSION}
- * extracts — what the flattened value actually IS for sync / Live Export, as opposed
- * to how its grid cell is drawn.
+ * The JSONPath expression that extracts an attribute's payload from its verbatim value array:
+ * the FIRST element's payload for a single-valued attribute (`$[0].<path>`), or EVERY
+ * element's payload for a multi-valued one (`$[*].<path>`). Undefined for attribute types
+ * with no simple extraction (their columns render the raw array as JSON).
+ */
+export function attioValueJsonPathExpression(
+  connectorDataType: string | undefined,
+  valueSelection: 'first-element' | 'every-element',
+): string | undefined {
+  if (!connectorDataType) return undefined;
+  const payloadPathInsideElement = ATTIO_VALUE_ELEMENT_PAYLOAD_PATH[connectorDataType as AttioAttributeType];
+  if (!payloadPathInsideElement) return undefined;
+  return valueSelection === 'every-element' ? `$[*].${payloadPathInsideElement}` : `$[0].${payloadPathInsideElement}`;
+}
+
+/**
+ * The SEMANTIC (logical) type of the scalar an attribute's extraction expression
+ * ({@link attioValueJsonPathExpression}) extracts — what the flattened value actually IS
+ * for sync / Live Export, as opposed to how its grid cell is drawn.
  *
  * A value column with a display transformer must render through the grid text cell
  * (`type:'string'`), because that is the only cell kind that consults a
@@ -92,17 +115,29 @@ const ATTIO_EXPORT_LOGICAL_TYPE: Partial<Record<AttioAttributeType, TablePropert
  * The semantic `logicalType` to declare on an Attio value column for sync / export,
  * for a column that carries a display transformer (so its render `type` was forced
  * to `'string'`). Returns `undefined` for a type with no mapping (no override).
+ *
+ * A MULTI-VALUED attribute always resolves to `'string'`: its exported value is the
+ * array of extracted payload strings (comma-joined into a single-valued destination),
+ * so a per-element semantic type like `url` or `number` would mistype the destination
+ * column ("a, b, c" is not a url) — a multi-valued column lands as text.
  */
-export function attioExportLogicalType(connectorDataType: string | undefined): TablePropertyType | undefined {
+export function attioExportLogicalType(
+  connectorDataType: string | undefined,
+  isMultiValuedAttribute: boolean,
+): TablePropertyType | undefined {
   if (!connectorDataType) return undefined;
+  if (isMultiValuedAttribute) return 'string';
   return ATTIO_EXPORT_LOGICAL_TYPE[connectorDataType as AttioAttributeType];
 }
 
 /**
  * Build a declarative `displayTransformer` for an Attio attribute's grid column
  * from its connector data type: a JSONPath that flattens the verbatim value
- * array to the single scalar the user cares about (e.g. `$[0].value` → the text,
- * `$[0].status.title` → the status label).
+ * array to what the user cares about — the single payload scalar for a
+ * single-valued attribute (`$[0].value` → the text, `$[0].status.title` → the
+ * status label), or the comma-joined payloads of EVERY element for a multi-valued
+ * (`is_multiselect`) one (`$[*].option.title` → "Opt A, Opt B, Opt C"), so no
+ * value past the first is hidden (DEV-11377).
  *
  * The renderer runs it through the generic, fail-closed applier in
  * `@spinner/shared-types/transform` and falls back to the raw array on
@@ -115,9 +150,32 @@ export function attioExportLogicalType(connectorDataType: string | undefined): T
  */
 export function buildAttioDisplayTransformer(
   connectorDataType: string | undefined,
+  isMultiValuedAttribute: boolean,
 ): TableViewCol['displayTransformer'] {
-  if (!connectorDataType) return undefined;
-  const expression = ATTIO_VALUE_EXPRESSION[connectorDataType as AttioAttributeType];
+  const expression = attioValueJsonPathExpression(
+    connectorDataType,
+    isMultiValuedAttribute ? 'every-element' : 'first-element',
+  );
   if (!expression) return undefined;
-  return { type: TransformerTypes.JSONPath, options: { expression, arrayHandling: 'first' } };
+  const arrayHandling: JSONPathArrayHandling = isMultiValuedAttribute ? 'join_comma' : 'first';
+  return { type: TransformerTypes.JSONPath, options: { expression, arrayHandling } };
+}
+
+/**
+ * Build the `codec.toCore` for a MULTI-VALUED (`is_multiselect`) Attio attribute's column:
+ * a JSONPath that extracts every element's payload as an ARRAY (`$[*].option.title` →
+ * `["Opt A", "Opt B"]`), declaring the column's true multi cardinality to the sync
+ * transform picker — which then keeps the whole list (an array into a multi destination,
+ * a comma-join into a text one) instead of exporting only the first value (DEV-11377).
+ * The FK id-extraction path (`foreignKeyIdExtractionTransformer`) resolves the same
+ * `toCore`, so a multi-record reference links EVERY referenced record.
+ *
+ * Single-valued columns deliberately get NO codec: their `displayTransformer` doubles as
+ * the `toCore` via the resolver's derive-from-display fallback, exactly as before.
+ * Returns `undefined` for types without an extraction expression.
+ */
+export function buildAttioMultiValueToCoreCodec(connectorDataType: string | undefined): TableViewCol['codec'] {
+  const expression = attioValueJsonPathExpression(connectorDataType, 'every-element');
+  if (!expression) return undefined;
+  return { toCore: { type: TransformerTypes.JSONPath, options: { expression, arrayHandling: 'array' } } };
 }

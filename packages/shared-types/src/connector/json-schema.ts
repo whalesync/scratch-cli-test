@@ -54,6 +54,14 @@ export const X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE = 'x-scratch-suggeste
 // An array of virtual field definitions that provide human-readable shortcuts for complex nested fields.
 export const X_SCRATCH_VIRTUAL_FIELDS = 'x-scratch-virtual-fields';
 
+// Marks a field the external service declares as holding MULTIPLE values (e.g. an Attio
+// attribute with `is_multiselect: true` — a multi-select, multiple emails/phones/domains,
+// or a multi-record reference) — a faithful fact from the service's own field metadata,
+// NOT a display opinion. The value is `true`; absent means single-valued. A connector's
+// default-view builder reads it to extract/display EVERY element of the stored value
+// (joined for the grid, an array for sync/export) instead of collapsing to the first.
+export const X_SCRATCH_MULTI_VALUED = 'x-scratch-multi-valued';
+
 // The maximum length of a string field as enforced by the external service (e.g. PostgreSQL VARCHAR(n)).
 export const X_SCRATCH_MAX_LENGTH = 'x-scratch-max-length';
 
