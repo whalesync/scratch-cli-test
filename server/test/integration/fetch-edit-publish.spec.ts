@@ -88,6 +88,7 @@ import { AssetIndexService } from 'src/asset/asset-index.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
 import { ExperimentsService } from 'src/experiments/experiments.service';
+import { StubMetricsService } from 'src/metrics/stub-metrics.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
@@ -600,6 +601,7 @@ describe('Fetch → Edit → Publish Integration', () => {
         deleteForWorkbook: jest.fn().mockResolvedValue(undefined),
       } as unknown as RecreatedIdMapService,
       refCleanerService,
+      new StubMetricsService(),
     );
   });
 

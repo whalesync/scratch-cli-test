@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   type DataFolderOptions,
   formatRecordJson,
@@ -10,6 +10,8 @@ import {
 } from '@spinner/shared-types';
 import axios from 'axios';
 import { WSLogger } from 'src/logger';
+import { CustomMetric } from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { ParsedContent } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
 import { DbService } from '../db/db.service';
@@ -49,6 +51,14 @@ import { parsePath } from './utils';
 // progress JSON the CLI/desktop poll.
 const PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP = 20;
 
+// User-facing reason stamped on a delete operation we could not execute because
+// no remote record id is known for it (its FileIndex row is missing, or its id
+// was never extractable at pull time). Surfaced via the operation's `error`
+// field → `failedOperations` → the CLI/desktop `failed-patches.json` quarantine.
+// The delete is marked failed-batch instead of a silent success (DEV-10595).
+const DELETE_MISSING_REMOTE_RECORD_ID_ERROR =
+  'Could not delete from the external service: no remote record ID is known for this record (its local index entry may be missing). Re-pull the folder and retry.';
+
 // Common shape for any plan-operation row dispatched by the runner. Phases that
 // require a sparse partial (edit/backfill) widen this to UpdatePublishOperation.
 type PublishOperation = {
@@ -70,6 +80,12 @@ type PublishOperation = {
 type UpdatePublishOperation = PublishOperation & {
   changedFields: Record<string, unknown>;
 };
+
+// A delete operation the runner could NOT dispatch because it has no resolvable
+// remote record id (its FileIndex row is missing / its id was never extractable
+// at pull time). `dispatchDeleteBatch` returns these so `processBatch` marks them
+// `failed-batch` instead of a silent `success` (DEV-10595).
+type DeleteOperationWithoutRemoteRecordId = { id: string; filePath: string };
 
 function narrowToUpdateOps(entries: PublishOperation[]): UpdatePublishOperation[] {
   return entries.map((entry) => {
@@ -97,6 +113,7 @@ export class PublishPlanRunService {
     private readonly experimentsService: ExperimentsService,
     private readonly recreatedIdMapService: RecreatedIdMapService,
     private readonly refCleanerService: RefCleanerService,
+    @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {}
 
   async runPipeline(
@@ -572,6 +589,24 @@ export class PublishPlanRunService {
         failedOperations = collapseFailedOperationsByPath(failedRows).slice(0, PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP);
       }
 
+      // Chart how many delete operations we could not execute because their remote
+      // record id was unresolvable (DEV-10595) — a rare data-integrity anomaly worth
+      // watching in prod. Counted from the terminal DB state so it is exact and
+      // unaffected by the phase retry pass re-touching the same rows; the sentinel
+      // reason match excludes connector-rejected deletes (which carry a connector
+      // message on `error`, never this string).
+      const deletesMissingRemoteRecordIdCount = await this.db.client.publishPlanOperation.count({
+        where: {
+          planId: pipelineId,
+          phase: 'delete',
+          status: 'failed-batch',
+          error: DELETE_MISSING_REMOTE_RECORD_ID_ERROR,
+        },
+      });
+      if (deletesMissingRemoteRecordIdCount > 0) {
+        this.metricsService.logValue(CustomMetric.PUBLISH_DELETE_MISSING_REMOTE_ID, deletesMissingRemoteRecordIdCount);
+      }
+
       // If we exit early intentionally because of single-phase execution, retain the completed suffix.
       // Otherwise, the entire pipeline is done.
       const lastPhaseRun = phasesToRun[phasesToRun.length - 1];
@@ -967,6 +1002,10 @@ export class PublishPlanRunService {
     useRemoteReturnedRows: boolean,
   ): Promise<boolean> {
     try {
+      // Populated only by the delete phase: ops the dispatcher could not execute
+      // because they have no resolvable remote record id. Marked failed-batch
+      // below instead of riding the blanket success update (DEV-10595).
+      let deleteEntriesWithoutRemoteRecordId: DeleteOperationWithoutRemoteRecordId[] = [];
       switch (phase) {
         case 'asset-upload':
           await this.dispatchAssetUploadBatch(entries, connector);
@@ -989,7 +1028,14 @@ export class PublishPlanRunService {
           await this.dispatchCreateBatch(phase, entries, connector, tableSpec, workbookId, planId, repoId);
           break;
         case 'delete':
-          await this.dispatchDeleteBatch(entries, connector, tableSpec, workbookId, planId, repoId);
+          deleteEntriesWithoutRemoteRecordId = await this.dispatchDeleteBatch(
+            entries,
+            connector,
+            tableSpec,
+            workbookId,
+            planId,
+            repoId,
+          );
           break;
         case 'rename-files':
           await this.dispatchRenameBatch(entries, workbookId, repoId, planId);
@@ -998,11 +1044,29 @@ export class PublishPlanRunService {
           throw new Error(`Unknown phase: ${phase}`);
       }
 
-      // success
-      await this.db.client.publishPlanOperation.updateMany({
-        where: { id: { in: entries.map((e) => e.id) } },
-        data: { status: 'success', error: null },
-      });
+      // Mark every entry the dispatcher actually processed as success. Delete ops
+      // with no resolvable remote record id are excluded here and marked
+      // failed-batch instead, so an un-executed delete is never reported as a
+      // success (DEV-10595).
+      const idsWithoutRemoteRecordId = new Set(deleteEntriesWithoutRemoteRecordId.map((e) => e.id));
+      const succeededEntryIds = entries.filter((e) => !idsWithoutRemoteRecordId.has(e.id)).map((e) => e.id);
+      if (succeededEntryIds.length > 0) {
+        await this.db.client.publishPlanOperation.updateMany({
+          where: { id: { in: succeededEntryIds } },
+          data: { status: 'success', error: null },
+        });
+      }
+
+      if (idsWithoutRemoteRecordId.size > 0) {
+        await this.db.client.publishPlanOperation.updateMany({
+          where: { id: { in: [...idsWithoutRemoteRecordId] } },
+          data: { status: 'failed-batch', error: DELETE_MISSING_REMOTE_RECORD_ID_ERROR },
+        });
+        // Treat the batch as errored so the run reports it and the phase's retry
+        // pass re-examines it (it will fail identically and stay failed-batch —
+        // the remoteRecordId is a stored field that a retry cannot change).
+        return true;
+      }
       return false;
     } catch (err) {
       // Resolve the failure into the service's own user-facing reason. For HTTP
@@ -1548,10 +1612,14 @@ export class PublishPlanRunService {
     workbookId: string,
     planId: string,
     repoId: string,
-  ): Promise<void> {
+  ): Promise<DeleteOperationWithoutRemoteRecordId[]> {
     const idField = tableSpec.idPath;
     const filters: ConnectorFile[] = [];
     const validEntries: PublishOperation[] = [];
+    // Delete ops with no resolvable remote id: we cannot delete these from the
+    // external service, so collect them and hand them back to processBatch to be
+    // marked failed-batch — never silently dropped-then-marked-success (DEV-10595).
+    const deleteEntriesWithoutRemoteRecordId: DeleteOperationWithoutRemoteRecordId[] = [];
 
     for (const entry of entries) {
       if (entry.remoteRecordId) {
@@ -1564,10 +1632,24 @@ export class PublishPlanRunService {
         // limitation note on `recordWithId`.)
         filters.push(recordWithId(idField, entry.remoteRecordId) as ConnectorFile);
         validEntries.push(entry);
+      } else {
+        // A record present in `main` whose remote-id resolution failed (unindexed
+        // at pull time, a pruned index row, or a connection-scoping mismatch). This
+        // is a real failure to surface, not a legitimate no-op — a never-published
+        // local-only record cancels out in the dirty-vs-main diff and never
+        // produces a delete op at all.
+        deleteEntriesWithoutRemoteRecordId.push({ id: entry.id, filePath: entry.filePath });
+        WSLogger.warn({
+          source: 'PublishRunService.dispatchDeleteBatch',
+          message: 'Delete operation has no remote record id — cannot delete from the external service',
+          workbookId,
+          filePath: entry.filePath,
+          data: { planId },
+        });
       }
     }
 
-    if (filters.length === 0) return;
+    if (filters.length === 0) return deleteEntriesWithoutRemoteRecordId;
 
     // Bulk delete
     await connector.deleteRecords(tableSpec, filters);
@@ -1614,6 +1696,8 @@ export class PublishPlanRunService {
       content: null,
     }));
     await this.syncBatchToDirtyIfFinal(workbookId, planId, 'delete', dirtySyncBatch, repoId);
+
+    return deleteEntriesWithoutRemoteRecordId;
   }
 
   private async dispatchRenameBatch(

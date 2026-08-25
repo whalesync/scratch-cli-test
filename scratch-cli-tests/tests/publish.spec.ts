@@ -11,12 +11,15 @@ import {
 } from "../src/helpers";
 import {
   AUTHOR_IDS,
+  NULLKEY_UNINDEXED_NAME,
   REVIEW_IDS,
   setupAuthorsTable,
+  setupNullKeyTable,
   setupProductsTable,
   setupReviewsTable,
   setupTestTable,
   teardownAuthorsTable,
+  teardownNullKeyTable,
   teardownProductsTable,
   teardownReviewsTable,
   teardownTestTable,
@@ -2367,6 +2370,103 @@ async function linkAuthorsWorkspaceAndFindAlice(prefix: string): Promise<{
   };
 }
 
+// Links `integration_nullkey`, pulls, and locates the row seeded with a NULL
+// `ext_key` (id path) — the record that lands on `main` with no FileIndex row, so
+// a later delete of it has no resolvable remote id (DEV-10595).
+async function linkNullKeyWorkspaceAndFindOrphan(prefix: string): Promise<{
+  workspaceId: string;
+  workspaceDir: string;
+  connDirName: string;
+  orphanAbsPath: string;
+  orphanWorkspacePath: string;
+}> {
+  const ws = cli.json<{ id: string }>([
+    "workspaces",
+    "create",
+    uniqueName(prefix),
+  ]);
+  const workspaceId = ws.id;
+
+  const conn = cli.json<{ id: string }>([
+    "connections",
+    "--workspace",
+    workspaceId,
+    "add",
+    "--service",
+    TEST_CONNECTOR_SERVICE,
+    "--param",
+    `connectionString=${postgresUrl}`,
+  ]);
+  const connectionId = conn.id;
+
+  const parentDir = path.join(cli.home, `test-${prefix}`);
+  fs.mkdirSync(parentDir, { recursive: true });
+  const initResult = cli.json<{ directory: string }>(
+    ["workspaces", "init", workspaceId],
+    { cwd: parentDir },
+  );
+  const workspaceDir = path.join(parentDir, initResult.directory);
+
+  const tables = cli.json<Array<{ id: string; displayName: string }>>([
+    "linked",
+    "--workspace",
+    workspaceId,
+    "available",
+    connectionId,
+  ]);
+  const nullKeyTable = tables.find(
+    (t) => t.displayName === "integration_nullkey",
+  );
+  if (!nullKeyTable) {
+    throw new Error(
+      `integration_nullkey not found in available tables: ${tables.map((t) => t.displayName).join(", ")}`,
+    );
+  }
+  const tableIdParts = nullKeyTable.id.split(",");
+  const linked = cli.json<{ id: string }>(
+    [
+      "linked",
+      "--workspace",
+      workspaceId,
+      "add",
+      "--connection-id",
+      connectionId,
+      ...tableIdParts.flatMap((p: string) => ["--table-id", p]),
+      "--name",
+      nullKeyTable.displayName,
+    ],
+    { cwd: workspaceDir },
+  );
+  cli.run(["linked", "--workspace", workspaceId, "pull", linked.id], {
+    cwd: workspaceDir,
+  });
+  cli.run(["files", "download"], { cwd: workspaceDir });
+
+  const marker = readMarker(workspaceDir);
+  const connDirName = marker.connections[0]!.dirName;
+
+  const orphanFile = findJsonFiles(workspaceDir)
+    .map((p) => ({
+      p,
+      data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>,
+    }))
+    .find((r) => r.data.name === NULLKEY_UNINDEXED_NAME);
+  if (!orphanFile) {
+    throw new Error(
+      `Expected the unindexed record (name="${NULLKEY_UNINDEXED_NAME}") not found after pull — ` +
+        `the null-ext_key row may not have been committed as a record file`,
+    );
+  }
+
+  return {
+    workspaceId,
+    workspaceDir,
+    connDirName,
+    orphanAbsPath: orphanFile.p,
+    orphanWorkspacePath: path.relative(workspaceDir, orphanFile.p),
+  };
+}
+
 // The publish-delete happy path is covered end-to-end by the driver suite
 // (scratch-cli-tests/tests/driver-publish.spec.ts). These two suites cover the
 // two paths the driver does NOT: walking a staged delete back down the review
@@ -2688,6 +2788,165 @@ describeIfPostgres(
           );
           expect(res.rowCount).toBe(1);
           expect(res.rows[0].name).toBe("Alice");
+        } finally {
+          await client.end();
+        }
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+  },
+);
+
+// A delete whose record has no resolvable remote id (its FileIndex row is
+// missing — here because it was pulled with a NULL id-path value) must be
+// surfaced as a failure, not marked a silent "success" (DEV-10595). This is the
+// null-remoteRecordId sibling of the connector-rejected-delete suite above: the
+// connector is never even called, yet the run must still report the failure and
+// quarantine the delete rather than dropping it.
+describeIfPostgres(
+  "Publish a delete with no resolvable remote id — surfaced as failed, not silent success (DEV-10595)",
+  () => {
+    let workspaceId: string;
+    let workspaceDir: string;
+    let connDirName: string;
+    let orphanAbsPath: string;
+    let orphanWorkspacePath: string;
+    let prePublishMainHash: string;
+    let hasFailed = false;
+
+    beforeAll(async () => {
+      await setupNullKeyTable();
+      ({
+        workspaceId,
+        workspaceDir,
+        connDirName,
+        orphanAbsPath,
+        orphanWorkspacePath,
+      } = await linkNullKeyWorkspaceAndFindOrphan("delete-noid"));
+    }, 120_000);
+
+    afterAll(async () => {
+      const shouldPreserve = preserveOnFailure && hasFailed;
+      if (shouldPreserve) {
+        console.log(
+          `[preserve] Keeping workbook ${workspaceId} and local dir ${workspaceDir} for inspection`,
+        );
+      }
+      if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
+      if (workspaceDir && !shouldPreserve) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      await teardownNullKeyTable();
+    });
+
+    it("accept + upload a delete of the unindexed row succeed (the null id only bites at run-job)", () => {
+      try {
+        const connWorktree = path.join(workspaceDir, connDirName);
+        prePublishMainHash = execFileSync(
+          "git",
+          ["-C", connWorktree, "rev-parse", "refs/heads/main"],
+          { encoding: "utf-8" },
+        ).trim();
+
+        fs.rmSync(orphanAbsPath);
+        const accept = cli.json<{ status: string; filesAccepted: number }>(
+          ["files", "accept", orphanWorkspacePath],
+          { cwd: workspaceDir },
+        );
+        expect(accept.status).toBe("accepted");
+        expect(accept.filesAccepted).toBe(1);
+        expect(
+          readAcceptedPatches(workspaceDir, connDirName).patches[0].kind,
+        ).toBe("delete");
+
+        const upload = cli.run(["files", "upload"], { cwd: workspaceDir });
+        expect(upload.exitCode).toBe(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 60_000);
+
+    it("publish surfaces the unresolvable-remote-id delete instead of silently succeeding", async () => {
+      try {
+        const publishResult = cli.json<{
+          status: string;
+          failedConnections: Array<unknown>;
+          warnings: Array<{
+            name: string;
+            warning: { phase: string; message: string; failedCount: number };
+          }>;
+        }>(["files", "publish"], { cwd: workspaceDir });
+
+        expect(publishResult.failedConnections).toHaveLength(0);
+        expect(publishResult.warnings.length).toBeGreaterThan(0);
+        const warning = publishResult.warnings.find(
+          (w) => w.name === connDirName,
+        );
+        expect(warning).toBeDefined();
+        expect(warning?.warning.phase).toBe("run-job");
+        expect(warning?.warning.failedCount).toBeGreaterThan(0);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    }, 180_000);
+
+    it("the un-executed delete is quarantined in failed-patches.json with a clear reason", () => {
+      try {
+        expect(
+          readAcceptedPatches(workspaceDir, connDirName).patches,
+        ).toHaveLength(0);
+
+        const afterFail = readFailedPatches(workspaceDir, connDirName);
+        expect(afterFail.patches).toHaveLength(1);
+        const entry = afterFail.patches[0];
+        const expectedConnectionRelativePath = path.relative(
+          path.join(workspaceDir, connDirName),
+          orphanAbsPath,
+        );
+        expect(entry.path).toBe(expectedConnectionRelativePath);
+        expect(entry.kind).toBe("delete");
+        expect(entry.patch).toBeNull();
+        expect(entry.error).toBeDefined();
+        expect(entry.error?.toLowerCase()).toContain("remote record");
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    });
+
+    it("publish left refs/heads/main unmoved (the delete never committed)", () => {
+      try {
+        const connWorktree = path.join(workspaceDir, connDirName);
+        const postPublishMainHash = execFileSync(
+          "git",
+          ["-C", connWorktree, "rev-parse", "refs/heads/main"],
+          { encoding: "utf-8" },
+        ).trim();
+        expect(postPublishMainHash).toBe(prePublishMainHash);
+      } catch (err) {
+        hasFailed = true;
+        throw err;
+      }
+    });
+
+    it("the unindexed row still exists in Postgres (the delete did not land)", async () => {
+      try {
+        const client = new Client({ connectionString: postgresUrl });
+        await client.connect();
+        try {
+          const res = await client.query<{ name: string }>(
+            `SELECT name FROM integration_nullkey WHERE name = $1`,
+            [NULLKEY_UNINDEXED_NAME],
+          );
+          expect(res.rowCount).toBe(1);
         } finally {
           await client.end();
         }

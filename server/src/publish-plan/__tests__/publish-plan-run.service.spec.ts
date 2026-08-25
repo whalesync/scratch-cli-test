@@ -3,6 +3,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CredentialEncryptionService } from '../../credential-encryption/credential-encryption.service';
 import { DbService } from '../../db/db.service';
 import { ExperimentsService } from '../../experiments/experiments.service';
+import { CustomMetric } from '../../metrics/custom-metrics';
+import { CustomMetricsService } from '../../metrics/custom-metrics-service';
 import { Connector } from '../../remote-service/connectors/connector';
 import { ConnectorsService } from '../../remote-service/connectors/connectors.service';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
@@ -107,6 +109,7 @@ describe('PublishPlanRunService', () => {
   let schemaService: jest.Mocked<SchemaHelperService>;
   let experimentsService: jest.Mocked<ExperimentsService>;
   let recreatedIdMapService: jest.Mocked<RecreatedIdMapService>;
+  let metricsService: { logValue: jest.Mock };
 
   beforeEach(async () => {
     db = makeDbMock();
@@ -183,6 +186,9 @@ describe('PublishPlanRunService', () => {
       stripSpecificPseudoRefs: jest.fn().mockImplementation((content: unknown) => content),
     } as unknown as jest.Mocked<RefCleanerService>;
 
+    // Spy-backed stub so tests can assert the anomaly counter is (or isn't) emitted.
+    metricsService = { logValue: jest.fn() };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PublishPlanRunService,
@@ -197,6 +203,7 @@ describe('PublishPlanRunService', () => {
         { provide: ExperimentsService, useValue: experimentsService },
         { provide: RecreatedIdMapService, useValue: recreatedIdMapService },
         { provide: RefCleanerService, useValue: refCleanerService },
+        { provide: CustomMetricsService, useValue: metricsService },
       ],
     }).compile();
 
@@ -701,6 +708,68 @@ describe('PublishPlanRunService', () => {
         await service.runPipeline(PLAN_ID);
 
         expect(connector.deleteRecords).not.toHaveBeenCalled();
+      });
+
+      // DEV-10595: an un-executed delete must NOT be reported as a remote success.
+      it('marks a delete with no remoteRecordId failed-batch (not success) while the real delete succeeds', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        setupPhaseEntries('delete', [
+          { id: 'op_null', filePath: 'articles/unindexed.json', content: null, remoteRecordId: null },
+          { id: 'op_valid', filePath: 'articles/published.json', content: null, remoteRecordId: 'rec_pub_1' },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const updateManyCalls = jest.mocked(db.client.publishPlanOperation.updateMany).mock.calls;
+
+        // The record that actually deleted is marked success — and only it.
+        const successCall = updateManyCalls.find(
+          (call) => (call[0] as { data?: { status?: string } }).data?.status === 'success',
+        );
+        expect(successCall).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        expect((successCall![0] as { where: { id: { in: string[] } } }).where.id.in).toEqual(['op_valid']);
+
+        // The un-executed delete is marked failed-batch with a clear, user-facing reason.
+        const failedCall = updateManyCalls.find(
+          (call) => (call[0] as { data?: { status?: string } }).data?.status === 'failed-batch',
+        );
+        expect(failedCall).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const failedArg = failedCall![0] as { where: { id: { in: string[] } }; data: { error: string } };
+        expect(failedArg.where.id.in).toEqual(['op_null']);
+        expect(failedArg.data.error).toEqual(expect.stringContaining('remote record ID'));
+
+        // The null-id delete is NEVER swept into a success update.
+        const nullIdMarkedSuccess = updateManyCalls.some(
+          (call) =>
+            (call[0] as { data?: { status?: string } }).data?.status === 'success' &&
+            ((call[0] as { where?: { id?: { in?: string[] } } }).where?.id?.in ?? []).includes('op_null'),
+        );
+        expect(nullIdMarkedSuccess).toBe(false);
+      });
+
+      // DEV-10595: the anomaly is charted so its prod frequency is visible.
+      it('emits the publish-delete-missing-remote-id counter with the terminal failed count', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        setupPhaseEntries('delete', [
+          { id: 'op_null', filePath: 'articles/unindexed.json', content: null, remoteRecordId: null },
+        ]);
+        // The end-of-run counter reads terminal DB state: model one failed-batch
+        // delete carrying the sentinel reason. The anomaly query is the only
+        // count() with an `error` filter; the phase-scoped counts keep the value
+        // setupPhaseEntries would return so the pipeline flow is unchanged.
+        db.client.publishPlanOperation.count.mockImplementation(
+          (args: { where?: { phase?: string; error?: unknown } }) => {
+            if (args?.where?.error) return Promise.resolve(1);
+            if (args?.where?.phase === 'delete') return Promise.resolve(1);
+            return Promise.resolve(0);
+          },
+        );
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.PUBLISH_DELETE_MISSING_REMOTE_ID, 1);
       });
     });
 

@@ -107,6 +107,12 @@ export enum CustomMetric {
   GC_MAINTENANCE_RUN = 'gc_maintenance_run', // counter: emitted in Phase 2 (DEV-11316)
   STAGING_DIR_REAPED = 'staging_dir_reaped', // counter: emitted in Phase 3 (DEV-11317)
   PLAN_TAGS_REAPED = 'plan_tags_reaped', // counter: emitted in Phase 4 (DEV-11318)
+
+  // Publish delete-op anomaly (DEV-10595). Fires when a publish delete operation has no resolvable
+  // remote record id (its FileIndex row is missing / its id was never extractable at pull time), so
+  // the record cannot be deleted from the external service. These deletes are now marked failed-batch
+  // instead of a silent success; the counter charts how often the anomaly happens in prod.
+  PUBLISH_DELETE_MISSING_REMOTE_ID = 'publish_delete_missing_remote_id',
 }
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
@@ -171,6 +177,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.GC_MAINTENANCE_RUN:
     case CustomMetric.STAGING_DIR_REAPED:
     case CustomMetric.PLAN_TAGS_REAPED:
+    case CustomMetric.PUBLISH_DELETE_MISSING_REMOTE_ID:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -240,6 +247,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.GC_MAINTENANCE_RUN:
     case CustomMetric.STAGING_DIR_REAPED:
     case CustomMetric.PLAN_TAGS_REAPED:
+    case CustomMetric.PUBLISH_DELETE_MISSING_REMOTE_ID:
       return CustomMetricUnit.EVENT_COUNT;
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
       // A gauge: how many syncs remain on the frozen v1 column right now, not a

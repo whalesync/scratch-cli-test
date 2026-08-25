@@ -334,6 +334,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       } as unknown as ExperimentsService,
       new RecreatedIdMapService(dbService),
       refCleanerService,
+      new StubMetricsService(),
     );
 
     // ---- Create DB entities ----
@@ -1491,6 +1492,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       } as unknown as ExperimentsService,
       new RecreatedIdMapService(dbService),
       refCleanerService,
+      new StubMetricsService(),
     );
 
     // ---- Create DB entities ----

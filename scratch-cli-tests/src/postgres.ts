@@ -260,6 +260,73 @@ export async function teardownAuthorsTable(): Promise<void> {
   }
 }
 
+const NULLKEY_TABLE = "integration_nullkey";
+
+/** The `name` of the row seeded with a NULL `ext_key` — the record that pulls
+ * without a FileIndex row, so a later delete of it has no resolvable remote id
+ * (DEV-10595). The test finds this record by its name in the pulled worktree. */
+export const NULLKEY_UNINDEXED_NAME = "Unindexed Orphan";
+
+/**
+ * Drop and recreate `integration_nullkey` — a table with no primary key and a
+ * NULLABLE single-column UNIQUE index (`ext_key`), which the connector picks as
+ * the record id path. Seed one row whose `ext_key` is NULL (so pull cannot
+ * resolve a remote id for it and commits its file to `main` WITHOUT a FileIndex
+ * row) plus one normally-keyed anchor row. Used by the DEV-10595 test that
+ * publishes a delete of a record with no resolvable remote record id and expects
+ * it to be surfaced as a failure, not a silent success.
+ */
+export async function setupNullKeyTable(): Promise<void> {
+  const client = new Client({ connectionString: getConnectionString() });
+  await client.connect();
+
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${NULLKEY_TABLE} CASCADE`);
+
+    const sqlPath = path.resolve(__dirname, "../test_table_nullkey.sql");
+    const createSql = fs.readFileSync(sqlPath, "utf-8");
+    await client.query(createSql);
+
+    // The unindexed record (ext_key NULL) is the one the test deletes; the keyed
+    // anchor makes the folder pull as an ordinary, non-degenerate table.
+    const rows: Array<[string | null, string]> = [
+      [null, NULLKEY_UNINDEXED_NAME],
+      ["key_anchor_1", "Keyed Anchor"],
+    ];
+    for (const [ext_key, name] of rows) {
+      await client.query(
+        `INSERT INTO ${NULLKEY_TABLE} (ext_key, name) VALUES ($1, $2)`,
+        [ext_key, name],
+      );
+    }
+
+    const count = await client.query(
+      `SELECT COUNT(*) AS cnt FROM ${NULLKEY_TABLE}`,
+    );
+    const rowCount = parseInt(count.rows[0].cnt, 10);
+    if (rowCount !== rows.length) {
+      throw new Error(
+        `Expected ${rows.length} rows in ${NULLKEY_TABLE} but found ${rowCount}`,
+      );
+    }
+    console.log(`[postgres] ${NULLKEY_TABLE}: ${rowCount} rows loaded`);
+  } finally {
+    await client.end();
+  }
+}
+
+/** Drop the integration_nullkey table. */
+export async function teardownNullKeyTable(): Promise<void> {
+  const client = new Client({ connectionString: getConnectionString() });
+  await client.connect();
+
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${NULLKEY_TABLE} CASCADE`);
+  } finally {
+    await client.end();
+  }
+}
+
 const REVIEWS_TABLE = "integration_reviews";
 
 /**
