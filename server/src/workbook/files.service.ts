@@ -265,6 +265,17 @@ export class FilesService {
   }
 
   /**
+   * A file "exists" if it has content on either the working copy (`content`) or main
+   * (`originalContent`). `getFileByPathGit` always returns a DTO — a genuinely missing path comes
+   * back with both null; a pending-but-unpublished create has null `originalContent` but non-null
+   * `content`, so both must be null to count as absent. (Guarding on `!fileDetails` is dead code
+   * because the DTO is never falsy — see DEV-10587.)
+   */
+  private fileDetailsRepresentMissingFile(fileDetails: FileDetailsResponseDto): boolean {
+    return fileDetails.file.content === null && fileDetails.file.originalContent === null;
+  }
+
+  /**
    * Delete a file by path.
    * Used by the file agent's `rm` command.
    */
@@ -273,7 +284,7 @@ export class FilesService {
 
     const existingFile = await this.getFileByPathGit(workbookId, path, actor);
 
-    if (!existingFile) {
+    if (this.fileDetailsRepresentMissingFile(existingFile)) {
       throw new NotFoundException(`Unable to find ${path}`);
     }
 
@@ -478,7 +489,7 @@ export class FilesService {
 
     const existingFile = await this.getFileByPathGit(workbookId, oldPath, actor);
 
-    if (!existingFile) {
+    if (this.fileDetailsRepresentMissingFile(existingFile)) {
       throw new NotFoundException(`Unable to find ${oldPath}`);
     }
 

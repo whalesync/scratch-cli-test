@@ -214,6 +214,19 @@ describe('FilesService', () => {
       );
     });
 
+    it('returns 404 when deleting a path that does not exist (DEV-10587)', async () => {
+      // A genuinely missing file: getFileByPathGit still returns a DTO, but both the working copy
+      // (content) and main (originalContent) are null because getRepoFile returns null. The guard
+      // must recognize this and 404 rather than calling deleteFile on a nonexistent path.
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue({ connectorAccountId: null });
+      (scratchGitService.getRepoFile as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.deleteFileByPathGit(WORKBOOK_ID, '/notes/missing.md', ACTOR)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(scratchGitService.deleteFile).not.toHaveBeenCalled();
+    });
+
     it('normalizes a git-relative (no leading slash) connector path to the dirty branch (smoke publish-delete regression)', async () => {
       // GET /files/list/by-folder returns git-relative paths with NO leading slash, e.g. "my-folder/rec.json"
       // (scratch-git's files-paginated builds `{folder}/{name}` after stripping the leading slash).
@@ -240,6 +253,20 @@ describe('FilesService', () => {
         expect.any(String),
         'dirty',
       );
+    });
+  });
+
+  describe('renameFileGit', () => {
+    it('returns 404 when renaming a connector path that does not exist (DEV-10587)', async () => {
+      // Same dead-guard bug as delete: getFileByPathGit returns a DTO with both content and
+      // originalContent null for a missing connector file, so the guard must 404 rather than
+      // proceeding into the git rename.
+      (dbService.client.dataFolder.findFirst as jest.Mock).mockResolvedValue({ connectorAccountId: 'conn-123' });
+      (scratchGitService.getRepoFile as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.renameFileGit(WORKBOOK_ID, '/my-folder/missing.json', '/my-folder/renamed.json', ACTOR),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
