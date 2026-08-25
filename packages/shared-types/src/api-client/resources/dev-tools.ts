@@ -93,6 +93,13 @@ export function createDevToolsApi(http: Http) {
       });
     },
 
+    /** Hard-delete every subscription row for the current user's org (non-production dev clean-slate). */
+    deleteSubscriptions: async (): Promise<void> => {
+      await http.post('/dev-tools/subscription/plan/delete', undefined, {
+        fallbackMessage: 'Failed to delete subscriptions',
+      });
+    },
+
     getConnectionCredentials: async (
       connectionId: string,
     ): Promise<{ id: string; service: string; credentials: Partial<DecryptedCredentials> }> => {

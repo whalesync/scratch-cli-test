@@ -298,6 +298,30 @@ export class DevToolsController {
     });
   }
 
+  @Post('subscription/plan/delete')
+  async deleteSubscriptions(@Req() req: RequestWithUser): Promise<void> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can delete their developer subscriptions');
+    }
+
+    if (this.configService.isProductionEnvironment()) {
+      throw new BadRequestException('This endpoint is only available in non-production environments');
+    }
+
+    if (!req.user.organizationId) {
+      throw new BadRequestException('You do not have an organization');
+    }
+
+    // Hard-delete every subscription row for the org so it looks brand-new. This is the only way to
+    // get a clean slate for re-testing flows gated on "never had a subscription" (e.g. free trials):
+    // the other dev tools only mutate the single latest row, and `updateUserSubscription` refuses to
+    // create a fake sub while any subscription already exists. DB-only — no Stripe, matching the
+    // other billing dev tools (their subscriptions carry fake stripeSubscriptionIds anyway).
+    await this.dbService.client.subscription.deleteMany({
+      where: { organizationId: req.user.organizationId },
+    });
+  }
+
   /* Connector account credentials (admin) */
   @Get('connections/:id')
   async getConnectionCredentials(@Param('id') id: string, @Req() req: RequestWithUser) {

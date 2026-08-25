@@ -83,6 +83,19 @@ export const useUserDevTools = () => {
     }
   };
 
+  const deleteActiveUserSubscriptions = async () => {
+    try {
+      setIsLoading(true);
+      await scratchApiClient.devTools.deleteSubscriptions();
+      await refreshCurrentUser();
+      ScratchpadNotifications.success({ message: `Your subscriptions were successfully deleted` });
+    } catch (error) {
+      setError(error as Error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return {
     users: results,
     isLoading,
@@ -94,5 +107,6 @@ export const useUserDevTools = () => {
     updateActiveUserSubscription,
     forceExpireActiveUserSubscription,
     forceCancelActiveUserSubscription,
+    deleteActiveUserSubscriptions,
   };
 };

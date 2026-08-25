@@ -15,6 +15,7 @@ export const BillingDevTools = () => {
     updateActiveUserSubscription,
     forceExpireActiveUserSubscription,
     forceCancelActiveUserSubscription,
+    deleteActiveUserSubscriptions,
     isLoading,
   } = useUserDevTools();
 
@@ -57,6 +58,9 @@ export const BillingDevTools = () => {
             leftSection={null}
           >
             Cancel Subscription (in 14 days)
+          </DevToolButton>
+          <DevToolButton onClick={() => deleteActiveUserSubscriptions()} loading={isLoading} leftSection={null}>
+            Delete Subscriptions
           </DevToolButton>
         </SimpleGrid>
         <Text13Regular c="dimmed">
