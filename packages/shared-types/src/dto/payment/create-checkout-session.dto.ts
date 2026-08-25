@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { billingIntervalSchema } from './billing-interval.schema';
 
 /**
  * Request body for `POST /payment/checkout/:planType`.
@@ -17,6 +18,12 @@ export const createCheckoutSessionSchema = z.object({
    * cancelled checkout redirects back into the desktop app instead of stranding the user on the web client.
    */
   cancelPath: z.string().optional(),
+  /**
+   * Which of the plan's prices to check out at. Optional so an older client (a desktop build that
+   * predates annual billing) keeps getting the monthly price it has always got — the server
+   * defaults to `month` rather than failing the request.
+   */
+  billingInterval: billingIntervalSchema.optional(),
 });
 
 export type CreateCheckoutSessionBody = z.infer<typeof createCheckoutSessionSchema>;

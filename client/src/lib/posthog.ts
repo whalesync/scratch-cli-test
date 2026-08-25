@@ -1,5 +1,5 @@
 import { ScratchPadUser } from '@/hooks/useScratchpadUser';
-import { ScratchPlanType } from '@spinner/shared-types';
+import { BillingInterval, ScratchPlanType } from '@spinner/shared-types';
 import posthog from 'posthog-js';
 
 export enum PostHogEvents {
@@ -73,8 +73,9 @@ export function trackClickManageSubscription(): void {
   captureEvent(PostHogEvents.CLICK_MANAGE_SUBSCRIPTION, {});
 }
 
-export function trackClickNewPlanCheckout(planType: ScratchPlanType): void {
-  captureEvent(PostHogEvents.CLICK_NEW_PLAN_CHECKOUT, { planType });
+/** `billingInterval` is the cadence the user picked on the Monthly/Yearly toggle — how annual uptake is measured. */
+export function trackClickNewPlanCheckout(planType: ScratchPlanType, billingInterval: BillingInterval): void {
+  captureEvent(PostHogEvents.CLICK_NEW_PLAN_CHECKOUT, { planType, billingInterval });
 }
 
 /**

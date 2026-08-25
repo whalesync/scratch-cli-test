@@ -2,7 +2,13 @@ import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackClickManageSubscription, trackClickNewPlanCheckout } from '@/lib/posthog';
 import { RouteUrls } from '@/utils/route-urls';
-import { ScratchPlanType, SubscriptionPlan } from '@spinner/shared-types';
+import {
+  BillingInterval,
+  getLowestPurchasablePriceCostUSD,
+  getOfferedBillingIntervals,
+  ScratchPlanType,
+  SubscriptionPlan,
+} from '@spinner/shared-types';
 import { isUnauthorizedError } from '@spinner/shared-types/api-client';
 import { useCallback, useMemo, useState } from 'react';
 import useSWR from 'swr';
@@ -15,8 +21,13 @@ export const usePayments = () => {
   );
 
   const sortedPlans = useMemo(() => {
-    return data ? data.sort((a, b) => a.costUSD - b.costUSD) : [];
+    return data
+      ? [...data].sort((a, b) => getLowestPurchasablePriceCostUSD(a) - getLowestPurchasablePriceCostUSD(b))
+      : [];
   }, [data]);
+
+  // Only the intervals some plan is actually sold at — see getOfferedBillingIntervals.
+  const offeredBillingIntervals = useMemo(() => getOfferedBillingIntervals(sortedPlans), [sortedPlans]);
 
   const displayError = useMemo(() => {
     if (isUnauthorizedError(error)) {
@@ -27,13 +38,14 @@ export const usePayments = () => {
   }, [error]);
 
   const redirectToPlanCheckout = useCallback(
-    async (planType: ScratchPlanType) => {
+    async (planType: ScratchPlanType, billingInterval: BillingInterval) => {
       try {
         setPortalRedirectInProgress(true);
         const result = await scratchApiClient.payment.createCheckoutSession(planType, {
           returnPath: RouteUrls.billingPageUrl,
+          billingInterval,
         });
-        trackClickNewPlanCheckout(planType);
+        trackClickNewPlanCheckout(planType, billingInterval);
         window.location.replace(result.url);
       } catch (error) {
         console.error('Failed to redirect to checkout page for plan: ', planType, error);
@@ -44,12 +56,13 @@ export const usePayments = () => {
     [setPortalRedirectInProgress, setPortalRedirectError],
   );
   const redirectToUpdateSubscription = useCallback(
-    async (planType: ScratchPlanType, returnPath: string) => {
+    async (planType: ScratchPlanType, billingInterval: BillingInterval, returnPath: string) => {
       try {
         setPortalRedirectInProgress(true);
         const result = await scratchApiClient.payment.createCustomerPortalUrl({
           portalType: 'update_subscription',
           planType,
+          billingInterval,
           returnPath,
         });
         trackClickManageSubscription();
@@ -100,6 +113,7 @@ export const usePayments = () => {
 
   return {
     plans: sortedPlans,
+    offeredBillingIntervals,
     isLoading,
     error: displayError,
     redirectToUpdateSubscription,

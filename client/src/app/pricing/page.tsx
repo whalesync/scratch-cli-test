@@ -5,18 +5,23 @@ import { useAuth, useUser } from '@clerk/nextjs';
 import { Alert, Box, Center, Divider, Group, SimpleGrid, Stack } from '@mantine/core';
 import { useState } from 'react';
 import { usePayments } from '../../hooks/use-payments';
+import { useSelectedBillingInterval } from '../../hooks/use-selected-billing-interval';
 import { useSubscription } from '../../hooks/use-subscription';
 import { ButtonPrimarySolid, ButtonSecondaryOutline } from '../components/base/buttons';
 import { Text13Book, Text13Regular, Text16Regular, TextTitle1 } from '../components/base/text';
 import { FullPageLoader } from '../components/FullPageLoader';
+import { BillingIntervalToggle } from '../settings/billing/components/BillingIntervalToggle';
 import { PlanCard } from '../settings/billing/components/PlanCard';
 
 export default function PricingPage() {
-  const { plans, isLoading, error, redirectToManageSubscription, portalRedirectInProgress } = usePayments();
+  const { plans, offeredBillingIntervals, isLoading, error, redirectToManageSubscription, portalRedirectInProgress } =
+    usePayments();
   const { isSignedIn, signOut } = useAuth();
   const { user: clerkUser } = useUser();
   const { subscription, isFreePlan } = useSubscription();
   const [planError, setPlanError] = useState<string | null>(null);
+  // Which prices the plan cards show. Lifted here so every card flips together.
+  const { selectedBillingInterval, setSelectedBillingInterval } = useSelectedBillingInterval();
 
   if (isLoading) {
     return <FullPageLoader />;
@@ -54,13 +59,27 @@ export default function PricingPage() {
         {planError && <Alert color="red">{planError}</Alert>}
 
         {/* Plan cards */}
-        <Center>
-          <SimpleGrid cols={3} spacing="xs" maw={900}>
-            {plans?.map((plan) => (
-              <PlanCard key={plan.planType} plan={plan} onError={setPlanError} />
-            ))}
-          </SimpleGrid>
-        </Center>
+        <Stack gap="xs" w="100%" maw={900}>
+          <BillingIntervalToggle
+            offeredBillingIntervals={offeredBillingIntervals}
+            selectedBillingInterval={selectedBillingInterval}
+            onChange={setSelectedBillingInterval}
+          />
+          <Center>
+            {/* Column count follows the plans actually on offer, capped at 3, so retiring a plan
+                doesn't leave a hole in the grid. */}
+            <SimpleGrid cols={Math.min(Math.max(plans?.length ?? 1, 1), 3)} spacing="xs" maw={900}>
+              {plans?.map((plan) => (
+                <PlanCard
+                  key={plan.planType}
+                  plan={plan}
+                  selectedBillingInterval={selectedBillingInterval}
+                  onError={setPlanError}
+                />
+              ))}
+            </SimpleGrid>
+          </Center>
+        </Stack>
 
         <Divider w="100%" maw={900} c="var(--mantine-color-gray-3)" />
 
@@ -76,7 +95,7 @@ export default function PricingPage() {
               </Text13Regular>
             </Group>
             <Text13Book c="dimmed">
-              {subscription.planDisplayName} plan &middot; ${subscription.costUSD}/month
+              {subscription.planDisplayName} plan &middot; ${subscription.costUSD}/{subscription.billingInterval}
             </Text13Book>
             {!isFreePlan && subscription.canManageSubscription && (
               <ButtonSecondaryOutline

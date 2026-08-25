@@ -19,7 +19,9 @@ export const ActiveSubscriptionSection = () => {
           <Text13Regular>{subscription.planDisplayName} plan</Text13Regular>
           {subscription.isTrial && <Badge color="green">Trial</Badge>}
         </Group>
-        <Text13Book c="dimmed">${subscription.costUSD} per month</Text13Book>
+        <Text13Book c="dimmed">
+          ${subscription.costUSD} per {subscription.billingInterval}
+        </Text13Book>
         {subscription.isTrial && (
           <Text13Regular c="dimmed">
             {subscription.daysRemaining > 0

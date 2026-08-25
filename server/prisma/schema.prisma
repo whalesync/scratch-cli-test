@@ -284,6 +284,13 @@ model Subscription {
   stripeSubscriptionId       String       @unique
   expiration                 DateTime
   priceInDollars             Int          @default(0)
+  /// The Stripe price the subscription is billed at. Recorded so we can tell an annual subscriber
+  /// from a monthly one (and spot bespoke/archived prices) without calling Stripe.
+  stripePriceId              String?
+  /// How often `priceInDollars` is charged: "month" or "year" (the BillingInterval union in
+  /// @spinner/shared-types). Defaults to "month" — every subscription sold before annual billing
+  /// existed was monthly, so that is the correct value for pre-existing rows.
+  billingInterval            String       @default("month")
   stripeStatus               String?
   cancelAt                   DateTime? // set when the user has cancelled the subscription and the date it takes effect
   lastInvoicePaid            Boolean? /// Set when we receive invoice.paid or invoice.payment_failed webhooks.

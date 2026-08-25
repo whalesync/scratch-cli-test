@@ -15,7 +15,7 @@ import { CreateCheckoutSessionResponse, CreateCustomerPortalUrlResponse } from '
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
-import { isErr } from 'src/types/results';
+import { ErrorCode, isErr } from 'src/types/results';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { CreatePortalDto } from './dto/create-portal.dto';
 import { getPlan, getPlanTypeFromString } from './plans';
@@ -90,11 +90,17 @@ export class StripePaymentController {
     const result = await this.stripePaymentService.generateCheckoutUrl(
       req.user,
       planTypeEnum,
+      dto.billingInterval,
       false,
       dto.returnPath,
       dto.cancelPath,
     );
     if (isErr(result)) {
+      // A bad request here means the caller asked for a plan/interval combination we don't sell
+      // (e.g. Max billed annually). Say so instead of hiding it behind a generic 500.
+      if (result.code === ErrorCode.BadRequestError) {
+        throw new BadRequestException({ userFacingMessage: result.error });
+      }
       throw new InternalServerErrorException({
         userFacingMessage: STRIPE_PAGE_ERROR_USER_FACING_MESSAGE,
         debugMessage: `Encountered a problem generating stripe checkout URL: ${result.error}`,

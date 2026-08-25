@@ -43,14 +43,6 @@ export const BillingDevTools = () => {
             Switch to Pro Plan
           </DevToolButton>
           <DevToolButton
-            onClick={() => updateActiveUserSubscription(ScratchPlanType.MAX_PLAN)}
-            loading={isLoading}
-            disabled={subscription.planType === ScratchPlanType.MAX_PLAN}
-            leftSection={null}
-          >
-            Switch to Max Plan
-          </DevToolButton>
-          <DevToolButton
             onClick={() => forceExpireActiveUserSubscription()}
             loading={isLoading}
             disabled={subscription.planType === ScratchPlanType.FREE_PLAN}

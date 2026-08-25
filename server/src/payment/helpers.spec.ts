@@ -14,6 +14,8 @@ function createTestSubscription(
     expiration: overrides.expiration,
     stripeSubscriptionId: overrides.stripeSubscriptionId || `stripe_${overrides.id}`,
     priceInDollars: overrides.priceInDollars ?? 10,
+    stripePriceId: null,
+    billingInterval: 'month',
     stripeStatus: overrides.stripeStatus ?? 'active',
     lastInvoicePaid: overrides.lastInvoicePaid ?? true,
     createdAt: overrides.createdAt || now,

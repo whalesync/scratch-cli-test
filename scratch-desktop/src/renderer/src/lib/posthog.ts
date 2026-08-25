@@ -1,4 +1,4 @@
-import type { User } from '@spinner/shared-types';
+import type { BillingInterval, User } from '@spinner/shared-types';
 import { sanitizeDeepLinkSource } from './deep-link-source';
 
 export enum PostHogEvents {
@@ -321,8 +321,9 @@ export async function trackOpenSettings(subSection: string, source: 'user_menu' 
 }
 
 /** The user started a Stripe checkout from desktop billing — opens the system browser, leaving the app. */
-export async function trackBillingStartCheckout(planType: string): Promise<void> {
-  await captureEvent(PostHogEvents.BILLING_START_CHECKOUT, { planType });
+/** `billingInterval` is the cadence the user picked on the Monthly/Yearly toggle — how annual uptake is measured. */
+export async function trackBillingStartCheckout(planType: string, billingInterval: BillingInterval): Promise<void> {
+  await captureEvent(PostHogEvents.BILLING_START_CHECKOUT, { planType, billingInterval });
 }
 
 /** The user opened the Stripe customer portal to manage their subscription — leaves the app. */

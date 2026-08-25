@@ -20,7 +20,9 @@ export const ActiveSubscriptionSection = () => {
       <Group px="12px" py="10px" justify="space-between" align="flex-start">
         <Stack gap="2px">
           <Text13Regular>{subscription.planDisplayName} plan</Text13Regular>
-          <Text13Book c="dimmed">${subscription.costUSD} per month</Text13Book>
+          <Text13Book c="dimmed">
+            ${subscription.costUSD} per {subscription.billingInterval}
+          </Text13Book>
           {subscription.status === 'payment_failed' && (
             <Text13Regular c="dimmed">Payment failed - please update your payment method.</Text13Regular>
           )}

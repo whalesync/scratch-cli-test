@@ -1,6 +1,8 @@
 import { Subscription, UserRole } from '@prisma/client';
 import {
   BillableActions,
+  BillingInterval,
+  isBillingInterval,
   ScratchPlanType,
   SubscriptionInfo,
   TokenType,
@@ -12,7 +14,7 @@ import { UserFlagValues } from 'src/experiments/experiments.service';
 import { WSLogger } from 'src/logger';
 import { SubscriptionPlanFeaturesEntity } from 'src/payment/entities/subscription-plan';
 import { getLastestExpiringSubscription } from 'src/payment/helpers';
-import { getFreePlan, getPlan, getPlanTypeFromString } from 'src/payment/plans';
+import { getFreePlan, getPlan, getPlanPriceForBillingInterval, getPlanTypeFromString } from 'src/payment/plans';
 import { BUILD_VERSION } from 'src/version';
 import { WorkspacePermission, WorkspacePermissionRole } from '../types';
 import { Organization } from './organization.entity';
@@ -111,7 +113,8 @@ function buildFreePlanSubscriptionInfo(userId: string, billableActions: Billable
     status: 'valid',
     planDisplayName: plan.displayName,
     planType: plan.planType,
-    costUSD: plan.costUSD,
+    costUSD: 0, // The Free plan is never billed.
+    billingInterval: 'month',
     daysRemaining: 0,
     isTrial: false,
     isCancelled: false,
@@ -172,11 +175,26 @@ function toSubscriptionInfo(
     status = 'payment_failed';
   }
 
+  // What they are actually charged, not the plan's list price: an annual subscriber pays $192/year and
+  // a legacy/bespoke price pays whatever was agreed, neither of which is the monthly list price.
+  // `billingInterval` defaults to monthly for rows written before we recorded it — everything sold
+  // before annual billing existed was monthly.
+  const billingInterval: BillingInterval = isBillingInterval(latestSubscription.billingInterval)
+    ? latestSubscription.billingInterval
+    : 'month';
+  const listPriceForBillingInterval = getPlanPriceForBillingInterval(plan, billingInterval);
+
   return {
     status,
     planDisplayName: plan.displayName,
     planType: planType,
-    costUSD: plan.costUSD,
+    // `priceInDollars` is NOT NULL DEFAULT 0, so 0 is how "we never managed to read a price off the
+    // Stripe subscription" is stored — `findPriceInDollarsForSubscription` returns undefined for a
+    // non-USD or tiered/metered price and Prisma then writes the column default. Falling back to the
+    // plan's list price keeps a real subscriber from being shown "$0". A `??` here would be dead code.
+    // The Whalesync plan is unaffected: it has no list price, so it still resolves to 0 as intended.
+    costUSD: latestSubscription.priceInDollars || (listPriceForBillingInterval?.costUSD ?? 0),
+    billingInterval,
     daysRemaining,
     isTrial: latestSubscription.stripeStatus === 'trialing',
     isCancelled: latestSubscription.cancelAt !== null, // if cancelled the days remaining will also represent when the subscription ends

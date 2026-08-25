@@ -42,7 +42,7 @@ import { UserCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { EmailService } from 'src/email/email.service';
 import { getLastestExpiringSubscription } from 'src/payment/helpers';
-import { getPlanTypeFromString } from 'src/payment/plans';
+import { getPlan, getPlanPriceForBillingInterval, getPlanTypeFromString } from 'src/payment/plans';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitClient } from 'src/scratch-git/scratch-git.client';
 import { SlackFormatters } from 'src/slack/slack-formatters';
@@ -190,6 +190,15 @@ export class DevToolsController {
       throw new BadRequestException('You cannot downgrade to the free plan if you do not have an active subscription');
     }
 
+    // The fake subscription has to carry the price it is pretending to charge: the billing UI reads
+    // `priceInDollars` off the row (that's what a real subscriber is actually billed), so leaving it at
+    // the column default would render a dev-forced Pro plan as "$0 per month". Dev subscriptions are
+    // always monthly — this endpoint has no interval switch.
+    const forcedPlan = getPlan(planType);
+    const forcedMonthlyListPriceUSD = forcedPlan
+      ? (getPlanPriceForBillingInterval(forcedPlan, 'month')?.costUSD ?? 0)
+      : 0;
+
     if (currentSubscription) {
       if (planType === ScratchPlanType.FREE_PLAN) {
         // cancel the current subscription
@@ -208,6 +217,8 @@ export class DevToolsController {
           data: {
             planType: dto.planType,
             expiration: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+            priceInDollars: forcedMonthlyListPriceUSD,
+            billingInterval: 'month',
             stripeStatus: 'active',
             cancelAt: null,
             lastInvoicePaid: true,
@@ -223,6 +234,8 @@ export class DevToolsController {
           organizationId: req.user.organizationId ?? '',
           planType: dto.planType,
           expiration: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+          priceInDollars: forcedMonthlyListPriceUSD,
+          billingInterval: 'month',
           stripeSubscriptionId: createSubscriptionId(), // create a fake stripe subscription id
           cancelAt: null,
           lastInvoicePaid: true,

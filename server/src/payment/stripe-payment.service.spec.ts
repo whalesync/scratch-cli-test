@@ -15,11 +15,11 @@ import Stripe from 'stripe';
 import { TEST_SANDBOX_PLANS } from './plans';
 import { StripePaymentService } from './stripe-payment.service';
 
-// Valid test price ID from plans.ts
-const VALID_TEST_PRICE_ID = TEST_SANDBOX_PLANS[0].stripePriceIds[0];
+// Valid test price IDs from plans.ts
 const VALID_TEST_PRO_PLAN_PRICE_ID =
-  TEST_SANDBOX_PLANS.find((p) => p.planType === ScratchPlanType.PRO_PLAN)?.stripePriceIds[0] ||
+  TEST_SANDBOX_PLANS.find((p) => p.planType === ScratchPlanType.PRO_PLAN)?.purchasablePrices[0]?.stripePriceId ||
   'price_1SYU4jBdRE0kMHNq4mMMjgWH';
+const VALID_TEST_PRICE_ID = VALID_TEST_PRO_PLAN_PRICE_ID;
 
 import { UserRole } from '@prisma/client';
 
@@ -489,7 +489,7 @@ describe('StripePaymentService', () => {
       mockStripeInstance.checkout.sessions.create = jest.fn().mockResolvedValue(mockSession);
       jest.spyOn(ScratchConfigService, 'getClientBaseUrl').mockReturnValue('https://app.scratch.md');
 
-      const result = await service.generateCheckoutUrl(user, ScratchPlanType.PRO_PLAN, true);
+      const result = await service.generateCheckoutUrl(user, ScratchPlanType.PRO_PLAN, 'month', true);
 
       expect(isOk(result)).toBe(true);
       if (isOk(result)) {
@@ -550,6 +550,7 @@ describe('StripePaymentService', () => {
       const result = await service.generateCheckoutUrl(
         user,
         ScratchPlanType.PRO_PLAN,
+        'month',
         false,
         '/billing/desktop-return?status=success',
         '/billing/desktop-return?status=cancel',
@@ -579,7 +580,7 @@ describe('StripePaymentService', () => {
       mockStripeInstance.checkout.sessions.create = jest.fn().mockResolvedValue(mockSession);
       jest.spyOn(ScratchConfigService, 'getClientBaseUrl').mockReturnValue('https://app.scratch.md');
 
-      const result = await service.generateCheckoutUrl(user, ScratchPlanType.PRO_PLAN, false);
+      const result = await service.generateCheckoutUrl(user, ScratchPlanType.PRO_PLAN, 'month', false);
 
       expect(isOk(result)).toBe(true);
       if (isOk(result)) {
@@ -644,7 +645,7 @@ describe('StripePaymentService', () => {
       const checkoutCreateSpy = jest.fn();
       mockStripeInstance.checkout.sessions.create = checkoutCreateSpy;
 
-      const result = await service.generateCheckoutUrl(user, ScratchPlanType.PRO_PLAN, true);
+      const result = await service.generateCheckoutUrl(user, ScratchPlanType.PRO_PLAN, 'month', true);
 
       expect(isOk(result)).toBe(true);
       if (isOk(result)) {
@@ -666,8 +667,25 @@ describe('StripePaymentService', () => {
 
       expect(isErr(result)).toBe(true);
       if (isErr(result)) {
-        expect(result.code).toBe(ErrorCode.UnexpectedError);
-        expect(result.error).toContain('No stripe product id for unknown_plan');
+        expect(result.code).toBe(ErrorCode.BadRequestError);
+        expect(result.error).toContain('unknown_plan plan is not sold on a monthly basis');
+      }
+    });
+
+    it('should return a bad request when the plan is not sold at the requested interval', async () => {
+      const user = createMockUser({
+        stripeCustomerId: 'cus_test123',
+        organization: { id: 'org_123', subscriptions: [] },
+      });
+
+      // Max is sold monthly only in every environment, so asking for it annually is a plan/interval
+      // combination we don't offer — a caller error, not a Stripe failure.
+      const result = await service.generateCheckoutUrl(user, ScratchPlanType.MAX_PLAN, 'year');
+
+      expect(isErr(result)).toBe(true);
+      if (isErr(result)) {
+        expect(result.code).toBe(ErrorCode.BadRequestError);
+        expect(result.error).toContain('not sold on a yearly basis');
       }
     });
 
@@ -681,7 +699,7 @@ describe('StripePaymentService', () => {
 
       mockStripeInstance.checkout.sessions.create = jest.fn().mockResolvedValue(mockSession);
 
-      const result = await service.generateCheckoutUrl(user, ScratchPlanType.PRO_PLAN, true);
+      const result = await service.generateCheckoutUrl(user, ScratchPlanType.PRO_PLAN, 'month', true);
 
       expect(isErr(result)).toBe(true);
       if (isErr(result)) {

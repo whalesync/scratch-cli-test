@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { User } from '@prisma/client';
 import {
+  BillingInterval,
   createInvoiceResultId,
   CreatePortalDto,
   createSubscriptionId,
+  isBillingInterval,
   ScratchPlanType,
   SubscriptionId,
 } from '@spinner/shared-types';
@@ -34,7 +36,7 @@ import {
 import { userToActor } from 'src/users/types';
 import Stripe from 'stripe';
 import { getActiveSubscriptions, getLastestExpiringSubscription, isActiveSubscriptionOwnedByUser } from './helpers';
-import { getPlan, getPlans } from './plans';
+import { getPlan, getPlanTypeForStripePriceId, getStripePriceIdForPlanAndBillingInterval } from './plans';
 
 /**
  * The version of the API we are expecting, from: https://stripe.com/docs/api/versioning
@@ -63,6 +65,11 @@ const PORTAL_RETURN_PATH = '/billing';
 
 // Attached to all subscriptions created by Scratch.
 const METADATA_APPLICATION_NAME = 'scratch';
+
+// Interval used where the caller has no say in the billing cadence: trials (always monthly, so an
+// abandoned trial can't convert into a surprise annual charge) and legacy subscription rows written
+// before we recorded the interval — everything sold before annual billing existed was monthly.
+const DEFAULT_BILLING_INTERVAL: BillingInterval = 'month';
 
 @Injectable()
 export class StripePaymentService {
@@ -145,9 +152,10 @@ export class StripePaymentService {
       return badRequestError('User already has a subscription; cannot start a trial');
     }
 
-    const stripePriceId = this.getDefaultPriceId(planType);
+    // Trials are always monthly — see DEFAULT_BILLING_INTERVAL.
+    const stripePriceId = this.getStripePriceId(planType, DEFAULT_BILLING_INTERVAL);
     if (!stripePriceId) {
-      return unexpectedError(`No stripe product id for ${planType}`);
+      return unexpectedError(`No stripe price for ${planType} billed ${DEFAULT_BILLING_INTERVAL}ly`);
     }
 
     const stripeCustomerId = await this.upsertStripeCustomerId(user);
@@ -264,6 +272,8 @@ export class StripePaymentService {
           stripeSubscriptionId: `whalesync_${user.organizationId}`,
           expiration,
           priceInDollars: 0,
+          // Never billed, so the interval is nominal — it only keeps the column honest for the UI.
+          billingInterval: DEFAULT_BILLING_INTERVAL,
           stripeStatus: 'active',
           cancelAt: null,
           lastInvoicePaid: true,
@@ -324,15 +334,13 @@ export class StripePaymentService {
 
     if (dto.portalType === 'update_subscription') {
       if (!currentSubscription) {
-        return badRequestError('You do not have an active subscription to cancel');
+        return badRequestError('You do not have an active subscription to update');
       }
 
-      portalSessionConfig.flow_data = {
-        type: 'subscription_update',
-        subscription_update: {
-          subscription: currentSubscription.stripeSubscriptionId,
-        },
-      };
+      portalSessionConfig.flow_data = await this.buildSubscriptionUpdateFlowData(
+        currentSubscription.stripeSubscriptionId,
+        dto,
+      );
     } else if (dto.portalType === 'cancel_subscription') {
       if (!currentSubscription) {
         return badRequestError('You do not have an active subscription to cancel');
@@ -357,6 +365,24 @@ export class StripePaymentService {
         apiVersion: STRIPE_API_VERSION,
       });
     } catch (err) {
+      // Stripe rejects a pre-confirmed update whose target price isn't listed in the billing-portal
+      // configuration. That's a Stripe Dashboard setting we can't see from here, so rather than dead-end
+      // the user on an error, drop back to the generic "pick a plan" flow — they can still make the
+      // change, just with an extra click. Any other failure falls through to the error below.
+      const genericUpdateFlowData = this.downgradeToGenericSubscriptionUpdateFlow(portalSessionConfig.flow_data);
+      if (genericUpdateFlowData) {
+        WSLogger.warn({
+          source: StripePaymentService.name,
+          message:
+            'Pre-confirmed subscription update was rejected by Stripe; falling back to the generic update flow. ' +
+            'The target price is most likely missing from the billing portal configuration.',
+          error: err,
+          userId: user.id,
+          context: { flowData: portalSessionConfig.flow_data },
+        });
+        return this.createPortalSessionUrl(user, { ...portalSessionConfig, flow_data: genericUpdateFlowData });
+      }
+
       WSLogger.error({
         source: StripePaymentService.name,
         message: `Failed to create customer portal session`,
@@ -376,28 +402,143 @@ export class StripePaymentService {
     return ok(portalSession.url);
   }
 
+  /**
+   * Flow data for the `update_subscription` portal type.
+   *
+   * When the caller names a plan AND an interval we can resolve an exact Stripe price, so the portal
+   * opens on a "confirm this change" page for that price — which is what makes an in-app "Switch to
+   * yearly" button feel like one decision instead of a trip through Stripe's plan picker. Without
+   * both (or if we can't resolve the price, or Stripe hasn't given us the subscription's item id) it
+   * falls back to the generic flow that lists whatever the portal configuration allows.
+   */
+  private async buildSubscriptionUpdateFlowData(
+    stripeSubscriptionId: string,
+    dto: CreatePortalDto,
+  ): Promise<Stripe.BillingPortal.SessionCreateParams.FlowData> {
+    const genericUpdateFlowData: Stripe.BillingPortal.SessionCreateParams.FlowData = {
+      type: 'subscription_update',
+      subscription_update: { subscription: stripeSubscriptionId },
+    };
+
+    if (!dto.planType || !dto.billingInterval) {
+      return genericUpdateFlowData;
+    }
+
+    const targetStripePriceId = this.getStripePriceId(dto.planType, dto.billingInterval);
+    if (!targetStripePriceId) {
+      WSLogger.warn({
+        source: StripePaymentService.name,
+        message: 'No Stripe price for the requested plan/interval; using the generic subscription update flow',
+        planType: dto.planType,
+        billingInterval: dto.billingInterval,
+      });
+      return genericUpdateFlowData;
+    }
+
+    const subscription = await this.getSubscriptionFromStripe(stripeSubscriptionId);
+    if (isErr(subscription)) {
+      WSLogger.warn({
+        source: StripePaymentService.name,
+        message: 'Could not load the subscription to pre-confirm the update; using the generic update flow',
+        subscriptionId: stripeSubscriptionId,
+      });
+      return genericUpdateFlowData;
+    }
+
+    const subscriptionItemId = subscription.v.items?.data[0]?.id;
+    if (!subscriptionItemId) {
+      return genericUpdateFlowData;
+    }
+
+    // Already on the target price — nothing to confirm, so send them to the generic flow rather than
+    // a no-op confirmation page.
+    if (this.findStripePriceIdForSubscription(subscription.v) === targetStripePriceId) {
+      return genericUpdateFlowData;
+    }
+
+    return {
+      type: 'subscription_update_confirm',
+      subscription_update_confirm: {
+        subscription: stripeSubscriptionId,
+        items: [{ id: subscriptionItemId, price: targetStripePriceId, quantity: 1 }],
+      },
+    };
+  }
+
+  /**
+   * Given the flow data of a portal session Stripe just rejected, returns the equivalent generic
+   * subscription-update flow to retry with — or null when the rejected session wasn't a
+   * pre-confirmed update and so has no safe fallback.
+   */
+  private downgradeToGenericSubscriptionUpdateFlow(
+    flowData: Stripe.BillingPortal.SessionCreateParams.FlowData | undefined,
+  ): Stripe.BillingPortal.SessionCreateParams.FlowData | null {
+    if (flowData?.type !== 'subscription_update_confirm' || !flowData.subscription_update_confirm) {
+      return null;
+    }
+    return {
+      type: 'subscription_update',
+      subscription_update: { subscription: flowData.subscription_update_confirm.subscription },
+    };
+  }
+
+  /** Creates a portal session from a fully-built config. Used for the fallback retry path. */
+  private async createPortalSessionUrl(
+    user: UserCluster.User,
+    portalSessionConfig: Stripe.BillingPortal.SessionCreateParams,
+  ): AsyncResult<string> {
+    try {
+      const portalSession = await this.stripe.billingPortal.sessions.create(portalSessionConfig, {
+        apiVersion: STRIPE_API_VERSION,
+      });
+      WSLogger.info({
+        source: StripePaymentService.name,
+        message: `Generated customer portal URL for user ${user.id}`,
+        url: portalSession.url,
+      });
+      return ok(portalSession.url);
+    } catch (err) {
+      WSLogger.error({
+        source: StripePaymentService.name,
+        message: `Failed to create customer portal session`,
+        error: err,
+        context: { portalSessionConfig },
+      });
+      return stripeLibraryError(`Failed to create customer portal session: ${_.toString(err)}`, {
+        context: { portalSessionConfig },
+      });
+    }
+  }
+
   async generateCheckoutUrl(
     user: UserCluster.User,
     planType: ScratchPlanType,
+    billingInterval: BillingInterval = DEFAULT_BILLING_INTERVAL,
     createTrialSubscription: boolean = false,
     returnPath: string = DEFAULT_SUCCESS_PATH,
     cancelPath: string = DEFAULT_CANCEL_PATH,
   ): AsyncResult<string> {
     WSLogger.info({
       source: StripePaymentService.name,
-      message: `Generating checkout URL for user ${user.id}, product ${planType}`,
+      message: `Generating checkout URL for user ${user.id}, product ${planType}, billed ${billingInterval}ly`,
     });
 
     // Never allow someone to checkout again if they already have a current subscription on the organization.
-    // Instead send them to manage the existing one.
+    // Instead send them to manage the existing one — targeting the plan/interval they asked for, so picking
+    // "Yearly" here lands on the same change they would have checked out.
     // TODO: handle the case where a different user in the organization owns the subscription.
     if (getActiveSubscriptions(user.organization?.subscriptions ?? []).length > 0) {
-      return this.createCustomerPortalUrl(user, { returnPath: returnPath });
+      return this.createCustomerPortalUrl(user, {
+        portalType: 'update_subscription',
+        planType,
+        billingInterval,
+        returnPath,
+      });
     }
 
-    const stripePriceId = this.getDefaultPriceId(planType);
+    const stripePriceId = this.getStripePriceId(planType, billingInterval);
     if (!stripePriceId) {
-      return unexpectedError(`No stripe product id for ${planType}`);
+      return badRequestError(`The ${planType} plan is not sold on a ${billingInterval}ly basis`);
     }
 
     const stripeCustomerId = await this.upsertStripeCustomerId(user);
@@ -998,6 +1139,8 @@ export class StripePaymentService {
     const expiration = this.findExpirationFromSubscription(subscription);
     const cancelAt = this.findCancelDateFromSubscription(subscription);
     const priceInDollars = this.findPriceInDollarsForSubscription(subscription);
+    const stripePriceId = this.findStripePriceIdForSubscription(subscription);
+    const billingInterval = this.findBillingIntervalForSubscription(subscription);
 
     // This shouldn't happen, but if it does, we want to ignore the payload.
     // Our preprod environments all share a stripe developer account, so they both receive notifications for each
@@ -1054,6 +1197,8 @@ export class StripePaymentService {
           expiration,
           planType,
           priceInDollars,
+          stripePriceId,
+          billingInterval,
           lastInvoicePaid,
           stripeStatus: subscription.status,
           cancelAt: cancelAt,
@@ -1062,6 +1207,8 @@ export class StripePaymentService {
           expiration,
           planType,
           priceInDollars,
+          stripePriceId,
+          billingInterval,
           lastInvoicePaid,
           stripeStatus: subscription.status,
           cancelAt: cancelAt,
@@ -1234,28 +1381,12 @@ export class StripePaymentService {
     return false;
   }
 
-  private getDefaultPriceId(planType: ScratchPlanType): string | null {
-    const plans = getPlans(this.configService.getScratchEnvironment());
-
-    for (const plan of plans) {
-      if (plan.planType === planType) {
-        return plan.stripePriceIds[0] ?? null;
-      }
-    }
-
-    return null;
-  }
-
-  private getPlanTypeFromPriceId(priceId: string): ScratchPlanType | null {
-    const plans = getPlans(this.configService.getScratchEnvironment());
-
-    for (const plan of plans) {
-      if (plan.stripePriceIds.includes(priceId)) {
-        return plan.planType;
-      }
-    }
-
-    return null;
+  private getStripePriceId(planType: ScratchPlanType, billingInterval: BillingInterval): string | null {
+    return getStripePriceIdForPlanAndBillingInterval(
+      this.configService.getScratchEnvironment(),
+      planType,
+      billingInterval,
+    );
   }
 
   private getPlanTypeFromSubscription(subscription: Stripe.Subscription): string | null {
@@ -1264,36 +1395,62 @@ export class StripePaymentService {
       message: `Getting product id from subscription`,
       subscriptionId: subscription.id,
     });
-    const firstItem = subscription.items?.data[0];
 
-    if (!firstItem) {
-      return null;
-    }
-
-    const priceId = firstItem.price?.id;
-    WSLogger.debug({
-      source: StripePaymentService.name,
-      message: `Getting product type from subscription`,
-      priceId,
-      metadata: firstItem.metadata,
-    });
-
+    const priceId = this.findStripePriceIdForSubscription(subscription);
     if (!priceId) {
       return null;
     }
 
-    const planType = this.getPlanTypeFromPriceId(priceId);
+    const planType = getPlanTypeForStripePriceId(this.configService.getScratchEnvironment(), priceId);
     if (!planType) {
       WSLogger.warn({
         source: StripePaymentService.name,
-        message: `No product type found for price id`,
+        message: `No plan found for price id — the price is missing from plans.ts, so this subscription cannot be granted`,
         priceId,
+        subscriptionId: subscription.id,
       });
     }
 
     return planType;
   }
 
+  /** The Stripe price the subscription is billed at (its first item), or null if it has no items. */
+  private findStripePriceIdForSubscription(subscription: Stripe.Subscription): string | null {
+    return subscription.items?.data[0]?.price?.id ?? null;
+  }
+
+  /**
+   * The cadence Stripe is actually billing this subscription at. Read straight off the price rather
+   * than inferred from our plan table so a bespoke or archived price reports its real interval.
+   * Anything outside the intervals we sell (Stripe also allows day/week) is logged and treated as
+   * monthly — we never create such a price, so this is a "shouldn't happen" guard.
+   */
+  private findBillingIntervalForSubscription(subscription: Stripe.Subscription): BillingInterval {
+    const stripeInterval = subscription.items?.data[0]?.price?.recurring?.interval;
+    if (isBillingInterval(stripeInterval)) {
+      return stripeInterval;
+    }
+
+    if (stripeInterval) {
+      WSLogger.warn({
+        source: StripePaymentService.name,
+        message: `Stripe subscription has an unsupported billing interval; recording it as ${DEFAULT_BILLING_INTERVAL}ly`,
+        subscriptionId: subscription.id,
+        stripeInterval,
+      });
+    }
+    return DEFAULT_BILLING_INTERVAL;
+  }
+
+  /**
+   * The USD amount a subscription is billed per period, or undefined when we can't read one — a
+   * non-USD price, or a tiered/metered price that carries no flat `amount`.
+   *
+   * Undefined is not harmless: `priceInDollars` is NOT NULL DEFAULT 0, so the row ends up claiming
+   * the subscription costs nothing, and the billing UI has to fall back to the plan's list price to
+   * avoid telling a paying customer they're on $0 (see `toSubscriptionInfo`). Warn so that case is
+   * visible in logs instead of silently becoming a wrong number.
+   */
   private findPriceInDollarsForSubscription(subscription: Stripe.Subscription): number | undefined {
     for (const subscriptionItem of subscription.items.data) {
       const price = subscriptionItem.plan.amount;
@@ -1302,6 +1459,13 @@ export class StripePaymentService {
         return Math.floor(price / 100);
       }
     }
+
+    WSLogger.warn({
+      source: StripePaymentService.name,
+      message: 'Could not determine a USD price for subscription; storing 0 and falling back to the plan list price',
+      subscriptionId: subscription.id,
+      currencies: subscription.items.data.map((item) => item.plan.currency),
+    });
     return undefined;
   }
 }

@@ -54,6 +54,7 @@ export * from './dto/oauth/oauth-initiate-options.dto';
 export * from './dto/oauth/oauth-install.dto';
 export * from './dto/oauth/oauth-responses.dto';
 export * from './dto/oauth/oauth-state-payload';
+export * from './dto/payment/billing-interval.schema';
 export * from './dto/payment/create-checkout-session.dto';
 export * from './dto/payment/create-portal.dto';
 export * from './dto/users/update-settings.dto';

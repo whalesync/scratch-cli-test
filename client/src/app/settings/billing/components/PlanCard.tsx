@@ -1,24 +1,31 @@
 import { Badge } from '@/app/components/base/badge';
 import { ButtonPrimaryLight } from '@/app/components/base/buttons';
-import { Text13Book, Text13Medium, Text13Regular, Text16Medium } from '@/app/components/base/text';
+import { Text13Book, Text13Medium, Text13Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import customBordersClasses from '@/app/components/theme/custom-borders.module.css';
 import { usePayments } from '@/hooks/use-payments';
 import { useSubscription } from '@/hooks/use-subscription';
 import { RouteUrls } from '@/utils/route-urls';
 import { useAuth } from '@clerk/nextjs';
-import { Box, Center, Group, Stack, Tooltip } from '@mantine/core';
-import { ScratchPlanType, SubscriptionPlan } from '@spinner/shared-types';
+import { Box, Group, Stack, Tooltip } from '@mantine/core';
+import {
+  BillingInterval,
+  findPurchasablePriceForBillingInterval,
+  ScratchPlanType,
+  SubscriptionPlan,
+} from '@spinner/shared-types';
 import { Check } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { useCallback, useEffect } from 'react';
+import { PlanPriceLabel } from './PlanPriceLabel';
 
 interface PlanCardProps {
   plan: SubscriptionPlan;
+  selectedBillingInterval: BillingInterval;
   onError: (error: string | null) => void;
 }
 
-export const PlanCard = ({ plan, onError }: PlanCardProps) => {
+export const PlanCard = ({ plan, selectedBillingInterval, onError }: PlanCardProps) => {
   const { subscription, isFreePlan } = useSubscription();
   const { isSignedIn } = useAuth();
   const {
@@ -28,8 +35,19 @@ export const PlanCard = ({ plan, onError }: PlanCardProps) => {
     redirectToPlanCheckout,
     portalRedirectError,
   } = usePayments();
-  const isCurrentPlan = subscription.planType === plan.planType;
-  const isComingSoon = plan.planType === ScratchPlanType.MAX_PLAN;
+  // The price this card offers. Falls back to the plan's only price when it isn't sold at the
+  // selected interval (e.g. a monthly-only plan while "Yearly" is selected) — the label always
+  // carries the interval, so showing the monthly price there is accurate rather than misleading.
+  const priceOnOffer =
+    findPurchasablePriceForBillingInterval(plan, selectedBillingInterval) ?? plan.purchasablePrices[0];
+
+  // "Current plan" means this exact price, not just this plan tier — otherwise a monthly Pro subscriber
+  // looking at the Yearly tab would see their own plan greyed out with no way to switch to it. A plan
+  // that isn't sold at any interval (the Free plan) has no price to match on, so plan type alone
+  // decides — without that, a Free-plan user's own card would offer them a "Downgrade" to it.
+  const isCurrentPlan =
+    subscription.planType === plan.planType &&
+    (priceOnOffer === undefined || subscription.billingInterval === priceOnOffer.billingInterval);
 
   useEffect(() => {
     onError(portalRedirectError);
@@ -44,25 +62,22 @@ export const PlanCard = ({ plan, onError }: PlanCardProps) => {
   }, []);
 
   const handleCheckout = useCallback(() => {
+    if (!priceOnOffer) {
+      return;
+    }
     if (isFreePlan) {
       // user doesn't have a subscription, so redirect to the checkout page
       console.debug('redirecting to checkout page for plan type: ', plan.planType);
-      redirectToPlanCheckout(plan.planType);
+      redirectToPlanCheckout(plan.planType, priceOnOffer.billingInterval);
     } else {
       console.debug('redirecting to update subscription page for plan type: ', plan.planType);
-      redirectToUpdateSubscription(plan.planType, RouteUrls.billingPageUrl);
+      redirectToUpdateSubscription(plan.planType, priceOnOffer.billingInterval, RouteUrls.billingPageUrl);
     }
-  }, [plan.planType, redirectToUpdateSubscription, redirectToPlanCheckout, isFreePlan]);
+  }, [plan.planType, priceOnOffer, redirectToUpdateSubscription, redirectToPlanCheckout, isFreePlan]);
 
   let actionButton = null;
   if (!subscription.canManageSubscription) {
     actionButton = <></>;
-  } else if (isComingSoon) {
-    actionButton = (
-      <Center w="100%" h="36px" bg="var(--bg-panel)" className={customBordersClasses.cornerBorders}>
-        <Text13Regular c="dimmed">Coming soon</Text13Regular>
-      </Center>
-    );
   } else if (!isSignedIn) {
     actionButton = (
       <ButtonPrimaryLight onClick={handleSignUp} loading={portalRedirectInProgress}>
@@ -73,8 +88,10 @@ export const PlanCard = ({ plan, onError }: PlanCardProps) => {
     actionButton = <ButtonPrimaryLight disabled={true}>Current Plan</ButtonPrimaryLight>;
   } else if (!isCurrentPlan && plan.planType !== ScratchPlanType.FREE_PLAN) {
     actionButton = (
-      <ButtonPrimaryLight onClick={handleCheckout} loading={portalRedirectInProgress}>
-        {subscription.costUSD > plan.costUSD ? 'Switch' : 'Upgrade'}
+      // Always "Switch": with per-interval pricing an "Upgrade"/"Switch" split on cost would compare a
+      // yearly total against a monthly one, which says nothing useful. "Switch" is true in every direction.
+      <ButtonPrimaryLight onClick={handleCheckout} loading={portalRedirectInProgress} disabled={!priceOnOffer}>
+        Switch
       </ButtonPrimaryLight>
     );
   } else if (!isCurrentPlan && plan.planType === ScratchPlanType.FREE_PLAN) {
@@ -111,13 +128,9 @@ export const PlanCard = ({ plan, onError }: PlanCardProps) => {
       <Stack gap="sm">
         <Group justify="space-between" align="flex-start">
           <Text13Medium>{plan.displayName}</Text13Medium>
-          {isComingSoon && <Badge w="fit-content">Coming soon</Badge>}
-          {plan.popular && !isCurrentPlan && !isComingSoon && <Badge w="fit-content">Popular</Badge>}
+          {plan.popular && !isCurrentPlan && <Badge w="fit-content">Popular</Badge>}
         </Group>
-        <Group gap="2px">
-          <Text16Medium>${plan.costUSD}</Text16Medium>
-          <Text13Book c="dimmed">/month</Text13Book>
-        </Group>
+        <PlanPriceLabel price={priceOnOffer} />
         {actionButton}
 
         {/* Features list */}

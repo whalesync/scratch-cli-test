@@ -16,6 +16,7 @@ const UNKNOWN_SUBSCRIPTION: SubscriptionInfo = {
   planDisplayName: 'No Plan',
   planType: ScratchPlanType.FREE_PLAN,
   costUSD: 0,
+  billingInterval: 'month',
   daysRemaining: 0,
   isTrial: false,
   isCancelled: false,

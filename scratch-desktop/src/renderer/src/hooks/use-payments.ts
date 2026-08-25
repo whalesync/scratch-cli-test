@@ -1,4 +1,10 @@
-import { ScratchPlanType, SubscriptionPlan } from '@spinner/shared-types';
+import {
+  BillingInterval,
+  getLowestPurchasablePriceCostUSD,
+  getOfferedBillingIntervals,
+  ScratchPlanType,
+  SubscriptionPlan,
+} from '@spinner/shared-types';
 import { isUnauthorizedError } from '@spinner/shared-types/api-client';
 import { useCallback, useMemo, useState } from 'react';
 import useSWR from 'swr';
@@ -29,7 +35,14 @@ export const usePayments = () => {
     scratchApiClient.payment.listPlans(),
   );
 
-  const sortedPlans = useMemo(() => (data ? [...data].sort((a, b) => a.costUSD - b.costUSD) : []), [data]);
+  const sortedPlans = useMemo(
+    () =>
+      data ? [...data].sort((a, b) => getLowestPurchasablePriceCostUSD(a) - getLowestPurchasablePriceCostUSD(b)) : [],
+    [data],
+  );
+
+  // Only the intervals some plan is actually sold at — see getOfferedBillingIntervals.
+  const offeredBillingIntervals = useMemo(() => getOfferedBillingIntervals(sortedPlans), [sortedPlans]);
 
   const displayError = useMemo(() => {
     if (isUnauthorizedError(error)) {
@@ -56,12 +69,13 @@ export const usePayments = () => {
   }, []);
 
   const redirectToPlanCheckout = useCallback(
-    async (planType: ScratchPlanType) => {
-      void trackBillingStartCheckout(planType);
+    async (planType: ScratchPlanType, billingInterval: BillingInterval) => {
+      void trackBillingStartCheckout(planType, billingInterval);
       await openStripeUrl(() =>
         scratchApiClient.payment.createCheckoutSession(planType, {
           returnPath: DESKTOP_BILLING_SUCCESS_PATH,
           cancelPath: DESKTOP_BILLING_CANCEL_PATH,
+          billingInterval,
         }),
       );
     },
@@ -69,12 +83,13 @@ export const usePayments = () => {
   );
 
   const redirectToUpdateSubscription = useCallback(
-    async (planType: ScratchPlanType) => {
+    async (planType: ScratchPlanType, billingInterval: BillingInterval) => {
       void trackBillingManageSubscription();
       await openStripeUrl(() =>
         scratchApiClient.payment.createCustomerPortalUrl({
           portalType: 'update_subscription',
           planType,
+          billingInterval,
           returnPath: DESKTOP_BILLING_PORTAL_RETURN_PATH,
         }),
       );
@@ -101,6 +116,7 @@ export const usePayments = () => {
 
   return {
     plans: sortedPlans,
+    offeredBillingIntervals,
     isLoading,
     error: displayError,
     redirectToPlanCheckout,
