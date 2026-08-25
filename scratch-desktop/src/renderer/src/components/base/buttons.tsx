@@ -11,6 +11,8 @@ export const ButtonPrimarySolid = Button.withProps({
   size: 'sm',
   color: 'var(--highlight-fill)',
   c: 'var(--highlight-text)',
+  // Black loader so the spinner stays readable on the pale-yellow fill (DEV-10420).
+  loaderProps: { color: 'var(--highlight-text)' },
   styles: {
     root: {
       border: '1.5px solid var(--highlight-border)',
@@ -26,6 +28,8 @@ export const ButtonPrimaryLight = Button.withProps({
   size: 'sm',
   color: 'var(--highlight-fill)',
   c: 'var(--highlight-text)',
+  // Black loader so the spinner stays readable on the pale-yellow fill (DEV-10420).
+  loaderProps: { color: 'var(--highlight-text)' },
   classNames: { root: customBordersClasses.cornerBorders },
   styles: {
     root: {

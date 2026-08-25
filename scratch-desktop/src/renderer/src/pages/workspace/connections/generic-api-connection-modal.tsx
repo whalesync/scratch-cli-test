@@ -45,6 +45,11 @@ export interface GenericApiConnectionModalProps {
 type ApiType = 'rest' | 'graphql';
 type AuthStyleSelection = 'bearer' | 'token' | 'raw' | 'custom-header';
 
+// An inline message shown above the form. `info` = guidance (e.g. "not configured yet"), which is
+// rendered in a neutral/non-error style; `error` = a genuine validation or connection failure,
+// rendered red. Keeping the two distinct stops benign guidance from looking like an error (DEV-10420).
+type InlineFormMessage = { text: string; severity: 'info' | 'error' };
+
 const AUTH_OPTIONS: Array<{ value: AuthStyleSelection; label: string }> = [
   { value: 'bearer', label: 'Authorization: Bearer <key>' },
   { value: 'token', label: 'Authorization: Token <key>' },
@@ -162,7 +167,7 @@ export function GenericApiConnectionModal({
   const [pasteText, setPasteText] = useState('');
   const [pasteError, setPasteError] = useState<{ message: string; fixIt: string } | null>(null);
 
-  const [error, setError] = useState<string | null>(null);
+  const [formMessage, setFormMessage] = useState<InlineFormMessage | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
   // Prepopulate in edit mode
@@ -225,7 +230,7 @@ export function GenericApiConnectionModal({
     setAiOpen(false);
     setPasteText('');
     setPasteError(null);
-    setError(null);
+    setFormMessage(null);
   };
 
   const buildExtras = (): GenericApiConnectorExtras => {
@@ -249,23 +254,25 @@ export function GenericApiConnectionModal({
     return { apiType, authHeader, endpoints };
   };
 
-  const validateForm = (): string | null => {
-    if (!displayName.trim()) return 'Connection name is required.';
-    if (!isEditMode && !apiKey.trim()) return 'API key is required.';
-    if (!userConfigured) return 'Configure the connection (use AI or Edit manually).';
-    if (authStyle === 'custom-header' && !customHeaderName.trim()) return 'Custom header name is required.';
+  const validateForm = (): InlineFormMessage | null => {
+    if (!displayName.trim()) return { text: 'Connection name is required.', severity: 'error' };
+    if (!isEditMode && !apiKey.trim()) return { text: 'API key is required.', severity: 'error' };
+    // Not-yet-configured is guidance, not a failure — show it in a neutral style, not a red error box.
+    if (!userConfigured) return { text: 'Configure the connection (use AI or Edit manually).', severity: 'info' };
+    if (authStyle === 'custom-header' && !customHeaderName.trim())
+      return { text: 'Custom header name is required.', severity: 'error' };
     const endpoints = apiType === 'rest' ? restEndpoints : graphqlEndpoints;
-    if (endpoints.length === 0) return 'Add at least one endpoint.';
+    if (endpoints.length === 0) return { text: 'Add at least one endpoint.', severity: 'info' };
     for (let i = 0; i < endpoints.length; i++) {
       const ep = endpoints[i];
-      if (!ep.url.trim()) return `Endpoint ${i + 1} is missing a URL.`;
+      if (!ep.url.trim()) return { text: `Endpoint ${i + 1} is missing a URL.`, severity: 'error' };
       try {
         new URL(ep.url.trim());
       } catch {
-        return `Endpoint ${i + 1} URL is not a valid URL.`;
+        return { text: `Endpoint ${i + 1} URL is not a valid URL.`, severity: 'error' };
       }
       if (apiType === 'graphql' && !(ep as GenericApiGraphqlEndpoint).query.trim()) {
-        return `Endpoint ${i + 1} is missing a GraphQL query.`;
+        return { text: `Endpoint ${i + 1} is missing a GraphQL query.`, severity: 'error' };
       }
     }
     return null;
@@ -366,10 +373,10 @@ export function GenericApiConnectionModal({
   const handleSave = async () => {
     const validationError = validateForm();
     if (validationError) {
-      setError(validationError);
+      setFormMessage(validationError);
       return;
     }
-    setError(null);
+    setFormMessage(null);
     setIsCreating(true);
     try {
       const extras = buildExtras() as unknown as Record<string, unknown>;
@@ -397,7 +404,7 @@ export function GenericApiConnectionModal({
     } catch (e) {
       const axiosMessage = (e as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
       const msg = axiosMessage ?? (e instanceof Error ? e.message : 'Failed to save connection.');
-      setError(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      setFormMessage({ text: typeof msg === 'string' ? msg : JSON.stringify(msg), severity: 'error' });
     } finally {
       setIsCreating(false);
     }
@@ -421,7 +428,7 @@ export function GenericApiConnectionModal({
         closeOnEscape={!anyChildOpen}
       >
         <Stack gap="md">
-          {error && <Alert color="red">{error}</Alert>}
+          {formMessage && <Alert color={formMessage.severity === 'info' ? 'blue' : 'red'}>{formMessage.text}</Alert>}
 
           <Group gap="xs" wrap="nowrap" align="center">
             <Text size="sm" w={80} style={{ flexShrink: 0 }}>
