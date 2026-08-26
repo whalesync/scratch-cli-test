@@ -223,14 +223,10 @@ variable "enable_secret_access_alerts" {
 
 variable "secret_access_alert_threshold" {
   type    = number
-  default = 500
-  # Gross-volume signal (all principals). A production release cold-starts the whole Cloud Run fleet (api 2,
-  # worker 2, cron 1, client 1) at ~40-59 AccessSecretVersion reads each ≈ 250 in one 10-minute window, and the
-  # old default of 50 sat below that — which is why it false-alarmed on every deploy. 500 (~2x that fleet peak)
-  # sits above any legitimate deploy/scale burst so a breach is a genuine bulk read. Confirm the real peak from
+  default = 600
+  # Gross-volume signal (all principals). Confirm the real peak from
   # the metric's own history (Metrics Explorer: logging.googleapis.com/user/secret-access-count) before
-  # finalizing; lower toward ~300 if the observed peak is comfortably under. Low-volume access by an unexpected
-  # caller is caught separately by secret_access_unexpected_principal_threshold, not this one.
+  # finalizing; 
   description = "Fire the Secret Manager access-spike alert when total AccessSecretVersion audit-log entries exceed this many in a 10-minute window (gross-volume signal, all principals)."
 }
 
@@ -247,11 +243,10 @@ variable "secret_access_allowlisted_principals" {
 
 variable "secret_access_unexpected_principal_threshold" {
   type    = number
-  default = 5
+  default = 10
   # Evaluated per principal. Any AccessSecretVersion by a non-allowlisted principal is already suspicious, so
-  # this is low. A leaked human or rogue SA reading the app secrets (dozens) is well over 5 and fires; a full
-  # deploy cannot trip it (deploy reads are all cloudrun-service-account, excluded from the metric). Set to 0 to
-  # alert on any single non-allowlisted read once the allowlist is confirmed complete.
+  # this is low. Devs with readonly service accounts will use tools that need ~10 secrets at once so we should not 
+  # trigger on that constantly
   description = "Fire the unexpected-principal secret-access alert when a single non-allowlisted principal makes more than this many AccessSecretVersion reads in a 10-minute window."
 }
 
