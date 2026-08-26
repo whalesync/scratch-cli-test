@@ -837,10 +837,13 @@ export class ConnectorAccountService {
    * Search the places a new table can be created for a connection. Prefers the
    * connector's own server-side search (Notion, whose shared-page list can far
    * exceed the base-list cap); otherwise filters the full `listCreateDestinations`
-   * list in-process (fine for connectors with small lists). Results are sorted by
-   * name and `hasMore` is set when matches were cut off at the cap. Empty/whitespace
-   * `searchTerm` behaves like the list endpoint. Throws a 400 when the connector
-   * supports neither listing nor searching create destinations.
+   * list in-process (fine for connectors with small lists). A connector search
+   * returns its results ranked (best matches first) and that order is kept — re-sorting
+   * by name buried the real matches under the fuzzy extras Notion's search adds
+   * (DEV-11379). The in-process fallback sorts by name itself. `hasMore` is set when
+   * matches were cut off at the cap. Empty/whitespace `searchTerm` behaves like the
+   * list endpoint. Throws a 400 when the connector supports neither listing nor
+   * searching create destinations.
    */
   async searchCreateDestinations(
     workbookId: WorkbookId,
@@ -864,10 +867,10 @@ export class ConnectorAccountService {
         : await this.filterCreateDestinationsInProcess(connector, normalizedSearchTerm);
       // One decoration site covers both the connector-search path and the
       // in-process fallback above — they converge on `result.destinations`.
-      const sortedDestinations = result.destinations
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((destination) => this.decorateCreateDestinationWithRemoteWebUrl(connector, destination));
-      return { destinations: sortedDestinations, hasMore: result.hasMore };
+      const destinations = result.destinations.map((destination) =>
+        this.decorateCreateDestinationWithRemoteWebUrl(connector, destination),
+      );
+      return { destinations, hasMore: result.hasMore };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
     }
@@ -951,8 +954,10 @@ export class ConnectorAccountService {
   /**
    * In-process create-destination search for connectors that only implement
    * `listCreateDestinations` (their lists are small). Case-insensitive substring
-   * match on the name, capped at {@link CREATE_DESTINATION_SEARCH_RESULT_CAP};
-   * an empty term returns the first capped page.
+   * match on the name, sorted by name and then capped at
+   * {@link CREATE_DESTINATION_SEARCH_RESULT_CAP} (so the cap keeps the first names
+   * alphabetically, matching the list endpoint); an empty term returns the first
+   * capped page.
    */
   private async filterCreateDestinationsInProcess(
     connector: Connector,
@@ -963,9 +968,11 @@ export class ConnectorAccountService {
     }
     const allDestinations = await connector.listCreateDestinations();
     const normalizedSearchTerm = searchTerm.trim().toLowerCase();
-    const matchingDestinations = normalizedSearchTerm
-      ? allDestinations.filter((destination) => destination.name.toLowerCase().includes(normalizedSearchTerm))
-      : allDestinations;
+    const matchingDestinations = (
+      normalizedSearchTerm
+        ? allDestinations.filter((destination) => destination.name.toLowerCase().includes(normalizedSearchTerm))
+        : allDestinations
+    ).sort((a, b) => a.name.localeCompare(b.name));
     const cappedDestinations = matchingDestinations.slice(0, CREATE_DESTINATION_SEARCH_RESULT_CAP);
     return {
       destinations: cappedDestinations,

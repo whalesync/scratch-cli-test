@@ -435,6 +435,39 @@ describe('GoogleSheetsConnector', () => {
     });
   });
 
+  describe('searchCreateDestinations', () => {
+    const NEW_SPREADSHEET = { id: 'scratch-new-spreadsheet', name: 'New spreadsheet', created: false };
+    const KNOWN = [
+      { id: 'sheet_z', name: 'Zebra budget', created: true },
+      { id: 'sheet_a', name: 'Apple budget', created: true },
+      { id: 'sheet_m', name: 'Meeting notes', created: true },
+    ];
+
+    it('keeps the "new spreadsheet" sentinel first and sorts the known spreadsheets by name', async () => {
+      const connector = makeConnector();
+      jest.spyOn(connector, 'listCreateDestinations').mockResolvedValue([NEW_SPREADSHEET, ...KNOWN]);
+
+      const result = await connector.searchCreateDestinations('');
+
+      expect(result.destinations.map((destination) => destination.id)).toEqual([
+        'scratch-new-spreadsheet',
+        'sheet_a',
+        'sheet_m',
+        'sheet_z',
+      ]);
+      expect(result.hasMore).toBe(false);
+    });
+
+    it('filters by name (case-insensitive) and keeps the sorted order', async () => {
+      const connector = makeConnector();
+      jest.spyOn(connector, 'listCreateDestinations').mockResolvedValue([NEW_SPREADSHEET, ...KNOWN]);
+
+      const result = await connector.searchCreateDestinations('BUDGET');
+
+      expect(result.destinations.map((destination) => destination.id)).toEqual(['sheet_a', 'sheet_z']);
+    });
+  });
+
   describe('buildCreateDestinationRemoteWebUrl', () => {
     const SPREADSHEET_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
 

@@ -24,7 +24,7 @@ jest.mock('turndown', () =>
 );
 
 import { NotionApiErrorCode, NotionError } from '../notion-api-client';
-import { NotionConnector } from '../notion-connector';
+import { NotionConnector, titleContainsEveryWord } from '../notion-connector';
 
 describe('NotionConnector.listCreateDestinations', () => {
   let connector: NotionConnector;
@@ -119,6 +119,63 @@ describe('NotionConnector.searchCreateDestinations', () => {
       page_size: 100,
     });
     expect(result).toEqual({ destinations: [], hasMore: false });
+  });
+
+  const page = (id: string, title: string): object => ({
+    object: 'page',
+    id,
+    properties: { Name: { type: 'title', title: [{ plain_text: title }] } },
+  });
+
+  it("ranks title matches ahead of Notion's fuzzy extras, keeping Notion's order within each group", async () => {
+    mockSearch.mockResolvedValue({
+      results: [
+        page('p1', 'Action items'),
+        page('p2', 'Export to Attio'),
+        page('p3', 'Ratio analysis'),
+        page('p4', 'attio crm notes'),
+      ],
+      has_more: true,
+    });
+
+    const result = await connector.searchCreateDestinations('Attio');
+
+    expect(result.destinations.map((destination) => destination.id)).toEqual(['p2', 'p4', 'p1', 'p3']);
+    expect(result.hasMore).toBe(true);
+  });
+
+  it('matches every word of a multi-word term in any order', async () => {
+    mockSearch.mockResolvedValue({
+      results: [page('p1', 'Export log'), page('p2', 'Attio CRM'), page('p3', 'Export to Attio')],
+      has_more: false,
+    });
+
+    const result = await connector.searchCreateDestinations('attio export');
+
+    expect(result.destinations.map((destination) => destination.id)).toEqual(['p3', 'p1', 'p2']);
+  });
+
+  it("keeps Notion's fuzzy results, in Notion's order, when no title contains the term (e.g. a typo)", async () => {
+    mockSearch.mockResolvedValue({
+      results: [page('p1', 'Attio CRM'), page('p2', 'Attio notes')],
+      has_more: false,
+    });
+
+    const result = await connector.searchCreateDestinations('Atio');
+
+    expect(result.destinations.map((destination) => destination.id)).toEqual(['p1', 'p2']);
+  });
+});
+
+describe('titleContainsEveryWord', () => {
+  it('is case-insensitive and order-independent', () => {
+    expect(titleContainsEveryWord('Export to Attio', 'attio EXPORT')).toBe(true);
+    expect(titleContainsEveryWord('Export to Attio', 'attio crm')).toBe(false);
+  });
+
+  it('treats an empty or whitespace term as matching everything', () => {
+    expect(titleContainsEveryWord('Anything', '')).toBe(true);
+    expect(titleContainsEveryWord('Anything', '  \t ')).toBe(true);
   });
 });
 

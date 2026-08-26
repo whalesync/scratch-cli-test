@@ -980,11 +980,19 @@ export class GoogleSheetsConnector extends Connector<string, GoogleSheetsPullPro
     }
     const allDestinations = await this.listCreateDestinations();
     const lowerCaseSearchTerm = searchTerm.trim().toLowerCase();
+    const matchingDestinations =
+      lowerCaseSearchTerm === ''
+        ? allDestinations
+        : allDestinations.filter((destination) => destination.name.toLowerCase().includes(lowerCaseSearchTerm));
+    // The REST layer keeps a connector search's order, so sort here: the "new
+    // spreadsheet" sentinel stays first, the known spreadsheets follow by name.
     return {
-      destinations:
-        lowerCaseSearchTerm === ''
-          ? allDestinations
-          : allDestinations.filter((destination) => destination.name.toLowerCase().includes(lowerCaseSearchTerm)),
+      destinations: matchingDestinations.sort((a, b) => {
+        if (a.created !== b.created) {
+          return a.created ? 1 : -1;
+        }
+        return a.name.localeCompare(b.name);
+      }),
       hasMore: false,
     };
   }

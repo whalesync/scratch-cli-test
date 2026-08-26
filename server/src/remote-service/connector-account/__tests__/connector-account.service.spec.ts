@@ -412,6 +412,41 @@ describe('ConnectorAccountService', () => {
       expect(result.destinations).toEqual([{ ...DESTINATION, remoteWebUrl: 'https://example.test/app_a' }]);
     });
 
+    it('keeps the order a connector search returns (best matches first), rather than sorting by name', async () => {
+      const ranked = [
+        { id: 'p2', name: 'Zebra: Attio export', created: true },
+        { id: 'p1', name: 'Attio CRM', created: true },
+        { id: 'p3', name: 'Action items', created: true },
+      ];
+      mockConnectorReturning({
+        searchCreateDestinations: jest.fn().mockResolvedValue({ destinations: ranked, hasMore: true }),
+      });
+
+      const result = await service.searchCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, 'Attio', ACTOR);
+
+      expect(result.destinations.map((destination) => destination.id)).toEqual(['p2', 'p1', 'p3']);
+      expect(result.hasMore).toBe(true);
+    });
+
+    it('sorts the in-process fallback by name before applying the cap', async () => {
+      // 51 matches named zz_00 … zz_50 plus one 'aa' — the alphabetical first must survive the cap of 50.
+      const many = Array.from({ length: 51 }, (_, i) => ({
+        id: `z${i}`,
+        name: `zz_${String(i).padStart(2, '0')} base`,
+        created: true,
+      }));
+      mockConnectorReturning({
+        listCreateDestinations: jest.fn().mockResolvedValue([...many, { id: 'a', name: 'aa base', created: true }]),
+      });
+
+      const result = await service.searchCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, 'base', ACTOR);
+
+      expect(result.destinations).toHaveLength(50);
+      expect(result.destinations[0].id).toBe('a');
+      expect(result.destinations[1].id).toBe('z0');
+      expect(result.hasMore).toBe(true);
+    });
+
     it('stamps on the connector lookup path', async () => {
       mockConnectorReturning({ lookupCreateDestination: jest.fn().mockResolvedValue(DESTINATION) });
 

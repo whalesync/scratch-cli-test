@@ -136,8 +136,9 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * @param searchTerm Case-insensitive term to match against destination names.
    *   An empty/whitespace term behaves like {@link listCreateDestinations} (the
    *   first capped page of destinations).
-   * @returns Matching destinations (unsorted; the REST layer sorts by name) and
-   *   `hasMore` set when matches were cut off at the cap.
+   * @returns Matching destinations in the order the picker should show them —
+   *   the connector owns the ranking (best matches first), and the REST layer
+   *   keeps it — plus `hasMore` set when matches were cut off at the cap.
    * @throws Error if the destinations cannot be searched.
    */
   searchCreateDestinations?(searchTerm: string): Promise<{ destinations: CreateDestination[]; hasMore: boolean }>;

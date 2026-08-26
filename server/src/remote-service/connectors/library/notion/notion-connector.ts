@@ -95,6 +95,20 @@ export const PAGE_CONTENT_COLUMN_NAME = 'Page Content';
  * `hasMore` truncation flag.
  */
 const NOTION_CREATE_DESTINATION_PAGE_SIZE = 100;
+
+/**
+ * Whether a page title contains every whitespace-separated word of the search
+ * term, case-insensitively and in any order — "Attio export" matches "Export to
+ * Attio". An empty term matches everything.
+ */
+export function titleContainsEveryWord(title: string, searchTerm: string): boolean {
+  const lowerTitle = title.toLowerCase();
+  return searchTerm
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word.length > 0)
+    .every((word) => lowerTitle.includes(word));
+}
 export const PAGE_CONTENT_COLUMN_ID = 'WS_PAGE_CONTENT';
 
 type NotionDownloadProgress = {
@@ -482,6 +496,13 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * {@link listCreateDestinations} cap — the whole point of the search endpoint,
    * since a workspace can share far more pages than one page of results. An
    * empty/whitespace term returns the first page, mirroring the list endpoint.
+   *
+   * Notion's search is fuzzy: alongside the pages whose titles contain the term
+   * it returns loosely similar titles, and with many shared pages those extras
+   * can outrank the real matches (DEV-11379). So the pages whose title contains
+   * every word of the term are ranked first and the fuzzy extras follow, each
+   * group in Notion's order. Nothing is dropped — the extras still help when the
+   * term is misspelled, they just never sit above an outright title match.
    */
   override async searchCreateDestinations(
     searchTerm: string,
@@ -494,7 +515,9 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     const destinations = response.results
       .filter((result): result is PageObjectResponse => result.object === 'page' && 'properties' in result)
       .map((page) => ({ id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName, created: true }));
-    return { destinations, hasMore: response.has_more };
+    const titleMatches = destinations.filter((destination) => titleContainsEveryWord(destination.name, searchTerm));
+    const fuzzyExtras = destinations.filter((destination) => !titleContainsEveryWord(destination.name, searchTerm));
+    return { destinations: [...titleMatches, ...fuzzyExtras], hasMore: response.has_more };
   }
 
   /**
