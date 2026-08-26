@@ -5,12 +5,10 @@ export type OAuthStatePayload = {
   /**
    * Absolute URL the OAuth callback forwards the result to (the "exit"): web
    * `${origin}/oauth/callback-step-2`, desktop `scratch://oauth-callback`, Whalesync its own landing
-   * page. Never the OAuth redirect_uri itself. Replaces `redirectPrefix` + the legacy desktop use of
-   * `returnPage`; optional for back-compat with states minted before it existed.
+   * page. Never the OAuth redirect_uri itself. Required on every state minted now, but typed
+   * optional because the callback decodes an arbitrary base64 `state` off the URL.
    */
   resultForwardUrl?: string;
-  /** @deprecated Origin-only precursor to `resultForwardUrl`; still sent during the transition. */
-  redirectPrefix: string;
   userId: string;
   organizationId: string;
   workbookId: string;

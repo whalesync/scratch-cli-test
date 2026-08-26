@@ -17,10 +17,11 @@
  * `resultForwardUrl` (web → /oauth/callback-step-2, desktop → scratch://oauth-callback).
  *
  * This page (`/oauth/callback`) is the OLD, pre-migration `redirect_uri`. It is
- * reached ONLY by OAuth flows that still authorize against a legacy, Scratch-owned
- * OAuth app registered against this URL — no current connector uses it. It is kept
- * solely so those pre-migration flows keep working, and is slated for deletion once
- * every OAuth app is migrated to Whalesync-owned (OAuth cleanup: DEV-10734).
+ * reached ONLY by OAuth flows that still authorize against a Scratch-owned OAuth app
+ * registered against this URL: the "bring your own app" `OAUTH_CUSTOM` path (which
+ * always uses the Scratch redirect — see `OAuthAppCredentialResolver`), and any service
+ * whose current app generation still maps to `scratchRedirectUri` (today: Pipedrive v1).
+ * It can be deleted once neither of those is true.
  *
  * ➜ DO NOT add or change routing logic here — the active equivalent is dusky's
  *   connector callback above. Anything you touch here affects legacy flows only.
@@ -46,20 +47,19 @@ interface OAuthCallbackState {
 }
 
 /**
- * Returns true if the given OAuth `redirectPrefix` points at a Whalesync (dusky) origin that we're
- * willing to forward an OAuth result back to. Whalesync drives the Scratch OAuth endpoints directly
- * (e.g. from its CRM Mirror connect flow) and passes a query-free callback URL on its own origin as
- * the `redirectPrefix`; we forward `code`/`state` (and `realmId`/`error` where present) there the
- * same way we forward to the scratch desktop app.
+ * Returns true if the state's `resultForwardUrl` points at a Whalesync (dusky) origin. Whalesync
+ * drives the Scratch OAuth endpoints directly (e.g. from its CRM Mirror connect flow) and passes a
+ * query-free landing URL on its own origin as the forward target; we forward `code`/`state` (and
+ * `realmId`/`error` where present) there the same way we forward to the scratch desktop app.
  *
- * Pinned to exact `.whalesync.com` subdomains plus `localhost` (local dev) — this is not an open
- * redirect, the suffix check pins it to Whalesync. Mirrors the host check dusky uses for its own
- * connector OAuth callbacks (`dusky/pages/oauth-callback/connector/[connectorType].tsx`).
+ * Pinned to exact `.whalesync.com` subdomains plus `localhost` (local dev). Mirrors the host check
+ * dusky uses for its own connector OAuth callbacks
+ * (`dusky/pages/oauth-callback/connector/[connectorType].tsx`).
  */
-const isWhalesyncRedirectPrefix = (redirectPrefix: string | undefined): boolean => {
-  if (!redirectPrefix) return false;
+const isWhalesyncForwardUrl = (resultForwardUrl: string | undefined): resultForwardUrl is string => {
+  if (!resultForwardUrl) return false;
   try {
-    const url = new URL(redirectPrefix);
+    const url = new URL(resultForwardUrl);
     return url.hostname.endsWith('.whalesync.com') || url.hostname === 'localhost';
   } catch {
     return false;
@@ -71,11 +71,11 @@ const isWhalesyncRedirectPrefix = (redirectPrefix: string | undefined): boolean 
  * callback, not here. This page is the pre-migration `redirect_uri`.
  *
  * This is the page that we go back to during an OAuth authorization flow after the user has just gone out to the OAuth
- * authorization screen for a provider (e.g. Webflow). It reads the original host/port that the request came from in the
- * OAuth state param, then redirects back there to finish the flow.
+ * authorization screen for a provider (e.g. Webflow). It reads the `resultForwardUrl` the initiator put in the OAuth
+ * state param — the exit it wants the result delivered to — and forwards the result there to finish the flow.
  *
  * e.g. If this came from `localhost`, the OAuth flow will send the browser to `test.scratch.md`, which will then
- * redirect back to `localhost`.
+ * forward to `http://localhost:3000/oauth/callback-step-2`.
  */
 function OAuthCallbackContent() {
   const router = useRouter();
@@ -119,10 +119,10 @@ function OAuthCallbackContent() {
         }
 
         if (error) {
-          // Whalesync (dusky) flow: forward the error back to its callback so it can surface the
+          // Whalesync (dusky) flow: forward the error back to its landing page so it can surface the
           // failure in its own wizard, the same way we forward a successful result below.
-          if (isWhalesyncRedirectPrefix(oAuthState.redirectPrefix)) {
-            const whalesyncUrl = new URL(oAuthState.redirectPrefix);
+          if (isWhalesyncForwardUrl(oAuthState.resultForwardUrl)) {
+            const whalesyncUrl = new URL(oAuthState.resultForwardUrl);
             whalesyncUrl.searchParams.set('error', error);
             const errorDescription = searchParams.get('error_description');
             if (errorDescription) whalesyncUrl.searchParams.set('error_description', errorDescription);
@@ -153,16 +153,32 @@ function OAuthCallbackContent() {
           return;
         }
 
-        // Desktop deep-link flow: redirect OAuth result back to desktop app if they originated there.
-        if (oAuthState.returnPage?.startsWith('scratch://')) {
-          const desktopUrl = new URL(oAuthState.returnPage);
-          if (code) desktopUrl.searchParams.set('code', code);
-          if (instanceId) desktopUrl.searchParams.set('instanceId', instanceId);
-          desktopUrl.searchParams.set('state', oAuthStateString);
-          desktopUrl.searchParams.set('service', oAuthState.service);
+        // Every initiator sends `resultForwardUrl`; a state without one was minted by a client
+        // predating the field (DEV-10734 cutoff) or is malformed. There is nowhere to forward to,
+        // so say so rather than guessing a destination.
+        const resultForwardUrl = oAuthState.resultForwardUrl;
+        if (!resultForwardUrl) {
+          setState({
+            status: 'error',
+            message: 'This connection was started by an outdated client. Please update and try again.',
+          });
+          return;
+        }
+
+        /** Copies the OAuth result onto a forward target that expects the params spelled out. */
+        const withOAuthResultParams = (targetUrl: URL): URL => {
+          if (code) targetUrl.searchParams.set('code', code);
+          if (instanceId) targetUrl.searchParams.set('instanceId', instanceId);
+          targetUrl.searchParams.set('state', oAuthStateString);
+          targetUrl.searchParams.set('service', oAuthState.service);
           const realmId = searchParams.get('realmId');
-          if (realmId) desktopUrl.searchParams.set('realmId', realmId);
-          const desktopUrlString = desktopUrl.toString();
+          if (realmId) targetUrl.searchParams.set('realmId', realmId);
+          return targetUrl;
+        };
+
+        // Desktop deep-link flow: redirect the OAuth result back to the desktop app.
+        if (resultForwardUrl.startsWith('scratch://')) {
+          const desktopUrlString = withOAuthResultParams(new URL(resultForwardUrl)).toString();
           window.location.href = desktopUrlString;
           // The browser stays on this page after a custom protocol redirect,
           // so update state to show a confirmation instead of the loading spinner.
@@ -170,26 +186,20 @@ function OAuthCallbackContent() {
           return;
         }
 
-        // Whalesync (dusky) flow: the redirectPrefix is a full, query-free callback URL on a
-        // Whalesync origin. Forward the OAuth result there directly, the same way we forward to the
-        // desktop app above.
-        if (isWhalesyncRedirectPrefix(oAuthState.redirectPrefix)) {
-          const whalesyncUrl = new URL(oAuthState.redirectPrefix);
-          if (code) whalesyncUrl.searchParams.set('code', code);
-          if (instanceId) whalesyncUrl.searchParams.set('instanceId', instanceId);
-          whalesyncUrl.searchParams.set('state', oAuthStateString);
-          whalesyncUrl.searchParams.set('service', oAuthState.service);
-          const realmId = searchParams.get('realmId');
-          if (realmId) whalesyncUrl.searchParams.set('realmId', realmId);
-          window.location.href = whalesyncUrl.toString();
+        // Whalesync (dusky) flow: the forward URL is a query-free landing page on a Whalesync
+        // origin. Forward the OAuth result there directly, the same way we forward to the desktop
+        // app above.
+        if (isWhalesyncForwardUrl(resultForwardUrl)) {
+          window.location.href = withOAuthResultParams(new URL(resultForwardUrl)).toString();
           return;
         }
 
-        // Otherwise send the result back to the web client that started the flow. `redirectPrefix` is a
-        // full origin (e.g. https://test.scratch.md), so this is a cross-origin, full-document navigation
-        // that the Next.js router can't perform — hence the direct window.location assignment, built as a
-        // URL the same way the desktop/Whalesync branches above are.
-        const webClientCallbackUrl = new URL('/oauth/callback-step-2', oAuthState.redirectPrefix);
+        // Otherwise send the result back to the web client that started the flow — its
+        // `/oauth/callback-step-2` on its own origin (e.g. https://test.scratch.md). That's a
+        // cross-origin, full-document navigation the Next.js router can't perform, hence the direct
+        // window.location assignment. Unlike the branches above, callback-step-2 wants the provider's
+        // query string verbatim.
+        const webClientCallbackUrl = new URL(resultForwardUrl);
         webClientCallbackUrl.search = window.location.search;
         window.location.href = webClientCallbackUrl.toString();
       } catch (error) {

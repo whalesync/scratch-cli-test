@@ -125,9 +125,6 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
       const oauthOptions: OAuthInitiateOptionsDto = {
         // Absolute exit URL the OAuth callback forwards the result to (the token-exchange page).
         resultForwardUrl: `${window.location.protocol}//${window.location.host}/oauth/callback-step-2`,
-        // TODO(DEV-10734): remove — unused now that forwarding uses `resultForwardUrl`; only sent to
-        // satisfy the still-required schema field. https://linear.app/whalesync/issue/DEV-10734
-        redirectPrefix: 'TODO(DEV-10734): Remove Unused parameter',
         workbookId: workbookId,
         connectionMethod: isCustom ? 'OAUTH_CUSTOM' : 'OAUTH_SYSTEM',
         customClientId: isCustom ? customClientId : undefined,

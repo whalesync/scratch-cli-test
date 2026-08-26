@@ -288,10 +288,6 @@ function ServiceBlock({
         workbookId,
         // Absolute exit URL the OAuth callback forwards the result to — the desktop deep link.
         resultForwardUrl: `scratch://oauth-callback`,
-        // TODO(DEV-10734): remove these two — unused now that forwarding uses `resultForwardUrl`.
-        // https://linear.app/whalesync/issue/DEV-10734
-        redirectPrefix: 'TODO(DEV-10734): Remove Unused parameter',
-        returnPage: 'TODO(DEV-10734): Remove Unused parameter',
         connectionMethod: 'OAUTH_SYSTEM',
         connectionName: connectorAccount.displayName,
         connectorAccountId: connectorAccount.id,
@@ -402,10 +398,6 @@ function EmptyServiceBlock({
         workbookId,
         // Absolute exit URL the OAuth callback forwards the result to — the desktop deep link.
         resultForwardUrl: `scratch://oauth-callback`,
-        // TODO(DEV-10734): remove these two — unused now that forwarding uses `resultForwardUrl`.
-        // https://linear.app/whalesync/issue/DEV-10734
-        redirectPrefix: 'TODO(DEV-10734): Remove Unused parameter',
-        returnPage: 'TODO(DEV-10734): Remove Unused parameter',
         connectionMethod: 'OAUTH_SYSTEM',
         connectionName: connectorAccount.displayName,
         connectorAccountId: connectorAccount.id,

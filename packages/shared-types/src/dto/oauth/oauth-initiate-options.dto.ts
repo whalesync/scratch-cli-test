@@ -9,23 +9,16 @@ export const oauthInitiateOptionsSchema = z.object({
    * back. Web: `${origin}/oauth/callback-step-2`. Desktop: `scratch://oauth-callback`. Whalesync
    * (Live Export): its own landing page. NEVER the OAuth redirect_uri / connector callback itself,
    * or the handler would forward to itself. Subject to the callback's host-based redirect allowlist.
-   * Optional for now: every initiator still also sends the legacy `redirectPrefix` during the
-   * transition, so old and new callbacks both work regardless of deploy order.
    */
-  resultForwardUrl: z.string().min(1).optional(),
-  /**
-   * The `(http|https)://<host>(:<port>)` origin of the browser location kicking off an OAuth request,
-   * so the callback knows which origin to bounce back to (stored in the URL `state` param). Mainly to
-   * redirect back to `localhost` for OAuth services that don't support it natively.
-   *
-   * @deprecated Superseded by `resultForwardUrl`. Still required — and still sent by every initiator —
-   * during the transition; it becomes optional and is then removed at cutoff.
-   */
-  redirectPrefix: z.string().min(1),
+  resultForwardUrl: z.string().min(1),
   connectionMethod: z.enum(['OAUTH_SYSTEM', 'OAUTH_CUSTOM']).optional(),
   customClientId: z.string().optional(),
   customClientSecret: z.string().optional(),
   connectionName: z.string().optional(),
+  /**
+   * Web-only: in-app path to land on once the connection completes, read at
+   * `/oauth/callback-step-2`. Not a forward target — that is `resultForwardUrl`.
+   */
   returnPage: z.string().optional(),
   connectorAccountId: z.string().optional(),
   workbookId: z.string().min(1),
@@ -50,5 +43,5 @@ export const oauthInitiateOptionsSchema = z.object({
 
 export type OAuthInitiateOptionsDto = z.infer<typeof oauthInitiateOptionsSchema>;
 
-// `redirectPrefix` and `workbookId` are already required by the schema.
+// `resultForwardUrl` and `workbookId` are already required by the schema.
 export type ValidatedOAuthInitiateOptionsDto = OAuthInitiateOptionsDto;

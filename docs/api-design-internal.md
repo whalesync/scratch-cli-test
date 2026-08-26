@@ -645,7 +645,7 @@ Returns an OAuth authorization URL.
 
 ```json
 {
-  "redirectPrefix": "https://app.scratch.io",
+  "resultForwardUrl": "https://app.scratch.io/oauth/callback-step-2",
   "connectionMethod": "OAUTH_SYSTEM",
   "connectionName": "My Airtable",
   "returnPage": "/connections",
@@ -655,12 +655,12 @@ Returns an OAuth authorization URL.
 
 | Field                | Type   | Required | Description                         |
 | -------------------- | ------ | -------- | ----------------------------------- |
-| `redirectPrefix`     | string | Yes      | Browser origin for OAuth redirect   |
+| `resultForwardUrl`   | string | Yes      | Absolute URL the OAuth callback forwards the result to (web `<origin>/oauth/callback-step-2`, desktop `scratch://oauth-callback`) |
 | `connectionMethod`   | string | No       | `OAUTH_SYSTEM` or `OAUTH_CUSTOM`    |
 | `customClientId`     | string | No       | Custom OAuth app client ID          |
 | `customClientSecret` | string | No       | Custom OAuth app secret             |
 | `connectionName`     | string | No       | Display name for connection         |
-| `returnPage`         | string | No       | Page to return to after OAuth       |
+| `returnPage`         | string | No       | Web-only in-app path to land on after OAuth |
 | `connectorAccountId` | string | No       | Existing connection to re-authorize |
 
 **Response:**

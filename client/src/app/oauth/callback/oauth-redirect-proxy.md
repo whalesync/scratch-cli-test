@@ -38,9 +38,9 @@ The OAuth redirect proxy allows OAuth providers to redirect to a test server, wh
 
 1. **OAuth Initiation** (on localhost):
    - User clicks "Connect with Webflow"
-   - Client reads that it's on `http://localhost:3000` and saves that as part of the `redirectPrefix`
+   - Client reads that it's on `http://localhost:3000` and sends `http://localhost:3000/oauth/callback-step-2` as the `resultForwardUrl`
    - Client asks the server for the authorization URL for the provider to redirect to
-   - Server puts the `redirectPrefix` in the `state` param
+   - Server puts the `resultForwardUrl` in the `state` param
    - State is base64-encoded
    - Backend constructs OAuth URL and returns it
    - User is redirected to OAuth provider
@@ -51,8 +51,8 @@ The OAuth redirect proxy allows OAuth providers to redirect to a test server, wh
 
 3. **Callback Proxy** (on test server):
    - Test server's `/oauth/callback` page loads
-   - It decodes the `state` parameter to get: `{ redirectPrefix: 'http://localhost:3000' }`
-   - In constructs the `localhost` URL to redirect to, `http://localhost:3000/oauth/callback-step-2?code=ABC123&state=eyJ...`
+   - It decodes the `state` parameter to get: `{ resultForwardUrl: 'http://localhost:3000/oauth/callback-step-2' }`
+   - It copies the provider's query string onto that URL: `http://localhost:3000/oauth/callback-step-2?code=ABC123&state=eyJ...`
    - It redirects the browser
 
 4. **Final Callback** (back on localhost):

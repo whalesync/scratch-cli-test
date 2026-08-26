@@ -65,7 +65,7 @@ The current flow, for reference (all file paths relative to repo root):
   browser to `authUrl`.
 - **State** — `OAuthStatePayload` (`packages/shared-types/src/dto/oauth/oauth-state-payload.ts`,
   mirrored in `server/src/oauth/types.ts`) encodes **`userId`, `organizationId`, `workbookId`,
-  `service`, `connectionMethod`, `returnPage`, …**. This is the mechanism that ties the eventual
+  `service`, `connectionMethod`, `resultForwardUrl`, …**. This is the mechanism that ties the eventual
   callback back to a Scratch workspace: *we told ourselves, in advance, where the tokens belong.*
 - **Provider abstraction** — `OAuthProvider` (`server/src/oauth/oauth-provider.interface.ts`):
   `generateAuthUrl`, `exchangeCodeForTokens`, `refreshTokens`, `getRedirectUri`. Examples:
@@ -73,9 +73,9 @@ The current flow, for reference (all file paths relative to repo root):
   `providers/airtable-oauth.provider.ts` (PKCE).
   All read a single shared `REDIRECT_URI` env var.
 - **Callback (web)** — the provider redirects to `https://<host>/oauth/callback`
-  (`client/src/app/oauth/callback/page.tsx`, a **public** route). It decodes `state.returnPage`:
+  (`client/src/app/oauth/callback/page.tsx`, a **public** route). It decodes `state.resultForwardUrl`:
   - `scratch://…` → bounce to the **desktop app** deep link (see §6).
-  - otherwise → forward to `/oauth/callback-step-2` (`client/src/app/oauth/callback-step-2/page.tsx`),
+  - otherwise → forward to the web client's `/oauth/callback-step-2` (`client/src/app/oauth/callback-step-2/page.tsx`),
     which **is auth-gated**, and calls `POST /oauth/:service/callback`.
 - **Callback (server)** — `OAuthService.handleOAuthCallback`:
   - decodes `state`, then **enforces `state.userId === actor.userId` and

@@ -126,11 +126,6 @@ export function CreateConnectionModal({
       const oauthOptions: OAuthInitiateOptionsDto = {
         // Absolute exit URL the OAuth callback forwards the result to — the desktop deep link.
         resultForwardUrl: 'scratch://oauth-callback',
-        // TODO(DEV-10734): remove these two — unused now that forwarding uses `resultForwardUrl`.
-        // `redirectPrefix` is only sent to satisfy the still-required schema field; the desktop
-        // `returnPage` was the old forward target. https://linear.app/whalesync/issue/DEV-10734
-        redirectPrefix: 'TODO(DEV-10734): Remove Unused parameter',
-        returnPage: 'TODO(DEV-10734): Remove Unused parameter',
         workbookId,
         connectionMethod: isCustom ? 'OAUTH_CUSTOM' : 'OAUTH_SYSTEM',
         customClientId: isCustom ? customClientId : undefined,
