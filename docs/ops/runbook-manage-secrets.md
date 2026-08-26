@@ -7,7 +7,7 @@ Two things describe a secret in this repo:
 - **The secret container** (its name/ID) is declared in Terraform. The canonical list lives in [`terraform/secrets.txt`](/terraform/secrets.txt) — one secret name per line — and Terraform creates a `google_secret_manager_secret` for each entry in every environment ([`terraform/modules/env/secrets.tf`](/terraform/modules/env/secrets.tf)). Terraform manages the **container only**, never the value.
 - **The secret value** is set per environment with `gcloud` and is **never** stored in the repo or in Terraform state.
 
-A secret therefore has a lifecycle: register the container → set a value in each environment → reference it from a Cloud Run service → (eventually) delete it. This runbook covers each step using the helper scripts in [`terraform/tools/`](/terraform/tools/).
+A secret therefore has a lifecycle: register the container → set a value in each environment → reference it from a Cloud Run service → rotate the value when needed → (eventually) delete it. This runbook covers each step using the helper scripts in [`terraform/tools/`](/terraform/tools/).
 
 ---
 
@@ -91,6 +91,56 @@ The script will:
 
 To verify what's set across an environment without printing every value, use `./terraform/tools/check_env_secrets.sh <env>` (confirms each secret has an accessible `latest` version); `./terraform/tools/get_secrets.sh <env>` prints `NAME=value` pairs.
 
+> **Rotating a value a service already uses?** Writing a new version is only half the job — running Cloud Run instances keep the old value until they restart. See [**Rotate a live secret**](#rotate-a-live-secret) for the required redeploy step.
+
+---
+
+## Rotate a live secret
+
+Rotating a secret that a Cloud Run service **already** reads is a **two-step** operation. [Updating the value](#update-a-secrets-value) writes a new `latest` version, but the services read secrets only at container start and hold them as `process.env` — there is no in-process Secret Manager client — so **running instances keep the old value until they restart**. A plain `terraform apply` will not restart them either: the env-var list is unchanged, so there is no diff to roll a new revision.
+
+**Step 1 — write the new version** (once per environment you're rotating). For a third-party credential, regenerate it in the provider's console _first_ (see the table below), then:
+
+```bash
+./terraform/tools/update_secret_value.sh production SECRET_NAME 'new-value'
+```
+
+**Step 2 — force a redeploy** so every service re-reads `latest`. This mints a fresh `FORCE_RELOAD` UUID, which rolls a new revision of all four services (rolling, no extra downtime):
+
+```bash
+cd terraform/envs/eu-production && terraform apply -var force_reload_services=true
+```
+
+(Use `eu-test` + `update_secret_value.sh test …` for the test environment.) **Until Step 2 runs, the old credential is still live in memory on the running instances** — so for an exposure, both steps are required to actually cut off the old value.
+
+> **Upstream first for third-party secrets.** Rotating only the Secret Manager copy without regenerating the credential at the provider (Clerk, Stripe, a connector OAuth app, …) leaves the old credential valid upstream. Regenerate at the provider, then run Steps 1–2 with the new value.
+
+For the rationale, the schedule, and which secrets we rotate routinely vs. only on exposure, see [`dev-10993-secret-rotation-risk-acceptance.md`](/docs/ops/dev-10993-secret-rotation-risk-acceptance.md).
+
+### Where to regenerate the highest-value secrets
+
+Upstream pointers for the secrets on the manual rotation cadence. Mint the new value at the source, then run Steps 1–2 above.
+
+| Secret                                                                                                                                                                        | Where to regenerate upstream                                                                | Notes                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`, `READONLY_DB_PASSWORD`, `MIGRATIONS_DB_PASSWORD`                                                                                                             | Cloud SQL (Postgres) — `ALTER USER … WITH PASSWORD` for the role, then rebuild the URL       | Coordinate so app and DB agree; the read-only / migrations password can rotate with a brief interruption.                                                                               |
+| `DB_PASS`                                                                                                                                                                    | Cloud SQL root password — Terraform-managed via `random_password`                            | Not a plain value swap; a coordinated Terraform + instance operation.                                                                                                                   |
+| `REDIS_PASSWORD`                                                                                                                                                             | Memorystore instance AUTH string                                                             | Update the instance AUTH and the secret together.                                                                                                                                       |
+| `ENCRYPTION_MASTER_KEY`                                                                                                                                                      | App credential-encryption key — **special**                                                  | **Not** a plain swap: requires a bulk re-encrypt of stored credentials (no rollover window). See the risk-acceptance doc.                                                               |
+| `CLERK_SECRET_KEY`                                                                                                                                                           | Clerk dashboard → API keys                                                                    |                                                                                                                                                                                        |
+| `STRIPE_API_KEY`                                                                                                                                                            | Stripe dashboard → Developers → API keys (roll the secret key)                               |                                                                                                                                                                                        |
+| `STRIPE_WEBHOOK_SECRET`                                                                                                                                                      | Stripe dashboard → Webhooks → signing secret                                                  | Blocked until the app accepts multiple signing secrets.                                                                                                                                 |
+| `SENDGRID_API_KEY`                                                                                                                                                          | SendGrid → Settings → API Keys                                                                |                                                                                                                                                                                        |
+| `SCRATCH_ADMIN_API_KEY`                                                                                                                                                     | Generate a new random token                                                                   | Shared token that bottlenose sends to Scratch; coordinate the new value with the Whalesync/bottlenose side so both hold it close together (a mismatch fails admin calls). The server also accepts an optional `SCRATCH_ADMIN_API_KEY_PREVIOUS` for a zero-gap overlap, not currently provisioned.                        |
+| `SCRATCH_GIT_AUTH_TOKEN`                                                                                                                                                    | Generate a new random token                                                                   | Shared with the scratch-git service; update both sides close together.                                                                                                                  |
+| Connector OAuth client secrets (`AIRTABLE_*`, `NOTION_*`, `WEBFLOW_*`, `SHOPIFY_*`, `PIPEDRIVE_*`, `WIX_*`, `ZOHO_*`, `SUPABASE_*`, `GOOGLE_SHEETS_*`, `GOHIGHLEVEL_*`, `QUICKBOOKS_*`, `YOUTUBE_*`, `LINEAR_OAUTH_*`) | Regenerate the client secret in each provider's developer console                            | The `_V2` entries are a second app generation; new connections use the current version (`oauthAppVersion`), existing ones keep refreshing against the app that issued their tokens. Not every provider supports rotation. |
+| `POSTHOG_API_KEY`, `POSTHOG_FEATURE_FLAG_API_KEY`                                                                                                                          | PostHog project settings                                                                      |                                                                                                                                                                                        |
+| `PAGERDUTY_INTEGRATION_KEY`                                                                                                                                                 | PagerDuty → the service's integration                                                         |                                                                                                                                                                                        |
+| `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `LANGSMITH_API_KEY`                                                                                                                 | The respective AI-provider console                                                            |                                                                                                                                                                                        |
+| `LINEAR_API_KEY`                                                                                                                                                            | Linear → Settings → API                                                                       |                                                                                                                                                                                        |
+| `GITHUB_RELEASES_TOKEN`                                                                                                                                                     | GitHub → personal access tokens                                                               |                                                                                                                                                                                        |
+| `SLACK_NOTIFICATION_WEBHOOK_URL`                                                                                                                                            | Slack app → Incoming Webhooks                                                                 |                                                                                                                                                                                        |
+
 ---
 
 ## Use a secret in a Cloud Run service
@@ -172,7 +222,8 @@ Push the branch and open a merge request so `secrets.txt` on `master` reflects t
 | Task                          | Command                                                              | Repo change? | Touches GCP?               |
 | ----------------------------- | ------------------------------------------------------------------- | ------------ | -------------------------- |
 | Register a secret container   | `add_secret.sh NAME`                                                 | commits `secrets.txt` | optional targeted apply (both envs) |
-| Set / rotate a value          | `update_secret_value.sh <test\|production> NAME VALUE`               | no           | adds a secret version      |
+| Set an initial value          | `update_secret_value.sh <test\|production> NAME VALUE`               | no           | adds a secret version      |
+| Rotate a live secret          | `update_secret_value.sh …` + `terraform apply -var force_reload_services=true` | no | new version + new revision |
 | Use in a Cloud Run service    | edit `services.tf` + `terraform apply`                              | commits `services.tf` | deploys new revision  |
 | Delete a secret container     | `remove_secret.sh NAME`                                              | commits `secrets.txt` | optional targeted destroy (both envs) |
 | Check values exist            | `check_env_secrets.sh <test\|production>`                            | no           | reads only                 |
