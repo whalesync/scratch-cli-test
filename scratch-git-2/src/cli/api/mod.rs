@@ -1,5 +1,6 @@
 use reqwest::{Client, Method, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};
+use std::time::Duration;
 use thiserror::Error;
 
 /// Default server URL. Override at build time by setting SCRATCH_DEFAULT_URL env var.
@@ -25,6 +26,135 @@ pub enum ApiError {
 
 pub type ApiResult<T> = Result<T, ApiError>;
 
+/// How long to wait for a TCP/TLS handshake before giving up on an attempt. A healthy
+/// connection to the API opens in milliseconds, so a handshake still unfinished after this
+/// is a dropped connection, not a slow one — failing fast here is what makes a retry useful.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The request ceiling the API's own Cloud Run services enforce. Beyond this the server
+/// abandons the request itself and returns an error the caller can act on, so there is nothing
+/// left for a client-side timeout to salvage.
+const SERVER_SIDE_REQUEST_CEILING: Duration = Duration::from_secs(300);
+
+/// How long a connected request may go with NO response bytes arriving before it is abandoned.
+///
+/// Read the exact semantics before changing this, because they are NOT uniform across the
+/// request: reqwest arms this timer once when the request is dispatched and never resets it
+/// until the response HEADERS arrive, so up to that point it is a hard time-to-first-byte
+/// deadline rather than an inactivity bound. Only once the body is streaming does each frame
+/// that lands reset it.
+///
+/// It is therefore set ABOVE `SERVER_SIDE_REQUEST_CEILING`, so a server-side operation that
+/// legitimately takes minutes to produce its first byte (listing tables from a large remote
+/// account, say) is never cut off here — the server's own timeout wins first and the caller
+/// sees the real error rather than a client-side one. What this still bounds is a socket gone
+/// permanently silent, which no server response will ever end.
+const RESPONSE_SILENCE_TIMEOUT: Duration =
+    Duration::from_secs(SERVER_SIDE_REQUEST_CEILING.as_secs() + 30);
+
+/// Total attempts allowed for one request (the first attempt plus its retries).
+const MAX_REQUEST_ATTEMPTS: usize = 3;
+
+/// Backoff before each retry, indexed by how many attempts have already failed.
+const RETRY_BACKOFF_BY_FAILED_ATTEMPTS: [Duration; 2] =
+    [Duration::from_millis(250), Duration::from_millis(1000)];
+
+/// Whether replaying this method is safe when we cannot tell if the server already applied
+/// the request. Deliberately narrower than the HTTP spec's idempotency list: a replayed
+/// `DELETE` whose first attempt actually succeeded comes back `404`, which would turn a
+/// success into a `NotFound` error, so only true reads are replayed here.
+fn is_safe_to_replay_after_server_may_have_received_it(method: &Method) -> bool {
+    matches!(*method, Method::GET | Method::HEAD)
+}
+
+/// Whether a transport-level failure should be retried.
+///
+/// A connect failure means the handshake never completed, so the server definitively never
+/// saw the request — replaying it cannot duplicate anything, whatever the method. This is the
+/// shape behind the dropped connections that keep failing CI runs, and the one retrying fixes.
+///
+/// A dropped connection or lost response body after the connection is up leaves us unable to
+/// tell whether the server applied the request, so only reads are replayed there.
+///
+/// A silence timeout is deliberately NOT retried: having already waited out
+/// `RESPONSE_SILENCE_TIMEOUT` — longer than the server would ever hold a request open — the
+/// connection is dead rather than slow, and replaying would only triple the wait before the
+/// caller learns that.
+fn is_transport_error_safe_to_retry(error: &reqwest::Error, method: &Method) -> bool {
+    if error.is_connect() {
+        return true;
+    }
+    if error.is_timeout() {
+        return false;
+    }
+    if error.is_request() || error.is_body() {
+        return is_safe_to_replay_after_server_may_have_received_it(method);
+    }
+    false
+}
+
+/// Whether a response status should be retried.
+///
+/// `502`/`503`/`504` are what the load balancer returns when it could not get a response out
+/// of the backend, and `429` is shed load; both are worth another attempt. Restricting this to
+/// reads also keeps every meaningful status the API itself returns on a write intact — most
+/// importantly `upload_patch_commit`'s `503 check_failed`, which its caller must still see.
+fn is_status_safe_to_retry(status: StatusCode, method: &Method) -> bool {
+    matches!(status.as_u16(), 429 | 502 | 503 | 504)
+        && is_safe_to_replay_after_server_may_have_received_it(method)
+}
+
+/// Build the shared HTTP client. Both timeouts are set here so every call the CLI and the
+/// desktop app make through this client is bounded. No TOTAL request timeout is set, because
+/// `upload_patch_put` streams publish payloads that can legitimately run long — but note that
+/// `RESPONSE_SILENCE_TIMEOUT` does cap how long such an upload may run before its response
+/// headers come back, since that timer only starts resetting once they do.
+fn build_http_client() -> Client {
+    Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(RESPONSE_SILENCE_TIMEOUT)
+        .build()
+        // A builder failure here means the TLS backend could not initialize, which would
+        // break every request anyway; fall back rather than making construction fallible.
+        .unwrap_or_else(|_| Client::new())
+}
+
+/// Send a request, retrying transient transport failures that are safe to replay.
+///
+/// This is the single choke point every API call passes through, so one dropped connection
+/// no longer aborts a whole pull, publish, or upload — for a CLI user, for the desktop app
+/// that shells out to `scratchmd`, or for the integration suites that drive both.
+async fn send_request_with_retry(
+    request: reqwest::RequestBuilder,
+    method: Method,
+) -> ApiResult<reqwest::Response> {
+    let mut failed_attempts: usize = 0;
+    loop {
+        // Retrying needs a replayable copy of the request. `try_clone` returns None only for
+        // streaming bodies, which this client never sends — if that ever changes, the request
+        // is simply sent once without retries rather than silently mishandled.
+        let Some(request_for_this_attempt) = request.try_clone() else {
+            return Ok(request.send().await?);
+        };
+
+        let attempt_result = request_for_this_attempt.send().await;
+        let has_attempts_remaining = failed_attempts + 1 < MAX_REQUEST_ATTEMPTS;
+
+        let should_retry = has_attempts_remaining
+            && match &attempt_result {
+                Err(error) => is_transport_error_safe_to_retry(error, &method),
+                Ok(response) => is_status_safe_to_retry(response.status(), &method),
+            };
+
+        if !should_retry {
+            return Ok(attempt_result?);
+        }
+
+        tokio::time::sleep(RETRY_BACKOFF_BY_FAILED_ATTEMPTS[failed_attempts]).await;
+        failed_attempts += 1;
+    }
+}
+
 pub struct ApiClient {
     client: Client,
     base_url: String,
@@ -34,7 +164,7 @@ pub struct ApiClient {
 impl ApiClient {
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
-            client: Client::new(),
+            client: build_http_client(),
             base_url: format!("{}/cli/v1", base_url.into().trim_end_matches('/')),
             token: token.into(),
         }
@@ -86,7 +216,8 @@ impl ApiClient {
         B: Serialize,
         R: DeserializeOwned,
     {
-        let resp = self.build_request(method, path, body).send().await?;
+        let resp =
+            send_request_with_retry(self.build_request(method.clone(), path, body), method).await?;
         let resp = Self::check_response(resp).await?;
         let data = resp.json::<R>().await?;
         Ok(data)
@@ -94,7 +225,9 @@ impl ApiClient {
 
     /// Send a request discarding the response body (handles 200/204).
     async fn do_request_void(&self, method: Method, path: &str) -> ApiResult<()> {
-        let resp = self.build_request::<()>(method, path, None).send().await?;
+        let resp =
+            send_request_with_retry(self.build_request::<()>(method.clone(), path, None), method)
+                .await?;
         Self::check_response(resp).await?;
         Ok(())
     }
@@ -136,10 +269,11 @@ impl ApiClient {
     }
 
     pub async fn post_void<B: Serialize>(&self, path: &str, body: &B) -> ApiResult<()> {
-        let resp = self
-            .build_request(Method::POST, path, Some(body))
-            .send()
-            .await?;
+        let resp = send_request_with_retry(
+            self.build_request(Method::POST, path, Some(body)),
+            Method::POST,
+        )
+        .await?;
         Self::check_response(resp).await?;
         Ok(())
     }
@@ -214,7 +348,7 @@ impl ApiClient {
     }
 
     pub async fn auth_initiate(base_url: &str) -> ApiResult<AuthInitiateResponse> {
-        let client = Client::new();
+        let client = build_http_client();
         let url = format!("{}/cli/v1/auth/initiate", base_url.trim_end_matches('/'));
         let resp = Self::build_unauthed_request::<()>(&client, Method::POST, &url, None)
             .send()
@@ -224,7 +358,7 @@ impl ApiClient {
     }
 
     pub async fn auth_poll(base_url: &str, polling_code: &str) -> ApiResult<AuthPollResponse> {
-        let client = Client::new();
+        let client = build_http_client();
         let url = format!("{}/cli/v1/auth/poll", base_url.trim_end_matches('/'));
         let body = serde_json::json!({ "pollingCode": polling_code });
         let resp = Self::build_unauthed_request(&client, Method::POST, &url, Some(&body))

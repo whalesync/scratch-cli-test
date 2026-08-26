@@ -1,8 +1,10 @@
 use super::{
+    is_safe_to_replay_after_server_may_have_received_it, is_status_safe_to_retry,
     job_progress_path, ApiClient, BlockedDirtyResponse, BlockedStaleResponse, CheckFailedResponse,
-    JobProgress, UploadPatchCommitResponse, Workbook,
+    JobProgress, UploadPatchCommitResponse, Workbook, MAX_REQUEST_ATTEMPTS,
+    RESPONSE_SILENCE_TIMEOUT, RETRY_BACKOFF_BY_FAILED_ATTEMPTS, SERVER_SIDE_REQUEST_CEILING,
 };
-use reqwest::{Client, Method};
+use reqwest::{Client, Method, StatusCode};
 
 #[test]
 fn workbook_deserializes_config_git_url_alias() {
@@ -297,4 +299,87 @@ fn check_failed_response_deserializes_from_nest_service_unavailable_body() {
     assert_eq!(parsed.status, "check_failed");
     assert_eq!(parsed.connector_account_id, "ca_conn1");
     assert!(parsed.message.unwrap().contains("Try again"));
+}
+
+// ── Transient-transport retry policy ─────────────────────────────────────────
+// A single dropped connection between the CLI (or the desktop app, which shells out to
+// `scratchmd`) and the API used to abort a whole pull/publish/upload. These lock down the
+// safety rules that decide when replaying a request is allowed.
+
+#[test]
+fn reads_are_replayable_after_the_server_may_have_received_the_request() {
+    assert!(is_safe_to_replay_after_server_may_have_received_it(
+        &Method::GET
+    ));
+    assert!(is_safe_to_replay_after_server_may_have_received_it(
+        &Method::HEAD
+    ));
+}
+
+#[test]
+fn writes_are_not_replayable_after_the_server_may_have_received_the_request() {
+    // POST/PATCH could duplicate work. DELETE is excluded too even though HTTP calls it
+    // idempotent: a replay of a delete that actually succeeded returns 404, which would
+    // surface a completed operation to the caller as `ApiError::NotFound`.
+    for method in [Method::POST, Method::PATCH, Method::PUT, Method::DELETE] {
+        assert!(
+            !is_safe_to_replay_after_server_may_have_received_it(&method),
+            "{method} must not be replayed once the server may have received it"
+        );
+    }
+}
+
+#[test]
+fn load_balancer_failure_statuses_are_retried_for_reads_only() {
+    for status in [429u16, 502, 503, 504] {
+        let status = StatusCode::from_u16(status).unwrap();
+        assert!(
+            is_status_safe_to_retry(status, &Method::GET),
+            "{status} should be retried on a read"
+        );
+        assert!(
+            !is_status_safe_to_retry(status, &Method::POST),
+            "{status} must not be retried on a write"
+        );
+    }
+}
+
+#[test]
+fn meaningful_api_statuses_are_never_retried() {
+    // `upload_patch_commit` maps 503 `check_failed` and 409 `blocked_stale`/`blocked_dirty`
+    // to real outcomes its caller must see, and 4xx are the caller's problem to surface.
+    for status in [400u16, 401, 403, 404, 409, 500] {
+        let status = StatusCode::from_u16(status).unwrap();
+        assert!(
+            !is_status_safe_to_retry(status, &Method::GET),
+            "{status} carries meaning and must reach the caller"
+        );
+    }
+    // The write path keeps its 503 even though 503 is retryable for reads.
+    assert!(!is_status_safe_to_retry(
+        StatusCode::SERVICE_UNAVAILABLE,
+        &Method::POST
+    ));
+}
+
+#[test]
+fn response_silence_timeout_outlasts_the_servers_own_request_ceiling() {
+    // Until the response headers arrive, reqwest treats `read_timeout` as a hard
+    // time-to-first-byte deadline rather than an inactivity bound, so anything at or below the
+    // server's own ceiling would cut off slow-but-working endpoints (`listTables` against a
+    // large remote account, say) before the server had a chance to answer or time out itself.
+    assert!(
+        RESPONSE_SILENCE_TIMEOUT > SERVER_SIDE_REQUEST_CEILING,
+        "a request the server is still allowed to be working on must not be cut off by the client"
+    );
+}
+
+#[test]
+fn backoff_table_covers_every_retry_the_attempt_budget_allows() {
+    // `send_request_with_retry` indexes the backoff table by the number of failed attempts,
+    // so the table must have one entry per retry or the loop would panic on the last one.
+    assert_eq!(
+        RETRY_BACKOFF_BY_FAILED_ATTEMPTS.len(),
+        MAX_REQUEST_ATTEMPTS - 1
+    );
 }

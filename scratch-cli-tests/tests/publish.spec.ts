@@ -4,6 +4,7 @@ import path from "node:path";
 import { Client } from "pg";
 import YAML from "yaml";
 import { ScratchCli } from "../src/cli";
+import { scratchApiGet } from "../src/scratch-api";
 import {
   deleteWorkspace,
   TEST_CONNECTOR_SERVICE,
@@ -3089,26 +3090,6 @@ describeIfPostgres(
 // This integration test proves the rest end-to-end against a real server + Postgres:
 // the new succeeded-operations endpoint is live and returns the published record, the
 // accepted patch is retired on publish success, and a re-publish does not re-send.
-
-const dev10741ServerUrl =
-  process.env.SCRATCH_API_URL || "http://localhost:3010";
-const dev10741ApiKey = process.env.SCRATCH_API_KEY;
-
-/** GET a Scratch server route with the test API token. */
-async function scratchApiGet<T>(urlPath: string): Promise<T> {
-  const res = await fetch(`${dev10741ServerUrl}${urlPath}`, {
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `API-Token ${dev10741ApiKey}`,
-    },
-  });
-  if (!res.ok) {
-    throw new Error(
-      `API GET ${urlPath} failed (${res.status}): ${await res.text()}`,
-    );
-  }
-  return (await res.json()) as T;
-}
 
 describeIfPostgres(
   "Publish-success signal (DEV-10741) — succeeded-operations endpoint retires the accepted patch, no ghost",

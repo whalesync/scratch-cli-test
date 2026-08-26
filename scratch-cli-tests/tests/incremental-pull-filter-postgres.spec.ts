@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import { ScratchCli } from "../src/cli";
+import { scratchApi } from "../src/scratch-api";
 import {
   deleteWorkspace,
   TEST_CONNECTOR_SERVICE,
@@ -17,9 +18,6 @@ const postgresUrl = process.env.DATABASE_URL;
 const preserveOnFailure = process.env.PRESERVE_WORKBOOK_ON_FAILURE === "true";
 
 const describeIfPostgres = postgresUrl ? describe : describe.skip;
-
-const serverUrl = process.env.SCRATCH_API_URL || "http://localhost:3010";
-const apiKey = process.env.SCRATCH_API_KEY;
 
 /**
  * Connector-side SQL WHERE filter declared on the folder. The Postgres
@@ -40,27 +38,6 @@ const FOLDER_FILTER = "price > 20";
  * pull's watermark capture. 70s gives margin for job latency / the strict `>`.
  */
 const CLOCK_SKEW_WAIT_MS = 70_000;
-
-/** Call the Scratch server API directly with the test API token. */
-async function scratchApi<T>(
-  method: string,
-  urlPath: string,
-  body?: unknown,
-): Promise<T> {
-  const res = await fetch(`${serverUrl}${urlPath}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `API-Token ${apiKey}`,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API ${method} ${urlPath} failed (${res.status}): ${text}`);
-  }
-  return (await res.json()) as T;
-}
 
 interface PullPublicProgress {
   totalFiles: number;
@@ -110,11 +87,13 @@ function findJsonFiles(dir: string): string[] {
 }
 
 /** Parse every downloaded record file into {name, price} objects. */
-function readProducts(
-  dir: string,
-): Array<{ name: unknown; price: unknown }> {
+function readProducts(dir: string): Array<{ name: unknown; price: unknown }> {
   return findJsonFiles(dir).map(
-    (f) => JSON.parse(fs.readFileSync(f, "utf-8")) as { name: unknown; price: unknown },
+    (f) =>
+      JSON.parse(fs.readFileSync(f, "utf-8")) as {
+        name: unknown;
+        price: unknown;
+      },
   );
 }
 
@@ -292,7 +271,9 @@ describeIfPostgres(
         ]);
         // Only the charging pad's price advanced; the bottle is untouched.
         const pad = afterInc.find((p) => p.name === "Wireless Charging Pad")!;
-        const bottle = afterInc.find((p) => p.name === "Aluminum Water Bottle")!;
+        const bottle = afterInc.find(
+          (p) => p.name === "Aluminum Water Bottle",
+        )!;
         expect(Number(pad.price)).toBe(44.95);
         expect(Number(bottle.price)).toBe(24.99);
 

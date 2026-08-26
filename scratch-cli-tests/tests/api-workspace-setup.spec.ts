@@ -10,36 +10,13 @@ import {
   teardownProductsTable,
 } from "../src/postgres";
 import { Client } from "pg";
+import { scratchApi } from "../src/scratch-api";
 
 const cli = new ScratchCli();
 const postgresUrl = process.env.DATABASE_URL;
 const preserveOnFailure = process.env.PRESERVE_WORKBOOK_ON_FAILURE === "true";
 
 const describeIfPostgres = postgresUrl ? describe : describe.skip;
-
-const serverUrl = process.env.SCRATCH_API_URL || "http://localhost:3010";
-const apiKey = process.env.SCRATCH_API_KEY;
-
-/** Call the Scratch server API directly with the test API token. */
-async function scratchApi<T>(
-  method: string,
-  urlPath: string,
-  body?: unknown,
-): Promise<T> {
-  const res = await fetch(`${serverUrl}${urlPath}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `API-Token ${apiKey}`,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API ${method} ${urlPath} failed (${res.status}): ${text}`);
-  }
-  return (await res.json()) as T;
-}
 
 /** Recursively find all .json record files under a directory (skipping dot-dirs). */
 function findJsonFiles(dir: string): string[] {

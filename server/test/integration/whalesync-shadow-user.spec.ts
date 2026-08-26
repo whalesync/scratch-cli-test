@@ -25,10 +25,14 @@
  * not localhost, and can also be forced with WHALESYNC_TEST_API_ONLY=true.
  */
 import { PrismaClient } from '@prisma/client';
-import axios from 'axios';
 import { randomUUID } from 'crypto';
 
-import { getApiUrl } from './common';
+import { createScratchApiClient, getApiUrl } from './common';
+
+// Bounded + transport-retrying client. A bare `axios` has no timeout, so one dropped connection
+// used to hang this suite until Jest's 60s cap fired with a message that named no request —
+// which is exactly how a healthy server produced a red post-deploy run.
+const axios = createScratchApiClient();
 
 const ADMIN_TOKEN = process.env.SCRATCH_ADMIN_API_KEY;
 const shouldRun = process.env.RUN_WHALESYNC_INTEGRATION === 'true' && !!ADMIN_TOKEN;

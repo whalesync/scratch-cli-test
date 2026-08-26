@@ -8,6 +8,7 @@ import {
   uniqueName,
 } from "../src/helpers";
 import { setupTestTable, teardownTestTable } from "../src/postgres";
+import { scratchApi } from "../src/scratch-api";
 
 const cli = new ScratchCli();
 const postgresUrl = process.env.DATABASE_URL;
@@ -29,40 +30,22 @@ function findJsonFiles(dir: string): string[] {
   return results;
 }
 
-const serverUrl = process.env.SCRATCH_API_URL || "http://localhost:3010";
-const apiKey = process.env.SCRATCH_API_KEY;
-
-/** Call the Scratch server API directly with the test API token. */
-async function scratchApi<T>(
-  method: string,
-  urlPath: string,
-  body?: unknown,
-): Promise<T> {
-  const res = await fetch(`${serverUrl}${urlPath}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `API-Token ${apiKey}`,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API ${method} ${urlPath} failed (${res.status}): ${text}`);
-  }
-  return (await res.json()) as T;
-}
-
 interface JobEntity {
   dbJobId: string;
   state: string;
   failedReason?: string | null;
 }
 
-/** Poll a job until it reaches a terminal state (completed, failed, canceled). */
+/**
+ * Poll a job until it reaches a terminal state (completed, failed, canceled).
+ *
+ * The budget matches the other pull suites, and must stay above a full exhausted attempt chain
+ * in `scratchApi` (~46s) so that a transport stall is reported as one rather than being blamed
+ * on the job for not finishing in time.
+ */
 async function waitForJob(
   jobId: string,
-  timeoutMs = 30_000,
+  timeoutMs = 60_000,
 ): Promise<JobEntity> {
   const start = Date.now();
   const terminalStates = ["completed", "failed", "canceled"];

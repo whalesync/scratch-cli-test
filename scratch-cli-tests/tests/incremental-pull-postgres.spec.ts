@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import { ScratchCli } from "../src/cli";
+import { scratchApi } from "../src/scratch-api";
 import {
   deleteWorkspace,
   TEST_CONNECTOR_SERVICE,
@@ -18,9 +19,6 @@ const preserveOnFailure = process.env.PRESERVE_WORKBOOK_ON_FAILURE === "true";
 
 const describeIfPostgres = postgresUrl ? describe : describe.skip;
 
-const serverUrl = process.env.SCRATCH_API_URL || "http://localhost:3010";
-const apiKey = process.env.SCRATCH_API_KEY;
-
 /**
  * The Postgres connector subtracts a 60s clock-skew margin from the watermark
  * (`PG_INCREMENTAL_CLOCK_SKEW_MS`): its predicate is `WHERE updated_dt >
@@ -32,27 +30,6 @@ const apiKey = process.env.SCRATCH_API_KEY;
  * job-scheduling latency and the strict `>` boundary.
  */
 const CLOCK_SKEW_WAIT_MS = 70_000;
-
-/** Call the Scratch server API directly with the test API token. */
-async function scratchApi<T>(
-  method: string,
-  urlPath: string,
-  body?: unknown,
-): Promise<T> {
-  const res = await fetch(`${serverUrl}${urlPath}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `API-Token ${apiKey}`,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API ${method} ${urlPath} failed (${res.status}): ${text}`);
-  }
-  return (await res.json()) as T;
-}
 
 interface PullPublicProgress {
   totalFiles: number;
