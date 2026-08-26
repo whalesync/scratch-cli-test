@@ -46,6 +46,29 @@ if (!shouldRun) {
 
 const describeOrSkip = shouldRun ? describe : describe.skip;
 
+/**
+ * Run `fn` over `items` with at most `concurrencyLimit` calls in flight at once, preserving input
+ * order in the returned results. Used to spread a burst of requests across a fixed-size worker pool
+ * instead of a single wide `Promise.all` spike (see the burst-polling test for why that matters).
+ */
+async function mapWithConcurrency<Item, Result>(
+  items: Item[],
+  concurrencyLimit: number,
+  fn: (item: Item) => Promise<Result>,
+): Promise<Result[]> {
+  const results: Result[] = new Array<Result>(items.length);
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex++;
+      results[currentIndex] = await fn(items[currentIndex]);
+    }
+  }
+  const workerCount = Math.min(concurrencyLimit, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
 const apiUrl = getApiUrl();
 const adminHeaders = { 'X-Scratch-Admin-Token': ADMIN_TOKEN ?? '' };
 const anyStatus = { validateStatus: () => true };
@@ -379,6 +402,18 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
   });
 
   // 9 — rate-limit bypass for WHALESYNC_SESSION tokens
+  //
+  // Sends the full burst through a small fixed-size worker pool rather than firing all 75 at once.
+  // Against the remote deployed server a 75-wide `Promise.all` spike inflates tail latency on both the
+  // runner egress and the server, and the retry client's 15s-per-attempt timeout can then turn a single
+  // stalled GET into ~46s of retries — which, awaited alongside the rest, used to push the whole test
+  // past its 60s cap and flake with a timeout that named no request. A bounded pool lands all 75 within
+  // a couple seconds (still inside the 60s rate-limit window and still well over the ~60-req cap), so the
+  // assertion is identical while the herd that caused the flakiness is gone.
+  //
+  // The 120s per-test timeout is a backstop above the suite-wide 60s cap: a genuinely slow (but
+  // non-throttling) remote should not read as a failure. The bounded pool is what actually caps the
+  // tail; the larger timeout is the margin.
   it('does not rate limit WHALESYNC_SESSION tokens under burst polling', async () => {
     const whalesyncUserId = randomUUID();
     const session = await createSession(whalesyncUserId, 'burst@example.com');
@@ -386,14 +421,14 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     // Fire well over the default 60 req / 60s cap. With the bypass in place none should be throttled.
     // NOTE: if API_RATE_LIMIT_DISABLED is true (the default in `development`), this trivially passes and
     // proves nothing — the real throttling contrast is covered by the ApiRateLimitGuard unit test.
-    const requests = Array.from({ length: 75 }, () =>
+    const requestIndexes = Array.from({ length: 75 }, (_unused, index) => index);
+    const responses = await mapWithConcurrency(requestIndexes, 10, () =>
       axios.get(`${apiUrl}/users/current`, {
         headers: { Authorization: `API-Token ${session.apiToken}` },
         ...anyStatus,
       }),
     );
-    const responses = await Promise.all(requests);
     const throttled = responses.filter((response) => response.status === 429);
     expect(throttled).toHaveLength(0);
-  });
+  }, 120_000);
 });
