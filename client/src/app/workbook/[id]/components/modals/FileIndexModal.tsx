@@ -1,20 +1,13 @@
 'use client';
 
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { formatNumber } from '@/utils/helpers';
-import { Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
+import { Group, Modal, Pagination, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { WorkbookId } from '@spinner/shared-types';
 import { DatabaseIcon } from 'lucide-react';
+import { useState } from 'react';
 import useSWR from 'swr';
-
-interface FileIndexEntry {
-  id: string;
-  workbookId: string;
-  folderPath: string;
-  filename: string;
-  recordId: string;
-  lastSeenAt: string | null;
-}
 
 interface FileIndexModalProps {
   opened: boolean;
@@ -22,11 +15,18 @@ interface FileIndexModalProps {
   workbookId: WorkbookId;
 }
 
+const PAGE_SIZE = 100;
+
 export function FileIndexModal({ opened, onClose, workbookId }: FileIndexModalProps) {
-  const { data: rows, isLoading } = useSWR(
-    opened ? ['file-index', workbookId] : null,
-    () => scratchApiClient.publish.listFileIndex(workbookId) as Promise<FileIndexEntry[]>,
+  const [page, setPage] = useState(1);
+
+  const { data, isLoading } = useSWR(opened ? SWR_KEYS.publishPlans.fileIndex(workbookId, page) : null, () =>
+    scratchApiClient.publish.listFileIndex(workbookId, { page, pageSize: PAGE_SIZE }),
   );
+
+  const rows = data?.data;
+  const total = data?.total ?? 0;
+  const totalPages = data ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1;
 
   return (
     <Modal
@@ -37,7 +37,7 @@ export function FileIndexModal({ opened, onClose, workbookId }: FileIndexModalPr
           <DatabaseIcon size={18} />
           <Title order={4}>File Index</Title>
           <Text size="sm" c="dimmed">
-            ({formatNumber(rows?.length ?? 0)} entries)
+            ({formatNumber(total)} entries)
           </Text>
         </Group>
       }
@@ -48,54 +48,61 @@ export function FileIndexModal({ opened, onClose, workbookId }: FileIndexModalPr
           Loading...
         </Text>
       ) : (
-        <ScrollArea h={500}>
-          <Table stickyHeader highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Folder</Table.Th>
-                <Table.Th>Filename</Table.Th>
-                <Table.Th>Record ID</Table.Th>
-                <Table.Th>Last Seen</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {!rows?.length ? (
+        <>
+          <ScrollArea h={500}>
+            <Table stickyHeader highlightOnHover>
+              <Table.Thead>
                 <Table.Tr>
-                  <Table.Td colSpan={4}>
-                    <Text size="sm" c="dimmed" ta="center" py="md">
-                      No entries.
-                    </Text>
-                  </Table.Td>
+                  <Table.Th>Folder</Table.Th>
+                  <Table.Th>Filename</Table.Th>
+                  <Table.Th>Record ID</Table.Th>
+                  <Table.Th>Last Seen</Table.Th>
                 </Table.Tr>
-              ) : (
-                rows.map((r) => (
-                  <Table.Tr key={r.id}>
-                    <Table.Td>
-                      <Text size="xs" ff="monospace">
-                        {r.folderPath}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" ff="monospace">
-                        {r.filename}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" ff="monospace">
-                        {r.recordId}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" c="dimmed">
-                        {r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : '—'}
+              </Table.Thead>
+              <Table.Tbody>
+                {!rows?.length ? (
+                  <Table.Tr>
+                    <Table.Td colSpan={4}>
+                      <Text size="sm" c="dimmed" ta="center" py="md">
+                        No entries.
                       </Text>
                     </Table.Td>
                   </Table.Tr>
-                ))
-              )}
-            </Table.Tbody>
-          </Table>
-        </ScrollArea>
+                ) : (
+                  rows.map((r) => (
+                    <Table.Tr key={r.id}>
+                      <Table.Td>
+                        <Text size="xs" ff="monospace">
+                          {r.folderPath}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" ff="monospace">
+                          {r.filename}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" ff="monospace">
+                          {r.recordId}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" c="dimmed">
+                          {r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : '—'}
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))
+                )}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+          {totalPages > 1 && (
+            <Group justify="center" mt="sm">
+              <Pagination value={page} onChange={setPage} total={totalPages} size="sm" />
+            </Group>
+          )}
+        </>
       )}
     </Modal>
   );

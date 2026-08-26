@@ -96,26 +96,64 @@ export class PublishPlanCrudService {
     return { data, total, page, pageSize };
   }
 
-  async listFileIndex(workbookId: string) {
-    return await this.db.client.fileIndex.findMany({
-      where: { workbookId },
-      orderBy: [{ folderPath: 'asc' }, { filename: 'asc' }],
-    });
+  async listFileIndex(workbookId: string, options?: { page?: number; pageSize?: number }) {
+    const page = options?.page ?? 1;
+    const pageSize = Math.min(options?.pageSize ?? 100, 500);
+    const skip = (page - 1) * pageSize;
+    const where = { workbookId };
+
+    const [data, total] = await Promise.all([
+      this.db.client.fileIndex.findMany({
+        where,
+        orderBy: [{ folderPath: 'asc' }, { filename: 'asc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.db.client.fileIndex.count({ where }),
+    ]);
+
+    return { data, total, page, pageSize };
   }
 
-  async listRefIndex(workbookId: string) {
-    return await this.db.client.fileReference.findMany({
-      where: { workbookId },
-      orderBy: [{ sourceFilePath: 'asc' }],
-    });
+  async listRefIndex(workbookId: string, options?: { page?: number; pageSize?: number }) {
+    const page = options?.page ?? 1;
+    const pageSize = Math.min(options?.pageSize ?? 100, 500);
+    const skip = (page - 1) * pageSize;
+    const where = { workbookId };
+
+    const [data, total] = await Promise.all([
+      this.db.client.fileReference.findMany({
+        where,
+        orderBy: [{ sourceFilePath: 'asc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.db.client.fileReference.count({ where }),
+    ]);
+
+    return { data, total, page, pageSize };
   }
 
-  async listAssetIndex(workbookId: string, dataFolderId?: string) {
-    const assets = await this.db.client.asset.findMany({
-      where: { workbookId, ...(dataFolderId ? { dataFolderId } : {}) },
-      orderBy: [{ service: 'asc' }, { lastSeenAt: 'desc' }],
-    });
-    return assets.map((a) => ({ ...a, size: a.size != null ? Number(a.size) : null }));
+  async listAssetIndex(workbookId: string, options?: { dataFolderId?: string; page?: number; pageSize?: number }) {
+    const page = options?.page ?? 1;
+    const pageSize = Math.min(options?.pageSize ?? 100, 500);
+    const skip = (page - 1) * pageSize;
+    const where = { workbookId, ...(options?.dataFolderId ? { dataFolderId: options.dataFolderId } : {}) };
+
+    const [assets, total] = await Promise.all([
+      this.db.client.asset.findMany({
+        where,
+        orderBy: [{ service: 'asc' }, { lastSeenAt: 'desc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.db.client.asset.count({ where }),
+    ]);
+
+    // `size` is a BigInt column; serialize it as a plain number for the wire.
+    const data = assets.map((a) => ({ ...a, size: a.size != null ? Number(a.size) : null }));
+
+    return { data, total, page, pageSize };
   }
 
   async listPublishPlanOperations(

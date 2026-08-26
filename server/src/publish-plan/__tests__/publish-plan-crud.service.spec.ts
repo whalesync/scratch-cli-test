@@ -225,3 +225,101 @@ describe('collapseFailedOperationsByPath', () => {
     expect(collapsed).toEqual([{ filePath: 'a.json', phase: 'edits', error: 'reject a' }]);
   });
 });
+
+/**
+ * DEV-11208: the dev-tools index endpoints (file / ref / asset) used to read a
+ * workbook's ENTIRE index into one response (no take/skip). They now page
+ * server-side and return a `{ data, total, page, pageSize }` envelope, mirroring
+ * `listPublishPlans` — default page size 100, capped at 500.
+ */
+describe('PublishPlanCrudService index pagination (DEV-11208)', () => {
+  const makeService = (model: 'fileIndex' | 'fileReference' | 'asset') => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const count = jest.fn().mockResolvedValue(0);
+    const db = { client: { [model]: { findMany, count } } } as unknown as DbService;
+    const service = new PublishPlanCrudService(db, {} as unknown as BullEnqueuerService);
+    return { service, findMany, count };
+  };
+
+  it('listFileIndex: defaults to page 1 / pageSize 100, newest folder+filename order, envelope shape', async () => {
+    const { service, findMany, count } = makeService('fileIndex');
+    count.mockResolvedValue(250);
+
+    const result = await service.listFileIndex('wb1');
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workbookId: 'wb1' },
+        orderBy: [{ folderPath: 'asc' }, { filename: 'asc' }],
+        skip: 0,
+        take: 100,
+      }),
+    );
+    expect(count).toHaveBeenCalledWith({ where: { workbookId: 'wb1' } });
+    expect(result).toEqual({ data: [], total: 250, page: 1, pageSize: 100 });
+  });
+
+  it('listFileIndex: computes skip from page/pageSize and caps the page size at 500', async () => {
+    const { service, findMany } = makeService('fileIndex');
+
+    await service.listFileIndex('wb1', { page: 4, pageSize: 25 });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 75, take: 25 }));
+
+    const capped = await service.listFileIndex('wb1', { pageSize: 5000 });
+    expect(capped.pageSize).toBe(500);
+  });
+
+  it('listRefIndex: paginates ordered by sourceFilePath and echoes the page back', async () => {
+    const { service, findMany, count } = makeService('fileReference');
+    count.mockResolvedValue(3);
+
+    const result = await service.listRefIndex('wb1', { page: 2, pageSize: 50 });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workbookId: 'wb1' },
+        orderBy: [{ sourceFilePath: 'asc' }],
+        skip: 50,
+        take: 50,
+      }),
+    );
+    expect(result).toMatchObject({ total: 3, page: 2, pageSize: 50 });
+  });
+
+  it('listAssetIndex: scopes the page query AND the count by dataFolderId, and maps BigInt size to number', async () => {
+    const { service, findMany, count } = makeService('asset');
+    findMany.mockResolvedValue([
+      { id: 'a1', size: BigInt(2048) },
+      { id: 'a2', size: null },
+    ]);
+    count.mockResolvedValue(2);
+
+    const result = await service.listAssetIndex('wb1', { dataFolderId: 'df1', page: 1, pageSize: 100 });
+
+    const expectedWhere = { workbookId: 'wb1', dataFolderId: 'df1' };
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expectedWhere,
+        orderBy: [{ service: 'asc' }, { lastSeenAt: 'desc' }],
+        skip: 0,
+        take: 100,
+      }),
+    );
+    expect(count).toHaveBeenCalledWith({ where: expectedWhere });
+    expect(result.total).toBe(2);
+    expect(result.data).toEqual([
+      { id: 'a1', size: 2048 },
+      { id: 'a2', size: null },
+    ]);
+    expect(typeof result.data[0].size).toBe('number');
+  });
+
+  it('listAssetIndex: omits the dataFolderId filter when none is provided', async () => {
+    const { service, findMany, count } = makeService('asset');
+
+    await service.listAssetIndex('wb1');
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workbookId: 'wb1' } }));
+    expect(count).toHaveBeenCalledWith({ where: { workbookId: 'wb1' } });
+  });
+});

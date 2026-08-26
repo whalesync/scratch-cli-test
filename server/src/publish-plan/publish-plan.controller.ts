@@ -190,28 +190,50 @@ export class PublishPlanController {
   }
 
   @Get('index/files')
-  fileIndex(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser) {
+  fileIndex(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Query('page') page: string | undefined,
+    @Query('pageSize') pageSize: string | undefined,
+    @Req() req: RequestWithUser,
+  ) {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return this.publishAdminService.listFileIndex(workbookId);
+    return this.publishAdminService.listFileIndex(workbookId, {
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+    });
   }
 
   @Get('index/refs')
-  refIndex(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser) {
+  refIndex(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Query('page') page: string | undefined,
+    @Query('pageSize') pageSize: string | undefined,
+    @Req() req: RequestWithUser,
+  ) {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return this.publishAdminService.listRefIndex(workbookId);
+    return this.publishAdminService.listRefIndex(workbookId, {
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+    });
   }
 
   @Get('index/assets')
   assetIndex(
     @Param('workbookId') workbookId: WorkbookId,
     @Query('dataFolderId') dataFolderId: string | undefined,
+    @Query('page') page: string | undefined,
+    @Query('pageSize') pageSize: string | undefined,
     @Req() req: RequestWithUser,
   ) {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return this.publishAdminService.listAssetIndex(workbookId, dataFolderId);
+    return this.publishAdminService.listAssetIndex(workbookId, {
+      dataFolderId,
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+    });
   }
 
   @Delete(':pipelineId')

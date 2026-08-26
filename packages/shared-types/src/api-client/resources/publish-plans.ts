@@ -1,3 +1,4 @@
+import type { Asset, FileIndex, FileReference } from '../../db';
 import type {
   PublishPlanEntity,
   PublishPlanListResponse,
@@ -55,25 +56,45 @@ export function createPublishPlansApi(http: Http) {
       return res.data;
     },
 
-    listFileIndex: async (workbookId: string): Promise<unknown[]> => {
-      const res = await http.get<unknown[]>(`/workbook/${workbookId}/publish-v2/index/files`, {
-        fallbackMessage: 'Failed to list file index',
-      });
+    listFileIndex: async (
+      workbookId: string,
+      options?: { page?: number; pageSize?: number },
+    ): Promise<{ data: FileIndex[]; total: number; page: number; pageSize: number }> => {
+      const res = await http.get<{ data: FileIndex[]; total: number; page: number; pageSize: number }>(
+        `/workbook/${workbookId}/publish-v2/index/files`,
+        {
+          params: { page: options?.page, pageSize: options?.pageSize },
+          fallbackMessage: 'Failed to list file index',
+        },
+      );
       return res.data;
     },
 
-    listRefIndex: async (workbookId: string): Promise<unknown[]> => {
-      const res = await http.get<unknown[]>(`/workbook/${workbookId}/publish-v2/index/refs`, {
-        fallbackMessage: 'Failed to list ref index',
-      });
+    listRefIndex: async (
+      workbookId: string,
+      options?: { page?: number; pageSize?: number },
+    ): Promise<{ data: FileReference[]; total: number; page: number; pageSize: number }> => {
+      const res = await http.get<{ data: FileReference[]; total: number; page: number; pageSize: number }>(
+        `/workbook/${workbookId}/publish-v2/index/refs`,
+        {
+          params: { page: options?.page, pageSize: options?.pageSize },
+          fallbackMessage: 'Failed to list ref index',
+        },
+      );
       return res.data;
     },
 
-    listAssetIndex: async (workbookId: string, dataFolderId?: string): Promise<unknown[]> => {
-      const res = await http.get<unknown[]>(`/workbook/${workbookId}/publish-v2/index/assets`, {
-        params: dataFolderId ? { dataFolderId } : {},
-        fallbackMessage: 'Failed to list asset index',
-      });
+    listAssetIndex: async (
+      workbookId: string,
+      options?: { dataFolderId?: string; page?: number; pageSize?: number },
+    ): Promise<{ data: Asset[]; total: number; page: number; pageSize: number }> => {
+      const res = await http.get<{ data: Asset[]; total: number; page: number; pageSize: number }>(
+        `/workbook/${workbookId}/publish-v2/index/assets`,
+        {
+          params: { dataFolderId: options?.dataFolderId, page: options?.page, pageSize: options?.pageSize },
+          fallbackMessage: 'Failed to list asset index',
+        },
+      );
       return res.data;
     },
 

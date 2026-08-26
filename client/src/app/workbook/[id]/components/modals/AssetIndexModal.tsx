@@ -1,33 +1,13 @@
 'use client';
 
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { formatNumber } from '@/utils/helpers';
-import { Anchor, Badge, Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Group, Modal, Pagination, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { ImageIcon } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import useSWR from 'swr';
-
-interface AssetEntry {
-  id: string;
-  workbookId: string;
-  dataFolderId: string | null;
-  service: string;
-  remoteAssetId: string;
-  url: string | null;
-  filename: string | null;
-  mimeType: string | null;
-  size: number | null;
-  width: number | null;
-  height: number | null;
-  altText: string | null;
-  mediaType: string | null;
-  urlExpiresAt: string | null;
-  lastSeenAt: string | null;
-  rehostedUrl: string | null;
-  rehostedAt: string | null;
-  updatedAt: string;
-}
 
 interface AssetIndexModalProps {
   opened: boolean;
@@ -35,6 +15,8 @@ interface AssetIndexModalProps {
   workbookId: WorkbookId;
   dataFolderId: DataFolderId;
 }
+
+const PAGE_SIZE = 100;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -61,11 +43,19 @@ function isExpired(urlExpiresAt: string | null): boolean {
 }
 
 export function AssetIndexModal({ opened, onClose, workbookId, dataFolderId }: AssetIndexModalProps) {
-  const { data: rows, isLoading } = useSWR(
-    opened ? ['asset-index', workbookId, dataFolderId] : null,
-    () => scratchApiClient.publish.listAssetIndex(workbookId, dataFolderId) as Promise<AssetEntry[]>,
+  const [page, setPage] = useState(1);
+
+  const { data, isLoading } = useSWR(
+    opened ? SWR_KEYS.publishPlans.assetIndex(workbookId, dataFolderId, page) : null,
+    () => scratchApiClient.publish.listAssetIndex(workbookId, { dataFolderId, page, pageSize: PAGE_SIZE }),
   );
 
+  const rows = data?.data;
+  const total = data?.total ?? 0;
+  const totalPages = data ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1;
+
+  // Counts reflect the current page only (the index is paginated); a whole-index
+  // aggregate would defeat the pagination this modal exists to provide.
   const expiredCount = useMemo(() => rows?.filter((r) => isExpired(r.urlExpiresAt)).length ?? 0, [rows]);
   const rehostedCount = useMemo(() => rows?.filter((r) => r.rehostedUrl != null).length ?? 0, [rows]);
 
@@ -78,16 +68,16 @@ export function AssetIndexModal({ opened, onClose, workbookId, dataFolderId }: A
           <ImageIcon size={18} />
           <Title order={4}>Asset Index</Title>
           <Text size="sm" c="dimmed">
-            ({formatNumber(rows?.length ?? 0)} entries)
+            ({formatNumber(total)} entries)
           </Text>
           {rehostedCount > 0 && (
             <Badge color="teal" size="sm">
-              {formatNumber(rehostedCount)} rehosted
+              {formatNumber(rehostedCount)} rehosted on page
             </Badge>
           )}
           {expiredCount > 0 && (
             <Badge color="red" size="sm">
-              {formatNumber(expiredCount)} expired
+              {formatNumber(expiredCount)} expired on page
             </Badge>
           )}
         </Group>
@@ -98,103 +88,112 @@ export function AssetIndexModal({ opened, onClose, workbookId, dataFolderId }: A
         <Text size="sm" c="dimmed" ta="center" py="md">
           Loading...
         </Text>
-      ) : rows?.length === 0 ? (
-        <Text size="sm" c="dimmed" ta="center" py="md">
-          No assets.
-        </Text>
       ) : (
-        <ScrollArea h={600}>
-          <Table highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th tt="none">Filename</Table.Th>
-                <Table.Th tt="none">Field</Table.Th>
-                <Table.Th tt="none">Type</Table.Th>
-                <Table.Th tt="none">Size</Table.Th>
-                <Table.Th tt="none">Dimensions</Table.Th>
-                <Table.Th tt="none">URL</Table.Th>
-                <Table.Th tt="none">URL Status</Table.Th>
-                <Table.Th tt="none">Rehosted</Table.Th>
-                <Table.Th tt="none">Last Seen</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {rows?.map((r) => {
-                const expired = isExpired(r.urlExpiresAt);
-                return (
-                  <Table.Tr key={r.id} bg={expired ? 'var(--mantine-color-red-0)' : undefined}>
-                    <Table.Td>
-                      <Text size="xs" ff="monospace">
-                        {r.filename ?? '—'}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" ff="monospace" lineClamp={1} maw={150}>
-                        {r.remoteAssetId}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs">{r.mediaType ?? r.mimeType ?? '—'}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs">{r.size != null ? formatBytes(Number(r.size)) : '—'}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs">{r.width != null && r.height != null ? `${r.width}x${r.height}` : '—'}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      {(() => {
-                        const displayUrl = r.rehostedUrl ?? r.url;
-                        return displayUrl ? (
-                          <Anchor href={displayUrl} target="_blank" size="xs" ff="monospace">
-                            {abbreviateUrl(displayUrl)}
-                          </Anchor>
-                        ) : (
-                          <Text size="xs" c="dimmed">
-                            —
-                          </Text>
-                        );
-                      })()}
-                    </Table.Td>
-                    <Table.Td>
-                      {r.urlExpiresAt == null ? (
-                        <Badge size="xs" color="gray" variant="light">
-                          permanent
-                        </Badge>
-                      ) : expired ? (
-                        <Badge size="xs" color="red">
-                          expired
-                        </Badge>
-                      ) : (
-                        <Badge size="xs" color="green" variant="light">
-                          valid
-                        </Badge>
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      {r.rehostedUrl ? (
-                        <Anchor href={r.rehostedUrl} target="_blank" size="xs">
-                          <Badge size="xs" color="teal" variant="light">
-                            yes
-                          </Badge>
-                        </Anchor>
-                      ) : (
-                        <Badge size="xs" color="gray" variant="light">
-                          no
-                        </Badge>
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" c="dimmed">
-                        {r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : '—'}
-                      </Text>
-                    </Table.Td>
+        <>
+          {rows?.length === 0 ? (
+            <Text size="sm" c="dimmed" ta="center" py="md">
+              No assets.
+            </Text>
+          ) : (
+            <ScrollArea h={600}>
+              <Table highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th tt="none">Filename</Table.Th>
+                    <Table.Th tt="none">Field</Table.Th>
+                    <Table.Th tt="none">Type</Table.Th>
+                    <Table.Th tt="none">Size</Table.Th>
+                    <Table.Th tt="none">Dimensions</Table.Th>
+                    <Table.Th tt="none">URL</Table.Th>
+                    <Table.Th tt="none">URL Status</Table.Th>
+                    <Table.Th tt="none">Rehosted</Table.Th>
+                    <Table.Th tt="none">Last Seen</Table.Th>
                   </Table.Tr>
-                );
-              })}
-            </Table.Tbody>
-          </Table>
-        </ScrollArea>
+                </Table.Thead>
+                <Table.Tbody>
+                  {rows?.map((r) => {
+                    const expired = isExpired(r.urlExpiresAt);
+                    return (
+                      <Table.Tr key={r.id} bg={expired ? 'var(--mantine-color-red-0)' : undefined}>
+                        <Table.Td>
+                          <Text size="xs" ff="monospace">
+                            {r.filename ?? '—'}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs" ff="monospace" lineClamp={1} maw={150}>
+                            {r.remoteAssetId}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs">{r.mediaType ?? r.mimeType ?? '—'}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs">{r.size != null ? formatBytes(Number(r.size)) : '—'}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs">{r.width != null && r.height != null ? `${r.width}x${r.height}` : '—'}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          {(() => {
+                            const displayUrl = r.rehostedUrl ?? r.url;
+                            return displayUrl ? (
+                              <Anchor href={displayUrl} target="_blank" size="xs" ff="monospace">
+                                {abbreviateUrl(displayUrl)}
+                              </Anchor>
+                            ) : (
+                              <Text size="xs" c="dimmed">
+                                —
+                              </Text>
+                            );
+                          })()}
+                        </Table.Td>
+                        <Table.Td>
+                          {r.urlExpiresAt == null ? (
+                            <Badge size="xs" color="gray" variant="light">
+                              permanent
+                            </Badge>
+                          ) : expired ? (
+                            <Badge size="xs" color="red">
+                              expired
+                            </Badge>
+                          ) : (
+                            <Badge size="xs" color="green" variant="light">
+                              valid
+                            </Badge>
+                          )}
+                        </Table.Td>
+                        <Table.Td>
+                          {r.rehostedUrl ? (
+                            <Anchor href={r.rehostedUrl} target="_blank" size="xs">
+                              <Badge size="xs" color="teal" variant="light">
+                                yes
+                              </Badge>
+                            </Anchor>
+                          ) : (
+                            <Badge size="xs" color="gray" variant="light">
+                              no
+                            </Badge>
+                          )}
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs" c="dimmed">
+                            {r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleString() : '—'}
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+          )}
+          {totalPages > 1 && (
+            <Group justify="center" mt="sm">
+              <Pagination value={page} onChange={setPage} total={totalPages} size="sm" />
+            </Group>
+          )}
+        </>
       )}
     </Modal>
   );

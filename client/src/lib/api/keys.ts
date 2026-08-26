@@ -116,5 +116,9 @@ export const SWR_KEYS = {
       ['publish-plans', 'records', workbookId, planId, page, dataFolderId ?? '', phase ?? ''] as const,
     operation: (workbookId: WorkbookId, planId: string, filePath: string, phase: string) =>
       ['publish-plans', 'operation', workbookId, planId, filePath, phase] as const,
+    fileIndex: (workbookId: WorkbookId, page: number) => ['publish-plans', 'file-index', workbookId, page] as const,
+    refIndex: (workbookId: WorkbookId, page: number) => ['publish-plans', 'ref-index', workbookId, page] as const,
+    assetIndex: (workbookId: WorkbookId, dataFolderId: string, page: number) =>
+      ['publish-plans', 'asset-index', workbookId, dataFolderId, page] as const,
   },
 };
