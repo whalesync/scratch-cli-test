@@ -19,6 +19,7 @@ import { ExperimentsService } from '../experiments/experiments.service';
 import { UserFlag } from '../experiments/flags';
 import { Connector } from '../remote-service/connectors/connector';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
+import { PartialBatchCreateError } from '../remote-service/connectors/error';
 import {
   BaseJsonTableSpec,
   ConnectorErrorDetails,
@@ -86,6 +87,14 @@ type UpdatePublishOperation = PublishOperation & {
 // at pull time). `dispatchDeleteBatch` returns these so `processBatch` marks them
 // `failed-batch` instead of a silent `success` (DEV-10595).
 type DeleteOperationWithoutRemoteRecordId = { id: string; filePath: string };
+
+// A create operation the connector rejected inside an otherwise-successful batch
+// (a connector's `PartialBatchCreateError`, DEV-10200). `dispatchCreateBatch`
+// persists the batch's created records and returns these so `processBatch` marks
+// them `failed-batch` with the connector's own reason; the ordinary per-record
+// retry then creates them again — safe, because the connector guarantees a failed
+// op left nothing behind remotely.
+type CreateOperationFailedInBatch = { id: string; error: string };
 
 function narrowToUpdateOps(entries: PublishOperation[]): UpdatePublishOperation[] {
   return entries.map((entry) => {
@@ -330,7 +339,7 @@ export class PublishPlanRunService {
         if (currentPhase === 'asset-upload') {
           for (const entry of assetUploadEntries) {
             abortSignal?.throwIfAborted();
-            const batchHadError = await this.processBatch(
+            const failedEntryCountInBatch = await this.processBatch(
               currentPhase,
               [entry as PublishOperation],
               connector,
@@ -341,7 +350,7 @@ export class PublishPlanRunService {
               repoId,
               useRemoteReturnedRows,
             );
-            if (batchHadError) {
+            if (failedEntryCountInBatch > 0) {
               cumulativeErrorCount += 1;
               onError?.({
                 lastSyncError: `Asset upload failed for ${entry.filePath}`,
@@ -436,7 +445,7 @@ export class PublishPlanRunService {
                 where: { id: { in: batchIds } },
                 orderBy: { id: 'asc' },
               });
-              const batchHadError = await this.processBatch(
+              const failedEntryCountInBatch = await this.processBatch(
                 currentPhase,
                 batch as PublishOperation[],
                 connector,
@@ -447,10 +456,10 @@ export class PublishPlanRunService {
                 repoId,
                 useRemoteReturnedRows,
               );
-              if (batchHadError) {
-                cumulativeErrorCount += batch.length;
+              if (failedEntryCountInBatch > 0) {
+                cumulativeErrorCount += failedEntryCountInBatch;
                 onError?.({
-                  lastSyncError: `Batch failed in ${currentPhase} phase (${batch.length} entries)`,
+                  lastSyncError: `Batch failed in ${currentPhase} phase (${failedEntryCountInBatch} of ${batch.length} entries)`,
                   errorCount: cumulativeErrorCount,
                 });
               }
@@ -509,7 +518,7 @@ export class PublishPlanRunService {
             }
 
             // Process individually (batch size 1)
-            const retryHadError = await this.processBatch(
+            const retryFailedEntryCount = await this.processBatch(
               currentPhase,
               [entry],
               connector,
@@ -520,7 +529,7 @@ export class PublishPlanRunService {
               repoId,
               useRemoteReturnedRows,
             );
-            if (retryHadError) {
+            if (retryFailedEntryCount > 0) {
               // Individual retry failed — this entry stays as failed-batch
               // Error count was already counted during initial batch failure, don't double-count
               onError?.({
@@ -987,8 +996,9 @@ export class PublishPlanRunService {
   /**
    * Process a batch of entries for a single table.
    * If successful, upgrades status to 'success'.
-   * If failed, marks all as 'failed-batch' for later individual retry.
-   * Returns true if the batch failed.
+   * If failed, marks all as 'failed-batch' for later individual retry (a
+   * connector that rejected only some creates gets only those marked).
+   * Returns the number of entries that failed (0 = the whole batch succeeded).
    */
   private async processBatch(
     phase: string,
@@ -1000,12 +1010,15 @@ export class PublishPlanRunService {
     planId: string,
     repoId: string,
     useRemoteReturnedRows: boolean,
-  ): Promise<boolean> {
+  ): Promise<number> {
     try {
       // Populated only by the delete phase: ops the dispatcher could not execute
       // because they have no resolvable remote record id. Marked failed-batch
       // below instead of riding the blanket success update (DEV-10595).
       let deleteEntriesWithoutRemoteRecordId: DeleteOperationWithoutRemoteRecordId[] = [];
+      // Populated only by the create phase: ops a connector rejected inside a
+      // batch that created the others (DEV-10200). Same treatment as above.
+      let createEntriesFailedInBatch: CreateOperationFailedInBatch[] = [];
       switch (phase) {
         case 'asset-upload':
           await this.dispatchAssetUploadBatch(entries, connector);
@@ -1025,7 +1038,15 @@ export class PublishPlanRunService {
           );
           break;
         case 'create':
-          await this.dispatchCreateBatch(phase, entries, connector, tableSpec, workbookId, planId, repoId);
+          createEntriesFailedInBatch = await this.dispatchCreateBatch(
+            phase,
+            entries,
+            connector,
+            tableSpec,
+            workbookId,
+            planId,
+            repoId,
+          );
           break;
         case 'delete':
           deleteEntriesWithoutRemoteRecordId = await this.dispatchDeleteBatch(
@@ -1049,7 +1070,10 @@ export class PublishPlanRunService {
       // failed-batch instead, so an un-executed delete is never reported as a
       // success (DEV-10595).
       const idsWithoutRemoteRecordId = new Set(deleteEntriesWithoutRemoteRecordId.map((e) => e.id));
-      const succeededEntryIds = entries.filter((e) => !idsWithoutRemoteRecordId.has(e.id)).map((e) => e.id);
+      const idsFailedInBatch = new Set(createEntriesFailedInBatch.map((e) => e.id));
+      const succeededEntryIds = entries
+        .filter((e) => !idsWithoutRemoteRecordId.has(e.id) && !idsFailedInBatch.has(e.id))
+        .map((e) => e.id);
       if (succeededEntryIds.length > 0) {
         await this.db.client.publishPlanOperation.updateMany({
           where: { id: { in: succeededEntryIds } },
@@ -1065,9 +1089,26 @@ export class PublishPlanRunService {
         // Treat the batch as errored so the run reports it and the phase's retry
         // pass re-examines it (it will fail identically and stay failed-batch —
         // the remoteRecordId is a stored field that a retry cannot change).
-        return true;
+        return idsWithoutRemoteRecordId.size;
       }
-      return false;
+
+      if (createEntriesFailedInBatch.length > 0) {
+        // Each rejected create carries the connector's own reason for that record.
+        for (const { id, error } of createEntriesFailedInBatch) {
+          await this.db.client.publishPlanOperation.updateMany({
+            where: { id },
+            data: { status: 'failed-batch', error },
+          });
+        }
+        WSLogger.warn({
+          source: 'PublishRunService.processBatch',
+          message: `Batch partially failed (${createEntriesFailedInBatch.length} of ${entries.length} entries)`,
+          workbookId,
+          data: { planId, phase, entryIds: createEntriesFailedInBatch.map((e) => e.id) },
+        });
+        return createEntriesFailedInBatch.length;
+      }
+      return 0;
     } catch (err) {
       // Resolve the failure into the service's own user-facing reason. For HTTP
       // connectors `extractConnectorErrorDetails` digs the validation message
@@ -1101,7 +1142,7 @@ export class PublishPlanRunService {
           error: connectorErrorDetails.userFriendlyMessage,
         },
       });
-      return true;
+      return entries.length;
     }
   }
 
@@ -1444,7 +1485,7 @@ export class PublishPlanRunService {
     workbookId: string,
     planId: string,
     repoId: string,
-  ): Promise<void> {
+  ): Promise<CreateOperationFailedInBatch[]> {
     const idField = tableSpec.idPath;
     const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
 
@@ -1503,10 +1544,36 @@ export class PublishPlanRunService {
       entriesWithOps.push({ entry, resolvedOp, priorRemoteId });
     }
 
-    if (operations.length === 0) return;
+    if (operations.length === 0) return [];
 
-    // Bulk create
-    const returnedRecords = await connector.createRecords(tableSpec, operations);
+    // Bulk create. A connector whose batch create landed some records but not
+    // all reports both halves through PartialBatchCreateError (DEV-10200): the
+    // created records are persisted below exactly like a clean batch, and the
+    // rejected ops are handed back for `failed-batch` + the ordinary per-record
+    // retry. The connector guarantees a rejected op left nothing behind
+    // remotely, so that retry can safely create it again.
+    const failedOps: CreateOperationFailedInBatch[] = [];
+    let returnedRecords: ConnectorFile[];
+    try {
+      returnedRecords = await connector.createRecords(tableSpec, operations);
+    } catch (error) {
+      if (!(error instanceof PartialBatchCreateError)) {
+        throw error;
+      }
+      for (const [inputIndex, message] of error.failureMessagesByInputIndex) {
+        failedOps.push({ id: entriesWithOps[inputIndex].entry.id, error: message });
+      }
+      const createdInputIndexes = [...error.createdRecordsByInputIndex.keys()].sort((a, b) => a - b);
+      returnedRecords = createdInputIndexes.map(
+        (inputIndex) => error.createdRecordsByInputIndex.get(inputIndex) as ConnectorFile,
+      );
+      // Narrow the post-processing below to the created ops, keeping it aligned with returnedRecords.
+      entriesWithOps.splice(
+        0,
+        entriesWithOps.length,
+        ...createdInputIndexes.map((inputIndex) => entriesWithOps[inputIndex]),
+      );
+    }
 
     // Post-process
     const fileIndexUpdates: {
@@ -1603,6 +1670,7 @@ export class PublishPlanRunService {
       };
     });
     await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch, repoId);
+    return failedOps;
   }
 
   private async dispatchDeleteBatch(

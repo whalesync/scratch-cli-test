@@ -37,6 +37,13 @@ These are flags that are evaluated for the user and passed to the client.
 - Flippable per-user from PostHog without a redeploy (create `DESKTOP_REVIEW_SURFACE_V2` in each project to enable)
 - Client-only gate: when false the existing review experience is unchanged; no server behavior depends on it
 
+## Local-dev overrides
+
+Set `FEATURE_FLAG_OVERRIDES_FOR_LOCAL_DEV=FLAG_A=true,FLAG_B=false` in `server/.env` to force boolean
+flags on a **local** server without PostHog credentials (e.g. `HUBSPOT_BATCH_PUBLISH=true` to exercise
+the batched HubSpot publish end-to-end). The overrides win over PostHog and the default; they are
+ignored in production and logged at startup when active.
+
 ## PostHog Integration
 
 - Requires `POSTHOG_API_KEY` and `POSTHOG_FEATURE_FLAG_API_KEY` environment variables

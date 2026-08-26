@@ -37,6 +37,21 @@ interface QueuedError {
 }
 
 /**
+ * A rule that makes the batch write routes reject one input (DEV-10200).
+ * Real HubSpot answers 207 Multi-Status with the created/updated inputs in
+ * `results` and the rejected ones in `errors`; tests register a rule here
+ * (e.g. "reject any contact whose `email` is `bad@example.com`") to reproduce
+ * that partial failure deterministically. Rules persist until `reset()`.
+ */
+export interface BatchInputRejectionRule {
+  objectType: string;
+  propertyName: string;
+  propertyValue: string | null;
+  category: string;
+  message: string;
+}
+
+/**
  * `hs_status` values in which HubSpot treats a quote as published and locks it
  * against property edits (DEV-10886). A locked quote must be recalled
  * (`hs_status` → an editable status like DRAFT) before it can be edited.
@@ -74,6 +89,22 @@ class Store {
   errorQueue: QueuedError[] = [];
   rateLimitCount: number = 0;
   rateLimitRetryAfterSeconds: number = 1;
+  batchInputRejectionRules: BatchInputRejectionRule[] = [];
+
+  /**
+   * Every request the batch routes received, oldest first, so a test can
+   * assert HOW records were published (one batch call for 10 records, one
+   * association call per type) and not only the end state.
+   */
+  batchRequestLog: { path: string; body: unknown }[] = [];
+
+  /**
+   * Real HubSpot echoes each input's `objectWriteTraceId` on its `results`
+   * record (live-verified 2026-08-26). Set to `true` to model a response
+   * without that echo, so a test can exercise the connector's fallback
+   * (binding created records to files by their echoed property values).
+   */
+  omitObjectWriteTraceIdFromBatchResults = false;
 
   reset(): void {
     this.records.clear();
@@ -82,7 +113,43 @@ class Store {
     this.errorQueue = [];
     this.rateLimitCount = 0;
     this.rateLimitRetryAfterSeconds = 1;
+    this.batchInputRejectionRules = [];
+    this.batchRequestLog = [];
+    this.omitObjectWriteTraceIdFromBatchResults = false;
     idCounter = 1;
+  }
+
+  /** Make the batch create/update routes reject inputs matching `properties[propertyName] === propertyValue`. */
+  rejectBatchInputsWhere(
+    objectType: string,
+    propertyName: string,
+    propertyValue: string | null,
+    error: { category?: string; message?: string } = {},
+  ): void {
+    this.batchInputRejectionRules.push({
+      objectType,
+      propertyName,
+      propertyValue,
+      category: error.category ?? "VALIDATION_ERROR",
+      message:
+        error.message ??
+        `Property values were not valid: [{"isValid":false,"message":"${propertyName} is not valid","name":"${propertyName}"}]`,
+    });
+  }
+
+  findBatchInputRejection(
+    objectType: string,
+    properties: Record<string, unknown> | undefined,
+  ): BatchInputRejectionRule | undefined {
+    return this.batchInputRejectionRules.find(
+      (rule) =>
+        rule.objectType === objectType &&
+        (properties?.[rule.propertyName] ?? null) === rule.propertyValue,
+    );
+  }
+
+  recordBatchRequest(path: string, body: unknown): void {
+    this.batchRequestLog.push({ path, body });
   }
 
   setProperties(objectType: string, properties: HubspotProperty[]): void {

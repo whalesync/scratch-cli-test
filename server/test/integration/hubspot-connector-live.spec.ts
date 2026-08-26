@@ -20,6 +20,9 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
   getServiceDisplayName: (service: string) => service,
 }));
 
+import { PartialBatchCreateError } from 'src/remote-service/connectors/error';
+import { HubspotApiClient } from 'src/remote-service/connectors/library/hubspot/hubspot-api-client';
+import { HubspotAssociationWriteError } from 'src/remote-service/connectors/library/hubspot/hubspot-batch-publish';
 import { HubspotConnector } from 'src/remote-service/connectors/library/hubspot/hubspot-connector';
 import { BaseJsonTableSpec, ConnectorFile, TablePreview } from 'src/remote-service/connectors/types';
 
@@ -170,5 +173,213 @@ describeIfKey('HubspotConnector — live API (associations)', () => {
       [{ associations: clearedAssociations }],
     );
     expect(associatedIds(await refetch(contactsSpec, contactId), 'companies')).not.toContain(companyId);
+  });
+});
+
+// DEV-10200 phase 2: prove the REAL contract of the batch endpoints the batched
+// publish path (HUBSPOT_BATCH_PUBLISH) relies on. The fake models these from
+// HubSpot's docs; only this suite can confirm the shapes against the portal:
+//   - batch/create results come back in ARBITRARY order but each echoes its
+//     input's objectWriteTraceId (the create path binds results to files by
+//     that echo; a wrong binding would tie a file to someone else's record);
+//   - a 207 body names rejected inputs in errors[].context.objectWriteTraceId;
+//   - batch/associate/default takes pairs from different records in one call;
+//   - batch/archive removes every association type, like the single DELETE;
+//   - the shape of a batch association error for a bogus `to` id.
+// The raw bodies of anything unexpected are printed (console.debug) so the
+// plan doc can record the exact contract.
+describeIfKey('HubspotConnector — live API (batch publishing contract, DEV-10200)', () => {
+  let batchConnector: HubspotConnector;
+  let legacyConnector: HubspotConnector;
+  let contactsSpec: BaseJsonTableSpec;
+  let companiesSpec: BaseJsonTableSpec;
+  const cleanups: (() => Promise<void>)[] = [];
+
+  beforeAll(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    batchConnector = new HubspotConnector(API_KEY!, { batchPublish: true, associationsApiVersion: '2026-03' });
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    legacyConnector = new HubspotConnector(API_KEY!);
+    const tables: TablePreview[] = await batchConnector.listTables();
+    const contacts = tables.find((t) => t.id.remoteId[0] === 'contacts');
+    const companies = tables.find((t) => t.id.remoteId[0] === 'companies');
+    if (!contacts || !companies) {
+      throw new Error('Expected the HubSpot portal to expose contacts and companies tables');
+    }
+    contactsSpec = await batchConnector.fetchJsonTableSpec(contacts.id);
+    companiesSpec = await batchConnector.fetchJsonTableSpec(companies.id);
+  });
+
+  afterAll(async () => {
+    await Promise.allSettled(cleanups.map((fn) => fn()));
+  });
+
+  function idOf(file: ConnectorFile | undefined): string {
+    return String((file as { id: unknown } | undefined)?.id);
+  }
+
+  function emailOf(file: ConnectorFile | undefined): string | undefined {
+    return (file as { properties?: { email?: string } } | undefined)?.properties?.email?.toLowerCase();
+  }
+
+  function scheduleContactCleanup(contactId: string): void {
+    cleanups.push(async () => {
+      await legacyConnector.deleteRecords(contactsSpec, [{ id: contactId } as ConnectorFile]);
+    });
+  }
+
+  async function refetch(spec: BaseJsonTableSpec, id: string): Promise<ConnectorFile | undefined> {
+    const pulled: ConnectorFile[] = [];
+    await legacyConnector.pullRecordFilesByIds(spec, [id], ({ files }) => {
+      pulled.push(...files);
+      return Promise.resolve();
+    });
+    return pulled[0];
+  }
+
+  it('batch/create: each file gets its own record even though HubSpot returns results in arbitrary order (observed: reversed)', async () => {
+    const suffix = Date.now();
+    const emails = [0, 1, 2].map((n) => `scratch-batch-${suffix}-${n}@example.com`);
+
+    const created = await batchConnector.createRecords(
+      contactsSpec,
+      emails.map((email) => ({ properties: { email } }) as ConnectorFile),
+    );
+    created.forEach((file) => scheduleContactCleanup(idOf(file)));
+
+    expect(created.map(emailOf)).toEqual(emails);
+  });
+
+  it("batch/create echoes each input's objectWriteTraceId on its result (201 and 207), for contacts and companies", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const client = new HubspotApiClient(API_KEY!);
+    const suffix = Date.now();
+    const traceIds = ['zeta', 'alpha', '7'];
+    const inputs = traceIds.map((objectWriteTraceId, index) => ({
+      objectWriteTraceId,
+      properties: { email: `scratch-trace-${suffix}-${index}@example.com`, lastname: objectWriteTraceId },
+    }));
+
+    const response = await client.batchCreateRecords('contacts', inputs);
+    for (const created of response.results) scheduleContactCleanup(created.id);
+    expect(response.status).toBe('COMPLETE');
+    expect(response.results).toHaveLength(3);
+    // Each result's trace id is the one sent for the input whose values it carries.
+    for (const created of response.results) expect(created.objectWriteTraceId).toBe(created.properties.lastname);
+    expect(new Set(response.results.map((created) => created.objectWriteTraceId))).toEqual(new Set(traceIds));
+
+    const partial = await client.batchCreateRecords('contacts', [
+      { objectWriteTraceId: 'ok', properties: { email: `scratch-trace-${suffix}-ok@example.com` } },
+      { objectWriteTraceId: 'bad', properties: { email: 'not-an-email' } },
+    ]);
+    for (const created of partial.results) scheduleContactCleanup(created.id);
+    expect(partial.results.map((created) => created.objectWriteTraceId)).toEqual(['ok']);
+    expect(partial.errors?.[0]?.context?.objectWriteTraceId).toEqual(['bad']);
+
+    const company = await client.batchCreateRecords('companies', [
+      { objectWriteTraceId: 'co', properties: { name: `Scratch Trace Co ${suffix}` } },
+    ]);
+    const companyId = company.results[0].id;
+    cleanups.push(async () => {
+      await legacyConnector.deleteRecords(companiesSpec, [{ id: companyId } as ConnectorFile]);
+    });
+    expect(company.results[0].objectWriteTraceId).toBe('co');
+  });
+
+  it('batch/create with one invalid input answers 207: valid inputs are created, the error names the trace id, and the results bind to the right files', async () => {
+    const suffix = Date.now();
+    const files = [
+      { properties: { email: `scratch-207-${suffix}-a@example.com` } },
+      { properties: { email: 'not-an-email' } },
+      { properties: { email: `scratch-207-${suffix}-c@example.com` } },
+    ] as ConnectorFile[];
+
+    let thrown: unknown;
+    await batchConnector.createRecords(contactsSpec, files).catch((error: unknown) => (thrown = error));
+    if (!(thrown instanceof PartialBatchCreateError)) {
+      // Print whatever HubSpot did instead so the plan doc can record it.
+      console.debug('batch/create with an invalid input did NOT produce a partial failure:', thrown);
+      throw thrown ?? new Error('Expected a PartialBatchCreateError');
+    }
+    for (const created of thrown.createdRecordsByInputIndex.values()) scheduleContactCleanup(idOf(created));
+
+    expect([...thrown.createdRecordsByInputIndex.keys()]).toEqual([0, 2]);
+    expect(emailOf(thrown.createdRecordsByInputIndex.get(0))).toBe(`scratch-207-${suffix}-a@example.com`);
+    expect(emailOf(thrown.createdRecordsByInputIndex.get(2))).toBe(`scratch-207-${suffix}-c@example.com`);
+    expect([...thrown.failureMessagesByInputIndex.keys()]).toEqual([1]);
+    console.debug('HubSpot 207 failure message for the invalid input:', thrown.failureMessagesByInputIndex.get(1));
+    expect(thrown.failureMessagesByInputIndex.get(1)).toMatch(/objectWriteTraceId=1/);
+  });
+
+  it('batch/associate/default links pairs from different records in one call; batch/archive removes every association type like the single DELETE', async () => {
+    const suffix = Date.now();
+    const [company] = await legacyConnector.createRecords(companiesSpec, [
+      { properties: { name: `Scratch Batch Co ${suffix}` } } as ConnectorFile,
+    ]);
+    const companyId = idOf(company);
+    cleanups.push(async () => {
+      await legacyConnector.deleteRecords(companiesSpec, [{ id: companyId } as ConnectorFile]);
+    });
+    const contacts = await legacyConnector.createRecords(
+      contactsSpec,
+      [0, 1].map((n) => ({ properties: { email: `scratch-assoc-${suffix}-${n}@example.com` } }) as ConnectorFile),
+    );
+    contacts.forEach((file) => scheduleContactCleanup(idOf(file)));
+
+    // Link both contacts to the company in one batched update (one associate call).
+    const linked = { companies: { results: [{ id: companyId }] } };
+    await batchConnector.updateRecords(
+      contactsSpec,
+      contacts.map((contact) => ({ ...contact, associations: linked })),
+      contacts.map(() => ({ associations: linked })),
+    );
+    for (const contact of contacts) {
+      const pulled = await refetch(contactsSpec, idOf(contact));
+      expect(associatedIds(pulled, 'companies')).toContain(companyId);
+    }
+
+    // Unlink both in one batched update (one archive call). The default
+    // contact→company association carries HubSpot's primary AND unlabeled
+    // types; the refetch must show NO companies link at all, proving the
+    // archive removed every type (the id-only diff depends on that).
+    const unlinked = { companies: { results: [] as { id: string }[] } };
+    await batchConnector.updateRecords(
+      contactsSpec,
+      contacts.map((contact) => ({ ...contact, associations: unlinked })),
+      contacts.map(() => ({ associations: unlinked })),
+    );
+    for (const contact of contacts) {
+      const pulled = await refetch(contactsSpec, idOf(contact));
+      expect(associatedIds(pulled, 'companies')).not.toContain(companyId);
+    }
+  });
+
+  it('batch/associate/default with a bogus `to` id is surfaced as an association write error naming the pair (prints the raw body)', async () => {
+    const suffix = Date.now();
+    const [contact] = await legacyConnector.createRecords(contactsSpec, [
+      { properties: { email: `scratch-bogus-${suffix}@example.com` } } as ConnectorFile,
+    ]);
+    const contactId = idOf(contact);
+    scheduleContactCleanup(contactId);
+
+    const bogusCompanyId = '999999999999';
+    const desired = { companies: { results: [{ id: bogusCompanyId }] } };
+    let thrown: unknown;
+    await batchConnector
+      .updateRecords(contactsSpec, [{ ...contact, associations: desired }], [{ associations: desired }])
+      .catch((error: unknown) => (thrown = error));
+
+    if (thrown instanceof HubspotAssociationWriteError) {
+      console.debug('HubSpot batch association error body:', JSON.stringify(thrown.responseData));
+      expect(thrown.failedPairs.map((pair) => `${pair.fromId}→${pair.toId}`)).toEqual([
+        `${contactId}→${bogusCompanyId}`,
+      ]);
+    } else {
+      // HubSpot may reject the whole call (4xx) instead of answering 207 —
+      // record which, since the connector handles both; either way the
+      // failure must be surfaced, never swallowed.
+      console.debug('HubSpot rejected the batch association call outright:', thrown);
+      expect(thrown).toBeInstanceOf(Error);
+    }
   });
 });

@@ -1,5 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
+import { PartialBatchCreateError } from '../../../error';
 import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import { HubspotConnector } from '../hubspot-connector';
 import companiesSchemaFixture from './__fixtures__/companies-schema.fixture.json';
@@ -19,6 +20,10 @@ const mockGetApiQuota = jest.fn();
 const mockGetCustomObjectSchemas = jest.fn();
 const mockCreateAssociation = jest.fn();
 const mockDeleteAssociation = jest.fn();
+const mockBatchCreateRecords = jest.fn();
+const mockBatchUpdateRecords = jest.fn();
+const mockBatchCreateDefaultAssociations = jest.fn();
+const mockBatchArchiveAssociations = jest.fn();
 
 jest.mock('../hubspot-api-client', () => {
   return {
@@ -34,6 +39,10 @@ jest.mock('../hubspot-api-client', () => {
       getCustomObjectSchemas: mockGetCustomObjectSchemas,
       createAssociation: mockCreateAssociation,
       deleteAssociation: mockDeleteAssociation,
+      batchCreateRecords: mockBatchCreateRecords,
+      batchUpdateRecords: mockBatchUpdateRecords,
+      batchCreateDefaultAssociations: mockBatchCreateDefaultAssociations,
+      batchArchiveAssociations: mockBatchArchiveAssociations,
     })),
     HubspotError: class HubspotError extends Error {
       statusCode?: number;
@@ -541,6 +550,364 @@ describe('HubspotConnector', () => {
       await connector.updateRecords(tableSpec, [second], [{ associations: second.associations }]);
 
       expect(isFeatureEnabled).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // DEV-10200 phase 2: with HUBSPOT_BATCH_PUBLISH on, records go out in one
+  // batch call and their association links in one call per association type.
+  describe('batched publishing (DEV-10200, HUBSPOT_BATCH_PUBLISH)', () => {
+    const CONTACTS = 'contacts';
+
+    function remoteRecord(
+      id: string,
+      associations?: Record<string, { results: { id: string }[] }>,
+      properties: Record<string, string> = {},
+    ) {
+      return {
+        id,
+        properties,
+        associations,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-02T00:00:00Z',
+        archived: false,
+      };
+    }
+
+    beforeEach(() => {
+      connector = new HubspotConnector('test-token', { batchPublish: true, associationsApiVersion: '2026-03' });
+      mockGetRecord.mockImplementation((_objectType: string, id: string) => Promise.resolve(remoteRecord(id)));
+      mockBatchCreateDefaultAssociations.mockResolvedValue({ status: 'COMPLETE', results: [] });
+      mockBatchArchiveAssociations.mockResolvedValue(undefined);
+    });
+
+    it('createRecords: ONE batchCreateRecords call with trace ids 0..n-1, then ONE association call per type carrying every record’s pairs', async () => {
+      // HubSpot echoes the sent properties and returns results in arbitrary order (here: reversed).
+      mockBatchCreateRecords.mockResolvedValue({
+        status: 'COMPLETE',
+        results: [remoteRecord('B', undefined, { firstname: 'b' }), remoteRecord('A', undefined, { firstname: 'a' })],
+      });
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const files = [
+        { properties: { firstname: 'a' }, associations: { companies: { results: [{ id: 'C1' }, { id: 'C2' }] } } },
+        {
+          properties: { firstname: 'b' },
+          associations: { companies: { results: [{ id: 'C1' }] }, deals: { results: [{ id: 'D1' }] } },
+        },
+      ] as ConnectorFile[];
+
+      const created = await connector.createRecords(tableSpec, files);
+
+      expect(mockBatchCreateRecords).toHaveBeenCalledTimes(1);
+      expect(mockBatchCreateRecords).toHaveBeenCalledWith(CONTACTS, [
+        { objectWriteTraceId: '0', properties: { firstname: 'a' } },
+        { objectWriteTraceId: '1', properties: { firstname: 'b' } },
+      ]);
+      expect(mockBatchCreateDefaultAssociations).toHaveBeenCalledTimes(2);
+      expect(mockBatchCreateDefaultAssociations).toHaveBeenCalledWith(CONTACTS, 'companies', [
+        { fromId: 'A', toId: 'C1' },
+        { fromId: 'A', toId: 'C2' },
+        { fromId: 'B', toId: 'C1' },
+      ]);
+      expect(mockBatchCreateDefaultAssociations).toHaveBeenCalledWith(CONTACTS, 'deals', [{ fromId: 'B', toId: 'D1' }]);
+      expect(mockBatchArchiveAssociations).not.toHaveBeenCalled();
+      expect(mockCreateRecord).not.toHaveBeenCalled();
+      expect(mockCreateAssociation).not.toHaveBeenCalled();
+      // Refetched per record (batch read never returns associations).
+      expect(mockGetRecord).toHaveBeenCalledTimes(2);
+      expect(created.map((file) => file.id)).toEqual(['A', 'B']);
+    });
+
+    it('createRecords: a 207 with a rejected input throws PartialBatchCreateError carrying the created records and the reason', async () => {
+      mockBatchCreateRecords.mockResolvedValue({
+        status: 'COMPLETE',
+        results: [remoteRecord('A', undefined, { firstname: 'a' })],
+        numErrors: 1,
+        errors: [
+          {
+            status: 'error',
+            category: 'VALIDATION_ERROR',
+            message: 'bad email',
+            context: { objectWriteTraceId: ['1'] },
+          },
+        ],
+      });
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const files = [{ properties: { firstname: 'a' } }, { properties: { firstname: 'b' } }] as ConnectorFile[];
+
+      let thrown: unknown;
+      await connector.createRecords(tableSpec, files).catch((error: unknown) => (thrown = error));
+
+      expect(thrown).toBeInstanceOf(PartialBatchCreateError);
+      const partial = thrown as PartialBatchCreateError;
+      expect([...partial.createdRecordsByInputIndex.keys()]).toEqual([0]);
+      expect(partial.createdRecordsByInputIndex.get(0)?.id).toBe('A');
+      expect(partial.failureMessagesByInputIndex.get(1)).toBe('VALIDATION_ERROR: bad email (objectWriteTraceId=1)');
+    });
+
+    it('createRecords: a 4xx on the first batch (nothing created) propagates as the raw error so the ordinary retry runs', async () => {
+      mockBatchCreateRecords.mockRejectedValue(new Error('Request failed with status code 400'));
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+
+      await expect(
+        connector.createRecords(tableSpec, [{ properties: { firstname: 'a' } }] as ConnectorFile[]),
+      ).rejects.toThrow('Request failed with status code 400');
+    });
+
+    it('createRecords: a rejected association pair archives its record and reports it as failed — the other record stays created', async () => {
+      mockBatchCreateRecords.mockResolvedValue({
+        status: 'COMPLETE',
+        results: [remoteRecord('A', undefined, { firstname: 'a' }), remoteRecord('B', undefined, { firstname: 'b' })],
+      });
+      mockBatchCreateDefaultAssociations.mockResolvedValue({
+        status: 'COMPLETE',
+        results: [],
+        numErrors: 1,
+        errors: [
+          {
+            status: 'error',
+            category: 'OBJECT_NOT_FOUND',
+            message: 'no such company',
+            context: { fromObjectId: ['B'], toObjectId: ['C9'] },
+          },
+        ],
+      });
+      mockDeleteRecord.mockResolvedValue(undefined);
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const files = [
+        { properties: { firstname: 'a' }, associations: { companies: { results: [{ id: 'C1' }] } } },
+        { properties: { firstname: 'b' }, associations: { companies: { results: [{ id: 'C9' }] } } },
+      ] as ConnectorFile[];
+
+      let thrown: unknown;
+      await connector.createRecords(tableSpec, files).catch((error: unknown) => (thrown = error));
+
+      const partial = thrown as PartialBatchCreateError;
+      expect(partial).toBeInstanceOf(PartialBatchCreateError);
+      expect([...partial.createdRecordsByInputIndex.keys()]).toEqual([0]);
+      expect([...partial.failureMessagesByInputIndex.keys()]).toEqual([1]);
+      expect(partial.failureMessagesByInputIndex.get(1)).toMatch(/contacts\/B → companies\/C9/);
+      // B was archived so the runner's per-record retry can create it cleanly.
+      expect(mockDeleteRecord).toHaveBeenCalledWith(CONTACTS, 'B');
+      expect(mockDeleteRecord).not.toHaveBeenCalledWith(CONTACTS, 'A');
+    });
+
+    it('updateRecords: ONE batchUpdateRecords call, then ONE associate + ONE archive call for the whole batch', async () => {
+      mockBatchUpdateRecords.mockResolvedValue({ status: 'COMPLETE', results: [remoteRecord('1'), remoteRecord('2')] });
+      mockGetRecord.mockImplementation((_objectType: string, id: string) =>
+        Promise.resolve(remoteRecord(id, { companies: { results: [{ id: 'C_old' }] } })),
+      );
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const files = [
+        { ...makeFile('1', { firstname: 'x' }), associations: { companies: { results: [{ id: 'C_new' }] } } },
+        { ...makeFile('2', { firstname: 'y' }), associations: { companies: { results: [{ id: 'C_new' }] } } },
+      ];
+
+      const updated = await connector.updateRecords(tableSpec, files);
+
+      expect(mockBatchUpdateRecords).toHaveBeenCalledTimes(1);
+      expect(mockBatchUpdateRecords).toHaveBeenCalledWith(CONTACTS, [
+        { id: '1', objectWriteTraceId: '0', properties: { firstname: 'x' } },
+        { id: '2', objectWriteTraceId: '1', properties: { firstname: 'y' } },
+      ]);
+      expect(mockBatchCreateDefaultAssociations).toHaveBeenCalledTimes(1);
+      expect(mockBatchCreateDefaultAssociations).toHaveBeenCalledWith(CONTACTS, 'companies', [
+        { fromId: '1', toId: 'C_new' },
+        { fromId: '2', toId: 'C_new' },
+      ]);
+      expect(mockBatchArchiveAssociations).toHaveBeenCalledTimes(1);
+      expect(mockBatchArchiveAssociations).toHaveBeenCalledWith(CONTACTS, 'companies', [
+        { fromId: '1', toId: 'C_old' },
+        { fromId: '2', toId: 'C_old' },
+      ]);
+      expect(mockUpdateRecord).not.toHaveBeenCalled();
+      expect(updated.map((file) => file.id)).toEqual(['1', '2']);
+    });
+
+    it('updateRecords: a rejected batch input fails the batch naming the record (retry per record is idempotent)', async () => {
+      mockBatchUpdateRecords.mockResolvedValue({
+        status: 'COMPLETE',
+        results: [remoteRecord('1')],
+        errors: [{ status: 'error', category: 'OBJECT_NOT_FOUND', message: 'gone', context: { ids: ['2'] } }],
+      });
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+
+      await expect(
+        connector.updateRecords(tableSpec, [makeFile('1', { firstname: 'x' }), makeFile('2', { firstname: 'y' })]),
+      ).rejects.toThrow(/rejected 1 of 2 record update\(s\): contacts\/2: OBJECT_NOT_FOUND: gone/);
+    });
+
+    it('quotes are exempt: with the flag on, a quote edit still goes through updateRecord (the recall dance), never a batch call', async () => {
+      const tableSpec = buildTableSpec('quotes', { hs_title: {}, hs_status: {} });
+      mockGetRecord.mockResolvedValue({
+        ...remoteRecord('q1'),
+        properties: { hs_title: 'Old', hs_status: 'DRAFT', hs_locked: 'false' },
+      });
+
+      await connector.updateRecords(tableSpec, [makeFile('q1', { hs_title: 'New', hs_status: 'DRAFT' })]);
+
+      expect(mockUpdateRecord).toHaveBeenCalledWith('quotes', 'q1', { hs_title: 'New' });
+      expect(mockBatchUpdateRecords).not.toHaveBeenCalled();
+      expect(mockBatchCreateRecords).not.toHaveBeenCalled();
+    });
+
+    it('createRecords: more than 10 files → chunk-local trace ids in every batch call', async () => {
+      mockBatchCreateRecords.mockImplementation(
+        (_objectType: string, inputs: { properties: { firstname: string } }[]) =>
+          Promise.resolve({
+            status: 'COMPLETE',
+            results: inputs
+              .map((input) => remoteRecord(`id-${input.properties.firstname}`, undefined, input.properties))
+              .reverse(),
+          }),
+      );
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const files = Array.from({ length: 12 }, (_, i) => ({ properties: { firstname: `n${i}` } })) as ConnectorFile[];
+
+      const created = await connector.createRecords(tableSpec, files);
+
+      expect(mockBatchCreateRecords).toHaveBeenCalledTimes(2);
+      const batchCalls = mockBatchCreateRecords.mock.calls as unknown as [string, { objectWriteTraceId: string }[]][];
+      const secondCallInputs = batchCalls[1][1];
+      expect(secondCallInputs.map((input) => input.objectWriteTraceId)).toEqual(['0', '1']);
+      expect(created.map((file) => file.id)).toEqual(files.map((file, i) => `id-n${i}`));
+    });
+
+    it('createRecords: a record that vanished before its refetch (GET → null) is archived and reported failed, never persisted', async () => {
+      mockBatchCreateRecords.mockResolvedValue({
+        status: 'COMPLETE',
+        results: [remoteRecord('A', undefined, { firstname: 'a' }), remoteRecord('B', undefined, { firstname: 'b' })],
+      });
+      mockGetRecord.mockImplementation((_objectType: string, id: string) =>
+        Promise.resolve(id === 'B' ? null : remoteRecord(id, undefined, { firstname: 'a' })),
+      );
+      mockDeleteRecord.mockResolvedValue(undefined);
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+
+      let thrown: unknown;
+      await connector
+        .createRecords(tableSpec, [
+          { properties: { firstname: 'a' } },
+          { properties: { firstname: 'b' } },
+        ] as ConnectorFile[])
+        .catch((error: unknown) => (thrown = error));
+
+      const partial = thrown as PartialBatchCreateError;
+      expect(partial).toBeInstanceOf(PartialBatchCreateError);
+      expect([...partial.createdRecordsByInputIndex.keys()]).toEqual([0]);
+      expect(partial.failureMessagesByInputIndex.get(1)).toMatch(/disappeared before it could be refetched/);
+      expect(mockDeleteRecord).toHaveBeenCalledWith(CONTACTS, 'B');
+    });
+
+    it('one-at-a-time path: a quote that vanished before its refetch is reported failed, not persisted', async () => {
+      const tableSpec = buildTableSpec('quotes', { hs_title: {} });
+      mockCreateRecord.mockResolvedValue(remoteRecord('q1', undefined, { hs_title: 'One' }));
+      mockGetRecord.mockResolvedValue(null);
+      mockDeleteRecord.mockResolvedValue(undefined);
+
+      await expect(
+        connector.createRecords(tableSpec, [{ properties: { hs_title: 'One' } }] as ConnectorFile[]),
+      ).rejects.toThrow(/disappeared before it could be refetched/);
+      expect(mockDeleteRecord).toHaveBeenCalledWith('quotes', 'q1');
+    });
+
+    it('createRecords: an unbindable chunk is rolled back and thrown as a plain error (retry re-creates one per call); a failed archive is named as orphaned', async () => {
+      // Two inputs whose echoed values contradict every binding → unmappable → rollback.
+      mockBatchCreateRecords.mockResolvedValue({
+        status: 'COMPLETE',
+        results: [
+          remoteRecord('X', undefined, { firstname: 'zzz' }),
+          remoteRecord('Y', undefined, { firstname: 'zzz' }),
+        ],
+      });
+      mockDeleteRecord.mockRejectedValue(new Error('Request failed with status code 500'));
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+
+      let thrown: unknown;
+      await connector
+        .createRecords(tableSpec, [
+          { properties: { firstname: 'a' } },
+          { properties: { firstname: 'b' } },
+        ] as ConnectorFile[])
+        .catch((error: unknown) => (thrown = error));
+
+      expect(thrown).not.toBeInstanceOf(PartialBatchCreateError);
+      expect((thrown as Error).message).toMatch(/orphaned in HubSpot.*\[X, Y\]/);
+      // 3 attempts per record.
+      expect(mockDeleteRecord).toHaveBeenCalledTimes(6);
+    });
+
+    it('createRecords: a PENDING batch is treated as unbindable — listed records rolled back, plain error, per-record retry', async () => {
+      mockBatchCreateRecords.mockResolvedValue({ status: 'PENDING', results: [remoteRecord('P')] });
+      mockDeleteRecord.mockResolvedValue(undefined);
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+
+      await expect(
+        connector.createRecords(tableSpec, [{ properties: { firstname: 'a' } }] as ConnectorFile[]),
+      ).rejects.toThrow(/did not complete/);
+      expect(mockDeleteRecord).toHaveBeenCalledWith(CONTACTS, 'P');
+    });
+
+    it('one-at-a-time path (quotes with the flag on): a failure after some creates reports the created ones, never a plain throw', async () => {
+      const tableSpec = buildTableSpec('quotes', { hs_title: {} });
+      mockCreateRecord
+        .mockResolvedValueOnce(remoteRecord('q1', undefined, { hs_title: 'One' }))
+        .mockRejectedValueOnce(new Error('Request failed with status code 400'));
+      mockGetRecord.mockImplementation((_objectType: string, id: string) => Promise.resolve(remoteRecord(id)));
+
+      let thrown: unknown;
+      await connector
+        .createRecords(tableSpec, [
+          { properties: { hs_title: 'One' } },
+          { properties: { hs_title: 'Two' } },
+          { properties: { hs_title: 'Three' } },
+        ] as ConnectorFile[])
+        .catch((error: unknown) => (thrown = error));
+
+      const partial = thrown as PartialBatchCreateError;
+      expect(partial).toBeInstanceOf(PartialBatchCreateError);
+      expect([...partial.createdRecordsByInputIndex.keys()]).toEqual([0]);
+      expect(partial.createdRecordsByInputIndex.get(0)?.id).toBe('q1');
+      expect([...partial.failureMessagesByInputIndex.keys()]).toEqual([1, 2]);
+      expect(partial.failureMessagesByInputIndex.get(1)).toBe('Request failed with status code 400');
+      expect(partial.failureMessagesByInputIndex.get(2)).toMatch(/^Not attempted/);
+      expect(mockBatchCreateRecords).not.toHaveBeenCalled();
+      // Quote #3 was never sent.
+      expect(mockCreateRecord).toHaveBeenCalledTimes(2);
+    });
+
+    it('one-at-a-time path: a failure on the very first create (nothing created) propagates as the raw error', async () => {
+      const tableSpec = buildTableSpec('quotes', { hs_title: {} });
+      mockCreateRecord.mockRejectedValue(new Error('Request failed with status code 400'));
+
+      await expect(
+        connector.createRecords(tableSpec, [{ properties: { hs_title: 'One' } }] as ConnectorFile[]),
+      ).rejects.toThrow('Request failed with status code 400');
+    });
+
+    it('flag on but v4 selected: association writes go one call per pair, and a rejection is surfaced', async () => {
+      connector = new HubspotConnector('test-token', { batchPublish: true, associationsApiVersion: 'v4' });
+      mockBatchUpdateRecords.mockResolvedValue({ status: 'COMPLETE', results: [remoteRecord('42')] });
+      mockCreateAssociation.mockRejectedValue(new Error('Request failed with status code 404'));
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const file = { ...makeFile('42', {}), associations: { companies: { results: [{ id: 'C2' }] } } };
+
+      await expect(connector.updateRecords(tableSpec, [file], [{ associations: file.associations }])).rejects.toThrow(
+        /contacts\/42 → companies\/C2 \(Request failed with status code 404\)/,
+      );
+      expect(mockCreateAssociation).toHaveBeenCalledWith(CONTACTS, '42', 'companies', 'C2', 'v4');
+      expect(mockBatchCreateDefaultAssociations).not.toHaveBeenCalled();
+    });
+
+    it('flag off: a rejected association write is still swallowed (legacy behavior, unchanged)', async () => {
+      connector = new HubspotConnector('test-token');
+      mockCreateAssociation.mockRejectedValue(new Error('Request failed with status code 404'));
+      const tableSpec = buildTableSpec(CONTACTS, { firstname: {} });
+      const file = { ...makeFile('42', {}), associations: { companies: { results: [{ id: 'C2' }] } } };
+
+      await expect(
+        connector.updateRecords(tableSpec, [file], [{ associations: file.associations }]),
+      ).resolves.toHaveLength(1);
+      expect(mockBatchCreateDefaultAssociations).not.toHaveBeenCalled();
     });
   });
 

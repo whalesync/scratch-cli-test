@@ -205,6 +205,63 @@ export interface HubspotBatchReadResponse {
 }
 
 /**
+ * One entry of the `errors` array in a HubSpot batch response. HubSpot's batch
+ * endpoints answer 207 Multi-Status — which axios does NOT throw on — when some
+ * inputs failed; `context` is a map of string arrays that identifies the failed
+ * inputs (`objectWriteTraceId` for batch create/update when the request carried
+ * trace ids; `ids` for a batch update whose ids weren't found; undocumented keys
+ * for association batches). DEV-10200.
+ */
+export interface HubspotBatchInputError {
+  status: string;
+  category?: string;
+  subCategory?: string;
+  message?: string;
+  context?: Record<string, string[]>;
+}
+
+/**
+ * Response body of `POST /crm/v3/objects/{type}/batch/create` and `batch/update`:
+ * 201/200 with every input in `results`, or 207 with the succeeded inputs in
+ * `results` and the failed ones described in `errors`.
+ */
+export interface HubspotBatchWriteResponse {
+  status: string;
+  results: HubspotBatchWriteResult[];
+  numErrors?: number;
+  errors?: HubspotBatchInputError[];
+}
+
+/**
+ * One record of a batch write's `results`. HubSpot echoes the input's
+ * `objectWriteTraceId` on it (live-verified 2026-08-26 on 201, 207 and
+ * `batch/update`, for contacts, companies and deals) — the only field that
+ * ties a result to its input, since results arrive in arbitrary order.
+ */
+export type HubspotBatchWriteResult = HubspotRecord & { objectWriteTraceId?: string };
+
+/** One input of a batch create: the trace id lets a 207 error name the input it belongs to. */
+export interface HubspotBatchCreateInput {
+  objectWriteTraceId: string;
+  properties: Record<string, unknown>;
+}
+
+/** One input of a batch update. */
+export interface HubspotBatchUpdateInput {
+  id: string;
+  objectWriteTraceId: string;
+  properties: Record<string, unknown>;
+}
+
+/** Response body of `POST /crm/associations/2026-03/{from}/{to}/batch/associate/default`. */
+export interface HubspotBatchAssociationResponse {
+  status: string;
+  results: unknown[];
+  numErrors?: number;
+  errors?: HubspotBatchInputError[];
+}
+
+/**
  * Request body for the CRM Search API (`POST /crm/v3/objects/{type}/search`),
  * used by incremental pulls to filter records by their modified-date property.
  */

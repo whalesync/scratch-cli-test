@@ -115,6 +115,23 @@ export enum UserFlag {
    */
   HUBSPOT_ASSOCIATIONS_API_2026_03 = 'HUBSPOT_ASSOCIATIONS_API_2026_03',
   /**
+   * DEV-10200 rollout gate for batched HubSpot publishing. When TRUE for the
+   * publishing user, the HubSpot connector publishes up to 10 records of one
+   * object type per API call (`batch/create` / `batch/update`), then writes
+   * all their association links in one call per association type through the
+   * 2026-03 batch endpoints (needs `HUBSPOT_ASSOCIATIONS_API_2026_03` too;
+   * with v4 still selected the links fall back to one call per pair). It also
+   * stops swallowing association-write failures: a rejected link fails the
+   * record's publish with HubSpot's reason instead of logging a warning —
+   * expect visibly higher HubSpot publish error rates as hidden failures
+   * surface. Quotes never batch (their recall window is per record). When
+   * FALSE (default), every record publishes one call at a time as before.
+   * Resolved once per connector instance at construction (the batch size is
+   * a synchronous per-operation answer). Fail-closed. Server-only, so NOT in
+   * `ClientUserFlags`. Delete after the batching bakes in.
+   */
+  HUBSPOT_BATCH_PUBLISH = 'HUBSPOT_BATCH_PUBLISH',
+  /**
    * DEV-10735 minimum supported desktop-app version. The flag's PostHog JSON
    * payload is a semver string (e.g. `"0.2.0"`); when set, the desktop app locks
    * its UI and forces an upgrade for any build older than that version. Evaluated

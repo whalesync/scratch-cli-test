@@ -23,7 +23,10 @@ function makeUser(overrides: Partial<User> = {}): User {
   } as unknown as User;
 }
 
-function makeService(environment: ScratchEnvironment): ExperimentsService {
+function makeService(
+  environment: ScratchEnvironment,
+  localDevFlagOverrides: Map<string, boolean> = new Map(),
+): ExperimentsService {
   // No PostHog credentials, so the constructor leaves `posthog` undefined; tests that
   // need PostHog inject a mock client directly onto the instance.
   const configService = {
@@ -31,6 +34,7 @@ function makeService(environment: ScratchEnvironment): ExperimentsService {
     getPostHogHost: () => undefined,
     getPosthogFeatureFlagApiKey: () => undefined,
     isProductionEnvironment: () => environment === 'production',
+    getLocalDevFeatureFlagOverrides: () => localDevFlagOverrides,
   } as unknown as ScratchConfigService;
   return new ExperimentsService(configService);
 }
@@ -155,5 +159,31 @@ describe('ExperimentsService — getMinimumSupportedDesktopVersion (DEV-10735)',
     posthog.getFeatureFlagPayload.mockRejectedValue(new Error('posthog down'));
 
     expect(await service.getMinimumSupportedDesktopVersion(makeUser())).toBeUndefined();
+  });
+});
+
+// FEATURE_FLAG_OVERRIDES_FOR_LOCAL_DEV: force boolean flags on a local server so
+// flag-gated paths (e.g. HUBSPOT_BATCH_PUBLISH) can be exercised end-to-end.
+describe('ExperimentsService — local-dev feature-flag overrides', () => {
+  it('returns the override instead of the default when PostHog is not configured (development)', async () => {
+    const service = makeService('development', new Map([['HUBSPOT_BATCH_PUBLISH', true]]));
+    await expect(service.getBooleanFlag(UserFlag.HUBSPOT_BATCH_PUBLISH, false, makeUser())).resolves.toBe(true);
+    // A flag without an override still falls back to its default.
+    await expect(service.getBooleanFlag(UserFlag.HUBSPOT_ASSOCIATIONS_API_2026_03, false, makeUser())).resolves.toBe(
+      false,
+    );
+  });
+
+  it('wins over PostHog when both are present', async () => {
+    const service = makeService('development', new Map([['HUBSPOT_BATCH_PUBLISH', false]]));
+    const posthog = injectPostHog(service);
+    posthog.isFeatureEnabled.mockResolvedValue(true);
+    await expect(service.getBooleanFlag(UserFlag.HUBSPOT_BATCH_PUBLISH, true, makeUser())).resolves.toBe(false);
+    expect(posthog.isFeatureEnabled).not.toHaveBeenCalled();
+  });
+
+  it('is ignored in production', async () => {
+    const service = makeService('production', new Map([['HUBSPOT_BATCH_PUBLISH', true]]));
+    await expect(service.getBooleanFlag(UserFlag.HUBSPOT_BATCH_PUBLISH, false, makeUser())).resolves.toBe(false);
   });
 });

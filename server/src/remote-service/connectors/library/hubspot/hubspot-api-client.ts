@@ -9,7 +9,11 @@ import {
   parseHubspotModifiedAtToEpochMs,
 } from './hubspot-incremental';
 import {
+  HubspotBatchAssociationResponse,
+  HubspotBatchCreateInput,
   HubspotBatchReadResponse,
+  HubspotBatchUpdateInput,
+  HubspotBatchWriteResponse,
   HubspotCustomObjectSchemasResponse,
   HubspotListResponse,
   HubspotPropertiesResponse,
@@ -22,6 +26,12 @@ const LOG_SOURCE = 'HubspotApiClient';
 const BASE_URL = 'https://api.hubapi.com';
 const PAGE_SIZE = 100;
 const BATCH_READ_SIZE = 100;
+/** HubSpot's cap on inputs per `batch/create` / `batch/update` call. */
+const BATCH_WRITE_MAX_INPUTS = 100;
+/** HubSpot's cap on `{from, to}` pairs per 2026-03 `batch/associate/default` call. */
+const BATCH_ASSOCIATE_MAX_INPUTS = 2000;
+/** HubSpot's cap on unique `from` ids per 2026-03 `batch/archive` call. */
+const BATCH_ARCHIVE_MAX_UNIQUE_FROM_IDS = 100;
 
 /**
  * Which API the association writes go through. HubSpot retires v4 on 2027-03-30;
@@ -366,6 +376,52 @@ export class HubspotApiClient {
     return allRecords;
   }
 
+  // --- Batch writes (DEV-10200, HUBSPOT_BATCH_PUBLISH) ---
+
+  /**
+   * Create up to 100 records in one call (`POST /crm/v3/objects/{type}/batch/create`).
+   *
+   * Every input MUST carry a unique `objectWriteTraceId`: that is what makes
+   * HubSpot answer **207 Multi-Status** (creating the valid inputs and naming
+   * the rejected ones in `errors[].context.objectWriteTraceId`) instead of
+   * rejecting the whole batch with a 4xx. axios resolves a 207 like a 2xx, so
+   * the caller must inspect the returned body (`mapBatchCreateResponseToInputs`).
+   * A thrown 4xx means HubSpot created nothing.
+   */
+  async batchCreateRecords(objectType: string, inputs: HubspotBatchCreateInput[]): Promise<HubspotBatchWriteResponse> {
+    this.assertBatchInputCount(inputs.length, BATCH_WRITE_MAX_INPUTS, 'batch create');
+    const response = await this.withRetry(async () =>
+      this.http.post<HubspotBatchWriteResponse>(`/crm/v3/objects/${objectType}/batch/create`, { inputs }),
+    );
+    return response.data;
+  }
+
+  /**
+   * Update up to 100 records in one call (`POST /crm/v3/objects/{type}/batch/update`).
+   * Same 207 contract as {@link batchCreateRecords}: the body carries the
+   * updated records in `results` and the rejected inputs in `errors`
+   * (`mapBatchUpdateResponseToInputs`). Updates are idempotent, so a re-run
+   * after a partial failure is safe.
+   */
+  async batchUpdateRecords(objectType: string, inputs: HubspotBatchUpdateInput[]): Promise<HubspotBatchWriteResponse> {
+    this.assertBatchInputCount(inputs.length, BATCH_WRITE_MAX_INPUTS, 'batch update');
+    const response = await this.withRetry(async () =>
+      this.http.post<HubspotBatchWriteResponse>(`/crm/v3/objects/${objectType}/batch/update`, { inputs }),
+    );
+    return response.data;
+  }
+
+  private assertBatchInputCount(inputCount: number, maxInputCount: number, operationName: string): void {
+    if (inputCount === 0) {
+      throw new HubspotError(`HubSpot ${operationName} called with no inputs`);
+    }
+    if (inputCount > maxInputCount) {
+      throw new HubspotError(
+        `HubSpot ${operationName} accepts at most ${maxInputCount} inputs per call, got ${inputCount}`,
+      );
+    }
+  }
+
   // --- CRUD operations ---
 
   /**
@@ -433,6 +489,57 @@ export class HubspotApiClient {
     const prefix = this.associationsPathPrefix(apiVersion);
     await this.withRetry(async () =>
       this.http.put(`${prefix}/${fromObjectType}/${fromId}/associations/default/${toObjectType}/${toId}`),
+    );
+  }
+
+  /**
+   * Create default (unlabeled) associations for many `{from, to}` pairs in one
+   * call — pairs from different `from` records may share a call. Only the
+   * date-versioned API has this endpoint
+   * (`POST /crm/associations/2026-03/{from}/{to}/batch/associate/default`,
+   * ≤ 2,000 inputs). Returns the raw body: HubSpot answers 207 with per-input
+   * `errors` when some pairs were rejected, which axios does not throw on —
+   * see `failedPairsFromBatchAssociationResponse`. The caller chunks;
+   * this asserts the cap.
+   */
+  async batchCreateDefaultAssociations(
+    fromObjectType: string,
+    toObjectType: string,
+    pairs: { fromId: string; toId: string }[],
+  ): Promise<HubspotBatchAssociationResponse> {
+    this.assertBatchInputCount(pairs.length, BATCH_ASSOCIATE_MAX_INPUTS, 'batch associate');
+    const response = await this.withRetry(async () =>
+      this.http.post<HubspotBatchAssociationResponse>(
+        `/crm/associations/2026-03/${fromObjectType}/${toObjectType}/batch/associate/default`,
+        { inputs: pairs.map((pair) => ({ from: { id: pair.fromId }, to: { id: pair.toId } })) },
+      ),
+    );
+    return response.data;
+  }
+
+  /**
+   * Remove every association type between many `{from, to}` pairs in one call
+   * (`POST /crm/associations/2026-03/{from}/{to}/batch/archive`, ≤ 100 unique
+   * `from` ids). Same delete-all semantics as the single DELETE; a pair that
+   * isn't associated is a no-op. The caller chunks; this asserts the cap.
+   */
+  async batchArchiveAssociations(
+    fromObjectType: string,
+    toObjectType: string,
+    pairs: { fromId: string; toId: string }[],
+  ): Promise<void> {
+    const toIdsByFromId = new Map<string, string[]>();
+    for (const pair of pairs) {
+      toIdsByFromId.set(pair.fromId, [...(toIdsByFromId.get(pair.fromId) ?? []), pair.toId]);
+    }
+    this.assertBatchInputCount(toIdsByFromId.size, BATCH_ARCHIVE_MAX_UNIQUE_FROM_IDS, 'batch archive');
+    await this.withRetry(async () =>
+      this.http.post(`/crm/associations/2026-03/${fromObjectType}/${toObjectType}/batch/archive`, {
+        inputs: [...toIdsByFromId.entries()].map(([fromId, toIds]) => ({
+          from: { id: fromId },
+          to: toIds.map((toId) => ({ id: toId })),
+        })),
+      }),
     );
   }
 

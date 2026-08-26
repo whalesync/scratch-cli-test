@@ -5,6 +5,7 @@ import testAdminRouter from "./routes/test-admin";
 import crmRouter from "./routes/crm";
 import {
   associations202603Router,
+  associationsBatch202603Router,
   associationsV4Router,
 } from "./routes/associations";
 
@@ -51,6 +52,9 @@ export function createApp(): express.Express {
   // Date-versioned associations routes (DEV-10200):
   // /crm/objects/2026-03/:fromObjectType/:fromId/associations/...
   app.use("/crm/objects/2026-03", associations202603Router);
+  // Batch association writes, 2026-03 only (DEV-10200):
+  // /crm/associations/2026-03/:fromObjectType/:toObjectType/batch/{associate/default,archive}
+  app.use("/crm/associations/2026-03", associationsBatch202603Router);
 
   return app;
 }

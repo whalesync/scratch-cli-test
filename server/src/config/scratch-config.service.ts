@@ -104,6 +104,23 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable('POSTHOG_FEATURE_FLAG_API_KEY');
   }
 
+  /**
+   * Local-development-only feature-flag overrides: `FLAG_A=true,FLAG_B=false`.
+   * Lets a developer exercise a flag-gated code path (e.g. a connector's batched
+   * publish) against a local server without PostHog credentials. Ignored in
+   * production — see `ExperimentsService.getBooleanFlag`.
+   */
+  getLocalDevFeatureFlagOverrides(): Map<string, boolean> {
+    const overrides = new Map<string, boolean>();
+    const raw = this.getOptionalEnvVariable<string>('FEATURE_FLAG_OVERRIDES_FOR_LOCAL_DEV');
+    if (!raw) return overrides;
+    for (const entry of raw.split(',')) {
+      const [flagKey, value] = entry.split('=').map((part) => part.trim());
+      if (flagKey) overrides.set(flagKey, value === undefined || value.toLowerCase() === 'true');
+    }
+    return overrides;
+  }
+
   getStripeApiKey(): string {
     return this.getEnvVariable('STRIPE_API_KEY');
   }

@@ -7,6 +7,7 @@ import { CustomMetric } from '../../metrics/custom-metrics';
 import { CustomMetricsService } from '../../metrics/custom-metrics-service';
 import { Connector } from '../../remote-service/connectors/connector';
 import { ConnectorsService } from '../../remote-service/connectors/connectors.service';
+import { PartialBatchCreateError } from '../../remote-service/connectors/error';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
 import { FileIndexService } from '../file-index.service';
 import { FileReferenceService } from '../file-reference.service';
@@ -1266,7 +1267,10 @@ describe('PublishPlanRunService', () => {
         // The bounded summary query (has a `select`) returns the failed row with
         // its persisted connector message; the retry scan (also projected, but
         // selecting only `id`) returns [] so the entry isn't reprocessed.
-        if (a?.where?.status === 'failed-batch') {
+        if (
+          a?.where?.status === 'failed-batch' ||
+          (a?.where?.status as { in?: string[] } | undefined)?.in?.includes('failed-batch')
+        ) {
           return Promise.resolve(
             a.select?.filePath
               ? [{ filePath: 'Activities/call-nishant.json', phase: 'edit', error: connectorMessage }]
@@ -1346,6 +1350,104 @@ describe('PublishPlanRunService', () => {
       await service.runPipeline(PLAN_ID, true, undefined, undefined, undefined, 'web');
       // Only the executed (success) path converges; the pending one stays on dirty.
       expect(scratchGitService.rebaseDirty).toHaveBeenCalledWith(REPO_ID, ['Articles/edited.json']);
+    });
+  });
+
+  // DEV-10200: a batched connector create can land SOME records. The connector
+  // reports both halves via PartialBatchCreateError; the runner persists the
+  // created ones like a clean batch and marks only the failed ones failed-batch
+  // (with their own reason) for the ordinary per-record retry.
+  describe('dispatchCreateBatch — partially-landed batch (PartialBatchCreateError)', () => {
+    function updateManyCalls(): unknown[] {
+      const calls = jest.mocked(db.client.publishPlanOperation.updateMany).mock.calls as unknown[][];
+      return calls.map((call) => call[0]);
+    }
+
+    it('persists only the created records, marks them success, and marks the failed entry failed-batch with its own reason', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      jest.mocked(connector.createRecords).mockRejectedValue(
+        new PartialBatchCreateError({
+          createdRecordsByInputIndex: new Map([
+            [0, { id: 'rec_a', title: 'A' }],
+            [2, { id: 'rec_c', title: 'C' }],
+          ]),
+          failureMessagesByInputIndex: new Map([[1, 'Email address is invalid']]),
+        }),
+      );
+      setupPhaseEntries('create', [
+        { id: 'op_a', filePath: 'articles/a.json', content: { title: 'A' }, remoteRecordId: null },
+        { id: 'op_b', filePath: 'articles/b.json', content: { title: 'B' }, remoteRecordId: null },
+        { id: 'op_c', filePath: 'articles/c.json', content: { title: 'C' }, remoteRecordId: null },
+      ]);
+
+      await service.runPipeline(PLAN_ID);
+
+      // Only the two created records are indexed and committed.
+      expect(fileIndexService.upsertBatch).toHaveBeenCalledWith([
+        expect.objectContaining({ filename: 'a.json', recordId: 'rec_a' }),
+        expect.objectContaining({ filename: 'c.json', recordId: 'rec_c' }),
+      ]);
+      expect(scratchGitService.commitFilesToBranch).toHaveBeenCalledWith(
+        REPO_ID,
+        'main',
+        [
+          { path: 'articles/a.json', content: expect.stringContaining('rec_a') as string },
+          { path: 'articles/c.json', content: expect.stringContaining('rec_c') as string },
+        ],
+        expect.any(String),
+      );
+      // Statuses: a, c → success; b → failed-batch with the connector's reason.
+      expect(updateManyCalls()).toContainEqual({
+        where: { id: { in: ['op_a', 'op_c'] } },
+        data: { status: 'success', error: null },
+      });
+      expect(updateManyCalls()).toContainEqual({
+        where: { id: 'op_b' },
+        data: { status: 'failed-batch', error: 'Email address is invalid' },
+      });
+      expect(connector.createRecords).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts only the rejected entries as errors in progress reporting, not the whole batch', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      jest.mocked(connector.createRecords).mockRejectedValue(
+        new PartialBatchCreateError({
+          createdRecordsByInputIndex: new Map([
+            [0, { id: 'rec_a', title: 'A' }],
+            [2, { id: 'rec_c', title: 'C' }],
+          ]),
+          failureMessagesByInputIndex: new Map([[1, 'Email address is invalid']]),
+        }),
+      );
+      setupPhaseEntries('create', [
+        { id: 'op_a', filePath: 'articles/a.json', content: { title: 'A' }, remoteRecordId: null },
+        { id: 'op_b', filePath: 'articles/b.json', content: { title: 'B' }, remoteRecordId: null },
+        { id: 'op_c', filePath: 'articles/c.json', content: { title: 'C' }, remoteRecordId: null },
+      ]);
+      const onError = jest.fn();
+
+      await service.runPipeline(PLAN_ID, undefined, undefined, undefined, onError);
+
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({ errorCount: 1, lastSyncError: expect.stringContaining('1 of 3 entries') as string }),
+      );
+    });
+
+    it('a plain connector error on a create batch still marks every entry failed-batch (unchanged contract)', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      jest.mocked(connector.createRecords).mockRejectedValue(new Error('HubSpot is down'));
+      setupPhaseEntries('create', [
+        { id: 'op_a', filePath: 'articles/a.json', content: { title: 'A' }, remoteRecordId: null },
+        { id: 'op_b', filePath: 'articles/b.json', content: { title: 'B' }, remoteRecordId: null },
+      ]);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(fileIndexService.upsertBatch).not.toHaveBeenCalled();
+      expect(updateManyCalls()).toContainEqual({
+        where: { id: { in: ['op_a', 'op_b'] } },
+        data: { status: 'failed-batch', error: 'HubSpot is down' },
+      });
     });
   });
 });

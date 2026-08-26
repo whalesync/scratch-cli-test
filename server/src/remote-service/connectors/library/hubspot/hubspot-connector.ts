@@ -17,6 +17,7 @@ import {
   NonWritableFieldEditError,
   nonWritableFieldEditErrorMessage,
   NonWritableFieldReason,
+  PartialBatchCreateError,
 } from '../../error';
 import { Service } from '../../service-constants';
 import {
@@ -30,6 +31,7 @@ import {
   TablePreview,
 } from '../../types';
 import { HubspotApiClient, HubspotAssociationsApiVersion, HubspotError } from './hubspot-api-client';
+import { HUBSPOT_BATCH_PUBLISH_SIZE, HubspotBatchPublisher } from './hubspot-batch-publisher';
 import { buildHubspotDefaultView } from './hubspot-default-view';
 import { buildHubspotJsonTableSpec, isReadonlyHubspotProperty } from './hubspot-json-schema';
 import {
@@ -252,18 +254,42 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
 
   private associationsApiVersionPromise?: Promise<HubspotAssociationsApiVersion>;
 
+  /**
+   * The batched publish flow (DEV-10200), present only when HUBSPOT_BATCH_PUBLISH
+   * is on for the publishing user. `createConnector` resolves the flag BEFORE
+   * construction because `getBatchSize` is a synchronous per-operation answer;
+   * direct construction (specs, the live spec) passes `batchPublish` explicitly
+   * and defaults to off — the flag's fail-closed value. When present, exactly
+   * three methods branch to it — `createRecords`, `updateRecords` (non-quotes)
+   * and `syncAssociations` — and everything else below is the unchanged legacy
+   * one-record-per-call flow. See {@link HubspotBatchPublisher} for the new flow.
+   */
+  private readonly batchPublisher?: HubspotBatchPublisher;
+
   constructor(
     accessToken: string,
     opts?: {
       rateLimiter?: RateLimiter;
       isFeatureEnabled?: (flagKey: string) => Promise<boolean>;
       associationsApiVersion?: HubspotAssociationsApiVersion;
+      batchPublish?: boolean;
     },
   ) {
     super();
     this.client = new HubspotApiClient(accessToken, { rateLimiter: opts?.rateLimiter });
     this.isFeatureEnabled = opts?.isFeatureEnabled;
     this.associationsApiVersionOverride = opts?.associationsApiVersion;
+    if (opts?.batchPublish) {
+      this.batchPublisher = new HubspotBatchPublisher({
+        client: this.client,
+        getPropertyNames: (objectType) => this.getPropertyNames(objectType),
+        getAssociationTypes: (objectType) => this.getAssociationTypes(objectType),
+        extractWritableProperties: (file, tableSpec) => this.extractWritableProperties(file, tableSpec),
+        computeWritablePropertiesToPublish: (file, tableSpec, changedFieldsForFile) =>
+          this.computeWritablePropertiesToPublish(file, tableSpec, changedFieldsForFile),
+        getAssociationsApiVersion: () => this.getAssociationsApiVersion(),
+      });
+    }
   }
 
   /**
@@ -520,8 +546,17 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     }
   }
 
-  getBatchSize(): number {
-    return 1;
+  /**
+   * One record per publish call unless HUBSPOT_BATCH_PUBLISH is on, in which
+   * case creates and updates go out {@link HUBSPOT_BATCH_PUBLISH_SIZE} at a
+   * time (deletes stay at 1). The runner slices per object type, so a batch
+   * never mixes types; quotes are kept one-per-call by the batch publisher.
+   */
+  getBatchSize(operation: 'create' | 'update' | 'delete'): number {
+    if (!this.batchPublisher || operation === 'delete') {
+      return 1;
+    }
+    return HUBSPOT_BATCH_PUBLISH_SIZE;
   }
 
   /**
@@ -530,6 +565,9 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
    */
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const objectType = tableSpec.id.remoteId[0];
+    if (this.batchPublisher) {
+      return this.batchPublisher.createRecords(objectType, tableSpec, files); // DEV-10200 batched flow
+    }
     const propertyNames = await this.getPropertyNames(objectType);
     const associationTypes = this.getAssociationTypes(objectType);
     const results: ConnectorFile[] = [];
@@ -567,6 +605,9 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<ConnectorFile[]> {
     const objectType = tableSpec.id.remoteId[0];
+    if (this.batchPublisher && objectType !== QUOTES_OBJECT_TYPE) {
+      return this.batchPublisher.updateRecords(objectType, tableSpec, files, changedFields); // DEV-10200 batched flow
+    }
     const propertyNames = await this.getPropertyNames(objectType);
     const associationTypes = this.getAssociationTypes(objectType);
 
@@ -652,6 +693,17 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
+    if (error instanceof PartialBatchCreateError) {
+      return {
+        userFriendlyMessage: error.userFriendlyMessage,
+        description: error.message,
+        additionalContext: {
+          createdRecordIds: [...error.createdRecordsByInputIndex.values()].map((record) => String(record.id)),
+          failureMessagesByInputIndex: Object.fromEntries(error.failureMessagesByInputIndex),
+        },
+      };
+    }
+
     if (error instanceof HubspotError) {
       return {
         userFriendlyMessage: error.message,
@@ -1034,6 +1086,9 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     current: Record<string, { results: HubspotAssociation[] }>,
     desired: Record<string, { results: HubspotAssociation[] }>,
   ): Promise<void> {
+    if (this.batchPublisher) {
+      return this.batchPublisher.syncAssociations(objectType, recordId, current, desired); // DEV-10200: surfaced, batched
+    }
     const apiVersion = await this.getAssociationsApiVersion();
 
     // Collect all association types from both current and desired
@@ -1076,6 +1131,26 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   }
 }
 
+/**
+ * Resolve HUBSPOT_BATCH_PUBLISH for the connector's user, fail-closed. Runs in
+ * `createConnector`, before the instance exists, because `getBatchSize` must
+ * answer synchronously and the runner asks it once per phase × folder.
+ */
+async function resolveBatchPublishFlagFailClosed(
+  isFeatureEnabled: (flagKey: string) => Promise<boolean>,
+): Promise<boolean> {
+  try {
+    return await isFeatureEnabled('HUBSPOT_BATCH_PUBLISH');
+  } catch (error) {
+    WSLogger.warn({
+      source: LOG_SOURCE,
+      message: 'HUBSPOT_BATCH_PUBLISH flag lookup failed; publishing one record at a time',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
 // --- Self-registration ---
 
 connectorRegistry.register({
@@ -1086,15 +1161,18 @@ connectorRegistry.register({
   resolveIncrementalPullSupport: ({ options, tableSpec }) => hubspotIncrementalPullSupport(options, tableSpec),
   incrementalPullAutoDetectsFromSchema: true,
   rateLimiterSpec: { points: 10, duration: 1 }, // 10 req/s — HubSpot private apps allow 100 req/10s
-  // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.decryptedCredentials?.apiKey) {
       throw new ConnectorInstantiationError('Private app access token is required for HubSpot', Service.HUBSPOT);
     }
     const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount?.id ?? 'default');
+    // Resolved here (not lazily in the instance) because the batch size is a
+    // synchronous answer — see HubspotConnector.batchPublisher.
+    const batchPublish = await resolveBatchPublishFlagFailClosed(ctx.isFeatureEnabled);
     return new HubspotConnector(ctx.decryptedCredentials.apiKey, {
       rateLimiter,
       isFeatureEnabled: ctx.isFeatureEnabled,
+      batchPublish,
     });
   },
 });

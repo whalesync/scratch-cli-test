@@ -15,10 +15,27 @@ export type PartialUser = Pick<User, 'id' | 'role'>;
 export class ExperimentsService implements OnModuleDestroy {
   private posthog: PostHog | undefined;
 
+  /**
+   * `FEATURE_FLAG_OVERRIDES_FOR_LOCAL_DEV` — boolean flags forced on/off for a
+   * local server, so flag-gated paths can be exercised end-to-end without
+   * PostHog. Never honored in production.
+   */
+  private readonly localDevFlagOverrides: ReadonlyMap<string, boolean>;
+
   constructor(private readonly config: ScratchConfigService) {
     const apiKey = config.getPostHogApiKey();
     const host = config.getPostHogHost();
     const personalApiKey = config.getPosthogFeatureFlagApiKey();
+
+    this.localDevFlagOverrides = config.isProductionEnvironment()
+      ? new Map()
+      : config.getLocalDevFeatureFlagOverrides();
+    if (this.localDevFlagOverrides.size > 0) {
+      WSLogger.warn({
+        source: ExperimentsService.name,
+        message: `Local-dev feature-flag overrides active: ${[...this.localDevFlagOverrides].map(([k, v]) => `${k}=${v}`).join(', ')}`,
+      });
+    }
 
     if (apiKey && personalApiKey) {
       this.posthog = new PostHog(apiKey, {
@@ -85,6 +102,10 @@ export class ExperimentsService implements OnModuleDestroy {
   public async getBooleanFlag(flag: AllFeatureFlags, defaultValue: boolean, user?: PartialUser): Promise<boolean> {
     if (flag in UserFlag && !user) {
       throw new Error('User ID must be provided when accessing a User-scoped feature flag');
+    }
+    const localDevOverride = this.localDevFlagOverrides.get(flag);
+    if (localDevOverride !== undefined) {
+      return localDevOverride;
     }
     if (!this.posthog) {
       return defaultValue;

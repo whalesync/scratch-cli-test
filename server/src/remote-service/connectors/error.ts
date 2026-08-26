@@ -6,7 +6,7 @@ import { assertUnreachable } from '../../utils/asserts';
 import { Connector } from './connector';
 import { describeRequestUrlForLogging } from './connector-http-logging';
 import { getServiceDisplayName } from './display-names';
-import { ConnectorErrorDetails } from './types';
+import { ConnectorErrorDetails, ConnectorFile } from './types';
 
 // Handled with exception filter in exception-filters module
 export class ConnectorInstantiationError extends Error {
@@ -79,6 +79,52 @@ export class NonWritableFieldEditError extends Error implements UserFriendlyErro
     super(message);
     this.name = 'NonWritableFieldEditError';
     this.userFriendlyMessage = message;
+  }
+}
+
+/**
+ * Thrown by a connector's `createRecords` when a bulk create landed **some** of
+ * the requested records but not all of them (DEV-10200).
+ *
+ * The publish runner's contract is throw-or-succeed per batch, and it recovers
+ * from a thrown batch by retrying its records one at a time. For creates that
+ * recovery is dangerous: the records the service DID create leave no local
+ * trace, so the retry creates them a second time. This error is the channel that
+ * prevents that — it hands the runner every record that now exists remotely
+ * (`createdRecordsByInputIndex`, keyed by the index into the `files` argument),
+ * which the runner persists exactly like a clean batch, plus the reason each
+ * rejected input failed (`failureMessagesByInputIndex`), which the runner marks
+ * `failed-batch` for the ordinary per-record retry.
+ *
+ * The two maps are disjoint, and **a failed input must have nothing remote**:
+ * the retry will create it again, so a connector that created a record and then
+ * failed a later step of publishing it (e.g. its association links) must roll
+ * that record back before reporting the input as failed.
+ *
+ * Only throw this when at least one record was created — if the service
+ * rejected the whole call and created nothing, throw the service's error as
+ * usual so the ordinary per-record retry runs.
+ */
+export class PartialBatchCreateError extends Error implements UserFriendlyError {
+  public readonly userFriendlyMessage: string;
+  public readonly createdRecordsByInputIndex: ReadonlyMap<number, ConnectorFile>;
+  public readonly failureMessagesByInputIndex: ReadonlyMap<number, string>;
+
+  constructor(params: {
+    createdRecordsByInputIndex: ReadonlyMap<number, ConnectorFile>;
+    failureMessagesByInputIndex: ReadonlyMap<number, string>;
+    cause?: unknown;
+  }) {
+    const failureCount = params.failureMessagesByInputIndex.size;
+    const firstFailure = [...params.failureMessagesByInputIndex.entries()].sort(([a], [b]) => a - b)[0];
+    const message =
+      `${failureCount} of the batch's records failed to publish` +
+      (firstFailure ? ` (first failure, record #${firstFailure[0] + 1}: ${firstFailure[1]})` : '');
+    super(message, params.cause !== undefined ? { cause: params.cause } : undefined);
+    this.name = 'PartialBatchCreateError';
+    this.userFriendlyMessage = message;
+    this.createdRecordsByInputIndex = params.createdRecordsByInputIndex;
+    this.failureMessagesByInputIndex = params.failureMessagesByInputIndex;
   }
 }
 

@@ -12,8 +12,11 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
   getServiceDisplayName: (service: string) => service,
 }));
 
+import { PartialBatchCreateError } from 'src/remote-service/connectors/error';
 import { HubspotApiClient } from 'src/remote-service/connectors/library/hubspot/hubspot-api-client';
+import { HubspotAssociationWriteError } from 'src/remote-service/connectors/library/hubspot/hubspot-batch-publish';
 import { HubspotConnector } from 'src/remote-service/connectors/library/hubspot/hubspot-connector';
+import { HubspotRecord } from 'src/remote-service/connectors/library/hubspot/hubspot-types';
 import { BaseJsonTableSpec, ConnectorFile, EntityId } from 'src/remote-service/connectors/types';
 
 // ─── Test Setup ──────────────────────────────────────────────────────────────
@@ -821,10 +824,334 @@ describe('HubspotConnector with fake API', () => {
     });
   });
 
-  describe('getBatchSize', () => {
-    it('returns 1', () => {
+  // ─── Batched publishing (DEV-10200, HUBSPOT_BATCH_PUBLISH) ──────────────────
+  //
+  // With the flag on, a publish batch of N records of one object type goes out
+  // as ONE batch/create (or batch/update) call, then ONE association call per
+  // association type carrying every record's links. The fake logs every batch
+  // request (`store.batchRequestLog`) so these cases assert HOW the records
+  // were published, not only the end state.
+  describe('batched publishing (DEV-10200, HUBSPOT_BATCH_PUBLISH)', () => {
+    type BatchBody = { inputs: Record<string, unknown>[] };
+
+    function createBatchConnector(associationsApiVersion: '2026-03' | 'v4' = '2026-03'): HubspotConnector {
+      return new HubspotConnector('fake-test-token', { batchPublish: true, associationsApiVersion });
+    }
+
+    function batchRequestsTo(pathFragment: string): { path: string; body: BatchBody }[] {
+      return store.batchRequestLog.filter((request) => request.path.includes(pathFragment)) as {
+        path: string;
+        body: BatchBody;
+      }[];
+    }
+
+    function contactFile(email: string, companyIds: string[] = [], dealIds: string[] = []): ConnectorFile {
+      return {
+        properties: { email, firstname: email.split('@')[0] },
+        associations: {
+          companies: { results: companyIds.map((id) => ({ id, type: 'contact_to_company' })) },
+          deals: { results: dealIds.map((id) => ({ id, type: 'contact_to_deal' })) },
+        },
+      } as unknown as ConnectorFile;
+    }
+
+    function asRecord(file: ConnectorFile): HubspotRecord {
+      return file as unknown as HubspotRecord;
+    }
+
+    async function captureError<T extends Error>(
+      promise: Promise<unknown>,
+      errorClass: new (...args: never[]) => T,
+    ): Promise<T> {
+      try {
+        await promise;
+      } catch (error) {
+        if (error instanceof errorClass) return error;
+        throw error;
+      }
+      throw new Error(`Expected the promise to reject with ${errorClass.name}`);
+    }
+
+    it('sends a unique chunk-local objectWriteTraceId per input and binds each created record to its file by the echoed trace id', async () => {
+      const connector = createBatchConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+      // Identical properties: nothing but the echoed trace id can tell the records apart.
+      const files = Array.from(
+        { length: 3 },
+        () => ({ properties: { firstname: 'Twin' } }) as unknown as ConnectorFile,
+      );
+
+      const created = await connector.createRecords(spec, files);
+
+      const [createRequest] = batchRequestsTo('/batch/create');
+      expect(createRequest.body.inputs.map((input) => input.objectWriteTraceId)).toEqual(['0', '1', '2']);
+      const echoedTraceIds = new Set(
+        created.map((file) => (file as unknown as { objectWriteTraceId?: string }).objectWriteTraceId),
+      );
+      // The refetched files never carry the transport-only trace id.
+      expect([...echoedTraceIds]).toEqual([undefined]);
+      expect(new Set(created.map((file) => asRecord(file).id)).size).toBe(3);
+    });
+
+    it('falls back to binding created records by their echoed property values when the results carry no trace id', async () => {
+      store.omitObjectWriteTraceIdFromBatchResults = true;
+      const connector = createBatchConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+      const files = Array.from({ length: 4 }, (_, index) => contactFile(`no-trace-${index}@example.com`));
+
+      const created = await connector.createRecords(spec, files);
+
+      const [createRequest] = batchRequestsTo('/batch/create');
+      expect(createRequest.body.inputs).toHaveLength(4);
+      created.forEach((file, index) => {
+        expect(asRecord(file).properties.email).toBe(`no-trace-${index}@example.com`);
+        expect(store.getRecord('contacts', asRecord(file).id)?.properties.email).toBe(`no-trace-${index}@example.com`);
+      });
+    });
+
+    it('creates 10 contacts in ONE batch/create call, then flushes their links in ONE call per association type', async () => {
+      const companyA = store.addRecord('companies', { name: 'A' });
+      const companyB = store.addRecord('companies', { name: 'B' });
+      const deal = store.addRecord('deals', { dealname: 'D' });
+      const connector = createBatchConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+
+      const files = Array.from({ length: 10 }, (_, index) =>
+        contactFile(`batch${index}@example.com`, index % 2 === 0 ? [companyA.id, companyB.id] : [companyA.id], [
+          deal.id,
+        ]),
+      );
+      const created = await connector.createRecords(spec, files);
+
+      expect(created).toHaveLength(10);
+      created.forEach((file, index) => {
+        expect(asRecord(file).id).toBeDefined();
+        expect(asRecord(file).properties.email).toBe(`batch${index}@example.com`);
+      });
+
+      const createCalls = batchRequestsTo('/crm/v3/objects/contacts/batch/create');
+      expect(createCalls).toHaveLength(1);
+      expect(createCalls[0].body.inputs.map((input) => input.objectWriteTraceId)).toEqual(
+        Array.from({ length: 10 }, (_, index) => String(index)),
+      );
+      expect(store.batchRequestLog.filter((r) => r.path.includes('/batch/update'))).toHaveLength(0);
+
+      const companyLinkCalls = batchRequestsTo('/crm/associations/2026-03/contacts/companies/batch/associate/default');
+      expect(companyLinkCalls).toHaveLength(1);
+      expect(companyLinkCalls[0].body.inputs).toHaveLength(15); // 5×2 + 5×1
+      const dealLinkCalls = batchRequestsTo('/crm/associations/2026-03/contacts/deals/batch/associate/default');
+      expect(dealLinkCalls).toHaveLength(1);
+      expect(dealLinkCalls[0].body.inputs).toHaveLength(10);
+      expect(batchRequestsTo('/batch/archive')).toHaveLength(0);
+
+      // End state in HubSpot AND on the returned (refetched) files.
+      const firstStored = store.getRecord('contacts', asRecord(created[0]).id);
+      expect(firstStored?.associations?.companies?.results.map((a) => a.id).sort()).toEqual(
+        [companyA.id, companyB.id].sort(),
+      );
+      expect(firstStored?.associations?.deals?.results.map((a) => a.id)).toEqual([deal.id]);
+      expect(asRecord(created[1]).associations?.companies?.results.map((a) => a.id)).toEqual([companyA.id]);
+    });
+
+    it('partial failure: reports the created ids and the rejected input, and a lone retry of the rejected one creates nothing extra', async () => {
+      store.rejectBatchInputsWhere('contacts', 'email', 'bad@example.com', {
+        message: 'Email address bad@example.com is invalid',
+      });
+      const connector = createBatchConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+      const files = [
+        contactFile('good1@example.com'),
+        contactFile('bad@example.com'),
+        contactFile('good2@example.com'),
+      ];
+
+      const error = await captureError(connector.createRecords(spec, files), PartialBatchCreateError);
+
+      expect([...error.createdRecordsByInputIndex.keys()]).toEqual([0, 2]);
+      expect(asRecord(error.createdRecordsByInputIndex.get(0) as ConnectorFile).properties.email).toBe(
+        'good1@example.com',
+      );
+      expect(asRecord(error.createdRecordsByInputIndex.get(2) as ConnectorFile).properties.email).toBe(
+        'good2@example.com',
+      );
+      expect([...error.failureMessagesByInputIndex.keys()]).toEqual([1]);
+      expect(error.failureMessagesByInputIndex.get(1)).toContain('is invalid');
+      expect(error.userFriendlyMessage).toContain('record #2');
+      expect(store.listRecords('contacts')).toHaveLength(2);
+      expect(batchRequestsTo('/batch/create')).toHaveLength(1);
+
+      // The runner retries ONLY the rejected record. With nothing created in
+      // that call, it is a plain HubSpot error (not a partial one) and no
+      // duplicate appears.
+      await expect(connector.createRecords(spec, [files[1]])).rejects.toThrow(/rejected 1 of 1 record create/);
+      expect(store.listRecords('contacts')).toHaveLength(2);
+    });
+
+    it('created but unlinked: a rejected association pair archives that record and reports it as failed, naming the pair', async () => {
+      const company = store.addRecord('companies', { name: 'Real' });
+      const connector = createBatchConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+      const files = [contactFile('ok@example.com', [company.id]), contactFile('dangling@example.com', ['999'])];
+
+      const error = await captureError(connector.createRecords(spec, files), PartialBatchCreateError);
+
+      expect([...error.createdRecordsByInputIndex.keys()]).toEqual([0]);
+      expect([...error.failureMessagesByInputIndex.keys()]).toEqual([1]);
+      expect(error.failureMessagesByInputIndex.get(1)).toMatch(/contacts\/\d+ → companies\/999/);
+      // Only the linked record remains; the dangling one was archived so a retry re-creates it cleanly.
+      const remaining = store.listRecords('contacts');
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].properties.email).toBe('ok@example.com');
+      expect(remaining[0].associations?.companies?.results.map((a) => a.id)).toEqual([company.id]);
+    });
+
+    it('updates 10 contacts in ONE batch/update call and flushes link adds/removes as ONE associate + ONE archive call', async () => {
+      const companyA = store.addRecord('companies', { name: 'A' });
+      const companyB = store.addRecord('companies', { name: 'B' });
+      for (let index = 0; index < 10; index++) {
+        const contact = store.addRecord('contacts', { email: `upd${index}@example.com`, firstname: 'Old' });
+        store.addAssociation('contacts', contact.id, 'companies', companyA.id);
+      }
+      const connector = createBatchConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+
+      const files = store.listRecords('contacts').map(
+        (record) =>
+          ({
+            ...record,
+            properties: { ...record.properties, firstname: 'Renamed' },
+            associations: { companies: { results: [{ id: companyB.id, type: 'contact_to_company' }] } },
+          }) as unknown as ConnectorFile,
+      );
+      const updated = await connector.updateRecords(
+        spec,
+        files,
+        files.map((file) => ({ properties: { firstname: 'Renamed' }, associations: asRecord(file).associations })),
+      );
+
+      expect(updated).toHaveLength(10);
+      updated.forEach((file) => expect(asRecord(file).properties.firstname).toBe('Renamed'));
+
+      const updateCalls = batchRequestsTo('/crm/v3/objects/contacts/batch/update');
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0].body.inputs).toHaveLength(10);
+      expect(updateCalls[0].body.inputs[0]).toEqual({
+        id: asRecord(files[0]).id,
+        objectWriteTraceId: '0',
+        properties: { firstname: 'Renamed' },
+      });
+      const associateCalls = batchRequestsTo('/crm/associations/2026-03/contacts/companies/batch/associate/default');
+      expect(associateCalls).toHaveLength(1);
+      expect(associateCalls[0].body.inputs).toHaveLength(10);
+      const archiveCalls = batchRequestsTo('/crm/associations/2026-03/contacts/companies/batch/archive');
+      expect(archiveCalls).toHaveLength(1);
+      expect(archiveCalls[0].body.inputs).toHaveLength(10);
+      expect(archiveCalls[0].body.inputs[0]).toEqual({
+        from: { id: asRecord(files[0]).id },
+        to: [{ id: companyA.id }],
+      });
+
+      for (const record of store.listRecords('contacts')) {
+        expect(record.associations?.companies?.results.map((a) => a.id)).toEqual([companyB.id]);
+      }
+    });
+
+    it('surfaces a rejected association write on update instead of swallowing it (batch on, 2026-03)', async () => {
+      const contact = store.addRecord('contacts', { email: 'link@example.com' });
+      const connector = createBatchConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+      const desiredAssociations = { companies: { results: [{ id: '999' }] } };
+
+      const error = await captureError(
+        connector.updateRecords(
+          spec,
+          [{ ...contact, associations: desiredAssociations } as unknown as ConnectorFile],
+          [{ associations: desiredAssociations }],
+        ),
+        HubspotAssociationWriteError,
+      );
+      expect(error.message).toMatch(new RegExp(`contacts/${contact.id} → companies/999`));
+      expect(error.failedPairs).toEqual([
+        expect.objectContaining({ fromId: contact.id, toId: '999', toObjectType: 'companies' }),
+      ]);
+    });
+
+    it('surfaces a rejected association write through per-pair calls when v4 is still selected (batch on, no 2026-03)', async () => {
+      const contact = store.addRecord('contacts', { email: 'v4@example.com' });
+      const connector = createBatchConnector('v4');
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+      const desiredAssociations = { companies: { results: [{ id: '999' }] } };
+
+      await expect(
+        connector.updateRecords(
+          spec,
+          [{ ...contact, associations: desiredAssociations } as unknown as ConnectorFile],
+          [{ associations: desiredAssociations }],
+        ),
+      ).rejects.toThrow(new RegExp(`contacts/${contact.id} → companies/999`));
+      expect(batchRequestsTo('/crm/associations/2026-03')).toHaveLength(0);
+    });
+
+    it('keeps swallowing a rejected association write when the flag is off (legacy behavior, unchanged)', async () => {
+      const contact = store.addRecord('contacts', { email: 'legacy@example.com' });
       const connector = createConnector();
-      expect(connector.getBatchSize()).toBe(1);
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+      const desiredAssociations = { companies: { results: [{ id: '999' }] } };
+
+      await expect(
+        connector.updateRecords(
+          spec,
+          [{ ...contact, associations: desiredAssociations } as unknown as ConnectorFile],
+          [{ associations: desiredAssociations }],
+        ),
+      ).resolves.toHaveLength(1);
+      expect(store.batchRequestLog).toHaveLength(0);
+    });
+
+    it('never batches quotes: with the flag on, quotes still publish one call at a time (recall window is per record)', async () => {
+      store.addRecord('quotes', { hs_title: 'Q1', hs_status: 'DRAFT' });
+      store.addRecord('quotes', { hs_title: 'Q2', hs_status: 'DRAFT' });
+      const connector = createBatchConnector();
+      const spec = await connector.fetchJsonTableSpec(QUOTES_ENTITY_ID);
+
+      const files = store
+        .listRecords('quotes')
+        .map(
+          (record) =>
+            ({ ...record, properties: { ...record.properties, hs_terms: 'Net 30' } }) as unknown as ConnectorFile,
+        );
+      const updated = await connector.updateRecords(
+        spec,
+        files,
+        files.map(() => ({ properties: { hs_terms: 'Net 30' } })),
+      );
+      expect(updated).toHaveLength(2);
+      expect(store.listRecords('quotes').map((record) => record.properties.hs_terms)).toEqual(['Net 30', 'Net 30']);
+
+      const created = await connector.createRecords(spec, [
+        { properties: { hs_title: 'Q3', hs_status: 'DRAFT' } } as unknown as ConnectorFile,
+        { properties: { hs_title: 'Q4', hs_status: 'DRAFT' } } as unknown as ConnectorFile,
+      ]);
+      expect(created).toHaveLength(2);
+      expect(store.listRecords('quotes')).toHaveLength(4);
+
+      expect(store.batchRequestLog).toHaveLength(0);
+    });
+  });
+
+  describe('getBatchSize', () => {
+    it('returns 1 for every operation when HUBSPOT_BATCH_PUBLISH is off (the default)', () => {
+      const connector = createConnector();
+      expect(connector.getBatchSize('create')).toBe(1);
+      expect(connector.getBatchSize('update')).toBe(1);
+      expect(connector.getBatchSize('delete')).toBe(1);
+    });
+
+    it('returns 10 for create/update and 1 for delete when HUBSPOT_BATCH_PUBLISH is on', () => {
+      const connector = new HubspotConnector('fake-test-token', { batchPublish: true });
+      expect(connector.getBatchSize('create')).toBe(10);
+      expect(connector.getBatchSize('update')).toBe(10);
+      expect(connector.getBatchSize('delete')).toBe(1);
     });
   });
 
