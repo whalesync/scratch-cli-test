@@ -109,7 +109,7 @@ const SCHEMA_SAMPLE_ROW_COUNT = 5;
 
 /** The pseudo create-destination that means "create a brand-new spreadsheet". */
 const NEW_SPREADSHEET_DESTINATION_ID = 'scratch-new-spreadsheet';
-const NEW_SPREADSHEET_DESTINATION_NAME = 'New spreadsheet (created by Scratch)';
+const NEW_SPREADSHEET_DESTINATION_NAME = 'New spreadsheet';
 const NEW_SPREADSHEET_DEFAULT_TITLE = 'Scratch Export';
 
 /**
