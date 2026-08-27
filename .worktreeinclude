@@ -12,6 +12,7 @@
 /client/.env.local
 /server/.env
 /scratch-desktop/.env
+/local/scratch-git-repos
 
 # Test env (client tests, live-API integration + smoke tests; e.g. WEBFLOW_API_KEY)
 /client/.env.test

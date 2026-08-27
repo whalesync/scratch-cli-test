@@ -1,4 +1,18 @@
 {
+  "worktree": {
+    "baseRef": "fresh",
+    "symlinkDirectories": [
+      "node_modules",
+      "server/node_modules",
+      "client/node_modules",
+      "scratch-cli-tests/node_modules",
+      "scratch-git-tests/node_modules",
+      "smoke-tests/node_modules",
+      "scratch-desktop/node_modules",
+      "terraform/envs/eu-test/.terraform",
+      "terraform/envs/eu-production/.terraform"
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(cat:*)",

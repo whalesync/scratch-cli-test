@@ -1,8 +1,23 @@
 import { BUILD_VERSION } from '@/version';
 import { withPostHogConfig } from '@posthog/nextjs-config';
 import type { NextConfig } from 'next';
+import { lstatSync, realpathSync } from 'node:fs';
 import { readdir, rm } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+
+// In a git worktree, node_modules is symlinked to the parent repo. Turbopack
+// rejects symlinks that resolve outside its inferred root. When node_modules is a symlink,
+// point the root at wherever it actually lives so the target falls inside the
+// boundary. In a normal checkout node_modules is a real dir, so we leave the
+// root untouched and let Next infer it as usual.
+const nmPath = join(__dirname, 'node_modules');
+const turbopackRoot = lstatSync(nmPath, { throwIfNoEntry: false })?.isSymbolicLink()
+  ? dirname(dirname(realpathSync(nmPath)))
+  : undefined;
+
+if (turbopackRoot) {
+  console.log(`[next.config] node_modules is a symlink; setting turbopack.root to ${turbopackRoot}`);
+}
 
 /**
  * The function form of a Next config — `next.config.ts` may export either a plain `NextConfig` or a
@@ -14,9 +29,7 @@ type NextConfigFactory = (phase: string, context: { defaultConfig: NextConfig })
 const baseNextConfig: NextConfig = {
   output: 'standalone',
   productionBrowserSourceMaps: true,
-  turbopack: {
-    root: '..',
-  },
+  ...(turbopackRoot ? { turbopack: { root: turbopackRoot } } : { turbopack: { root: '..' } }),
   devIndicators: {
     position: 'bottom-right',
   },
