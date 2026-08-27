@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { User } from '@prisma/client';
 import {
   BillingInterval,
@@ -36,7 +36,12 @@ import {
 import { userToActor } from 'src/users/types';
 import Stripe from 'stripe';
 import { getActiveSubscriptions, getLastestExpiringSubscription, isActiveSubscriptionOwnedByUser } from './helpers';
-import { getPlan, getPlanTypeForStripePriceId, getStripePriceIdForPlanAndBillingInterval } from './plans';
+import {
+  getPlan,
+  getPlanTypeForStripePriceId,
+  getPlanTypeFromString,
+  getStripePriceIdForPlanAndBillingInterval,
+} from './plans';
 
 /**
  * The version of the API we are expecting, from: https://stripe.com/docs/api/versioning
@@ -303,6 +308,64 @@ export class StripePaymentService {
         error: err,
       });
     }
+  }
+
+  /**
+   * Clears the internal Whalesync-plan subscription for a shadow user's organization — the inverse of
+   * {@link ensureWhalesyncPlanSubscription}. Driven by Bottlenose when a user's Whalesync subscription
+   * ends, so their free Scratch access is revoked.
+   *
+   * Refuses (throws {@link ConflictException} → 409) if the organization has a real, active Scratch
+   * Stripe subscription: `WHALESYNC_PLAN` is the only synthetic, non-Stripe plan, so a "real Scratch
+   * Stripe subscription" is exactly an active subscription whose `planType` is not `WHALESYNC_PLAN`
+   * (a paid `PRO_PLAN`/`MAX_PLAN`). Those are genuine paying customers we must never downgrade.
+   *
+   * The Whalesync row is deleted (not soft-canceled) so its deterministic `whalesync_<orgId>`
+   * `stripeSubscriptionId` is freed and `ensureWhalesyncPlanSubscription` can cleanly re-grant it if the
+   * user later re-subscribes to Whalesync. Idempotent: an organization with no Whalesync row returns
+   * `{ cleared: false }` rather than failing, so retried Bottlenose lifecycle hooks are safe.
+   */
+  async clearWhalesyncPlanSubscription(user: UserCluster.User): Promise<{ cleared: boolean }> {
+    const subscriptions = user.organization?.subscriptions ?? [];
+
+    // A real, active Scratch Stripe subscription (paid Pro/Max) must never be touched — refuse loudly.
+    const activeRealStripeSubscriptions = getActiveSubscriptions(subscriptions).filter(
+      (subscription) => getPlanTypeFromString(subscription.planType) !== ScratchPlanType.WHALESYNC_PLAN,
+    );
+    if (activeRealStripeSubscriptions.length > 0) {
+      throw new ConflictException('User has an active Scratch subscription; refusing to clear the Whalesync plan.');
+    }
+
+    const whalesyncSubscriptions = subscriptions.filter(
+      (subscription) => getPlanTypeFromString(subscription.planType) === ScratchPlanType.WHALESYNC_PLAN,
+    );
+    if (!user.organizationId || whalesyncSubscriptions.length === 0) {
+      // Nothing to clear — idempotent no-op.
+      return { cleared: false };
+    }
+
+    await this.dbService.client.subscription.deleteMany({
+      where: { organizationId: user.organizationId, planType: ScratchPlanType.WHALESYNC_PLAN },
+    });
+
+    this.postHogService.trackSubscriptionChanged(
+      userToActor(user),
+      ScratchPlanType.WHALESYNC_PLAN,
+      ScratchPlanType.FREE_PLAN,
+    );
+    await this.auditLogService.logEvent({
+      actor: userToActor(user),
+      eventType: 'delete',
+      message: 'Unsubscribed from the Whalesync plan',
+      entityId: whalesyncSubscriptions[0].id as SubscriptionId,
+    });
+
+    WSLogger.info({
+      source: StripePaymentService.name,
+      message: `Cleared Whalesync plan for user ${user.id}`,
+    });
+
+    return { cleared: true };
   }
 
   async createCustomerPortalUrl(user: UserCluster.User, dto: CreatePortalDto): AsyncResult<string> {

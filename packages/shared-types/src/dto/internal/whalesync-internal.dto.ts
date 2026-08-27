@@ -28,3 +28,10 @@ export interface WhalesyncUserResponse {
 export interface WhalesyncRevokeSessionsResponse {
   revoked: number;
 }
+
+export interface WhalesyncClearSubscriptionResponse {
+  /** The Scratch user whose Whalesync plan was cleared, or `null` when no shadow user exists. */
+  scratchUserId: string | null;
+  /** True when a Whalesync-plan subscription row was deleted; false when there was nothing to clear. */
+  cleared: boolean;
+}

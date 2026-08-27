@@ -4,6 +4,7 @@ import { createZodDto } from 'nestjs-zod';
 // Response shapes are pure contracts and live in shared-types; re-export them so controllers can
 // import everything for these endpoints from one place.
 export type {
+  WhalesyncClearSubscriptionResponse,
   WhalesyncRevokeSessionsResponse,
   WhalesyncSessionResponse,
   WhalesyncUserResponse,

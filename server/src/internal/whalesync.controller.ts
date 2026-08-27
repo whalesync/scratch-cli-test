@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
 import { ScratchAdminGuard } from 'src/auth/scratch-admin.guard';
 import {
+  WhalesyncClearSubscriptionResponse,
   WhalesyncRevokeSessionsResponse,
   WhalesyncSessionResponse,
   WhalesyncShadowUserDto,
@@ -45,6 +46,18 @@ export class WhalesyncController {
   @Delete('users/:whalesyncUserId/sessions')
   async revokeSessions(@Param('whalesyncUserId') whalesyncUserId: string): Promise<WhalesyncRevokeSessionsResponse> {
     return this.whalesyncInternalService.revokeSessionsForWhalesyncUser(whalesyncUserId);
+  }
+
+  /**
+   * Clear a shadow user's internal Whalesync-plan subscription (revoke the free access granted for
+   * their Whalesync subscription). Returns 409 if the user has a real Scratch Stripe subscription.
+   * Idempotent if the user does not exist or has no Whalesync plan.
+   */
+  @Delete('users/:whalesyncUserId/subscription')
+  async clearSubscription(
+    @Param('whalesyncUserId') whalesyncUserId: string,
+  ): Promise<WhalesyncClearSubscriptionResponse> {
+    return this.whalesyncInternalService.clearWhalesyncSubscriptionForWhalesyncUser(whalesyncUserId);
   }
 
   /** Deprovision a shadow user (workbooks, org, user, tokens). Idempotent if the user does not exist. */

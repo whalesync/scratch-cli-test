@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { WorkbookId } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
+import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { userToActor } from 'src/users/types';
 import { UsersService } from 'src/users/users.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -21,6 +22,7 @@ export class WhalesyncInternalService {
   constructor(
     private readonly usersService: UsersService,
     private readonly workbookService: WorkbookService,
+    private readonly stripePaymentService: StripePaymentService,
   ) {}
 
   /** Ensure the shadow user exists, then mint a fresh 10-minute session token. Idempotent on `whalesyncUserId`. */
@@ -55,6 +57,25 @@ export class WhalesyncInternalService {
     }
     const revoked = await this.usersService.revokeWhalesyncSessionTokens(shadowUser.id);
     return { revoked };
+  }
+
+  /**
+   * Clear a shadow user's internal Whalesync-plan subscription — revoke the free Scratch access granted
+   * for their Whalesync subscription. Driven by Bottlenose when the user's Whalesync subscription ends.
+   * Throws `ConflictException` (409) if the user has a real active Scratch Stripe subscription (we never
+   * downgrade a paying customer). Idempotent: a user that doesn't exist (already deprovisioned, or never
+   * provisioned) returns `{ scratchUserId: null, cleared: false }` rather than failing, so retried
+   * Bottlenose lifecycle hooks are safe.
+   */
+  public async clearWhalesyncSubscriptionForWhalesyncUser(
+    whalesyncUserId: string,
+  ): Promise<{ scratchUserId: string | null; cleared: boolean }> {
+    const shadowUser = await this.usersService.findByWhalesyncUserId(whalesyncUserId);
+    if (!shadowUser) {
+      return { scratchUserId: null, cleared: false };
+    }
+    const { cleared } = await this.stripePaymentService.clearWhalesyncPlanSubscription(shadowUser);
+    return { scratchUserId: shadowUser.id, cleared };
   }
 
   /**

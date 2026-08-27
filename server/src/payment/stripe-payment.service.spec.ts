@@ -44,6 +44,7 @@ const mockDbService = {
       update: jest.fn(),
       upsert: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({ id: 'sub_db_audit', planType: ScratchPlanType.PRO_PLAN }),
     },
     invoiceResult: {
@@ -471,6 +472,82 @@ describe('StripePaymentService', () => {
       await service.ensureWhalesyncPlanSubscription(user);
 
       expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('clearWhalesyncPlanSubscription', () => {
+    it('deletes the Whalesync-plan subscription row and records the change', async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: {
+          id: 'org_shadow',
+          subscriptions: [
+            {
+              id: 'sub_whalesync',
+              userId: 'usr_shadow',
+              planType: ScratchPlanType.WHALESYNC_PLAN,
+              expiration: new Date(Date.now() + 86400000),
+              stripeStatus: 'active',
+            },
+          ],
+        },
+      });
+
+      const result = await service.clearWhalesyncPlanSubscription(user);
+
+      expect(result).toEqual({ cleared: true });
+      expect(mockDbService.client.subscription.deleteMany).toHaveBeenCalledWith({
+        where: { organizationId: 'org_shadow', planType: ScratchPlanType.WHALESYNC_PLAN },
+      });
+      expect(mockPostHogService.trackSubscriptionChanged).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'usr_shadow' }),
+        ScratchPlanType.WHALESYNC_PLAN,
+        ScratchPlanType.FREE_PLAN,
+      );
+      expect(mockAuditLogService.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'delete',
+          message: expect.stringContaining('Whalesync'),
+          entityId: 'sub_whalesync',
+        }),
+      );
+    });
+
+    it('throws (409) when the organization has a real active Scratch Stripe subscription', async () => {
+      const user = createMockUser({
+        id: 'usr_paid',
+        organizationId: 'org_paid',
+        organization: {
+          id: 'org_paid',
+          subscriptions: [
+            {
+              id: 'sub_pro',
+              userId: 'usr_paid',
+              planType: ScratchPlanType.PRO_PLAN,
+              expiration: new Date(Date.now() + 86400000),
+              stripeStatus: 'active',
+            },
+          ],
+        },
+      });
+
+      await expect(service.clearWhalesyncPlanSubscription(user)).rejects.toThrow('active Scratch subscription');
+      expect(mockDbService.client.subscription.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('is an idempotent no-op when there is no Whalesync-plan subscription to clear', async () => {
+      const user = createMockUser({
+        id: 'usr_free',
+        organizationId: 'org_free',
+        organization: { id: 'org_free', subscriptions: [] },
+      });
+
+      const result = await service.clearWhalesyncPlanSubscription(user);
+
+      expect(result).toEqual({ cleared: false });
+      expect(mockDbService.client.subscription.deleteMany).not.toHaveBeenCalled();
+      expect(mockAuditLogService.logEvent).not.toHaveBeenCalled();
     });
   });
 
