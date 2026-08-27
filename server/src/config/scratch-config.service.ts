@@ -415,7 +415,13 @@ export class ScratchConfigService {
       if (!origin || allowedOrigins.has(origin)) {
         callback(null, true);
       } else {
-        callback(new Error(`Origin ${origin} not allowed by CORS`));
+        // Deny by omitting the Access-Control-Allow-Origin header (the browser blocks the response —
+        // this is the whole point of CORS) WITHOUT throwing. Passing an Error here would make the
+        // `cors` middleware call next(err) with a plain (non-HttpException) Error, which NestJS maps
+        // to an HTTP 500 and logs as an unhandled error — turning routine spam-origin rejections into
+        // false-positive server errors. `callback(null, false)` lets the request return normally.
+        WSLogger.warn({ source: 'ScratchConfigService', message: `CORS: rejected disallowed origin ${origin}` });
+        callback(null, false);
       }
     };
   }
