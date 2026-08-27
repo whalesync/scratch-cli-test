@@ -3297,3 +3297,208 @@ describeIfPostgres(
     }, 60_000);
   },
 );
+
+// ---------------------------------------------------------------------------
+// DEV-11362 — table-scoped upload: `files upload --folder <conn>/<table>`. A
+// single connection maps TWO tables (integration_blog_posts + integration_products).
+// The point of a folder-scoped upload is that it stages ONLY the target table's
+// approved patches on the server — every OTHER table's approved changes stay
+// local (never uploaded), so they remain freely revertible on disk. This proves:
+//   1. `--folder` is mutually exclusive with `--connection` and `--file-path`.
+//   2. An unknown folder is rejected (not a silent no-op).
+//   3. Uploading one table ships ONLY that table's accepted record, leaving the
+//      sibling table's accepted change staged locally — a follow-up folder-scoped
+//      upload of the sibling then ships it independently.
+// ---------------------------------------------------------------------------
+describeIfPostgres("Table-scoped upload — files upload --folder (DEV-11362)", () => {
+  let workspaceId: string;
+  let workspaceDir: string;
+  let connDirName: string;
+  // Workspace-relative folder paths (`<conn>/<table>`) derived from disk.
+  let blogFolder: string;
+  let productFolder: string;
+  // A record in each table, located by a distinctive field.
+  let blogPost: { abs: string; ws: string };
+  let product: { abs: string; ws: string };
+  let hasFailed = false;
+
+  function editField(absPath: string, field: string, value: unknown): void {
+    const data = JSON.parse(fs.readFileSync(absPath, "utf-8")) as Record<string, unknown>;
+    data[field] = value;
+    fs.writeFileSync(absPath, JSON.stringify(data, null, 2) + "\n");
+  }
+
+  function acceptOne(wsPath: string): void {
+    const res = cli.json<{ status: string; filesAccepted: number }>(["files", "accept", wsPath], { cwd: workspaceDir });
+    expect(res.status).toBe("accepted");
+    expect(res.filesAccepted).toBe(1);
+  }
+
+  beforeAll(async () => {
+    await setupTestTable();
+    await setupProductsTable();
+
+    const ws = cli.json<{ id: string }>(["workspaces", "create", uniqueName("publish-folder-scope")]);
+    workspaceId = ws.id;
+
+    const connId = cli.json<{ id: string }>([
+      "connections",
+      "--workspace",
+      workspaceId,
+      "add",
+      "--service",
+      TEST_CONNECTOR_SERVICE,
+      "--param",
+      `connectionString=${postgresUrl}`,
+    ]).id;
+
+    const parentDir = path.join(cli.home, "test-publish-folder-scope");
+    fs.mkdirSync(parentDir, { recursive: true });
+    const initResult = cli.json<{ directory: string }>(["workspaces", "init", workspaceId], { cwd: parentDir });
+    workspaceDir = path.join(parentDir, initResult.directory);
+
+    const linkTable = (displayName: string): void => {
+      const tables = cli.json<Array<{ id: string; displayName: string }>>([
+        "linked",
+        "--workspace",
+        workspaceId,
+        "available",
+        connId,
+      ]);
+      const table = tables.find((t) => t.displayName === displayName);
+      if (!table) {
+        throw new Error(`${displayName} not found in available tables: ${tables.map((t) => t.displayName).join(", ")}`);
+      }
+      const tableIdParts = table.id.split(",");
+      const linked = cli.json<{ id: string }>(
+        [
+          "linked",
+          "--workspace",
+          workspaceId,
+          "add",
+          "--connection-id",
+          connId,
+          ...tableIdParts.flatMap((p: string) => ["--table-id", p]),
+          "--name",
+          table.displayName,
+        ],
+        { cwd: workspaceDir },
+      );
+      cli.run(["linked", "--workspace", workspaceId, "pull", linked.id], { cwd: workspaceDir });
+    };
+    linkTable("integration_blog_posts");
+    linkTable("integration_products");
+    cli.run(["files", "download"], { cwd: workspaceDir });
+
+    const marker = readMarker(workspaceDir);
+    connDirName = marker.connections[0].dirName;
+
+    const records = findJsonFiles(path.join(workspaceDir, connDirName)).map((p) => ({
+      p,
+      data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>,
+    }));
+    const blogHit = records.find((r) => r.data.title === "The Rise of AI-Powered Development Tools");
+    const productHit = records.find((r) => r.data.name === "Widget A");
+    if (!blogHit || !productHit) {
+      throw new Error("blog/product records not found under the connection");
+    }
+    blogPost = { abs: blogHit.p, ws: path.relative(workspaceDir, blogHit.p) };
+    product = { abs: productHit.p, ws: path.relative(workspaceDir, productHit.p) };
+    // The workspace-relative folder is the record's parent dir (`<conn>/<table>`).
+    blogFolder = path.dirname(blogPost.ws);
+    productFolder = path.dirname(product.ws);
+  }, 180_000);
+
+  afterAll(async () => {
+    const shouldPreserve = preserveOnFailure && hasFailed;
+    if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
+    if (workspaceDir && !shouldPreserve) {
+      try {
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+    await teardownProductsTable();
+    await teardownTestTable();
+  });
+
+  it("rejects `--folder` combined with `--connection`", () => {
+    const result = cli.run(["files", "upload", "--folder", blogFolder, "--connection", connDirName], {
+      cwd: workspaceDir,
+      expectError: true,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("mutually exclusive");
+  });
+
+  it("rejects `--folder` combined with `--file-path`", () => {
+    const result = cli.run(["files", "upload", "--folder", blogFolder, "--file-path", blogPost.ws], {
+      cwd: workspaceDir,
+      expectError: true,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("mutually exclusive");
+  });
+
+  it("rejects a folder outside any connection", () => {
+    const result = cli.run(["files", "upload", "--folder", "NotAConnection/NoSuchTable"], {
+      cwd: workspaceDir,
+      expectError: true,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("No connection");
+  });
+
+  it("rejects a folder with no approved changes (runs before anything is accepted)", () => {
+    // A folder-scoped upload of a table with nothing approved is an explicit
+    // error, not a silent no-op that ships nothing. (Ordered before the accept
+    // test below, when accepted-patches.json is still empty.)
+    const result = cli.run(["files", "upload", "--folder", blogFolder], {
+      cwd: workspaceDir,
+      expectError: true,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("No accepted");
+  });
+
+  it("uploads ONLY the target table, leaving the sibling table's approved change staged locally", () => {
+    try {
+      // Approve a change in BOTH tables.
+      editField(blogPost.abs, "author", "Folder-Scoped-Author");
+      acceptOne(blogPost.ws);
+      editField(product.abs, "category", "Folder-Scoped-Category");
+      acceptOne(product.ws);
+
+      // Folder-scoped upload of the blog table ships ONLY the blog record.
+      const blogUpload = cli.json<{
+        filesUpdated: number;
+        updatedPaths: string[];
+        connections: Array<{ connectionName: string; status: string; filesUpdated: number; updatedPaths: string[] }>;
+      }>(["files", "upload", "--folder", blogFolder], { cwd: workspaceDir });
+
+      expect(blogUpload.connections).toHaveLength(1);
+      expect(blogUpload.connections[0].connectionName).toBe(connDirName);
+      expect(blogUpload.connections[0].status).toBe("uploaded");
+      expect(blogUpload.connections[0].filesUpdated).toBe(1);
+      expect(blogUpload.updatedPaths).toEqual([blogPost.ws]);
+      // The product edit was NOT part of this upload.
+      expect(blogUpload.updatedPaths).not.toContain(product.ws);
+
+      // The product's accepted change survived locally — a folder-scoped upload of
+      // the product table now ships it independently.
+      const productUpload = cli.json<{
+        updatedPaths: string[];
+        connections: Array<{ status: string; filesUpdated: number }>;
+      }>(["files", "upload", "--folder", productFolder], { cwd: workspaceDir });
+
+      expect(productUpload.connections).toHaveLength(1);
+      expect(productUpload.connections[0].status).toBe("uploaded");
+      expect(productUpload.connections[0].filesUpdated).toBe(1);
+      expect(productUpload.updatedPaths).toEqual([product.ws]);
+    } catch (err) {
+      hasFailed = true;
+      throw err;
+    }
+  }, 60_000);
+});

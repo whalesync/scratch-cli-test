@@ -885,21 +885,31 @@ export async function listUnpublishedChanges(workspacePath: string): Promise<Unr
  */
 export async function uploadWorkspaceChanges(
   workspacePath: string,
-  opts?: { filePath?: string; connectionId?: string },
+  opts?: { filePath?: string; folderPath?: string; connectionId?: string },
 ): Promise<UploadWorkspaceResult> {
   // `--file-path` (DEV-10413) scopes the upload to a single record (workspace-
   // relative path). The CLI then skips the dirty-gate probe and relaxes
   // `refuse_if_dirty`, mirroring Scratch Web's single-file publish.
   //
+  // `--folder` (DEV-11362) scopes the upload to a single folder/table
+  // (workspace-relative `<connection>/<folder>` path): only that table's
+  // approved patches are staged, leaving every other table's approved changes
+  // local. Like single-record, it RELAXES the connection dirty gate
+  // (`refuse_if_dirty` false) — the server resets dirty to main and applies just
+  // this folder's patches, so the dirty branch never accumulates a table you
+  // aren't publishing. The plan's `folderPath` scope is the over-publish guard.
+  //
   // `--connection` (DEV-10596) scopes the upload to a single connection: the
   // two-pass dirty gate runs over ONLY that connection, so the chosen connector
-  // publishes regardless of any other connection's dirty/stale state. The two
+  // publishes regardless of any other connection's dirty/stale state. All three
   // are mutually exclusive (the CLI also rejects the combination).
   //
-  // Without either flag, the full workspace upload (two-pass dirty gate) runs.
+  // Without any flag, the full workspace upload (two-pass dirty gate) runs.
   const args = ['--json', 'files', 'upload'];
   if (opts?.filePath) {
     args.push('--file-path', opts.filePath);
+  } else if (opts?.folderPath) {
+    args.push('--folder', opts.folderPath);
   } else if (opts?.connectionId) {
     args.push('--connection', opts.connectionId);
   }

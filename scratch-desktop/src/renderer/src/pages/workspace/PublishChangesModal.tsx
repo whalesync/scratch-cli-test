@@ -28,6 +28,7 @@ import {
 } from '../../lib/posthog';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { SingleConnectionPublishTarget } from './single-connection-publish-target';
+import type { SingleFolderPublishTarget } from './single-folder-publish-target';
 import type { SingleRecordPublishTarget } from './single-record-publish-target';
 
 interface UnreviewedChangeEntry {
@@ -125,6 +126,17 @@ interface PublishChangesModalProps {
    * are somehow set, `singleRecord` wins (it is checked first everywhere).
    */
   singleConnection?: SingleConnectionPublishTarget;
+  /**
+   * DEV-11362: when set, the modal publishes ONLY this one folder/table (scoped
+   * `files upload --folder` + folder-scoped plan/reconcile) instead of the whole
+   * workspace. Its upload stages ONLY this table's approved patches — every other
+   * table's approved changes stay local. Like `singleRecord`, the scoped upload
+   * resets the connection's dirty branch to main + this folder (so it never
+   * accumulates a table you aren't actively publishing); the plan's `folderPath`
+   * is the over-publish guard. Unreviewed/validation pre-flight are filtered to
+   * this folder. Precedence: `singleRecord` > `singleFolder` > `singleConnection`.
+   */
+  singleFolder?: SingleFolderPublishTarget;
 }
 
 function isTerminalState(state: Job['state']): boolean {
@@ -173,10 +185,13 @@ function formatDiffSummary(created: number, updated: number, deleted: number): s
   return parts.length > 0 ? parts.join(' · ') : 'No changes';
 }
 
-function modeTitle(mode: PublishMode): string {
+// DEV-11362: `scopeNoun` ('record' | 'table' | 'connector') tailors the title
+// to a scoped publish; null = the workspace-wide flow (unchanged titles).
+function modeTitle(mode: PublishMode, scopeNoun: string | null): string {
+  const capitalizedScopeNoun = scopeNoun ? `${scopeNoun[0].toUpperCase()}${scopeNoun.slice(1)}` : null;
   switch (mode) {
     case 'approval':
-      return 'Publish changes';
+      return scopeNoun ? `Publish ${scopeNoun}` : 'Publish changes';
     case 'uploading':
       return 'Uploading changes';
     case 'uploaded':
@@ -184,7 +199,7 @@ function modeTitle(mode: PublishMode): string {
     case 'publishing':
       return 'Publishing changes';
     case 'complete':
-      return 'Published';
+      return capitalizedScopeNoun ? `${capitalizedScopeNoun} published` : 'Published';
     case 'error':
       return 'Publish failed';
     case 'stale':
@@ -535,6 +550,7 @@ export function PublishChangesModal({
   onViewProblems,
   singleRecord,
   singleConnection,
+  singleFolder,
 }: PublishChangesModalProps) {
   // Per-workbook "Validation" toggle (renderer-only display setting). When it's
   // off the publish pre-flight skips the validation gate entirely — see DEV-10522.
@@ -577,6 +593,12 @@ export function PublishChangesModal({
   // DEV-10596: the single-connection analogue (e.g. "nothing new to publish for
   // this connection" when its scoped plan was a no-diff).
   const [singleConnectionNotice, setSingleConnectionNotice] = useState<string | null>(null);
+  // DEV-11362: the single-table analogue (e.g. "nothing new to publish for this
+  // table" when its scoped plan was a no-diff).
+  const [singleFolderNotice, setSingleFolderNotice] = useState<string | null>(null);
+
+  // DEV-11362: noun for this modal's scoped publish (drives the per-scope title).
+  const scopePublishNoun = singleRecord ? 'record' : singleFolder ? 'table' : singleConnection ? 'connector' : null;
 
   const stalenessWarning = uploadResult?.stalenessWarning ?? null;
 
@@ -601,17 +623,23 @@ export function PublishChangesModal({
 
       // DEV-10413: scope the upload to the single record in single-record mode
       // (skips the dirty gate, ships only this record's patch to dirty).
+      // DEV-11362: scope it to the single folder/table in single-table mode
+      // (relaxes the dirty gate like single-record; ships ONLY this table's
+      // approved patches to dirty, so every other table's approved changes stay
+      // local).
       // DEV-10596: scope it to the single connection in single-connection mode
       // (KEEPS the two-pass dirty gate, but over only that connection — so a
       // stale/dirty TARGET still surfaces below and other connections never
-      // block it). `singleRecord` wins if both are somehow set.
+      // block it). Precedence: record > folder > connection.
       const result = await window.scratchDesktop.uploadWorkspaceChanges(
         localPath,
         singleRecord
           ? { filePath: singleRecord.filePath }
-          : singleConnection
-            ? { connectionId: singleConnection.connectionId }
-            : undefined,
+          : singleFolder
+            ? { folderPath: singleFolder.folderWorkspaceRelativePath }
+            : singleConnection
+              ? { connectionId: singleConnection.connectionId }
+              : undefined,
       );
 
       // D8: server `refs/heads/main` advanced past local — `files upload`
@@ -699,7 +727,7 @@ export function PublishChangesModal({
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to upload workspace changes');
     }
-  }, [localPath, workspaceId, singleRecord, singleConnection]);
+  }, [localPath, workspaceId, singleRecord, singleFolder, singleConnection]);
 
   const loadSingleRecordInitialState = useCallback(async () => {
     // DEV-10413: scoped pre-flight. The record is already reviewed+approved (the
@@ -808,6 +836,82 @@ export function PublishChangesModal({
     await startUpload();
   }, [localPath, singleConnection, startUpload, validateEnabled]);
 
+  // DEV-11362: scoped pre-flight for table-scoped publish. Mirrors the
+  // single-connection flow but filters unreviewed edits + validation to THIS
+  // folder (not the whole connection), so unreviewed edits in a sibling table
+  // never block this table's publish. Blocks with "review them first" (Cancel,
+  // or folder-scoped accept/discard) if this table has unreviewed edits.
+  const loadSingleFolderInitialState = useCallback(async () => {
+    if (!localPath || !singleFolder) return;
+    const connectionName = singleFolder.connectionName;
+    // `folderRepoRelativePath` is the connection-relative folder (e.g. `/People`);
+    // unreviewed entry paths and validation `folder_path`s are connection-relative
+    // with no leading slash (e.g. `People/…`).
+    const repoFolder = singleFolder.folderRepoRelativePath.replace(/^\//, '');
+
+    setProgressSteps([{ id: 'unreviewed', label: 'Checking this table for unreviewed edits…', status: 'active' }]);
+    const allUnreviewed = await window.scratchDesktop.listUnreviewedChanges(localPath);
+    const scopedUnreviewed = allUnreviewed.filter(
+      (entry) => entry.connectionName === connectionName && entry.path.startsWith(`${repoFolder}/`),
+    );
+    setUnreviewedEntries(scopedUnreviewed);
+    if (scopedUnreviewed.length > 0) {
+      setProgressSteps((prev) =>
+        prev.map((step) =>
+          step.id === 'unreviewed'
+            ? {
+                ...step,
+                status: 'error',
+                label: `Found ${scopedUnreviewed.length.toLocaleString()} unreviewed record${scopedUnreviewed.length === 1 ? '' : 's'}`,
+              }
+            : step,
+        ),
+      );
+      setMode('approval');
+      return;
+    }
+    setProgressSteps((prev) =>
+      prev.map((step) => (step.id === 'unreviewed' ? { ...step, status: 'done', label: 'No unreviewed edits' } : step)),
+    );
+
+    // DEV-10522: only gate on validation when the workbook's toggle is on.
+    if (validateEnabled) {
+      setProgressSteps((prev) => [
+        ...prev,
+        { id: 'validation', label: 'Loading validation status…', status: 'active' },
+      ]);
+      const counts = await loadValidationCounts(localPath);
+      const scopedStats = (counts?.stats ?? []).filter(
+        (s) => s.connection === connectionName && s.folder_path === repoFolder,
+      );
+      const scopedErrors = scopedStats.reduce((sum, s) => sum + s.errors, 0);
+      const scopedWarnings = scopedStats.reduce((sum, s) => sum + s.warnings, 0);
+      const scopedRecords = scopedStats.reduce((sum, s) => sum + s.records, 0);
+      setValidationStats(scopedStats);
+      setValidationCounts({ errors: scopedErrors, warnings: scopedWarnings, records: scopedRecords });
+      setProgressSteps((prev) =>
+        prev.map((step) =>
+          step.id === 'validation'
+            ? {
+                ...step,
+                status: 'done',
+                label:
+                  scopedErrors === 0
+                    ? 'No validation errors'
+                    : `Found ${scopedErrors.toLocaleString()} record${scopedErrors === 1 ? '' : 's'} with validation errors`,
+              }
+            : step,
+        ),
+      );
+      if (scopedErrors > 0) {
+        setMode('approval');
+        return;
+      }
+    }
+
+    await startUpload();
+  }, [localPath, singleFolder, startUpload, validateEnabled]);
+
   const loadInitialState = useCallback(async () => {
     if (!opened || !localPath) {
       return;
@@ -829,12 +933,16 @@ export function PublishChangesModal({
     setValidationStats([]);
     setSingleRecordNotice(null);
     setSingleConnectionNotice(null);
+    setSingleFolderNotice(null);
 
-    // Defensive: `singleRecord` and `singleConnection` are mutually exclusive
-    // (the caller clears the other before opening). If both are somehow set,
-    // `singleRecord` wins — it is checked first here and in every branch below.
-    if (singleRecord && singleConnection) {
-      console.debug('PublishChangesModal: both singleRecord and singleConnection set; preferring singleRecord.');
+    // Defensive: the three scoped targets are mutually exclusive (the caller
+    // clears the others before opening). If more than one is somehow set,
+    // precedence is record > folder > connection — checked in that order here
+    // and in every branch below.
+    if ([singleRecord, singleFolder, singleConnection].filter(Boolean).length > 1) {
+      console.debug(
+        'PublishChangesModal: multiple scoped publish targets set; preferring record > folder > connection.',
+      );
     }
 
     // DEV-10413: single-record mode runs a scoped pre-flight (validation only,
@@ -842,6 +950,23 @@ export function PublishChangesModal({
     if (singleRecord) {
       try {
         await loadSingleRecordInitialState();
+      } catch (err) {
+        setProgressSteps((prev) =>
+          prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)),
+        );
+        setMode('error');
+        setError(err instanceof Error ? err.message : 'Failed to load publish state');
+      } finally {
+        setInitializing(false);
+      }
+      return;
+    }
+
+    // DEV-11362: single-table mode runs its own scoped pre-flight
+    // (folder-filtered unreviewed + validation) and returns early.
+    if (singleFolder) {
+      try {
+        await loadSingleFolderInitialState();
       } catch (err) {
         setProgressSteps((prev) =>
           prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)),
@@ -965,6 +1090,8 @@ export function PublishChangesModal({
     startUpload,
     singleRecord,
     loadSingleRecordInitialState,
+    singleFolder,
+    loadSingleFolderInitialState,
     singleConnection,
     loadSingleConnectionInitialState,
     validateEnabled,
@@ -991,17 +1118,21 @@ export function PublishChangesModal({
       setProgressSteps([
         {
           id: 'accept',
-          label: singleConnection
-            ? 'Accepting this connector’s unreviewed edits…'
-            : 'Accepting all unreviewed local edits…',
+          label: singleFolder
+            ? 'Accepting this table’s unreviewed edits…'
+            : singleConnection
+              ? 'Accepting this connector’s unreviewed edits…'
+              : 'Accepting all unreviewed local edits…',
           status: 'active',
         },
       ]);
-      // DEV-10596: in single-connection mode, scope accept-all to just this
-      // connection's data folders — other connectors' edits are left untouched.
+      // DEV-11362: in single-table mode, scope accept-all to just this folder.
+      // DEV-10596: in single-connection mode, scope it to just this connection's
+      // data folders. Other tables/connectors' edits are left untouched. (folder
+      // path and connection id are mutually exclusive — the CLI rejects both.)
       const result = await window.scratchDesktop.acceptAllChanges(
         localPath,
-        undefined,
+        singleFolder ? `${localPath}/${singleFolder.folderWorkspaceRelativePath}` : undefined,
         singleConnection ? singleConnection.connectionId : undefined,
       );
       if (result.exitCode !== 0) {
@@ -1021,7 +1152,7 @@ export function PublishChangesModal({
     } finally {
       setInitializing(false);
     }
-  }, [localPath, startUpload, singleConnection]);
+  }, [localPath, startUpload, singleFolder, singleConnection]);
 
   // "Discard and publish" only needs to undo the unreviewed working-tree edits —
   // the already-accepted patches are what we're about to publish. That maps to
@@ -1035,17 +1166,21 @@ export function PublishChangesModal({
       setProgressSteps([
         {
           id: 'discard',
-          label: singleConnection
-            ? 'Discarding this connector’s unreviewed edits…'
-            : 'Discarding all unreviewed local edits…',
+          label: singleFolder
+            ? 'Discarding this table’s unreviewed edits…'
+            : singleConnection
+              ? 'Discarding this connector’s unreviewed edits…'
+              : 'Discarding all unreviewed local edits…',
           status: 'active',
         },
       ]);
-      // DEV-10596: in single-connection mode, scope reject-all to just this
-      // connection's data folders — other connectors' edits are left untouched.
+      // DEV-11362: in single-table mode, scope reject-all to just this folder.
+      // DEV-10596: in single-connection mode, scope it to just this connection's
+      // data folders. Other tables/connectors' edits are left untouched. (folder
+      // path and connection id are mutually exclusive — the CLI rejects both.)
       const result = await window.scratchDesktop.rejectAllChanges(
         localPath,
-        undefined,
+        singleFolder ? `${localPath}/${singleFolder.folderWorkspaceRelativePath}` : undefined,
         singleConnection ? singleConnection.connectionId : undefined,
       );
       if (result.exitCode !== 0) {
@@ -1065,7 +1200,7 @@ export function PublishChangesModal({
     } finally {
       setInitializing(false);
     }
-  }, [localPath, startUpload, singleConnection]);
+  }, [localPath, startUpload, singleFolder, singleConnection]);
 
   /**
    * D8 stale-modal action. When `files upload` refuses with `blocked_stale`,
@@ -1089,13 +1224,18 @@ export function PublishChangesModal({
       // target CONNECTION (refuses only if a record in THIS connection
       // hard-conflicts), so another connector's unreviewed edits can't block the
       // chosen connector's stale recovery. `singleRecord` wins if both are set.
+      // DEV-11362: in single-table mode, pull the whole CONNECTION to advance
+      // local main (there is no folder-scoped pull), scoping the conflict gate
+      // to this connection — another connector can't block this table's recovery.
       const result = await window.scratchDesktop.pullWorkspaceChanges(
         localPath,
         singleRecord
           ? { filePath: singleRecord.filePath }
-          : singleConnection
-            ? { connectionId: singleConnection.connectionId }
-            : undefined,
+          : singleFolder
+            ? { connectionId: singleFolder.connectionId }
+            : singleConnection
+              ? { connectionId: singleConnection.connectionId }
+              : undefined,
       );
       if (result.status === 'blocked_conflict') {
         // The target (record, or — DEV-10596 — a record in this connection)
@@ -1106,7 +1246,7 @@ export function PublishChangesModal({
         );
         setMode('error');
         setError(
-          singleConnection
+          singleConnection || singleFolder
             ? 'A record in this connector conflicts with newer changes from the server. Your local edits were saved to unreviewed-changes.json — resolve the conflict, then try again.'
             : 'This record conflicts with newer changes from the server. Your local edits were saved to unreviewed-changes.json — resolve the conflict, then try again.',
         );
@@ -1132,7 +1272,7 @@ export function PublishChangesModal({
     } finally {
       setInitializing(false);
     }
-  }, [localPath, singleRecord, singleConnection, startUpload]);
+  }, [localPath, singleRecord, singleFolder, singleConnection, startUpload]);
 
   const handleViewProblems = useCallback(() => {
     if (!localPath || !onViewProblems) return;
@@ -1141,6 +1281,12 @@ export function PublishChangesModal({
     // grid then activates its `has-problems` filter on that folder.
     if (singleRecord) {
       onViewProblems(singleRecord.folderPath);
+      return;
+    }
+    // DEV-11362: single-table flow. `validationStats` is already scoped to this
+    // folder — land directly on it so the grid filters within this table.
+    if (singleFolder) {
+      onViewProblems(`${localPath}/${singleFolder.folderWorkspaceRelativePath}`);
       return;
     }
     // DEV-10596: single-connection flow. `validationStats` is already scoped to
@@ -1178,7 +1324,7 @@ export function PublishChangesModal({
     }
 
     onViewProblems(`${localPath}/${targetStat.connection}/${targetStat.folder_path}`);
-  }, [currentFolderPath, localPath, onViewProblems, validationStats, singleRecord, singleConnection]);
+  }, [currentFolderPath, localPath, onViewProblems, validationStats, singleRecord, singleFolder, singleConnection]);
 
   const handleClose = useCallback(() => {
     if (closing) {
@@ -1213,7 +1359,7 @@ export function PublishChangesModal({
     async (
       wbId: string,
       conn: ConnectionPublishState,
-      options?: { expectedBaseDirtyHead?: string | null; filePath?: string },
+      options?: { expectedBaseDirtyHead?: string | null; filePath?: string; folderPath?: string },
     ): Promise<DirtyGateConnection | null> => {
       const updateConn = (next: Partial<ConnectionPublishState>) => {
         setPublishConnections((prev) =>
@@ -1226,9 +1372,11 @@ export function PublishChangesModal({
         // DEV-10316: pass the post-upload dirty HEAD so the server aborts the
         // plan build if the staging area drifted while the user reviewed.
         // DEV-10413: `filePath` scopes the plan to a single record.
+        // DEV-11362: `folderPath` scopes it to a single folder/table.
         const plan = await scratchApiClient.publish.viaCliRoute.planJob(wbId, conn.connectionId, {
           expectedBaseDirtyHead: options?.expectedBaseDirtyHead,
           filePath: options?.filePath,
+          folderPath: options?.folderPath,
         });
         if (!plan.jobId || !plan.pipelineId) {
           updateConn({ status: 'plan-no-diff' });
@@ -1381,6 +1529,65 @@ export function PublishChangesModal({
     }
   }, [localPath, workspaceId, singleConnection, uploadResult, runConnectionPublish]);
 
+  // DEV-11362: single-table publish. The scoped `--folder` upload already shipped
+  // ONLY this table's accepted changes to its connection's dirty branch, so build
+  // the single connection state directly. Like single-connection:
+  //   - pre-publish unreviewed re-check, FILTERED to this folder (edits to a
+  //     sibling table or connection must not block it; a new edit to THIS table
+  //     flips back to the review-first block);
+  //   - `expectedBaseDirtyHead` is the connection's post-upload `dirtyHead` (the
+  //     TOCTOU guard), and `folderPath` scopes the plan defensively to this table.
+  const triggerSingleFolderPublish = useCallback(async () => {
+    if (!localPath || !workspaceId || !singleFolder || !uploadResult) {
+      return;
+    }
+    try {
+      setError(null);
+      setPublishErrorDetails([]);
+      setProgressSteps([{ id: 'recheck', label: 'Re-checking this table for unreviewed edits…', status: 'active' }]);
+
+      const repoFolder = singleFolder.folderRepoRelativePath.replace(/^\//, '');
+      const freshUnreviewed = await window.scratchDesktop.listUnreviewedChanges(localPath);
+      const scopedUnreviewed = freshUnreviewed.filter(
+        (e) => e.connectionName === singleFolder.connectionName && e.path.startsWith(`${repoFolder}/`),
+      );
+      if (scopedUnreviewed.length > 0) {
+        setUnreviewedEntries(scopedUnreviewed);
+        setUploadResult(null);
+        setProgressSteps([]);
+        setMode('approval');
+        return;
+      }
+
+      setProgressSteps([]);
+      setMode('publishing');
+      const conn: ConnectionPublishState = {
+        connectionId: singleFolder.connectionId,
+        connectionName: singleFolder.connectionName,
+        status: 'pending',
+      };
+      setPublishConnections([conn]);
+      await trackPublishStarted(workspaceId, 1);
+      // Post-upload dirty HEAD for this connection (the scoped upload returns only
+      // it). Used as the publish-time TOCTOU token.
+      const expectedBaseDirtyHead =
+        uploadResult.connections.find((c) => c.connectionName === singleFolder.connectionName)?.dirtyHead ?? null;
+      const drift = await runConnectionPublish(workspaceId, conn, {
+        expectedBaseDirtyHead,
+        folderPath: singleFolder.folderRepoRelativePath,
+      });
+      // DEV-10316: plan-build aborted on dirty-HEAD drift → count-only `dirty`
+      // redirect (scoped to this one connection).
+      if (drift) {
+        setBlockedDirty({ connections: [drift], lead: TOCTOU_DRIFT_LEAD });
+        setMode('dirty');
+      }
+    } catch (err) {
+      setMode('error');
+      setError(err instanceof Error ? err.message : 'Failed to start publish');
+    }
+  }, [localPath, workspaceId, singleFolder, uploadResult, runConnectionPublish]);
+
   const triggerPublish = useCallback(async () => {
     if (!localPath || !workspaceId || !uploadResult) {
       return;
@@ -1389,6 +1596,12 @@ export function PublishChangesModal({
     // DEV-10413: single-record mode has its own, simpler trigger.
     if (singleRecord) {
       await triggerSingleRecordPublish();
+      return;
+    }
+
+    // DEV-11362: single-table mode has its own scoped trigger.
+    if (singleFolder) {
+      await triggerSingleFolderPublish();
       return;
     }
 
@@ -1489,6 +1702,8 @@ export function PublishChangesModal({
     runConnectionPublish,
     singleRecord,
     triggerSingleRecordPublish,
+    singleFolder,
+    triggerSingleFolderPublish,
     singleConnection,
     triggerSingleConnectionPublish,
   ]);
@@ -1687,6 +1902,47 @@ export function PublishChangesModal({
     setMode('complete');
   }, [localPath, singleConnection, publishConnections, invalidateWorkspaceLevelData, workspaceId]);
 
+  // DEV-11362: single-table terminal handling. Identical mechanics to the
+  // single-connection handler (the reconcile is connection-scoped either way —
+  // the published pipeline only touched this table's records, so its
+  // failedOperations only carry this table's rejections); only the no-diff
+  // notice wording differs.
+  const finishSingleFolderPublish = useCallback(async () => {
+    if (!localPath || !singleFolder) return;
+    const conn = publishConnections[0];
+    try {
+      if (conn?.runJobId) {
+        await window.scratchDesktop.reconcileAfterPublish(
+          localPath,
+          conn.connectionId,
+          JSON.stringify(conn.failedOperations ?? []),
+          conn.pipelineId,
+        );
+      }
+      invalidateWorkspaceLevelData();
+      if (conn?.status === 'plan-no-diff') {
+        setSingleFolderNotice('There was nothing new to publish for this table.');
+      }
+    } catch (err) {
+      console.debug('Post-publish single-table reconcile failed:', err);
+      invalidateWorkspaceLevelData();
+    }
+    if (workspaceId) {
+      void trackPublishCompleted(workspaceId, {
+        successCount: conn?.status === 'completed' ? 1 : 0,
+        failedCount: conn?.status === 'failed' ? 1 : 0,
+        noDiffCount: conn?.status === 'plan-no-diff' ? 1 : 0,
+      });
+    }
+    if (conn?.status === 'failed') {
+      setPublishErrorDetails([`${conn.connectionName}: ${conn.failureMessage ?? 'failed'}`]);
+      setError(`${conn.connectionName} failed`);
+      setMode('error');
+      return;
+    }
+    setMode('complete');
+  }, [localPath, singleFolder, publishConnections, invalidateWorkspaceLevelData, workspaceId]);
+
   // When all per-connection publishes reach a terminal state, transition
   // mode → complete | error and refresh local data.
   useEffect(() => {
@@ -1701,6 +1957,12 @@ export function PublishChangesModal({
     // DEV-10413: single-record mode has its own terminal handler (scoped reconcile).
     if (singleRecord) {
       void finishSingleRecordPublish();
+      return;
+    }
+
+    // DEV-11362: single-table mode has its own terminal handler.
+    if (singleFolder) {
+      void finishSingleFolderPublish();
       return;
     }
 
@@ -1767,6 +2029,8 @@ export function PublishChangesModal({
     invalidateWorkspaceLevelData,
     singleRecord,
     finishSingleRecordPublish,
+    singleFolder,
+    finishSingleFolderPublish,
     singleConnection,
     finishSingleConnectionPublish,
   ]);
@@ -1786,7 +2050,12 @@ export function PublishChangesModal({
   const canClose = !closing && mode !== 'uploading' && mode !== 'publishing';
 
   return (
-    <Modal opened={opened} onClose={canClose ? () => handleClose() : () => undefined} title={modeTitle(mode)} size="lg">
+    <Modal
+      opened={opened}
+      onClose={canClose ? () => handleClose() : () => undefined}
+      title={modeTitle(mode, scopePublishNoun)}
+      size="lg"
+    >
       <Stack gap="md">
         {showStalenessBanner && stalenessWarning && (
           <Alert color="yellow" withCloseButton onClose={() => setStalenessBannerDismissed(true)}>
@@ -1805,21 +2074,26 @@ export function PublishChangesModal({
                   <Text size="sm" c="red">
                     {singleRecord
                       ? 'This record has validation errors that may prevent it from publishing.'
-                      : singleConnection
-                        ? `${validationCounts.errors.toLocaleString()} record${validationCounts.errors === 1 ? '' : 's'} in this connector ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`
-                        : `${validationCounts.errors.toLocaleString()} record${validationCounts.errors === 1 ? '' : 's'} ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`}
+                      : singleFolder
+                        ? `${validationCounts.errors.toLocaleString()} record${validationCounts.errors === 1 ? '' : 's'} in this table ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`
+                        : singleConnection
+                          ? `${validationCounts.errors.toLocaleString()} record${validationCounts.errors === 1 ? '' : 's'} in this connector ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`
+                          : `${validationCounts.errors.toLocaleString()} record${validationCounts.errors === 1 ? '' : 's'} ${validationCounts.errors === 1 ? 'contains' : 'contain'} validation errors that may prevent ${validationCounts.errors === 1 ? 'it' : 'them'} from publishing.`}
                   </Text>
                 )}
                 {unreviewedEntries.length > 0 && (
                   <>
                     <Text size="sm">
                       {unreviewedEntries.length.toLocaleString()} record{unreviewedEntries.length === 1 ? '' : 's'}{' '}
-                      contain unreviewed local edits{singleConnection ? ' in this connector' : ''}.
+                      contain unreviewed local edits
+                      {singleFolder ? ' in this table' : singleConnection ? ' in this connector' : ''}.
                     </Text>
                     <Text size="sm" c="dimmed">
-                      {singleConnection
-                        ? `Accept them to publish the new values, or discard them to revert to the last accepted state. Only “${singleConnection.connectionName}” is affected — other connectors’ edits are left untouched.`
-                        : 'Publishing is blocked until you decide what to do with these edits. Accept them to publish the new values, or discard them to revert to the last accepted state.'}
+                      {singleFolder
+                        ? `Accept them to publish the new values, or discard them to revert to the last accepted state. Only “${singleFolder.folderDisplayName}” is affected — other tables’ edits are left untouched.`
+                        : singleConnection
+                          ? `Accept them to publish the new values, or discard them to revert to the last accepted state. Only “${singleConnection.connectionName}” is affected — other connectors’ edits are left untouched.`
+                          : 'Publishing is blocked until you decide what to do with these edits. Accept them to publish the new values, or discard them to revert to the last accepted state.'}
                     </Text>
                   </>
                 )}
@@ -1865,9 +2139,11 @@ export function PublishChangesModal({
                 <Text size="sm" c="dimmed">
                   {singleRecord
                     ? 'This record was staged on the server. Click Publish to dispatch it through the connector, or review it on the web first.'
-                    : singleConnection
-                      ? 'This connector’s changes were staged on the server. Click Publish to dispatch them through the connector, or review them on the web first.'
-                      : 'Your changes were uploaded to the server. Click Publish to dispatch them through the connectors, or review them on the web first.'}
+                    : singleFolder
+                      ? 'This table’s changes were staged on the server. Click Publish to dispatch them through the connector, or review them on the web first.'
+                      : singleConnection
+                        ? 'This connector’s changes were staged on the server. Click Publish to dispatch them through the connector, or review them on the web first.'
+                        : 'Your changes were uploaded to the server. Click Publish to dispatch them through the connectors, or review them on the web first.'}
                 </Text>
 
                 <Text size="sm" c="dimmed">
@@ -2056,16 +2332,24 @@ export function PublishChangesModal({
                 <Alert
                   color="green"
                   title={
-                    singleRecord ? 'Record published' : singleConnection ? 'Connector published' : 'All data published'
+                    singleRecord
+                      ? 'Record published'
+                      : singleFolder
+                        ? 'Table published'
+                        : singleConnection
+                          ? 'Connector published'
+                          : 'All data published'
                   }
                 >
                   {singleRecord
                     ? (singleRecordNotice ?? 'This record was published.')
-                    : singleConnection
-                      ? (singleConnectionNotice ?? `${singleConnection.connectionName} is now in sync.`)
-                      : workspaceName
-                        ? `${workspaceName} is now in sync.`
-                        : 'Your changes were published.'}
+                    : singleFolder
+                      ? (singleFolderNotice ?? `${singleFolder.folderDisplayName} is now in sync.`)
+                      : singleConnection
+                        ? (singleConnectionNotice ?? `${singleConnection.connectionName} is now in sync.`)
+                        : workspaceName
+                          ? `${workspaceName} is now in sync.`
+                          : 'Your changes were published.'}
                 </Alert>
                 <Group justify="flex-end">
                   <Button onClick={() => handleClose()} loading={closing}>

@@ -6175,7 +6175,8 @@ fn build_upload_patch_plan_no_scope_ships_everything_unchanged() {
             ),
         ],
     };
-    let plan = build_upload_patch_plan(&accepted, "Conn", None).unwrap();
+    let plan =
+        build_upload_patch_plan(&accepted, "Conn", UploadScope::AllRecordsInConnection).unwrap();
     assert_eq!(plan.payload_patches.len(), 3);
     assert_eq!(plan.files_created, 1);
     assert_eq!(plan.files_updated, 1);
@@ -6206,7 +6207,14 @@ fn build_upload_patch_plan_scoped_ships_only_one_record() {
             ),
         ],
     };
-    let plan = build_upload_patch_plan(&accepted, "Conn", Some("posts/target.json")).unwrap();
+    let plan = build_upload_patch_plan(
+        &accepted,
+        "Conn",
+        UploadScope::SingleRecord {
+            connection_relative_record_path: "posts/target.json",
+        },
+    )
+    .unwrap();
     assert_eq!(plan.payload_patches.len(), 1);
     assert_eq!(plan.payload_patches[0].path, "posts/target.json");
     assert_eq!(plan.files_updated, 1);
@@ -6226,9 +6234,88 @@ fn build_upload_patch_plan_scoped_errors_when_record_has_no_accepted_patch() {
             serde_json::json!({"a": 1}),
         )],
     };
-    let err = build_upload_patch_plan(&accepted, "Conn", Some("posts/missing.json"))
-        .map(|_| ())
-        .unwrap_err();
+    let err = build_upload_patch_plan(
+        &accepted,
+        "Conn",
+        UploadScope::SingleRecord {
+            connection_relative_record_path: "posts/missing.json",
+        },
+    )
+    .map(|_| ())
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("No accepted"),
+        "expected a clear no-approved-change error, got: {err}"
+    );
+}
+
+#[test]
+fn build_upload_patch_plan_folder_scoped_ships_only_that_folders_records() {
+    // [DEV-11362] A folder-scoped upload ships EVERY accepted patch under the
+    // target folder and NONE from sibling folders — so a "Publish this table"
+    // never stages another table's approved changes on the server.
+    use crate::shared::re_anchor::PatchKind;
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![
+            anchored_patch(
+                "posts/new.json",
+                PatchKind::Create,
+                serde_json::json!({"a": 1}),
+            ),
+            anchored_patch(
+                "posts/edit.json",
+                PatchKind::Update,
+                serde_json::json!({"b": 2}),
+            ),
+            // Sibling table — must be excluded.
+            anchored_patch(
+                "authors/other.json",
+                PatchKind::Update,
+                serde_json::json!({"c": 3}),
+            ),
+        ],
+    };
+    let plan = build_upload_patch_plan(
+        &accepted,
+        "Conn",
+        UploadScope::SingleFolder {
+            connection_relative_folder_path: "posts",
+        },
+    )
+    .unwrap();
+    assert_eq!(plan.payload_patches.len(), 2);
+    assert_eq!(plan.files_created, 1);
+    assert_eq!(plan.files_updated, 1);
+    assert_eq!(plan.files_deleted, 0);
+    assert_eq!(plan.created_paths, vec!["Conn/posts/new.json"]);
+    assert_eq!(plan.updated_paths, vec!["Conn/posts/edit.json"]);
+    assert_eq!(
+        plan.changed_paths,
+        vec!["posts/new.json", "posts/edit.json"]
+    );
+}
+
+#[test]
+fn build_upload_patch_plan_folder_scoped_errors_when_folder_has_no_accepted_patch() {
+    // [DEV-11362] A folder-scoped upload of a table with no approved changes is
+    // an explicit error, not a silent no-op that ships nothing.
+    use crate::shared::re_anchor::PatchKind;
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![anchored_patch(
+            "authors/other.json",
+            PatchKind::Update,
+            serde_json::json!({"a": 1}),
+        )],
+    };
+    let err = build_upload_patch_plan(
+        &accepted,
+        "Conn",
+        UploadScope::SingleFolder {
+            connection_relative_folder_path: "posts",
+        },
+    )
+    .map(|_| ())
+    .unwrap_err();
     assert!(
         err.to_string().contains("No accepted"),
         "expected a clear no-approved-change error, got: {err}"

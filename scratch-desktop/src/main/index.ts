@@ -1127,10 +1127,11 @@ confinedIpc.handle('scratch:list-unpushed-changes', async (_, workspacePath: str
 );
 confinedIpc.handle(
   'scratch:upload-workspace-changes',
-  async (_, workspacePath: string, opts?: { filePath?: string; connectionId?: string }) =>
+  async (_, workspacePath: string, opts?: { filePath?: string; folderPath?: string; connectionId?: string }) =>
     // `files upload` reindexes the affected folders itself (per-path,
     // scoped to the actually-changed records). No follow-up CLI call.
     // `opts.filePath` (DEV-10413) scopes the upload to a single record;
+    // `opts.folderPath` (DEV-11362) scopes it to a single folder/table;
     // `opts.connectionId` (DEV-10596) scopes it to a single connection.
     withWorkspaceInternalMutation(workspacePath, () => uploadWorkspaceChanges(workspacePath, opts)),
 );

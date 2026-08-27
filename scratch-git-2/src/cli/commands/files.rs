@@ -218,6 +218,18 @@ pub enum FilesCommands {
         /// server state (DEV-10596). Mutually exclusive with `--file-path`.
         #[arg(long = "connection")]
         connection: Option<String>,
+        /// Single-table mode: workspace-relative folder path
+        /// (e.g. `<connection-name>/Folder`). Ships ONLY this folder/table's
+        /// accepted patches to the connection's dirty branch, leaving every
+        /// other table's approved changes local-only (DEV-11362). Like
+        /// `--file-path` it relaxes `refuse_if_dirty` — the server resets dirty
+        /// to main and applies just this folder's patches, so the connection's
+        /// dirty branch never accumulates a table you are not actively
+        /// publishing (the publish plan's folder scope is the over-publish
+        /// guard). The staleness gate is still enforced. Mutually exclusive with
+        /// `--file-path` and `--connection`.
+        #[arg(long = "folder")]
+        folder: Option<String>,
     },
     /// Publish accepted changes to external connectors (plan-job + run-job).
     ///
@@ -706,6 +718,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             skip_folder_index,
             file_path,
             connection,
+            folder,
         } => {
             run_upload(
                 &cwd,
@@ -714,6 +727,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
                 skip_folder_index,
                 file_path,
                 connection,
+                folder,
             )
             .await
         }
@@ -1447,14 +1461,20 @@ async fn run_upload(
     skip_folder_index: bool,
     file_path: Option<String>,
     connection: Option<String>,
+    folder: Option<String>,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
 
-    // DEV-10596: `--connection` (whole-connection scope) and `--file-path`
-    // (single-record scope) both narrow the upload, in incompatible ways —
-    // reject the combination up front rather than silently preferring one.
-    if connection.is_some() && file_path.is_some() {
-        anyhow::bail!("--connection and --file-path are mutually exclusive");
+    // `--file-path` (single-record, DEV-10413), `--folder` (single-table,
+    // DEV-11362), and `--connection` (whole-connection, DEV-10596) each narrow
+    // the upload in incompatible ways — reject any combination up front rather
+    // than silently preferring one.
+    let scope_flags_set = [file_path.is_some(), folder.is_some(), connection.is_some()]
+        .into_iter()
+        .filter(|is_set| *is_set)
+        .count();
+    if scope_flags_set > 1 {
+        anyhow::bail!("--file-path, --folder, and --connection are mutually exclusive");
     }
 
     let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
@@ -1496,6 +1516,27 @@ async fn run_upload(
             &client,
             workbook_id,
             file_path,
+            skip_folder_index,
+            verbose,
+            json,
+            started,
+        )
+        .await;
+    }
+
+    // Single-table publish (DEV-11362): ship ONLY this folder/table's accepted
+    // patches, leaving every other table's approved changes local-only. Mirrors
+    // single-record — the scoped upload resets dirty to main + this folder, so
+    // the connection's dirty branch never accumulates a table you are not
+    // actively publishing. Branches out here so the workspace-wide "Publish all"
+    // path below is untouched.
+    if let Some(folder) = folder.as_deref() {
+        return upload_single_folder_scoped(
+            &workspace_dir,
+            &contexts,
+            &client,
+            workbook_id,
+            folder,
             skip_folder_index,
             verbose,
             json,
@@ -1553,8 +1594,15 @@ async fn run_upload(
         if contexts.len() > 1 && verbose {
             println!("Uploading {}...", ctx.conn_dir_name);
         }
-        let upload_result =
-            upload_single_repo_via_patches(ctx, &client, workbook_id, verbose, None, true).await?;
+        let upload_result = upload_single_repo_via_patches(
+            ctx,
+            &client,
+            workbook_id,
+            verbose,
+            UploadScope::AllRecordsInConnection,
+            true,
+        )
+        .await?;
         if let Some(ref dirty) = upload_result.blocked_dirty {
             dirty_blocked.push(BlockedDirtyConnection {
                 connection_name: ctx.conn_dir_name.clone(),
@@ -1666,12 +1714,101 @@ async fn upload_single_record_scoped(
 ) -> anyhow::Result<()> {
     let (ctx, relpath) = resolve_connection_and_relpath(contexts, file_path)?;
 
-    let upload_result =
-        upload_single_repo_via_patches(ctx, client, workbook_id, verbose, Some(&relpath), false)
-            .await?;
+    let upload_result = upload_single_repo_via_patches(
+        ctx,
+        client,
+        workbook_id,
+        verbose,
+        UploadScope::SingleRecord {
+            connection_relative_record_path: &relpath,
+        },
+        false,
+    )
+    .await?;
 
     // The staleness gate still fires (refuse_if_stale kept); surface it the
     // same way the workspace-wide path does so the desktop sees `blocked_stale`.
+    if let Some(stale) = &upload_result.blocked_stale {
+        let blocked = vec![BlockedStaleConnection {
+            connection_name: ctx.conn_dir_name.clone(),
+            stale: stale.clone(),
+        }];
+        print_blocked_stale_result(&blocked, started.elapsed().as_millis(), json)?;
+        anyhow::bail!("1 connection refused — run `scratchmd files download`, then retry.");
+    }
+    // `refuse_if_dirty: false` means the server won't return `blocked_dirty`,
+    // but handle it defensively so a future server change can't silently
+    // over-publish.
+    if let Some(dirty) = &upload_result.blocked_dirty {
+        let blocked = vec![BlockedDirtyConnection {
+            connection_name: ctx.conn_dir_name.clone(),
+            dirty: dirty.clone(),
+        }];
+        print_blocked_dirty_result(&blocked, &[], started.elapsed().as_millis(), json)?;
+        anyhow::bail!("1 connection refused — resolve unpublished changes on the web, then retry.");
+    }
+    if let Some(failed) = &upload_result.check_failed {
+        let check_failed = vec![CheckFailedConnection {
+            connection_name: ctx.conn_dir_name.clone(),
+            failed: failed.clone(),
+        }];
+        print_blocked_dirty_result(&[], &check_failed, started.elapsed().as_millis(), json)?;
+        anyhow::bail!("1 connection refused — resolve unpublished changes on the web, then retry.");
+    }
+
+    if !skip_folder_index {
+        let all_changed_workspace_paths: Vec<String> = upload_result
+            .changed_paths
+            .iter()
+            .map(|path| format!("{}/{}", ctx.conn_dir_name, path))
+            .collect();
+        reindex_folder_index_for_changes(workspace_dir, &all_changed_workspace_paths)?;
+    }
+
+    let results = vec![upload_result];
+    let aggregate = aggregate_upload(&results);
+    print_upload_result(&aggregate, &results, started.elapsed().as_millis(), json)
+}
+
+/// Single-table publish upload (DEV-11362). Ships ONLY the target folder's
+/// accepted patches to its connection's dirty branch, so every OTHER table's
+/// approved changes stay local (they are never staged on the server, and so
+/// stay freely revertible on disk). Mirrors single-record (DEV-10413): it
+/// relaxes `refuse_if_dirty` — the server resets dirty to main and applies just
+/// this folder's patches, so the connection's dirty branch never accumulates a
+/// table you are not actively publishing (the publish plan's `--folder-path`
+/// scope is the over-publish guard). The staleness gate (`refuse_if_stale`) is
+/// kept as everywhere else.
+#[allow(clippy::too_many_arguments)]
+async fn upload_single_folder_scoped(
+    workspace_dir: &Path,
+    contexts: &[ConnectionContext],
+    client: &crate::api::ApiClient,
+    workbook_id: &str,
+    folder: &str,
+    skip_folder_index: bool,
+    verbose: bool,
+    json: bool,
+    started: std::time::Instant,
+) -> anyhow::Result<()> {
+    let (ctx, connection_relative_folder_path, _workspace_relative_folder_path) =
+        resolve_folder_context(workspace_dir, contexts, Path::new(folder))?;
+
+    let upload_result = upload_single_repo_via_patches(
+        &ctx,
+        client,
+        workbook_id,
+        verbose,
+        UploadScope::SingleFolder {
+            connection_relative_folder_path: &connection_relative_folder_path,
+        },
+        false, // refuse_if_dirty relaxed — reset dirty to main + this folder (DEV-11362)
+    )
+    .await?;
+
+    // Surface each refusal exactly as the single-record path does, so the
+    // desktop sees the same structured `blocked_stale` / `blocked_dirty` /
+    // `check_failed` payloads regardless of publish scope.
     if let Some(stale) = &upload_result.blocked_stale {
         let blocked = vec![BlockedStaleConnection {
             connection_name: ctx.conn_dir_name.clone(),
@@ -7303,29 +7440,76 @@ struct UploadPatchPlan {
     changed_paths: Vec<String>,
 }
 
+/// What subset of a connection's accepted patches an `files upload` ships to
+/// the server's dirty branch. Every field of the resulting [`UploadPatchPlan`]
+/// is derived from the SAME selected set, so a scoped upload can never silently
+/// ship more (or report different counts) than what it filtered to.
+#[derive(Clone, Copy)]
+enum UploadScope<'a> {
+    /// Every accepted patch in the connection (workspace-wide "Publish all").
+    AllRecordsInConnection,
+    /// Exactly one record's accepted patch (single-record publish, DEV-10413).
+    /// The path is connection-relative, e.g. `Folder/rec.json`.
+    SingleRecord {
+        connection_relative_record_path: &'a str,
+    },
+    /// Every accepted patch under one folder/table (single-table publish,
+    /// DEV-11362). The path is the connection-relative folder, e.g. `Folder`.
+    SingleFolder {
+        connection_relative_folder_path: &'a str,
+    },
+}
+
 /// Shape the accepted-patches file into the upload payload + summary counts.
-/// `scope_relpath = None` ships every accepted patch (workspace-wide "Publish
-/// all"); `Some(path)` ships only that record's patch (single-record publish,
-/// DEV-10413) and errors if the record has no accepted patch. Every field is
-/// derived from the SAME selected set so a scoped upload can never silently
+/// The selected set is scoped by [`UploadScope`]: all records (workspace-wide
+/// "Publish all"), one record (single-record publish, DEV-10413), or one
+/// folder/table (single-table publish, DEV-11362). A scoped variant that
+/// selects nothing is an explicit error rather than a silent no-op. Every field
+/// is derived from the SAME selected set so a scoped upload can never silently
 /// ship more (or report different counts) than what it filtered to.
 fn build_upload_patch_plan(
     accepted_file: &crate::shared::accepted_patches::AcceptedPatchesFile,
     conn_dir_name: &str,
-    scope_relpath: Option<&str>,
+    scope: UploadScope,
 ) -> anyhow::Result<UploadPatchPlan> {
     use crate::shared::re_anchor::PatchKind as AnchoredKind;
-    let selected: Vec<&crate::shared::re_anchor::AnchoredPatch> = match scope_relpath {
-        None => accepted_file.patches.iter().collect(),
-        Some(path) => {
-            let entry = crate::shared::accepted_patches::get_entry(accepted_file, path)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "No accepted (approved) change found for '{}'. Approve the record before publishing it.",
-                        path
-                    )
-                })?;
+    let selected: Vec<&crate::shared::re_anchor::AnchoredPatch> = match scope {
+        UploadScope::AllRecordsInConnection => accepted_file.patches.iter().collect(),
+        UploadScope::SingleRecord {
+            connection_relative_record_path,
+        } => {
+            let entry = crate::shared::accepted_patches::get_entry(
+                accepted_file,
+                connection_relative_record_path,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No accepted (approved) change found for '{}'. Approve the record before publishing it.",
+                    connection_relative_record_path
+                )
+            })?;
             vec![entry]
+        }
+        UploadScope::SingleFolder {
+            connection_relative_folder_path,
+        } => {
+            let selected_in_folder: Vec<&crate::shared::re_anchor::AnchoredPatch> = accepted_file
+                .patches
+                .iter()
+                .filter(|patch| {
+                    crate::shared::review_ops::is_data_path_in_folder(
+                        &patch.path,
+                        connection_relative_folder_path,
+                    )
+                })
+                .collect();
+            if selected_in_folder.is_empty() {
+                anyhow::bail!(
+                    "No accepted (approved) changes found in folder '{}'. Approve at least one record in this table before publishing it.",
+                    connection_relative_folder_path
+                );
+            }
+            selected_in_folder
         }
     };
     let count_of_kind =
@@ -7363,19 +7547,24 @@ fn build_upload_patch_plan(
 /// patches to its dirty branch as a single commit. No publish is triggered —
 /// the caller runs `scratchmd files publish` separately.
 ///
-/// `scope_relpath = Some(path)` ships only that record (single-record publish,
-/// DEV-10413); `None` ships the whole accepted-patches file. `refuse_if_dirty`
-/// is `true` for the workspace-wide path and `false` for single-record (mirror
-/// web). Skips entirely (no network, no tree walks) when there's nothing to
-/// upload. `baseHead` is the local `refs/heads/main` SHA: the snapshot the
-/// accepted patches were anchored against. The server uses it for the
-/// staleness signal (returned in `stalenessWarning`).
+/// `scope` selects which accepted patches ship: [`UploadScope::SingleRecord`]
+/// ships only that record (single-record publish, DEV-10413),
+/// [`UploadScope::SingleFolder`] ships only that folder/table (single-table
+/// publish, DEV-11362), and [`UploadScope::AllRecordsInConnection`] ships the
+/// whole accepted-patches file. `refuse_if_dirty` is `true` only for the
+/// workspace-wide path (keep the connection dirty gate) and `false` for
+/// single-record and single-folder (both mirror web: reset dirty to main and
+/// apply just the scoped patches). Skips entirely (no network, no tree
+/// walks) when there's nothing to upload. `baseHead` is the local
+/// `refs/heads/main` SHA: the snapshot the accepted patches were anchored
+/// against. The server uses it for the staleness signal (returned in
+/// `stalenessWarning`).
 async fn upload_single_repo_via_patches(
     ctx: &ConnectionContext,
     client: &crate::api::ApiClient,
     workbook_id: &str,
     verbose: bool,
-    scope_relpath: Option<&str>,
+    scope: UploadScope<'_>,
     refuse_if_dirty: bool,
 ) -> anyhow::Result<UploadResult> {
     // Cheap read first — skip the rest if nothing to upload.
@@ -7395,7 +7584,7 @@ async fn upload_single_repo_via_patches(
         updated_paths,
         deleted_paths,
         changed_paths,
-    } = build_upload_patch_plan(&accepted_file, &ctx.conn_dir_name, scope_relpath)?;
+    } = build_upload_patch_plan(&accepted_file, &ctx.conn_dir_name, scope)?;
     if payload_patches.is_empty() {
         // Only reachable for the unscoped path with an empty file — a scoped
         // path with no matching entry errors inside build_upload_patch_plan.
@@ -7501,12 +7690,13 @@ async fn upload_single_repo_via_patches(
     // Surface a warning if the user has on-disk edits that haven't been
     // accepted yet — those don't ride along with this upload. Uses the
     // gix::status-backed fast path (~210ms warm) so the courtesy check
-    // doesn't dominate the upload time. Skipped in single-record mode
-    // (DEV-10413): publishing one record while others stay unreviewed is the
-    // whole intent there, so the connection-wide "run `accept-all` first" advice
-    // would be actively wrong (it would accept every other record).
+    // doesn't dominate the upload time. Skipped for any scoped upload
+    // (single-record DEV-10413, single-folder DEV-11362): publishing one
+    // record/table while others stay unreviewed is the whole intent there, so
+    // the connection-wide "run `accept-all` first" advice would be actively
+    // wrong (it would accept every other record).
     let mut messages = Vec::new();
-    if scope_relpath.is_none() {
+    if matches!(scope, UploadScope::AllRecordsInConnection) {
         let local_unreviewed =
             list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(ctx, false)?;
         if !local_unreviewed.is_empty() {

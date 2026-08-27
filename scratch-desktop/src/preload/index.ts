@@ -189,8 +189,10 @@ const scratchDesktop = {
     workspacePath: string,
   ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>
     invoke('scratch:list-unpushed-changes', workspacePath),
-  uploadWorkspaceChanges: (workspacePath: string, opts?: { filePath?: string; connectionId?: string }) =>
-    invoke('scratch:upload-workspace-changes', workspacePath, opts),
+  uploadWorkspaceChanges: (
+    workspacePath: string,
+    opts?: { filePath?: string; folderPath?: string; connectionId?: string },
+  ) => invoke('scratch:upload-workspace-changes', workspacePath, opts),
   reconcilePublishedRecord: (
     workspacePath: string,
     filePath: string,

@@ -18,6 +18,7 @@ import {
   resolveSingleConnectionPublishTarget,
   type SingleConnectionPublishTarget,
 } from './single-connection-publish-target';
+import { resolveSingleFolderPublishTarget, type SingleFolderPublishTarget } from './single-folder-publish-target';
 import type { StartPullOptions } from './use-pull-tracker';
 import { LocalFolder } from './WorkspaceContent';
 
@@ -179,6 +180,8 @@ interface FolderTreeNodeProps {
   onViewInService: (folder: DataFolder) => void;
   /** DEV-10596: publish only this connector's approved changes (right-click connector node). */
   onRequestPublishConnector?: (target: SingleConnectionPublishTarget) => void;
+  /** DEV-11362: publish only this table's approved changes (right-click mapped-folder node). */
+  onRequestPublishFolder?: (target: SingleFolderPublishTarget) => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
   reviewByFolder?: Map<string, { unreviewed: number; approved: number }>;
 }
@@ -200,6 +203,7 @@ function FolderTreeNodeRow({
   onViewRecordTree,
   onViewInService,
   onRequestPublishConnector,
+  onRequestPublishFolder,
   validationByFolder,
   reviewByFolder,
 }: FolderTreeNodeProps) {
@@ -244,6 +248,15 @@ function FolderTreeNodeRow({
           ? resolveSingleConnectionPublishTarget(node.name, connectionFolders)
           : null;
 
+      // DEV-11362: resolve the table-scoped publish target (mapped-folder node
+      // only), and read this table's APPROVED (staged-for-publish) change count
+      // so the item is enabled only when there's actually something to publish.
+      const publishFolderTarget =
+        mappedFolder && node.folder
+          ? resolveSingleFolderPublishTarget(node.folder.name, node.name, mappedFolder)
+          : null;
+      const approvedChangeCountForFolder = node.folder ? (reviewByFolder?.get(node.folder.name)?.approved ?? 0) : 0;
+
       const items: Array<{
         id: string;
         label: string;
@@ -254,6 +267,16 @@ function FolderTreeNodeRow({
 
       if (mappedFolder) {
         items.push(...buildTablePullMenuItems(mappedFolder.incrementalPullSupport));
+        // DEV-11362: publish only this table's approved changes. Shown but
+        // disabled when the table has no approved (staged-for-publish) changes,
+        // so the user gets clear feedback rather than a no-op publish.
+        if (onRequestPublishFolder && publishFolderTarget?.ok) {
+          items.push({
+            id: 'publish-folder',
+            label: `Publish ${node.name}`,
+            enabled: approvedChangeCountForFolder > 0,
+          });
+        }
         items.push({ id: 'pull-sep', label: '', type: 'separator' });
       } else if (depth === 0 && connectionFolders.length > 0) {
         // Only offer the incremental "Pull All Tables" when at least one table in this
@@ -323,6 +346,9 @@ function FolderTreeNodeRow({
       window.scratchDesktop.showNativeContextMenu(items, (id) => {
         if (id === 'publish-connector' && publishConnectorTarget?.ok) {
           onRequestPublishConnector?.(publishConnectorTarget.target);
+        }
+        if (id === 'publish-folder' && publishFolderTarget?.ok) {
+          onRequestPublishFolder?.(publishFolderTarget.target);
         }
         if (id === 'pull' && mappedFolder) {
           onRequestPull({
@@ -402,10 +428,12 @@ function FolderTreeNodeRow({
       onRerunValidation,
       onRequestPull,
       onRequestPublishConnector,
+      onRequestPublishFolder,
       onShowColumnDefs,
       onShowFolderInfo,
       onViewRecordTree,
       onViewInService,
+      reviewByFolder,
       workspacePath,
     ],
   );
@@ -629,6 +657,7 @@ function FolderTreeNodeRow({
               onViewRecordTree={onViewRecordTree}
               onViewInService={onViewInService}
               onRequestPublishConnector={onRequestPublishConnector}
+              onRequestPublishFolder={onRequestPublishFolder}
               validationByFolder={validationByFolder}
               reviewByFolder={reviewByFolder}
             />
@@ -654,6 +683,8 @@ interface FolderTreeProps {
   onRequestFolderPull?: (options: StartPullOptions) => void;
   /** DEV-10596: publish only the chosen connector's approved changes (right-click connector node). */
   onRequestPublishConnector?: (target: SingleConnectionPublishTarget) => void;
+  /** DEV-11362: publish only the chosen table's approved changes (right-click mapped-folder node). */
+  onRequestPublishFolder?: (target: SingleFolderPublishTarget) => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
   reviewByFolder?: Map<string, { unreviewed: number; approved: number }>;
   onRerunValidation?: (scope: RerunValidationScope) => void;
@@ -670,6 +701,7 @@ export function FolderTree({
   isDevToolsEnabled,
   onRequestFolderPull,
   onRequestPublishConnector,
+  onRequestPublishFolder,
   validationByFolder,
   reviewByFolder,
   onRerunValidation,
@@ -805,6 +837,7 @@ export function FolderTree({
           onViewRecordTree={handleViewRecordTree}
           onViewInService={handleViewInService}
           onRequestPublishConnector={onRequestPublishConnector}
+          onRequestPublishFolder={onRequestPublishFolder}
           validationByFolder={validationByFolder}
           reviewByFolder={reviewByFolder}
         />

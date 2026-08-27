@@ -145,7 +145,7 @@ interface ScratchDesktopAPI {
   ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
   uploadWorkspaceChanges: (
     workspacePath: string,
-    opts?: { filePath?: string; connectionId?: string },
+    opts?: { filePath?: string; folderPath?: string; connectionId?: string },
   ) => Promise<
     | {
         status: 'uploaded' | 'no_changes' | 'up_to_date';

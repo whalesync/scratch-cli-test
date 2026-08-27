@@ -35,13 +35,19 @@ export function createPublishViaCliRouteApi(http: Http) {
      * When set, the server diffs dirty↔main and filters the plan to that one path — the single-record
      * publish flow's over-publish guard. Passed via an options object (not a positional after the
      * nullable `expectedBaseDirtyHead`) to avoid a classic mis-wire site.
+     *
+     * `options.folderPath` (DEV-11362) scopes the plan to a single folder/table (connection-relative
+     * path). When set, the server filters the plan to changes under that folder — the single-table
+     * publish flow's over-publish guard. Because a single-table publish first uploads only that
+     * folder's approved patches (`scratchmd files upload --folder`), the connection's dirty branch
+     * already reflects just that folder; this is a defensive belt-and-suspenders scope on the plan.
      */
     planJob: async (
       workbookId: string,
       connectorAccountId: string,
-      options: { expectedBaseDirtyHead?: string | null; filePath?: string } = {},
+      options: { expectedBaseDirtyHead?: string | null; filePath?: string; folderPath?: string } = {},
     ): Promise<PlanJobResponse> => {
-      const { expectedBaseDirtyHead, filePath } = options;
+      const { expectedBaseDirtyHead, filePath, folderPath } = options;
       const res = await http.post<PlanJobResponse>(
         `/cli/v1/workbooks/${workbookId}/publish-v2/plan-job`,
         {
@@ -49,6 +55,7 @@ export function createPublishViaCliRouteApi(http: Http) {
           runAfterPlan: false,
           ...(expectedBaseDirtyHead ? { expectedBaseDirtyHead } : {}),
           ...(filePath ? { filePath } : {}),
+          ...(folderPath ? { folderPath } : {}),
         },
         { fallbackMessage: 'Failed to start plan job' },
       );
