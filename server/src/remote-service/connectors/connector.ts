@@ -115,7 +115,9 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * REST layer returns a `not supported` error when a connector leaves it
    * undefined.
    *
-   * @returns The create destinations, unsorted (the REST layer sorts by name).
+   * @returns The create destinations, unsorted — the REST layer orders them for
+   *   the picker (not-yet-created destinations first, then by name), so a
+   *   connector never has to sort its own "create one for me" entry to the top.
    * @throws Error if the destinations cannot be listed.
    */
   listCreateDestinations?(): Promise<CreateDestination[]>;

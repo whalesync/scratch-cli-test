@@ -49,16 +49,19 @@ export const draftTableDestinationSchema = z.discriminatedUnion('kind', [
     connectorAccountId: z.string().min(1),
     /**
      * Remote base/parent under which to create (connector-interpreted), e.g. an
-     * Airtable base id. For a parent the connector PROVISIONS (Google Sheets'
-     * `scratch-new-spreadsheet`), materialize rewrites this to the real id once
-     * the container exists, so a later run adds tables to the same container.
+     * Airtable base id. For a parent the connector PROVISIONS (Google Sheets' "new
+     * spreadsheet", Supabase's "new schema"), materialize rewrites this to the real
+     * id once the container exists, so a later run adds tables to the same container.
      */
     remoteParentId: z.array(z.string()).optional(),
     /**
      * What to name a parent container the connector has to provision — the
-     * user's answer to the "name the spreadsheet we're about to create" box.
-     * Absent means "use the server's suggestion" (`SyncDraft.suggestedNewParentName`,
-     * `"<Source service> export"`). Ignored once the parent exists.
+     * user's answer to the "name the spreadsheet / schema we're about to create"
+     * box. Absent means "use the server's suggestion"
+     * (`SyncDraft.suggestedNewParentName`, `"<Source service> export"`). Ignored
+     * once the parent exists. A connector may FOLD the name to fit what the
+     * service allows (Supabase turns `Airtable export` into the schema
+     * `airtable_export`) and reports back what it actually used.
      */
     newParentName: z.string().min(1).optional(),
     /** The approved table-create spec the user signed off on in the UI. */

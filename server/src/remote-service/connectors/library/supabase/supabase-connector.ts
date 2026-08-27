@@ -51,8 +51,10 @@ import {
   chooseUniquelyAddressableColumn,
   collectPgColumnNamesRejectingEmptyString,
   duplicateTableCreateErrorMessage,
+  foldNameToPostgresSchemaIdentifier,
   isDuplicateTableError,
   isGeneratedColumn,
+  isInsufficientPrivilegeError,
   KnexPGClient,
   KnexPGClientError,
   mapPgType,
@@ -85,6 +87,29 @@ const READ_BATCH_SIZE = 500;
 /** Schema used when a create-schema request's `remoteParentId` names a project but no schema. */
 const DEFAULT_SUPABASE_SCHEMA = 'public';
 
+/**
+ * The pseudo create-destination that means "create a brand-new schema for this
+ * export" (DEV-11396) — the Supabase analogue of Google Sheets' "new
+ * spreadsheet". Advertised per project as
+ * `"<projectRef>/<NEW_SCHEMA_DESTINATION_SEGMENT>"` so it reads like every other
+ * Supabase destination id and resolves through the same parser, and marked
+ * `created: false` so a UI can render "will be created" — and default to it —
+ * without knowing this sentinel exists.
+ *
+ * The segment is deliberately longer than Postgres' 63-byte identifier limit, so
+ * no schema a user actually has can collide with the sentinel and be shadowed by
+ * it.
+ */
+const NEW_SCHEMA_DESTINATION_SEGMENT = 'scratch-new-schema-sentinel-longer-than-any-postgres-schema-name-can-be';
+const NEW_SCHEMA_DESTINATION_NAME = 'New schema';
+
+/**
+ * Schema name used for a brand-new destination when the create request carries no
+ * `newParentName` — i.e. the user never typed one and the draft had no source
+ * service to suggest one after.
+ */
+const NEW_SCHEMA_DEFAULT_NAME = 'scratch_export';
+
 // ---------------------------------------------------------------------------
 // Connector
 // ---------------------------------------------------------------------------
@@ -98,6 +123,10 @@ export class SupabaseConnector extends Connector {
     records: 'rows',
     base: 'project',
     bases: 'projects',
+    // Tables are created in a SCHEMA, not a project — "project" is a different
+    // Supabase concept and naming it here produced "Name the new project".
+    createDestination: 'schema',
+    createDestinations: 'schemas',
     logo: 'https://static.scratch.md/connector-icons/supabase.svg',
     incrementalPull: true,
     incrementalPullInstructions:
@@ -404,16 +433,24 @@ export class SupabaseConnector extends Connector {
    * label ("<project> / <schema>"). Mirrors the system-schema exclusions used by
    * {@link listTables} (the fixed Supabase system schemas plus the `pg_` / `supabase_`
    * prefixes).
+   *
+   * Each project also gets a "New schema" destination first: exporting into a
+   * schema that already has another purpose is the clunky path, so the one Scratch
+   * provisions leads (DEV-11396). It is the only destination here that does not
+   * exist yet — `created: false` is what tells a UI to default to it without
+   * knowing the sentinel id.
    */
   override async listCreateDestinations(): Promise<CreateDestination[]> {
     if (this.isOAuth) {
       const destinations: CreateDestination[] = [];
       for (const project of this.projects) {
+        const projectLabel = project.projectName || project.projectRef;
+        destinations.push(this.buildNewSchemaCreateDestination(project.projectRef, projectLabel));
         const schemas = await this.listUserSchemas(project.connectionString);
         for (const schema of schemas) {
           destinations.push({
             id: `${project.projectRef}/${schema}`,
-            name: `${project.projectName || project.projectRef} / ${schema}`,
+            name: `${projectLabel} / ${schema}`,
             created: true,
           });
         }
@@ -426,7 +463,38 @@ export class SupabaseConnector extends Connector {
       throw new Error('listCreateDestinations called without a connection-string project ref');
     }
     const schemas = await this.listUserSchemas(this.connectionString);
-    return schemas.map((schema) => ({ id: `${projectRef}/${schema}`, name: schema, created: true }));
+    return [
+      this.buildNewSchemaCreateDestination(projectRef),
+      ...schemas.map((schema) => ({ id: `${projectRef}/${schema}`, name: schema, created: true })),
+    ];
+  }
+
+  /**
+   * The "create a brand-new schema" pseudo-destination for one project.
+   *
+   * Deliberately NOT labelled like its sibling schemas. Those read
+   * `"<project> / <schema>"`, and reusing that template here produced
+   * `"my-project / New schema"` — which reads as an existing schema that happens
+   * to be *named* "New schema", asserting a parent/child path that doesn't exist
+   * yet. So the project becomes a qualifier rather than a path segment:
+   * `"New schema in my-project"`. It still needs the project somewhere, because a
+   * multi-project OAuth connection shows one of these per project and they'd
+   * otherwise be indistinguishable.
+   *
+   * In connection-string mode there is one project and its only "name" is an
+   * opaque ref, so the qualifier would add nothing — the label stays bare, exactly
+   * as the sibling schemas drop the prefix in that mode.
+   *
+   * The label carries no "will be created" wording on purpose: `created: false`
+   * already says that, and a client renders it as a badge. Saying it twice makes
+   * the row longer without making it clearer.
+   */
+  private buildNewSchemaCreateDestination(projectRef: string, projectLabel?: string): CreateDestination {
+    return {
+      id: `${projectRef}/${NEW_SCHEMA_DESTINATION_SEGMENT}`,
+      name: projectLabel ? `${NEW_SCHEMA_DESTINATION_NAME} in ${projectLabel}` : NEW_SCHEMA_DESTINATION_NAME,
+      created: false,
+    };
   }
 
   /**
@@ -435,10 +503,14 @@ export class SupabaseConnector extends Connector {
    * where the tables we create will appear. Reuses {@link resolveCreateParent}
    * so `"ref/schema"` and a bare `"ref"` (schema defaulting to `public`)
    * normalize the same way the create path normalizes them.
+   *
+   * The "New schema" destination gets no link: the schema does not exist yet, and
+   * its final name isn't decided until the create runs.
    */
   override buildCreateDestinationRemoteWebUrl(destinationId: string): string | undefined {
     if (!this.supabaseDashboardDeepLinksAreAvailable) return undefined;
-    const { projectRef, schema } = this.resolveCreateParent([destinationId]);
+    const { projectRef, schema, targetsNewSchema } = this.resolveCreateParent([destinationId]);
+    if (targetsNewSchema) return undefined;
     return projectRef ? buildSupabaseSchemaEditorUrl(projectRef, schema) : undefined;
   }
 
@@ -908,15 +980,22 @@ export class SupabaseConnector extends Connector {
    * contain `/`, so we normalize by flattening every segment on `/` — `["ref/public"]`,
    * `["ref", "public"]`, and `["ref"]` (schema defaulted) all resolve to the same
    * `{ projectRef, schema }`.
+   *
+   * `targetsNewSchema` is set when the schema segment is the
+   * {@link NEW_SCHEMA_DESTINATION_SEGMENT} sentinel — the user picked "New
+   * schema", and `schema` is a placeholder the create path replaces with the real
+   * name it provisions.
    */
   private resolveCreateParent(remoteParentId: string[] | undefined): {
     projectRef: string | undefined;
     schema: string;
+    targetsNewSchema: boolean;
   } {
     const segments = (remoteParentId ?? [])
       .flatMap((segment) => segment.split('/'))
       .filter((segment) => segment !== '');
-    return { projectRef: segments[0], schema: segments[1] ?? DEFAULT_SUPABASE_SCHEMA };
+    const schema = segments[1] ?? DEFAULT_SUPABASE_SCHEMA;
+    return { projectRef: segments[0], schema, targetsNewSchema: schema === NEW_SCHEMA_DESTINATION_SEGMENT };
   }
 
   /**
@@ -924,15 +1003,24 @@ export class SupabaseConnector extends Connector {
    * non-deferred fields inside `[projectRef, schema]`. DDL runs over the same
    * Knex data role that does DML — its setup grants CREATE on every user schema
    * (`GRANT ALL ON SCHEMA`), so no Management-API superuser call is needed and
-   * both connection-string and OAuth modes work identically. The schema is never
-   * created here: create destinations are always existing schemas, and the data
-   * role does not own the database, so we don't attempt `CREATE SCHEMA`.
+   * both connection-string and OAuth modes work identically.
    * ForeignKey targets are already resolved to existing tables by the server;
    * here we introspect each target's primary-key column so the FK references it
    * with a matching type. Creates are NOT idempotent.
+   *
+   * When the parent is the "New schema" sentinel, the schema is PROVISIONED here
+   * first, named from `plan.newParentName` (see
+   * {@link foldNameToPostgresSchemaIdentifier}), and reported back as
+   * `remoteParentId` so the caller pins the rest of the batch — and any retry — to
+   * the schema this table actually landed in. `CREATE SCHEMA IF NOT EXISTS` plus a
+   * deterministic name makes that path safe to re-run: the second table in a batch
+   * finds the schema the first one made instead of provisioning another.
    */
   override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
-    const { projectRef, schema } = this.resolveCreateParent(plan.remoteParentId);
+    const { projectRef, schema: resolvedSchema, targetsNewSchema } = this.resolveCreateParent(plan.remoteParentId);
+    const schema = targetsNewSchema
+      ? foldNameToPostgresSchemaIdentifier(plan.newParentName, NEW_SCHEMA_DEFAULT_NAME)
+      : resolvedSchema;
     const tableName = plan.name;
     if (!projectRef) {
       return this.failedTableResult(
@@ -943,6 +1031,7 @@ export class SupabaseConnector extends Connector {
     try {
       const connectionString = this.resolveConnectionStringForProject(projectRef);
       return await this.withPgClient(async (client) => {
+        if (targetsNewSchema) await this.provisionNewExportSchema(client, schema);
         const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields, projectRef);
         const { skippedFields } = await client.createTable(schema, tableName, plan.fields, foreignKeyResolutions);
         const fields = this.buildFieldResults(plan.fields, skippedFields);
@@ -951,6 +1040,10 @@ export class SupabaseConnector extends Connector {
           name: tableName,
           status: skippedFields.size > 0 ? 'partial' : 'created',
           remoteTableId: [projectRef, schema, tableName],
+          // Only when we provisioned the parent: the caller pins this onto the rest
+          // of the batch so nothing re-resolves the sentinel and splits the export
+          // across two schemas.
+          ...(targetsNewSchema ? { remoteParentId: [projectRef, schema] } : {}),
           fields,
         };
       }, connectionString);
@@ -959,6 +1052,41 @@ export class SupabaseConnector extends Connector {
         ? duplicateTableCreateErrorMessage(tableName)
         : this.extractConnectorErrorDetails(error).userFriendlyMessage;
       return this.failedTableResult(plan, message);
+    }
+  }
+
+  /**
+   * Create the schema behind a "New schema" destination, if it isn't there
+   * already. `IF NOT EXISTS` is what makes the batch converge: every table in a
+   * create-tables run resolves the same deterministic name, so the first table
+   * makes the schema and the rest find it.
+   *
+   * Creating a schema needs CREATE on the *database*, a broader grant than the
+   * per-schema ones (`GRANT ALL ON SCHEMA`) — a role without it gets a bare
+   * "permission denied for database postgres" from Postgres, which names neither
+   * the missing privilege nor the way out. The remedy differs by auth mode, and
+   * giving an OAuth user the connection-string advice would send them looking for
+   * a field they don't have:
+   *
+   * - **OAuth**: we provision the role ourselves, and `buildCreateUserSQL` now
+   *   grants this. Only connections authorized BEFORE that fix landed can hit
+   *   this, and reconnecting re-runs setup with the grant.
+   * - **Connection string**: the role is the user's own, so only they can widen
+   *   it — or pick an existing schema instead.
+   */
+  private async provisionNewExportSchema(client: KnexPGClient, schema: string): Promise<void> {
+    try {
+      await client.createSchemaIfNotExists(schema);
+    } catch (error) {
+      if (isInsufficientPrivilegeError(error)) {
+        throw new Error(
+          `this connection is not allowed to create the schema "${schema}". ` +
+            (this.isOAuth
+              ? 'Reconnect this Supabase connection to re-run setup and grant it, or export into an existing schema instead.'
+              : 'Grant CREATE on the database to the role in your connection string, or export into an existing schema instead.'),
+        );
+      }
+      throw error;
     }
   }
 

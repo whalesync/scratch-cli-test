@@ -69,6 +69,15 @@ export function buildSupabaseTableEditorUrl(projectRef: string, schema: string, 
 
 /**
  * Build the PL/pgSQL to create a service account role with permissions on all user schemas.
+ *
+ * The role also gets **CREATE on the database**, which is what lets Live Export
+ * provision a schema for a "New schema" destination (DEV-11396). The per-schema
+ * `GRANT ALL ON SCHEMA` loop below only covers schemas that exist *right now* —
+ * `CREATE SCHEMA` is a database-level privilege and no amount of per-schema
+ * granting confers it, so without this line the create fails with a bare
+ * `42501 permission denied for database`. Granting it here also means the role
+ * OWNS any schema it creates, so no follow-up grant dance is needed for the
+ * tables that go into it.
  */
 export function buildCreateUserSQL(username: string, password: string): string {
   const excludedSchemas = [...SUPABASE_SYSTEM_SCHEMAS].map((s) => `'${s}'`).join(', ');
@@ -81,6 +90,10 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${username}') THEN
     CREATE ROLE "${username}" LOGIN PASSWORD '${password}' BYPASSRLS;
   END IF;
+
+  -- Database-level CREATE: required for CREATE SCHEMA (Live Export's "New
+  -- schema" destination). Not implied by any per-schema grant below.
+  EXECUTE format('GRANT CREATE ON DATABASE %I TO "${username}"', current_database());
 
   FOR schema_record IN
     SELECT schema_name FROM information_schema.schemata

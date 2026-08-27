@@ -5,6 +5,9 @@ import { applyVerbatimIdentifierQuoting } from '../knex-pg-client';
 import {
   buildAddColumnsQuery,
   buildCreateTableQuery,
+  foldNameToPostgresSchemaIdentifier,
+  isInsufficientPrivilegeError,
+  POSTGRES_MAX_IDENTIFIER_LENGTH,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   type ForeignKeyResolutions,
 } from '../pg-create-schema';
@@ -390,5 +393,60 @@ describe('column names containing a question mark', () => {
 
     expect(sql).toContain('"Sold out?" boolean');
     expect(sql).not.toContain('Sold out$');
+  });
+});
+
+describe('foldNameToPostgresSchemaIdentifier', () => {
+  it('folds a human container name into a snake_case identifier', () => {
+    expect(foldNameToPostgresSchemaIdentifier('Airtable export', 'fallback')).toBe('airtable_export');
+  });
+
+  it('is deterministic, so a retried create converges on the schema the first attempt made', () => {
+    expect(foldNameToPostgresSchemaIdentifier('Q3 CRM export', 'fallback')).toBe(
+      foldNameToPostgresSchemaIdentifier('Q3 CRM export', 'fallback'),
+    );
+  });
+
+  it('collapses runs of punctuation and trims the separators off both ends', () => {
+    expect(foldNameToPostgresSchemaIdentifier('  --HubSpot & Notion--  ', 'fallback')).toBe('hubspot_notion');
+  });
+
+  it('keeps accented letters by stripping their combining marks', () => {
+    expect(foldNameToPostgresSchemaIdentifier('Café export', 'fallback')).toBe('cafe_export');
+  });
+
+  it('prefixes a leading digit so the identifier is usable unquoted', () => {
+    expect(foldNameToPostgresSchemaIdentifier('2026 export', 'fallback')).toBe('s_2026_export');
+  });
+
+  it('truncates to the Postgres identifier limit rather than letting Postgres do it silently', () => {
+    const folded = foldNameToPostgresSchemaIdentifier('a'.repeat(120), 'fallback');
+
+    expect(folded).toHaveLength(POSTGRES_MAX_IDENTIFIER_LENGTH);
+  });
+
+  it('does not leave a trailing separator when the truncation lands on one', () => {
+    // 63 chars of 'a' then a space: the cut falls exactly on the separator.
+    const folded = foldNameToPostgresSchemaIdentifier(`${'a'.repeat(POSTGRES_MAX_IDENTIFIER_LENGTH)} export`, 'fb');
+
+    expect(folded).toBe('a'.repeat(POSTGRES_MAX_IDENTIFIER_LENGTH));
+    expect(folded.endsWith('_')).toBe(false);
+  });
+
+  it('falls back when the name has nothing usable in it', () => {
+    expect(foldNameToPostgresSchemaIdentifier('...', 'scratch_export')).toBe('scratch_export');
+    expect(foldNameToPostgresSchemaIdentifier(undefined, 'scratch_export')).toBe('scratch_export');
+  });
+});
+
+describe('isInsufficientPrivilegeError', () => {
+  it('recognizes a Postgres 42501', () => {
+    expect(isInsufficientPrivilegeError(Object.assign(new Error('permission denied'), { code: '42501' }))).toBe(true);
+  });
+
+  it('ignores any other error', () => {
+    expect(isInsufficientPrivilegeError(Object.assign(new Error('nope'), { code: '42P07' }))).toBe(false);
+    expect(isInsufficientPrivilegeError(new Error('nope'))).toBe(false);
+    expect(isInsufficientPrivilegeError(null)).toBe(false);
   });
 });

@@ -10,6 +10,26 @@ export interface ConnectorMetadata {
   records: string;
   base: string | null;
   bases: string | null;
+  /**
+   * Noun for the container a NEW table is created inside — the thing a
+   * `CreateDestination` names, and the word Live Export's "name the container
+   * we're about to create" dialog puts in "Name the new ___".
+   *
+   * Usually the same as {@link base}, which is why this falls back to it when
+   * null — but not always, and the mismatches are the ones that matter:
+   * Supabase's base is a *project* while tables are created in a **schema**
+   * ("Name the new project" was both wrong and confusing, since "project" means
+   * something else entirely in Supabase), and Postgres' base is a *database*
+   * while tables likewise land in a **schema**. Airtable and Google Sheets
+   * genuinely create into their base (a base / a spreadsheet) and leave this
+   * null.
+   *
+   * Null ⇒ fall back to `base`, then to generic copy. Clients must read this
+   * rather than hardcoding a service's word — no frontend branches on a
+   * connector.
+   */
+  createDestination: string | null;
+  createDestinations: string | null;
   logo: string;
   visible: boolean;
   /**
@@ -80,6 +100,8 @@ const DEFAULTS: Omit<ConnectorMetadata, 'displayName' | 'logo'> = {
   records: 'records',
   base: null,
   bases: null,
+  createDestination: null,
+  createDestinations: null,
   visible: true,
   incrementalPull: false,
   incrementalPullInstructions: null,

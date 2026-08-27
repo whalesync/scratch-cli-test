@@ -54,6 +54,65 @@ export function duplicateTableCreateErrorMessage(tableName: string): string {
   return `A table named "${tableName}" already exists in the target schema. Rename the new table, or map to the existing table instead.`;
 }
 
+/**
+ * Postgres SQLSTATE `42501` (`insufficient_privilege`): the connected role is not
+ * allowed to perform the statement. The create-schema path turns this one into a
+ * message that names the missing grant, since "permission denied for database
+ * postgres" tells a user nothing about what to change.
+ */
+export const PG_INSUFFICIENT_PRIVILEGE_SQLSTATE = '42501';
+
+/** True when `error` is a Postgres `insufficient_privilege` (42501) error. */
+export function isInsufficientPrivilegeError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === PG_INSUFFICIENT_PRIVILEGE_SQLSTATE
+  );
+}
+
+/**
+ * Fold a human-chosen container name ("Airtable export") into a Postgres schema
+ * identifier we can create and then address unquoted (`airtable_export`).
+ *
+ * A schema Scratch provisions for a Live Export is one a person will go on to
+ * query by hand, so it gets the shape hand-written SQL expects: lower case,
+ * `snake_case`, nothing that would force every future reference to be
+ * double-quoted. Postgres would happily accept `"Airtable export"` as a quoted
+ * identifier — it just makes the schema permanently awkward to use.
+ *
+ * The fold is deliberately lossy but DETERMINISTIC: the same requested name
+ * always yields the same schema name, which is what lets a retried create
+ * converge on the schema the first attempt made instead of provisioning a second
+ * one. Callers report the name actually used back to the user (via the created
+ * table's remote parent), so the rename is visible rather than silent.
+ *
+ * @param requestedName The name the user typed, or the server's suggestion.
+ * @param fallbackSchemaName Used when the fold leaves nothing usable (a name made
+ *   entirely of punctuation, or no name at all).
+ */
+export function foldNameToPostgresSchemaIdentifier(
+  requestedName: string | undefined,
+  fallbackSchemaName: string,
+): string {
+  const foldedName = (requestedName ?? '')
+    .normalize('NFKD')
+    // Drop combining marks so "Café" folds to "cafe" rather than losing the é entirely.
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (foldedName === '') return fallbackSchemaName;
+  // A leading digit makes the identifier unusable unquoted (`2026_export` is a
+  // syntax error), so prefix rather than drop the digits. Prefix BEFORE truncating
+  // so the length limit is respected either way.
+  const prefixedName = /^[0-9]/.test(foldedName) ? `s_${foldedName}` : foldedName;
+  // Postgres silently truncates over-long identifiers, so truncate deliberately
+  // here — and re-trim, since the cut can land on a separator.
+  return prefixedName.slice(0, POSTGRES_MAX_IDENTIFIER_LENGTH).replace(/_+$/, '') || fallbackSchemaName;
+}
+
 /** Generous integer headroom added to a requested decimal scale to form `numeric(scale + headroom, scale)`. */
 const NUMERIC_PRECISION_HEADROOM = 8;
 

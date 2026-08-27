@@ -69,6 +69,53 @@ import { DecryptedCredentials } from './types/encrypted-credentials.interface';
 const CREATE_DESTINATION_SEARCH_RESULT_CAP = 50;
 
 /**
+ * Picker order for the create-destination lists the SERVER sorts (the list
+ * endpoint and the in-process search fallback): destinations that don't exist yet
+ * come first, then everything else alphabetically.
+ *
+ * A not-yet-created destination — Google Sheets' "New spreadsheet", Supabase's
+ * "New schema" — is the one a client offers as the default, because exporting
+ * into a container Scratch provisions beats dropping tables into one that already
+ * has another purpose (DEV-11396). Expressed here off `CreateDestination.created`
+ * so the rule is generic: no frontend has to learn which id is a given
+ * connector's sentinel, and a new connector's "create one for me" destination
+ * leads the picker with no client change.
+ *
+ * Connectors that implement `searchCreateDestinations` rank their own results and
+ * that order is kept — this comparator does not apply to them.
+ */
+function compareCreateDestinationsForPicker(a: CreateDestination, b: CreateDestination): number {
+  if (a.created !== b.created) return a.created ? 1 : -1;
+  return a.name.localeCompare(b.name);
+}
+
+/**
+ * Which destination a picker should preselect on first open — the value behind
+ * `CreateDestinationList.defaultDestinationId`.
+ *
+ * The rule: default to the not-yet-created destination when there is EXACTLY ONE
+ * of them, and otherwise have no opinion.
+ *
+ * - One (Google Sheets' "New spreadsheet", a single-project Supabase's "New
+ *   schema"): unambiguous, and the option we want to steer people to — a Live
+ *   Export into a container Scratch provisions beats dropping tables into one
+ *   that already has another purpose (DEV-11396).
+ * - Several (a multi-project Supabase OAuth connection offers "New schema" per
+ *   project): preselecting one would silently pick a PROJECT for the user, which
+ *   is the very decision they need to make. Returning nothing is the honest
+ *   answer, and it's the answer plain list ordering can't express.
+ * - None (Airtable — you can't create a base from here): nothing to default to.
+ *
+ * Kept out of the connectors on purpose: it reads only `created`, which every
+ * connector already sets, so a new connector's "create one for me" destination
+ * becomes the default with no connector code and no client change.
+ */
+function resolveDefaultCreateDestinationId(destinations: CreateDestination[]): string | undefined {
+  const notYetCreatedDestinations = destinations.filter((destination) => !destination.created);
+  return notYetCreatedDestinations.length === 1 ? notYetCreatedDestinations[0].id : undefined;
+}
+
+/**
  * Rethrow a failure from `ConnectorsService.getConnector` in the form the HTTP
  * layer can actually act on.
  *
@@ -789,8 +836,11 @@ export class ConnectorAccountService {
 
   /**
    * List the places a new table can be created for a connection (e.g. Airtable
-   * bases, Postgres schemas, Notion pages). Returns the destinations sorted
-   * alphabetically by name. Throws a 400 when the connector does not support
+   * bases, Postgres schemas, Notion pages). Returns the destinations in
+   * {@link compareCreateDestinationsForPicker} order — the ones that don't exist
+   * yet first, then alphabetically by name — plus the
+   * {@link resolveDefaultCreateDestinationId} the picker should preselect, when
+   * there is an unambiguous one. Throws a 400 when the connector does not support
    * creating tables.
    */
   async listCreateDestinations(
@@ -823,11 +873,12 @@ export class ConnectorAccountService {
     try {
       const destinations = await connector
         .listCreateDestinations()
-        .then((destinations) => destinations.sort((a, b) => a.name.localeCompare(b.name)))
+        .then((destinations) => destinations.sort(compareCreateDestinationsForPicker))
         .then((destinations) =>
           destinations.map((destination) => this.decorateCreateDestinationWithRemoteWebUrl(connector, destination)),
         );
-      return { destinations };
+      const defaultDestinationId = resolveDefaultCreateDestinationId(destinations);
+      return { destinations, ...(defaultDestinationId ? { defaultDestinationId } : {}) };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
     }
@@ -954,10 +1005,11 @@ export class ConnectorAccountService {
   /**
    * In-process create-destination search for connectors that only implement
    * `listCreateDestinations` (their lists are small). Case-insensitive substring
-   * match on the name, sorted by name and then capped at
-   * {@link CREATE_DESTINATION_SEARCH_RESULT_CAP} (so the cap keeps the first names
-   * alphabetically, matching the list endpoint); an empty term returns the first
-   * capped page.
+   * match on the name, ordered by {@link compareCreateDestinationsForPicker} and
+   * then capped at {@link CREATE_DESTINATION_SEARCH_RESULT_CAP} (so the cap drops
+   * the tail of the same order the list endpoint returns, and can never cut the
+   * not-yet-created destination the client defaults to); an empty term returns the
+   * first capped page.
    */
   private async filterCreateDestinationsInProcess(
     connector: Connector,
@@ -972,7 +1024,7 @@ export class ConnectorAccountService {
       normalizedSearchTerm
         ? allDestinations.filter((destination) => destination.name.toLowerCase().includes(normalizedSearchTerm))
         : allDestinations
-    ).sort((a, b) => a.name.localeCompare(b.name));
+    ).sort(compareCreateDestinationsForPicker);
     const cappedDestinations = matchingDestinations.slice(0, CREATE_DESTINATION_SEARCH_RESULT_CAP);
     return {
       destinations: cappedDestinations,

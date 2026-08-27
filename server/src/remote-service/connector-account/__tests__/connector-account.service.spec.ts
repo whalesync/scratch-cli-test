@@ -306,6 +306,67 @@ describe('ConnectorAccountService', () => {
       expect(mockConnector.listCreateDestinations).toHaveBeenCalledTimes(1);
     });
 
+    it('puts a not-yet-created destination first, ahead of the alphabetical existing ones (DEV-11396)', async () => {
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+
+      // "New schema" would sort between "analytics" and "public" alphabetically;
+      // it leads because it is the one a client defaults to.
+      const mockConnector = {
+        listCreateDestinations: jest.fn().mockResolvedValue([
+          { id: 'ref/public', name: 'public', created: true },
+          { id: 'ref/analytics', name: 'analytics', created: true },
+          { id: 'ref/scratch-new-schema', name: 'New schema', created: false },
+        ]),
+      };
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      const result = await service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(result.destinations.map((destination) => destination.name)).toEqual(['New schema', 'analytics', 'public']);
+      // The picker is TOLD what to preselect rather than inferring it from the order.
+      expect(result.defaultDestinationId).toBe('ref/scratch-new-schema');
+    });
+
+    it('has no default when every destination already exists (nothing to steer toward)', async () => {
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue({
+        listCreateDestinations: jest.fn().mockResolvedValue([
+          { id: 'app_a', name: 'Apple base', created: true },
+          { id: 'app_z', name: 'Zebra base', created: true },
+        ]),
+      });
+
+      const result = await service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(result.defaultDestinationId).toBeUndefined();
+    });
+
+    it('has no default when several destinations are uncreated, rather than silently picking a project', async () => {
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+
+      // A multi-project Supabase OAuth connection: one "New schema" per project.
+      // Choosing between them is the user's decision, not ours.
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue({
+        listCreateDestinations: jest.fn().mockResolvedValue([
+          { id: 'prod/new', name: 'Prod / New schema', created: false },
+          { id: 'prod/public', name: 'Prod / public', created: true },
+          { id: 'staging/new', name: 'Staging / New schema', created: false },
+        ]),
+      });
+
+      const result = await service.listCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(result.destinations).toHaveLength(3);
+      expect(result.defaultDestinationId).toBeUndefined();
+    });
+
     it('throws BadRequestException when the connector does not implement listCreateDestinations', async () => {
       const account = createMockAccount();
       (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
@@ -444,6 +505,25 @@ describe('ConnectorAccountService', () => {
       expect(result.destinations).toHaveLength(50);
       expect(result.destinations[0].id).toBe('a');
       expect(result.destinations[1].id).toBe('z0');
+      expect(result.hasMore).toBe(true);
+    });
+
+    it('keeps a not-yet-created destination at the head of the in-process fallback, so the cap can never cut it', async () => {
+      // 60 existing bases whose names all sort before "New base" — without the
+      // created-first rule the default destination would fall off the 50-cap.
+      const many = Array.from({ length: 60 }, (_, i) => ({
+        id: `a${i}`,
+        name: `aa_${String(i).padStart(2, '0')} base`,
+        created: true,
+      }));
+      mockConnectorReturning({
+        listCreateDestinations: jest.fn().mockResolvedValue([...many, { id: 'new', name: 'New base', created: false }]),
+      });
+
+      const result = await service.searchCreateDestinations(WORKBOOK_ID, ACCOUNT_ID, 'base', ACTOR);
+
+      expect(result.destinations[0].id).toBe('new');
+      expect(result.destinations).toHaveLength(50);
       expect(result.hasMore).toBe(true);
     });
 

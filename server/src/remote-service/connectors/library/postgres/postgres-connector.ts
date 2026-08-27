@@ -96,6 +96,9 @@ export class PostgresConnector extends Connector {
     records: 'rows',
     base: 'database',
     bases: 'databases',
+    // A new table lands in a schema; the database is the connection, not a choice.
+    createDestination: 'schema',
+    createDestinations: 'schemas',
     logo: 'https://static.scratch.md/connector-icons/postgres.svg',
     visible: false,
     incrementalPull: true,

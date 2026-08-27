@@ -17,12 +17,15 @@ export {
 export {
   AUTO_PK_COLUMN,
   PG_DUPLICATE_TABLE_SQLSTATE,
+  PG_INSUFFICIENT_PRIVILEGE_SQLSTATE,
   POSTGRES_MAX_IDENTIFIER_LENGTH,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   buildAddColumnsQuery,
   buildCreateTableQuery,
   duplicateTableCreateErrorMessage,
+  foldNameToPostgresSchemaIdentifier,
   isDuplicateTableError,
+  isInsufficientPrivilegeError,
   type ForeignKeyResolution,
   type ForeignKeyResolutions,
 } from './pg-create-schema';

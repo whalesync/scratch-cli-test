@@ -116,6 +116,25 @@ export interface CreateDestinationList {
    * returned here — a hint for the UI to prompt "type to search all pages".
    */
   hasMore?: boolean;
+  /**
+   * The `CreateDestination.id` a picker should PRESELECT on first open, or absent
+   * when the server has no opinion and the user must choose.
+   *
+   * The server owns this so the three frontends don't each invent a preselection
+   * rule off `created` and drift (DEV-11396). It is deliberately separate from
+   * `created`: that field states a FACT about a destination ("doesn't exist yet",
+   * which is what renders the "will be created" badge), while this one is a
+   * PRODUCT decision about where to start. Keeping them apart means the default
+   * can later move to an existing destination without a client release, and
+   * without mislabelling it as uncreated.
+   *
+   * Only on the list endpoint — the initial load. Search results deliberately
+   * carry no default: the user is steering by then.
+   *
+   * Absent is a real answer, not an oversight — see the derivation in
+   * `ConnectorAccountService.listCreateDestinations`.
+   */
+  defaultDestinationId?: string;
 }
 
 /** Response for `GET .../connections/:id/create-destinations/search`. */

@@ -28,6 +28,7 @@ const mockFindViewRelationOid = jest.fn();
 const mockFindRelationOidAndKind = jest.fn();
 const mockSelectAll = jest.fn();
 const mockFindAllSchemas = jest.fn();
+const mockCreateSchemaIfNotExists = jest.fn();
 const mockCreateTable = jest.fn();
 const mockAddColumns = jest.fn();
 const mockFindTableUniquelyAddressableColumn = jest.fn();
@@ -49,6 +50,7 @@ jest.mock('../../pg-common/knex-pg-client', () => {
       findRelationOidAndKind: mockFindRelationOidAndKind,
       selectAll: mockSelectAll,
       findAllSchemas: mockFindAllSchemas,
+      createSchemaIfNotExists: mockCreateSchemaIfNotExists,
       createTable: mockCreateTable,
       addColumns: mockAddColumns,
       findTableUniquelyAddressableColumn: mockFindTableUniquelyAddressableColumn,
@@ -749,10 +751,21 @@ function addColumnsCall(index = 0): DdlCallArgs {
   return mockAddColumns.mock.calls[index] as DdlCallArgs;
 }
 
+/**
+ * The "create a brand-new schema" sentinel, spelled out here rather than imported
+ * so the test pins the exact id the API puts on the wire — a rename that breaks a
+ * saved Live Export draft has to break this test too.
+ */
+const NEW_SCHEMA_SEGMENT = 'scratch-new-schema-sentinel-longer-than-any-postgres-schema-name-can-be';
+
 describe('SupabaseConnector.listCreateDestinations', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockDispose.mockResolvedValue(undefined);
+  });
+
+  it('cannot be shadowed by a real schema: the sentinel is longer than a Postgres identifier can be', () => {
+    expect(NEW_SCHEMA_SEGMENT.length).toBeGreaterThan(63);
   });
 
   it('returns "<projectRef>/<schema>" destinations for a connection-string project', async () => {
@@ -770,6 +783,8 @@ describe('SupabaseConnector.listCreateDestinations', () => {
     const destinations = await connector.listCreateDestinations();
 
     expect(destinations).toEqual([
+      // The only destination that does not exist yet, and the one a client defaults to.
+      { id: `${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`, name: 'New schema', created: false },
       { id: `${PROJECT_REF}/public`, name: 'public', created: true },
       { id: `${PROJECT_REF}/analytics`, name: 'analytics', created: true },
     ]);
@@ -792,9 +807,18 @@ describe('SupabaseConnector.listCreateDestinations', () => {
     const destinations = await connector.listCreateDestinations();
 
     expect(destinations).toEqual([
+      // One "New schema" per project — the schema is created inside a specific project.
+      { id: `${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`, name: 'New schema in Prod', created: false },
       { id: `${PROJECT_REF}/public`, name: 'Prod / public', created: true },
+      { id: `${OTHER_PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`, name: 'New schema in Staging', created: false },
       { id: `${OTHER_PROJECT_REF}/public`, name: 'Staging / public', created: true },
     ]);
+  });
+
+  it('offers no deep link for the "New schema" destination (nothing exists to link to yet)', () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+    expect(connector.buildCreateDestinationRemoteWebUrl(`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`)).toBeUndefined();
   });
 
   it('deep-links a destination to the dashboard editor opened on that schema', () => {
@@ -930,6 +954,107 @@ describe('SupabaseConnector schema creation', () => {
 
       expect(result.status).toBe('created');
       expect(result.remoteTableId).toEqual([PROJECT_REF, 'public', 'users']);
+    });
+
+    it('provisions the schema named after newParentName when the parent is the "New schema" sentinel', async () => {
+      mockCreateSchemaIfNotExists.mockResolvedValue(undefined);
+      mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+      const plan: NormalizedCreateTablePlan = {
+        remoteParentId: [`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`],
+        newParentName: 'Airtable export',
+        ref: 't1',
+        name: 'users',
+        fields: [textField('name')],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      // Folded into an identifier hand-written SQL can use unquoted.
+      expect(mockCreateSchemaIfNotExists).toHaveBeenCalledWith('airtable_export');
+      expect(createTableCall()[0]).toBe('airtable_export');
+      expect(result.status).toBe('created');
+      expect(result.remoteTableId).toEqual([PROJECT_REF, 'airtable_export', 'users']);
+      // Reported back so the caller pins the rest of the batch to this schema.
+      expect(result.remoteParentId).toEqual([PROJECT_REF, 'airtable_export']);
+    });
+
+    it('falls back to a default schema name when the "New schema" request carries no newParentName', async () => {
+      mockCreateSchemaIfNotExists.mockResolvedValue(undefined);
+      mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+      const plan: NormalizedCreateTablePlan = {
+        remoteParentId: [PROJECT_REF, NEW_SCHEMA_SEGMENT],
+        ref: 't1',
+        name: 'users',
+        fields: [textField('name')],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(mockCreateSchemaIfNotExists).toHaveBeenCalledWith('scratch_export');
+      expect(result.remoteTableId).toEqual([PROJECT_REF, 'scratch_export', 'users']);
+    });
+
+    it('never creates a schema when the parent names an existing one', async () => {
+      mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+      const plan: NormalizedCreateTablePlan = {
+        remoteParentId: [PROJECT_REF, 'analytics'],
+        newParentName: 'Airtable export',
+        ref: 't1',
+        name: 'users',
+        fields: [textField('name')],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(mockCreateSchemaIfNotExists).not.toHaveBeenCalled();
+      expect(createTableCall()[0]).toBe('analytics');
+      // No pin: we didn't provision the parent, so there is nothing to pin.
+      expect(result.remoteParentId).toBeUndefined();
+    });
+
+    it('explains the missing grant when the role cannot create a schema', async () => {
+      const permissionDenied = Object.assign(new Error('permission denied for database postgres'), { code: '42501' });
+      mockCreateSchemaIfNotExists.mockRejectedValue(permissionDenied);
+      const plan: NormalizedCreateTablePlan = {
+        remoteParentId: [`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`],
+        newParentName: 'Airtable export',
+        ref: 't1',
+        name: 'users',
+        fields: [textField('name')],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(mockCreateTable).not.toHaveBeenCalled();
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('airtable_export');
+      // Connection-string mode: the role is the user's own, so tell them to widen it.
+      expect(result.error).toContain('CREATE on the database');
+    });
+
+    it('tells an OAuth connection to reconnect rather than to edit a connection string it has no field for', async () => {
+      const permissionDenied = Object.assign(new Error('permission denied for database postgres'), { code: '42501' });
+      mockCreateSchemaIfNotExists.mockRejectedValue(permissionDenied);
+      const oauthConnector = new SupabaseConnector({
+        projects: [{ projectRef: PROJECT_REF, projectName: 'Prod', connectionString: CONNECTION_STRING }],
+      });
+
+      const result = await oauthConnector.createTable({
+        remoteParentId: [`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`],
+        newParentName: 'Airtable export',
+        ref: 't1',
+        name: 'users',
+        fields: [textField('name')],
+        deferredFkFields: [],
+      });
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('Reconnect');
+      expect(result.error).not.toContain('connection string');
     });
 
     it('fails (no throw) when no project is given in the parent', async () => {
