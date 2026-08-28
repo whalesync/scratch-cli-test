@@ -9,6 +9,8 @@ import type { SyncDraftId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { load as loadYaml } from 'js-yaml';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
+import { UserFlag } from 'src/experiments/flags';
 import { JobService } from 'src/job/job.service';
 import { RoutineService } from 'src/routine/routine.service';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
@@ -55,6 +57,7 @@ describe('SyncDraftService', () => {
   let routineService: jest.Mocked<RoutineService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
   let jobService: jest.Mocked<JobService>;
+  let experimentsService: jest.Mocked<ExperimentsService>;
 
   beforeEach(() => {
     dbService = {
@@ -73,6 +76,9 @@ describe('SyncDraftService', () => {
         // Source-service lookup for naming a brand-new destination container; defaults
         // to [] so materialize passes no newParentName unless a test opts in.
         connectorAccount: { findMany: jest.fn().mockResolvedValue([]) },
+        // Flag evaluation looks the acting user up; default to a present user so a test only
+        // has to set the flag value itself.
+        user: { findUnique: jest.fn().mockResolvedValue({ id: 'usr_test', role: 'USER' }) },
         // getOrCreate runs its find-or-create inside a transaction guarded by an
         // advisory lock; the mock runs the callback against the same client.
         $transaction: jest.fn().mockImplementation((cb: (tx: unknown) => unknown) => cb(dbService.client)),
@@ -118,7 +124,7 @@ describe('SyncDraftService', () => {
     } as unknown as jest.Mocked<DataFolderService>;
 
     routineService = {
-      createRoutineFile: jest.fn().mockResolvedValue(undefined),
+      upsertRoutineFile: jest.fn().mockResolvedValue({ routine: undefined, outcome: 'created' }),
     } as unknown as jest.Mocked<RoutineService>;
 
     bullEnqueuerService = {
@@ -131,6 +137,12 @@ describe('SyncDraftService', () => {
       getJobsProgress: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<JobService>;
 
+    experimentsService = {
+      // Default: no experiment enrolled (fail-closed), matching production for an unmatched user.
+      getBooleanFlag: jest.fn().mockResolvedValue(false),
+      getJsonFlag: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<ExperimentsService>;
+
     service = new SyncDraftService(
       dbService,
       workbookService,
@@ -140,6 +152,7 @@ describe('SyncDraftService', () => {
       routineService,
       bullEnqueuerService,
       jobService,
+      experimentsService,
     );
   });
 
@@ -2203,9 +2216,9 @@ describe('SyncDraftService', () => {
       });
     }
 
-    /** The (workbookId, routineFile) arguments of the first createRoutineFile call. */
+    /** The (workbookId, routineFile) arguments of the first upsertRoutineFile call. */
     function firstCreateRoutineCall(): [string, { path: string; content: string }] {
-      const calls = (routineService.createRoutineFile as jest.Mock).mock.calls as Array<
+      const calls = (routineService.upsertRoutineFile as jest.Mock).mock.calls as Array<
         [string, { path: string; content: string }]
       >;
       return calls[0];
@@ -2223,7 +2236,7 @@ describe('SyncDraftService', () => {
       const sync = await service.apply(DRAFT_ID, ACTOR, { createRoutine: true });
 
       expect(sync.id).toBe('syn_new');
-      expect(routineService.createRoutineFile).toHaveBeenCalledTimes(1);
+      expect(routineService.upsertRoutineFile).toHaveBeenCalledTimes(1);
       const [calledWorkbookId, file] = firstCreateRoutineCall();
       expect(calledWorkbookId).toBe(WORKBOOK_ID);
       expect(file.path).toBe('routines/run-syn_new.yaml');
@@ -2247,6 +2260,85 @@ describe('SyncDraftService', () => {
       });
     });
 
+    /** Apply of a new sync whose single mapping targets a destination folder on a `destinationService` connection. */
+    async function applyWithDestinationService(destinationService: string): Promise<Array<Record<string, unknown>>> {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(existingMappingsRow());
+      (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
+      (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync('syn_new'));
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_src', connectorAccountId: 'coa_src', connectorAccount: { service: 'ATTIO' } },
+        { id: 'dfd_dst', connectorAccountId: 'coa_dst', connectorAccount: { service: destinationService } },
+      ]);
+      await service.apply(DRAFT_ID, ACTOR, { createRoutine: true });
+      const [, file] = firstCreateRoutineCall();
+      const routine = loadYaml(file.content) as { steps: Array<Record<string, unknown>> };
+      return routine.steps.filter((step) => step.action === 'pull');
+    }
+    const FULL_SOURCE = { action: 'pull', name: 'Pull Source', connection: 'coa_src', options: { fullPull: true } };
+    const FULL_DESTINATION = {
+      action: 'pull',
+      name: 'Pull Destination',
+      connection: 'coa_dst',
+      options: { fullPull: true },
+    };
+    const INCREMENTAL_DESTINATION = { ...FULL_DESTINATION, options: { fullPull: false } };
+
+    it('flag on + payload naming the destination service: that destination pulls incrementally, source stays full', async () => {
+      (experimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(true);
+      (experimentsService.getJsonFlag as jest.Mock).mockResolvedValue(['notion']);
+
+      await expect(applyWithDestinationService('NOTION')).resolves.toEqual([FULL_SOURCE, INCREMENTAL_DESTINATION]);
+
+      expect(experimentsService.getBooleanFlag).toHaveBeenCalledWith(
+        UserFlag.ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL,
+        false,
+        { id: 'usr_test', role: 'USER' },
+      );
+      expect(experimentsService.getJsonFlag).toHaveBeenCalledWith(
+        UserFlag.ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL,
+        [],
+        { id: 'usr_test', role: 'USER' },
+      );
+    });
+
+    it('flag on + payload naming OTHER services: the destination stays a full pull', async () => {
+      (experimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(true);
+      (experimentsService.getJsonFlag as jest.Mock).mockResolvedValue(['AIRTABLE', 'SUPABASE']);
+
+      await expect(applyWithDestinationService('NOTION')).resolves.toEqual([FULL_SOURCE, FULL_DESTINATION]);
+    });
+
+    it('flag on + ["*"] payload: any destination service pulls incrementally', async () => {
+      (experimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(true);
+      (experimentsService.getJsonFlag as jest.Mock).mockResolvedValue(['*']);
+
+      await expect(applyWithDestinationService('WEBFLOW')).resolves.toEqual([FULL_SOURCE, INCREMENTAL_DESTINATION]);
+    });
+
+    it('flag on + malformed payload fails closed: every pull is full (never "everything")', async () => {
+      (experimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(true);
+      (experimentsService.getJsonFlag as jest.Mock).mockResolvedValue({ destinationServices: ['NOTION'] });
+
+      await expect(applyWithDestinationService('NOTION')).resolves.toEqual([FULL_SOURCE, FULL_DESTINATION]);
+    });
+
+    it('flag off: the payload is never read and every pull is full', async () => {
+      (experimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(false);
+      (experimentsService.getJsonFlag as jest.Mock).mockResolvedValue(['*']);
+
+      await expect(applyWithDestinationService('NOTION')).resolves.toEqual([FULL_SOURCE, FULL_DESTINATION]);
+      expect(experimentsService.getJsonFlag).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the acting user has no row: the flag is not even consulted', async () => {
+      (dbService.client.user.findUnique as jest.Mock).mockResolvedValue(null);
+      (experimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(true);
+      (experimentsService.getJsonFlag as jest.Mock).mockResolvedValue(['*']);
+
+      await expect(applyWithDestinationService('NOTION')).resolves.toEqual([FULL_SOURCE, FULL_DESTINATION]);
+      expect(experimentsService.getBooleanFlag).not.toHaveBeenCalled();
+    });
+
     it('does not create a routine when createRoutine is not set', async () => {
       (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(existingMappingsRow());
       (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
@@ -2254,7 +2346,7 @@ describe('SyncDraftService', () => {
 
       await service.apply(DRAFT_ID, ACTOR);
 
-      expect(routineService.createRoutineFile).not.toHaveBeenCalled();
+      expect(routineService.upsertRoutineFile).not.toHaveBeenCalled();
       expect(workbookService.updateWorkbookSettings).not.toHaveBeenCalled();
       expect(dbService.client.dataFolder.findMany).not.toHaveBeenCalled();
     });
@@ -2287,7 +2379,7 @@ describe('SyncDraftService', () => {
         { id: 'dfd_src', connectorAccountId: 'coa_src' },
         { id: 'dfd_dst', connectorAccountId: 'coa_dst' },
       ]);
-      (routineService.createRoutineFile as jest.Mock).mockRejectedValue(new Error('scratch-git unavailable'));
+      (routineService.upsertRoutineFile as jest.Mock).mockRejectedValue(new Error('scratch-git unavailable'));
 
       const sync = await service.apply(DRAFT_ID, ACTOR, { createRoutine: true });
 
@@ -2308,7 +2400,7 @@ describe('SyncDraftService', () => {
       const sync = await service.apply(DRAFT_ID, ACTOR, { createRoutine: true });
 
       expect(sync.id).toBe('syn_new');
-      expect(routineService.createRoutineFile).toHaveBeenCalledTimes(1);
+      expect(routineService.upsertRoutineFile).toHaveBeenCalledTimes(1);
     });
   });
 

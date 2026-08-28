@@ -584,8 +584,11 @@ function notionInboundPackTransformer(notionType: string): TransformerConfig | u
     // Each type passes an `emptyTemplate`: the shape Notion accepts to CLEAR the field when
     // an empty/null value is synced (an empty rich_text/title array, or a null scalar). This
     // matches what a Notion *pull* returns for an empty field, keeping a cleared record the
-    // same shape as a pulled one. `checkbox` has no clear shape (it's a boolean, never empty),
-    // so it omits emptyTemplate and an empty value falls back to null (dropped, unchanged).
+    // same shape as a pulled one. `checkbox` is the one type Notion never reads back as empty:
+    // an unset checkbox is `{ checkbox: false }`, so its cleared shape is `false`. Without that
+    // emptyTemplate a null/empty source (e.g. an Attio checkbox never set, `[]`) packed to a
+    // literal `null`, which the sync WRITES as a clear (it is not dropped); the pull then
+    // returned `checkbox: false` again and the record re-published on every run.
     case 'title':
       return notionWrapTransformer(
         { type: 'title', title: [{ type: 'text', text: { content: '$value' }, plain_text: '$value' }] },
@@ -599,7 +602,7 @@ function notionInboundPackTransformer(notionType: string): TransformerConfig | u
     case 'number':
       return notionWrapTransformer({ type: 'number', number: '$value' }, { type: 'number', number: null });
     case 'checkbox':
-      return notionWrapTransformer({ type: 'checkbox', checkbox: '$value' });
+      return notionWrapTransformer({ type: 'checkbox', checkbox: '$value' }, { type: 'checkbox', checkbox: false });
     case 'date':
       // A scalar date populates `start`; `end`/`time_zone` are left for the editor.
       return notionWrapTransformer({ type: 'date', date: { start: '$value' } }, { type: 'date', date: null });

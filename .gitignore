@@ -13,7 +13,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 .DS_Store
 
 # Terraform state files
-.terraform/
+.terraform
 *.tfstate
 *.tfstate.backup
 *.tfstate.lock.info
@@ -35,7 +35,7 @@ settings.local.json
 
 # Node.js compiled output and packages.
 dist/
-node_modules/
+node_modules
 *.tsbuildinfo
 
 # Python bytecode caches

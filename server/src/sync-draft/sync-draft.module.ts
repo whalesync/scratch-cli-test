@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
+import { ExperimentsModule } from 'src/experiments/experiments.module';
 import { JobModule } from 'src/job/job.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
@@ -15,6 +16,7 @@ import { SyncDraftService } from './sync-draft.service';
 @Module({
   imports: [
     DbModule,
+    ExperimentsModule,
     RateLimiterModule,
     WorkbookModule,
     SyncModule,

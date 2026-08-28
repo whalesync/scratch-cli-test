@@ -13,6 +13,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { createSyncId, createWorkbookId, type SyncId, type WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
 import { JobService } from 'src/job/job.service';
 import { RoutineService } from 'src/routine/routine.service';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
@@ -55,6 +56,8 @@ describe('SyncDraftService (real DB)', () => {
       // like the other connector-facing services above.
       {} as unknown as BullEnqueuerService,
       {} as unknown as JobService,
+      // Flag evaluation only happens on the apply/createRoutine path, which is out of scope here.
+      {} as unknown as ExperimentsService,
     );
 
     const org = await prisma.organization.create({

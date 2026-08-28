@@ -22,6 +22,13 @@ export class ExperimentsService implements OnModuleDestroy {
    */
   private readonly localDevFlagOverrides: ReadonlyMap<string, boolean>;
 
+  /**
+   * `FEATURE_FLAG_PAYLOAD_OVERRIDES_FOR_LOCAL_DEV` — JSON payloads forced for a local
+   * server, the counterpart of {@link localDevFlagOverrides} for payload-driven flags
+   * (`getJsonFlag`). Never honored in production.
+   */
+  private readonly localDevFlagPayloadOverrides: ReadonlyMap<string, JsonValue>;
+
   constructor(private readonly config: ScratchConfigService) {
     const apiKey = config.getPostHogApiKey();
     const host = config.getPostHogHost();
@@ -34,6 +41,17 @@ export class ExperimentsService implements OnModuleDestroy {
       WSLogger.warn({
         source: ExperimentsService.name,
         message: `Local-dev feature-flag overrides active: ${[...this.localDevFlagOverrides].map(([k, v]) => `${k}=${v}`).join(', ')}`,
+      });
+    }
+    this.localDevFlagPayloadOverrides = config.isProductionEnvironment()
+      ? new Map()
+      : (config.getLocalDevFeatureFlagPayloadOverrides() as Map<string, JsonValue>);
+    if (this.localDevFlagPayloadOverrides.size > 0) {
+      WSLogger.warn({
+        source: ExperimentsService.name,
+        message: `Local-dev feature-flag payload overrides active: ${[...this.localDevFlagPayloadOverrides]
+          .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+          .join(', ')}`,
       });
     }
 
@@ -272,6 +290,10 @@ export class ExperimentsService implements OnModuleDestroy {
   public async getJsonFlag(flag: AllFeatureFlags, defaultValue: JsonValue, user?: PartialUser): Promise<JsonValue> {
     if (flag in UserFlag && !user) {
       throw new Error('User ID must be provided when accessing a User-scoped feature flag');
+    }
+    const localDevPayloadOverride = this.localDevFlagPayloadOverrides.get(flag);
+    if (localDevPayloadOverride !== undefined) {
+      return localDevPayloadOverride;
     }
     if (!this.posthog) {
       return defaultValue;

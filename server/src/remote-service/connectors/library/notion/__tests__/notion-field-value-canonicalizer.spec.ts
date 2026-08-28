@@ -90,6 +90,20 @@ describe('notionFieldValueCanonicalizerForPropertyType', () => {
       expectDifferent('title', pulledTitle, { type: 'title', title: [] });
     });
 
+    it('ignores U+200B / U+FEFF, which Notion drops on write, but not U+200D (emoji ZWJ)', () => {
+      // Live repro: an Attio description seeded as `zero\u200bwidth` read back from Notion as
+      // `zerowidth`, so the sync re-published the page on every run.
+      const span = (content: string) => ({
+        type: 'rich_text',
+        rich_text: [{ type: 'text', text: { content }, plain_text: content }],
+      });
+      expectSame('rich_text', span('zero\u200bwidth'), span('zerowidth'));
+      expectSame('rich_text', span('\uFEFFbom'), span('bom'));
+      expectSame('rich_text', span('\u200b'), { type: 'rich_text', rich_text: [] });
+      // A ZWJ is real content (it binds emoji sequences), so removing it is a change.
+      expectDifferent('rich_text', span('\uD83D\uDC68\u200D\uD83D\uDC69'), span('\uD83D\uDC68\uD83D\uDC69'));
+    });
+
     it('treats an empty span array, a missing property and null as the same (cleared) value', () => {
       expectSame('rich_text', { id: 'x', type: 'rich_text', rich_text: [] }, { type: 'rich_text', rich_text: [] });
       expectSame('rich_text', { id: 'x', type: 'rich_text', rich_text: [] }, undefined);
@@ -269,6 +283,11 @@ describe('notionFieldValueCanonicalizerForPropertyType', () => {
       expectSame('number', { type: 'number', number: null }, { type: 'number', number: null });
       expectSame('checkbox', { id: 'c', type: 'checkbox', checkbox: true }, { type: 'checkbox', checkbox: true });
       expectDifferent('checkbox', { type: 'checkbox', checkbox: true }, { type: 'checkbox', checkbox: false });
+      // Notion never reads a checkbox back as empty: a null/absent write (a source with no
+      // boolean, e.g. an Attio checkbox never set) and the `false` Notion echoes must agree.
+      expectSame('checkbox', { id: 'c', type: 'checkbox', checkbox: false }, null);
+      expectSame('checkbox', { id: 'c', type: 'checkbox', checkbox: false }, undefined);
+      expectDifferent('checkbox', { type: 'checkbox', checkbox: true }, null);
       expectSame('url', { id: 'u', type: 'url', url: 'https://x.y' }, { type: 'url', url: 'https://x.y' });
       expectSame('url', { type: 'url', url: null }, { type: 'url', url: null });
       expectSame('email', { type: 'email', email: 'a@b.c' }, { type: 'email', email: 'a@b.c' });

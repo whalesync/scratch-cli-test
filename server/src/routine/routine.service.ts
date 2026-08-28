@@ -33,6 +33,9 @@ import { ParsedRoutine, RoutineParseResult } from './routine.types';
 /** Cap on runs returned by the list endpoint (newest first). */
 const ROUTINE_RUNS_LIST_LIMIT = 100;
 
+/** What {@link RoutineService.upsertRoutineFile} did with the file. */
+export type RoutineFileUpsertOutcome = 'created' | 'updated' | 'unchanged';
+
 @Injectable()
 export class RoutineService {
   constructor(
@@ -311,6 +314,36 @@ export class RoutineService {
     });
 
     return this.buildSingleRoutine(workbookId, dto.path, parseResult);
+  }
+
+  /**
+   * Creates the routine file when absent, replaces it when the stored content differs, and leaves
+   * it untouched (no commit, no audit event) when the stored content is byte-identical. Same
+   * validation as create/update: invalid path (400), unparseable YAML (400), dangling references
+   * (400). Used by callers that regenerate a routine on every save (the Live Export's generated
+   * `run-<syncId>.yaml`), so a generator improvement reaches existing routines instead of only
+   * brand-new ones.
+   */
+  async upsertRoutineFile(
+    workbookId: WorkbookId,
+    dto: CreateRoutineFileDto,
+    actor: Actor,
+  ): Promise<{ routine: Routine; outcome: RoutineFileUpsertOutcome }> {
+    assertValidRoutineFilePath(dto.path);
+    const repoId = await this.resolveConfigRepoId(workbookId);
+
+    const existing = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, dto.path);
+    if (existing === null) {
+      return { routine: await this.createRoutineFile(workbookId, dto, actor), outcome: 'created' };
+    }
+    if (existing.content === dto.content) {
+      const parseResult = this.parser.parse(dto.content);
+      if ('error' in parseResult) {
+        throw new BadRequestException(parseResult.error);
+      }
+      return { routine: await this.buildSingleRoutine(workbookId, dto.path, parseResult), outcome: 'unchanged' };
+    }
+    return { routine: await this.updateRoutineFile(workbookId, dto, actor), outcome: 'updated' };
   }
 
   /** Deletes a routine file and its ROUTINE schedule (if any). 404 if the file doesn't exist. */

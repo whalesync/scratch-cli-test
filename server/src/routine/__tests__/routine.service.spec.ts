@@ -461,6 +461,74 @@ describe('RoutineService', () => {
     });
   });
 
+  describe('upsertRoutineFile', () => {
+    const NEW_YAML = 'name: New\nsteps:\n  - action: pull\n';
+
+    it('creates the file when it does not exist', async () => {
+      getRepoFile.mockResolvedValue(null);
+
+      const { routine, outcome } = await service.upsertRoutineFile(
+        WORKBOOK_ID,
+        { path: 'routines/run.yaml', content: NEW_YAML },
+        ACTOR,
+      );
+
+      expect(outcome).toBe('created');
+      expect(commitFilesToBranch).toHaveBeenCalledWith(
+        expect.any(String),
+        'main',
+        [{ path: 'routines/run.yaml', content: NEW_YAML }],
+        expect.stringContaining('Create routine routines/run.yaml'),
+      );
+      expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'create' }));
+      expect(routine).toMatchObject({ filePath: 'routines/run.yaml', name: 'New', parseError: null });
+    });
+
+    it('replaces the file when the stored content differs', async () => {
+      getRepoFile.mockResolvedValue({ content: 'name: Old\nsteps:\n  - action: pull\n' });
+
+      const { routine, outcome } = await service.upsertRoutineFile(
+        WORKBOOK_ID,
+        { path: 'routines/run.yaml', content: NEW_YAML },
+        ACTOR,
+      );
+
+      expect(outcome).toBe('updated');
+      expect(commitFilesToBranch).toHaveBeenCalledWith(
+        expect.any(String),
+        'main',
+        [{ path: 'routines/run.yaml', content: NEW_YAML }],
+        expect.stringContaining('Update routine routines/run.yaml'),
+      );
+      expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'update' }));
+      expect(routine).toMatchObject({ filePath: 'routines/run.yaml', name: 'New', parseError: null });
+    });
+
+    it('commits nothing and logs no audit event when the stored content is identical', async () => {
+      getRepoFile.mockResolvedValue({ content: NEW_YAML });
+
+      const { routine, outcome } = await service.upsertRoutineFile(
+        WORKBOOK_ID,
+        { path: 'routines/run.yaml', content: NEW_YAML },
+        ACTOR,
+      );
+
+      expect(outcome).toBe('unchanged');
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+      expect(logEvent).not.toHaveBeenCalled();
+      expect(routine).toMatchObject({ filePath: 'routines/run.yaml', name: 'New', parseError: null });
+    });
+
+    it('throws BadRequest and does not commit when the new YAML is invalid', async () => {
+      getRepoFile.mockResolvedValue({ content: 'name: Old\nsteps:\n  - action: pull\n' });
+
+      await expect(
+        service.upsertRoutineFile(WORKBOOK_ID, { path: 'routines/run.yaml', content: 'steps: 42' }, ACTOR),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+  });
+
   describe('deleteRoutineFile', () => {
     it('deletes the file and its schedule and audit-logs', async () => {
       getRepoFile.mockResolvedValue({ content: 'name: A\nsteps:\n  - action: pull\n' });

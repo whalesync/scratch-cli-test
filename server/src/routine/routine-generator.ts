@@ -12,6 +12,15 @@ export interface SyncRoutineSpec {
   sourceConnectorAccountIds: string[];
   /** Destination-side connector account ids ("coa_..."); empty for a scratch-only destination. */
   destinationConnectorAccountIds: string[];
+  /**
+   * Destination connector account ids whose pull step should run INCREMENTAL instead of the
+   * default full pull (see {@link FULL_PULL_STEP_OPTIONS} for why full is the default). Populated
+   * only for users enrolled in `ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL`; deletion
+   * reconciliation on those destinations is knowingly skipped; their steps say `fullPull: false`
+   * explicitly. Omitted/empty = every destination
+   * pull is full.
+   */
+  incrementalPullDestinationConnectorAccountIds?: string[];
 }
 
 /** A routine file ready to hand to {@link RoutineService.createRoutineFile}. */
@@ -47,8 +56,19 @@ interface GeneratedRoutineStep {
  *
  * Routine pulls are incremental unless a step opts out, so a generated sync routine has to say so
  * explicitly — and the YAML the user reads then states the mode the sync depends on.
+ *
+ * The one exception is {@link SyncRoutineSpec.incrementalPullDestinationConnectorAccountIds}: a
+ * flag-gated opt-in (`ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL`) that leaves a destination
+ * pull step incremental.
  */
 const FULL_PULL_STEP_OPTIONS: RoutineStepOptions = { fullPull: true };
+
+/**
+ * The explicit opt-out: an incremental pull step says `fullPull: false` rather than omitting the
+ * option, so the YAML a user reads states the mode either way (the executor treats an absent
+ * option as incremental too, but "absent" reads like an oversight next to the full-pull steps).
+ */
+const INCREMENTAL_PULL_STEP_OPTIONS: RoutineStepOptions = { fullPull: false };
 
 /**
  * Builds the routine that runs a sync end to end: clear any leftover working-set edits, pull every
@@ -95,6 +115,9 @@ export function buildSyncRoutineFile(spec: SyncRoutineSpec): GeneratedRoutineFil
     });
   }
 
+  const incrementalPullDestinationConnectorAccountIdSet = new Set(
+    spec.incrementalPullDestinationConnectorAccountIds ?? [],
+  );
   for (const connectorAccountId of distinctDestinationConnectorAccountIds) {
     steps.push({
       action: RoutineAction.PULL,
@@ -103,7 +126,9 @@ export function buildSyncRoutineFile(spec: SyncRoutineSpec): GeneratedRoutineFil
           ? `Pull Destination (${connectorAccountId})`
           : 'Pull Destination',
       connection: connectorAccountId,
-      options: FULL_PULL_STEP_OPTIONS,
+      options: incrementalPullDestinationConnectorAccountIdSet.has(connectorAccountId)
+        ? INCREMENTAL_PULL_STEP_OPTIONS
+        : FULL_PULL_STEP_OPTIONS,
     });
   }
 

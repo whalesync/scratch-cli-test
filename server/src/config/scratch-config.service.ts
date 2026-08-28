@@ -121,6 +121,27 @@ export class ScratchConfigService {
     return overrides;
   }
 
+  /**
+   * Local-development-only feature-flag PAYLOAD overrides, as one JSON object keyed by
+   * flag: `{"FLAG_A": ["NOTION"], "FLAG_B": {"minVersion": "1.2.0"}}`. The companion of
+   * `FEATURE_FLAG_OVERRIDES_FOR_LOCAL_DEV` for flags whose behaviour is driven by their
+   * PostHog payload (`ExperimentsService.getJsonFlag`). Ignored in production. An
+   * unparseable value throws at startup rather than silently running without overrides.
+   */
+  getLocalDevFeatureFlagPayloadOverrides(): Map<string, unknown> {
+    const overrides = new Map<string, unknown>();
+    const raw = this.getOptionalEnvVariable<string>('FEATURE_FLAG_PAYLOAD_OVERRIDES_FOR_LOCAL_DEV');
+    if (!raw) return overrides;
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('FEATURE_FLAG_PAYLOAD_OVERRIDES_FOR_LOCAL_DEV must be a JSON object keyed by flag name');
+    }
+    for (const [flagKey, payload] of Object.entries(parsed)) {
+      overrides.set(flagKey, payload);
+    }
+    return overrides;
+  }
+
   getStripeApiKey(): string {
     return this.getEnvVariable('STRIPE_API_KEY');
   }

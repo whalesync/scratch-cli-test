@@ -180,6 +180,39 @@ export enum UserFlag {
    * also yields false. Checked server-side only — not exposed to the client.
    */
   ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS = 'ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS',
+  /**
+   * DEV-11069 experiment. Lets a Live Export pull only new and changed records
+   * from its destination, instead of every record on every run.
+   *
+   * By default, every pull in a Live Export run is a full pull. A full pull is
+   * the only kind that notices when a record was deleted or archived on the
+   * destination. An incremental pull skips that check.
+   *
+   * Turn the flag on for a user. Then set its JSON payload to a list of
+   * connector names. Only those connectors are affected. Examples:
+   * `["NOTION"]`, `["NOTION", "AIRTABLE"]`, or `["*"]` for all connectors.
+   * Names are not case-sensitive. An empty list or a payload of any other
+   * shape means no connector is affected, and the server logs a warning. See
+   * `live-export-incremental-destination-pull.ts`.
+   *
+   * When the flag is on for the user: each destination whose connector is in
+   * the list pulls incrementally. The source and all other destinations still
+   * pull in full. The first run after turning it on is still a full pull.
+   * Deleted or archived destination records are not noticed until the next
+   * full pull.
+   *
+   * When the flag is off: every pull is a full pull. This is the default.
+   *
+   * The flag is checked when the user saves the Live Export, not when it runs.
+   * The choice is written into the routine file. To change it, save the
+   * Live Export again. On a local server, set
+   * `FEATURE_FLAG_OVERRIDES_FOR_LOCAL_DEV=<flag>=true` and
+   * `FEATURE_FLAG_PAYLOAD_OVERRIDES_FOR_LOCAL_DEV={"<flag>":["NOTION"]}`.
+   *
+   * If the user is not matched, or PostHog is down, the flag counts as off.
+   * Server-only. Not sent to the client.
+   */
+  ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL = 'ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL',
 }
 
 /**

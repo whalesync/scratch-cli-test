@@ -26,6 +26,7 @@ function makeUser(overrides: Partial<User> = {}): User {
 function makeService(
   environment: ScratchEnvironment,
   localDevFlagOverrides: Map<string, boolean> = new Map(),
+  localDevFlagPayloadOverrides: Map<string, unknown> = new Map(),
 ): ExperimentsService {
   // No PostHog credentials, so the constructor leaves `posthog` undefined; tests that
   // need PostHog inject a mock client directly onto the instance.
@@ -35,6 +36,7 @@ function makeService(
     getPosthogFeatureFlagApiKey: () => undefined,
     isProductionEnvironment: () => environment === 'production',
     getLocalDevFeatureFlagOverrides: () => localDevFlagOverrides,
+    getLocalDevFeatureFlagPayloadOverrides: () => localDevFlagPayloadOverrides,
   } as unknown as ScratchConfigService;
   return new ExperimentsService(configService);
 }
@@ -185,5 +187,29 @@ describe('ExperimentsService — local-dev feature-flag overrides', () => {
   it('is ignored in production', async () => {
     const service = makeService('production', new Map([['HUBSPOT_BATCH_PUBLISH', true]]));
     await expect(service.getBooleanFlag(UserFlag.HUBSPOT_BATCH_PUBLISH, false, makeUser())).resolves.toBe(false);
+  });
+});
+
+describe('ExperimentsService — local-dev feature-flag PAYLOAD overrides', () => {
+  const FLAG = UserFlag.ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL;
+
+  it('returns the payload override instead of the default when PostHog is not configured (development)', async () => {
+    const service = makeService('development', new Map(), new Map([[FLAG, ['NOTION']]]));
+    await expect(service.getJsonFlag(FLAG, [], makeUser())).resolves.toEqual(['NOTION']);
+    // A flag without a payload override still falls back to its default.
+    await expect(service.getJsonFlag(UserFlag.MINIMUM_SUPPORTED_DESKTOP_VERSION, '', makeUser())).resolves.toBe('');
+  });
+
+  it('wins over PostHog when both are present', async () => {
+    const service = makeService('development', new Map(), new Map([[FLAG, ['*']]]));
+    const posthog = injectPostHog(service);
+    posthog.getFeatureFlagPayload.mockResolvedValue(['NOTION']);
+    await expect(service.getJsonFlag(FLAG, [], makeUser())).resolves.toEqual(['*']);
+    expect(posthog.getFeatureFlagPayload).not.toHaveBeenCalled();
+  });
+
+  it('is ignored in production', async () => {
+    const service = makeService('production', new Map(), new Map([[FLAG, ['NOTION']]]));
+    await expect(service.getJsonFlag(FLAG, [], makeUser())).resolves.toEqual([]);
   });
 });

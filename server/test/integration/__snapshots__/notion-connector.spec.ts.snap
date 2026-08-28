@@ -558,6 +558,10 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "x-scratch-remote-field-id": "%5BK%7BH",
             "x-scratch-suggested-in-transformer": {
               "options": {
+                "emptyTemplate": {
+                  "checkbox": false,
+                  "type": "checkbox",
+                },
                 "template": {
                   "checkbox": "$value",
                   "type": "checkbox",

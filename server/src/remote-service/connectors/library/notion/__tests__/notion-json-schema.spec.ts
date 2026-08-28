@@ -97,10 +97,15 @@ describe('notionPropertyToJsonSchema — transform hints', () => {
     });
   });
 
-  it('checkbox has no clear shape (boolean is never empty), so it omits emptyTemplate', () => {
+  it('checkbox clears to `false` — Notion never reads a checkbox back as empty', () => {
+    // Without this emptyTemplate a null source packed to a literal `null`, which the sync wrote
+    // as a clear; the pull then returned `{ checkbox: false }` and the record re-published forever.
     expect(prop('checkbox')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
       type: 'wrap_object',
-      options: { template: { type: 'checkbox', checkbox: '$value' } },
+      options: {
+        template: { type: 'checkbox', checkbox: '$value' },
+        emptyTemplate: { type: 'checkbox', checkbox: false },
+      },
     });
   });
 

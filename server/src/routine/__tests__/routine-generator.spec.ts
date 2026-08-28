@@ -169,4 +169,25 @@ describe('buildSyncRoutineFile', () => {
     const parseResult = parser.parse(file.content);
     expect('routine' in parseResult).toBe(true);
   });
+
+  it('writes an explicit fullPull: false on an opted-in destination pull step and fullPull: true on every other pull', () => {
+    const file = buildSyncRoutineFile({
+      syncDisplayName: 'Mixed Pulls',
+      syncId: 'syn_mixed12345',
+      sourceConnectorAccountIds: ['coa_src_a'],
+      destinationConnectorAccountIds: ['coa_dest_a', 'coa_dest_b'],
+      incrementalPullDestinationConnectorAccountIds: ['coa_dest_b'],
+    });
+
+    const pullSteps = loadRoutine(file.content).steps.filter((step) => step.action === 'pull');
+    expect(pullSteps).toEqual([
+      { action: 'pull', name: 'Pull Source', connection: 'coa_src_a', options: { fullPull: true } },
+      { action: 'pull', name: 'Pull Destination (coa_dest_a)', connection: 'coa_dest_a', options: { fullPull: true } },
+      { action: 'pull', name: 'Pull Destination (coa_dest_b)', connection: 'coa_dest_b', options: { fullPull: false } },
+    ]);
+
+    // Still round-trips through the real parser (`fullPull: false` is a valid pull-step option).
+    const parseResult = parser.parse(file.content);
+    expect('routine' in parseResult).toBe(true);
+  });
 });

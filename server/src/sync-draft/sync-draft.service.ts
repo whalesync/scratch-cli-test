@@ -44,6 +44,8 @@ import {
 } from '@spinner/shared-types';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
+import { UserFlag } from 'src/experiments/flags';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
 import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
@@ -68,6 +70,11 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { CreateSyncDraftDtoClass, PatchSyncDraftDtoClass } from './dto/sync-draft.dto';
 import { SyncDraftEntity } from './entities/sync-draft.entity';
+import {
+  IncrementalPullDestinationServices,
+  isIncrementalPullDestinationService,
+  parseIncrementalPullDestinationServicesPayload,
+} from './live-export-incremental-destination-pull';
 
 /** The placeholder-table variant of a draft table destination (carries the create plan + resolution). */
 type PlaceholderTableDestination = Extract<DraftTableDestination, { kind: 'placeholderTable' }>;
@@ -318,6 +325,7 @@ export class SyncDraftService {
     private readonly routineService: RoutineService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly jobService: JobService,
+    private readonly experimentsService: ExperimentsService,
   ) {}
 
   /**
@@ -781,14 +789,54 @@ export class SyncDraftService {
   }
 
   /**
-   * Best-effort: writes a `routines/run-<syncId>.yaml` file describing how to run the just-created
-   * sync, then records its path on the workbook (`settings.sync_routine`). Resolves the source/
-   * destination connections from the v2 mapping's folder ids (a Sync doesn't store connections;
-   * `DataFolder.connectorAccountId` does — null for scratch folders, which contribute no pull/publish
-   * steps). NEVER throws: apply has already created the sync and archived the draft (one-shot — a
-   * re-apply throws SYNC_DRAFT_ARCHIVED), so a routine failure is logged and swallowed rather than
-   * failing the whole apply. The settings write runs only after the routine file commits, so a failed
-   * routine never records a dangling path.
+   * The destination connector services whose Live Export pull may run incrementally for the
+   * acting user, per `ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL` and its payload (a plain
+   * array of service ids, or `["*"]`). `null` = nothing enrolled — fail-closed on a missing user
+   * row, an unmatched user, a PostHog outage, or a malformed payload (which is logged so a typo
+   * in the flag is noticed rather than silently disabling the experiment). Mirrors
+   * `SyncService.fieldValueCanonicalizersEnabledForActor` for the user lookup.
+   */
+  private async incrementalPullDestinationServicesForActor(
+    actor: Actor,
+    workbookId: WorkbookId,
+  ): Promise<IncrementalPullDestinationServices | null> {
+    const actingUser = await this.db.client.user.findUnique({
+      where: { id: actor.userId },
+      select: { id: true, role: true },
+    });
+    if (!actingUser) {
+      return null;
+    }
+    const flag = UserFlag.ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL;
+    if (!(await this.experimentsService.getBooleanFlag(flag, false, actingUser))) {
+      return null;
+    }
+    const payload = await this.experimentsService.getJsonFlag(flag, [], actingUser);
+    const enrolled = parseIncrementalPullDestinationServicesPayload(payload);
+    if (enrolled === null) {
+      WSLogger.warn({
+        source: 'SyncDraftService.apply',
+        message:
+          `${flag} is on for the user but its payload is not an array of service ids ` +
+          `(got ${JSON.stringify(payload)}); treating as no destination enrolled`,
+        workbookId,
+        userId: actor.userId,
+      });
+    }
+    return enrolled;
+  }
+
+  /**
+   * Best-effort: writes (or, on a re-save of an existing sync, REPLACES) the
+   * `routines/run-<syncId>.yaml` file describing how to run the sync, then records its path on the
+   * workbook (`settings.sync_routine`). Regenerating on every save is what lets a routine-generator
+   * change reach an existing Live Export the next time it is saved; an unchanged routine costs no
+   * commit. Resolves the source/destination connections from the v2 mapping's folder ids (a Sync
+   * doesn't store connections; `DataFolder.connectorAccountId` does — null for scratch folders, which
+   * contribute no pull/publish steps). NEVER throws: apply has already created the sync and archived
+   * the draft (one-shot — a re-apply throws SYNC_DRAFT_ARCHIVED), so a routine failure is logged and
+   * swallowed rather than failing the whole apply. The settings write runs only after the routine
+   * file commits, so a failed routine never records a dangling path.
    */
   private async tryCreateSyncRoutine(
     workbook: WorkbookCluster.Workbook,
@@ -806,21 +854,54 @@ export class SyncDraftService {
 
       const folders = await this.db.client.dataFolder.findMany({
         where: { id: { in: [...sourceDataFolderIds, ...destinationDataFolderIds] } },
-        select: { id: true, connectorAccountId: true },
+        select: { id: true, connectorAccountId: true, connectorAccount: { select: { service: true } } },
       });
       const connectorAccountIdByFolderId = new Map(folders.map((folder) => [folder.id, folder.connectorAccountId]));
+      const destinationConnectorAccountIds = collectConnectorAccountIds(
+        destinationDataFolderIds,
+        connectorAccountIdByFolderId,
+      );
+
+      // ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL (per acting user, fail-closed): the pull
+      // step of every destination connection whose connector service the flag's payload names
+      // (or all of them, for `["*"]`) opts out of the default full pull. Read at save time — the
+      // choice is baked into the generated YAML. See the flag's doc for the deletion trade-off.
+      const enrolledDestinationServices = await this.incrementalPullDestinationServicesForActor(actor, workbookId);
+      const destinationDataFolderIdSet = new Set<string>(destinationDataFolderIds);
+      const incrementalPullDestinationConnectorAccountIds =
+        enrolledDestinationServices === null
+          ? []
+          : [
+              ...new Set(
+                folders
+                  .filter(
+                    (folder) =>
+                      destinationDataFolderIdSet.has(folder.id) &&
+                      isIncrementalPullDestinationService(
+                        enrolledDestinationServices,
+                        folder.connectorAccount?.service,
+                      ),
+                  )
+                  .map((folder) => folder.connectorAccountId)
+                  .filter((connectorAccountId): connectorAccountId is string => connectorAccountId !== null),
+              ),
+            ];
 
       const file = buildSyncRoutineFile({
         syncDisplayName,
         syncId,
         sourceConnectorAccountIds: collectConnectorAccountIds(sourceDataFolderIds, connectorAccountIdByFolderId),
-        destinationConnectorAccountIds: collectConnectorAccountIds(
-          destinationDataFolderIds,
-          connectorAccountIdByFolderId,
-        ),
+        destinationConnectorAccountIds,
+        incrementalPullDestinationConnectorAccountIds,
       });
 
-      await this.routineService.createRoutineFile(workbookId, file, actor);
+      const { outcome } = await this.routineService.upsertRoutineFile(workbookId, file, actor);
+      WSLogger.info({
+        source: 'SyncDraftService.apply',
+        message: `Sync routine ${file.path} ${outcome}`,
+        workbookId,
+        syncId,
+      });
       // Record the routine path on the workbook so other surfaces can find this sync's routine.
       await this.workbookService.updateWorkbookSettings(workbook, { updates: { sync_routine: file.path } });
     } catch (error) {
