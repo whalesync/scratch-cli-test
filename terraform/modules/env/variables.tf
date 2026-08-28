@@ -244,9 +244,10 @@ variable "secret_access_allowlisted_principals" {
 variable "secret_access_unexpected_principal_threshold" {
   type    = number
   default = 10
-  # Evaluated per principal. Any AccessSecretVersion by a non-allowlisted principal is already suspicious, so
-  # this is low. Devs with readonly service accounts will use tools that need ~10 secrets at once so we should not 
-  # trigger on that constantly
+  # Evaluated per principal. Any AccessSecretVersion by a non-allowlisted principal is already suspicious, so this is
+  # low. The per-dev read-only SAs are excluded from this metric (developer_readonly_service_account_email_regex) and
+  # volume-watched by secret_access_readonly_sa_threshold instead, so this is purely about a genuinely unexpected
+  # principal.
   description = "Fire the unexpected-principal secret-access alert when a single non-allowlisted principal makes more than this many AccessSecretVersion reads in a 10-minute window."
 }
 
@@ -254,6 +255,32 @@ variable "enable_secret_access_unexpected_principal_alert" {
   type        = bool
   default     = false
   description = "Create a log-based metric + alert that fires when a principal NOT on the allowlist (the app SA + GitLab deploy SA, plus secret_access_allowlisted_principals) reads a Secret Manager secret (DEV-10989 follow-up). Prod-only — eu-test grants readonly-SA/dev reads of test secrets (grant_readonly_sa_all_secrets + dev cloudrun-SA impersonation), which are non-allowlisted principals and would make it noisy there. Alert additionally honors var.enable_alerts."
+}
+
+variable "developer_readonly_service_account_email_regex" {
+  type    = string
+  default = "-readonly@wsv1-dev-identity\\.iam\\.gserviceaccount\\.com$"
+  # RE2 pattern (Cloud Logging "=~"/"!~") matching the per-dev
+  # "<alias>-readonly@wsv1-dev-identity.iam.gserviceaccount.com" read-only SAs (Workspace group
+  # role_readonly_sa@whalesync.com, managed there — hence a pattern, not a list that would drift). Excludes them from
+  # the unexpected-principal alert and scopes the read-only-SA volume alert. Dots escaped ("\\." in HCL renders "\."
+  # at runtime); end-anchored to the wsv1-dev-identity project.
+  description = "RE2 regex identifying the per-dev read-only service accounts (excluded from the unexpected-principal alert; scoped by the read-only-SA volume alert)."
+}
+
+variable "enable_secret_access_readonly_sa_alert" {
+  type        = bool
+  default     = false
+  description = "Create a log-based metric + alert that fires when a per-dev read-only service account (matched by developer_readonly_service_account_email_regex) makes an abnormally high number of Secret Manager AccessSecretVersion reads in a 10-minute window — a compromised-readonly-key signal. Prod-only (eu-test reads test secrets routinely). Alert additionally honors var.enable_alerts."
+}
+
+variable "secret_access_readonly_sa_threshold" {
+  type    = number
+  default = 200
+  # Evaluated per principal. Set well above normal read-only investigation volume so it fires only on genuinely
+  # abnormal reads. Tune from the metric's history (Metrics Explorer:
+  # logging.googleapis.com/user/secret-access-readonly-sa-count).
+  description = "Fire the read-only-SA volume alert when a single per-dev read-only service account makes more than this many AccessSecretVersion reads in a 10-minute window."
 }
 
 variable "enable_log_ingestion_alerts" {

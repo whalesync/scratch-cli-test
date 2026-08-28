@@ -43,6 +43,13 @@ locals {
   # Rendered "(\"a\" OR \"b\")" clause for the log filter, mirroring the flow-log country clauses below.
   secret_access_allowlist_principal_clause = "(${join(" OR ", [for p in local.secret_access_allowlisted_principals : "\"${p}\""])})"
 
+  # --- Developer read-only service accounts ---
+  # The per-dev "<alias>-readonly@wsv1-dev-identity.iam.gserviceaccount.com" SAs (Workspace group
+  # role_readonly_sa@whalesync.com, managed there — hence a regex, not a list that would drift) legitimately read a
+  # few secrets during read-only prod investigation. Used to exclude them from the unexpected-principal metric and to
+  # scope the read-only-SA volume alert below.
+  developer_readonly_sa_principal_regex = var.developer_readonly_service_account_email_regex
+
   # --- VPC Flow Log anomaly detection ---
   # VPC Flow Logs are already emitted on every subnet (see modules/vpc). These filters
   # power log-based security metrics that replaced the (expensive) Cloud IDS appliance.
@@ -1796,8 +1803,9 @@ resource "google_monitoring_alert_policy" "secret_access_spike_alert" {
 ## Counts AccessSecretVersion entries whose principal is NOT on the allowlist (normally only the shared app SA + the
 ## GitLab deploy SA). Legitimate reads all come from the single shared app SA, so a read by anyone else can indicate a
 ## leaked human credential or a rogue/compromised SA — anomalous even at low volume. A full-fleet deploy cannot trip it
-## (deploy reads are all cloudrun-service-account, excluded here). The exclusion is in the logging filter so the metric
-## is empty in normal operation; the principal label names who accessed the secret. Prod-only via
+## (deploy reads are all cloudrun-service-account, excluded here). The per-dev "<alias>-readonly" SAs are also excluded
+## (volume-watched by secret_access_readonly_sa_volume_alert below). The exclusions are in the logging filter so the
+## metric is empty in normal operation; the principal label names who accessed the secret. Prod-only via
 ## var.enable_secret_access_unexpected_principal_alert — eu-test grants readonly-SA/dev reads of test secrets
 ## (grant_readonly_sa_all_secrets + dev cloudrun-SA impersonation), which are non-allowlisted principals and would make
 ## this noisy there; eu-test runs only the gross-volume alert above.
@@ -1809,6 +1817,8 @@ resource "google_logging_metric" "secret_access_unexpected_principal_count" {
     "protoPayload.serviceName=\"secretmanager.googleapis.com\"",
     "protoPayload.methodName:\"AccessSecretVersion\"",
     "NOT protoPayload.authenticationInfo.principalEmail=${local.secret_access_allowlist_principal_clause}",
+    # Also exclude the per-dev read-only SAs: their reads are expected and are volume-watched separately below.
+    "NOT protoPayload.authenticationInfo.principalEmail=~\"${local.developer_readonly_sa_principal_regex}\"",
   ])
   metric_descriptor {
     metric_kind = "DELTA"
@@ -1832,7 +1842,7 @@ resource "google_monitoring_alert_policy" "secret_access_unexpected_principal_al
   documentation {
     subject = "Scratch ${local.display_env} Cloud Audit Logs - Secret Manager accessed by a non-allowlisted principal"
     content = <<-EOF
-    A principal that is NOT on the expected allowlist read a Secret Manager secret (AccessSecretVersion). Legitimate secret reads come only from the shared Cloud Run application service account (and the GitLab deploy service account during a terraform apply), so a read by any other principal can indicate leaked human credentials or a rogue/compromised service account. Review the data-access audit logs for the named principal and which secrets were accessed. If the access was intended (a break-glass admin or a CI job), add that principal to secret_access_allowlisted_principals.
+    A principal that is NOT on the expected allowlist read a Secret Manager secret (AccessSecretVersion). Legitimate secret reads come only from the shared Cloud Run application service account (and the GitLab deploy service account during a terraform apply), so a read by any other principal can indicate leaked human credentials or a rogue/compromised service account. The per-dev read-only service accounts (<alias>-readonly@wsv1-dev-identity.iam.gserviceaccount.com) are already excluded here and are volume-monitored by the separate "Read-only SA secret-access volume" alert, so ordinary read-only investigation does not trip this. Review the data-access audit logs for the named principal and which secrets were accessed. If the access was intended (a break-glass admin or a CI job), add that principal to secret_access_allowlisted_principals.
     Runbook: ${local.runbook_secret_access_alerts}
     EOF
   }
@@ -1868,6 +1878,83 @@ resource "google_monitoring_alert_policy" "secret_access_unexpected_principal_al
   notification_channels = local.warning_notification_channels
   severity              = "WARNING"
   depends_on            = [google_logging_metric.secret_access_unexpected_principal_count]
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Secret access VOLUME by a developer read-only SA (compromised-readonly-SA signal)
+## ---------------------------------------------------------------------------------------------------------------------
+## Counts AccessSecretVersion entries by the per-dev "<alias>-readonly@wsv1-dev-identity..." SAs (matched by
+## var.developer_readonly_service_account_email_regex). They read a few secrets during read-only prod investigation, so
+## they are excluded from the unexpected-principal alert above; a *compromised* key instead shows up as abnormally high
+## volume. Higher per-principal threshold (var.secret_access_readonly_sa_threshold, default 200 / 10-min). Prod-only
+## via var.enable_secret_access_readonly_sa_alert (eu-test reads test secrets routinely).
+resource "google_logging_metric" "secret_access_readonly_sa_count" {
+  count = var.enable_secret_access_readonly_sa_alert ? 1 : 0
+  name  = "secret-access-readonly-sa-count"
+  filter = join(" AND ", [
+    "logName=\"projects/${var.gcp_project_id}/logs/cloudaudit.googleapis.com%2Fdata_access\"",
+    "protoPayload.serviceName=\"secretmanager.googleapis.com\"",
+    "protoPayload.methodName:\"AccessSecretVersion\"",
+    "protoPayload.authenticationInfo.principalEmail=~\"${local.developer_readonly_sa_principal_regex}\"",
+  ])
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+    labels {
+      key         = "principal"
+      value_type  = "STRING"
+      description = "Email of the developer read-only service account that accessed a secret"
+    }
+  }
+  label_extractors = {
+    "principal" = "EXTRACT(protoPayload.authenticationInfo.principalEmail)"
+  }
+
+  depends_on = [google_project_service.services]
+}
+
+resource "google_monitoring_alert_policy" "secret_access_readonly_sa_volume_alert" {
+  count        = var.enable_secret_access_readonly_sa_alert && var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Cloud Audit Logs - Read-only SA secret-access volume"
+  documentation {
+    subject = "Scratch ${local.display_env} Cloud Audit Logs - Read-only service account read secrets at abnormal volume"
+    content = <<-EOF
+    A per-dev read-only service account (<alias>-readonly@wsv1-dev-identity.iam.gserviceaccount.com) read Secret Manager secrets (AccessSecretVersion) more than ${var.secret_access_readonly_sa_threshold} times in a 10-minute window. These SAs are expected to read READONLY_DB_PASSWORD + DB_HOST during read-only prod investigation (which is why they are excluded from the unexpected-principal alert), but this volume is far above normal use and can indicate a leaked/compromised read-only key. Review the data-access audit logs for the named principal and which secrets were accessed; if it does not correspond to known investigation work, rotate READONLY_DB_PASSWORD and revoke the developer's read-only SA key.
+    Runbook: ${local.runbook_secret_access_alerts}
+    EOF
+  }
+  combiner = "OR"
+  conditions {
+    display_name = "Read-only SA secret accesses over ${var.secret_access_readonly_sa_threshold} in 10m"
+    condition_threshold {
+      filter          = "resource.type = \"audited_resource\" AND metric.type = \"logging.googleapis.com/user/${google_logging_metric.secret_access_readonly_sa_count[0].name}\""
+      duration        = "0s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.secret_access_readonly_sa_threshold
+      trigger {
+        count = 1
+      }
+      aggregations {
+        alignment_period     = "600s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        group_by_fields      = ["metric.label.principal"]
+      }
+    }
+  }
+
+  alert_strategy {
+    # See secret_access_spike_alert: pin auto_close to the GCP max (7 days) so a security incident does not
+    # self-resolve before a human triages.
+    auto_close = "604800s"
+    notification_channel_strategy {
+      renotify_interval = local.extended_renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
+  depends_on            = [google_logging_metric.secret_access_readonly_sa_count]
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------

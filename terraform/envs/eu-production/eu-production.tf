@@ -31,6 +31,11 @@ module "eu_production" {
   # readonly-SA/dev secret reads are non-allowlisted principals that would make it noisy.
   enable_secret_access_unexpected_principal_alert = true
 
+  # Alert when a per-dev read-only SA (<alias>-readonly@wsv1-dev-identity...) reads secrets at abnormal VOLUME — a
+  # compromised read-only key. Those SAs are excluded from the unexpected-principal alert above and are volume-watched
+  # here (secret_access_readonly_sa_threshold, default 200 / 10-min, per principal). Prod-only.
+  enable_secret_access_readonly_sa_alert = true
+
   # Warn when month-to-date Cloud Logging ingestion exceeds log_ingestion_alert_threshold_gib (default
   # 300 GiB) — a cost guardrail on the audit-log volume added by WSG-008 / DEV-10989. Resets monthly.
   enable_log_ingestion_alerts = true
