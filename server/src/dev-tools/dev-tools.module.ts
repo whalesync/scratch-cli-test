@@ -6,6 +6,7 @@ import { DbModule } from 'src/db/db.module';
 import { EmailModule } from 'src/email/email.module';
 import { JobModule } from 'src/job/job.module';
 import { PaymentModule } from 'src/payment/payment.module';
+import { PosthogModule } from 'src/posthog/posthog.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { SlackNotificationModule } from 'src/slack/slack-notification.module';
@@ -31,6 +32,7 @@ import { DevToolsService } from './dev-tools.service';
     ScratchGitModule,
     SlackNotificationModule,
     EmailModule,
+    PosthogModule,
   ],
   exports: [], //export this service to use in other modules
   controllers: [DevToolsController],

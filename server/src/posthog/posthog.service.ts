@@ -167,6 +167,23 @@ export class PostHogService implements OnModuleDestroy {
     });
   }
 
+  /**
+   * Fires when an admin hard-deletes a user (and all their resources) from the dev-tools User
+   * Management surface. Attributed to the acting admin (`actingAdmin`), not the deleted user.
+   */
+  public trackHardDeleteUser(
+    actingAdmin: Actor,
+    deletedUser: { id: string; email: string | null },
+    stats: { deletedWorkbookCount: number; organizationDeleted: boolean },
+  ): void {
+    this.captureEvent(PostHogEventName.USER_HARD_DELETED, actingAdmin, {
+      deleted_user_id: deletedUser.id,
+      deleted_user_email: deletedUser.email,
+      deleted_workbook_count: stats.deletedWorkbookCount,
+      organization_deleted: stats.organizationDeleted,
+    });
+  }
+
   /*******************************************************
    * Workbook events
    *******************************************************/
@@ -541,6 +558,12 @@ export enum PostHogEventName {
    * a creation. Properties: { clerk_id, whalesync_user_id, email, role }.
    */
   CLERK_ACCOUNT_LINKED = 'clerk_account_linked',
+  /**
+   * An admin hard-deleted a user (and all their resources) via the dev-tools User Management surface.
+   * Attributed to the acting admin. Properties: { deleted_user_id, deleted_user_email,
+   * deleted_workbook_count, organization_deleted }.
+   */
+  USER_HARD_DELETED = 'user_hard_deleted',
   CONNECTOR_ACCOUNT_CREATED = 'connector_created',
   CONNECTOR_ACCOUNT_UPDATED = 'connector_updated',
   CONNECTOR_ACCOUNT_REMOVED = 'connector_deleted',

@@ -1,5 +1,5 @@
 import { Badge, BadgeError, BadgeOK } from '@/app/components/base/badge';
-import { ButtonPrimaryLight } from '@/app/components/base/buttons';
+import { ButtonDangerLight, ButtonPrimaryLight } from '@/app/components/base/buttons';
 import { Text13Book, TextTitle2, TextTitle3, TextTitle4 } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { LabelValuePair } from '@/app/components/LabelValuePair';
@@ -40,6 +40,7 @@ import {
 import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { clerkUserUrl, posthogPersonUrl, stripeCustomerUrl } from '../utils';
+import { HardDeleteUserModal } from './HardDeleteUserModal';
 
 /**
  * A Whalesync "shadow" user: provisioned from Whalesync (has a `whalesyncUserId`) and backed by a
@@ -63,6 +64,7 @@ export const UserDetailsCard = ({
   const [activeWorkbookTab, setActiveWorkbookTab] = useState<string | null>(details.workbooks[0]?.id ?? null);
   const [credentialsMap, setCredentialsMap] = useState<Record<string, Record<string, unknown> | null>>({});
   const [loadingCredentials, setLoadingCredentials] = useState<Record<string, boolean>>({});
+  const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
 
   useEffect(() => {
     setActiveWorkbookTab(details.workbooks[0]?.id ?? null);
@@ -491,6 +493,29 @@ export const UserDetailsCard = ({
           </Table>
         </Stack>
       </Card.Section>
+      <Card.Section p="xs" withBorder>
+        <Stack>
+          <Group gap="xs">
+            <StyledLucideIcon Icon={Trash2Icon} size={14} c="var(--fg-error)" />
+            <TextTitle3>Danger Zone</TextTitle3>
+          </Group>
+          <Text13Book c="var(--fg-secondary)">
+            Permanently delete this user and all of their resources. If they are the sole member of their organization,
+            the organization is deleted too. This cannot be undone.
+          </Text13Book>
+          <Group justify="flex-start">
+            <ButtonDangerLight onClick={() => setHardDeleteOpen(true)} size="xs">
+              Hard-delete user
+            </ButtonDangerLight>
+          </Group>
+        </Stack>
+      </Card.Section>
+      <HardDeleteUserModal
+        opened={hardDeleteOpen}
+        onClose={() => setHardDeleteOpen(false)}
+        user={{ id: details.user.id, name: details.user.name, email: details.user.email }}
+        onDeleted={onClose}
+      />
     </Card>
   );
 };

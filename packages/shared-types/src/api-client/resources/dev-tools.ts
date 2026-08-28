@@ -3,6 +3,7 @@ import type { User } from '../../db/user';
 import type { ListCronJobsResponseDto, TriggerCronJobResponseDto } from '../../dto/cron/cron.dto';
 import type { ChangeUserOrganizationDto } from '../../dto/dev-tools/change-user-organization.dto';
 import type { GetAllJobsResponseDto } from '../../dto/dev-tools/get-all-jobs.dto';
+import type { HardDeleteUserResponse } from '../../dto/dev-tools/hard-delete-user.dto';
 import type { UserDetails } from '../../dto/dev-tools/user-detail.dto';
 import type { UpdateSettingsDto } from '../../dto/users/update-settings.dto';
 import type { AdminWorkbookDto } from '../../dto/workbook/admin-workbook.dto';
@@ -53,6 +54,17 @@ export function createDevToolsApi(http: Http) {
       await http.patch(`/dev-tools/users/${userId}/settings`, dto, {
         fallbackMessage: 'Failed to update user settings for user: ' + userId,
       });
+    },
+
+    /**
+     * Hard-delete a user and clean up all of their resources (workbooks, repos, jobs, tokens) — and, when
+     * the user is the sole member of their organization, the organization too. Admin only; irreversible.
+     */
+    hardDeleteUser: async (userId: string): Promise<HardDeleteUserResponse> => {
+      const res = await http.delete<HardDeleteUserResponse>(`/dev-tools/users/${userId}`, {
+        fallbackMessage: 'Failed to hard-delete user: ' + userId,
+      });
+      return res.data;
     },
 
     changeUserOrganization: async (dto: ChangeUserOrganizationDto): Promise<void> => {

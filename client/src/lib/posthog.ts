@@ -15,6 +15,7 @@ export enum PostHogEvents {
   REFRESH_CONNECTION_SCHEMAS = 'refresh_connection_schemas',
   WHALESYNC_IMPORT = 'whalesync_import',
   DELETE_WORKBOOK = 'delete_workbook',
+  ADMIN_HARD_DELETE_USER = 'admin_hard_delete_user',
   CLICK_OPEN_IN_DESKTOP = 'click_open_in_desktop',
   OPEN_IN_DESKTOP_INTERSTITIAL_FALLBACK = 'open_in_desktop_interstitial_fallback',
   DOWNLOAD_DESKTOP_APP = 'download_desktop_app',
@@ -144,6 +145,11 @@ export function trackWhalesyncImport(workbookId: string, syncCount: number): voi
 
 export function trackDeleteWorkbook(workbookId: string): void {
   captureEvent(PostHogEvents.DELETE_WORKBOOK, { workbookId });
+}
+
+/** An admin hard-deleted a user via the dev-tools User Management surface. */
+export function trackAdminHardDeleteUser(deletedUserId: string): void {
+  captureEvent(PostHogEvents.ADMIN_HARD_DELETE_USER, { deletedUserId });
 }
 
 export function trackClickOpenInDesktop(context: { section: 'toolbar' | 'workspace_connections' }): void {

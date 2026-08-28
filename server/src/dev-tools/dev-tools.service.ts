@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { AuthType, SyncState } from '@prisma/client';
-import type { DecryptedCredentials, ScheduleAction } from '@spinner/shared-types';
+import type { AnyId, DecryptedCredentials, HardDeleteUserResponse, ScheduleAction } from '@spinner/shared-types';
 import {
   createConnectorAccountId,
   createDataFolderId,
@@ -10,16 +10,21 @@ import {
   createWorkbookId,
   createWorkspacePermissionId,
   ScratchPlanType,
+  WorkbookId,
 } from '@spinner/shared-types';
+import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
+import { PostHogService } from 'src/posthog/posthog.service';
 import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { isErr } from 'src/types/results';
 import { SubscriptionService } from 'src/users/subscription.service';
+import type { Actor } from 'src/users/types';
 import { UsersService } from 'src/users/users.service';
 import type { EncryptedData } from 'src/utils/encryption';
+import { WorkbookService } from 'src/workbook/workbook.service';
 
 export interface WorkbookExportJson {
   version: 1;
@@ -82,6 +87,9 @@ export class DevToolsService {
     private readonly subscriptionService: SubscriptionService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly workbookService: WorkbookService,
+    private readonly auditLogService: AuditLogService,
+    private readonly posthogService: PostHogService,
   ) {}
 
   async exportWorkbook(workbookId: string): Promise<WorkbookExportJson> {
@@ -474,6 +482,103 @@ export class DevToolsService {
         });
       }
     }
+  }
+
+  /**
+   * Hard-delete a user and clean up all of their associated resources. This is irreversible.
+   *
+   * Mirrors the Whalesync shadow-user deprovision flow ({@link WhalesyncInternalService.deprovisionWhalesyncUser})
+   * but for an admin acting on an arbitrary user:
+   *   1. Only when the user is the SOLE member of their organization, tear down every workbook owned by
+   *      that organization via {@link WorkbookService.executeHardDeleteWorkbook} — this is what cleans up
+   *      the per-connection git repos, jobs, file indices and tables (a bare Prisma cascade does NOT).
+   *   2. Delete the user row (cascading its tokens and workspace permissions).
+   *   3. Only when the user is the SOLE member of their organization, delete the organization too (which
+   *      cascades its remaining org-scoped rows).
+   *
+   * When the user is NOT the sole member of their org, no workbooks are deleted: the org and all of its
+   * workbooks (including any the user could access via WorkspacePermission) belong to the organization and
+   * are left intact — only the user's own row and permissions are removed.
+   *
+   * The teardown and the delete are attributed to the acting admin in the audit log and analytics.
+   *
+   * @param targetUserId the user to delete
+   * @param actingAdmin the admin performing the deletion (for permission-free teardown + audit attribution)
+   */
+  async hardDeleteUser(targetUserId: string, actingAdmin: Actor): Promise<HardDeleteUserResponse> {
+    const targetUser = await this.usersService.findOne(targetUserId);
+    if (!targetUser) {
+      throw new NotFoundException('User not found');
+    }
+    if (targetUser.id === actingAdmin.userId) {
+      throw new BadRequestException('You cannot hard-delete your own account');
+    }
+
+    const organizationId = targetUser.organizationId ?? undefined;
+
+    const isSoleMemberOfOrganization = organizationId
+      ? (await this.dbService.client.user.count({ where: { organizationId } })) === 1
+      : false;
+
+    // Only tear down workbooks when the user is the sole member of their org: delete every workbook owned
+    // by the org (org-scoped) so the subsequent organization delete cascade can't orphan a git repo. When
+    // other members remain, we never delete a workbook — those are org-owned and may be shared with the
+    // remaining members, even if the target user could reach them via WorkspacePermission.
+    let workbookIdsToDelete: WorkbookId[] = [];
+    if (isSoleMemberOfOrganization && organizationId) {
+      const orgWorkbooks = await this.dbService.client.workbook.findMany({
+        where: { organizationId },
+        select: { id: true },
+      });
+      workbookIdsToDelete = orgWorkbooks.map((workbook) => workbook.id as WorkbookId);
+    }
+
+    WSLogger.info({
+      source: 'DevToolsService',
+      message: `Admin ${actingAdmin.userId} hard-deleting user ${targetUserId}: tearing down ${workbookIdsToDelete.length} workbook(s), organizationDeleted=${isSoleMemberOfOrganization}`,
+      targetUserId,
+      organizationId,
+    });
+
+    // executeHardDeleteWorkbook performs no permission check, so the acting admin can tear down a workbook
+    // they are not a member of; attributing the teardown to the admin keeps the workbook audit trail honest.
+    for (const workbookId of workbookIdsToDelete) {
+      await this.workbookService.executeHardDeleteWorkbook(workbookId, { actor: actingAdmin });
+    }
+
+    // Tidy up any lingering Whalesync session tokens before the row goes (user delete cascades ApiToken
+    // anyway, but this keeps parity with the deprovision flow and is a no-op when there are none).
+    await this.usersService.revokeWhalesyncSessionTokens(targetUserId);
+
+    await this.usersService.deleteShadowUserAndOrganization(
+      targetUserId,
+      isSoleMemberOfOrganization ? organizationId : undefined,
+    );
+
+    const result: HardDeleteUserResponse = {
+      deletedWorkbookCount: workbookIdsToDelete.length,
+      organizationDeleted: isSoleMemberOfOrganization,
+    };
+
+    await this.auditLogService.logEvent({
+      actor: actingAdmin,
+      eventType: 'delete',
+      entityId: targetUserId as AnyId,
+      organizationId,
+      message: `Hard-deleted user ${targetUser.email ?? targetUserId} (${targetUserId}): removed ${
+        result.deletedWorkbookCount
+      } workbook(s)${result.organizationDeleted ? ' and their organization' : ''}`,
+      context: {
+        deletedUserId: targetUserId,
+        deletedUserEmail: targetUser.email ?? '',
+        deletedWorkbookCount: result.deletedWorkbookCount,
+        organizationDeleted: result.organizationDeleted,
+      },
+    });
+
+    this.posthogService.trackHardDeleteUser(actingAdmin, { id: targetUserId, email: targetUser.email }, result);
+
+    return result;
   }
 
   /**

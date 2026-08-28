@@ -3,6 +3,7 @@ import {
   Body,
   ClassSerializerInterceptor,
   Controller,
+  Delete,
   Get,
   HttpCode,
   NotFoundException,
@@ -23,6 +24,7 @@ import type {
   GetAllJobsResponseDto,
   GitFsckResponse,
   GitRepairResponse,
+  HardDeleteUserResponse,
 } from '@spinner/shared-types';
 import {
   createSubscriptionId,
@@ -48,7 +50,7 @@ import { ScratchGitClient } from 'src/scratch-git/scratch-git.client';
 import { SlackFormatters } from 'src/slack/slack-formatters';
 import { SlackNotificationService } from 'src/slack/slack-notification.service';
 import { User } from 'src/users/entities/user.entity';
-import { userToActor } from 'src/users/types';
+import { requestToActor, userToActor } from 'src/users/types';
 import { UsersService } from 'src/users/users.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -149,6 +151,21 @@ export class DevToolsController {
     }
 
     await this.usersService.updateUserSettings(targetUser, dto);
+  }
+
+  /**
+   * Hard-delete a user and clean up all of their associated resources (workbooks, repos, jobs, tokens),
+   * and — when the user is the sole member of their organization — the organization too. Irreversible.
+   * Admin only; deliberately allowed in production so it can service support/GDPR deletion requests.
+   */
+  @Delete('users/:id')
+  @HttpCode(200)
+  async hardDeleteUser(@Param('id') id: string, @Req() req: RequestWithUser): Promise<HardDeleteUserResponse> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can hard-delete a user');
+    }
+
+    return this.devToolsService.hardDeleteUser(id, requestToActor(req));
   }
 
   /**

@@ -6,8 +6,22 @@ import { Text16Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import MainContent from '@/app/components/layouts/MainContent';
 import { useUserDevTools } from '@/hooks/use-user-dev-tools';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { getBuildFlavor } from '@/utils/build';
-import { ActionIcon, Alert, Anchor, CopyButton, Group, Stack, Table, TextInput, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Alert,
+  Anchor,
+  Center,
+  CopyButton,
+  Group,
+  Loader,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Tooltip,
+} from '@mantine/core';
 import { AlertCircleIcon, CheckIcon, CopyIcon, HatGlassesIcon, PiggyBankIcon, Search, UsersIcon } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
@@ -19,6 +33,7 @@ export default function UsersDevPage() {
   const qParam = searchParams.get('q') || '';
   const [searchQuery, setSearchQuery] = useState(qParam.trim());
   const [prevQParam, setPrevQParam] = useState(qParam);
+  const { isAdmin, isLoading: isUserLoading } = useScratchPadUser();
   const { users, isLoading, error, search, retrieveUserDetails, currentUserDetails, clearCurrentUserDetails } =
     useUserDevTools();
 
@@ -52,6 +67,35 @@ export default function UsersDevPage() {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
   }, [users]);
+
+  if (isUserLoading) {
+    return (
+      <MainContent>
+        <MainContent.BasicHeader title="User Management" Icon={UsersIcon} />
+        <MainContent.Body>
+          <Center h="100%">
+            <Group>
+              <Loader size="sm" />
+              <Text>Loading...</Text>
+            </Group>
+          </Center>
+        </MainContent.Body>
+      </MainContent>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <MainContent>
+        <MainContent.BasicHeader title="User Management" Icon={UsersIcon} />
+        <MainContent.Body>
+          <Center h="100%">
+            <Text c="red">You do not have permission to view this page. Admin access is required.</Text>
+          </Center>
+        </MainContent.Body>
+      </MainContent>
+    );
+  }
 
   return (
     <MainContent>
