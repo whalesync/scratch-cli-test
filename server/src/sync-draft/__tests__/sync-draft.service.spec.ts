@@ -96,6 +96,9 @@ describe('SyncDraftService', () => {
     schemaBuilderService = {
       createTables: jest.fn(),
       createFields: jest.fn(),
+      // Default: no adoptable orphan folder, so materialize creates tables as usual. Individual
+      // tests override this to model a leftover orphan the save should reuse.
+      findAdoptableOrphanFolder: jest.fn().mockResolvedValue(null),
       fetchSchemaFieldsForRemoteTable: jest.fn().mockResolvedValue([]),
       // Default: the destination supports many-to-many FKs (a link field holding a list), so FK columns
       // stay `array`. Individual tests override this to model a scalar-FK destination (Postgres/Supabase).
@@ -797,6 +800,42 @@ describe('SyncDraftService', () => {
       expect(dbService.client.syncDraft.update).toHaveBeenCalled();
       const dest = res.draft.tableMappings[0].destination;
       expect(dest.kind === 'placeholderTable' && dest.resolved?.remoteTableId).toEqual(['base1', 'tbl1']);
+    });
+
+    it('reuses a genuine orphan folder instead of creating a duplicate table', async () => {
+      const row = makeDraftRow({ tableMappings: [placeholderTableDraft()] });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      // A prior attempt left this unmapped folder + its remote table; the save should adopt it.
+      schemaBuilderService.findAdoptableOrphanFolder.mockResolvedValue({
+        dataFolderId: 'dfd_orphan',
+        remoteTableId: ['base1', 'tbl_orphan'],
+        actualName: 'Contacts',
+      });
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      // Adopted the orphan; never created a table on the remote service.
+      expect(schemaBuilderService.createTables).not.toHaveBeenCalled();
+      expect(schemaBuilderService.findAdoptableOrphanFolder).toHaveBeenCalledWith(
+        expect.anything(),
+        'coa_1',
+        ['base1'],
+        'Contacts',
+        ['Name'],
+        ACTOR,
+      );
+      expect(res.results[0]).toMatchObject({
+        ref: 'ph_contacts',
+        status: 'created',
+        remoteTableId: ['base1', 'tbl_orphan'],
+      });
+      // resolved carries the orphan's remote table AND its existing folder, so apply reuses the
+      // folder (createFolder is skipped when resolved.dataFolderId is already set) instead of
+      // creating a duplicate.
+      const dest = res.draft.tableMappings[0].destination;
+      expect(dest.kind === 'placeholderTable' && dest.resolved?.remoteTableId).toEqual(['base1', 'tbl_orphan']);
+      expect(dest.kind === 'placeholderTable' && dest.resolved?.dataFolderId).toBe('dfd_orphan');
+      expect(dbService.client.syncDraft.update).toHaveBeenCalled();
     });
 
     it('names a brand-new destination container after the source service (newParentName)', async () => {
@@ -1816,6 +1855,135 @@ describe('SyncDraftService', () => {
         syncTablePairs: [],
       };
     }
+
+    /**
+     * The "unsaved_changes never clears" investigation: after a save, the export re-opens the draft
+     * from the just-applied sync (initializeFromExistingSync) and asks "is it unsaved?". If that
+     * open→apply is NOT a byte-for-byte no-op, the re-opened draft shows a phantom diff and the flag
+     * can never clear. These tests pin the round-trip fidelity of the SCRATCH side so a caller-side
+     * "still unsaved" can be attributed correctly.
+     */
+    describe('open-from-sync → apply round-trip fidelity', () => {
+      // A representative Webflow → Airtable sync: 3 existing-table pairs, record matching, a delete
+      // policy, and a source transformer — the shape dusky produces once every table is resolved.
+      const ORIGINAL_V2_TABLE_MAPPINGS = [
+        {
+          sourceDataFolderId: 'dfd_whales_src',
+          destinationDataFolderId: 'dfd_Z6JfrYdc1d',
+          columnMappings: [
+            { destinationColumnId: 'fields.Name', source: { kind: 'column', columnId: 'name' } },
+            { destinationColumnId: 'fields.webflow_record_id', source: { kind: 'column', columnId: 'id' } },
+          ],
+          recordMatching: { sourceColumnId: 'id', destinationColumnId: 'fields.webflow_record_id' },
+          unmatchedDestinationPolicy: { withMatchKey: 'delete', withoutMatchKey: 'ignore' },
+        },
+        {
+          sourceDataFolderId: 'dfd_blog_src',
+          destinationDataFolderId: 'dfd_qxbb6rv0Ik',
+          columnMappings: [
+            {
+              destinationColumnId: 'fields.Body',
+              source: { kind: 'column', columnId: 'post-body', transformers: [{ id: 'ricos_to_html', config: {} }] },
+            },
+          ],
+          recordMatching: { sourceColumnId: 'id', destinationColumnId: 'fields.webflow_record_id' },
+          unmatchedDestinationPolicy: { withMatchKey: 'delete', withoutMatchKey: 'ignore' },
+        },
+        {
+          sourceDataFolderId: 'dfd_countries_src',
+          destinationDataFolderId: 'dfd_tJQaAGshMo',
+          columnMappings: [{ destinationColumnId: 'fields.Country', source: { kind: 'column', columnId: 'country' } }],
+          recordMatching: { sourceColumnId: 'id', destinationColumnId: 'fields.postgres_record_id' },
+          unmatchedDestinationPolicy: { withMatchKey: 'delete', withoutMatchKey: 'ignore' },
+        },
+      ];
+
+      /** Open a v2 sync as a draft, apply it, and return the v2 mappings apply wrote back. */
+      async function reapplyMappings(originalTableMappings: unknown[]): Promise<unknown[]> {
+        syncService.getSync.mockResolvedValue({
+          id: SYNC_ID,
+          workbookId: WORKBOOK_ID,
+          mappings: { version: 2, tableMappings: originalTableMappings },
+        } as never);
+        (dbService.client.schedule.findFirst as jest.Mock).mockResolvedValue(null);
+
+        const opened = await (
+          service as unknown as {
+            initializeFromExistingSync: (
+              workbookId: WorkbookId,
+              syncId: SyncId,
+            ) => Promise<{ tableMappings: unknown[] }>;
+          }
+        ).initializeFromExistingSync(WORKBOOK_ID, SYNC_ID);
+
+        const row = makeDraftRow({ sourceSyncId: SYNC_ID, tableMappings: opened.tableMappings });
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+        (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync(SYNC_ID));
+
+        await service.apply(DRAFT_ID, ACTOR);
+
+        const updateSyncCallArgs = (syncService.updateSync as jest.Mock).mock.calls[0] as unknown[];
+        const body = updateSyncCallArgs[2] as { mappings: { tableMappings: unknown[] } };
+        return body.mappings.tableMappings;
+      }
+
+      it('is a byte-for-byte no-op for the mappings dusky produces (transformers array, no explicit when)', async () => {
+        const reapplied = await reapplyMappings(ORIGINAL_V2_TABLE_MAPPINGS);
+        expect(reapplied).toEqual(ORIGINAL_V2_TABLE_MAPPINGS);
+      });
+
+      it('normalizes a singular source.transformer to a transformers array (a phantom-diff source for callers)', async () => {
+        const withSingularTransformer = [
+          {
+            sourceDataFolderId: 'dfd_src',
+            destinationDataFolderId: 'dfd_dst',
+            columnMappings: [
+              {
+                destinationColumnId: 'fields.Body',
+                source: { kind: 'column', columnId: 'post-body', transformer: { id: 'ricos_to_html', config: {} } },
+              },
+            ],
+          },
+        ];
+        const reapplied = await reapplyMappings(withSingularTransformer);
+        // The singular `transformer` comes back as a one-element `transformers` array: same behavior,
+        // different bytes. A caller diffing raw JSON would call this "unsaved".
+        expect(reapplied).not.toEqual(withSingularTransformer);
+        expect(reapplied).toEqual([
+          {
+            sourceDataFolderId: 'dfd_src',
+            destinationDataFolderId: 'dfd_dst',
+            columnMappings: [
+              {
+                destinationColumnId: 'fields.Body',
+                source: { kind: 'column', columnId: 'post-body', transformers: [{ id: 'ricos_to_html', config: {} }] },
+              },
+            ],
+          },
+        ]);
+      });
+
+      it("drops an explicit when:'matched' (the default), another phantom-diff source for callers", async () => {
+        const withExplicitWhen = [
+          {
+            sourceDataFolderId: 'dfd_src',
+            destinationDataFolderId: 'dfd_dst',
+            columnMappings: [
+              { destinationColumnId: 'fields.Name', source: { kind: 'column', columnId: 'name' }, when: 'matched' },
+            ],
+          },
+        ];
+        const reapplied = await reapplyMappings(withExplicitWhen);
+        // `when: 'matched'` is the default and is not modeled on the draft, so it round-trips absent.
+        expect(reapplied).toEqual([
+          {
+            sourceDataFolderId: 'dfd_src',
+            destinationDataFolderId: 'dfd_dst',
+            columnMappings: [{ destinationColumnId: 'fields.Name', source: { kind: 'column', columnId: 'name' } }],
+          },
+        ]);
+      });
+    });
 
     it('422s when placeholders are unresolved', async () => {
       const row = makeDraftRow({

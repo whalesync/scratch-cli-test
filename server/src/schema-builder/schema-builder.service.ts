@@ -43,6 +43,7 @@ import {
   generateCreatePlanFromSources,
   inferLogicalFieldType,
 } from './schema-builder-plan-generator';
+import { normalizeNameForUniqueness } from './schema-builder-unique-names';
 import {
   validateFieldsAgainstCapabilities,
   validateForeignKeyTargetsResolved,
@@ -556,6 +557,117 @@ export class SchemaBuilderService {
       kind: inferLogicalFieldType(field).fieldType.kind,
     }));
     return { dataFolderId: destinationDataFolderId, remoteTableId: folder.tableId, existingFields };
+  }
+
+  /**
+   * Find a genuine ORPHAN destination folder that materialize can reuse for a table it's about to
+   * create, instead of creating a duplicate (and colliding on the name). Returns the folder to
+   * adopt, or null when there is no unambiguous, safe match.
+   *
+   * The scenario: a prior "add table" attempt created the destination table + its data folder but
+   * the sync save never landed, leaving an unmapped folder. On the next attempt the planner would
+   * create the table again — which collides. This lets the save reuse that orphan instead.
+   *
+   * The safety rule is deliberately conservative, because a wrong adoption binds the sync to the
+   * wrong table (a bare name match once adopted an unrelated same-named table):
+   *   - same workbook + same destination connector account, and — when the create targets a
+   *     specific parent (e.g. an Airtable base) — the folder lives under that same parent;
+   *   - the folder's name matches the table we'd create (normalized);
+   *   - the folder is UNMAPPED — not a destination in any live sync's table pairs. A same-named
+   *     folder owned by another sync is mapped, so it is excluded (the guard a name match lacks);
+   *   - the folder's MEANINGFUL columns (derived exactly as the planner derives source columns, so
+   *     connector system fields are excluded) EXACTLY equal the fields we'd create — same set of
+   *     names. A foreign table with extra columns, or a partial orphan missing some, is rejected;
+   *   - exactly one such folder exists. Zero or several → no adoption (never guess).
+   */
+  async findAdoptableOrphanFolder(
+    workbookId: WorkbookId,
+    destinationConnectorAccountId: string,
+    remoteParentId: string[] | undefined,
+    intendedTableName: string,
+    intendedFieldNames: string[],
+    actor: Actor,
+  ): Promise<{ dataFolderId: string; remoteTableId: string[]; actualName: string } | null> {
+    const normalizedIntendedTableName = normalizeNameForUniqueness(intendedTableName);
+    const intendedColumnNameSet = new Set(intendedFieldNames.map(normalizeNameForUniqueness));
+
+    const sameConnectorFolders = await this.db.client.dataFolder.findMany({
+      where: { workbookId, connectorAccountId: destinationConnectorAccountId },
+    });
+    const nameAndParentMatchingFolders = sameConnectorFolders.filter(
+      (folder) =>
+        normalizeNameForUniqueness(folder.name) === normalizedIntendedTableName &&
+        (remoteParentId === undefined ||
+          remoteParentId.length === 0 ||
+          remoteParentId.every((segment, index) => folder.tableId[index] === segment)),
+    );
+
+    const adoptableFolders: { dataFolderId: string; remoteTableId: string[]; actualName: string }[] = [];
+    for (const folder of nameAndParentMatchingFolders) {
+      // Only a true orphan is safe: a folder already claimed as a destination by a live sync
+      // belongs to that sync, not to us.
+      const mappedAsDestination = await this.db.client.syncTablePair.findFirst({
+        where: { destinationDataFolderId: folder.id },
+        select: { id: true },
+      });
+      if (mappedAsDestination) continue;
+
+      const meaningfulColumnNames = await this.deriveMeaningfulColumnNames(folder.id as DataFolderId, actor);
+      if (!meaningfulColumnNames) continue;
+      const folderColumnNameSet = new Set(meaningfulColumnNames.map(normalizeNameForUniqueness));
+      const columnsExactlyMatch =
+        folderColumnNameSet.size === intendedColumnNameSet.size &&
+        [...intendedColumnNameSet].every((columnName) => folderColumnNameSet.has(columnName));
+      if (!columnsExactlyMatch) continue;
+
+      adoptableFolders.push({
+        dataFolderId: folder.id,
+        remoteTableId: folder.tableId,
+        actualName: folder.name,
+      });
+    }
+
+    if (adoptableFolders.length !== 1) {
+      if (adoptableFolders.length > 1) {
+        WSLogger.warn({
+          source: SOURCE,
+          message: 'Multiple adoptable orphan folders match the table to create; declining to guess',
+          workbookId,
+          intendedTableName,
+          candidateDataFolderIds: adoptableFolders.map((candidate) => candidate.dataFolderId),
+        });
+      }
+      return null;
+    }
+    WSLogger.info({
+      source: SOURCE,
+      message: 'Adopting an existing unmapped destination folder instead of creating a duplicate table',
+      workbookId,
+      intendedTableName,
+      adoptedDataFolderId: adoptableFolders[0].dataFolderId,
+    });
+    return adoptableFolders[0];
+  }
+
+  /**
+   * The meaningful (user-editable) column names of a stored folder — derived the SAME way the plan
+   * generator derives a source's columns (curated default view when present, raw schema flatten
+   * otherwise), so connector system fields (`id`, `createdTime`, …) are excluded and the set lines
+   * up with a createSpec's field names. Null when the folder has no stored schema.
+   */
+  private async deriveMeaningfulColumnNames(dataFolderId: DataFolderId, actor: Actor): Promise<string[] | null> {
+    const stored = await this.dataFolderService.getStoredSchema(dataFolderId, actor);
+    if (!stored) return null;
+    const storedView = await this.dataFolderService.getStoredView(dataFolderId, actor);
+    const schemaFields = storedView
+      ? selectPlanFieldsFromTableView({
+          schema: stored.schema as TSchema,
+          view: storedView,
+          titlePath: toDotPath(stored.titlePath),
+          idPath: typeof stored.idPath === 'string' ? stored.idPath : undefined,
+        }).schemaFields
+      : extractSchemaFields(stored.schema as TSchema);
+    return schemaFields.map((field) => field.displayLabel ?? lastPathSegment(field.path));
   }
 
   // ── execution core (BullMQ-wrappable) ──────────────────────────────────────

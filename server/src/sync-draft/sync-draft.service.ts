@@ -941,6 +941,39 @@ export class SyncDraftService {
         });
         continue;
       }
+
+      // Reuse a genuine orphan folder — an unmapped folder on this destination whose columns
+      // EXACTLY match what we'd create — instead of creating a duplicate table (which would
+      // collide with the orphan's table on the name). This recovers the "created the table + folder
+      // but the sync save failed" case: the next save adopts the leftover rather than colliding
+      // forever. The safety rule that keeps this from binding the wrong table lives in
+      // SchemaBuilderService.findAdoptableOrphanFolder.
+      const adoptedOrphanFolder = await this.schemaBuilderService.findAdoptableOrphanFolder(
+        workbookId,
+        destination.connectorAccountId,
+        destination.remoteParentId,
+        destination.createSpec.name,
+        destination.createSpec.fields.map((field) => field.name),
+        actor,
+      );
+      if (adoptedOrphanFolder) {
+        destination.resolved = {
+          remoteTableId: adoptedOrphanFolder.remoteTableId,
+          dataFolderId: adoptedOrphanFolder.dataFolderId,
+          actualName: adoptedOrphanFolder.actualName,
+        };
+        results.push({
+          ref: destination.ref,
+          kind: 'table',
+          status: 'created',
+          actualName: adoptedOrphanFolder.actualName,
+          remoteTableId: adoptedOrphanFolder.remoteTableId,
+        });
+        await onPlaceholderCreatedInBatch?.(destination.ref);
+        await this.persistTableMappings(draftId, tableMappings);
+        continue;
+      }
+
       const key = `${destination.connectorAccountId}::${JSON.stringify(destination.remoteParentId ?? [])}`;
       const group = groups.get(key) ?? {
         connectorAccountId: destination.connectorAccountId,
