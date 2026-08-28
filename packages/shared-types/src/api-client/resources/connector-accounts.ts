@@ -99,11 +99,16 @@ export function createConnectorAccountsApi(http: Http) {
       return res.data;
     },
 
-    /** GET `/workbooks/:id/connections/:connectionId/create-destinations/lookup` — resolve one create-destination by id. (web + desktop) */
+    /**
+     * GET `/workbooks/:id/connections/:connectionId/create-destinations/lookup` — resolve one
+     * create-destination. Pass a single id (the original form), or the connector-native parent
+     * segments a materialized pin holds (e.g. Supabase's `[projectRef, schema]`); an array is sent as
+     * repeated `destinationId` query params and the server folds it back into an id. (web + desktop)
+     */
     getCreateDestination: async (
       workbookId: string,
       connectorAccountId: string,
-      destinationId: string,
+      destinationId: string | string[],
     ): Promise<CreateDestinationLookup> => {
       const res = await http.get<CreateDestinationLookup>(
         `/workbooks/${workbookId}/connections/${connectorAccountId}/create-destinations/lookup`,

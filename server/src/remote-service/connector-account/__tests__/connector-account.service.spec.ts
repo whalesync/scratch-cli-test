@@ -551,6 +551,50 @@ describe('ConnectorAccountService', () => {
 
       expect(result.destination).toBeNull();
     });
+
+    // DEV-11402: materialize pins a provisioned parent in connector-native segments (Supabase's
+    // [projectRef, schema]) that a client can't look up. The lookup endpoint folds those segments
+    // back into an id via `createDestinationIdForParent` before resolving.
+    it('folds parent segments back into an id through createDestinationIdForParent', async () => {
+      const createDestinationIdForParent = jest.fn((segments: string[]) => segments.join('/'));
+      const lookupCreateDestination = jest.fn().mockResolvedValue({ ...DESTINATION, id: 'ref/my_schema' });
+      mockConnectorReturning({ createDestinationIdForParent, lookupCreateDestination });
+
+      const result = await service.lookupCreateDestination(WORKBOOK_ID, ACCOUNT_ID, ['ref', 'my_schema'], ACTOR);
+
+      expect(createDestinationIdForParent).toHaveBeenCalledWith(['ref', 'my_schema']);
+      expect(lookupCreateDestination).toHaveBeenCalledWith('ref/my_schema');
+      expect(result.destination?.id).toBe('ref/my_schema');
+    });
+
+    it('treats a single-segment parent as the id when the connector has no fold hook', async () => {
+      const lookupCreateDestination = jest.fn().mockResolvedValue(DESTINATION);
+      mockConnectorReturning({ lookupCreateDestination });
+
+      const result = await service.lookupCreateDestination(WORKBOOK_ID, ACCOUNT_ID, ['app_a'], ACTOR);
+
+      expect(lookupCreateDestination).toHaveBeenCalledWith('app_a');
+      expect(result.destination?.id).toBe('app_a');
+    });
+
+    it('400s when the connector cannot address the parent (undefined fold), not { destination: null }', async () => {
+      mockConnectorReturning({
+        createDestinationIdForParent: jest.fn().mockReturnValue(undefined),
+        lookupCreateDestination: jest.fn().mockResolvedValue(DESTINATION),
+      });
+
+      await expect(
+        service.lookupCreateDestination(WORKBOOK_ID, ACCOUNT_ID, ['ref', 'my_schema'], ACTOR),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('400s on a multi-segment parent when the connector has no fold hook', async () => {
+      mockConnectorReturning({ lookupCreateDestination: jest.fn().mockResolvedValue(DESTINATION) });
+
+      await expect(
+        service.lookupCreateDestination(WORKBOOK_ID, ACCOUNT_ID, ['ref', 'my_schema'], ACTOR),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   // DEV-11167: every connection endpoint reachable over HTTP takes its `connectorAccountId` straight

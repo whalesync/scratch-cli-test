@@ -939,7 +939,7 @@ export class ConnectorAccountService {
   async lookupCreateDestination(
     workbookId: WorkbookId,
     connectorAccountId: string,
-    destinationId: string,
+    destinationIdOrParentSegments: string | string[],
     actor: Actor,
   ): Promise<CreateDestinationLookup> {
     const { account, connector } = await this.buildConnectorForAccount(workbookId, connectorAccountId, actor);
@@ -949,6 +949,12 @@ export class ConnectorAccountService {
         `${getServiceDisplayName(account.service)} does not support listing table create destinations`,
       );
     }
+
+    const destinationId = this.resolveCreateDestinationIdFromLookupParam(
+      connector,
+      account.service,
+      destinationIdOrParentSegments,
+    );
 
     try {
       // Both branches converge on one `destination` so the single decoration
@@ -969,6 +975,41 @@ export class ConnectorAccountService {
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
     }
+  }
+
+  /**
+   * Normalize the lookup endpoint's `destinationId` param into a single
+   * create-destination id the connector's lookup / list-scan understands.
+   *
+   * A single value is already a create-destination id — the original behaviour.
+   * Several values are connector-native parent segments materialize pinned (e.g.
+   * Supabase's `[projectRef, schema]`): fold them back into a lookup id through
+   * `connector.createDestinationIdForParent`, whose base rule is "a single
+   * segment IS the id, anything longer is unaddressable". When the fold yields
+   * `undefined` the connector cannot address the parent, which is a 400 — NOT a
+   * `{ destination: null }`, because `null` means "confirmed gone" in this
+   * contract and a client treats it as a stale pick to reset.
+   */
+  private resolveCreateDestinationIdFromLookupParam(
+    connector: Connector,
+    service: Service,
+    destinationIdOrParentSegments: string | string[],
+  ): string {
+    if (typeof destinationIdOrParentSegments === 'string') {
+      return destinationIdOrParentSegments;
+    }
+    const parentSegments = destinationIdOrParentSegments;
+    const resolvedDestinationId = connector.createDestinationIdForParent
+      ? connector.createDestinationIdForParent(parentSegments)
+      : parentSegments.length === 1
+        ? parentSegments[0]
+        : undefined;
+    if (resolvedDestinationId === undefined) {
+      throw new BadRequestException(
+        `${getServiceDisplayName(service)} cannot address a create destination for the given parent`,
+      );
+    }
+    return resolvedDestinationId;
   }
 
   /**

@@ -515,6 +515,21 @@ export class SupabaseConnector extends Connector {
   }
 
   /**
+   * Fold a pinned `[projectRef, schema]` parent back into a create-destination id.
+   *
+   * Materialize pins the schema it provisioned in Supabase-native segments
+   * (`createTable`, the `targetsNewSchema` branch), which prefix-match a
+   * `remoteTableId` (`[projectRef, schema, tableName]`) but are NOT a lookup id.
+   * `resolveCreateParent` flattens on `/`, so `["ref", "schema"]` and
+   * `["ref/schema"]` both land on the same `"<projectRef>/<schema>"` id — the
+   * form `listCreateDestinations` advertises and the lookup endpoint scans for.
+   */
+  override createDestinationIdForParent(remoteParentId: string[]): string | undefined {
+    const { projectRef, schema } = this.resolveCreateParent(remoteParentId);
+    return projectRef ? `${projectRef}/${schema}` : undefined;
+  }
+
+  /**
    * Label for a (project, schema) container. Matches the create-destination
    * labels: `"<project> / <schema>"` in OAuth mode, where a human-readable
    * project name is on hand, and the bare schema in connection-string mode,

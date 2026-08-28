@@ -852,6 +852,36 @@ describe('SupabaseConnector.listCreateDestinations', () => {
   });
 });
 
+// DEV-11402: materialize pins a provisioned schema as native segments `[projectRef, schema]` (a prefix
+// of the `[projectRef, schema, tableName]` remoteTableId), which the create-destination lookup can't
+// address directly. This override folds those segments back into the `"<projectRef>/<schema>"` id that
+// listCreateDestinations advertises — without collapsing the pin itself.
+describe('SupabaseConnector.createDestinationIdForParent', () => {
+  it('folds a pinned [projectRef, schema] parent into the create-destination id', () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+    expect(connector.createDestinationIdForParent([PROJECT_REF, 'my_schema_99'])).toBe(`${PROJECT_REF}/my_schema_99`);
+  });
+
+  it('accepts an already-joined "<projectRef>/<schema>" single segment (resolveCreateParent flattens on /)', () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+    expect(connector.createDestinationIdForParent([`${PROJECT_REF}/analytics`])).toBe(`${PROJECT_REF}/analytics`);
+  });
+
+  it('defaults a bare project ref to the public schema', () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+    expect(connector.createDestinationIdForParent([PROJECT_REF])).toBe(`${PROJECT_REF}/public`);
+  });
+
+  it('returns undefined when no project ref is present (nothing to address)', () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+    expect(connector.createDestinationIdForParent([])).toBeUndefined();
+  });
+});
+
 describe('SupabaseConnector schema creation', () => {
   let connector: SupabaseConnector;
 

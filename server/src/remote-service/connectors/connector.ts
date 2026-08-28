@@ -193,6 +193,33 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   buildCreateDestinationRemoteWebUrl?(destinationId: string): string | undefined;
 
   /**
+   * The {@link CreateDestination.id} addressing the container a `remoteParentId`
+   * names, or `undefined` when this connector can't address it.
+   *
+   * Materialize pins the parent it provisioned in connector-native segments — an
+   * ordered array that also prefix-matches a `remoteTableId` (e.g. Supabase pins
+   * `[projectRef, schema]`, a prefix of its `[projectRef, schema, tableName]`).
+   * A `CreateDestination.id`, by contrast, is one opaque string a client can look
+   * up. This hook is what turns those segments back into that lookup id, so a
+   * just-provisioned container resolves to its real name and web link at the
+   * wizard's Activate step.
+   *
+   * The base behaviour (applied by the caller when a connector does not override):
+   * a single segment IS the id; anything longer is `undefined`. That is correct
+   * for connectors whose parent is one segment that already equals a destination
+   * id (Google Sheets' new-spreadsheet id, an Airtable base). A connector whose
+   * pin spans multiple segments (Supabase) overrides this to fold them back into
+   * its `"<projectRef>/<schema>"` id form.
+   *
+   * Must be **synchronous and pure** — no network calls.
+   *
+   * @param remoteParentId The connector-native parent segments materialize pinned.
+   * @returns The create-destination id for that parent, or `undefined` when this
+   *   connector cannot address it.
+   */
+  createDestinationIdForParent?(remoteParentId: string[]): string | undefined;
+
+  /**
    * Search for tables by name. Only used when tableDiscoveryMode is SEARCH.
    * Connectors opting into SEARCH mode must override this method.
    * @param searchTerm The search term to filter tables by.

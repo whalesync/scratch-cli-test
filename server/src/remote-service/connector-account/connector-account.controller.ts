@@ -110,12 +110,18 @@ export class ConnectorAccountController {
   async lookupCreateDestination(
     @Param('workbookId') workbookId: string,
     @Param('connectorAccountId') connectorAccountId: string,
-    @Query('destinationId') destinationId: string,
+    // A single value is a create-destination id (today's behaviour); repeated
+    // `destinationId` params arrive as an array of connector-native parent
+    // segments the service folds back into an id.
+    @Query('destinationId') destinationId: string | string[],
     @Req() req: RequestWithUser,
   ): Promise<CreateDestinationLookup> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
-    if (!destinationId?.trim()) {
+    const destinationIdIsPresent = Array.isArray(destinationId)
+      ? destinationId.length > 0
+      : Boolean(destinationId?.trim());
+    if (!destinationIdIsPresent) {
       throw new BadRequestException('destinationId is required');
     }
     return this.service.lookupCreateDestination(workbookId as WorkbookId, connectorAccountId, destinationId, actor);
