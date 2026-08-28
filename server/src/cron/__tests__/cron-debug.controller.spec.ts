@@ -9,6 +9,7 @@ import { RoutineRunReaperService } from '../routine-run-reaper.service';
 import { ScratchGitDiskObservabilityService } from '../scratch-git-disk-observability.service';
 import { StagingDirReaperService } from '../staging-dir-reaper.service';
 import { StaleJobReaperService } from '../stale-job-reaper.service';
+import { SubscriptionEnforcementService } from '../subscription-enforcement.service';
 
 const ADMIN_REQ = { user: { id: 'usr_admin', role: UserRole.ADMIN, authType: 'jwt' } } as unknown as RequestWithUser;
 const NON_ADMIN_REQ = { user: { id: 'usr_user', role: UserRole.USER, authType: 'jwt' } } as unknown as RequestWithUser;
@@ -21,6 +22,7 @@ describe('CronDebugController', () => {
   let expiredApiTokenCleanup: { cleanupExpiredWhalesyncSessionTokens: jest.Mock };
   let scratchGitDiskObservability: { emitDiskObservabilityMetrics: jest.Mock };
   let stagingDirReaper: { reapStagingDirs: jest.Mock };
+  let subscriptionEnforcement: { enforceLapsedSubscriptions: jest.Mock };
   let controller: CronDebugController;
 
   const originalRunningInCloud = process.env.RUNNING_IN_CLOUD;
@@ -45,6 +47,7 @@ describe('CronDebugController', () => {
     expiredApiTokenCleanup = { cleanupExpiredWhalesyncSessionTokens: jest.fn().mockResolvedValue(undefined) };
     scratchGitDiskObservability = { emitDiskObservabilityMetrics: jest.fn().mockResolvedValue(undefined) };
     stagingDirReaper = { reapStagingDirs: jest.fn().mockResolvedValue(undefined) };
+    subscriptionEnforcement = { enforceLapsedSubscriptions: jest.fn().mockResolvedValue(undefined) };
     controller = new CronDebugController(
       recordCountRefresh as unknown as RecordCountRefreshService,
       oldJobCleanup as unknown as OldJobCleanupService,
@@ -53,6 +56,7 @@ describe('CronDebugController', () => {
       expiredApiTokenCleanup as unknown as ExpiredApiTokenCleanupService,
       scratchGitDiskObservability as unknown as ScratchGitDiskObservabilityService,
       stagingDirReaper as unknown as StagingDirReaperService,
+      subscriptionEnforcement as unknown as SubscriptionEnforcementService,
     );
   });
 

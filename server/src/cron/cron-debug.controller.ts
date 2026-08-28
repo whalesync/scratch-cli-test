@@ -21,6 +21,7 @@ import { RoutineRunReaperService } from './routine-run-reaper.service';
 import { ScratchGitDiskObservabilityService } from './scratch-git-disk-observability.service';
 import { StagingDirReaperService } from './staging-dir-reaper.service';
 import { StaleJobReaperService } from './stale-job-reaper.service';
+import { SubscriptionEnforcementService } from './subscription-enforcement.service';
 
 const LOG_SOURCE = 'CronDebugController';
 
@@ -42,6 +43,7 @@ export class CronDebugController {
     private readonly expiredApiTokenCleanup: ExpiredApiTokenCleanupService,
     private readonly scratchGitDiskObservability: ScratchGitDiskObservabilityService,
     private readonly stagingDirReaper: StagingDirReaperService,
+    private readonly subscriptionEnforcement: SubscriptionEnforcementService,
   ) {}
 
   /**
@@ -59,6 +61,7 @@ export class CronDebugController {
       'expired-api-token-cleanup': () => this.expiredApiTokenCleanup.cleanupExpiredWhalesyncSessionTokens(),
       'scratch-git-disk-observability': () => this.scratchGitDiskObservability.emitDiskObservabilityMetrics(),
       'staging-dir-reaper': () => this.stagingDirReaper.reapStagingDirs(),
+      'subscription-enforcement': () => this.subscriptionEnforcement.enforceLapsedSubscriptions(),
     };
   }
 

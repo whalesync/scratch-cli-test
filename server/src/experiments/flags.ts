@@ -27,6 +27,16 @@ export enum SystemFeatureFlag {
   AUTO_TRIAL_SUBSCRIPTION_ON_SIGNUP = 'AUTO_TRIAL_SUBSCRIPTION_ON_SIGNUP',
   /** DEV-10573 gate for trial reminder emails (3-day reminder + post-expiry notice). Default false. */
   TRIAL_REMINDER_EMAILS = 'TRIAL_REMINDER_EMAILS',
+  /**
+   * DEV-11400 opt-in gate + kill switch for the subscription-enforcement cron
+   * (`SubscriptionEnforcementService`, every 15 min). When enabled, the cron disables
+   * all scheduled actions for organizations whose subscription lapsed; flip it off to
+   * halt enforcement without a redeploy. Fail-closed: evaluated with no user via
+   * `getBooleanFlag(..., false)`, so it is OFF by default and an absent flag or a
+   * PostHog outage leaves enforcement off (it never blindly quiesces schedules). Turn
+   * it on with a 100%-rollout release condition when ready to enforce.
+   */
+  SUBSCRIPTION_ENFORCEMENT_ENABLED = 'SUBSCRIPTION_ENFORCEMENT_ENABLED',
 }
 
 /**

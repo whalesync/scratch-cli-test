@@ -301,6 +301,11 @@ model Subscription {
   /// send it (on the trialing -> canceled transition in upsertSubscription) so repeat updated/deleted
   /// webhook deliveries never re-send.
   trialExpiredReminderSentAt DateTime?
+  /// Adhoc key-value store for out-of-band subscription state. Used by the Whalesync integration to
+  /// carry the Whalesync-side subscription shape (product type, Live Export record-count limit and
+  /// cadence, last-known Whalesync status) that gates Live Export behavior — see the
+  /// `WhalesyncSubscriptionMetadata` shape in @spinner/shared-types. Null for regular Stripe subs.
+  metadata                   Json?
 
   @@index([userId])
   @@index([organizationId])

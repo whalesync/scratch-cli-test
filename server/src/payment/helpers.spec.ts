@@ -24,6 +24,7 @@ function createTestSubscription(
     cancelAt: overrides.cancelAt ?? null,
     trialEndingReminderSentAt: overrides.trialEndingReminderSentAt ?? null,
     trialExpiredReminderSentAt: overrides.trialExpiredReminderSentAt ?? null,
+    metadata: overrides.metadata ?? null,
   };
 }
 

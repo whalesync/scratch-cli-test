@@ -551,6 +551,214 @@ describe('StripePaymentService', () => {
     });
   });
 
+  describe('applyWhalesyncSubscriptionState', () => {
+    const whalesyncSub = (overrides: Record<string, unknown> = {}) => ({
+      id: 'sub_ws',
+      userId: 'usr_shadow',
+      planType: ScratchPlanType.WHALESYNC_PLAN,
+      expiration: new Date(Date.now() + 86400000),
+      stripeStatus: 'active',
+      ...overrides,
+    });
+
+    it("creates a $0 Whalesync row with metadata when 'active' and none exists", async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [] },
+      });
+      (mockDbService.client.subscription.create as jest.Mock).mockResolvedValue({ id: 'sub_new' });
+
+      const result = await service.applyWhalesyncSubscriptionState(user, {
+        status: 'active',
+        whalesyncProductType: 'growth',
+        liveExportRecordCountLimit: 5000,
+        liveExportCadence: 'hourly',
+      });
+
+      expect(result).toEqual({ planType: ScratchPlanType.WHALESYNC_PLAN, updated: true });
+      expect(mockDbService.client.subscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            planType: ScratchPlanType.WHALESYNC_PLAN,
+            stripeSubscriptionId: 'whalesync_org_shadow',
+            stripeStatus: 'active',
+            metadata: {
+              whalesyncStatus: 'active',
+              whalesyncProductType: 'growth',
+              liveExportRecordCountLimit: 5000,
+              liveExportCadence: 'hourly',
+            },
+          }),
+        }),
+      );
+      expect(mockDbService.client.subscription.update).not.toHaveBeenCalled();
+      expect(mockPostHogService.trackSubscriptionChanged).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'usr_shadow' }),
+        ScratchPlanType.FREE_PLAN,
+        ScratchPlanType.WHALESYNC_PLAN,
+      );
+    });
+
+    it("applies the payload's UTC expiry to the Subscription row when provided", async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [] },
+      });
+      (mockDbService.client.subscription.create as jest.Mock).mockResolvedValue({ id: 'sub_new' });
+      const expiresAt = '2027-01-15T00:00:00.000Z';
+
+      await service.applyWhalesyncSubscriptionState(user, { status: 'active', expiresAt });
+
+      const createCalls = (mockDbService.client.subscription.create as jest.Mock).mock.calls as Array<
+        [{ data: { expiration: Date } }]
+      >;
+      expect(createCalls[0][0].data.expiration.toISOString()).toBe(expiresAt);
+    });
+
+    it('falls back to the nominal ~100-year expiry when no expiry is provided', async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [] },
+      });
+      (mockDbService.client.subscription.create as jest.Mock).mockResolvedValue({ id: 'sub_new' });
+
+      await service.applyWhalesyncSubscriptionState(user, { status: 'active' });
+
+      const createCalls = (mockDbService.client.subscription.create as jest.Mock).mock.calls as Array<
+        [{ data: { expiration: Date } }]
+      >;
+      expect(createCalls[0][0].data.expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
+    });
+
+    it("refreshes an existing Whalesync row in place (no create) when 'active'", async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [whalesyncSub({ stripeStatus: 'expired' })] },
+      });
+
+      const result = await service.applyWhalesyncSubscriptionState(user, { status: 'active' });
+
+      expect(result).toEqual({ planType: ScratchPlanType.WHALESYNC_PLAN, updated: true });
+      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
+      expect(mockDbService.client.subscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'sub_ws' },
+          data: expect.objectContaining({ stripeStatus: 'active', cancelAt: null }),
+        }),
+      );
+    });
+
+    it("soft-updates (keeps) an existing Whalesync row when 'cancelled', mapping to stripeStatus 'canceled'", async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [whalesyncSub()] },
+      });
+
+      const result = await service.applyWhalesyncSubscriptionState(user, { status: 'cancelled' });
+
+      expect(result).toEqual({ planType: null, updated: true });
+      expect(mockDbService.client.subscription.deleteMany).not.toHaveBeenCalled();
+      expect(mockDbService.client.subscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'sub_ws' },
+          data: expect.objectContaining({ stripeStatus: 'canceled' }),
+        }),
+      );
+      // The row is expired (not deleted) so plan resolution treats it as inactive.
+      const updateCalls = (mockDbService.client.subscription.update as jest.Mock).mock.calls as Array<
+        [{ data: { expiration: Date } }]
+      >;
+      expect(updateCalls[0][0].data.expiration.getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+      expect(mockPostHogService.trackSubscriptionChanged).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'usr_shadow' }),
+        ScratchPlanType.WHALESYNC_PLAN,
+        ScratchPlanType.FREE_PLAN,
+      );
+    });
+
+    it("maps 'expired' status to stripeStatus 'expired'", async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [whalesyncSub()] },
+      });
+
+      await service.applyWhalesyncSubscriptionState(user, { status: 'expired' });
+
+      expect(mockDbService.client.subscription.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ stripeStatus: 'expired' }) }),
+      );
+    });
+
+    it('is a no-op for a non-active status when no Whalesync row exists (never creates one)', async () => {
+      const user = createMockUser({
+        id: 'usr_shadow',
+        organizationId: 'org_shadow',
+        organization: { id: 'org_shadow', subscriptions: [] },
+      });
+
+      const result = await service.applyWhalesyncSubscriptionState(user, { status: 'expired' });
+
+      expect(result).toEqual({ planType: null, updated: false });
+      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
+      expect(mockDbService.client.subscription.update).not.toHaveBeenCalled();
+    });
+
+    it('throws (409) when a real active Stripe subscription exists and throwOnRealSubscriptionConflict is set', async () => {
+      const user = createMockUser({
+        id: 'usr_paid',
+        organizationId: 'org_paid',
+        organization: {
+          id: 'org_paid',
+          subscriptions: [
+            {
+              id: 'sub_pro',
+              userId: 'usr_paid',
+              planType: ScratchPlanType.PRO_PLAN,
+              expiration: new Date(Date.now() + 86400000),
+              stripeStatus: 'active',
+            },
+          ],
+        },
+      });
+
+      await expect(
+        service.applyWhalesyncSubscriptionState(user, { status: 'active' }, { throwOnRealSubscriptionConflict: true }),
+      ).rejects.toThrow('active Scratch subscription');
+      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
+      expect(mockDbService.client.subscription.update).not.toHaveBeenCalled();
+    });
+
+    it('is a best-effort no-op (no throw) when a real active Stripe subscription exists and the flag is unset', async () => {
+      const user = createMockUser({
+        id: 'usr_paid',
+        organizationId: 'org_paid',
+        organization: {
+          id: 'org_paid',
+          subscriptions: [
+            {
+              id: 'sub_pro',
+              userId: 'usr_paid',
+              planType: ScratchPlanType.PRO_PLAN,
+              expiration: new Date(Date.now() + 86400000),
+              stripeStatus: 'active',
+            },
+          ],
+        },
+      });
+
+      const result = await service.applyWhalesyncSubscriptionState(user, { status: 'active' });
+
+      expect(result).toEqual({ planType: null, updated: false });
+      expect(mockDbService.client.subscription.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('generateCheckoutUrl', () => {
     it('should generate checkout URL for user without active subscription', async () => {
       const user = createMockUser({

@@ -1,4 +1,4 @@
-import { whalesyncShadowUserSchema } from '@spinner/shared-types';
+import { whalesyncShadowUserSchema, whalesyncUpdateSubscriptionSchema } from '@spinner/shared-types';
 import { createZodDto } from 'nestjs-zod';
 
 // Response shapes are pure contracts and live in shared-types; re-export them so controllers can
@@ -7,6 +7,7 @@ export type {
   WhalesyncClearSubscriptionResponse,
   WhalesyncRevokeSessionsResponse,
   WhalesyncSessionResponse,
+  WhalesyncUpdateSubscriptionResponse,
   WhalesyncUserResponse,
 } from '@spinner/shared-types';
 
@@ -15,3 +16,9 @@ export type {
  * NestJS bridge for the shared zod schema; the global ZodValidationPipe enforces it.
  */
 export class WhalesyncShadowUserDto extends createZodDto(whalesyncShadowUserSchema) {}
+
+/**
+ * Body for `PATCH /internal/whalesync/subscription`.
+ * NestJS bridge for the shared zod schema; the global ZodValidationPipe enforces it.
+ */
+export class WhalesyncUpdateSubscriptionDto extends createZodDto(whalesyncUpdateSubscriptionSchema) {}

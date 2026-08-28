@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ExperimentsModule } from 'src/experiments/experiments.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { RecordCountModule } from 'src/record-count/record-count.module';
 import { RoutineExecutionModule } from 'src/routine/routine-execution.module';
@@ -16,6 +17,7 @@ import { RoutineRunReaperService } from './routine-run-reaper.service';
 import { ScratchGitDiskObservabilityService } from './scratch-git-disk-observability.service';
 import { StagingDirReaperService } from './staging-dir-reaper.service';
 import { StaleJobReaperService } from './stale-job-reaper.service';
+import { SubscriptionEnforcementService } from './subscription-enforcement.service';
 
 @Module({
   // RoutineExecutionModule gives the reaper RoutineExecutorService to resume stuck runs.
@@ -29,6 +31,7 @@ import { StaleJobReaperService } from './stale-job-reaper.service';
     RecordCountModule,
     MetricsModule,
     ScratchGitModule,
+    ExperimentsModule,
   ],
   controllers: [CronDebugController],
   providers: [
@@ -39,6 +42,7 @@ import { StaleJobReaperService } from './stale-job-reaper.service';
     RecordCountRefreshService,
     ScratchGitDiskObservabilityService,
     StagingDirReaperService,
+    SubscriptionEnforcementService,
   ],
   exports: [
     StaleJobReaperService,
@@ -48,6 +52,7 @@ import { StaleJobReaperService } from './stale-job-reaper.service';
     RecordCountRefreshService,
     ScratchGitDiskObservabilityService,
     StagingDirReaperService,
+    SubscriptionEnforcementService,
   ],
 })
 export class CronModule {}

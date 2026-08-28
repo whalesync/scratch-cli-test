@@ -38,6 +38,7 @@ describe('User.subscription', () => {
       lastInvoicePaid: true,
       trialEndingReminderSentAt: null,
       trialExpiredReminderSentAt: null,
+      metadata: null,
       ...overrides,
     };
   }

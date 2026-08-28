@@ -51,6 +51,11 @@ export const CRON_JOB_DEFINITIONS: CronJobSummaryDto[] = [
     description: 'Delete orphaned scratch-git staging dirs (older than the threshold, no live job).',
     schedule: 'EVERY_HOUR',
   },
+  {
+    slug: 'subscription-enforcement',
+    description: 'Disable scheduled actions for orgs whose subscription lapsed (expired/past_due/canceled).',
+    schedule: 'EVERY_15_MINUTES',
+  },
 ];
 
 /**

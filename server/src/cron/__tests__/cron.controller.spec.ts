@@ -46,6 +46,7 @@ describe('CronController', () => {
       'staging-dir-reaper',
       'stale-active-job-reaper',
       'stale-job-reaper',
+      'subscription-enforcement',
     ]);
     for (const job of jobs) {
       expect(job.description.length).toBeGreaterThan(0);

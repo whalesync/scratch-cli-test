@@ -113,6 +113,11 @@ export enum CustomMetric {
   // the record cannot be deleted from the external service. These deletes are now marked failed-batch
   // instead of a silent success; the counter charts how often the anomaly happens in prod.
   PUBLISH_DELETE_MISSING_REMOTE_ID = 'publish_delete_missing_remote_id',
+
+  // Subscription enforcement (DEV-11400). Counts schedules the SubscriptionEnforcementService disabled
+  // because their organization's subscription lapsed (Stripe status expired/past_due/canceled) — charts how
+  // much scheduled work is being quiesced by paywall enforcement.
+  SUBSCRIPTION_LAPSE_SCHEDULES_DISABLED = 'subscription_lapse_schedules_disabled',
 }
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
@@ -178,6 +183,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.STAGING_DIR_REAPED:
     case CustomMetric.PLAN_TAGS_REAPED:
     case CustomMetric.PUBLISH_DELETE_MISSING_REMOTE_ID:
+    case CustomMetric.SUBSCRIPTION_LAPSE_SCHEDULES_DISABLED:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -248,6 +254,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.STAGING_DIR_REAPED:
     case CustomMetric.PLAN_TAGS_REAPED:
     case CustomMetric.PUBLISH_DELETE_MISSING_REMOTE_ID:
+    case CustomMetric.SUBSCRIPTION_LAPSE_SCHEDULES_DISABLED:
       return CustomMetricUnit.EVENT_COUNT;
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
       // A gauge: how many syncs remain on the frozen v1 column right now, not a

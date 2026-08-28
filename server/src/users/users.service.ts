@@ -8,6 +8,7 @@ import {
   ScratchPlanType,
   TokenType,
   UpdateSettingsDto,
+  WhalesyncSubscriptionPayload,
   WorkbookId,
 } from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -288,20 +289,25 @@ export class UsersService {
   /**
    * Ensures a Scratch user exists for the given Whalesync user AND that the user's organization is on
    * the internal Whalesync plan. Idempotent on `whalesyncUserId`. Delegates identity reconciliation to
-   * `resolveShadowUserFromWhalesync`, then assigns the Whalesync plan via
+   * `resolveShadowUserFromWhalesync`, then applies the subscription via
    * `StripePaymentService.ensureWhalesyncPlanSubscription` (itself idempotent and best-effort: existing
    * Free shadow users are self-healed onto the plan, and existing paid subscribers are left untouched).
    *
+   * The optional `subscription` payload drives whether the plan is granted or revoked and records the
+   * Whalesync-side subscription shape; when omitted it defaults to `{ status: 'active' }`, preserving the
+   * historical auto-subscribe behavior (used until the Whalesync backend starts sending the payload).
+   *
    * Both Whalesync internal entry points (`ensureSessionForWhalesyncUser` and `ensureWhalesyncUser`)
-   * funnel through here, so this is the single choke point where a shadow user is guaranteed the plan.
+   * funnel through here, so this is the single choke point where a shadow user's plan is reconciled.
    */
   public async getOrCreateShadowUserFromWhalesync(
     whalesyncUserId: string,
     email: string,
     name?: string,
+    subscription?: WhalesyncSubscriptionPayload,
   ): Promise<UserCluster.User> {
     const shadowUser = await this.resolveShadowUserFromWhalesync(whalesyncUserId, email, name);
-    await this.stripePaymentService.ensureWhalesyncPlanSubscription(shadowUser);
+    await this.stripePaymentService.ensureWhalesyncPlanSubscription(shadowUser, subscription);
     return shadowUser;
   }
 

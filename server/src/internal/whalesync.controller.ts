@@ -1,10 +1,12 @@
-import { Body, Controller, Delete, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ScratchAdminGuard } from 'src/auth/scratch-admin.guard';
 import {
   WhalesyncClearSubscriptionResponse,
   WhalesyncRevokeSessionsResponse,
   WhalesyncSessionResponse,
   WhalesyncShadowUserDto,
+  WhalesyncUpdateSubscriptionDto,
+  WhalesyncUpdateSubscriptionResponse,
   WhalesyncUserResponse,
 } from './dto/whalesync-internal.dto';
 import { WhalesyncInternalService } from './whalesync-internal.service';
@@ -28,12 +30,23 @@ export class WhalesyncController {
       body.whalesyncUserId,
       body.email,
       body.name,
+      body.subscription,
     );
     return {
       scratchUserId: result.scratchUserId,
       apiToken: result.apiToken,
       expiresAt: result.expiresAt.toISOString(),
     };
+  }
+
+  /**
+   * Apply a Whalesync subscription status change (expire / cancel / upgrade) to the shadow user's Whalesync
+   * plan. Returns 409 if the user holds a real Scratch Stripe subscription (only a `WHALESYNC_PLAN` row is
+   * mutated). Idempotent if the user does not exist.
+   */
+  @Patch('subscription')
+  async updateSubscription(@Body() body: WhalesyncUpdateSubscriptionDto): Promise<WhalesyncUpdateSubscriptionResponse> {
+    return this.whalesyncInternalService.updateWhalesyncSubscription(body.whalesyncUserId, body.subscription);
   }
 
   /** Ensure (create-if-missing) a shadow user without minting a token. For eager provisioning. */

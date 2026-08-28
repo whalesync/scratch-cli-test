@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { WorkbookId } from '@spinner/shared-types';
+import { WhalesyncSubscriptionPayload, WhalesyncUpdateSubscriptionResponse, WorkbookId } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { userToActor } from 'src/users/types';
@@ -30,8 +30,14 @@ export class WhalesyncInternalService {
     whalesyncUserId: string,
     email: string,
     name?: string,
+    subscription?: WhalesyncSubscriptionPayload,
   ): Promise<{ scratchUserId: string; apiToken: string; expiresAt: Date }> {
-    const shadowUser = await this.usersService.getOrCreateShadowUserFromWhalesync(whalesyncUserId, email, name);
+    const shadowUser = await this.usersService.getOrCreateShadowUserFromWhalesync(
+      whalesyncUserId,
+      email,
+      name,
+      subscription,
+    );
     const { token, expiresAt } = await this.usersService.mintWhalesyncSessionToken(shadowUser.id);
     return { scratchUserId: shadowUser.id, apiToken: token, expiresAt };
   }
@@ -41,9 +47,39 @@ export class WhalesyncInternalService {
     whalesyncUserId: string,
     email: string,
     name?: string,
+    subscription?: WhalesyncSubscriptionPayload,
   ): Promise<{ scratchUserId: string }> {
-    const shadowUser = await this.usersService.getOrCreateShadowUserFromWhalesync(whalesyncUserId, email, name);
+    const shadowUser = await this.usersService.getOrCreateShadowUserFromWhalesync(
+      whalesyncUserId,
+      email,
+      name,
+      subscription,
+    );
     return { scratchUserId: shadowUser.id };
+  }
+
+  /**
+   * Apply a Whalesync subscription status change to a shadow user's Whalesync plan — driven by Bottlenose
+   * whenever a subscription expires, is cancelled, or is upgraded on the Whalesync side. Only a
+   * `WHALESYNC_PLAN` subscription is mutated: if the user holds a real active Scratch Stripe subscription
+   * (paid Pro/Max) this throws `ConflictException` (→ 409), matching the contract. Idempotent: a user that
+   * doesn't exist returns `{ scratchUserId: null, updated: false, planType: null }` so retried Bottlenose
+   * lifecycle hooks are safe.
+   */
+  public async updateWhalesyncSubscription(
+    whalesyncUserId: string,
+    subscription: WhalesyncSubscriptionPayload,
+  ): Promise<WhalesyncUpdateSubscriptionResponse> {
+    const shadowUser = await this.usersService.findByWhalesyncUserId(whalesyncUserId);
+    if (!shadowUser) {
+      return { scratchUserId: null, updated: false, planType: null };
+    }
+    const { planType, updated } = await this.stripePaymentService.applyWhalesyncSubscriptionState(
+      shadowUser,
+      subscription,
+      { throwOnRealSubscriptionConflict: true },
+    );
+    return { scratchUserId: shadowUser.id, updated, planType };
   }
 
   /**

@@ -126,14 +126,28 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     await prismaForDbRowAssertions?.$disconnect();
   });
 
-  async function createSession(whalesyncUserId: string, email: string, name?: string): Promise<SessionResponse> {
+  async function createSession(
+    whalesyncUserId: string,
+    email: string,
+    name?: string,
+    subscription?: Record<string, unknown>,
+  ): Promise<SessionResponse> {
     provisionedWhalesyncUserIds.push(whalesyncUserId);
     const response = await axios.post<SessionResponse>(
       `${apiUrl}/internal/whalesync/sessions`,
-      { whalesyncUserId, email, name },
+      { whalesyncUserId, email, name, subscription },
       { headers: adminHeaders },
     );
     return response.data;
+  }
+
+  // PATCH /internal/whalesync/subscription. Does not throw on non-2xx — callers assert the status.
+  function patchSubscription(whalesyncUserId: string, subscription: Record<string, unknown>) {
+    return axios.patch(
+      `${apiUrl}/internal/whalesync/subscription`,
+      { whalesyncUserId, subscription },
+      { headers: adminHeaders, ...anyStatus },
+    );
   }
 
   // Resolve the actor a session token authenticates as. Does not throw on 401 — callers assert status.
@@ -216,6 +230,123 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
       expect(subscriptions[0].expiration.getFullYear()).toBeGreaterThanOrEqual(new Date().getFullYear() + 99);
     }
   });
+
+  // 1d — a session subscription payload with status 'active' records the Whalesync-side shape in
+  // Subscription.metadata (product type + Live Export limits) and keeps stripeStatus 'active'.
+  it('records the session subscription payload in metadata and applies the UTC expiry when status is active', async () => {
+    const whalesyncUserId = randomUUID();
+    const email = `sub-active-${whalesyncUserId}@example.com`;
+    const expiresAt = '2027-01-15T00:00:00.000Z';
+    const session = await createSession(whalesyncUserId, email, 'Katherine Johnson', {
+      status: 'active',
+      whalesyncProductType: 'growth',
+      liveExportRecordCountLimit: 5000,
+      liveExportCadence: 'hourly',
+      expiresAt,
+    });
+
+    const whoami = await fetchCurrentUser(session.apiToken);
+    expect(whoami.data.subscription?.planType).toBe('WHALESYNC_PLAN');
+
+    if (prismaForDbRowAssertions) {
+      const user = await prismaForDbRowAssertions.user.findFirst({ where: { whalesyncUserId } });
+      const subscriptions = await prismaForDbRowAssertions.subscription.findMany({
+        where: { organizationId: user?.organizationId ?? '' },
+      });
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0].stripeStatus).toBe('active');
+      // Whalesync's own UTC expiry replaces the nominal far-future expiry.
+      expect(subscriptions[0].expiration.toISOString()).toBe(expiresAt);
+      expect(subscriptions[0].metadata).toEqual({
+        whalesyncStatus: 'active',
+        whalesyncProductType: 'growth',
+        liveExportRecordCountLimit: 5000,
+        liveExportCadence: 'hourly',
+      });
+    }
+  });
+
+  // 1e — a session subscription payload whose status is NOT active must not create a subscription row.
+  (isApiOnlyMode ? it.skip : it)(
+    'does not create a subscription when the session subscription status is not active',
+    async () => {
+      const prisma = prismaForDbRowAssertions;
+      if (!prisma) return;
+
+      const whalesyncUserId = randomUUID();
+      const email = `sub-none-${whalesyncUserId}@example.com`;
+      const session = await createSession(whalesyncUserId, email, 'Radia Perlman', { status: 'expired' });
+
+      const user = await prisma.user.findFirst({ where: { whalesyncUserId } });
+      expect(user).toBeTruthy(); // the shadow user is still provisioned...
+      const subscriptions = await prisma.subscription.findMany({
+        where: { organizationId: user?.organizationId ?? '' },
+      });
+      expect(subscriptions).toHaveLength(0); // ...but no Whalesync plan was granted.
+
+      // Over HTTP the user is not on the Whalesync plan.
+      const whoami = await fetchCurrentUser(session.apiToken);
+      expect(whoami.data.subscription?.planType).not.toBe('WHALESYNC_PLAN');
+    },
+  );
+
+  // 3a — PATCH /subscription with a non-active status soft-updates (keeps) the Whalesync row and marks it
+  // inactive, so the user drops off the Whalesync plan.
+  it('marks the Whalesync plan inactive on a cancelled subscription patch', async () => {
+    const whalesyncUserId = randomUUID();
+    const email = `patch-cancel-${whalesyncUserId}@example.com`;
+    const session = await createSession(whalesyncUserId, email, 'Grace Hopper', { status: 'active' });
+    expect((await fetchCurrentUser(session.apiToken)).data.subscription?.planType).toBe('WHALESYNC_PLAN');
+
+    const patched = await patchSubscription(whalesyncUserId, { status: 'cancelled' });
+    expect(patched.status).toBe(200);
+    expect(patched.data.scratchUserId).toBe(session.scratchUserId);
+    expect(patched.data.updated).toBe(true);
+
+    // Over HTTP the user is no longer on the Whalesync plan.
+    const whoami = await fetchCurrentUser(session.apiToken);
+    expect(whoami.data.subscription?.planType).not.toBe('WHALESYNC_PLAN');
+
+    if (prismaForDbRowAssertions) {
+      const user = await prismaForDbRowAssertions.user.findFirst({ where: { whalesyncUserId } });
+      const subscriptions = await prismaForDbRowAssertions.subscription.findMany({
+        where: { organizationId: user?.organizationId ?? '' },
+      });
+      // The row is KEPT (soft-update), not deleted, and marked canceled.
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0].stripeStatus).toBe('canceled');
+    }
+  });
+
+  // 3b — PATCH /subscription for a user that doesn't exist is an idempotent no-op (safe to retry).
+  it('is an idempotent no-op when patching a subscription for an unknown user', async () => {
+    const response = await patchSubscription(randomUUID(), { status: 'expired' });
+    expect(response.status).toBe(200);
+    expect(response.data).toEqual({ scratchUserId: null, updated: false, planType: null });
+  });
+
+  // 3c — PATCH /subscription refuses (409) to touch a real Scratch Stripe subscription (paid Pro/Max).
+  (isApiOnlyMode ? it.skip : it)(
+    'returns 409 when the organization has a real Scratch Stripe subscription',
+    async () => {
+      const prisma = prismaForDbRowAssertions;
+      if (!prisma) return;
+
+      const whalesyncUserId = randomUUID();
+      const email = `patch-real-${whalesyncUserId}@example.com`;
+      const session = await createSession(whalesyncUserId, email, 'Barbara Liskov', { status: 'active' });
+
+      // Turn the org's Whalesync row into a real (non-Whalesync) active Stripe subscription.
+      const user = await prisma.user.findFirst({ where: { whalesyncUserId } });
+      await prisma.subscription.updateMany({
+        where: { organizationId: user?.organizationId ?? '' },
+        data: { planType: 'PRO_PLAN', stripeSubscriptionId: `sub_real_${whalesyncUserId}` },
+      });
+
+      const response = await patchSubscription(whalesyncUserId, { status: 'cancelled' });
+      expect(response.status).toBe(409);
+    },
+  );
 
   // 2b — reconciliation: an existing Scratch user that owns the email is adopted, not duplicated.
   // Requires a local DB matching the target server (to seed the pre-existing native user directly),
