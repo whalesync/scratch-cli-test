@@ -1,0 +1,46 @@
+meta {
+  name: Create Sync (CLI)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/syncs
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "displayName": "My Sync",
+    "validateMappings": true,
+    "mappings": {
+      "version": 1,
+      "tableMappings": [
+        {
+          "sourceDataFolderId": "{{dataFolderId}}",
+          "destinationDataFolderId": "dfld_destination",
+          "columnMappings": [
+            {
+              "sourceColumnId": "name",
+              "destinationColumnId": "Name"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+
+docs {
+  Creates a sync. Required: `displayName`, `validateMappings`, and `mappings`.
+  Optional: `schedule` (cron), `scheduleTimezone`, `publishAfterSync`.
+
+  NOTE: `mappings` is abbreviated to the minimal v1 on-disk shape (the server also
+  accepts the v2 shape and normalizes v1 → v2). The folder ids and column ids are
+  placeholders — replace with real DataFolder ids and schema column ids.
+}

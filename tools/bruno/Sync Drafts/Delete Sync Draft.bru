@@ -1,0 +1,15 @@
+meta {
+  name: Delete Sync Draft
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/sync-drafts/{{draftId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Deletes a sync draft. Returns 204 No Content.
+}

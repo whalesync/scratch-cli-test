@@ -1,0 +1,15 @@
+meta {
+  name: List Connections
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns all connections for the workbook.
+}

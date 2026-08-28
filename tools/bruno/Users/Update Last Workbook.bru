@@ -1,0 +1,26 @@
+meta {
+  name: Update Last Workbook
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/users/current/last-workbook
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "workbookId": "{{workbookId}}"
+  }
+}
+
+docs {
+  Records the workbook the user last had open (for restoring context on next
+  login). Pass `workbookId: null` to clear it. Returns 204.
+}

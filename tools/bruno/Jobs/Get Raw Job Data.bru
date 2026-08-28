@@ -1,0 +1,16 @@
+meta {
+  name: Get Raw Job Data
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/jobs/{{jobId}}/raw
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the raw BullMQ job payload (internal state and metadata; structure varies
+  by job type). Used by job-inspection/debug views.
+}

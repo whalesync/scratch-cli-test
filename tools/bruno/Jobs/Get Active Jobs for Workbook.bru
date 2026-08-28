@@ -1,0 +1,15 @@
+meta {
+  name: Get Active Jobs for Workbook
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/jobs/workbook/{{workbookId}}/active
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns all currently active (running or pending) jobs for a specific workbook.
+}

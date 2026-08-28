@@ -1,0 +1,20 @@
+meta {
+  name: Export Syncs (CLI)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/syncs/export?syncId={{syncId}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  syncId: {{syncId}}
+}
+
+docs {
+  Exports syncs as portable config. `syncId` scopes the export to one sync; omit it
+  (remove the query param) to export every sync in the workbook.
+}

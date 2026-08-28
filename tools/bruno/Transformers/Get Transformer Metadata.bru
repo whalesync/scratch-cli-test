@@ -1,0 +1,15 @@
+meta {
+  name: Get Transformer Metadata
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/sync/transformers/metadata
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns metadata for all available transformers. Response: TransformerMetadata[].
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Create Workbook (CLI)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "My Workbook"
+  }
+}
+
+docs {
+  Creates an empty workbook. `name` is optional.
+}

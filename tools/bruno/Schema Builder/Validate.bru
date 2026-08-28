@@ -1,0 +1,41 @@
+meta {
+  name: Validate
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/schema/validate
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "connectorAccountId": "{{connectorAccountId}}",
+    "tables": [
+      {
+        "ref": "posts",
+        "name": "Posts",
+        "fields": [
+          {
+            "name": "Title",
+            "fieldType": { "kind": "text" },
+            "isPrimary": true
+          }
+        ]
+      }
+    ]
+  }
+}
+
+docs {
+  Dry-run validation of a create-tables body (same shape as Create Tables). Never
+  touches the remote service. The endpoint takes a raw `unknown` body on purpose,
+  collecting all validation issues in the response instead of throwing on the first
+  one.
+}

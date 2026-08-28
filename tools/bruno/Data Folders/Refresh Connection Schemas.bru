@@ -1,0 +1,27 @@
+meta {
+  name: Refresh Connection Schemas
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/data-folder/refresh-schemas
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "connectorAccountId": "{{connectorAccountId}}"
+  }
+}
+
+docs {
+  Re-derives the schema (JSON table spec + default view) for every data folder
+  belonging to one connection, in a single call. Returns per-folder
+  refreshed/failed results.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Validate Mapping
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/validate-mapping
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "sourceId": "dfolder_source",
+    "destId": "dfolder_dest",
+    "columnMappings": [
+      { "sourceColumnId": "title", "destinationColumnId": "name" },
+      { "sourceColumnId": "body", "destinationColumnId": "content" }
+    ]
+  }
+}
+
+docs {
+  Validates column mappings between a source and destination folder before creating
+  or updating a sync. Returns { valid }.
+}

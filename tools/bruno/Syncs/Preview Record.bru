@@ -1,0 +1,36 @@
+meta {
+  name: Preview Record
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/preview-record
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "sourceFolderId": "dfolder_source",
+    "destFolderId": "dfolder_dest",
+    "filePath": "/airtable/posts/rec123.json",
+    "columnMappings": [
+      { "sourceColumnId": "title", "destinationColumnId": "name" },
+      { "sourceColumnId": "body", "destinationColumnId": "content" }
+    ],
+    "recordMatching": {
+      "sourceColumnId": "id",
+      "destinationColumnId": "airtable_id"
+    }
+  }
+}
+
+docs {
+  Previews the sync result for a single record — useful for testing mappings and
+  transformers. `recordMatching` is optional. Returns { recordId, fields, ... }.
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Get Pipeline Records
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/{{pipelineId}}/records
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~pageSize: 20
+  ~dataFolderId: {{dataFolderId}}
+  ~phase:
+  ~filename:
+}
+
+docs {
+  Lists the records touched by a publish pipeline. Optional filters: `page` /
+  `pageSize` paginate; `dataFolderId` scopes to one folder; `phase` filters by
+  pipeline phase; `filename` filters by record filename.
+}

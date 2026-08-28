@@ -1,0 +1,21 @@
+meta {
+  name: Get Generic API AI Prompt
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/connectors/generic-api/ai-prompt?apiType=rest
+  body: none
+  auth: inherit
+}
+
+params:query {
+  apiType: rest
+}
+
+docs {
+  Returns the AI-assist prompt shown in the GENERIC_API connection modal, tailored
+  to the API style. `apiType` is required and must be `rest` or `graphql` (returns
+  400 otherwise). Public, cached 5 minutes.
+}

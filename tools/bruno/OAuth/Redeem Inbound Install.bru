@@ -1,0 +1,27 @@
+meta {
+  name: Redeem Inbound Install
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/oauth/install/{{service}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "code": "one_time_install_code_from_marketplace"
+  }
+}
+
+docs {
+  PUBLIC. Redeems the one-time marketplace-delivered `code` for a connector
+  (`{{service}}`), stashes the tokens under an unguessable installId, and returns
+  { installId, service } for the claim step.
+}

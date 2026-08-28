@@ -1,0 +1,20 @@
+meta {
+  name: Discover
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/discover
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~workbook: {{workbookId}}
+}
+
+docs {
+  Returns LLM/markdown discovery content (text/markdown). Optional `workbook`
+  query param scopes it to one workbook. Public.
+}

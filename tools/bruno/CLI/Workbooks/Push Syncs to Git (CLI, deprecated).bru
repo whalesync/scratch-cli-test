@@ -1,0 +1,17 @@
+meta {
+  name: Push Syncs to Git (CLI, deprecated)
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/config/push-syncs
+  body: none
+  auth: inherit
+}
+
+docs {
+  Deprecated. Pushes all of the workbook's Postgres syncs to the config git repo as
+  portable JSON. Normal sync create/update/delete already does this automatically. No
+  body. Returns { count }.
+}

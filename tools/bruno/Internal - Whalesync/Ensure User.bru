@@ -1,0 +1,28 @@
+meta {
+  name: Ensure User
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/internal/whalesync/users
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "whalesyncUserId": "ws_user_123",
+    "email": "user@example.com",
+    "name": "Example User"
+  }
+}
+
+docs {
+  Ensure (create-if-missing) a shadow user WITHOUT minting a token. For eager
+  provisioning. Returns { scratchUserId }. `name` optional.
+}

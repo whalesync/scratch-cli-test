@@ -1,0 +1,35 @@
+meta {
+  name: Create Schedule
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/schedules
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Nightly sync",
+    "action": "SYNC",
+    "entityId": "{{syncId}}",
+    "cronExpression": "0 2 * * *",
+    "timezone": "America/New_York",
+    "enabled": true
+  }
+}
+
+docs {
+  Creates a schedule. Required: `name`, `action`, `entityId`, `cronExpression`.
+  `action` is one of PULL, FULL_PULL, INCREMENTAL_PULL, CONNECTION_FULL_PULL,
+  CONNECTION_INCREMENTAL_PULL, PUBLISH, SYNC, ROUTINE — `entityId` is the id the
+  action operates on (a sync id for SYNC, a data-folder id for PUBLISH/pulls, a
+  connection id for CONNECTION_* pulls, a routine file path for ROUTINE). Optional
+  `timezone` (IANA name, or null for UTC) and `enabled` (default true).
+}

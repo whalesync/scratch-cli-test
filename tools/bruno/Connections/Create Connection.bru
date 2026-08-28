@@ -1,0 +1,33 @@
+meta {
+  name: Create Connection
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "service": "airtable",
+    "displayName": "My Airtable",
+    "authType": "api_key",
+    "userProvidedParams": {
+      "apiKey": "pat_xxxxx"
+    }
+  }
+}
+
+docs {
+  Creates a new connection (connector account) on the workbook. `service` is
+  required; `displayName`, `authType` (oauth | api_key), and `userProvidedParams`
+  (credentials, shape varies by service) are optional. GENERIC_API connections may
+  also pass a structured `extras` object.
+}

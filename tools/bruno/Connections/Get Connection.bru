@@ -1,0 +1,15 @@
+meta {
+  name: Get Connection
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns details for a single connection.
+}

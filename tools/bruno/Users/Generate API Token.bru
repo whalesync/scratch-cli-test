@@ -1,0 +1,18 @@
+meta {
+  name: Generate API Token
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/users/current/api-token
+  body: none
+  auth: inherit
+}
+
+docs {
+  Mints a fresh API token for the current user and returns { apiToken }. Use that
+  value as the collection's `apiToken` environment variable to authenticate the
+  rest of the collection. No request body. Regenerating invalidates the previous
+  token.
+}

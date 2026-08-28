@@ -1,0 +1,35 @@
+meta {
+  name: Create Fields
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/schema/fields
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "connectorAccountId": "{{connectorAccountId}}",
+    "remoteTableId": ["tbl_posts"],
+    "fields": [
+      {
+        "name": "Author Email",
+        "fieldType": { "kind": "email" }
+      }
+    ]
+  }
+}
+
+docs {
+  Adds one or more fields to an existing remote table (`remoteTableId`). Unlike
+  Create Tables, a `foreignKey` field here must point at an existing remote table
+  (`target.existingRemoteTableId`) — an in-request `{ ref }` target is rejected.
+  Returns a `not_supported` status until the connector opts into schema creation.
+}

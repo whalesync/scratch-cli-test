@@ -1,0 +1,27 @@
+meta {
+  name: Apply Sync Draft
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/sync-drafts/{{draftId}}/apply
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "createRoutine": false
+  }
+}
+
+docs {
+  Phase 2: apply the (materialized) draft into a live Sync. Body is optional — an
+  empty {} applies with defaults. `createRoutine` additionally writes a run routine
+  file for the new sync. Returns the created Sync.
+}

@@ -1,0 +1,15 @@
+meta {
+  name: List Invites
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/invites
+  body: none
+  auth: inherit
+}
+
+docs {
+  Lists all pending invites for a workbook.
+}

@@ -1,0 +1,16 @@
+meta {
+  name: Get Schema Paths
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/data-folder/{{dataFolderId}}/schema-paths
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the schema paths available for a data folder (e.g. `title`, `content`,
+  `metadata.author`), each with its type. Useful for building field mappings.
+}

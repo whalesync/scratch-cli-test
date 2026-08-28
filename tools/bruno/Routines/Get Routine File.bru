@@ -1,0 +1,20 @@
+meta {
+  name: Get Routine File
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/routines/file?path=routines/example.ts
+  body: none
+  auth: inherit
+}
+
+params:query {
+  path: routines/example.ts
+}
+
+docs {
+  Reads the raw text of one routine file (for the editor). `path` is required and
+  must point at a file under `routines/`.
+}

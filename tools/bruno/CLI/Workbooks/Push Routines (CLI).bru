@@ -1,0 +1,36 @@
+meta {
+  name: Push Routines (CLI)
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/routines/push
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "upserts": [
+      {
+        "path": "routines/daily-pull.yaml",
+        "content": "name: Daily Pull\nschedule: \"0 9 * * *\"\n"
+      }
+    ],
+    "deletes": [],
+    "baseHead": null
+  }
+}
+
+docs {
+  Batch-pushes routine YAML files (`scratchmd routines push`) to the config repo
+  `main`. `upserts` are created/edited files (each a `routines/*.yaml` path +
+  content); `deletes` are removed paths. Optional `baseHead` enables optimistic
+  concurrency — a stale push is refused with 409 `blocked_stale`. Returns
+  { head, routines }.
+}

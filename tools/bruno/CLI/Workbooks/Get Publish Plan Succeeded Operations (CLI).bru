@@ -1,0 +1,22 @@
+meta {
+  name: Get Publish Plan Succeeded Operations (CLI)
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/publish-v2/{{planId}}/succeeded-operations
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~pageSize: 20
+}
+
+docs {
+  The COMPLETE paginated set of successfully-published (`success`) operations for a
+  plan, one per file path. Used by the CLI's post-publish reconcile to drop each
+  shipped record's accepted patch. `page` / `pageSize` paginate.
+}

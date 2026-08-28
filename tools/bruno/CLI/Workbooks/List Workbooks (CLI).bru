@@ -1,0 +1,21 @@
+meta {
+  name: List Workbooks (CLI)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~sortBy: updatedAt
+  ~sortOrder: desc
+}
+
+docs {
+  Lists the authenticated user's workbooks (pending-delete workbooks excluded).
+  Optional `sortBy` = name | createdAt | updatedAt and `sortOrder` = asc | desc.
+}

@@ -1,0 +1,26 @@
+meta {
+  name: Pull Linked Table
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/linked/{{folderId}}/pull
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "mode": "full"
+  }
+}
+
+docs {
+  Pulls a single linked table. `mode` = full | incremental; omit for the safe `full`
+  default. Returns a pull job acknowledgement.
+}

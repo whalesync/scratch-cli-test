@@ -1,0 +1,16 @@
+meta {
+  name: Materialize Sync Draft
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/sync-drafts/{{draftId}}/materialize
+  body: none
+  auth: inherit
+}
+
+docs {
+  Phase 1: create any unresolved placeholder tables/fields for the draft
+  (idempotent, resumable). Returns { draft, results, status }.
+}

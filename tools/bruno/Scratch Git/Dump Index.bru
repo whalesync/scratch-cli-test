@@ -1,0 +1,20 @@
+meta {
+  name: Dump Index
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/index/dump
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+}
+
+docs {
+  Dumps the git file index for inspection. Pass `connectorAccountId` to select the
+  connection's repo.
+}

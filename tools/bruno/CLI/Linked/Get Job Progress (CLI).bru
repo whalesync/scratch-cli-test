@@ -1,0 +1,16 @@
+meta {
+  name: Get Job Progress (CLI)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/jobs/{{jobId}}/progress
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the progress/state of a background job (pull, publish, sync, ...) by id.
+  Used by the CLI to poll a job it enqueued.
+}

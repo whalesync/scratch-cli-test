@@ -1,0 +1,17 @@
+meta {
+  name: Health Check
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/health
+  body: none
+  auth: inherit
+}
+
+docs {
+  Server health status: { status, timestamp, service, build_version, in_cloud,
+  app_url, apptype }. Public (no auth required) — a good first request to confirm
+  the selected environment's host is reachable.
+}

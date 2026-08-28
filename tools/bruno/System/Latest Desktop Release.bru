@@ -1,0 +1,15 @@
+meta {
+  name: Latest Desktop Release
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/desktop-release/latest
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns metadata for the latest Scratch desktop app release. Public.
+}

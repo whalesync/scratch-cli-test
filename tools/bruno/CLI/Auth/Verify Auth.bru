@@ -1,0 +1,28 @@
+meta {
+  name: Verify Auth
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/auth/verify
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userCode": "ABCD-1234"
+  }
+}
+
+docs {
+  Approves a pending CLI authorization. Called from the web UI by the logged-in
+  user (guarded by the Scratch session auth, not the API token), passing the
+  `userCode` shown by the CLI. After this succeeds, the CLI's Poll Auth call flips
+  to `approved`.
+}

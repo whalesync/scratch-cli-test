@@ -1,0 +1,15 @@
+meta {
+  name: Remove Permission
+  type: http
+  seq: 19
+}
+
+delete {
+  url: {{baseUrl}}/workbook/{{workbookId}}/permission/{{permissionId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Removes a permission from a workbook. Returns 204.
+}

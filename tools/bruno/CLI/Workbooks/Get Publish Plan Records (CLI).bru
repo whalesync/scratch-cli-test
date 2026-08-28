@@ -1,0 +1,25 @@
+meta {
+  name: Get Publish Plan Records (CLI)
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/publish-v2/{{planId}}/records
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~pageSize: 20
+  ~dataFolderId: {{dataFolderId}}
+  ~phase:
+  ~filename:
+}
+
+docs {
+  Paginated records touched by a publish plan. Optional filters: `page` / `pageSize`
+  paginate; `dataFolderId` scopes to one folder; `phase` filters by pipeline phase;
+  `filename` filters by record filename.
+}

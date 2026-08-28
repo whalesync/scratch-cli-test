@@ -1,0 +1,15 @@
+meta {
+  name: Get API Quota
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/quota
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the connection's current API quota / rate-limit usage.
+}

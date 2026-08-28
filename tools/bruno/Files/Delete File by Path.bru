@@ -1,0 +1,19 @@
+meta {
+  name: Delete File by Path
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/files/by-path?path=/airtable/posts/rec123.json
+  body: none
+  auth: inherit
+}
+
+params:query {
+  path: /airtable/posts/rec123.json
+}
+
+docs {
+  Deletes a file identified by the `path` query param. Returns 204 No Content.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Report Bug
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/bugs/report
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "title": "Grid fails to load for large table",
+    "bugType": "ui",
+    "userDescription": "Opening the Airtable posts folder spins forever and never renders rows.",
+    "pageUrl": "https://app.scratch.md/workspace/wkb_123",
+    "workbookId": "{{workbookId}}"
+  }
+}
+
+docs {
+  Files a bug report (creates a Linear issue) and returns { issueId, link }. Every
+  field is optional. Gated behind the ENABLE_CREATE_BUG_REPORT feature flag —
+  returns 403 if the flag is off for your account.
+}

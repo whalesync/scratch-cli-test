@@ -1,0 +1,15 @@
+meta {
+  name: Get Organization Usage Summary
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/workbook/organization-usage-summary
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns a usage summary for the organization (record counts, limits, etc.).
+}

@@ -1,0 +1,16 @@
+meta {
+  name: Egress IP
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/egress-ip
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the server's external IP: { egress_ip, timestamp, service }. Useful for
+  verifying Cloud NAT static IP configuration. Public (no auth required).
+}

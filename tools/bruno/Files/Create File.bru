@@ -1,0 +1,30 @@
+meta {
+  name: Create File
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/files
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "new-document.md",
+    "parentFolderId": "{{dataFolderId}}",
+    "content": "# New Document\n\nContent here.",
+    "useTemplate": false
+  }
+}
+
+docs {
+  Creates a new file in the workbook. Only `name` (with extension) is required.
+  `parentFolderId` places it in a folder (null/omitted for workbook root),
+  `content` seeds initial content, and `useTemplate` uses the default template.
+}

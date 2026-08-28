@@ -1,0 +1,29 @@
+meta {
+  name: Create File
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/data-folder/{{dataFolderId}}/files
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "new-post.md",
+    "workbookId": "{{workbookId}}",
+    "useTemplate": true
+  }
+}
+
+docs {
+  Creates a new file inside a data folder. `name` (with extension) and
+  `workbookId` are required; `useTemplate` seeds default template content. Returns
+  a file reference.
+}

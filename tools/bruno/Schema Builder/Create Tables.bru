@@ -1,0 +1,47 @@
+meta {
+  name: Create Tables
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/schema/tables
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "connectorAccountId": "{{connectorAccountId}}",
+    "tables": [
+      {
+        "ref": "posts",
+        "name": "Posts",
+        "fields": [
+          {
+            "name": "Title",
+            "fieldType": { "kind": "text" },
+            "isPrimary": true
+          },
+          {
+            "name": "Published",
+            "fieldType": { "kind": "boolean" }
+          }
+        ]
+      }
+    ]
+  }
+}
+
+docs {
+  Creates one or more tables (each with its fields) on the remote service. `ref` is
+  a caller-assigned handle unique within the request (used to wire cross-table
+  foreign keys). Field types use the connector-agnostic logical vocabulary (text,
+  longText, number, boolean, date, select, multiSelect, url, email, phone,
+  currency, foreignKey). Returns a `not_supported` status until the connector opts
+  into schema creation.
+}

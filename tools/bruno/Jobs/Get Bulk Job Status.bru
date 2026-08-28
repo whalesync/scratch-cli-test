@@ -1,0 +1,25 @@
+meta {
+  name: Get Bulk Job Status
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/jobs/bulk-status
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "jobIds": ["{{jobId}}"]
+  }
+}
+
+docs {
+  Returns status for multiple jobs in one request. Body is { jobIds: string[] }.
+}

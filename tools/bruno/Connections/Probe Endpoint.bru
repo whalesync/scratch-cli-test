@@ -1,0 +1,28 @@
+meta {
+  name: Probe Endpoint
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/generic-api/{{connectorAccountId}}/probe-endpoint
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "endpointId": "list-posts"
+  }
+}
+
+docs {
+  GENERIC_API only. Probes one configured endpoint (walks the first two pages) and
+  returns the inferred probe result WITHOUT persisting — the client shows a status
+  line before creating the table. `endpointId` is required. Gated behind the
+  Generic API connector flag.
+}

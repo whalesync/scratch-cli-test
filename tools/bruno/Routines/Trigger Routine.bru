@@ -1,0 +1,26 @@
+meta {
+  name: Trigger Routine
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/routines/trigger
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "filePath": "routines/example.yaml"
+  }
+}
+
+docs {
+  Starts a manual run of one routine (identified by `filePath`). 409 if the
+  routine already has an active run. Returns the created RoutineRun.
+}

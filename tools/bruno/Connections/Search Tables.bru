@@ -1,0 +1,20 @@
+meta {
+  name: Search Tables
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/tables/search?searchTerm=posts
+  body: none
+  auth: inherit
+}
+
+params:query {
+  searchTerm: posts
+}
+
+docs {
+  Searches tables by name (for connectors that use search-based table discovery).
+  `searchTerm` is the query string.
+}

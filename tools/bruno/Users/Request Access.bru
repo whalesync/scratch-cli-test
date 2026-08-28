@@ -1,0 +1,16 @@
+meta {
+  name: Request Access
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/users/current/request-access
+  body: none
+  auth: inherit
+}
+
+docs {
+  Requests waitlist / dev access for the current user — posts a Slack notification
+  to the team with an approve link. No request body. Returns 204.
+}

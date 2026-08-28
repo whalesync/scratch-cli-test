@@ -1,0 +1,15 @@
+meta {
+  name: List Permissions
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/permissions
+  body: none
+  auth: inherit
+}
+
+docs {
+  Lists all permissions for a workbook.
+}

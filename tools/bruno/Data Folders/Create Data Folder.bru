@@ -1,0 +1,32 @@
+meta {
+  name: Create Data Folder
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/data-folder/create
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Blog Posts",
+    "workbookId": "{{workbookId}}",
+    "connectorAccountId": "{{connectorAccountId}}",
+    "tableId": ["tbl_posts"],
+    "parentFolderId": null
+  }
+}
+
+docs {
+  Creates a folder connected to an external data source. Only `name` and
+  `workbookId` are required. `connectorAccountId` + `tableId` bind the folder to a
+  connection table; `parentFolderId` nests it. Optional extras: `filter`,
+  `options`, `idFieldOverride`, `nameFieldOverride`, `triggerPull`.
+}

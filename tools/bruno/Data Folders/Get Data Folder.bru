@@ -1,0 +1,16 @@
+meta {
+  name: Get Data Folder
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/data-folder/{{dataFolderId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns data folder details, including its connector info, tableId, path, and
+  schema.
+}

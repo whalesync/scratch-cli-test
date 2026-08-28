@@ -1,0 +1,32 @@
+meta {
+  name: Update File by Path
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/files/by-path?path=/airtable/posts/rec123.json
+  body: json
+  auth: inherit
+}
+
+params:query {
+  path: /airtable/posts/rec123.json
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "renamed.json",
+    "content": "{\n  \"title\": \"Updated\"\n}"
+  }
+}
+
+docs {
+  Updates a file identified by the `path` query param. Both body fields are
+  optional: `name` renames the file, `content` replaces its contents. Returns 204
+  No Content.
+}

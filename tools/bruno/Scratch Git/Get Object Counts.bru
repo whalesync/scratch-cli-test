@@ -1,0 +1,21 @@
+meta {
+  name: Get Object Counts
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/object-counts
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+}
+
+docs {
+  Returns git object counts (loose/packed objects, etc.) for the repo — useful for
+  spotting repos that need a GC. Pass `connectorAccountId` to select the
+  connection's repo.
+}

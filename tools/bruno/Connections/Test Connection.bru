@@ -1,0 +1,16 @@
+meta {
+  name: Test Connection
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/test
+  body: none
+  auth: inherit
+}
+
+docs {
+  Tests whether the connection's stored credentials are valid. Returns
+  { health: "ok" } or { health: "error", error }. No request body.
+}

@@ -1,0 +1,30 @@
+meta {
+  name: Run Git GC
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/gc
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+}
+
+body:json {
+  {
+    "aggressive": false
+  }
+}
+
+docs {
+  Runs git garbage collection on the repo. `aggressive` (default false) triggers a
+  more thorough repack. Pass `connectorAccountId` to select the connection's repo.
+}

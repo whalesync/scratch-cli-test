@@ -1,0 +1,27 @@
+meta {
+  name: Sync One Record
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/{{syncId}}/sync-one-record
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "sourceFilePath": "/airtable/posts/rec123.json",
+    "sourceDataFolderId": "{{dataFolderId}}"
+  }
+}
+
+docs {
+  Syncs a single source record to its destination. Both `sourceFilePath` and
+  `sourceDataFolderId` are required. Returns { success, result }.
+}

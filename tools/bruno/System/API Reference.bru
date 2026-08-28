@@ -1,0 +1,16 @@
+meta {
+  name: API Reference
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/discover/api-reference
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the full REST API reference as markdown (the same content as
+  server/src/assets/api-reference.md). Public.
+}

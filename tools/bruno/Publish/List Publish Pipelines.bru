@@ -1,0 +1,22 @@
+meta {
+  name: List Publish Pipelines
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2?connectorAccountId={{connectorAccountId}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  connectorAccountId: {{connectorAccountId}}
+  ~page: 1
+  ~pageSize: 20
+}
+
+docs {
+  Lists publish pipelines for a workbook. Optional `connectorAccountId` filters to
+  one connection; `page` / `pageSize` paginate.
+}

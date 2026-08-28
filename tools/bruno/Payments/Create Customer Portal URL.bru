@@ -1,0 +1,30 @@
+meta {
+  name: Create Customer Portal URL
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/payment/portal
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "portalType": "manage_payment_methods",
+    "returnPath": "/settings/billing"
+  }
+}
+
+docs {
+  Returns a Stripe customer portal URL ({ url }) for managing an existing
+  subscription. All fields optional: `portalType` (cancel_subscription |
+  update_subscription | manage_payment_methods), `returnPath`, and — for
+  update_subscription — `planType` + `billingInterval` to open on a
+  confirm-this-change page.
+}

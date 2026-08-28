@@ -1,0 +1,27 @@
+meta {
+  name: Create Routine File
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/routines/file
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "path": "routines/example.yaml",
+    "content": "name: Example routine\nschedule: '0 9 * * *'\nsteps: []\n"
+  }
+}
+
+docs {
+  Creates a new routine YAML file. `path` must be a single `.yaml`/`.yml` file
+  directly under `routines/`. Rejects a duplicate path (409) or invalid YAML (400).
+}

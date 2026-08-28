@@ -1,0 +1,16 @@
+meta {
+  name: Refresh Data Folder Schema
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/data-folder/{{dataFolderId}}/refresh-schema
+  body: none
+  auth: inherit
+}
+
+docs {
+  Re-fetches the schema for a data folder from the external service. No request
+  body. 404 if no schema can be derived.
+}

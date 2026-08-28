@@ -1,0 +1,21 @@
+meta {
+  name: Resolve File References
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/files/resolve-references?path=/airtable/posts/rec123.json
+  body: none
+  auth: inherit
+}
+
+params:query {
+  path: /airtable/posts/rec123.json
+  ~branch: main
+}
+
+docs {
+  Resolves foreign-key values in a file to their referenced file paths. `path` is
+  required; `branch` defaults to the working (dirty) branch.
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Get Graph
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/graph
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+  ~useConfigRepo: true
+}
+
+docs {
+  Returns the commit graph for the repo. Default is the connection repo (pass
+  `connectorAccountId`); `useConfigRepo=true` targets the workbook config repo.
+}

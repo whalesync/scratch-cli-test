@@ -1,0 +1,15 @@
+meta {
+  name: Delete Connection (CLI)
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/connections/{{connectorAccountId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Removes a connection from the workbook. Returns 204.
+}

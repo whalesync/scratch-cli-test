@@ -1,0 +1,42 @@
+meta {
+  name: Update Sync (CLI)
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/syncs/{{syncId}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "displayName": "My Sync",
+    "validateMappings": true,
+    "mappings": {
+      "version": 1,
+      "tableMappings": [
+        {
+          "sourceDataFolderId": "{{dataFolderId}}",
+          "destinationDataFolderId": "dfld_destination",
+          "columnMappings": [
+            {
+              "sourceColumnId": "name",
+              "destinationColumnId": "Name"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+
+docs {
+  Updates a sync's definition (same `SaveSyncBody` shape as Create Sync). See Create
+  Sync for the abbreviated-`mappings` note.
+}

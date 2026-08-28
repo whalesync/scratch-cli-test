@@ -1,0 +1,15 @@
+meta {
+  name: List Routines
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/routines
+  body: none
+  auth: inherit
+}
+
+docs {
+  Lists all routines defined in the workbook.
+}

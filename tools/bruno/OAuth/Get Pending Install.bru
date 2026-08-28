@@ -1,0 +1,16 @@
+meta {
+  name: Get Pending Install
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/oauth/pending-install/{{installId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns public metadata about a pending inbound install (service, display name,
+  workspace id, expiry). Never returns tokens.
+}

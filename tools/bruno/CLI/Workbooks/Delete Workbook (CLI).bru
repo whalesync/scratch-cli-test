@@ -1,0 +1,21 @@
+meta {
+  name: Delete Workbook (CLI)
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}?force=false
+  body: none
+  auth: inherit
+}
+
+params:query {
+  force: false
+}
+
+docs {
+  Deletes a workbook. Default (`force=false`) schedules an async hard-delete and
+  returns `{ status: 'deletion_scheduled' }`. `force=true` (admin-only in
+  production) deletes synchronously and returns `{ status: 'deleted' }`.
+}

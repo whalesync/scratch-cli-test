@@ -1,0 +1,15 @@
+meta {
+  name: List Syncs
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns all syncs for a workbook.
+}

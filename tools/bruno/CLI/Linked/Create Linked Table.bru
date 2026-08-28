@@ -1,0 +1,29 @@
+meta {
+  name: Create Linked Table
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/linked
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Blog Posts",
+    "connectorAccountId": "{{connectorAccountId}}",
+    "tableId": ["appXXXXXXXX", "tblYYYYYYYY"]
+  }
+}
+
+docs {
+  Links a table into the workbook as a data folder. Required: `name`,
+  `connectorAccountId`, and `tableId` (the connector's composite remote table id, as
+  a string array). Optional `filter` scopes which records are pulled.
+}

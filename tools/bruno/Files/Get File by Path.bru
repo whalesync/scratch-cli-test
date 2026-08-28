@@ -1,0 +1,19 @@
+meta {
+  name: Get File by Path
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/files/by-path?path=/airtable/posts/rec123.json
+  body: none
+  auth: inherit
+}
+
+params:query {
+  path: /airtable/posts/rec123.json
+}
+
+docs {
+  Returns a single file by its full path, including its content and timestamps.
+}

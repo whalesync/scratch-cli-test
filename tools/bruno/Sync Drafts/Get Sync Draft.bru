@@ -1,0 +1,15 @@
+meta {
+  name: Get Sync Draft
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/sync-drafts/{{draftId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns a sync draft by ID.
+}

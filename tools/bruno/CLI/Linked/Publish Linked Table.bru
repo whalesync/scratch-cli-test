@@ -1,0 +1,17 @@
+meta {
+  name: Publish Linked Table
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/linked/{{folderId}}/publish
+  body: none
+  auth: inherit
+}
+
+docs {
+  Publishes a single linked table's changes to the external service via the
+  publish-v2 pipeline (combined plan + run). No body. Requires the user's
+  `cliCanPublish` setting to be enabled. Returns { jobId }.
+}

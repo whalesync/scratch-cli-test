@@ -1,0 +1,26 @@
+meta {
+  name: Pull Linked Table Files
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/linked/{{folderId}}/pull-files
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "filePaths": ["/airtable/posts/rec123.json"]
+  }
+}
+
+docs {
+  Pulls specific records (by full path) for one linked table. `filePaths` must have
+  at least one entry. Returns { jobId }.
+}

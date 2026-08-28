@@ -1,0 +1,20 @@
+meta {
+  name: Run Sync
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/{{syncId}}/run?pullFirst=true
+  body: none
+  auth: inherit
+}
+
+params:query {
+  pullFirst: true
+}
+
+docs {
+  Manually triggers a sync run. `pullFirst=true` enqueues a pull-then-sync job;
+  omit it (or set false) for sync-only. Returns { success, jobId, message }.
+}

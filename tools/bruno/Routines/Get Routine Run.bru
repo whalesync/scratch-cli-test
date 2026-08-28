@@ -1,0 +1,20 @@
+meta {
+  name: Get Routine Run
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/routine-runs/{{runId}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~includeJobs: true
+}
+
+docs {
+  Returns one routine run. `includeJobs=true` includes each step's job (in the
+  `/jobs` wire shape).
+}

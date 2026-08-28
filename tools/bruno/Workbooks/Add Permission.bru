@@ -1,0 +1,27 @@
+meta {
+  name: Add Permission
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/permissions/add
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "email": "user@example.com",
+    "role": "editor"
+  }
+}
+
+docs {
+  Adds a permission to a workbook. Provide either `userId` or `email` — if the user
+  has no account, an invite is created instead. `role` e.g. editor | viewer.
+}

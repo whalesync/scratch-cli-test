@@ -1,0 +1,29 @@
+meta {
+  name: Run Publish Job (CLI)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/publish-v2/run-job
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "pipelineId": "{{planId}}"
+  }
+}
+
+docs {
+  Runs a publish pipeline previously created by Plan Publish Job. `pipelineId` is
+  required — it is the id returned as `pipelineId` from plan-job (the same id the Get
+  Publish Plan routes take as `{{planId}}`). Optional `executeSinglePhase` runs just
+  the next phase; `publishOrigin` (web | desktop) routes post-publish reconcile.
+  Returns { jobId }.
+}

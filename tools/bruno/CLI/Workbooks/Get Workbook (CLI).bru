@@ -1,0 +1,16 @@
+meta {
+  name: Get Workbook (CLI)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the workbook plus its connector accounts (each with a per-connection git
+  URL and data folders) and the config/scratch git URLs the CLI clones.
+}

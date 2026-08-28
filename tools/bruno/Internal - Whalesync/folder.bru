@@ -1,0 +1,22 @@
+meta {
+  name: Internal - Whalesync
+  seq: 20
+}
+
+headers {
+  X-Scratch-Admin-Token: {{adminToken}}
+}
+
+docs {
+  Internal, admin-only server-to-server channel (`/internal/whalesync/*`) that
+  Bottlenose/Whalesync uses to provision shadow users and mint session tokens.
+
+  These endpoints use a DIFFERENT auth pattern than the rest of the collection:
+  the shared-secret header `X-Scratch-Admin-Token` (added here at the folder level),
+  compared against the server's `SCRATCH_ADMIN_API_KEY`. Set the secret `adminToken`
+  environment variable to that key. There is no user session — each endpoint acts on
+  the user named by `whalesyncUserId` in the request body/path.
+
+  (The collection's inherited `Authorization: API-Token` header is ignored by these
+  routes, so it is harmless that it is still sent.)
+}

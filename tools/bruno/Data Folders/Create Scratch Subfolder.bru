@@ -1,0 +1,27 @@
+meta {
+  name: Create Scratch Subfolder
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/data-folder/{{dataFolderId}}/scratch-subfolders
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "path": "drafts",
+    "workbookId": "{{workbookId}}"
+  }
+}
+
+docs {
+  Creates a scratch subfolder under a data folder. `path` is the subfolder path to
+  create; `workbookId` is required. Returns 204 No Content.
+}

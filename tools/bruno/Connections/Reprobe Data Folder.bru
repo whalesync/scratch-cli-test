@@ -1,0 +1,18 @@
+meta {
+  name: Reprobe Data Folder
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/generic-api/data-folders/{{dataFolderId}}/reprobe
+  body: none
+  auth: inherit
+}
+
+docs {
+  GENERIC_API only. Re-runs the probe for an existing data folder and diffs it
+  against the persisted probe. Applies silent changes immediately; on idPath drift
+  returns { applied: false, diff, newProbe } for the client to confirm. No request
+  body.
+}

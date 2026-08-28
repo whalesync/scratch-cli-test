@@ -1,0 +1,25 @@
+meta {
+  name: Get Pipeline Operations
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/{{pipelineId}}/operations
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~pageSize: 20
+  ~phase:
+  ~filePath:
+  ~hasError: true
+}
+
+docs {
+  Lists the individual operations within a publish pipeline. Optional filters:
+  `page` / `pageSize` paginate; `phase` filters by pipeline phase; `filePath`
+  filters to one record; `hasError=true` returns only failed operations.
+}

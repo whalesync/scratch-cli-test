@@ -1,0 +1,21 @@
+meta {
+  name: List Routine Runs
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/routine-runs
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~routineFilePath: routines/example.yaml
+  ~includeJobs: true
+}
+
+docs {
+  Lists routine runs for the workbook. Optional filters: `routineFilePath` scopes
+  to one routine; `includeJobs=true` includes each run's steps and their jobs.
+}

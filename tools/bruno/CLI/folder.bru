@@ -1,0 +1,15 @@
+meta {
+  name: CLI
+  seq: 19
+}
+
+headers {
+  User-Agent: Scratch-cli/1.0
+}
+
+docs {
+  The scratchmd CLI surface (`/cli/v1/*`). These routes require a User-Agent that
+  identifies a Scratch client — added here at the folder level. The collection's
+  inherited `Authorization: API-Token` header still applies (most CLI routes load
+  the user from it; the auth initiate/poll routes only need the User-Agent).
+}

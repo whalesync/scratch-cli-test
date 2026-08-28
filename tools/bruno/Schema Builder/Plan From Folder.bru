@@ -1,0 +1,33 @@
+meta {
+  name: Plan From Folder
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/schema/plan-from-folder
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "sources": [
+      {
+        "dataFolderId": "{{dataFolderId}}"
+      }
+    ],
+    "destinationConnectorAccountId": "{{connectorAccountId}}"
+  }
+}
+
+docs {
+  Read-only: derives an editable create-tables plan from one or more existing
+  source DataFolders, targeting `destinationConnectorAccountId`. Each source may
+  set `newTableName` or `existingDestinationDataFolderId` (turning it into an
+  add-fields plan). Returns a CreateSchemaTables body plus per-field notes.
+}

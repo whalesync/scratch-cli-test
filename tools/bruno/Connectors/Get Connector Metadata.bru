@@ -1,0 +1,16 @@
+meta {
+  name: Get Connector Metadata
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/connectors/metadata
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns metadata for every connector (display names, supported auth methods,
+  setup guides, etc.), keyed by service. Public.
+}

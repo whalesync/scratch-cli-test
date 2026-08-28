@@ -1,0 +1,20 @@
+meta {
+  name: Rebase Dirty
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/rebase
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+}
+
+docs {
+  Rebases the repo's dirty (uncommitted) changes onto the latest main. Pass
+  `connectorAccountId` to select the connection's repo.
+}

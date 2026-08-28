@@ -1,0 +1,26 @@
+meta {
+  name: Discard Changes
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/discard-changes
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "path": "/airtable/blog-posts/rec123.json"
+  }
+}
+
+docs {
+  Discards uncommitted changes, reverting files to their last committed state.
+  `path` is optional — omit to discard all changes in the workbook.
+}

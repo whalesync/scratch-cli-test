@@ -1,0 +1,16 @@
+meta {
+  name: Reset Connection
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/reset
+  body: none
+  auth: inherit
+}
+
+docs {
+  Resets the connection state (clears cached auth / health so it re-initializes on
+  next use). No request body. Returns 204.
+}

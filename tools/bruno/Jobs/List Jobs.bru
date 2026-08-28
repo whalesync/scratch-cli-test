@@ -1,0 +1,26 @@
+meta {
+  name: List Jobs
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/jobs?workbookId={{workbookId}}&limit=50
+  body: none
+  auth: inherit
+}
+
+params:query {
+  workbookId: {{workbookId}}
+  limit: 50
+  ~offset: 0
+  ~type:
+  ~syncId:
+  ~dataFolderId: {{dataFolderId}}
+}
+
+docs {
+  Lists jobs. With `workbookId` set, returns that workbook's jobs (requires read
+  access); without it, returns the authenticated user's jobs. Optional `limit`
+  (default 50) / `offset` paginate; `type`, `syncId`, `dataFolderId` filter.
+}

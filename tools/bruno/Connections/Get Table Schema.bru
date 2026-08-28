@@ -1,0 +1,21 @@
+meta {
+  name: Get Table Schema
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/tables/schema?tableRemoteId=base_xyz,tbl_abc
+  body: none
+  auth: inherit
+}
+
+params:query {
+  tableRemoteId: base_xyz,tbl_abc
+}
+
+docs {
+  Returns a preview of a table's schema (columns / field types). `tableRemoteId` is
+  the connector's remote id — comma-separated when the id has multiple parts (e.g.
+  Airtable `baseId,tableId`).
+}

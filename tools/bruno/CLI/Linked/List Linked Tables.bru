@@ -1,0 +1,16 @@
+meta {
+  name: List Linked Tables
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/linked
+  body: none
+  auth: inherit
+}
+
+docs {
+  Lists the workbook's linked tables (data folders backed by a connector), grouped
+  by connector base.
+}

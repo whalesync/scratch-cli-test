@@ -1,0 +1,15 @@
+meta {
+  name: Get Pipeline by Job ID
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/by-job/{{jobId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the publish pipeline associated with a specific plan/run job id.
+}

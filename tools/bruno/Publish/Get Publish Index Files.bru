@@ -1,0 +1,21 @@
+meta {
+  name: Get Publish Index Files
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/index/files
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~pageSize: 20
+}
+
+docs {
+  Returns the publish index of files, showing what has been published. `page` /
+  `pageSize` paginate.
+}

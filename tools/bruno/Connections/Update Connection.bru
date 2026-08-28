@@ -1,0 +1,29 @@
+meta {
+  name: Update Connection
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "displayName": "Updated Name",
+    "userProvidedParams": {
+      "apiKey": "new_pat_xxxxx"
+    }
+  }
+}
+
+docs {
+  Updates a connection. All fields optional: `displayName`, `userProvidedParams`
+  (credentials to re-encrypt), `modifier`, and `extras`.
+}

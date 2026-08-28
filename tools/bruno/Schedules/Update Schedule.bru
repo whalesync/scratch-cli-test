@@ -1,0 +1,29 @@
+meta {
+  name: Update Schedule
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/schedules/{{scheduleId}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Updated schedule name",
+    "cronExpression": "0 3 * * *",
+    "enabled": false
+  }
+}
+
+docs {
+  Partial update of a schedule. All fields optional: `name`, `cronExpression`,
+  `timezone` (string or null to change; omit to leave unchanged), `enabled`. The
+  action/entity a schedule targets cannot be changed.
+}

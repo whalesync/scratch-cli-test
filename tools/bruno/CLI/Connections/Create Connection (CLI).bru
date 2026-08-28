@@ -1,0 +1,33 @@
+meta {
+  name: Create Connection (CLI)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/connections
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "service": "webflow",
+    "displayName": "My Webflow",
+    "userProvidedParams": {
+      "apiKey": "wf_xxxxx"
+    }
+  }
+}
+
+docs {
+  Creates a connection from user-provided credentials (the CLI always uses the
+  user-provided-params auth type — there is no `authType` field). `service` and
+  `userProvidedParams` are required; `userProvidedParams` keys vary by service
+  (e.g. Webflow `{apiKey}`, Shopify `{shopDomain, apiKey}`, WordPress
+  `{endpoint, username, password}`). `displayName` is optional.
+}

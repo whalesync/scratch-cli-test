@@ -1,0 +1,18 @@
+meta {
+  name: Initiate Auth
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/auth/initiate
+  body: none
+  auth: inherit
+}
+
+docs {
+  Starts the device-authorization flow (like `gcloud auth login`). Requires only the
+  folder's `User-Agent` header — no request body and no user session. Returns a
+  `userCode` (shown to the user), a `pollingCode` (used by Poll Auth), a
+  `verificationUrl`, and expiry/interval hints.
+}

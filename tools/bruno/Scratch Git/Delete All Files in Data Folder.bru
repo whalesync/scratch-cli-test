@@ -1,0 +1,20 @@
+meta {
+  name: Delete All Files in Data Folder
+  type: http
+  seq: 13
+}
+
+delete {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/data-folder/files?path=/airtable/posts
+  body: none
+  auth: inherit
+}
+
+params:query {
+  path: /airtable/posts
+}
+
+docs {
+  Deletes every file in the given data folder from the connection's repo. `path`
+  is required and must match a DataFolder linked to a connection.
+}

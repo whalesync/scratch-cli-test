@@ -1,0 +1,16 @@
+meta {
+  name: Get Job Progress
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/jobs/{{jobId}}/progress
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns detailed progress for a job (state + publicProgress, including per-folder
+  breakdown for pulls).
+}

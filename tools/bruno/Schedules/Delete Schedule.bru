@@ -1,0 +1,15 @@
+meta {
+  name: Delete Schedule
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/schedules/{{scheduleId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Deletes a schedule.
+}

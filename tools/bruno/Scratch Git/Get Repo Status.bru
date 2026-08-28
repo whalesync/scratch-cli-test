@@ -1,0 +1,21 @@
+meta {
+  name: Get Repo Status
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/git-status
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+}
+
+docs {
+  Lists dirty (uncommitted) files across the workbook's per-connection repos, each
+  tagged with its source `connectorAccountId`. Pass `connectorAccountId` to scope
+  to one connection.
+}

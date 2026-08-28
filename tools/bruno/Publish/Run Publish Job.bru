@@ -1,0 +1,28 @@
+meta {
+  name: Run Publish Job
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/run-job
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "pipelineId": "{{pipelineId}}"
+  }
+}
+
+docs {
+  Executes a previously planned publish pipeline. `pipelineId` is required.
+  Optional `executeSinglePhase` runs just the next phase; optional `publishOrigin`
+  (`web` | `desktop`) routes how a record's failed edit is reconciled after publish
+  (absent ⇒ `web`). Returns { jobId }.
+}

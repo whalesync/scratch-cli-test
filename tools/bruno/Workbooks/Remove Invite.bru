@@ -1,0 +1,15 @@
+meta {
+  name: Remove Invite
+  type: http
+  seq: 20
+}
+
+delete {
+  url: {{baseUrl}}/workbook/{{workbookId}}/invite/{{inviteId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Removes a pending invite from a workbook. Returns 204.
+}

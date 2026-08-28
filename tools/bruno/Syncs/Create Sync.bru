@@ -1,0 +1,47 @@
+meta {
+  name: Create Sync
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "displayName": "Blog to Webflow",
+    "validateMappings": true,
+    "mappings": {
+      "version": 1,
+      "tableMappings": [
+        {
+          "sourceDataFolderId": "dfolder_airtable",
+          "destinationDataFolderId": "dfolder_webflow",
+          "columnMappings": [
+            { "sourceColumnId": "title", "destinationColumnId": "name" },
+            { "sourceColumnId": "body", "destinationColumnId": "content" },
+            { "sourceColumnId": "slug", "destinationColumnId": "slug" }
+          ],
+          "recordMatching": {
+            "sourceColumnId": "id",
+            "destinationColumnId": "airtable_id"
+          }
+        }
+      ]
+    }
+  }
+}
+
+docs {
+  Creates a new sync between folders (SaveSyncBody). `mappings` accepts the v1
+  (shown) or v2 shape; the server normalizes v1 to v2 before persisting.
+  `displayName`, `mappings`, and `validateMappings` are required. Optional:
+  `schedule` (cron), `scheduleTimezone` (IANA tz or null), `publishAfterSync`.
+}

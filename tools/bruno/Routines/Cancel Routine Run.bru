@@ -1,0 +1,16 @@
+meta {
+  name: Cancel Routine Run
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/routine-runs/{{runId}}/cancel
+  body: none
+  auth: inherit
+}
+
+docs {
+  Cancels a running routine run (stops its in-flight step's job). A write —
+  asserts the workbook is writable. Returns the updated RoutineRun.
+}

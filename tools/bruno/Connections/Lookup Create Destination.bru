@@ -1,0 +1,20 @@
+meta {
+  name: Lookup Create Destination
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/create-destinations/lookup?destinationId=base_xyz
+  body: none
+  auth: inherit
+}
+
+params:query {
+  destinationId: base_xyz
+}
+
+docs {
+  Looks up a single create-destination by its id. `destinationId` is required
+  (returns 400 if blank).
+}

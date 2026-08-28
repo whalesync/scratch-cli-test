@@ -1,0 +1,22 @@
+meta {
+  name: Download Folder
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/files/download?folderId={{dataFolderId}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  folderId: {{dataFolderId}}
+  ~branch: main
+}
+
+docs {
+  Downloads all files in a data folder as a ZIP archive. Responds with a
+  `application/zip` attachment stream (not JSON). `folderId` selects the folder;
+  `branch` defaults to the working (dirty) branch.
+}

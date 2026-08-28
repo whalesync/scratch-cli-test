@@ -1,0 +1,15 @@
+meta {
+  name: Cancel Job
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/jobs/{{jobId}}/cancel
+  body: none
+  auth: inherit
+}
+
+docs {
+  Cancels a running job. No request body. Returns { success, message }.
+}

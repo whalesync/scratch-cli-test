@@ -1,0 +1,16 @@
+meta {
+  name: Get Data Folder Schema
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/data-folder/{{dataFolderId}}/schema
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the stored schema for a data folder, describing the structure and fields
+  of its records. 404 if no schema has been derived yet.
+}

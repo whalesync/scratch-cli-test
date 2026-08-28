@@ -1,0 +1,33 @@
+meta {
+  name: Test Transformer
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/sync/transformers/test
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "workbookId": "{{workbookId}}",
+    "fileId": "/airtable/posts/rec123.json",
+    "path": "fields.title",
+    "transformerConfig": {
+      "type": "slugify"
+    }
+  }
+}
+
+docs {
+  Tests a transformer against a real file's value without running a sync. `fileId`
+  is the record's full file path; `path` is a lodash path into the file's JSON
+  (e.g. fields.title); `transformerConfig.type` is a transformer type (e.g.
+  slugify). Returns { success, value, error?, originalValue? }.
+}

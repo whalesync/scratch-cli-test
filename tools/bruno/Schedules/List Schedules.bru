@@ -1,0 +1,15 @@
+meta {
+  name: List Schedules
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/schedules
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns all schedules for a workbook.
+}

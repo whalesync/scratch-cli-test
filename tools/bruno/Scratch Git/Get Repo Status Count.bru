@@ -1,0 +1,20 @@
+meta {
+  name: Get Repo Status Count
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/git-status-count
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+}
+
+docs {
+  Returns { count } — total dirty file count summed across the workbook's
+  per-connection repos. Pass `connectorAccountId` to scope to one connection.
+}

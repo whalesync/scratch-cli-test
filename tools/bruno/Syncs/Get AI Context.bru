@@ -1,0 +1,16 @@
+meta {
+  name: Get AI Context
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/ai-context
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns a markdown AI/LLM context document describing the workbook's syncs (for
+  external agents). Response: { markdown }.
+}

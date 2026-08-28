@@ -1,0 +1,16 @@
+meta {
+  name: List Create Destinations
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/create-destinations
+  body: none
+  auth: inherit
+}
+
+docs {
+  Lists the destinations (e.g. bases / sites) into which new records can be created
+  on this connection.
+}

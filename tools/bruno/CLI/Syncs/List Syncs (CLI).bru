@@ -1,0 +1,15 @@
+meta {
+  name: List Syncs (CLI)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/syncs
+  body: none
+  auth: inherit
+}
+
+docs {
+  Lists all syncs defined in the workbook.
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Get File Diff
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/git-diff?path=/airtable/posts/rec123.json
+  body: none
+  auth: inherit
+}
+
+params:query {
+  path: /airtable/posts/rec123.json
+  ~connectorAccountId: {{connectorAccountId}}
+}
+
+docs {
+  Returns the diff for one file (working tree vs last commit). `path` is required.
+  Pass `connectorAccountId` to select the connection's repo.
+}

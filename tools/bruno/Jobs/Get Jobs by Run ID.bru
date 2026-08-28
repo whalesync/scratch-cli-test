@@ -1,0 +1,16 @@
+meta {
+  name: Get Jobs by Run ID
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/jobs/run/{{runId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the jobs for a given run id (an alternative identifier used by some job
+  types, e.g. sync runs).
+}

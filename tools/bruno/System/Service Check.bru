@@ -1,0 +1,16 @@
+meta {
+  name: Service Check
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/service-check
+  body: none
+  auth: inherit
+}
+
+docs {
+  Tests connections to Redis and the scratch-git service. Returns per-service
+  status (ok / error / not_enabled). Public (no auth required).
+}

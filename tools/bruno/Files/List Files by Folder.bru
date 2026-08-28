@@ -1,0 +1,22 @@
+meta {
+  name: List Files by Folder
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/files/list/by-folder?folderId={{dataFolderId}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  folderId: {{dataFolderId}}
+  ~cursor:
+  ~limit: 100
+}
+
+docs {
+  Lists files in a specific data folder (paginated). `folderId` selects the folder;
+  `cursor` and `limit` page through results.
+}

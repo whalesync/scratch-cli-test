@@ -1,0 +1,17 @@
+meta {
+  name: Current User
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/users/current
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the authenticated user, including resolved client feature flags, billable
+  action counts (e.g. monthly publish count), and the minimum supported desktop
+  client version.
+}

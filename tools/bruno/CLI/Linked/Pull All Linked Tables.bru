@@ -1,0 +1,26 @@
+meta {
+  name: Pull All Linked Tables
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/linked/pull-all
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "mode": "full"
+  }
+}
+
+docs {
+  Pulls every linked table in the workbook. `mode` = full | incremental; omit for
+  the safe `full` default. Returns a pull job acknowledgement.
+}

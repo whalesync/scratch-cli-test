@@ -1,0 +1,15 @@
+meta {
+  name: List Data Folders
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/data-folders/list
+  body: none
+  auth: inherit
+}
+
+docs {
+  Lists all folders in a workbook, grouped by connection.
+}

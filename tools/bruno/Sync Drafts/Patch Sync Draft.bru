@@ -1,0 +1,31 @@
+meta {
+  name: Patch Sync Draft
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/sync-drafts/{{draftId}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "version": 0,
+    "displayName": "My Sync",
+    "schedule": "0 */6 * * *",
+    "publishAfterSync": false
+  }
+}
+
+docs {
+  Replace-merge the draft's editable contents. `version` is the required optimistic
+  concurrency token the client last saw (a mismatch is a 409). Only provided keys
+  are written; set `schedule` to null to clear it. `tableMappings` (the large
+  structured draft-mappings shape) is omitted here for brevity.
+}

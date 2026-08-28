@@ -1,0 +1,16 @@
+meta {
+  name: List Tables (CLI)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/tables
+  body: none
+  auth: inherit
+}
+
+docs {
+  Lists the tables/collections available from the connection (with discovery mode
+  and any per-table disabled flags).
+}

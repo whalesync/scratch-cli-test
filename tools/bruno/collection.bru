@@ -1,0 +1,24 @@
+headers {
+  Authorization: API-Token {{apiToken}}
+}
+
+auth {
+  mode: none
+}
+
+docs {
+  # Scratch API
+
+  A testing collection for the Scratch REST API. Every request inherits the
+  collection-level `Authorization: API-Token {{apiToken}}` header above, which
+  authenticates against the server's `APITokenStrategy`.
+
+  1. Pick an environment (Local / Test / Production) from the top-right selector.
+  2. Set the secret `apiToken` variable for that environment (see README.md for
+     how to mint one).
+  3. Fill in path variables ({{workbookId}}, {{connectorAccountId}}, ...) for the
+     request you want to run.
+
+  See README.md in this folder for full setup instructions, the list of path
+  variables, and notes on the CLI / Internal groups (which use extra headers).
+}

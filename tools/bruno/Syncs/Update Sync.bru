@@ -1,0 +1,44 @@
+meta {
+  name: Update Sync
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/{{syncId}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "displayName": "Updated Sync Name",
+    "validateMappings": true,
+    "mappings": {
+      "version": 1,
+      "tableMappings": [
+        {
+          "sourceDataFolderId": "dfolder_airtable",
+          "destinationDataFolderId": "dfolder_webflow",
+          "columnMappings": [
+            { "sourceColumnId": "title", "destinationColumnId": "name" },
+            { "sourceColumnId": "body", "destinationColumnId": "content" }
+          ],
+          "recordMatching": {
+            "sourceColumnId": "id",
+            "destinationColumnId": "airtable_id"
+          }
+        }
+      ]
+    }
+  }
+}
+
+docs {
+  Updates an existing sync configuration. Same body shape as Create Sync
+  (SaveSyncBody). Returns the updated sync.
+}

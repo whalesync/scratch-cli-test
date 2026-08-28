@@ -1,0 +1,30 @@
+meta {
+  name: Validate Mapping Type
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/validate-mapping-type
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "sourceFolderId": "dfolder_source",
+    "destFolderId": "dfolder_dest",
+    "sourceColumnId": "title",
+    "destinationColumnId": "name",
+    "transformers": []
+  }
+}
+
+docs {
+  Admin only. Traces a type through one mapping's transformer pipeline. Returns
+  { sourceType, steps, destinationType, validation }.
+}

@@ -1,0 +1,20 @@
+meta {
+  name: Has Dirty Files
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/git-has-dirty
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+}
+
+docs {
+  Returns { dirty } — whether any per-connection repo has uncommitted changes.
+  Pass `connectorAccountId` to scope to one connection.
+}

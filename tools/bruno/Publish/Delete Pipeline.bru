@@ -1,0 +1,15 @@
+meta {
+  name: Delete Pipeline
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/{{pipelineId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Deletes a publish pipeline and its associated plan/operation records.
+}

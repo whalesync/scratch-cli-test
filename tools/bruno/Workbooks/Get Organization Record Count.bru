@@ -1,0 +1,15 @@
+meta {
+  name: Get Organization Record Count
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/workbook/record-count/total
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns the total record count across all of the organization's workbooks.
+}

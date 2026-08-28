@@ -1,0 +1,22 @@
+meta {
+  name: Get Publish Index Assets
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/index/assets
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~dataFolderId: {{dataFolderId}}
+  ~page: 1
+  ~pageSize: 20
+}
+
+docs {
+  Returns the publish index of assets. Optional `dataFolderId` scopes to one
+  folder; `page` / `pageSize` paginate.
+}

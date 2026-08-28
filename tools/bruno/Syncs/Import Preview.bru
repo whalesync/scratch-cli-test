@@ -1,0 +1,27 @@
+meta {
+  name: Import Preview
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/import-preview
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "whalesyncApiToken": "wsk_example_token",
+    "coreBaseId": "base_abc"
+  }
+}
+
+docs {
+  Previews importing syncs from a Whalesync core base without creating them.
+  Returns { syncs, caveats, unmatchedFolders }.
+}

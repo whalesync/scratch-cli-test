@@ -1,0 +1,27 @@
+meta {
+  name: Get or Create Sync Draft
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/sync-drafts
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "fromSyncId": "{{syncId}}"
+  }
+}
+
+docs {
+  Get-or-create the active sync draft for a workbook (idempotent, 200).
+  `fromSyncId` is optional — set it to edit an existing sync; omit it to start an
+  empty draft for a brand-new sync.
+}

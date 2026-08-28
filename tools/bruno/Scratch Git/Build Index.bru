@@ -1,0 +1,20 @@
+meta {
+  name: Build Index
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/index/build
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+}
+
+docs {
+  Rebuilds the git file index for the repo. Returns { count }. Pass
+  `connectorAccountId` to select the connection's repo.
+}

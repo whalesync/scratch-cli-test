@@ -1,0 +1,15 @@
+meta {
+  name: Reset Workbook
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/reset
+  body: none
+  auth: inherit
+}
+
+docs {
+  Resets the workbook, clearing its state.
+}

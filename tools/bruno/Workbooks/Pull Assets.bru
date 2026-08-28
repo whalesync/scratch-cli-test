@@ -1,0 +1,25 @@
+meta {
+  name: Pull Assets
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/pull-assets
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "dataFolderId": "{{dataFolderId}}"
+  }
+}
+
+docs {
+  Triggers an asset pull for a specific data folder. Returns { jobId, warning? }.
+}

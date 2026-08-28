@@ -1,0 +1,29 @@
+meta {
+  name: OAuth Callback
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/oauth/{{service}}/callback
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "code": "authorization_code_from_provider",
+    "state": "state_token_from_initiate"
+  }
+}
+
+docs {
+  Completes the OAuth flow by exchanging the provider's `code` for tokens and
+  creating a connection. Returns { connectorAccountId }. Required: `code`, `state`.
+  Optional: `realmId` (QuickBooks), `instanceId` (client_credentials providers
+  like Wix, which return no code).
+}

@@ -1,0 +1,28 @@
+meta {
+  name: Create Session
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/internal/whalesync/sessions
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "whalesyncUserId": "ws_user_123",
+    "email": "user@example.com",
+    "name": "Example User"
+  }
+}
+
+docs {
+  Ensure the shadow user exists and mint a 10-minute session token. Idempotent on
+  `whalesyncUserId`. Returns { scratchUserId, apiToken, expiresAt }. `name` optional.
+}

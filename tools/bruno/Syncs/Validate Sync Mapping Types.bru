@@ -1,0 +1,15 @@
+meta {
+  name: Validate Sync Mapping Types
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/{{syncId}}/validate-mapping-types
+  body: none
+  auth: inherit
+}
+
+docs {
+  Runs type validation on every field mapping in a sync. Returns { errors }.
+}

@@ -1,0 +1,23 @@
+meta {
+  name: List Workbooks
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/workbook
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~connectorAccountId: {{connectorAccountId}}
+  ~sortBy: updatedAt
+  ~sortOrder: desc
+  ~managedBy:
+}
+
+docs {
+  Returns all workbooks for the authenticated user. Optional filters:
+  connectorAccountId; sortBy = name|createdAt|updatedAt; sortOrder = asc|desc.
+}

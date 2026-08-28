@@ -1,0 +1,16 @@
+meta {
+  name: List Tables
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/tables
+  body: none
+  auth: inherit
+}
+
+docs {
+  Lists the tables/collections available from the connection, plus the discovery
+  mode (LIST or SEARCH) and any advanced settings.
+}

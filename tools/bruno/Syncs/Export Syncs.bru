@@ -1,0 +1,20 @@
+meta {
+  name: Export Syncs
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/export?syncId={{syncId}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  syncId: {{syncId}}
+}
+
+docs {
+  Exports sync configuration for a workbook. `syncId` is optional — omit to export
+  all syncs. Returns an array of ExportSyncConfig.
+}

@@ -1,0 +1,28 @@
+meta {
+  name: Update Data Folder
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/data-folder/{{dataFolderId}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "filter": null,
+    "options": {}
+  }
+}
+
+docs {
+  Updates data folder properties. All fields optional. `filter` is a
+  connector-interpreted filter expression (send `null` to clear it); `options` is
+  a connector-specific options bag.
+}

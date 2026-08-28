@@ -1,0 +1,27 @@
+meta {
+  name: Discard Remote Dirty Changes
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/connectors/{{connectorAccountId}}/discard-remote-dirty-changes
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "path": "/airtable/posts/rec123.json"
+  }
+}
+
+docs {
+  Reverts an uncommitted change on the connection's remote `dirty` branch back to
+  its committed state. `path` is the full record path within the connection. Returns
+  204.
+}

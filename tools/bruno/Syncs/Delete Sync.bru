@@ -1,0 +1,15 @@
+meta {
+  name: Delete Sync
+  type: http
+  seq: 9
+}
+
+delete {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/{{syncId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Deletes a sync configuration. Returns 204 No Content.
+}

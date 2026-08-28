@@ -1,0 +1,15 @@
+meta {
+  name: Latest CLI Release
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/desktop-release/cli/latest
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns metadata for the latest scratchmd CLI release. Public.
+}

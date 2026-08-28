@@ -1,0 +1,16 @@
+meta {
+  name: Revoke Sessions
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/internal/whalesync/users/{{whalesyncUserId}}/sessions
+  body: none
+  auth: inherit
+}
+
+docs {
+  Bulk-revoke a shadow user's session tokens (logout). Idempotent if the user does
+  not exist. Returns { revoked }.
+}

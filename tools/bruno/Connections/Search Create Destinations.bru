@@ -1,0 +1,20 @@
+meta {
+  name: Search Create Destinations
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}/create-destinations/search?searchTerm=blog
+  body: none
+  auth: inherit
+}
+
+params:query {
+  searchTerm: blog
+}
+
+docs {
+  Searches create-destinations by name (for connectors that use search-based
+  discovery). `searchTerm` is the query string.
+}

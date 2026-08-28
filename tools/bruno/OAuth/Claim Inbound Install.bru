@@ -1,0 +1,16 @@
+meta {
+  name: Claim Inbound Install
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/oauth/pending-install/{{installId}}/claim
+  body: none
+  auth: inherit
+}
+
+docs {
+  The authenticated user claims a pending inbound install (auto-creates a
+  workbook). Returns { connectorAccountId, workbookId }.
+}

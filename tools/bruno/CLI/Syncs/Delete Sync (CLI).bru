@@ -1,0 +1,15 @@
+meta {
+  name: Delete Sync (CLI)
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/syncs/{{syncId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Deletes a sync from the workbook. Returns { success }.
+}

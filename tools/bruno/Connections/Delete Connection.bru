@@ -1,0 +1,15 @@
+meta {
+  name: Delete Connection
+  type: http
+  seq: 13
+}
+
+delete {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/connections/{{connectorAccountId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Deletes a connection. Returns 204.
+}

@@ -1,0 +1,35 @@
+meta {
+  name: Commit Upload Patch
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/upload-patch/commit
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "uploadId": "upl_abc123",
+    "connectorAccountId": "{{connectorAccountId}}",
+    "baseHead": "0000000000000000000000000000000000000000",
+    "refuseIfStale": true,
+    "refuseIfDirty": true,
+    "checkOnly": false
+  }
+}
+
+docs {
+  Step 3 of the upload-then-commit flow. Applies the uploaded patches to the
+  connection's `dirty` branch as one commit, then triggers the publish-v2 pipeline.
+  `uploadId` + `connectorAccountId` are required. Guards: `baseHead` + `refuseIfStale`
+  reject a stale local `main` (409 `blocked_stale`); `refuseIfDirty` rejects when the
+  server staging area already holds unpublished changes (409 `blocked_dirty`);
+  `checkOnly: true` runs the gates without applying (returns { jobId: null }).
+}

@@ -1,0 +1,26 @@
+meta {
+  name: List Repo Files
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/scratch-git/{{workbookId}}/list
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~branch: main
+  ~folder: airtable/posts
+  ~connectorAccountId: {{connectorAccountId}}
+  ~useConfigRepo: true
+  ~useScratchRepo: true
+}
+
+docs {
+  Lists files in the workbook's git repo. `branch` defaults to main; `folder`
+  scopes the listing. Repo selection: default is the connection repo (pass
+  `connectorAccountId`); `useConfigRepo=true` or `useScratchRepo=true` target the
+  workbook config repo or the scratch repo instead.
+}

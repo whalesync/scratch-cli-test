@@ -1,0 +1,20 @@
+meta {
+  name: Get Publish Index Refs
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/index/refs
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~pageSize: 20
+}
+
+docs {
+  Returns the publish index of git refs. `page` / `pageSize` paginate.
+}

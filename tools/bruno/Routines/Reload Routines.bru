@@ -1,0 +1,16 @@
+meta {
+  name: Reload Routines
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/routines/reload
+  body: none
+  auth: inherit
+}
+
+docs {
+  Re-reads routine YAML files from git and syncs their ROUTINE schedule rows.
+  A write — asserts the workbook is writable. Returns the resulting Routine[].
+}

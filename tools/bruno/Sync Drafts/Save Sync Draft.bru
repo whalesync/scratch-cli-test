@@ -1,0 +1,27 @@
+meta {
+  name: Save Sync Draft
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/sync-drafts/{{draftId}}/save
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "createRoutine": false
+  }
+}
+
+docs {
+  Enqueue the background apply-sync-draft job (materialize then apply). Body is
+  optional ({}); `createRoutine` mirrors Apply. Acknowledges 202 with { jobId } —
+  poll GET /jobs/:jobId/progress. Single-flight per draft.
+}

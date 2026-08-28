@@ -1,0 +1,15 @@
+meta {
+  name: Run Sync (CLI)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/syncs/{{syncId}}/run
+  body: none
+  auth: inherit
+}
+
+docs {
+  Enqueues a run of the sync. No body. Returns { success, jobId, message }.
+}

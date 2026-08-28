@@ -1,0 +1,16 @@
+meta {
+  name: Get Linked Table
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/linked/{{folderId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Returns a linked table's details plus its publish status — change counts
+  (`creates`, `updates`, `deletes`) and `hasChanges`.
+}

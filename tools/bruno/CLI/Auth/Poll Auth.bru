@@ -1,0 +1,28 @@
+meta {
+  name: Poll Auth
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/auth/poll
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "pollingCode": "poll_abc123"
+  }
+}
+
+docs {
+  Polls for the authorization result using the `pollingCode` from Initiate Auth.
+  Requires only the folder's `User-Agent` header. Returns `status`
+  (pending | approved | denied | expired) and, once approved, the `apiToken`,
+  `userEmail`, and `tokenExpiresAt`.
+}

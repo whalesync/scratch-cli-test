@@ -1,0 +1,17 @@
+meta {
+  name: Init Workbook Repo (CLI, deprecated)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/config/init
+  body: none
+  auth: inherit
+}
+
+docs {
+  Deprecated. Initializes the workbook config git repo (idempotent). Normal sync
+  flows already init this repo automatically, so manual calls are rarely needed. No
+  body. Returns { success }.
+}

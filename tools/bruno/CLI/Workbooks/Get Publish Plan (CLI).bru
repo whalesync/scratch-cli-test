@@ -1,0 +1,16 @@
+meta {
+  name: Get Publish Plan (CLI)
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/publish-v2/{{planId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Fetches a single publish plan/pipeline by id. Used by `scratchmd files revert-plan`
+  to read `preMainCommitSha` and `connectorAccountId`. Read-only.
+}

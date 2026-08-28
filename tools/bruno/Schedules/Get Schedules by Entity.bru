@@ -1,0 +1,22 @@
+meta {
+  name: Get Schedules by Entity
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/workbooks/{{workbookId}}/schedules/by-entity?action=SYNC&entityId={{syncId}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  action: SYNC
+  entityId: {{syncId}}
+}
+
+docs {
+  Returns the schedule (if any) for a given entity. Both query params are required:
+  `action` (e.g. SYNC, PUBLISH, FULL_PULL, ...) and `entityId` (the id that action
+  operates on).
+}

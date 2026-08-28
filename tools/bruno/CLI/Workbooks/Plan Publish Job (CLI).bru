@@ -1,0 +1,29 @@
+meta {
+  name: Plan Publish Job (CLI)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/publish-v2/plan-job
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "connectorAccountId": "{{connectorAccountId}}",
+    "runAfterPlan": false
+  }
+}
+
+docs {
+  Enqueues a publish plan job for a connection (`connectorAccountId` is required).
+  Optionally scope with `folderPath` or `filePath`; set `runAfterPlan: true` to
+  publish right after planning; `expectedBaseDirtyHead` is a TOCTOU guard. Returns
+  { jobId, pipelineId } — both null when there are no diffs.
+}

@@ -1,0 +1,28 @@
+meta {
+  name: Update Workbook Settings
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/workbook/{{workbookId}}/settings
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "updates": {
+      "someSettingKey": "someValue"
+    }
+  }
+}
+
+docs {
+  Partial update of the workbook's settings map. Only keys present in `updates` are
+  changed; a null value removes that key.
+}

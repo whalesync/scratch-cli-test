@@ -1,0 +1,31 @@
+meta {
+  name: Create Publish Plan Job
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/plan-job
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "connectorAccountId": "{{connectorAccountId}}",
+    "runAfterPlan": false
+  }
+}
+
+docs {
+  Enqueues a plan job that computes what changes need publishing. All fields are
+  optional: scope with `folderPath` or `filePath` (omit both to plan the whole
+  connection); set `runAfterPlan: true` to publish immediately after planning;
+  `expectedBaseDirtyHead` is a TOCTOU guard (the dirty HEAD the client captured
+  after its upload). Returns { jobId, pipelineId } — both null if there are no
+  diffs to publish.
+}
