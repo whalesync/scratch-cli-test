@@ -47,6 +47,14 @@ async function bootstrap(): Promise<void> {
   // which causes generated URLs (e.g. git clone URLs) to use http:// instead of https://.
   app.set('trust proxy', 1);
 
+  // Parse query strings with `qs` (the Express 4 default) rather than Express 5's
+  // `'simple'` parser (Node's `querystring`). `'simple'` does not interpret `[]`,
+  // so a bracket-form array param (`a[]=x&a[]=y`) lands under the literal key
+  // `"a[]"` and a `@Query('a')` reads `undefined`. `'extended'` accepts both the
+  // repeated-plain-key form our client sends and the bracket form, removing a
+  // whole class of "worked before Express 5" surprises for any other client.
+  app.set('query parser', 'extended');
+
   // Turn on validation for body and URL params (DTOs).
   // - `ValidationPipe` validates class-validator DTOs (the existing pattern).
   // - `ZodValidationPipe` validates `createZodDto(...)` DTOs against their zod
