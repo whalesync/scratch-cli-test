@@ -8,19 +8,69 @@ set -e
 # To use:
 #   1. Run this script for the environment you want to access: 'test' or 'production'
 #      > ./connect_to_gcp_redis.sh test
-#   2. Use Redis CLI to connect to the Redis instance at 127.0.0.1:6399 
+#   2. Use Redis CLI to connect to the Redis instance at 127.0.0.1:6399
 #          redis-cli -h 127.0.0.1 -p 6399 -a <REDIS_PASS>
 #      Get the password from the GCP Secrets Manager
 #   3. Ctrl-C the script or hit any key to terminate the tunnel
+#
+# The tunnel also auto-closes after a maximum lifetime (default 15 minutes) as a
+# safety net against a tunnel to prod being left open unattended. Override with
+# --timeout <minutes>, e.g. '--timeout 60' for 1h, or '--timeout 0' to disable
+# the auto-close entirely.
 
 # arg1: environment: 'test'|'production'
+# arg2 (optional): host override
+# --timeout <minutes>: max tunnel lifetime before auto-close (default 15, 0 disables)
+
+usage() {
+  echo "usage: $0 [--timeout <minutes>] <environment> [host]"
+  echo "You must provide the name of the environment as the first argument: 'test' or 'production'."
+  echo "  --timeout <minutes>  auto-close the tunnel after N minutes (default 15, 0 disables)"
+}
+
+# Maximum tunnel lifetime, in minutes. After this the tunnel auto-closes even if
+# the script was left running unattended. Default 15 minutes; 0 disables it.
+TIMEOUT_MINUTES=15
+
+# Parse --timeout out of the args, leaving the positional args (environment, host).
+POSITIONAL=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --timeout)
+      TIMEOUT_MINUTES=$2
+      if ! [[ "$TIMEOUT_MINUTES" =~ ^[0-9]+$ ]]; then
+        echo "--timeout requires a non-negative integer number of minutes, got: '$TIMEOUT_MINUTES'"
+        exit 1
+      fi
+      shift 2
+      ;;
+    --timeout=*)
+      TIMEOUT_MINUTES="${1#*=}"
+      if ! [[ "$TIMEOUT_MINUTES" =~ ^[0-9]+$ ]]; then
+        echo "--timeout requires a non-negative integer number of minutes, got: '$TIMEOUT_MINUTES'"
+        exit 1
+      fi
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${POSITIONAL[@]}"
 
 if [ $# -lt 1 ]
 then
-  echo "usage: $0 <environment> [host]"
-  echo "You must provide the name of the environment as the first argument: 'test' or 'production'."
+  usage
   exit 1
 fi
+
+TUNNEL_TIMEOUT_SECONDS=$((TIMEOUT_MINUTES * 60))
 
 # Ensure gcloud is installed
 if ! command -v gcloud &> /dev/null; then
@@ -39,7 +89,6 @@ if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "production" ]]; then
     exit 1
 fi
 
-# Override the REDIS_HOST if provided as a second argument
 # Override the REDIS_HOST if provided as a second argument
 if [ $# -ge 2 ]; then
     REDIS_HOST=$2
@@ -95,7 +144,19 @@ echo
 echo "You can get the password with gcloud using:"
 echo "gcloud redis instances get-auth-string --project \"${GCP_PROJECT}\" --region \"${GCP_REGION}\" ${ENVIRONMENT}-redis --format='value(authString)'"
 echo
-echo "Press any key to terminate the tunnel..."
 
-# Read a single character silently
-read -rsn1
+# Wait for a keypress to terminate, but also auto-close after the max lifetime so
+# a tunnel to prod isn't left open unattended (e.g. overnight). The cleanup trap
+# on EXIT tears down the tunnel in either case.
+if [ "$TUNNEL_TIMEOUT_SECONDS" -gt 0 ]; then
+  echo "Press any key to terminate the tunnel (auto-closes after ${TIMEOUT_MINUTES}m)..."
+  # -t makes read return non-zero on timeout; ignore that so we fall through to
+  # the (trap-driven) clean exit instead of tripping 'set -e'.
+  read -rsn1 -t "$TUNNEL_TIMEOUT_SECONDS" key || true
+  if [ -z "${key:-}" ]; then
+    echo "Auto-closing tunnel after ${TIMEOUT_MINUTES}m timeout."
+  fi
+else
+  echo "Press any key to terminate the tunnel (auto-close disabled)..."
+  read -rsn1 key
+fi
