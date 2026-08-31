@@ -4,6 +4,8 @@ pub mod error;
 pub mod gc_marker;
 pub mod git;
 pub mod graceful_shutdown;
+pub mod maintenance;
+pub mod maintenance_db;
 pub mod routes;
 pub mod slack;
 pub mod state;
@@ -136,6 +138,7 @@ pub async fn run() {
 
     let config = Config::from_env();
     let state = AppState::new(&config);
+    let maintenance_loop_state = state.clone();
 
     tracing::info!("[API] Repos directory (v1): {}", config.repos_dir.display());
     tracing::info!(
@@ -144,6 +147,11 @@ pub async fn run() {
     );
     tracing::info!("[API] Index directory: {}", config.index_dir.display());
     tracing::info!("[API] Staging directory: {}", config.staging_dir.display());
+    tracing::info!(
+        "[API] Maintenance db: {} (enabled={})",
+        state.maintenance.db_path().display(),
+        state.maintenance.is_enabled()
+    );
 
     // Shared bearer token the NestJS server presents (DEV-10600). Wrapped in `Arc<str>` so
     // the auth middleware's per-request state clone is cheap. `None` → the HTTP APIs are
@@ -179,6 +187,29 @@ pub async fn run() {
             get(routes::manage::count_objects),
         )
         .route("/api/repo/manage/{id}/gc", post(routes::manage::gc))
+        // Background maintenance switch + status (DEV-11316)
+        .route(
+            "/api/maintenance/config",
+            get(routes::maintenance::get_config).put(routes::maintenance::put_config),
+        )
+        .route(
+            "/api/maintenance/status",
+            get(routes::maintenance::get_status),
+        )
+        .route("/api/maintenance/runs", get(routes::maintenance::get_runs))
+        .route("/api/maintenance/run", post(routes::maintenance::run_now))
+        .route(
+            "/api/maintenance/settings",
+            get(routes::maintenance::get_settings),
+        )
+        .route(
+            "/api/maintenance/repos",
+            get(routes::maintenance::get_repos),
+        )
+        .route(
+            "/api/maintenance/ticks",
+            get(routes::maintenance::get_ticks),
+        )
         .route("/api/repo/manage/{id}/fsck", get(routes::manage::fsck))
         .route("/api/repo/manage/{id}/repair", post(routes::manage::repair))
         .route("/api/repo/manage/copy", post(routes::manage::copy_repo))
@@ -398,6 +429,11 @@ pub async fn run() {
     // and wait for in-flight requests to complete before exiting.
     let (mut api_shutdown_rx, mut git_shutdown_rx) = graceful_shutdown::spawn_shutdown_handler();
 
+    // Background repo maintenance (DEV-11316): a 60 s tick that does nothing while the switch is
+    // off. Gets its own shutdown receiver so an in-flight git step is killed on SIGTERM.
+    let maintenance_loop_task =
+        maintenance::spawn_maintenance_loop(maintenance_loop_state, api_shutdown_rx.clone());
+
     let api_server = axum::serve(listener, app).with_graceful_shutdown(async move {
         api_shutdown_rx.changed().await.ok();
     });
@@ -411,6 +447,17 @@ pub async fn run() {
     }
     if let Err(e) = git_result {
         tracing::error!("Git backend server error: {}", e);
+    }
+
+    // Wait for the maintenance loop to finish killing its git process group before the runtime
+    // is torn down — dropping the task would only kill the direct child, not `repack` /
+    // `pack-objects` underneath it. The loop exits promptly on the shutdown signal; the timeout
+    // is a backstop.
+    if tokio::time::timeout(std::time::Duration::from_secs(60), maintenance_loop_task)
+        .await
+        .is_err()
+    {
+        tracing::warn!("[GC] maintenance loop did not stop within 60 s of shutdown");
     }
 
     tracing::info!("Graceful shutdown complete.");

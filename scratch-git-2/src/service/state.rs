@@ -6,6 +6,7 @@ use dashmap::DashMap;
 use crate::service::config::Config;
 use crate::service::gc_marker::GcStateMap;
 use crate::service::git::lock::RepoLocks;
+use crate::service::maintenance::MaintenanceState;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -17,6 +18,9 @@ pub struct AppState {
     /// set/cleared through `gc_marker::GcMarkerGuard` (RAII), never by hand.
     pub gc_state: GcStateMap,
     pub repo_locks: Arc<RepoLocks>,
+    /// Background maintenance switch + loop status (DEV-11316). The switch is persisted under
+    /// `Config::maintenance_dir` and re-read at boot; missing ⇒ off.
+    pub maintenance: Arc<MaintenanceState>,
 }
 
 impl AppState {
@@ -28,6 +32,7 @@ impl AppState {
             build_version: config.build_version.clone(),
             gc_state: Arc::new(DashMap::new()),
             repo_locks: Arc::new(RepoLocks::new()),
+            maintenance: Arc::new(MaintenanceState::load(&config.maintenance_dir)),
         }
     }
 

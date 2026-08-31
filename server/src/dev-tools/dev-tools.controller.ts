@@ -10,6 +10,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UnauthorizedException,
@@ -23,6 +24,13 @@ import type {
   DecryptedCredentials,
   GetAllJobsResponseDto,
   GitFsckResponse,
+  GitMaintenanceConfigResponse,
+  GitMaintenanceRepoRow,
+  GitMaintenanceRun,
+  GitMaintenanceRunNowResponse,
+  GitMaintenanceSettingRow,
+  GitMaintenanceStatusResponse,
+  GitMaintenanceTickRow,
   GitRepairResponse,
   HardDeleteUserResponse,
 } from '@spinner/shared-types';
@@ -43,6 +51,7 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { EmailService } from 'src/email/email.service';
+import { WSLogger } from 'src/logger';
 import { getLastestExpiringSubscription } from 'src/payment/helpers';
 import { getPlan, getPlanPriceForBillingInterval, getPlanTypeFromString } from 'src/payment/plans';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
@@ -684,6 +693,132 @@ export class DevToolsController {
       oldRepoPath: account.repoPath,
       newRepoPath: body.newRepoPath,
     };
+  }
+
+  /**
+   * scratch-git's background-maintenance switch (DEV-11316). Persisted on the git VM's disk and
+   * re-read when scratch-git restarts; missing ⇒ off. While ON, scratch-git runs quick/full GC
+   * steps from its own 60 s loop and the after-job `/gc` calls become no-ops.
+   */
+  @Get('git-maintenance/config')
+  async getGitMaintenanceConfig(@Req() req: RequestWithUser): Promise<GitMaintenanceConfigResponse> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can read git maintenance config');
+    }
+    return this.scratchGitClient.getMaintenanceConfig();
+  }
+
+  @Put('git-maintenance/config')
+  async setGitMaintenanceConfig(
+    @Body('enabled') enabled: unknown,
+    @Req() req: RequestWithUser,
+  ): Promise<GitMaintenanceConfigResponse> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can change git maintenance config');
+    }
+    if (typeof enabled !== 'boolean') {
+      throw new BadRequestException('`enabled` must be a boolean');
+    }
+    const updated = await this.scratchGitClient.setMaintenanceEnabled(enabled);
+    WSLogger.info({
+      source: 'DevToolsController',
+      message: 'scratch-git background maintenance switch changed',
+      enabled: updated.enabled,
+      userId: req.user.id,
+    });
+    return updated;
+  }
+
+  /* The maintenance journal: what each quick/full step did to which repo (30-day retention). */
+  @Get('git-maintenance/runs')
+  async getGitMaintenanceRuns(
+    @Query('repo') repo: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Req() req: RequestWithUser,
+  ): Promise<GitMaintenanceRun[]> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can read git maintenance runs');
+    }
+    const parsedLimit = limit === undefined ? undefined : Number.parseInt(limit, 10);
+    return this.scratchGitClient.getMaintenanceRuns({
+      repo: repo || undefined,
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    });
+  }
+
+  /* Run one quick/full maintenance step on one repo now (the GC page's play buttons). */
+  @Post('git-maintenance/run')
+  async runGitMaintenanceStep(
+    @Body('repoId') repoId: unknown,
+    @Body('mode') mode: unknown,
+    @Req() req: RequestWithUser,
+  ): Promise<GitMaintenanceRunNowResponse> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can run git maintenance steps');
+    }
+    if (typeof repoId !== 'string' || repoId.length === 0) {
+      throw new BadRequestException('`repoId` must be a non-empty string');
+    }
+    if (mode !== 'quick' && mode !== 'full') {
+      throw new BadRequestException('`mode` must be `quick` or `full`');
+    }
+    WSLogger.info({
+      source: 'DevToolsController',
+      message: 'Manual git maintenance step triggered',
+      repoId,
+      mode,
+      userId: req.user.id,
+    });
+    return this.scratchGitClient.runMaintenanceStep(repoId, mode);
+  }
+
+  @Get('git-maintenance/settings')
+  async getGitMaintenanceSettings(@Req() req: RequestWithUser): Promise<GitMaintenanceSettingRow[]> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can read git maintenance settings');
+    }
+    return this.scratchGitClient.getMaintenanceSettings();
+  }
+
+  /* Every repo with its derived maintenance state and what the next tick would do, enriched with
+   * the owning user (repo id = orgId/workbookId/connAccountId → workbook → user). */
+  @Get('git-maintenance/repos')
+  async getGitMaintenanceRepos(@Req() req: RequestWithUser): Promise<GitMaintenanceRepoRow[]> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can read git maintenance repos');
+    }
+    const rows = await this.scratchGitClient.getMaintenanceRepos();
+    const workbookIds = [...new Set(rows.map((row) => row.repoId.split('/')[1]).filter((id): id is string => !!id))];
+    const workbooks = await this.dbService.client.workbook.findMany({
+      where: { id: { in: workbookIds } },
+      select: { id: true, user: { select: { name: true, email: true } } },
+    });
+    const userByWorkbookId = new Map(workbooks.map((workbook) => [workbook.id, workbook.user]));
+    return rows.map((row) => {
+      const user = userByWorkbookId.get(row.repoId.split('/')[1] ?? '');
+      return { ...row, userName: user?.name ?? null, userEmail: user?.email ?? null };
+    });
+  }
+
+  @Get('git-maintenance/ticks')
+  async getGitMaintenanceTicks(
+    @Query('limit') limit: string | undefined,
+    @Req() req: RequestWithUser,
+  ): Promise<GitMaintenanceTickRow[]> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can read git maintenance ticks');
+    }
+    const parsedLimit = limit === undefined ? undefined : Number.parseInt(limit, 10);
+    return this.scratchGitClient.getMaintenanceTicks(Number.isFinite(parsedLimit) ? parsedLimit : undefined);
+  }
+
+  /* What scratch-git's maintenance loop is doing: switch, settings, current repo, last tick. */
+  @Get('git-maintenance/status')
+  async getGitMaintenanceStatus(@Req() req: RequestWithUser): Promise<GitMaintenanceStatusResponse> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can read git maintenance status');
+    }
+    return this.scratchGitClient.getMaintenanceStatus();
   }
 
   /* Diagnose a connection's git repo health (read-only `git fsck`). */

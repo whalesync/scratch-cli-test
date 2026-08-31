@@ -2,6 +2,7 @@
 target-cli-integration/
 .cargo-cli-integration/
 repos/
+maintenance/
 cli-binaries/
 
 # napi-rs cdylib artifacts (slice H.2 of DEV-10144). Built locally via

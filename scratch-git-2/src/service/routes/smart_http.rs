@@ -431,6 +431,9 @@ mod tests {
             build_version: "test".to_string(),
             gc_state: std::sync::Arc::new(dashmap::DashMap::new()),
             repo_locks: std::sync::Arc::new(RepoLocks::new()),
+            maintenance: std::sync::Arc::new(crate::service::maintenance::MaintenanceState::load(
+                std::path::Path::new("/nonexistent-maintenance-dir"),
+            )),
         };
         Router::new()
             .route(
@@ -823,6 +826,9 @@ mod tests {
             build_version: "test".to_string(),
             gc_state: std::sync::Arc::new(dashmap::DashMap::new()),
             repo_locks: std::sync::Arc::new(RepoLocks::new()),
+            maintenance: std::sync::Arc::new(crate::service::maintenance::MaintenanceState::load(
+                std::path::Path::new("/nonexistent-maintenance-dir"),
+            )),
         };
         let app = Router::new()
             .route(

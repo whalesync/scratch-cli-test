@@ -1,6 +1,7 @@
 pub mod debug;
 pub mod diff;
 pub mod index;
+pub mod maintenance;
 pub mod manage;
 pub mod read;
 pub mod smart_http;

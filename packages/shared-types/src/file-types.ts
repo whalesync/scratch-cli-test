@@ -60,6 +60,153 @@ export interface GitGcResponse {
   success: boolean;
   statsBefore: string;
   statsAfter: string;
+  /**
+   * True when scratch-git did NOT run `git gc` because background maintenance is enabled
+   * (DEV-11316): the maintenance loop owns compaction/pruning, so the after-job call is a no-op.
+   */
+  skipped?: boolean;
+  /** Why it was skipped (`maintenance_enabled`). */
+  reason?: string;
+}
+
+/**
+ * scratch-git's background-maintenance switch (`GET/PUT /api/maintenance/config`, DEV-11316).
+ * In memory, persisted to the maintenance SQLite DB and read at boot; missing ⇒ `enabled: false`.
+ */
+export interface GitMaintenanceConfigResponse {
+  enabled: boolean;
+  /** When the switch was last flipped (ms since epoch); null when never persisted. */
+  updatedAtMs: number | null;
+}
+
+/** `loose` / `packs` / packed bytes of one repo at one instant. */
+export interface GitMaintenanceObjectCounts {
+  loose: number;
+  /** Total bytes of the loose object files (0 in journal rows — not journaled per run). */
+  looseBytes?: number;
+  packs: number;
+  packBytes: number;
+  largestPackBytes: number;
+}
+
+/** What one maintenance step did to one repo (journaled in the maintenance DB, 30-day retention). */
+export interface GitMaintenanceStepOutcome {
+  mode: 'quick' | 'full';
+  /** `completed` | `failed` | `timed_out` | `aborted` | `fsck_failed` | `fsck_inconclusive` (gc ran, canary did not pass / could not finish) */
+  state: string;
+  /** Why the step was due (e.g. `loose=18240`, `smallPackShare=0.31`, `neverMaintained`). */
+  reason: string;
+  startedAtMs: number;
+  durationMs: number;
+  before: GitMaintenanceObjectCounts;
+  after: GitMaintenanceObjectCounts;
+  /** The git commands that ran, in order. */
+  commands: string[];
+  exitCode?: number;
+  stderr?: string;
+  /** Only on full steps: the post-gc `fsck` canary. */
+  fsckClean?: boolean;
+}
+
+/** One tick of the maintenance loop. */
+export interface GitMaintenanceTickSummary {
+  startedAtMs: number;
+  durationMs: number;
+  scanMs: number;
+  reposScanned: number;
+  reposUnreadable: number;
+  dueQuick: number;
+  dueFull: number;
+  ran: Array<{ repoId: string; outcome: GitMaintenanceStepOutcome }>;
+  aborted: boolean;
+}
+
+/** One journaled maintenance step (`GET /api/maintenance/runs` on scratch-git; 30-day retention). */
+export interface GitMaintenanceRun {
+  id: number;
+  repoId: string;
+  outcome: GitMaintenanceStepOutcome;
+}
+
+/** One `settings` row of the maintenance DB (`GET /api/maintenance/settings`). */
+export interface GitMaintenanceSettingRow {
+  key: string;
+  value: string;
+  updatedAtMs: number;
+}
+
+/** One repo as the maintenance sweep sees it right now (`GET /api/maintenance/repos`). */
+export interface GitMaintenanceRepoRow {
+  repoId: string;
+  /** Filesystem creation (birth) time of the repo directory; null where the FS does not record it. */
+  createdAtMs: number | null;
+  /** Owner of the repo's workbook — enriched by the server (scratch-git knows nothing about users). */
+  userName?: string | null;
+  userEmail?: string | null;
+  loose: number;
+  /** Total bytes of the loose object files. */
+  looseBytes: number;
+  packs: number;
+  packBytes: number;
+  largestPackBytes: number;
+  /** Share of packed bytes outside the largest pack (0 for a single-pack repo). */
+  smallPackShare: number;
+  lastWriteAtMs: number;
+  /** Derived: newest pack mtime. Null = never. */
+  lastQuickAtMs: number | null;
+  /** Derived: `objects/info/commit-graph` mtime. Null = never. */
+  lastFullAtMs: number | null;
+  /** What the next tick would do: `quick` | `full` | `nothing`. */
+  plan: 'quick' | 'full' | 'nothing';
+  reason: string;
+  /** Set when the repo could not be scanned. */
+  error?: string;
+}
+
+/** One `ticks` row of the maintenance DB (`GET /api/maintenance/ticks`). */
+export interface GitMaintenanceTickRow {
+  id: number;
+  startedAtMs: number;
+  durationMs: number;
+  scanMs: number;
+  reposScanned: number;
+  reposUnreadable: number;
+  dueQuick: number;
+  dueFull: number;
+  ran: number;
+  aborted: boolean;
+}
+
+/** `POST /api/maintenance/run` on scratch-git — one manually triggered step on one repo. */
+export interface GitMaintenanceRunNowResponse {
+  /**
+   * The outcome state when the step finished within the wait window; `started` when it is still
+   * running (poll the runs journal); `skipped_already_running` when a GC already holds the repo.
+   */
+  state: string;
+  outcome?: GitMaintenanceStepOutcome;
+}
+
+/** `GET /api/maintenance/status` on scratch-git. */
+export interface GitMaintenanceStatusResponse {
+  enabled: boolean;
+  /** The throw-away cache/journal DB (`<root>/maintenance/maintenance.sqlite`). */
+  dbPath: string;
+  settings: {
+    tickIntervalSecs: number;
+    quickMinIntervalMs: number;
+    fullMinIntervalMs: number;
+    fullMaxIntervalMs: number;
+    looseThreshold: number;
+    maxPacks: number;
+    smallPackShareThreshold: number;
+    quickBudgetSecs: number;
+    fullBudgetSecs: number;
+    fsckAfterFull: boolean;
+  };
+  tickInProgress: boolean;
+  current: { repoId: string; mode: 'quick' | 'full'; startedAtMs: number } | null;
+  lastTick: GitMaintenanceTickSummary | null;
 }
 
 /**

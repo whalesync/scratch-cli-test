@@ -8,7 +8,17 @@ import type { UserDetails } from '../../dto/dev-tools/user-detail.dto';
 import type { UpdateSettingsDto } from '../../dto/users/update-settings.dto';
 import type { AdminWorkbookDto } from '../../dto/workbook/admin-workbook.dto';
 import type { EmailTemplate, EmailTemplatePayload } from '../../email';
-import type { GitFsckResponse, GitRepairResponse } from '../../file-types';
+import type {
+  GitFsckResponse,
+  GitMaintenanceConfigResponse,
+  GitMaintenanceRepoRow,
+  GitMaintenanceRun,
+  GitMaintenanceRunNowResponse,
+  GitMaintenanceSettingRow,
+  GitMaintenanceStatusResponse,
+  GitMaintenanceTickRow,
+  GitRepairResponse,
+} from '../../file-types';
 import type { ScratchPlanType } from '../../subscription';
 import type { Http } from '../http';
 
@@ -263,6 +273,76 @@ export function createDevToolsApi(http: Http) {
         undefined,
         { fallbackMessage: 'Failed to repair connection repo' },
       );
+      return res.data;
+    },
+
+    /** GET `/dev-tools/git-maintenance/config` — scratch-git's background-maintenance switch (DEV-11316). */
+    getGitMaintenanceConfig: async (): Promise<GitMaintenanceConfigResponse> => {
+      const res = await http.get<GitMaintenanceConfigResponse>('/dev-tools/git-maintenance/config', {
+        fallbackMessage: 'Failed to read git maintenance config',
+      });
+      return res.data;
+    },
+
+    /** PUT `/dev-tools/git-maintenance/config` — flip the switch; persisted on the git VM's disk. */
+    setGitMaintenanceEnabled: async (enabled: boolean): Promise<GitMaintenanceConfigResponse> => {
+      const res = await http.put<GitMaintenanceConfigResponse>(
+        '/dev-tools/git-maintenance/config',
+        { enabled },
+        { fallbackMessage: 'Failed to update git maintenance config' },
+      );
+      return res.data;
+    },
+
+    /** GET `/dev-tools/git-maintenance/runs` — the maintenance journal, newest first (optionally one repo). */
+    getGitMaintenanceRuns: async (params?: { repo?: string; limit?: number }): Promise<GitMaintenanceRun[]> => {
+      const res = await http.get<GitMaintenanceRun[]>('/dev-tools/git-maintenance/runs', {
+        params: { repo: params?.repo, limit: params?.limit },
+        fallbackMessage: 'Failed to read git maintenance runs',
+      });
+      return res.data;
+    },
+
+    /** POST `/dev-tools/git-maintenance/run` — run one quick/full step on one repo now (forced past the due-rules). */
+    runGitMaintenanceStep: async (repoId: string, mode: 'quick' | 'full'): Promise<GitMaintenanceRunNowResponse> => {
+      const res = await http.post<GitMaintenanceRunNowResponse>(
+        '/dev-tools/git-maintenance/run',
+        { repoId, mode },
+        { fallbackMessage: `Failed to run ${mode} GC on ${repoId}` },
+      );
+      return res.data;
+    },
+
+    /** GET `/dev-tools/git-maintenance/settings` — every row of the maintenance DB's `settings` table. */
+    getGitMaintenanceSettings: async (): Promise<GitMaintenanceSettingRow[]> => {
+      const res = await http.get<GitMaintenanceSettingRow[]>('/dev-tools/git-maintenance/settings', {
+        fallbackMessage: 'Failed to read git maintenance settings',
+      });
+      return res.data;
+    },
+
+    /** GET `/dev-tools/git-maintenance/repos` — every repo with its derived state and pending decision. */
+    getGitMaintenanceRepos: async (): Promise<GitMaintenanceRepoRow[]> => {
+      const res = await http.get<GitMaintenanceRepoRow[]>('/dev-tools/git-maintenance/repos', {
+        fallbackMessage: 'Failed to read git maintenance repos',
+      });
+      return res.data;
+    },
+
+    /** GET `/dev-tools/git-maintenance/ticks` — the tick journal, newest first. */
+    getGitMaintenanceTicks: async (limit?: number): Promise<GitMaintenanceTickRow[]> => {
+      const res = await http.get<GitMaintenanceTickRow[]>('/dev-tools/git-maintenance/ticks', {
+        params: { limit },
+        fallbackMessage: 'Failed to read git maintenance ticks',
+      });
+      return res.data;
+    },
+
+    /** GET `/dev-tools/git-maintenance/status` — what the maintenance loop is doing and its last tick. */
+    getGitMaintenanceStatus: async (): Promise<GitMaintenanceStatusResponse> => {
+      const res = await http.get<GitMaintenanceStatusResponse>('/dev-tools/git-maintenance/status', {
+        fallbackMessage: 'Failed to read git maintenance status',
+      });
       return res.data;
     },
   };

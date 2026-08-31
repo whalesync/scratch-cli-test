@@ -24,6 +24,10 @@ pub struct Config {
     /// the crash-resume design: it covers pulls that legitimately run for days and leaves a window to
     /// debug a failed pull's staging dir before it is swept.
     pub staging_reap_max_age_hours: u64,
+    /// `<root>/maintenance` — the background-maintenance cache/journal DB (`maintenance.sqlite`,
+    /// DEV-11316). `<root>` is the parent of `repos_dir`, the same root `staging/` hangs off, so
+    /// on the VM this is `/data/maintenance`. Not separately configurable: one root.
+    pub maintenance_dir: PathBuf,
 }
 
 impl Config {
@@ -83,6 +87,8 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(72);
 
+        let maintenance_dir = repos_dir.parent().unwrap_or(&repos_dir).join("maintenance");
+
         Self {
             port,
             git_backend_port,
@@ -93,6 +99,7 @@ impl Config {
             slack_notification_webhook_url,
             shared_auth_token,
             staging_reap_max_age_hours,
+            maintenance_dir,
         }
     }
 }

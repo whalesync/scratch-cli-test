@@ -433,6 +433,39 @@ pub async fn gc(
     Path(id): Path<String>,
     Json(body): Json<GcBody>,
 ) -> Response {
+    // While background maintenance is on (DEV-11316), the after-job GC call is a no-op: the
+    // maintenance loop owns compaction and pruning, and this is the one place that knows the
+    // switch — callers keep calling exactly as before. Same response shape (`success`,
+    // `statsBefore`, `statsAfter`) plus `skipped: true` so the caller can tell.
+    if state.maintenance.is_enabled() {
+        let repo_path = state.repo_path(&id);
+        if !repo_path.exists() {
+            return envelope_error(
+                &state,
+                Some(&id),
+                AppError::not_found(format!("Repository not found: {}", id)),
+            );
+        }
+        let stats = tokio::task::spawn_blocking(move || count_objects_stats(&repo_path))
+            .await
+            .unwrap_or_default();
+        tracing::debug!(
+            "[GC] repo={} skipped: background maintenance is enabled",
+            id
+        );
+        return envelope(
+            &state,
+            Some(&id),
+            json!({
+                "success": true,
+                "skipped": true,
+                "reason": "maintenance_enabled",
+                "statsBefore": stats,
+                "statsAfter": stats,
+            }),
+        );
+    }
+
     let Some(gc_marker) = GcMarkerGuard::try_acquire(&state.gc_state, &id) else {
         return envelope_error(
             &state,
@@ -458,6 +491,27 @@ pub async fn gc(
             // Held until `git gc` returns (or this closure panics), regardless
             // of what happens to the HTTP request that started it.
             let _gc_marker_held_for_the_whole_gc = gc_marker;
+            // Cross-instance exclusion with the background maintenance loop
+            // (and with the blue/green partner container, which shares the
+            // disk): the in-memory marker only covers this process.
+            let _cross_instance_lock =
+                match crate::service::maintenance::try_lock_repo_for_maintenance(&repo_path) {
+                    Ok(Some(lock)) => lock,
+                    Ok(None) => {
+                        return Err(AppError::conflict(
+                            "GC already in progress (another scratch-git instance)",
+                        ))
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        return Err(AppError::not_found(format!("Repository not found: {}", id)))
+                    }
+                    Err(e) => {
+                        return Err(AppError::internal(format!(
+                            "Failed to take the maintenance lock: {}",
+                            e
+                        )))
+                    }
+                };
             let outcome = run_git_gc(&repo_path, aggressive, &prune_expiry);
             match &outcome {
                 Ok(o) => tracing::info!(
@@ -1377,6 +1431,9 @@ mod tests {
             build_version: "test".to_string(),
             gc_state: std::sync::Arc::new(dashmap::DashMap::new()),
             repo_locks: std::sync::Arc::new(crate::service::git::lock::RepoLocks::new()),
+            maintenance: std::sync::Arc::new(crate::service::maintenance::MaintenanceState::load(
+                std::path::Path::new("/nonexistent-maintenance-dir"),
+            )),
         }
     }
 
@@ -1415,6 +1472,45 @@ mod tests {
         // Envelope status is computed after the marker guard dropped.
         assert!(body["status"]["gcInProgress"].is_null());
         assert!(!state.gc_state.contains_key(&id));
+    }
+
+    /// Handler-level: while background maintenance is ON (DEV-11316), `/gc` is a
+    /// no-op that keeps the response shape callers read and says so via `skipped`.
+    #[tokio::test]
+    async fn gc_handler_is_a_skipped_noop_while_maintenance_is_enabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = unique_repo_id("gcskip");
+        GitRepo::init(tmp.path(), &id).unwrap();
+        let state = AppState {
+            maintenance: std::sync::Arc::new(crate::service::maintenance::MaintenanceState::load(
+                &tmp.path().join("m"),
+            )),
+            ..make_state(tmp.path())
+        };
+        state.maintenance.set_enabled(true).unwrap();
+
+        let response = gc(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(GcBody { aggressive: None }),
+        )
+        .await;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["success"], true);
+        assert_eq!(body["data"]["skipped"], true);
+        assert_eq!(body["data"]["reason"], "maintenance_enabled");
+        assert!(body["data"]["statsBefore"].is_string());
+        assert!(!state.gc_state.contains_key(&id), "no marker taken");
+
+        // A missing repo is still a 404, not a silent skip.
+        let response = gc(
+            State(state.clone()),
+            Path("org_t/wkb_t/coa_missing".to_string()),
+            Json(GcBody { aggressive: None }),
+        )
+        .await;
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
     /// Handler-level: a held marker → 409 envelope carrying `gcInProgress`,
@@ -1630,7 +1726,8 @@ mod tests {
         assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
-    /// Handler-level: `/gc` on a missing repo → error envelope, marker cleared.
+    /// Handler-level: `/gc` on a missing repo → 404 envelope (the cross-instance
+    /// lock file cannot be created in a dir that does not exist), marker cleared.
     #[tokio::test]
     async fn gc_handler_on_missing_repo_errors_and_clears_marker() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1643,10 +1740,7 @@ mod tests {
             Json(GcBody { aggressive: None }),
         )
         .await;
-        assert_eq!(
-            response.status(),
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-        );
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
         assert!(!state.gc_state.contains_key(&id));
     }
 

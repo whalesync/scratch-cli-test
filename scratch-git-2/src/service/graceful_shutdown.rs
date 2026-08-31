@@ -1,5 +1,23 @@
+use std::sync::OnceLock;
+
 use tokio::signal;
 use tokio::sync::watch;
+
+/// The process-wide shutdown channel, set by [`spawn_shutdown_handler`]. Lets code far from
+/// `run()` (e.g. a manually triggered maintenance step) observe SIGTERM without threading a
+/// receiver through every constructor.
+static SHUTDOWN_RX: OnceLock<watch::Receiver<bool>> = OnceLock::new();
+
+/// A receiver on the process shutdown channel. Before `spawn_shutdown_handler` ran (tests),
+/// returns a receiver that never fires.
+pub fn subscribe() -> watch::Receiver<bool> {
+    if let Some(rx) = SHUTDOWN_RX.get() {
+        return rx.clone();
+    }
+    let (tx, rx) = watch::channel(false);
+    std::mem::forget(tx); // keep the channel alive so `changed()` pends forever
+    rx
+}
 
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -28,6 +46,7 @@ pub fn spawn_shutdown_handler() -> (watch::Receiver<bool>, watch::Receiver<bool>
     let (tx, _) = watch::channel(false);
     let api_rx = tx.subscribe();
     let git_rx = tx.subscribe();
+    let _ = SHUTDOWN_RX.set(tx.subscribe());
 
     tokio::spawn(async move {
         shutdown_signal().await;

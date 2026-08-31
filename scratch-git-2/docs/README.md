@@ -82,6 +82,25 @@ SCRATCH_GIT_GC_PRUNE_EXPIRY=1.hour.ago
                           # `1.hour.ago`.
 ```
 
+### On-disk layout — one root
+
+Everything lives under one root: the **parent of `GIT_REPOS_DIR`** (`/data` on the VM, `local/` in
+a dev checkout). Nothing else is separately configurable except the legacy `GIT_INDEX_DIR` /
+`GIT_STAGING_DIR` overrides.
+
+```
+<root>/repos/<org>/<wkb>/<coa>.git        bare repos (GIT_REPOS_DIR)
+<root>/repos/<org>/<wkb>/<coa>.db         per-repo SQLite file index (GIT_INDEX_DIR, defaults to repos)
+<root>/staging/<jobId>/                   per-job staging dirs (GIT_STAGING_DIR)
+<root>/maintenance/maintenance.sqlite     background-maintenance cache + 30-day journal (DEV-11316)
+```
+
+`maintenance.sqlite` is **throw-away**: every value the maintenance loop *decides* on is derived from
+files git maintains (`objects/info/commit-graph` mtime = last full GC, newest `objects/pack/*.pack`
+mtime = last quick step); the DB only holds outcomes/history/ticks and the on/off switch. Writes
+create it if missing; reads assume defaults if it — or a row — is missing. Deleting it costs history
+and turns the switch off, never extra GC work.
+
 ### Running Locally
 
 **Build and run in development mode:**

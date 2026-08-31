@@ -9,6 +9,7 @@ import { notifications } from '@mantine/notifications';
 import { TriggerCronJobResponseDto } from '@spinner/shared-types';
 import { ClockIcon, ExternalLinkIcon, InfoIcon, PlayIcon } from 'lucide-react';
 import { useState } from 'react';
+import { GitMaintenanceCronRow } from '../gc/GitMaintenanceCronRow';
 
 const TITLE = 'Cron Jobs';
 
@@ -122,6 +123,7 @@ export default function CronJobsDevPage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
+                <GitMaintenanceCronRow />
                 {jobs.map((job) => {
                   const lastResult = lastResultBySlug.get(job.slug);
                   return (

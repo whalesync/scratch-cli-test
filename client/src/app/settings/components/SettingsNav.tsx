@@ -15,6 +15,7 @@ import {
   LayoutGridIcon,
   ListChecksIcon,
   MailIcon,
+  RecycleIcon,
   UserIcon,
   UsersIcon,
   WrenchIcon,
@@ -80,6 +81,12 @@ const devNavItems: NavItem[] = [
     label: 'Cron Jobs',
     icon: ClockIcon,
     href: '/settings/dev/cron',
+  },
+  {
+    id: 'gc',
+    label: 'Git GC',
+    icon: RecycleIcon,
+    href: '/settings/dev/gc',
   },
   {
     id: 'migrations',

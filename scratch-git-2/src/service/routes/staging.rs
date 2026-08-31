@@ -893,6 +893,9 @@ mod tests {
             build_version: "test".to_string(),
             gc_state: Arc::new(DashMap::new()),
             repo_locks: Arc::new(RepoLocks::new()),
+            maintenance: std::sync::Arc::new(crate::service::maintenance::MaintenanceState::load(
+                std::path::Path::new("/nonexistent-maintenance-dir"),
+            )),
         };
 
         (state, repos_dir, staging_dir, index_dir)

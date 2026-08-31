@@ -4,6 +4,13 @@ import {
   FileDiffStatus,
   GitFsckResponse,
   GitGcResponse,
+  GitMaintenanceConfigResponse,
+  GitMaintenanceRepoRow,
+  GitMaintenanceRun,
+  GitMaintenanceRunNowResponse,
+  GitMaintenanceSettingRow,
+  GitMaintenanceStatusResponse,
+  GitMaintenanceTickRow,
   GitObjectCountsResponse,
   GitRepairResponse,
   GitStagingDirsResponse,
@@ -197,6 +204,55 @@ export class ScratchGitClient {
     return this.callGitApi(`/api/repo/manage/${this.encodeRepoId(repoId)}/gc`, 'POST', {
       aggressive,
     }) as Promise<GitGcResponse>;
+  }
+
+  /** scratch-git's persisted background-maintenance switch (DEV-11316). */
+  async getMaintenanceConfig(): Promise<GitMaintenanceConfigResponse> {
+    return this.callGitApi('/api/maintenance/config', 'GET') as Promise<GitMaintenanceConfigResponse>;
+  }
+
+  /** Flip the switch. scratch-git persists it (tmp + rename) before the in-memory value changes. */
+  async setMaintenanceEnabled(enabled: boolean): Promise<GitMaintenanceConfigResponse> {
+    return this.callGitApi('/api/maintenance/config', 'PUT', { enabled }) as Promise<GitMaintenanceConfigResponse>;
+  }
+
+  /** The maintenance journal (30-day retention), newest first; optionally one repo. */
+  async getMaintenanceRuns(params: { repo?: string; limit?: number }): Promise<GitMaintenanceRun[]> {
+    const query = new URLSearchParams();
+    if (params.repo) query.set('repo', params.repo);
+    if (params.limit !== undefined) query.set('limit', String(params.limit));
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    return this.callGitApi(`/api/maintenance/runs${suffix}`, 'GET') as Promise<GitMaintenanceRun[]>;
+  }
+
+  /** Run one quick/full maintenance step on one repo now (forced past the due-rules). */
+  async runMaintenanceStep(repoId: string, mode: 'quick' | 'full'): Promise<GitMaintenanceRunNowResponse> {
+    return this.callGitApi('/api/maintenance/run', 'POST', {
+      repoId,
+      mode,
+      waitSeconds: 20,
+    }) as Promise<GitMaintenanceRunNowResponse>;
+  }
+
+  /** Every row of the maintenance DB's `settings` table. */
+  async getMaintenanceSettings(): Promise<GitMaintenanceSettingRow[]> {
+    return this.callGitApi('/api/maintenance/settings', 'GET') as Promise<GitMaintenanceSettingRow[]>;
+  }
+
+  /** Every repo as the sweep sees it now (derived state + pending decision). */
+  async getMaintenanceRepos(): Promise<GitMaintenanceRepoRow[]> {
+    return this.callGitApi('/api/maintenance/repos', 'GET') as Promise<GitMaintenanceRepoRow[]>;
+  }
+
+  /** The tick journal, newest first. */
+  async getMaintenanceTicks(limit?: number): Promise<GitMaintenanceTickRow[]> {
+    const suffix = limit === undefined ? '' : `?limit=${limit}`;
+    return this.callGitApi(`/api/maintenance/ticks${suffix}`, 'GET') as Promise<GitMaintenanceTickRow[]>;
+  }
+
+  /** What the maintenance loop is doing: switch, settings, current repo, last tick summary. */
+  async getMaintenanceStatus(): Promise<GitMaintenanceStatusResponse> {
+    return this.callGitApi('/api/maintenance/status', 'GET') as Promise<GitMaintenanceStatusResponse>;
   }
 
   async getObjectCounts(repoId: string): Promise<GitObjectCountsResponse> {

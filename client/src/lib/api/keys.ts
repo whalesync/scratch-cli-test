@@ -11,6 +11,14 @@ export const SWR_KEYS = {
   cron: {
     jobs: () => ['cron', 'jobs'] as const,
   },
+  gitMaintenance: {
+    config: () => ['git-maintenance', 'config'] as const,
+    status: () => ['git-maintenance', 'status'] as const,
+    runs: (repo: string | null) => ['git-maintenance', 'runs', repo ?? '*'] as const,
+    settings: () => ['git-maintenance', 'settings'] as const,
+    repos: () => ['git-maintenance', 'repos'] as const,
+    ticks: () => ['git-maintenance', 'ticks'] as const,
+  },
   connectorAccounts: {
     list: (workbookId: string) => ['connector-accounts', 'list', workbookId],
     detail: (workbookId: string, id: string) => ['connector-accounts', 'detail', workbookId, id],
