@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/require-await */
 import { ConflictException } from '@nestjs/common';
 import { Prisma, type DbJob } from '@prisma/client';
-import { RoutineAction, RoutineRunId, RoutineStepOptions, WorkbookId } from '@spinner/shared-types';
+import { RoutineAction, RoutineRunId, RoutineStep, RoutineStepOptions, WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
@@ -1061,7 +1061,7 @@ describe('RoutineExecutorService.execute', () => {
 });
 
 describe('RoutineExecutorService.triggerRun', () => {
-  const PARSED_ROUTINE = {
+  const PARSED_ROUTINE: { name: string; schedule: null; comment: null; steps: RoutineStep[] } = {
     name: 'Daily',
     schedule: null,
     comment: null,
@@ -1080,7 +1080,7 @@ describe('RoutineExecutorService.triggerRun', () => {
     ],
   };
 
-  function makeTriggerService(routineRunCreate: jest.Mock) {
+  function makeTriggerService(routineRunCreate: jest.Mock, parsedRoutine: typeof PARSED_ROUTINE = PARSED_ROUTINE) {
     const db = {
       client: {
         workbook: { findFirst: jest.fn().mockResolvedValue({ organizationId: 'org_test1234' }) },
@@ -1090,7 +1090,7 @@ describe('RoutineExecutorService.triggerRun', () => {
     const scratchGit = {
       getRepoFile: jest.fn().mockResolvedValue({ content: 'yaml' }),
     } as unknown as ScratchGitService;
-    const parser = { parse: jest.fn().mockReturnValue({ routine: PARSED_ROUTINE }) } as unknown as RoutineParserService;
+    const parser = { parse: jest.fn().mockReturnValue({ routine: parsedRoutine }) } as unknown as RoutineParserService;
     const referenceValidator = {
       validateRoutine: jest.fn().mockResolvedValue([]),
     } as unknown as RoutineReferenceValidatorService;
@@ -1145,6 +1145,78 @@ describe('RoutineExecutorService.triggerRun', () => {
     expect(executeSpy).toHaveBeenCalledWith(RUN_ID);
     // No step has a job yet, so the run reports the step it is about to start (DEV-11256).
     expect(run.currentStepSummary).toBe('Pull Source…');
+  });
+
+  /**
+   * A generated Live Export routine with an incremental destination pull: source full, destination
+   * incremental (`fullPull: false`), then sync + publish with no options at all.
+   */
+  const LIVE_EXPORT_ROUTINE_WITH_INCREMENTAL_DESTINATION = {
+    ...PARSED_ROUTINE,
+    steps: [
+      { ...PARSED_ROUTINE.steps[0], name: 'Pull Source', connection: 'coa_source', options: { fullPull: true } },
+      { ...PARSED_ROUTINE.steps[0], name: 'Pull Destination', connection: 'coa_dest', options: { fullPull: false } },
+      { ...PARSED_ROUTINE.steps[0], action: RoutineAction.SYNC, name: 'Run Sync', sync: 'syn_1' },
+      { ...PARSED_ROUTINE.steps[0], action: RoutineAction.PUBLISH, name: 'Publish', connection: 'coa_dest' },
+    ],
+  };
+
+  /** The `options` snapshotted per step by the `routineRun.create` call the trigger made. */
+  function snapshottedStepOptionsFrom(routineRunCreate: jest.Mock): unknown[] {
+    type RoutineRunCreateArgs = { data: { steps: { create: { options: unknown }[] } } };
+    const [createArgs] = routineRunCreate.mock.calls[0] as [RoutineRunCreateArgs];
+    return createArgs.data.steps.create.map((step) => step.options);
+  }
+
+  /** The bare run row `routineRun.create` resolves with (no steps) — enough for the entity mapper. */
+  function makeCreatedRunWithoutSteps() {
+    return {
+      id: RUN_ID,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      workbookId: WORKBOOK_ID,
+      routineFilePath: 'routines/run-syn_1.yaml',
+      routineName: 'Daily',
+      status: 'pending',
+      trigger: 'manual',
+      triggeredByUserId: null,
+      startedAt: null,
+      finishedAt: null,
+      error: null,
+      currentStepIndex: 0,
+      steps: [],
+    };
+  }
+
+  it('snapshots each step with its own YAML options on a plain trigger', async () => {
+    const routineRunCreate = jest.fn().mockResolvedValue(makeCreatedRunWithoutSteps());
+    const service = makeTriggerService(routineRunCreate, LIVE_EXPORT_ROUTINE_WITH_INCREMENTAL_DESTINATION);
+    jest.spyOn(service, 'execute').mockResolvedValue(undefined);
+
+    await service.triggerRun(WORKBOOK_ID, 'routines/run-syn_1.yaml', 'manual');
+
+    expect(snapshottedStepOptionsFrom(routineRunCreate)).toEqual([
+      { fullPull: true },
+      { fullPull: false },
+      Prisma.DbNull,
+      Prisma.DbNull,
+    ]);
+  });
+
+  it('forces every pull step to a full pull — and leaves other steps alone — when triggered with forceFullPull (DEV-11407)', async () => {
+    const routineRunCreate = jest.fn().mockResolvedValue(makeCreatedRunWithoutSteps());
+    const service = makeTriggerService(routineRunCreate, LIVE_EXPORT_ROUTINE_WITH_INCREMENTAL_DESTINATION);
+    jest.spyOn(service, 'execute').mockResolvedValue(undefined);
+
+    await service.triggerRun(WORKBOOK_ID, 'routines/run-syn_1.yaml', 'manual', undefined, { forceFullPull: true });
+
+    // The incremental destination pull becomes full for THIS run; sync/publish still carry no options.
+    expect(snapshottedStepOptionsFrom(routineRunCreate)).toEqual([
+      { fullPull: true },
+      { fullPull: true },
+      Prisma.DbNull,
+      Prisma.DbNull,
+    ]);
   });
 
   it('rejects with 409 when the routine already has an active run (unique-index P2002)', async () => {

@@ -101,7 +101,11 @@ export class RoutineController {
     await this.routineService.deleteRoutineFile(workbookId, path, actor);
   }
 
-  /** Start a manual run of one routine. 409 if the routine already has an active run. A write — asserts writable. */
+  /**
+   * Start a manual run of one routine. 409 if the routine already has an active run. A write — asserts
+   * writable. `forceFullPull: true` makes every pull step of this run a full pull (a Live Export's
+   * one-off "full sync" when its destination pull is otherwise incremental — DEV-11407).
+   */
   @Post('routines/trigger')
   async trigger(
     @Param('workbookId') workbookId: WorkbookId,
@@ -110,7 +114,9 @@ export class RoutineController {
   ): Promise<RoutineRun> {
     const actor = userToActor(req.user);
     await this.workbookService.assertWritableWorkbook(actor, workbookId);
-    return this.routineExecutorService.triggerRun(workbookId, dto.filePath, 'manual', actor);
+    return this.routineExecutorService.triggerRun(workbookId, dto.filePath, 'manual', actor, {
+      forceFullPull: dto.forceFullPull,
+    });
   }
 
   @Get('routine-runs')

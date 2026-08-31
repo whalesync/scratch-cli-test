@@ -1,6 +1,7 @@
 import type { Routine, RoutineFileContent } from '../../db/routine';
 import type { RoutineRun } from '../../db/routine-run';
 import type { CreateRoutineFileDto } from '../../dto/routine/create-routine-file.dto';
+import type { TriggerRoutineDto } from '../../dto/routine/trigger-routine.dto';
 import type { UpdateRoutineFileDto } from '../../dto/routine/update-routine-file.dto';
 import type { Http } from '../http';
 
@@ -61,13 +62,21 @@ export function createRoutineApi(http: Http) {
       });
     },
 
-    /** POST /workbooks/:id/routines/trigger — start a manual run of one routine (409 if already running). */
-    trigger: async (workbookId: string, filePath: string): Promise<RoutineRun> => {
-      const res = await http.post<RoutineRun>(
-        `/workbooks/${workbookId}/routines/trigger`,
-        { filePath },
-        { fallbackMessage: 'Failed to trigger routine' },
-      );
+    /**
+     * POST /workbooks/:id/routines/trigger — start a manual run of one routine (409 if already running).
+     * `options.forceFullPull: true` makes every pull step of THIS run a full pull, whatever the routine
+     * YAML says — the "full sync" of a Live Export whose destination pull is otherwise incremental
+     * (see {@link TriggerRoutineDto.forceFullPull}).
+     */
+    trigger: async (
+      workbookId: string,
+      filePath: string,
+      options: Pick<TriggerRoutineDto, 'forceFullPull'> = {},
+    ): Promise<RoutineRun> => {
+      const body: TriggerRoutineDto = { filePath, ...options };
+      const res = await http.post<RoutineRun>(`/workbooks/${workbookId}/routines/trigger`, body, {
+        fallbackMessage: 'Failed to trigger routine',
+      });
       return res.data;
     },
 

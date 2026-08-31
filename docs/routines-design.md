@@ -363,7 +363,7 @@ POST   /workbooks/:workbookId/routine-runs/:runId/cancel        Cancel a running
 - `reload` reads the git repo and returns the list of discovered routines (joined with schedule + latest-run state). It does not write schedules from the YAML; it only orphan-cleans `Schedule` rows whose routine file is gone.
 - A routine's **schedule** is created/edited/removed through the generic schedule endpoints (`POST/PATCH/DELETE /workbooks/:id/schedules`) with `action: ROUTINE` and `entityId` = the routine file path — not through any routine endpoint.
 - `GET /routines` reads YAML files from git on every request (they're small). Returns parsed routine definitions with schedule status and latest run info joined from the DB.
-- `trigger` accepts `{ filePath: string }` in the body. Reads and parses the YAML, creates a `RoutineRun`, and begins execution. Returns 409 if the routine is already running.
+- `trigger` accepts `{ filePath: string, forceFullPull?: boolean }` in the body. Reads and parses the YAML, creates a `RoutineRun`, and begins execution. Returns 409 if the routine is already running. `forceFullPull: true` writes `options.fullPull: true` onto every pull step of that run's snapshot (the YAML is untouched) — how a Live Export with an incremental destination pull runs a one-off full sync (DEV-11407).
 - `cancel` sets the run status to `cancelled` and stops execution after the current step finishes.
 
 ## Client UI

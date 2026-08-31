@@ -11,6 +11,7 @@ import {
   RoutineRunId,
   RoutineRunStepResult,
   RoutineRunTrigger,
+  RoutineStep,
   RoutineStepOptions,
   SyncId,
   WorkbookId,
@@ -67,6 +68,28 @@ type RoutineStepOutcome =
   // yet — yield to it. The reaper resumes the run if that driver dies.
   | { kind: 'yield' };
 
+/** Per-trigger overrides applied to the run's step snapshot (see {@link RoutineExecutorService.triggerRun}). */
+export interface TriggerRunOptions {
+  /**
+   * Force every pull step of this run to a full pull, whatever its YAML `options.fullPull` says.
+   * The wire-level meaning is documented on `triggerRoutineSchema.forceFullPull` (shared-types).
+   */
+  forceFullPull?: boolean;
+}
+
+/**
+ * The `options` to snapshot onto a run step: the step's own YAML options, with `fullPull: true`
+ * written over a PULL step's when the run was triggered with `forceFullPull`. Non-pull steps are
+ * never touched (`fullPull` is meaningless there, and the parser rejects it on them). Returns
+ * `null` when the step ends up with no options at all.
+ */
+function resolveStepOptionsForRun(step: RoutineStep, forceFullPull: boolean): RoutineStepOptions | null {
+  if (!forceFullPull || step.action !== RoutineAction.PULL) {
+    return step.options;
+  }
+  return { ...(step.options ?? {}), fullPull: true };
+}
+
 /**
  * Runs a routine end-to-end (DEV-10436, slice 2). This is the "Option A" durable orchestrator from
  * docs/routines-step-execution.md: each step is enqueued as its own DbJob via the existing enqueuers,
@@ -96,12 +119,19 @@ export class RoutineExecutorService {
    * and kicks the executor fire-and-forget. Enforces "one active run per routine file" via the
    * partial unique index — a concurrent trigger surfaces as a P2002, mapped to 409. Returns the
    * pending run immediately so the caller can navigate to it.
+   *
+   * `options.forceFullPull` rewrites every pull step's snapshotted `options.fullPull` to `true` for
+   * THIS run only — the routine file is untouched, and the executor reads pull mode from the step
+   * snapshot (never the YAML), so the override needs no executor change and the run's own step rows
+   * record that a full pull was requested. This is the "full sync" of a Live Export whose
+   * destination pull is otherwise incremental (DEV-11407).
    */
   async triggerRun(
     workbookId: WorkbookId,
     routineFilePath: string,
     trigger: RoutineRunTrigger,
     actor?: Actor,
+    options: TriggerRunOptions = {},
   ): Promise<RoutineRun> {
     assertValidRoutineFilePath(routineFilePath);
 
@@ -122,6 +152,8 @@ export class RoutineExecutorService {
       throw new BadRequestException(referenceErrors.join('; '));
     }
 
+    const forceFullPull = options.forceFullPull === true;
+
     let run: PrismaRoutineRun & { steps: PrismaRoutineRunStep[] };
     try {
       run = await this.db.client.routineRun.create({
@@ -138,22 +170,25 @@ export class RoutineExecutorService {
           triggeredByUserId: actor?.userId ?? null,
           currentStepIndex: 0,
           steps: {
-            create: routine.steps.map((step, index) => ({
-              id: createRoutineRunStepId(),
-              stepIndex: index,
-              action: step.action,
-              name: step.name,
-              folder: step.folder,
-              // Scalar-list column: an absent `folders:` snapshots as an empty array (the executor
-              // treats empty as "all linked folders", matching an omitted target).
-              folders: step.folders ?? [],
-              connection: step.connection,
-              sync: step.sync,
-              timeoutSeconds: step.timeout,
-              // Json column rejects a bare `null`; use Prisma.DbNull for "no options".
-              options: step.options === null ? Prisma.DbNull : (step.options as Prisma.InputJsonValue),
-              status: 'pending',
-            })),
+            create: routine.steps.map((step, index) => {
+              const stepOptions = resolveStepOptionsForRun(step, forceFullPull);
+              return {
+                id: createRoutineRunStepId(),
+                stepIndex: index,
+                action: step.action,
+                name: step.name,
+                folder: step.folder,
+                // Scalar-list column: an absent `folders:` snapshots as an empty array (the executor
+                // treats empty as "all linked folders", matching an omitted target).
+                folders: step.folders ?? [],
+                connection: step.connection,
+                sync: step.sync,
+                timeoutSeconds: step.timeout,
+                // Json column rejects a bare `null`; use Prisma.DbNull for "no options".
+                options: stepOptions === null ? Prisma.DbNull : (stepOptions as Prisma.InputJsonValue),
+                status: 'pending',
+              };
+            }),
           },
         },
       });
@@ -168,7 +203,7 @@ export class RoutineExecutorService {
       await this.auditLogService.logEvent({
         actor,
         eventType: 'create',
-        message: `Triggered routine "${routine.name}" (${routineFilePath})`,
+        message: `Triggered routine "${routine.name}" (${routineFilePath})${forceFullPull ? ' with a forced full pull' : ''}`,
         entityId: workbookId,
         organizationId: actor.organizationId,
       });

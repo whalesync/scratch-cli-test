@@ -59,7 +59,9 @@ interface GeneratedRoutineStep {
  *
  * The one exception is {@link SyncRoutineSpec.incrementalPullDestinationConnectorAccountIds}: a
  * flag-gated opt-in (`ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL`) that leaves a destination
- * pull step incremental.
+ * pull step incremental. Such a routine can still be run as a one-off full sync without touching
+ * the file: `POST routines/trigger { forceFullPull: true }` overrides `fullPull` on the run's step
+ * snapshot (DEV-11407).
  */
 const FULL_PULL_STEP_OPTIONS: RoutineStepOptions = { fullPull: true };
 

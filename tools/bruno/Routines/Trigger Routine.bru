@@ -16,11 +16,17 @@ headers {
 
 body:json {
   {
-    "filePath": "routines/example.yaml"
+    "filePath": "routines/example.yaml",
+    "forceFullPull": false
   }
 }
 
 docs {
   Starts a manual run of one routine (identified by `filePath`). 409 if the
   routine already has an active run. Returns the created RoutineRun.
+
+  `forceFullPull` (optional, default false): when true every pull step of
+  this run is a full pull regardless of the routine's `options.fullPull` —
+  the "full sync" of a Live Export whose destination pull is incremental.
+  The routine file is not modified.
 }
