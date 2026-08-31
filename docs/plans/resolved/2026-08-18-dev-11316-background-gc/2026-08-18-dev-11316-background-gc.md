@@ -2,11 +2,22 @@
 
 - **Created:** 2026-08-18 · **Revised:** 2026-08-26 (two hard guarantees, git 2.39 measurements, lock-free full GC)
 - **Author:** Ivan Dimitrov
-- **Status:** In Progress (MR 2 implemented on branch `DEV-11316-background-gc-cron`, 2026-08-27 — see below)
+- **Status:** Resolved (merged to master 2026-08-31 as `82d2a8956`, MR [!3305](https://gitlab.com/whalesync/spinner/-/merge_requests/3305); switch default OFF). **Canonical feature doc: [`scratch-git-2/docs/MAINTENANCE.md`](/scratch-git-2/docs/MAINTENANCE.md)** — this plan is the historical record of how the design evolved.
 - **Linear:** [DEV-11316](https://linear.app/whalesync/issue/DEV-11316/phase-2-rc1-robust-gc-maintenance-dominant-safe-win) (parent [DEV-11253](https://linear.app/whalesync/issue/DEV-11253); incident [DEV-11266](https://linear.app/whalesync/issue/DEV-11266))
 - **Shipped so far:** MR 1 — [!3253](https://gitlab.com/whalesync/spinner/-/merge_requests/3253) (`25c96230b`): write-lock guards and the `gcInProgress` marker live inside the blocking task, `git gc` exit status checked, `--prune=now` → `--prune=1.hour.ago`. Plan doc — [!3254](https://gitlab.com/whalesync/spinner/-/merge_requests/3254) (`a6c9d11e1`).
 
-## The two guarantees
+> **Superseded sections below.** The design evolved during implementation; the sections that
+> follow are kept as history. The final decisions that differ from them:
+> **G1 was dropped entirely** — no GC step after a job at all (the after-job `/gc` becomes a no-op
+> while the switch is on); the loop's *quick* step replaced "compact after every job". The
+> "budgetSeconds/batchSize hot path" and the `SCRATCH_GIT_FULL_GC_EXCLUSIVE` writer-lock flag were
+> never built — full GC is lock-free via git's grace model from day one, with freshen-on-write as
+> the pre-default-on follow-up. The per-repo JSON state file and the switch JSON became a
+> throw-away SQLite cache/journal with all decision inputs **derived from git's own files**, and
+> the full step gained `--cruft` + forced `commit-graph`. See "What is built" below and
+> MAINTENANCE.md for the final system.
+
+## The two guarantees (superseded — G1 dropped; see note above)
 
 Everything below exists to make these two statements true, and each is checkable on its own.
 

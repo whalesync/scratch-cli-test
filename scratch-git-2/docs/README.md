@@ -82,6 +82,9 @@ SCRATCH_GIT_GC_PRUNE_EXPIRY=1.hour.ago
                           # `1.hour.ago`.
 ```
 
+> Background repo GC (the maintenance loop, its switch, endpoints and rollout runbook) is
+> documented in [MAINTENANCE.md](MAINTENANCE.md).
+
 ### On-disk layout — one root
 
 Everything lives under one root: the **parent of `GIT_REPOS_DIR`** (`/data` on the VM, `local/` in

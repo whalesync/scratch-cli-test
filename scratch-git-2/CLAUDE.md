@@ -44,6 +44,7 @@ Always run commands from inside `scratch-git-2/` (or the repo root using Turbore
 ## Docs
 
 - [README.md](docs/README.md) — service architecture, environment variables, Docker, deployment, DevOps playbook
+- [MAINTENANCE.md](docs/MAINTENANCE.md) — background repo GC: the quick/full maintenance loop, the admin switch (default off), derived timestamps, the throw-away SQLite journal, endpoints, rollout runbook (DEV-11316)
 - [PARITY.md](docs/PARITY.md) — Rust vs Go CLI feature gap tracking
 - [MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) — plan to migrate business logic from NestJS/Postgres into Rust/git
 - [TEST_LOOP.md](docs/TEST_LOOP.md) — end-to-end test guide ⚠️ partially outdated (uses old binary name `scratchmd2` and old workspace paths — treat as conceptual reference)

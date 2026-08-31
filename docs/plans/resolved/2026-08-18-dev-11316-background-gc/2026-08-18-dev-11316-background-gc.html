@@ -85,6 +85,13 @@
 </head>
 <body>
 <main>
+<div style="border:1.5px solid var(--amber); background: var(--amber-soft); border-radius:4px; padding:12px 16px; margin-bottom:24px; font-size:14px;">
+  <strong>Historical design plan — superseded.</strong> The feature merged 2026-08-31 (MR !3253 + !3305, switch default off).
+  The implementation dropped the after-job compact step and the exclusive-lock flag, derives all decision
+  inputs from git's own files, journals to a throw-away SQLite DB, and runs the full step as
+  <code>gc --cruft</code>. Canonical doc: <code>scratch-git-2/docs/MAINTENANCE.md</code>. The measurements,
+  traces and the lock-free argument below remain valid background.
+</div>
 <header class="top">
   <div class="eyebrow">DEV-11316 · scratch-git · plan for MR 2 → 4 · revised 2026-08-26</div>
   <h1>Background GC for scratch-git</h1>
