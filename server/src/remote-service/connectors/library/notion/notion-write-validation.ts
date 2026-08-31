@@ -181,3 +181,31 @@ export function extractNotionRejectedPropertyName(message: string): string | und
   const propertyName = match?.[1]?.trim();
   return propertyName ? propertyName : undefined;
 }
+
+/**
+ * The message prefixes Notion uses when it rejects a write because the target
+ * page/database/block is archived (in the trash), e.g. "Can't edit block that
+ * is archived. You must unarchive the block before editing." — a
+ * `validation_error` (HTTP 400), NOT an `object_not_found`. Mirrors
+ * bottlenose's `NOTION_ARCHIVED_ERROR_PATTERNS`
+ * (whalesync/api/bottlenose/src/connectors/notion-connector/notion-sync-error.ts),
+ * which classifies the same rejections for the V1 sync engine.
+ *
+ * This substring matching is deliberately confined to the Notion connector:
+ * everything downstream branches on the stable `ConnectorErrorCode` the connector
+ * attaches, never on this copy.
+ */
+const NOTION_ARCHIVED_WRITE_REJECTION_MESSAGE_PATTERNS: readonly string[] = [
+  "Can't edit block that is archived",
+  "Can't update a page that is archived",
+  "Can't edit database that is archived",
+];
+
+/**
+ * True when a Notion `validation_error` message is the "target is archived"
+ * write rejection — the record still exists in Notion's trash but cannot be
+ * edited until it is restored, so retrying the same update can never succeed.
+ */
+export function isNotionArchivedWriteRejectionMessage(message: string): boolean {
+  return NOTION_ARCHIVED_WRITE_REJECTION_MESSAGE_PATTERNS.some((pattern) => message.includes(pattern));
+}

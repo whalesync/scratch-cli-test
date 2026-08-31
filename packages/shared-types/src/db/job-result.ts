@@ -1,3 +1,5 @@
+import { ConnectorErrorCode } from '../connector/connector-error-code';
+import { PublishFailedOperation } from '../dto/publish-plan/publish-job-responses.dto';
 import { JobType } from '../job-types';
 import {
   DiscardPendingChangesPublicProgress,
@@ -59,6 +61,17 @@ export interface JobResultFolder {
 }
 
 /**
+ * One user-facing error message plus its stable machine-readable classification, when the
+ * connector recognized the failure as one of the {@link ConnectorErrorCode} cases. Frontends that
+ * want to attach behavior to a *kind* of failure (e.g. offer a full-sync recovery when the
+ * destination record no longer exists) branch on `errorCode`, never on the message text.
+ */
+export interface JobResultError {
+  message: string;
+  errorCode: ConnectorErrorCode | null;
+}
+
+/**
  * The full normalized result. `summary` + `stats` are the lightweight headline (suitable for a list
  * row); `folders`, `files`, `errors`, and `warnings` are the drill-down detail.
  */
@@ -73,6 +86,13 @@ export interface JobResult {
   files: JobResultFile[];
   /** User-facing error messages. */
   errors: string[];
+  /**
+   * The entries of `errors` paired with their stable {@link ConnectorErrorCode} classification
+   * (`errorCode: null` when unclassified). Same order and length as `errors`; only populated for
+   * publish jobs today — `undefined` elsewhere. Frontends that need to branch on the *kind* of
+   * failure read this; frontends that only render text can keep reading `errors`.
+   */
+  recordErrors?: JobResultError[];
   /** User-facing warning messages. */
   warnings: string[];
   /**
@@ -483,11 +503,18 @@ function derivePublishResult(
     stats.push({ label: 'Rejected', value: failedCount });
   }
 
-  const errors = (progress.failedOperations ?? [])
-    .map((operation) => operation.error)
-    .filter((message): message is string => typeof message === 'string' && message.length > 0);
+  // `errors` (bare strings) and `recordErrors` (string + stable errorCode) are derived from the
+  // same rows in the same order — `recordErrors` exists so a frontend can attach behavior to a
+  // failure *kind* (e.g. remote_record_not_found) without parsing the message text.
+  const recordErrors: JobResultError[] = (progress.failedOperations ?? [])
+    .filter(
+      (operation): operation is PublishFailedOperation & { error: string } =>
+        typeof operation.error === 'string' && operation.error.length > 0,
+    )
+    .map((operation) => ({ message: operation.error, errorCode: operation.errorCode ?? null }));
+  const errors = recordErrors.map((recordError) => recordError.message);
 
-  return { summary, stats, folders: [], files: [], errors, warnings: [] };
+  return { summary, stats, folders: [], files: [], errors, recordErrors, warnings: [] };
 }
 
 /**

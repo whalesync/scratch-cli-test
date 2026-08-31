@@ -589,7 +589,7 @@ export class PublishPlanRunService {
       if (failedCount > 0) {
         const failedRows = await this.db.client.publishPlanOperation.findMany({
           where: { planId: pipelineId, status: 'failed-batch' },
-          select: { filePath: true, phase: true, error: true },
+          select: { filePath: true, phase: true, error: true, errorCode: true },
           orderBy: { filePath: 'asc' },
         });
         // Collapse to one entry per record (shared rule; DEV-10756) and slice to
@@ -1077,14 +1077,14 @@ export class PublishPlanRunService {
       if (succeededEntryIds.length > 0) {
         await this.db.client.publishPlanOperation.updateMany({
           where: { id: { in: succeededEntryIds } },
-          data: { status: 'success', error: null },
+          data: { status: 'success', error: null, errorCode: null },
         });
       }
 
       if (idsWithoutRemoteRecordId.size > 0) {
         await this.db.client.publishPlanOperation.updateMany({
           where: { id: { in: [...idsWithoutRemoteRecordId] } },
-          data: { status: 'failed-batch', error: DELETE_MISSING_REMOTE_RECORD_ID_ERROR },
+          data: { status: 'failed-batch', error: DELETE_MISSING_REMOTE_RECORD_ID_ERROR, errorCode: null },
         });
         // Treat the batch as errored so the run reports it and the phase's retry
         // pass re-examines it (it will fail identically and stay failed-batch —
@@ -1097,7 +1097,7 @@ export class PublishPlanRunService {
         for (const { id, error } of createEntriesFailedInBatch) {
           await this.db.client.publishPlanOperation.updateMany({
             where: { id },
-            data: { status: 'failed-batch', error },
+            data: { status: 'failed-batch', error, errorCode: null },
           });
         }
         WSLogger.warn({
@@ -1134,12 +1134,15 @@ export class PublishPlanRunService {
       });
 
       // failed-batch — persist the user-facing reason so the review UI surfaces
-      // it on the record instead of a bare HTTP status code.
+      // it on the record instead of a bare HTTP status code, plus the stable
+      // errorCode (when the connector classified the failure) so frontends can
+      // attach behavior to the failure kind without parsing the message.
       await this.db.client.publishPlanOperation.updateMany({
         where: { id: { in: entries.map((e) => e.id) } },
         data: {
           status: 'failed-batch',
           error: connectorErrorDetails.userFriendlyMessage,
+          errorCode: connectorErrorDetails.errorCode ?? null,
         },
       });
       return entries.length;

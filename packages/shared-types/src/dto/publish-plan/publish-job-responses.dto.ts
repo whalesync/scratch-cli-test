@@ -1,3 +1,5 @@
+import { ConnectorErrorCode } from '../../connector/connector-error-code';
+
 /** Response for `POST .../publish-v2/plan-job`. */
 export interface PlanJobResponse {
   jobId: string | number | null;
@@ -34,6 +36,14 @@ export type PublishFailedOperation = {
   filePath: string;
   phase: string;
   error: string | null;
+  /**
+   * Stable machine-readable classification of the failure, when the connector
+   * recognized it as one of the {@link ConnectorErrorCode} cases (e.g. the
+   * destination record no longer exists). `null`/absent for unclassified
+   * failures. Frontends branch on THIS, never on the `error` message text —
+   * the message copy may change; the code may not.
+   */
+  errorCode?: ConnectorErrorCode | null;
   /**
    * Per-field connector rejection messages, keyed by RFC 6902 JSON Pointer
    * (e.g. `"/Organization"`). Populated when the connector attributes the

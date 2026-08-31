@@ -3,6 +3,7 @@ import {
   chunkStringToNotionRichTextLimit,
   extractNotionRejectedPropertyName,
   findUnwritableNotionDateBoundary,
+  isNotionArchivedWriteRejectionMessage,
   isNotionWritableDateBoundary,
   splitRichTextSpansToNotionLimit,
 } from '../notion-write-validation';
@@ -166,5 +167,28 @@ describe('findUnwritableNotionDateBoundary', () => {
     expect(findUnwritableNotionDateBoundary({ start: '2025-02-20', end: '+010000-01-01T07:59:59.000Z' })).toBe(
       '+010000-01-01T07:59:59.000Z',
     );
+  });
+});
+
+describe('isNotionArchivedWriteRejectionMessage', () => {
+  it('matches each of the archived-write rejection phrasings Notion uses', () => {
+    expect(
+      isNotionArchivedWriteRejectionMessage(
+        "Can't edit block that is archived. You must unarchive the block before editing.",
+      ),
+    ).toBe(true);
+    expect(
+      isNotionArchivedWriteRejectionMessage(
+        "Can't update a page that is archived. You must unarchive the page before updating.",
+      ),
+    ).toBe(true);
+    expect(isNotionArchivedWriteRejectionMessage("Can't edit database that is archived.")).toBe(true);
+  });
+
+  it('does not match unrelated validation errors', () => {
+    expect(
+      isNotionArchivedWriteRejectionMessage('body.properties.Body.rich_text[0].text.content.length should be ≤ 2000'),
+    ).toBe(false);
+    expect(isNotionArchivedWriteRejectionMessage('')).toBe(false);
   });
 });

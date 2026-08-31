@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConnectorErrorCode } from '@spinner/shared-types';
 import { CredentialEncryptionService } from '../../credential-encryption/credential-encryption.service';
 import { DbService } from '../../db/db.service';
 import { ExperimentsService } from '../../experiments/experiments.service';
@@ -1213,8 +1214,43 @@ describe('PublishPlanRunService', () => {
         .mock.calls.find((call) => (call[0] as { data?: { status?: string } }).data?.status === 'failed-batch');
       expect(failedBatchCall).toBeDefined();
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const failedData = (failedBatchCall![0] as { data: { status: string; error: string } }).data;
+      const failedData = (failedBatchCall![0] as { data: { status: string; error: string; errorCode: string | null } })
+        .data;
       expect(failedData.error).toBe(serviceValidationMessage);
+      // The connector didn't classify this failure, so no stale code may linger.
+      expect(failedData.errorCode).toBeNull();
+    });
+
+    it("persists the connector's stable errorCode alongside the message when the failure is classified", async () => {
+      setupEditPhaseEntries([
+        {
+          id: 'op_1',
+          filePath: 'Pages/archived-page.json',
+          content: { id: 'pg_1', properties: {} },
+          changedFields: { properties: {} },
+          remoteRecordId: 'pg_1',
+        },
+      ]);
+
+      jest.mocked(connector.updateRecords).mockRejectedValue(new Error('Request failed with status code 400'));
+      // e.g. Notion classifying "Can't edit block that is archived" — the
+      // message copy is connector-owned prose; the code is the stable contract
+      // frontends branch on (DEV-11407).
+      jest.mocked(connector.extractConnectorErrorDetails).mockReturnValue({
+        userFriendlyMessage:
+          "Notion API error (validation_error): Can't edit block that is archived. You must unarchive the block before editing.",
+        errorCode: ConnectorErrorCode.RemoteRecordNotFound,
+      });
+
+      await service.runPipeline(PLAN_ID);
+
+      const failedBatchCall = jest
+        .mocked(db.client.publishPlanOperation.updateMany)
+        .mock.calls.find((call) => (call[0] as { data?: { status?: string } }).data?.status === 'failed-batch');
+      expect(failedBatchCall).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const failedData = (failedBatchCall![0] as { data: { errorCode: string | null } }).data;
+      expect(failedData.errorCode).toBe('remote_record_not_found');
     });
 
     it('returns failedOperations (filePath/phase/connector message) so the job can surface why a record failed', async () => {
@@ -1273,7 +1309,7 @@ describe('PublishPlanRunService', () => {
         ) {
           return Promise.resolve(
             a.select?.filePath
-              ? [{ filePath: 'Activities/call-nishant.json', phase: 'edit', error: connectorMessage }]
+              ? [{ filePath: 'Activities/call-nishant.json', phase: 'edit', error: connectorMessage, errorCode: null }]
               : [],
           );
         }
@@ -1293,7 +1329,7 @@ describe('PublishPlanRunService', () => {
 
       expect(result.failedCount).toBe(1);
       expect(result.failedOperations).toEqual([
-        { filePath: 'Activities/call-nishant.json', phase: 'edit', error: connectorMessage },
+        { filePath: 'Activities/call-nishant.json', phase: 'edit', error: connectorMessage, errorCode: null },
       ]);
     });
   });
@@ -1399,11 +1435,11 @@ describe('PublishPlanRunService', () => {
       // Statuses: a, c → success; b → failed-batch with the connector's reason.
       expect(updateManyCalls()).toContainEqual({
         where: { id: { in: ['op_a', 'op_c'] } },
-        data: { status: 'success', error: null },
+        data: { status: 'success', error: null, errorCode: null },
       });
       expect(updateManyCalls()).toContainEqual({
         where: { id: 'op_b' },
-        data: { status: 'failed-batch', error: 'Email address is invalid' },
+        data: { status: 'failed-batch', error: 'Email address is invalid', errorCode: null },
       });
       expect(connector.createRecords).toHaveBeenCalledTimes(1);
     });
@@ -1446,7 +1482,7 @@ describe('PublishPlanRunService', () => {
       expect(fileIndexService.upsertBatch).not.toHaveBeenCalled();
       expect(updateManyCalls()).toContainEqual({
         where: { id: { in: ['op_a', 'op_b'] } },
-        data: { status: 'failed-batch', error: 'HubSpot is down' },
+        data: { status: 'failed-batch', error: 'HubSpot is down', errorCode: null },
       });
     });
   });

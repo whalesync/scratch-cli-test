@@ -7,6 +7,7 @@ import type {
   UpdateDataSourceParameters,
 } from '@notionhq/client';
 import {
+  ConnectorErrorCode,
   connectorMetadata,
   ConnectorSettingDefinition,
   type CreateFieldResult,
@@ -84,6 +85,7 @@ import {
 import {
   extractNotionRejectedPropertyName,
   findUnwritableNotionDateBoundary,
+  isNotionArchivedWriteRejectionMessage,
   splitRichTextSpansToNotionLimit,
 } from './notion-write-validation';
 
@@ -1761,6 +1763,13 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         return {
           userFriendlyMessage: `Notion object not found: ${notionError.message}`,
           description: notionError.message,
+          // Operation-agnostic fact: whatever object this call targeted no
+          // longer exists in Notion, so retrying the same call can never
+          // succeed. What to do about it attaches downstream where the
+          // operation context lives — only the publish runner persists the
+          // code today (a stale destination record → the frontend offers a
+          // full-sync repair); pull/HTTP paths discard it.
+          errorCode: ConnectorErrorCode.RemoteRecordNotFound,
         };
       }
 
@@ -1782,6 +1791,23 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         return {
           userFriendlyMessage: `The Notion service is unavailable. Details: ${notionError.message}`,
           description: notionError.message,
+        };
+      }
+
+      // Notion rejects a write to an archived (trashed) page/database/block as a
+      // `validation_error` ("Can't edit block that is archived…"), not an
+      // `object_not_found`. Classify it with the same stable code as a deleted
+      // destination record: either way the local mirror is stale and retrying the
+      // update can never succeed, so the frontend offers the same full-sync
+      // recovery. The message-substring sniffing stays here in the connector.
+      if (
+        notionError.code === NotionApiErrorCode.ValidationError &&
+        isNotionArchivedWriteRejectionMessage(notionError.message)
+      ) {
+        return {
+          userFriendlyMessage: `Notion API error (${notionError.code}): ${notionError.message}`,
+          description: notionError.message,
+          errorCode: ConnectorErrorCode.RemoteRecordNotFound,
         };
       }
 

@@ -4013,6 +4013,7 @@ fn reconcile_moves_failed_op_to_failed_patches() {
         file_path: "posts/rec_acme.json".into(),
         phase: "edit".into(),
         error: Some("industry must be one of: Tech, Bio".into()),
+        error_code: None,
         field_errors: Some(
             [(
                 "/industry".to_string(),
@@ -4095,6 +4096,7 @@ fn reconcile_moves_all_failed_ops_when_more_than_twenty() {
             file_path: path,
             phase: "edit".into(),
             error: Some("industry must be one of: Tech, Bio".into()),
+            error_code: None,
             field_errors: None,
         });
     }
@@ -4320,6 +4322,7 @@ fn reject_all_clears_failed_patches_so_edit_does_not_resurrect_on_next_reconcile
         file_path: "posts/rec_acme.json".into(),
         phase: "edit".into(),
         error: Some("industry must be one of: Tech, Bio".into()),
+        error_code: None,
         field_errors: None,
     };
     reconcile_accepted_after_publish(
@@ -5723,6 +5726,7 @@ mod publish_results_formatting {
                 file_path: "Activities/call-nishant-tare.json".into(),
                 phase: "create".into(),
                 error: Some(connector_message.into()),
+                error_code: None,
                 field_errors: None,
             }],
         );
@@ -5740,6 +5744,7 @@ mod publish_results_formatting {
                 file_path: "Activities/call-nishant-tare.json".into(),
                 phase: "create".into(),
                 error: Some(connector_message.into()),
+                error_code: None,
                 field_errors: None,
             }],
         }];

@@ -1,7 +1,7 @@
-import type { PublishFailedOperation } from '@spinner/shared-types';
+import type { ConnectorErrorCode, PublishFailedOperation } from '@spinner/shared-types';
 
 /** A `publishPlanOperation` row's failure-relevant columns. */
-export type FailedOperationRow = { filePath: string; phase: string; error: string | null };
+export type FailedOperationRow = { filePath: string; phase: string; error: string | null; errorCode: string | null };
 
 /**
  * Collapse the raw `failed-batch` operation rows of a publish plan to one
@@ -28,7 +28,14 @@ export function collapseFailedOperationsByPath(rows: FailedOperationRow[]): Publ
   for (const row of rows) {
     const existing = failedOperationByPath.get(row.filePath);
     if (!existing || (existing.phase === 'rename-files' && row.phase !== 'rename-files')) {
-      failedOperationByPath.set(row.filePath, { filePath: row.filePath, phase: row.phase, error: row.error });
+      failedOperationByPath.set(row.filePath, {
+        filePath: row.filePath,
+        phase: row.phase,
+        error: row.error,
+        // The DB column is a plain String; it only ever holds a ConnectorErrorCode
+        // value (or null) — see the processBatch write sites.
+        errorCode: (row.errorCode as ConnectorErrorCode | null) ?? null,
+      });
     }
   }
   return Array.from(failedOperationByPath.values());

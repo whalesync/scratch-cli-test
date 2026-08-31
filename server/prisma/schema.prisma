@@ -756,6 +756,11 @@ model PublishPlanOperation {
   dataFolderId   String? // The DataFolder ID (for batching)
   status         String  @default("pending") // "pending", "success", "failed-batch"
   error          String?
+  // Stable machine-readable classification of the failure, when the connector
+  // recognized it (a `ConnectorErrorCode` value from @spinner/shared-types, e.g.
+  // "remote_record_not_found"). Null for unclassified failures. Frontends
+  // branch on this, never on the `error` message text.
+  errorCode      String?
 
   // True when this operation was produced from a `scratchmd files revert-plan`
   // patch (CLI sent `revert: true` on the upload-patch DTO, which

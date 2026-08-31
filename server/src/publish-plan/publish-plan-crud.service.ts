@@ -214,7 +214,7 @@ export class PublishPlanCrudService {
 
     const rows = await this.db.client.publishPlanOperation.findMany({
       where: { planId: pipelineId, status: 'failed-batch' },
-      select: { filePath: true, phase: true, error: true },
+      select: { filePath: true, phase: true, error: true, errorCode: true },
       orderBy: { filePath: 'asc' },
     });
 

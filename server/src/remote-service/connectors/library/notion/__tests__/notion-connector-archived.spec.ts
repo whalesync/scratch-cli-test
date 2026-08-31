@@ -28,6 +28,8 @@ jest.mock('turndown', () =>
   })),
 );
 
+import { ConnectorErrorCode } from '@spinner/shared-types';
+import { NotionApiErrorCode, NotionError } from '../notion-api-client';
 import {
   isArchivedOrTrashedNotionPage,
   NotionConnector,
@@ -206,6 +208,46 @@ describe('NotionConnector.updateRecords — unarchive with no property drift (DE
 
     expect(mockUpdatePage).not.toHaveBeenCalled();
     expect(result).toBe(file);
+  });
+});
+
+describe('NotionConnector.extractConnectorErrorDetails — stable errorCode (DEV-11407)', () => {
+  const connector = new NotionConnector('fake-key');
+
+  it("classifies the archived-write rejection (validation_error) as remote_record_not_found, keeping Notion's copy", () => {
+    const archivedMessage = "Can't edit block that is archived. You must unarchive the block before editing.";
+    const details = connector.extractConnectorErrorDetails(
+      new NotionError({ code: NotionApiErrorCode.ValidationError, message: archivedMessage, status: 400 }),
+    );
+
+    expect(details.errorCode).toBe(ConnectorErrorCode.RemoteRecordNotFound);
+    expect(details.userFriendlyMessage).toBe(`Notion API error (validation_error): ${archivedMessage}`);
+  });
+
+  it('classifies object_not_found as remote_record_not_found', () => {
+    const details = connector.extractConnectorErrorDetails(
+      new NotionError({
+        code: NotionApiErrorCode.ObjectNotFound,
+        message: 'Could not find page with ID: pg_123.',
+        status: 404,
+      }),
+    );
+
+    expect(details.errorCode).toBe(ConnectorErrorCode.RemoteRecordNotFound);
+  });
+
+  it('leaves an ordinary validation_error unclassified (no errorCode)', () => {
+    const details = connector.extractConnectorErrorDetails(
+      new NotionError({
+        code: NotionApiErrorCode.ValidationError,
+        message: 'body.properties.Body.rich_text[0].text.content.length should be ≤ `2000`.',
+        status: 400,
+      }),
+    );
+
+    expect(details.errorCode).toBeUndefined();
+    // The unrelated validation error still gets the field-attribution prefix.
+    expect(details.userFriendlyMessage).toContain('field "Body"');
   });
 });
 

@@ -1,5 +1,11 @@
 import { TSchema } from '@sinclair/typebox';
-import type { CreateDestination, DataFolderOptions, EntityId, RemoteContainer } from '@spinner/shared-types';
+import type {
+  ConnectorErrorCode,
+  CreateDestination,
+  DataFolderOptions,
+  EntityId,
+  RemoteContainer,
+} from '@spinner/shared-types';
 import { PostgresColumnType, X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import { get, set, toPath, unset } from 'lodash';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -455,6 +461,22 @@ export type ConnectorErrorDetails = {
   userFriendlyMessage: string;
   description?: string;
   additionalContext?: Record<string, unknown>;
+  /**
+   * Stable machine-readable classification of the failure, set when the
+   * connector recognizes the service's error as one of the shared
+   * {@link ConnectorErrorCode} cases (e.g. the remote object this call
+   * targeted no longer exists / is archived, so retrying the same call can
+   * never succeed). Operation-agnostic — `extractConnectorErrorDetails` serves
+   * pull, publish, and the HTTP boundary alike, so the code states a fact
+   * about the service's response; what to do about it attaches at the surface
+   * with operation context (today only the publish runner persists it). Any
+   * sniffing of the service's error message or status to decide this belongs
+   * INSIDE the connector's `extractConnectorErrorDetails` — everything
+   * downstream (the publish runner, bottlenose, dusky) must branch only on
+   * this code, never on `userFriendlyMessage` text, so copy edits can't break
+   * behavior.
+   */
+  errorCode?: ConnectorErrorCode;
 };
 
 export type RecordErrorsMetadata = {

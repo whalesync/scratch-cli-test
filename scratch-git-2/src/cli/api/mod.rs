@@ -565,6 +565,14 @@ pub struct JobFailedOperation {
     pub phase: String,
     #[serde(default)]
     pub error: Option<String>,
+    /// Stable machine-readable classification of the failure, when the
+    /// connector recognized it — a `ConnectorErrorCode` value from
+    /// `@spinner/shared-types` (e.g. `remote_record_not_found`).
+    /// Absent/`null` for unclassified failures. Consumers branch on this,
+    /// never on the `error` message text (the copy may change; the code
+    /// may not).
+    #[serde(rename = "errorCode", default)]
+    pub error_code: Option<String>,
     /// Per-field connector rejection messages keyed by RFC 6902 JSON Pointer
     /// (e.g. `/Organization`). Mirrors `PublishFailedOperation.fieldErrors`.
     /// Absent/`null` when only a record-level `error` is available. Moved into

@@ -92,6 +92,7 @@ describe('PublishPlanCrudService.listFailedPublishPlanOperations', () => {
       filePath: `Folder/rec-${String(i).padStart(2, '0')}.json`,
       phase,
       error: `rejected ${i}`,
+      errorCode: null,
     }));
 
   it('queries only failed-batch operations for the plan, ordered by filePath', async () => {
@@ -101,7 +102,7 @@ describe('PublishPlanCrudService.listFailedPublishPlanOperations', () => {
 
     expect(findManyOperations).toHaveBeenCalledWith({
       where: { planId: 'plan-1', status: 'failed-batch' },
-      select: { filePath: true, phase: true, error: true },
+      select: { filePath: true, phase: true, error: true, errorCode: true },
       orderBy: { filePath: 'asc' },
     });
   });
@@ -114,7 +115,12 @@ describe('PublishPlanCrudService.listFailedPublishPlanOperations', () => {
     // The whole point of the fix: 25 > the summary cap of 20, yet all 25 come back.
     expect(result.total).toBe(25);
     expect(result.data).toHaveLength(25);
-    expect(result.data[0]).toEqual({ filePath: 'Folder/rec-00.json', phase: 'edits', error: 'rejected 0' });
+    expect(result.data[0]).toEqual({
+      filePath: 'Folder/rec-00.json',
+      phase: 'edits',
+      error: 'rejected 0',
+      errorCode: null,
+    });
   });
 
   it('paginates the collapsed list (default page size 50, cap 200)', async () => {
@@ -135,14 +141,16 @@ describe('PublishPlanCrudService.listFailedPublishPlanOperations', () => {
   it('collapses multiple failed rows for one record, preferring the non-rename phase', async () => {
     // Rename row seen first — the connector rejection must still win.
     const service = makeService([
-      { filePath: 'Folder/rec.json', phase: 'rename-files', error: 'rename failed' },
-      { filePath: 'Folder/rec.json', phase: 'edits', error: 'connector rejected' },
+      { filePath: 'Folder/rec.json', phase: 'rename-files', error: 'rename failed', errorCode: null },
+      { filePath: 'Folder/rec.json', phase: 'edits', error: 'connector rejected', errorCode: null },
     ]);
 
     const result = await service.listFailedPublishPlanOperations('plan-1');
 
     expect(result.total).toBe(1);
-    expect(result.data).toEqual([{ filePath: 'Folder/rec.json', phase: 'edits', error: 'connector rejected' }]);
+    expect(result.data).toEqual([
+      { filePath: 'Folder/rec.json', phase: 'edits', error: 'connector rejected', errorCode: null },
+    ]);
   });
 });
 
@@ -205,24 +213,45 @@ describe('PublishPlanCrudService.listSucceededPublishPlanOperations', () => {
 describe('collapseFailedOperationsByPath', () => {
   it('keeps one entry per path, preferring a non-rename phase regardless of row order', () => {
     const collapsed = collapseFailedOperationsByPath([
-      { filePath: 'a.json', phase: 'rename-files', error: 'rename a' },
-      { filePath: 'a.json', phase: 'edits', error: 'reject a' },
-      { filePath: 'b.json', phase: 'creates', error: null },
+      { filePath: 'a.json', phase: 'rename-files', error: 'rename a', errorCode: null },
+      { filePath: 'a.json', phase: 'edits', error: 'reject a', errorCode: null },
+      { filePath: 'b.json', phase: 'creates', error: null, errorCode: null },
     ]);
 
     expect(collapsed).toEqual([
-      { filePath: 'a.json', phase: 'edits', error: 'reject a' },
-      { filePath: 'b.json', phase: 'creates', error: null },
+      { filePath: 'a.json', phase: 'edits', error: 'reject a', errorCode: null },
+      { filePath: 'b.json', phase: 'creates', error: null, errorCode: null },
     ]);
   });
 
   it('does not overwrite an already-primary phase with a later rename row', () => {
     const collapsed = collapseFailedOperationsByPath([
-      { filePath: 'a.json', phase: 'edits', error: 'reject a' },
-      { filePath: 'a.json', phase: 'rename-files', error: 'rename a' },
+      { filePath: 'a.json', phase: 'edits', error: 'reject a', errorCode: null },
+      { filePath: 'a.json', phase: 'rename-files', error: 'rename a', errorCode: null },
     ]);
 
-    expect(collapsed).toEqual([{ filePath: 'a.json', phase: 'edits', error: 'reject a' }]);
+    expect(collapsed).toEqual([{ filePath: 'a.json', phase: 'edits', error: 'reject a', errorCode: null }]);
+  });
+
+  it("carries the winning row's stable errorCode through the collapse", () => {
+    const collapsed = collapseFailedOperationsByPath([
+      { filePath: 'a.json', phase: 'rename-files', error: 'rename a', errorCode: null },
+      {
+        filePath: 'a.json',
+        phase: 'edits',
+        error: 'Notion object not found: …',
+        errorCode: 'remote_record_not_found',
+      },
+    ]);
+
+    expect(collapsed).toEqual([
+      {
+        filePath: 'a.json',
+        phase: 'edits',
+        error: 'Notion object not found: …',
+        errorCode: 'remote_record_not_found',
+      },
+    ]);
   });
 });
 
