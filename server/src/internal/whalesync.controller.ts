@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ScratchAdminGuard } from 'src/auth/scratch-admin.guard';
+import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { WSLogger } from 'src/logger';
 import {
   WhalesyncClearSubscriptionResponse,
   WhalesyncRevokeSessionsResponse,
@@ -10,6 +12,8 @@ import {
   WhalesyncUserResponse,
 } from './dto/whalesync-internal.dto';
 import { WhalesyncInternalService } from './whalesync-internal.service';
+
+const LOG_SOURCE = 'WhalesyncController';
 
 /**
  * Internal, admin-only endpoints for the Whalesync → Scratch integration. Guarded by
@@ -26,6 +30,14 @@ export class WhalesyncController {
   /** Ensure the shadow user exists and mint a 10-minute session token. Idempotent on `whalesyncUserId`. */
   @Post('sessions')
   async createSession(@Body() body: WhalesyncShadowUserDto): Promise<WhalesyncSessionResponse> {
+    // Local-dev only: the body carries the shadow user's email/name, which we don't want in cloud logs.
+    if (ScratchConfigService.getScratchEnvironment() === 'development') {
+      WSLogger.info({
+        source: LOG_SOURCE,
+        message: 'POST /internal/whalesync/sessions',
+        requestBody: body,
+      });
+    }
     const result = await this.whalesyncInternalService.ensureSessionForWhalesyncUser(
       body.whalesyncUserId,
       body.email,
@@ -46,6 +58,14 @@ export class WhalesyncController {
    */
   @Patch('subscription')
   async updateSubscription(@Body() body: WhalesyncUpdateSubscriptionDto): Promise<WhalesyncUpdateSubscriptionResponse> {
+    // Local-dev only, same as `createSession` above — keep request bodies out of cloud logs.
+    if (ScratchConfigService.getScratchEnvironment() === 'development') {
+      WSLogger.info({
+        source: LOG_SOURCE,
+        message: 'PATCH /internal/whalesync/subscription',
+        requestBody: body,
+      });
+    }
     return this.whalesyncInternalService.updateWhalesyncSubscription(body.whalesyncUserId, body.subscription);
   }
 
