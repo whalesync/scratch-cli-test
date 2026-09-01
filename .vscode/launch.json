@@ -2,11 +2,35 @@
   "version": "0.2.0",
   "configurations": [
     {
+      // Runs `yarn run dev` -> `nest start --debug=9228 --watch`.
+      // NestJS forks worker processes, so autoAttachChildProcesses lets the
+      // debugger attach to the actual app process (not just the nest CLI).
+      "type": "node",
+      "request": "launch",
+      "name": "Launch scratch (debug)",
+      "cwd": "${workspaceFolder}",
+      "runtimeArgs": [
+        "dev"
+      ],
+      "runtimeExecutable": "yarn",
+      "console": "internalConsole",
+      "autoAttachChildProcesses": true,
+      "outputCapture": "std",
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "${env:HOME}/.config/gcloud/keys/${env:USER}-readonly.json",
+        "CLOUDSDK_ACTIVE_CONFIG_NAME": "readonly"
+      },
+      "internalConsoleOptions": "openOnSessionStart"
+    },
+    {
       "type": "node",
       "request": "attach",
       "name": "Attach to scratch server",
       "address": "127.0.0.1",
-      "port": 9229,
+      "port": 9230,
       "enableContentValidation": true,
       "outputCapture": "std",
       "restart": true,
@@ -18,20 +42,29 @@
       "request": "launch",
       "cwd": "${workspaceFolder}/scratch-desktop",
       "runtimeExecutable": "${workspaceFolder}/scratch-desktop/node_modules/.bin/electron",
-      "args": ["."],
+      "args": [
+        "."
+      ],
       "outputCapture": "std",
       "showAsyncStacks": true,
       "sourceMaps": true,
-      "outFiles": ["${workspaceFolder}/scratch-desktop/out/**/*.js"]
+      "outFiles": [
+        "${workspaceFolder}/scratch-desktop/out/**/*.js"
+      ]
     },
     {
       "type": "lldb",
       "request": "launch",
       "name": "Debug scratchmd CLI",
       "program": "${workspaceFolder}/scratch-git-2/target/debug/scratchmd",
-      "args": ["workspaces", "list"],
+      "args": [
+        "workspaces",
+        "list"
+      ],
       "cwd": "${workspaceFolder}/scratch-local-data",
-      "sourceLanguages": ["rust"]
+      "sourceLanguages": [
+        "rust"
+      ]
     }
   ]
 }
