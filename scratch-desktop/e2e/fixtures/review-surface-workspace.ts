@@ -22,10 +22,21 @@ import { join } from 'path';
  *
  * On-disk layout (the exact shape the CLI expects — see scratch-git-2 `WorkspaceLayout`):
  *   <workspace>/
- *     .scratch/.scratchmd                                  ← workspace marker (v3)
- *     .scratch/connections/<conn>/accepted-patches.json    ← approved records' patches
- *     .repos/<coa>.git                                     ← bare repo, `main` = published records
- *     <conn>/Records/<id>.json                             ← linked worktree (edits applied)
+ *     .scratch/.scratchmd                                        ← workspace marker (v3)
+ *     .scratch/connections/<conn>/accepted-patches.json          ← approved records' patches
+ *     .scratch/connections/scratch/<conn>/Records/schema.json    ← folder schema (see below)
+ *     .repos/<coa>.git                                           ← bare repo, `main` = published records
+ *     <conn>/Records/<id>.json                                   ← linked worktree (edits applied)
+ *
+ * The `schema.json` matters for the By-field review surface: `FolderReviewSurface` buckets a
+ * `modified`/`unpublished` record into a per-field group only for columns the folder's view exposes,
+ * and with no `views/default.json` the view is derived from this schema (`createFallbackTableView`).
+ * Without it, `flatViewColumns` is empty and a `modified` record forms no field group — the By-field
+ * view renders "No pending changes to review in this folder". `getFolderMetadata` reads it from
+ * `.scratch/connections/scratch/<relPath>/schema.json` (note the literal `scratch/` segment — a
+ * DIFFERENT subtree than `accepted-patches.json`), and `buildColumnDefinitions` requires the
+ * `{ schema: { properties: … } }` wrapper with `fieldData` as a nested `object` container so the
+ * changed leaf `fieldData.body` becomes a column. `titlePath` makes group rows read the record name.
  */
 
 export type ReviewRecordState = 'modified' | 'approved' | 'created';
@@ -69,6 +80,35 @@ function git(args: string[], cwd?: string): void {
 
 function recordJson(id: string, name: string, body: string): string {
   return JSON.stringify({ id, fieldData: { name, body } }, null, 2) + '\n';
+}
+
+/**
+ * The folder's `schema.json` (the `{ schema: { properties } }` wrapper `buildColumnDefinitions` expects).
+ * Declares the record's editable leaf `fieldData.body` (via a nested `object` container) so the By-field
+ * review surface can form a `body` field group; `titlePath` points group rows at the record name.
+ */
+function folderSchemaJson(): string {
+  return (
+    JSON.stringify(
+      {
+        titlePath: 'fieldData.name',
+        schema: {
+          type: 'object',
+          properties: {
+            fieldData: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                body: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      null,
+      2,
+    ) + '\n'
+  );
 }
 
 const publishedBody = (id: string) => `${id}-published`;
@@ -170,6 +210,15 @@ connections:
 
   const acceptedPatchesPath = join(connScratchDir, 'accepted-patches.json');
   writeFileSync(acceptedPatchesPath, JSON.stringify({ version: 2, patches: acceptedPatches }, null, 2) + '\n');
+
+  // Folder schema, read by `getFolderMetadata` from `.scratch/connections/scratch/<relPath>/schema.json`
+  // (the literal `scratch/` segment — NOT the `.scratch/connections/<conn>/` subtree the patches live in).
+  // `fieldData` is a nested `object` container so the changed leaf `fieldData.body` becomes a column; the
+  // By-field surface needs that column to form a `body` field group for the `modified`/`unpublished`
+  // records. `titlePath` makes group rows read the record name (the `name` field), not the id/filename.
+  const folderSchemaDir = join(workspacePath, '.scratch', 'connections', 'scratch', connectionDirName, folderName);
+  mkdirSync(folderSchemaDir, { recursive: true });
+  writeFileSync(join(folderSchemaDir, 'schema.json'), folderSchemaJson());
 
   return {
     workspacePath,

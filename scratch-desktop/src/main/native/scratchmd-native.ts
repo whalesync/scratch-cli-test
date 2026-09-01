@@ -33,6 +33,18 @@ function nativeBinaryFilename(): string {
 function resolveNativeBinaryPath(): string {
   const filename = nativeBinaryFilename();
   if (!app.isPackaged) {
+    // Test/dev seam: an explicit directory override holding the built `.node`.
+    // Honored only in unpackaged builds so a packaged app can never be pointed
+    // at an arbitrary addon. The e2e suite launches `out/main/index.js` directly,
+    // where `app.getAppPath()` resolves to `out/main` rather than the repo
+    // checkout, so the app-path-relative default below would miss the napi crate.
+    // Mirrors the CLI binary's `SCRATCH_DESKTOP_SCRATCHMD_BINARY` override in
+    // `scratchmd.ts` (a dir here, not a full path, since the filename is
+    // platform-specific and computed above).
+    const overrideDir = process.env.SCRATCH_DESKTOP_SCRATCHMD_NATIVE_DIR;
+    if (overrideDir && overrideDir.length > 0) {
+      return join(overrideDir, filename);
+    }
     // Dev: walk up from src/main/native to the repo root, then into the napi
     // crate. Matches the dev-path resolution `scratchmd.ts` uses for the
     // CLI binary (which sits in `target/debug/`).

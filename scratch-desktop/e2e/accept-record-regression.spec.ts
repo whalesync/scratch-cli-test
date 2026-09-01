@@ -27,10 +27,16 @@ import {
 
 const MAIN_PROCESS_ENTRY = join(__dirname, '..', 'out', 'main', 'index.js');
 const SCRATCHMD_BINARY = join(__dirname, '..', '..', 'scratch-git-2', 'target', 'debug', 'scratchmd');
+// Directory holding the built `scratchmd-native.<platform>-<arch>.node`. Handed to the app via an env
+// override because launching `out/main/index.js` directly makes `app.getAppPath()` miss the repo checkout,
+// so the diff grid's napi baseline read would otherwise fail and misclassify every record as `added`
+// (see resolveNativeBinaryPath in src/main/native/scratchmd-native.ts).
+const SCRATCHMD_NATIVE_DIR = join(__dirname, '..', '..', 'scratch-git-2', 'napi');
 
 const TEST_CREDENTIALS_ENV_VAR = 'SCRATCH_DESKTOP_TEST_CREDENTIALS_JSON';
 const USER_DATA_DIR_ENV_VAR = 'SCRATCH_DESKTOP_USER_DATA_DIR';
 const SCRATCHMD_BINARY_ENV_VAR = 'SCRATCH_DESKTOP_SCRATCHMD_BINARY';
+const SCRATCHMD_NATIVE_DIR_ENV_VAR = 'SCRATCH_DESKTOP_SCRATCHMD_NATIVE_DIR';
 
 const FAKE_TEST_CREDENTIALS = {
   apiToken: 'test-api-token-not-a-real-secret',
@@ -111,6 +117,7 @@ test('approving a record works when another record in the connection has a pendi
       [USER_DATA_DIR_ENV_VAR]: userDataDir,
       [TEST_CREDENTIALS_ENV_VAR]: JSON.stringify(FAKE_TEST_CREDENTIALS),
       [SCRATCHMD_BINARY_ENV_VAR]: SCRATCHMD_BINARY,
+      [SCRATCHMD_NATIVE_DIR_ENV_VAR]: SCRATCHMD_NATIVE_DIR,
       SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE: '1',
     },
   });

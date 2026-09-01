@@ -14,14 +14,18 @@ import { assertScratchmdBinaryBuilt, closeLaunchedResources, launchReviewApp } f
  * record lands in accepted-patches.json and the stepped set shrinks), and Reject walking an edit back.
  *
  * Needs several records with distinct states in one folder, which the single-record accept-bug fixture
- * lacks, so this uses the parameterized `buildReviewSurfaceWorkspace`: Ada + Ben (unreviewed) and Cam
- * (approved — it counts on the approved side of the ladder). A hermetic fixture that was never pulled
- * has no "published" baseline, so all three classify as `added` and the By-field view groups them under
- * one "New" record-level group. That is fine here: the drawer's stepper, ladder calls, and auto-advance
- * behave identically for a created vs a modified record.
+ * lacks, so this uses the parameterized `buildReviewSurfaceWorkspace`: Ada + Ben (`modified`, unreviewed)
+ * and Cam (`approved` — it counts on the approved side of the ladder). Classification comes from the bare
+ * repo's `refs/heads/main` + `accepted-patches.json` (Slice F.5 — `readDiffGridDataPage`), not a pull, so
+ * Ada + Ben are `modified` and Cam is `addedUnpublished`. Ada + Ben both edited `body`, so the By-field
+ * view groups them under one `body` field group (2 unreviewed rows → "Approve all 2"); Cam, an approved
+ * create, contributes no By-field row (an approved create has no changed/unpublished field, so it forms
+ * no group) and only counts on the approved side. That is fine here: the drawer's stepper, ladder calls,
+ * and auto-advance behave identically across the grouped records.
  *
- * Records display by filename stem, so `getByText('Ada')` targets Ada's group row. Hermetic (see
- * `support/review-app-harness.ts`); build first with `yarn build`.
+ * Each record's `name` equals its filename stem, so `getByText('Ada')` targets Ada's group row. The
+ * By-field group requires the fixture's `schema.json` (no schema ⇒ no columns ⇒ "No pending changes").
+ * Hermetic (see `support/review-app-harness.ts`); build first with `yarn build`.
  */
 
 const FIXTURE_RECORDS: ReviewRecordSpec[] = [
@@ -44,7 +48,7 @@ async function openByFieldGroup(window: Page, folderName: string): Promise<void>
   await window.getByText(folderName, { exact: false }).first().click({ timeout: 45_000 });
   await expect(window.getByText(/Review before publishing/i)).toBeVisible({ timeout: 20_000 });
   await window.getByLabel('By field').click();
-  // The records land in one "New" group; its bulk action is the "group loaded" signal. Match the
+  // Ada + Ben land in one `body` field group; its bulk action is the "group loaded" signal. Match the
   // per-group "Approve all N" button (ByTypeGroupBlock) specifically — the trailing count distinguishes
   // it from the review banner's plain "Approve all" (ReviewContextBanner), which is also on screen.
   await expect(window.getByRole('button', { name: /Approve all \d/ })).toBeVisible({ timeout: 20_000 });
@@ -134,8 +138,10 @@ test('flag ON: Reject walks an unreviewed record back without approving it (DEV-
 });
 
 // NOTE: the record-level approved-state chrome (the "✓ approved" header + "Next →" footer, which need a
-// row whose `__rowStatus` is `addedUnpublished`) is intentionally NOT covered here. That status only
-// appears after the app's own `acceptRecord` updates the folder index; a hermetic pre-seeded fixture
-// yields `added` records that merely *count* as approved (see review-surface-grid-data.spec.ts's
-// `filterCounts` partition). The approved-state rendering itself is owned by the unit tests
-// (build-by-type-group-model.spec.ts, review-table-cell-drawing.spec.ts) and Storybook.
+// row whose `__rowStatus` is `addedUnpublished`) is intentionally NOT covered here. The fixture's one
+// approved record (Cam) IS an `addedUnpublished` create, but an approved create contributes no
+// changed/unpublished field (`local-files.ts` passes `unpublishedFields` as `[]` for a new record), so it
+// forms no By-field group row — it only *counts* as approved in the banner (see
+// review-surface-grid-data.spec.ts's `filterCounts` partition). The approved-state rendering itself is
+// owned by the unit tests (build-by-type-group-model.spec.ts, review-table-cell-drawing.spec.ts) and
+// Storybook.

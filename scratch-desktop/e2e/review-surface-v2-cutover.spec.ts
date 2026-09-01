@@ -24,12 +24,15 @@ import { assertScratchmdBinaryBuilt, closeLaunchedResources, launchReviewApp } f
  *     and the pending filter pill is **Pending** (not "Needs review"). The pill counts the de-duplicated
  *     union of unreviewed + approved-but-unpublished records, so it reads `Pending (2)`; the honest
  *     "1 record needs review" signal lives in the banner's `1 needs review · 1 approved` subtitle.
- *   - A hermetic fixture that was never pulled has no "published" baseline in the folder index, so both
- *     records classify as *created* — A `added` (unreviewed), B `addedUnpublished` (approved). The
- *     By-field view therefore groups them under a single "New" record-level group whose rows read
- *     "New record", exactly as this suite has since Phase 7. Modified-record field groups + the approved
- *     field-marker chrome are exercised by the unit tests (`build-by-type-group-model.spec.ts`) and
- *     Storybook; here we cover the surface switch, counts, bulk approve, and drawer wiring.
+ *   - The desktop reads the published/approved snapshots straight from the bare repo's `refs/heads/main`
+ *     + `accepted-patches.json` (Slice F.5 — `readDiffGridDataPage`), NOT the folder index, so records
+ *     classify correctly without a pull: record A is a `modified` edit against main, record B an approved
+ *     (`unpublished`) edit. Both changed the same `body` field, so the By-field view groups them under one
+ *     `body` field group (title = the column name) — A's row is unreviewed, B's is the approved ✓ row.
+ *     The group's bulk action approves only the not-yet-approved rows, so it reads `Approve all 1` (not
+ *     2), while the change-type chip carries the group's row count → `body 2`. Rows read the record name
+ *     (Alpha/Bravo) via the fixture schema's `titlePath`. This is why the fixture now writes a
+ *     `schema.json`: with no schema the By-field view has no columns and renders "No pending changes".
  */
 
 /** Launch the app at the accept-bug fixture with the review-surface-v2 flag in the given state. */
@@ -67,14 +70,16 @@ test('flag ON: the new review surface renders, counts partition, and the drawer 
   // union of both records → 2.
   await expect(window.getByRole('button', { name: /Pending/, pressed: true })).toBeVisible({ timeout: 20_000 });
 
-  // By-field view groups the two pending records under one "New" group; its bulk action counts both.
+  // By-field view groups both pending records (A modified, B unpublished) under one `body` field group;
+  // its bulk action approves only the not-yet-approved rows → A alone → "Approve all 1".
   await window.getByLabel('By field').click();
-  await expect(window.getByRole('button', { name: 'Approve all 2' })).toBeVisible({ timeout: 20_000 });
+  await expect(window.getByRole('button', { name: 'Approve all 1' })).toBeVisible({ timeout: 20_000 });
 
   // Single-clicking a group row opens the RecordReviewDrawer scoped to the group (2 records), so its
   // stepper is enabled and the primary action reads "Approve · next →". (The drawer's approve/reject
-  // ladder + auto-advance are exercised in review-surface-drawer.spec.ts.)
-  await window.getByText('New record').first().click();
+  // ladder + auto-advance are exercised in review-surface-drawer.spec.ts.) Rows read the record name, so
+  // "Alpha" is record A's row.
+  await window.getByText('Alpha').first().click();
   await expect(window.getByRole('button', { name: 'Approve · next →' })).toBeVisible({ timeout: 20_000 });
   await expect(window.getByLabel('Next record')).toBeEnabled();
 });
@@ -86,31 +91,32 @@ test('flag ON: change-type filter chips render their group count, select exclusi
 
   await openFolderOnReviewSurface(window, workspace.folderName);
   // Switch to By-field so the folder-wide By-type set (which feeds both the group blocks and the Phase 9
-  // change-type chips) is loaded; the group's bulk button is the "loaded" signal.
+  // change-type chips) is loaded; the group's bulk button is the "loaded" signal (only A is unreviewed).
   await window.getByLabel('By field').click();
-  await expect(window.getByRole('button', { name: 'Approve all 2' })).toBeVisible({ timeout: 20_000 });
+  await expect(window.getByRole('button', { name: 'Approve all 1' })).toBeVisible({ timeout: 20_000 });
 
-  // One chip per By-type group. The two created records form a single "New" group, so its chip carries
-  // the group's live count → "New 2" (chip count == group record count by construction). There is no
-  // dedicated "All" chip (DEV-10759) — nothing is selected by default, so the group chip starts unpressed.
-  const newChip = window.getByRole('button', { name: 'New 2' });
-  await expect(newChip).toBeVisible({ timeout: 20_000 });
-  await expect(newChip).toHaveAttribute('aria-pressed', 'false');
+  // One chip per By-type group. Both pending records changed `body`, forming a single `body` field group,
+  // so its chip carries the group's live row count → "body 2" (chip count == group row count by
+  // construction — both A and B are rows, even though only A is unreviewed). There is no dedicated "All"
+  // chip (DEV-10759) — nothing is selected by default, so the group chip starts unpressed.
+  const bodyChip = window.getByRole('button', { name: 'body 2' });
+  await expect(bodyChip).toBeVisible({ timeout: 20_000 });
+  await expect(bodyChip).toHaveAttribute('aria-pressed', 'false');
 
   // Selecting the chip narrows the surface to that change type (an exclusive `change-type` entry in the
   // shared activeFilters store, DEV-10656): it becomes pressed and the By-field group it targets still
   // renders. (The narrowing / drawer-stepper-scoping math is unit-tested in change-type-chips.spec.ts;
   // a hermetic fixture only yields one change-type group, so e2e asserts the wiring, not multi-group
   // narrowing.)
-  await newChip.click();
-  await expect(newChip).toHaveAttribute('aria-pressed', 'true');
-  await expect(window.getByRole('button', { name: 'Approve all 2' })).toBeVisible();
+  await bodyChip.click();
+  await expect(bodyChip).toHaveAttribute('aria-pressed', 'true');
+  await expect(window.getByRole('button', { name: 'Approve all 1' })).toBeVisible();
 
   // Toggle off (DEV-10759): clicking the active chip clears the change-type filter and returns to the
   // unfiltered state — the chip becomes unpressed again while its group is still present.
-  await newChip.click();
-  await expect(newChip).toHaveAttribute('aria-pressed', 'false');
-  await expect(window.getByRole('button', { name: 'Approve all 2' })).toBeVisible();
+  await bodyChip.click();
+  await expect(bodyChip).toHaveAttribute('aria-pressed', 'false');
+  await expect(window.getByRole('button', { name: 'Approve all 1' })).toBeVisible();
 });
 
 test('flag OFF: the legacy FolderDataGrid still renders (cutover gates both ways)', async () => {
