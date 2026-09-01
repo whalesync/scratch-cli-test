@@ -118,6 +118,11 @@ export enum CustomMetric {
   // because their organization's subscription lapsed (Stripe status expired/past_due/canceled) — charts how
   // much scheduled work is being quiesced by paywall enforcement.
   SUBSCRIPTION_LAPSE_SCHEDULES_DISABLED = 'subscription_lapse_schedules_disabled',
+
+  // Live Export record-limit enforcement (DEV-11157). Fires once each time a sync/publish job is failed
+  // because its Live Export workbook's organization is over the plan's `liveExportRecordCountLimit` — charts
+  // how often the record cap is actually blocking exports.
+  LIVE_EXPORT_RECORD_LIMIT_ENFORCED = 'live_export_record_limit_enforced',
 }
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
@@ -184,6 +189,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.PLAN_TAGS_REAPED:
     case CustomMetric.PUBLISH_DELETE_MISSING_REMOTE_ID:
     case CustomMetric.SUBSCRIPTION_LAPSE_SCHEDULES_DISABLED:
+    case CustomMetric.LIVE_EXPORT_RECORD_LIMIT_ENFORCED:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -255,6 +261,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.PLAN_TAGS_REAPED:
     case CustomMetric.PUBLISH_DELETE_MISSING_REMOTE_ID:
     case CustomMetric.SUBSCRIPTION_LAPSE_SCHEDULES_DISABLED:
+    case CustomMetric.LIVE_EXPORT_RECORD_LIMIT_ENFORCED:
       return CustomMetricUnit.EVENT_COUNT;
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
       // A gauge: how many syncs remain on the frozen v1 column right now, not a

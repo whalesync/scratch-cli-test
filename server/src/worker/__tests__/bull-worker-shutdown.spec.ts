@@ -5,6 +5,7 @@ import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { RunCountService } from 'src/run-count/run-count.service';
 import { QueueService } from '../bull-worker.service';
 import { JobHandlerService } from '../job-handler.service';
+import { LiveExportRecordLimitEnforcer } from '../live-export-record-limit-enforcer.service';
 
 /**
  * Tests for QueueService's two-phase graceful shutdown (DEV-11184), mirroring the sibling bottlenose
@@ -62,6 +63,7 @@ function createServiceUnderTest(params: {
     configService,
     metricsService,
     {} as unknown as RunCountService,
+    {} as unknown as LiveExportRecordLimitEnforcer,
   );
 
   const internals = service as unknown as QueueServiceShutdownInternals;

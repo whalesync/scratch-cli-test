@@ -19,6 +19,7 @@ import { JobCanceledError } from './job-errors';
 import { JobHandlerService } from './job-handler.service';
 import { JobResult, Progress, RunContext } from './jobs/base-types';
 import { JobData, JobProgress } from './jobs/union-types';
+import { LiveExportRecordLimitEnforcer } from './live-export-record-limit-enforcer.service';
 import { WORKER_QUEUE_NAME, WORKER_QUEUE_STREAM_OPTIONS } from './worker-queue.constants';
 
 @Injectable()
@@ -35,6 +36,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicatio
     private readonly configService: ScratchConfigService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
     private readonly runCountService: RunCountService,
+    private readonly liveExportRecordLimitEnforcer: LiveExportRecordLimitEnforcer,
   ) {}
 
   private getRedis(): IORedis {
@@ -293,6 +295,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicatio
     };
 
     try {
+      // Enforce the organization's Live Export record limit before doing any work (DEV-11157). For a
+      // ws_export workbook whose org is over its plan's record limit this throws, and the catch below records
+      // the job 'failed' with the count-vs-limit message. Flag-gated and OFF by default, so it is a no-op for
+      // every non-Live-Export job and whenever enforcement is disabled.
+      await this.liveExportRecordLimitEnforcer.assertWithinLiveExportRecordLimitOrThrow(jobData);
+
       const runContext = dbJob.runContext as RunContext | null;
       const result = await handler.run({
         jobId: dbJob.id,

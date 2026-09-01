@@ -19,6 +19,7 @@ import { ScratchGitModule } from '../scratch-git/scratch-git.module';
 import { WorkerEnqueuerModule } from '../worker-enqueuer/worker-enqueuer.module';
 import { QueueService } from './bull-worker.service';
 import { JobHandlerService } from './job-handler.service';
+import { LiveExportRecordLimitEnforcer } from './live-export-record-limit-enforcer.service';
 import { WorkerPoolService } from './piscina/worker-pool.service';
 import { QueueTestService } from './test/queue-test.service';
 import { WorkersController } from './test/workers.controller';
@@ -45,7 +46,7 @@ import { WorkersController } from './test/workers.controller';
     RunCountModule,
   ],
   controllers: [WorkersController],
-  providers: [WorkerPoolService, QueueService, QueueTestService, JobHandlerService],
+  providers: [WorkerPoolService, QueueService, QueueTestService, JobHandlerService, LiveExportRecordLimitEnforcer],
   exports: [WorkerPoolService, QueueService, JobHandlerService],
 })
 export class WorkerModule {}

@@ -9,6 +9,7 @@ import { RunCountService } from 'src/run-count/run-count.service';
 import { QueueService } from '../bull-worker.service';
 import { JobHandlerService } from '../job-handler.service';
 import { JobData } from '../jobs/union-types';
+import { LiveExportRecordLimitEnforcer } from '../live-export-record-limit-enforcer.service';
 
 /**
  * Tests the transient-DB-connection retry around the startup `getJobByBullJobId` lookup in
@@ -53,6 +54,9 @@ function createServiceUnderTest() {
     {} as unknown as ScratchConfigService,
     metricsService,
     {} as unknown as RunCountService,
+    {
+      assertWithinLiveExportRecordLimitOrThrow: jest.fn().mockResolvedValue(undefined),
+    } as unknown as LiveExportRecordLimitEnforcer,
   );
 
   return { service, logValue, getJobByBullJobId, run };
