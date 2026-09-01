@@ -1,4 +1,4 @@
-import { setByPath } from '../../../../shared/schema-columns';
+import { getByPath, setByPath } from '../../../../shared/schema-columns';
 import type { ColumnDefinition } from '../../types/local-files';
 import type { InvalidJsonFileListEntry } from './InvalidJsonFilesModal';
 
@@ -221,6 +221,110 @@ export function applyAcceptedFieldChangeToFolderDiffData(
     __unpublishedFields: nextUnpublishedFields,
   };
   nextRow.__rowStatus = deriveRowStatusAfterEdit(nextRow);
+
+  return replaceRowInResult(result, prevRow, nextRow);
+}
+
+// ── Whole-record optimistic-update helpers (DEV-10610) ──
+//
+// These flip a grid row's *review state* (status + changed/unpublished sets, and the recomputed
+// summary/filter counts) after a whole-record accept/reject/discard, so the row's colour and the
+// header counts update instantly — mirroring the field-level helper above. They deliberately do NOT
+// rewrite field *values* in `__raw`: the caller re-reads the folder page from disk right after
+// (an in-place `refreshGridDataInBackground` / `bumpReviewDataVersion` that keeps painting current
+// rows), which reconciles the displayed values with the authoritative on-disk state. Each returns
+// the input result unchanged when the filename isn't present or there is nothing to change.
+
+/**
+ * Apply a whole-record **accept** to an in-memory `DiffGridResult`: promote every unreviewed field
+ * edit to approved (keeping each in the unpublished set unless it already matches the published
+ * value), or flip a needs-review added/deleted row to its approved (`*Unpublished`) variant, then
+ * re-derive the row status + summary/filter counts.
+ */
+export function applyAcceptedRecordChangeToFolderDiffData(result: DiffGridResult, filename: string): DiffGridResult {
+  const prevRow = result.rows.find((r) => r.__filename === filename);
+  if (!prevRow) return result;
+
+  let nextRow: DiffRow;
+  if (prevRow.__rowStatus === 'added') {
+    nextRow = { ...prevRow, __rowStatus: 'addedUnpublished' };
+  } else if (prevRow.__rowStatus === 'deleted') {
+    nextRow = { ...prevRow, __rowStatus: 'deletedUnpublished' };
+  } else {
+    if (prevRow.__changedFields.length === 0) return result;
+    const nextFromFields = { ...prevRow.__fromFields };
+    const nextUnpublishedFields = [...prevRow.__unpublishedFields];
+    for (const field of prevRow.__changedFields) {
+      delete nextFromFields[field];
+      const workingValue = getByPath(prevRow.__raw, field);
+      const masterHadField = Object.prototype.hasOwnProperty.call(prevRow.__masterFields, field);
+      const matchesMaster = masterHadField && diffValuesEqual(workingValue, prevRow.__masterFields[field]);
+      if (!matchesMaster && !nextUnpublishedFields.includes(field)) nextUnpublishedFields.push(field);
+    }
+    nextRow = {
+      ...prevRow,
+      __changedFields: [],
+      __fromFields: nextFromFields,
+      __unpublishedFields: nextUnpublishedFields,
+    };
+    nextRow.__rowStatus = deriveRowStatusAfterEdit(nextRow);
+  }
+
+  return replaceRowInResult(result, prevRow, nextRow);
+}
+
+/**
+ * Apply a whole-record **reject** to an in-memory `DiffGridResult`: drop every unreviewed field edit
+ * (leaving already-approved edits in the unpublished set), or restore a needs-review deletion to
+ * unchanged. Returns the input unchanged for a newly-added row — rejecting it removes the record, a
+ * structural change the background refresh reconciles.
+ */
+export function applyRejectedRecordChangeToFolderDiffData(result: DiffGridResult, filename: string): DiffGridResult {
+  const prevRow = result.rows.find((r) => r.__filename === filename);
+  if (!prevRow) return result;
+
+  let nextRow: DiffRow;
+  if (prevRow.__rowStatus === 'added' || prevRow.__rowStatus === 'addedUnpublished') {
+    return result;
+  } else if (prevRow.__rowStatus === 'deleted') {
+    nextRow = { ...prevRow, __rowStatus: 'unchanged', __changedFields: [], __fromFields: {} };
+  } else {
+    if (prevRow.__changedFields.length === 0) return result;
+    const nextFromFields = { ...prevRow.__fromFields };
+    for (const field of prevRow.__changedFields) delete nextFromFields[field];
+    nextRow = { ...prevRow, __changedFields: [], __fromFields: nextFromFields };
+    nextRow.__rowStatus = deriveRowStatusAfterEdit(nextRow);
+  }
+
+  return replaceRowInResult(result, prevRow, nextRow);
+}
+
+/**
+ * Apply a whole-record **discard** to an in-memory `DiffGridResult`: reset both the unreviewed and
+ * approved edits so the row returns to the published baseline (`unchanged`). Only valid for a
+ * modified/unpublished row (discard is hidden for added/deleted); returns the input unchanged otherwise.
+ */
+export function applyDiscardedRecordChangeToFolderDiffData(result: DiffGridResult, filename: string): DiffGridResult {
+  const prevRow = result.rows.find((r) => r.__filename === filename);
+  if (!prevRow) return result;
+
+  if (
+    prevRow.__rowStatus === 'added' ||
+    prevRow.__rowStatus === 'addedUnpublished' ||
+    prevRow.__rowStatus === 'deleted' ||
+    prevRow.__rowStatus === 'deletedUnpublished' ||
+    prevRow.__rowStatus === 'invalidJson'
+  ) {
+    return result;
+  }
+
+  const nextRow: DiffRow = {
+    ...prevRow,
+    __rowStatus: 'unchanged',
+    __changedFields: [],
+    __fromFields: {},
+    __unpublishedFields: [],
+  };
 
   return replaceRowInResult(result, prevRow, nextRow);
 }

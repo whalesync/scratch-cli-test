@@ -189,3 +189,102 @@ export function applyAcceptedFieldChangeToOpenRecordData(
 
   return { ...prev, row: nextRow, displayData: nextDisplayData };
 }
+
+// ── Whole-record optimistic-update helpers (DEV-10610) ──
+//
+// These flip an open record's *review state* (status + changed/unpublished sets) so the
+// detail view's Approve/Reject/Discard buttons and banners update instantly, mirroring the
+// field-level helper above. They deliberately do NOT rewrite field *values*: the caller
+// re-reads the record from disk right after (a cheap, no-CLI-spawn `readDiffRecordData`),
+// which reconciles the displayed values with the authoritative on-disk state. Each returns
+// `null` when the record has nothing to change, or when the change is structural in a way the
+// optimistic path can't express (e.g. rejecting a newly-added record removes it) — the caller
+// then falls back to a full refresh.
+
+/**
+ * Apply a whole-record **accept** to an open record's three-state diff: promote every unreviewed
+ * field edit to approved (drop it from the unreviewed set; keep it in the unpublished set unless
+ * the working value already matches the published value), and flip a needs-review added/deleted
+ * record to its approved (`*Unpublished`) variant. Returns `null` when there is nothing to accept.
+ */
+export function applyAcceptedRecordChangeToOpenRecordData(prev: DiffRecordData): DiffRecordData | null {
+  const prevRow = prev.row;
+
+  if (prevRow.__rowStatus === 'added') {
+    return { ...prev, row: { ...prevRow, __rowStatus: 'addedUnpublished' } };
+  }
+  if (prevRow.__rowStatus === 'deleted') {
+    return { ...prev, row: { ...prevRow, __rowStatus: 'deletedUnpublished' } };
+  }
+  if (prevRow.__changedFields.length === 0) return null;
+
+  const nextFromFields = { ...prevRow.__fromFields };
+  const nextUnpublishedFields = [...prevRow.__unpublishedFields];
+  for (const field of prevRow.__changedFields) {
+    delete nextFromFields[field];
+    const workingValue = getByPath(prevRow.__raw, field);
+    const masterHadField = Object.prototype.hasOwnProperty.call(prevRow.__masterFields, field);
+    const matchesMaster = masterHadField && diffValuesEqual(workingValue, prevRow.__masterFields[field]);
+    if (!matchesMaster && !nextUnpublishedFields.includes(field)) nextUnpublishedFields.push(field);
+  }
+
+  const nextRow: DiffRow = {
+    ...prevRow,
+    __changedFields: [],
+    __fromFields: nextFromFields,
+    __unpublishedFields: nextUnpublishedFields,
+  };
+  nextRow.__rowStatus = deriveRowStatusAfterEdit(nextRow);
+  return { ...prev, row: nextRow };
+}
+
+/**
+ * Apply a whole-record **reject** to an open record's three-state diff: drop every unreviewed field
+ * edit (the working value reverts to its approved baseline) while leaving already-approved edits in
+ * the unpublished set, or restore a needs-review deletion back to unchanged. Returns `null` for a
+ * newly-added record (rejecting it removes the record — a structural change the caller must refresh).
+ */
+export function applyRejectedRecordChangeToOpenRecordData(prev: DiffRecordData): DiffRecordData | null {
+  const prevRow = prev.row;
+
+  if (prevRow.__rowStatus === 'added' || prevRow.__rowStatus === 'addedUnpublished') return null;
+  if (prevRow.__rowStatus === 'deleted') {
+    return { ...prev, row: { ...prevRow, __rowStatus: 'unchanged', __changedFields: [], __fromFields: {} } };
+  }
+  if (prevRow.__changedFields.length === 0) return null;
+
+  const nextFromFields = { ...prevRow.__fromFields };
+  for (const field of prevRow.__changedFields) delete nextFromFields[field];
+
+  const nextRow: DiffRow = { ...prevRow, __changedFields: [], __fromFields: nextFromFields };
+  nextRow.__rowStatus = deriveRowStatusAfterEdit(nextRow);
+  return { ...prev, row: nextRow };
+}
+
+/**
+ * Apply a whole-record **discard** to an open record's three-state diff: reset both the unreviewed
+ * and approved edits so the record returns to the published baseline (`unchanged`). Only valid for a
+ * modified/unpublished record (the discard action is hidden for added/deleted); returns `null` otherwise.
+ */
+export function applyDiscardedRecordChangeToOpenRecordData(prev: DiffRecordData): DiffRecordData | null {
+  const prevRow = prev.row;
+
+  if (
+    prevRow.__rowStatus === 'added' ||
+    prevRow.__rowStatus === 'addedUnpublished' ||
+    prevRow.__rowStatus === 'deleted' ||
+    prevRow.__rowStatus === 'deletedUnpublished' ||
+    prevRow.__rowStatus === 'invalidJson'
+  ) {
+    return null;
+  }
+
+  const nextRow: DiffRow = {
+    ...prevRow,
+    __rowStatus: 'unchanged',
+    __changedFields: [],
+    __fromFields: {},
+    __unpublishedFields: [],
+  };
+  return { ...prev, row: nextRow };
+}

@@ -9,17 +9,16 @@ import { join } from 'path';
  * single-record `accept-bug-workspace.ts` shape to N records; `accept-bug-workspace.ts` is left alone
  * (it is pinned to the DEV-10609 regression).
  *
- * Per-record state:
- *   - `modified`  — in `main` at its published value, worktree carries an unreviewed edit.
- *   - `created`   — absent from `main`, present only in the worktree (an unreviewed new record).
+ * Per-record state → the `__rowStatus` the review pipeline classifies it as. The desktop reads the
+ * published + approved snapshots straight from the bare repo's `refs/heads/main` + `accepted-patches.json`
+ * (the Slice F.5 architecture — `local-files.ts` `readDiffGridDataPage`), NOT from the SQLite folder
+ * index, so classification is correct WITHOUT a pull. (Empirically verified — an earlier caveat here
+ * claiming a never-pulled fixture renders every record as `added` was stale and has been removed.)
+ *   - `modified`  — in `main` at its published value, worktree carries an unreviewed edit → `modified`.
+ *   - `created`   — absent from `main`, present only in the worktree (an unreviewed new record) → `added`.
  *   - `approved`  — a new record whose creation is approved: absent from `main`, present in the worktree,
- *                   with a `create`-kind `accepted-patches.json` entry carrying the full content. It sits
- *                   on the approved side of the ladder, counting as `unpublished` in the review
- *                   `filterCounts`. NOTE: a hermetic fixture that was never pulled has no folder-index
- *                   baseline, so every record's `__rowStatus` is `added` regardless of approval; the
- *                   fully-approved `addedUnpublished` row status only appears once the app's own approve
- *                   updates the index. So `approved` here is "counts as approved", not the `addedUnpublished`
- *                   row status.
+ *                   with a `create`-kind `accepted-patches.json` entry carrying the full content →
+ *                   `addedUnpublished` (counts as `unpublished` in the review `filterCounts`).
  *
  * On-disk layout (the exact shape the CLI expects — see scratch-git-2 `WorkspaceLayout`):
  *   <workspace>/
@@ -121,6 +120,11 @@ export function buildReviewSurfaceWorkspace(rootDir: string, records: ReviewReco
     throw new Error('expected the connection worktree `.git` to be a linked-worktree file pointer');
   }
 
+  // The worktree folder only exists on disk when `main` tracked a file in it (i.e. there was a
+  // `modified` record). A fixture of only `created`/`approved` (new) records has an empty `main`, so
+  // create the folder before writing new files into it. Idempotent when it already exists.
+  mkdirSync(join(worktree, folderName), { recursive: true });
+
   // Working edits per record: modified → unreviewed edit against main; approved → a new file plus a
   // `create`-kind accepted patch (counts on the approved side of the ladder); created → a new (untracked) file.
   const acceptedPatches: { path: string; kind: string; patch: unknown }[] = [];
@@ -132,8 +136,8 @@ export function buildReviewSurfaceWorkspace(rootDir: string, records: ReviewReco
       const content = recordJson(record.id, record.name, approvedBody(record.id));
       writeFileSync(filePath, content);
       // A `create`-kind patch carries the full record content (REVIEW_MODEL.md): the record's creation
-      // is approved, so it counts as `unpublished` in the review filterCounts (see the fixture-level note
-      // above on why its `__rowStatus` is still `added` in a hermetic, never-pulled fixture).
+      // is approved, so it counts as `unpublished` in the review filterCounts and classifies as
+      // `addedUnpublished` (published side read from refs/heads/main; approved side from this patch).
       acceptedPatches.push({
         path: `${folderName}/${record.id}.json`,
         kind: 'create',

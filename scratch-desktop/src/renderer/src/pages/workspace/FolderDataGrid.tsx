@@ -76,6 +76,9 @@ import {
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import {
   applyAcceptedFieldChangeToFolderDiffData,
+  applyAcceptedRecordChangeToFolderDiffData,
+  applyDiscardedRecordChangeToFolderDiffData,
+  applyRejectedRecordChangeToFolderDiffData,
   type CellValidationEntry,
   type DiffGridResult,
   type DiffRow,
@@ -2964,6 +2967,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   setDiffData((prev) =>
                     prev ? applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue) : prev,
                   );
+                }}
+                onSingleRecordAcceptedApplyOptimistically={(filename) => {
+                  // DEV-10610: flip the row's review state instantly, then reconcile field values
+                  // from disk in the background. No invalidateWorkspaceLevelData — same reasoning as
+                  // the field-level accept above.
+                  setDiffData((prev) => (prev ? applyAcceptedRecordChangeToFolderDiffData(prev, filename) : prev));
+                  refreshGridDataInBackground();
+                }}
+                onSingleRecordRejectedApplyOptimistically={(filename) => {
+                  setDiffData((prev) => (prev ? applyRejectedRecordChangeToFolderDiffData(prev, filename) : prev));
+                  refreshGridDataInBackground();
+                }}
+                onSingleRecordDiscardedApplyOptimistically={(filename) => {
+                  setDiffData((prev) => (prev ? applyDiscardedRecordChangeToFolderDiffData(prev, filename) : prev));
+                  refreshGridDataInBackground();
                 }}
                 onPublishFile={props.onPublishFile}
                 onAddColumn={handleAddColumn}

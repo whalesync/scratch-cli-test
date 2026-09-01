@@ -24,11 +24,11 @@ import { closeLaunchedResources, launchReviewApp, SCRATCHMD_BINARY } from './sup
  * the union never double-counts, and one record sits on each side of the review ladder. This partition
  * is the DEV-10687 counts contract the review banner + pills bind to.
  *
- * NOTE: a hermetic fixture that was never pulled has no "published" baseline in the folder index, so
- * both rows classify as `added`; the fully-approved `addedUnpublished` record-level status only appears
- * after the app's own `acceptRecord` updates the index, which a pre-seeded fixture can't reproduce. The
- * approved-vs-unreviewed split is therefore asserted through the partitioned `filterCounts` (Dos lands
- * in `unpublished`), not through a per-row status difference.
+ * NOTE: the desktop reads the published + approved snapshots straight from the bare repo's
+ * `refs/heads/main` + `accepted-patches.json` (Slice F.5 — `readDiffGridDataPage`), NOT from the SQLite
+ * folder index, so records classify correctly WITHOUT a pull: `Uno` (a `modified` edit against main)
+ * lands on `modified`, and `Dos` (an approved create) on `addedUnpublished`. This is also reflected in
+ * the partitioned `filterCounts` (Uno → `unreviewed`, Dos → `unpublished`).
  */
 
 const FIXTURE_RECORDS: ReviewRecordSpec[] = [
@@ -93,11 +93,11 @@ test('readDiffGridData hands the grid partitioned counts and per-row review stat
   // review-state contract the new banner + pills consume.
   expect(result.filterCounts).toEqual({ unreviewed: 1, unpublished: 1, pending: 2, errors: 0 });
 
-  // Both rows are present and carry a created status (the never-pulled fixture has no published
-  // baseline); the approved-vs-unreviewed distinction between them lives in `filterCounts` above.
+  // Both rows are present and carry their real row-status (published/approved read from the bare repo):
+  // Uno is a `modified` edit against main; Dos is an approved create (`addedUnpublished`).
   const uno = result.rows.find((row) => row.__filename.endsWith('Uno.json'));
   const dos = result.rows.find((row) => row.__filename.endsWith('Dos.json'));
   if (!uno || !dos) throw new Error(`expected Uno + Dos rows, got ${result.rows.map((r) => r.__filename)}`);
-  expect(uno.__rowStatus).toBe('added');
-  expect(dos.__rowStatus).toBe('added');
+  expect(uno.__rowStatus).toBe('modified');
+  expect(dos.__rowStatus).toBe('addedUnpublished');
 });

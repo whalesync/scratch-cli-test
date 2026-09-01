@@ -34,6 +34,12 @@ to a `<canvas>`, so there's no DOM node to read). Because the desktop shells out
 `scratchmd` CLI for record pagination, this test **skips** (it does not fail) when the binary
 isn't built — run `cargo build --bin scratchmd` in `scratch-git-2/` first.
 
+`record-detail-review-loops.spec.ts` drives the single-record **Reject** and **Approve → Discard**
+loops through the real `RecordDetailView` (legacy `FolderDataGrid`, "Record view" toggle),
+asserting both the optimistic UI flip and the on-disk truth (working file + `accepted-patches.json`)
+— the DEV-10610 counterpart to `accept-record-regression.spec.ts`'s Approve coverage. Needs the
+built CLI (guarded in `beforeAll`).
+
 ## How auth is bypassed
 
 The desktop normally logs in via interactive **device-code OAuth** — a flow that happens in the

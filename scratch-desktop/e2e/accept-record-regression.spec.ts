@@ -143,6 +143,12 @@ test('approving a record works when another record in the connection has a pendi
   // 7. No error toast, and the accept actually landed: record A now has an entry in
   //    accepted-patches.json (pre-fix it would have crashed and A would be absent).
   await expect(window.getByText(/Failed to approve record/i)).toHaveCount(0);
+
+  // DEV-10610: the record-level accept flips the detail view's review state optimistically —
+  // record A moves from unreviewed → approved/unpublished, so the record-level Approve button
+  // disappears — without the old workspace-wide refresh cascade.
+  await expect(approve).toBeHidden({ timeout: 15_000 });
+
   await expect
     .poll(
       () => {

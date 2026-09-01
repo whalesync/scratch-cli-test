@@ -6,7 +6,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { trackOpenRecordChangesDrawer, trackSelectChangeTypeChip } from '../../../lib/posthog';
 import { useWorkspaceUiStore, type FilterKind } from '../../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../../types/local-files';
-import { applyAcceptedFieldChangeToFolderDiffData } from '../diff-grid-types';
+import {
+  applyAcceptedFieldChangeToFolderDiffData,
+  applyAcceptedRecordChangeToFolderDiffData,
+  applyDiscardedRecordChangeToFolderDiffData,
+  applyRejectedRecordChangeToFolderDiffData,
+} from '../diff-grid-types';
 import { RecordDetailView } from '../RecordDetailView';
 import { RecordReviewDrawer } from '../RecordReviewDrawer';
 import { buildByTypeGroupModel, type ByTypeGroupModel, type ByTypeSourceColumn } from './build-by-type-group-model';
@@ -651,6 +656,20 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
                 applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue),
               )
             }
+            onSingleRecordAcceptedApplyOptimistically={(filename) => {
+              // DEV-10610: flip the row's review state instantly, then reconcile field values from
+              // disk via an in-place refresh (bumpReviewDataVersion keeps painting current rows).
+              applyOptimisticDiff((prev) => applyAcceptedRecordChangeToFolderDiffData(prev, filename));
+              bumpReviewDataVersion();
+            }}
+            onSingleRecordRejectedApplyOptimistically={(filename) => {
+              applyOptimisticDiff((prev) => applyRejectedRecordChangeToFolderDiffData(prev, filename));
+              bumpReviewDataVersion();
+            }}
+            onSingleRecordDiscardedApplyOptimistically={(filename) => {
+              applyOptimisticDiff((prev) => applyDiscardedRecordChangeToFolderDiffData(prev, filename));
+              bumpReviewDataVersion();
+            }}
             onPublishFile={props.onPublishFile}
           />
         )}

@@ -30,6 +30,9 @@ import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import {
   applyAcceptedFieldChangeToOpenRecordData,
+  applyAcceptedRecordChangeToOpenRecordData,
+  applyDiscardedRecordChangeToOpenRecordData,
+  applyRejectedRecordChangeToOpenRecordData,
   getRecordName,
   rowHasUnreviewedChanges,
   toDisplayString,
@@ -70,6 +73,14 @@ interface RecordDetailViewProps {
   onClose: () => void;
   onRecordStructurallyChangedRefetchAll?: () => void;
   onSingleFieldAcceptedApplyOptimistically?: (filename: string, fieldName: string, nextValue: unknown) => void;
+  /**
+   * Record-level optimistic flips (DEV-10610): the parent grid updates its in-memory diff so the
+   * row flips to approved/reverted instantly, without the full workspace-level refresh cascade.
+   * One per review action; a background grid reconcile keeps the values honest.
+   */
+  onSingleRecordAcceptedApplyOptimistically?: (filename: string) => void;
+  onSingleRecordRejectedApplyOptimistically?: (filename: string) => void;
+  onSingleRecordDiscardedApplyOptimistically?: (filename: string) => void;
   onPublishFile?: (relativePath: string) => void;
   /** Incremented by the parent when external file changes are detected, triggering a reload. */
   workspaceLevelDataInvalidationCounter?: number;
@@ -148,6 +159,9 @@ export const RecordDetailView = memo(function RecordDetailView({
   onClose,
   onRecordStructurallyChangedRefetchAll,
   onSingleFieldAcceptedApplyOptimistically,
+  onSingleRecordAcceptedApplyOptimistically,
+  onSingleRecordRejectedApplyOptimistically,
+  onSingleRecordDiscardedApplyOptimistically,
   onPublishFile,
   workspaceLevelDataInvalidationCounter,
   onAddColumn,
@@ -363,6 +377,33 @@ export const RecordDetailView = memo(function RecordDetailView({
     setValidationReloadKey((k) => k + 1);
   }, []);
 
+  // DEV-10610: after a successful record-level review action, flip the open record's review state
+  // optimistically (so the header/banner buttons update instantly) and reconcile from disk in the
+  // background — instead of the slow workspace-wide invalidation cascade (folder-validation refetch,
+  // full grid reload, connections reload, file-watch reconcile, and a second record re-fetch). The
+  // sidebar review dots still update via the accepted-patches / file-watch push. When the optimistic
+  // helper returns null (a structural change it can't express, e.g. rejecting a newly-added record
+  // removes it) we fall back to the full refresh so the grid drops/restores the row correctly.
+  const applyOptimisticRecordReviewAction = useCallback(
+    (
+      optimisticOpenRecordUpdate: (prev: DiffRecordData) => DiffRecordData | null,
+      gridOptimisticFlip: ((filename: string) => void) | undefined,
+    ) => {
+      const filename = filenameRef.current;
+      const optimisticRecordData = recordData ? optimisticOpenRecordUpdate(recordData) : null;
+      // Re-read this record + its validations from disk (a cheap, no-CLI-spawn read) so the
+      // displayed field values reconcile with the authoritative on-disk state after the flip.
+      reloadRecordAndValidations();
+      if (optimisticRecordData) {
+        setRecordData(optimisticRecordData);
+        if (filename) gridOptimisticFlip?.(filename);
+      } else {
+        onRecordStructurallyChangedRefetchAll?.();
+      }
+    },
+    [recordData, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll],
+  );
+
   const handleAccept = useCallback(() => {
     if (!currentRecordCliPath) return;
     void window.scratchDesktop
@@ -373,8 +414,10 @@ export const RecordDetailView = memo(function RecordDetailView({
         if (result.exitCode !== 0) {
           throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to approve record');
         }
-        reloadRecordAndValidations();
-        onRecordStructurallyChangedRefetchAll?.();
+        applyOptimisticRecordReviewAction(
+          applyAcceptedRecordChangeToOpenRecordData,
+          onSingleRecordAcceptedApplyOptimistically,
+        );
       })
       .catch((err: unknown) => {
         console.error('acceptRecord failed', err);
@@ -384,7 +427,12 @@ export const RecordDetailView = memo(function RecordDetailView({
           message: err instanceof Error ? err.message : 'Unknown error',
         });
       });
-  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
+  }, [
+    workspacePath,
+    currentRecordCliPath,
+    applyOptimisticRecordReviewAction,
+    onSingleRecordAcceptedApplyOptimistically,
+  ]);
 
   const handleReject = useCallback(() => {
     if (!currentRecordCliPath) return;
@@ -394,8 +442,10 @@ export const RecordDetailView = memo(function RecordDetailView({
         if (result.exitCode !== 0) {
           throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to reject record');
         }
-        reloadRecordAndValidations();
-        onRecordStructurallyChangedRefetchAll?.();
+        applyOptimisticRecordReviewAction(
+          applyRejectedRecordChangeToOpenRecordData,
+          onSingleRecordRejectedApplyOptimistically,
+        );
       })
       .catch((err: unknown) => {
         console.error('rejectRecord failed', err);
@@ -405,7 +455,12 @@ export const RecordDetailView = memo(function RecordDetailView({
           message: err instanceof Error ? err.message : 'Unknown error',
         });
       });
-  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
+  }, [
+    workspacePath,
+    currentRecordCliPath,
+    applyOptimisticRecordReviewAction,
+    onSingleRecordRejectedApplyOptimistically,
+  ]);
 
   const handleDiscard = useCallback(() => {
     if (!currentRecordCliPath) return;
@@ -415,8 +470,10 @@ export const RecordDetailView = memo(function RecordDetailView({
         if (result.exitCode !== 0) {
           throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to discard record');
         }
-        reloadRecordAndValidations();
-        onRecordStructurallyChangedRefetchAll?.();
+        applyOptimisticRecordReviewAction(
+          applyDiscardedRecordChangeToOpenRecordData,
+          onSingleRecordDiscardedApplyOptimistically,
+        );
       })
       .catch((err: unknown) => {
         console.error('discardRecord failed', err);
@@ -426,7 +483,12 @@ export const RecordDetailView = memo(function RecordDetailView({
           message: err instanceof Error ? err.message : 'Unknown error',
         });
       });
-  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
+  }, [
+    workspacePath,
+    currentRecordCliPath,
+    applyOptimisticRecordReviewAction,
+    onSingleRecordDiscardedApplyOptimistically,
+  ]);
 
   const handleRestore = useCallback(() => {
     const filename = filenameRef.current;
@@ -994,6 +1056,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                       c="red.8"
                       onClick={handleReject}
                       disabled={!currentRecordCliPath}
+                      data-testid="record-detail-reject"
                     >
                       {unreviewedFieldCount === 1 ? 'Reject' : 'Reject all'}
                     </ButtonSecondaryGhost>
@@ -1047,7 +1110,11 @@ export const RecordDetailView = memo(function RecordDetailView({
                 {!focusedFieldName && (hasUnreviewedChanges || hasPublishableChanges) && !isDeleted && !isCreated && (
                   <Menu position="bottom-end" withinPortal zIndex={10020}>
                     <Menu.Target>
-                      <IconButtonGhost size="compact-xs" aria-label="More actions">
+                      <IconButtonGhost
+                        size="compact-xs"
+                        aria-label="More actions"
+                        data-testid="record-detail-more-actions"
+                      >
                         <StyledLucideIcon Icon={EllipsisVertical} size="sm" />
                       </IconButtonGhost>
                     </Menu.Target>
@@ -1057,6 +1124,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                         leftSection={<StyledLucideIcon Icon={Trash2} size={14} />}
                         onClick={handleDiscard}
                         disabled={!currentRecordCliPath}
+                        data-testid="record-detail-discard"
                       >
                         Discard all unpublished changes
                       </Menu.Item>
@@ -1113,6 +1181,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                       leftSection={<RotateCcw size={12} />}
                       onClick={handleReject}
                       disabled={!currentRecordCliPath}
+                      data-testid="record-detail-reject"
                     >
                       Reject
                     </ButtonSecondaryGhost>
@@ -1124,6 +1193,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     c="currentColor"
                     leftSection={<RotateCcw size={12} />}
                     onClick={handleRestore}
+                    data-testid="record-detail-restore"
                   >
                     Restore
                   </ButtonSecondaryGhost>
@@ -1176,6 +1246,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                       leftSection={<RotateCcw size={12} />}
                       onClick={handleReject}
                       disabled={!currentRecordCliPath}
+                      data-testid="record-detail-reject"
                     >
                       Reject
                     </ButtonSecondaryGhost>
@@ -1187,6 +1258,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     c="currentColor"
                     leftSection={<Trash2 size={12} />}
                     onClick={handleDiscardCreate}
+                    data-testid="record-detail-discard-create"
                   >
                     Discard
                   </ButtonSecondaryGhost>

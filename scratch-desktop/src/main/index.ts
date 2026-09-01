@@ -1071,36 +1071,21 @@ confinedIpc.handle(
   },
 );
 confinedIpc.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>
-  withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await runScratchmdCapture(['files', 'accept', recordPath], workspacePath);
-    if (result.exitCode === 0) {
-      // accept moves working → dirty; dirty changed so hot path won't detect it
-      await reindexFiles(workspacePath, folderFromRecordPath(recordPath), [filenameFromRecordPath(recordPath)]);
-    }
-    return result;
-  }),
+  withWorkspaceInternalMutation(workspacePath, () =>
+    // DEV-10610: `files accept` already reindexes the accepted paths' folder_index (and revalidates)
+    // internally — see run_accept's `reindex_folder_index_for_changes` — so a second reindex here is
+    // redundant work. One spawn per accept, not two.
+    runScratchmdCapture(['files', 'accept', recordPath], workspacePath),
+  ),
 );
 confinedIpc.handle('scratch:accept-records', async (_, workspacePath: string, recordPaths: string[]) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     if (recordPaths.length === 0) return { stdout: '', stderr: '', exitCode: 0 };
-    // The CLI `files accept` takes many paths in one call (the by-type view's
-    // "Approve all N" for a created/removed/invalid group), so this is one spawn
-    // instead of N. accept moves working → dirty; dirty changed so the hot path
-    // won't detect it — reindex the affected records, grouped by folder.
-    const result = await runScratchmdCapture(['files', 'accept', ...recordPaths], workspacePath);
-    if (result.exitCode === 0) {
-      const filenamesByFolder = new Map<string, string[]>();
-      for (const recordPath of recordPaths) {
-        const folder = folderFromRecordPath(recordPath);
-        const filenames = filenamesByFolder.get(folder) ?? [];
-        filenames.push(filenameFromRecordPath(recordPath));
-        filenamesByFolder.set(folder, filenames);
-      }
-      for (const [folder, filenames] of Array.from(filenamesByFolder.entries())) {
-        await reindexFiles(workspacePath, folder, filenames);
-      }
-    }
-    return result;
+    // The CLI `files accept` takes many paths in one call (the by-type view's "Approve all N" for a
+    // created/removed/invalid group), so this is one spawn instead of N. It reindexes every accepted
+    // path's folder_index internally (run_accept's `reindex_folder_index_for_changes`), so no separate
+    // per-folder reindex loop is needed here (DEV-10610).
+    return runScratchmdCapture(['files', 'accept', ...recordPaths], workspacePath);
   }),
 );
 confinedIpc.handle('scratch:reject-record', async (_, workspacePath: string, recordPath: string) =>
@@ -1110,14 +1095,11 @@ confinedIpc.handle('scratch:reject-record', async (_, workspacePath: string, rec
   }),
 );
 confinedIpc.handle('scratch:discard-record', async (_, workspacePath: string, recordPath: string) =>
-  withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await runScratchmdCapture(['files', 'discard', recordPath], workspacePath);
-    if (result.exitCode === 0) {
-      // discard resets both dirty and working to master; dirty changed so hot path won't detect it
-      await reindexFiles(workspacePath, folderFromRecordPath(recordPath), [filenameFromRecordPath(recordPath)]);
-    }
-    return result;
-  }),
+  withWorkspaceInternalMutation(workspacePath, () =>
+    // DEV-10610: `files discard` already reindexes + revalidates the discarded paths' folder_index
+    // internally (run_discard's `reindex_folder_index_for_changes`), so a second reindex here is redundant.
+    runScratchmdCapture(['files', 'discard', recordPath], workspacePath),
+  ),
 );
 confinedIpc.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
   listUnreviewedChanges(workspacePath),
