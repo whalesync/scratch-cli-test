@@ -81,6 +81,16 @@ pub struct MaintenanceSettings {
     pub full_budget_secs: u64,
     /// Run `git fsck` after every full step and report it (rollout canary).
     pub fsck_after_full: bool,
+    /// After a step `failed` or `timed_out` on a repo, do not retry that repo for this long —
+    /// a permanently broken repo (e.g. corrupt history the full's walk trips over) must not
+    /// burn a retry every tick. Read from the journal ONLY to slow retries: a missing or
+    /// unreadable DB means "retry", so losing the DB fails in the safe direction.
+    pub failed_step_backoff_ms: i64,
+    /// `-c pack.threads=<n>` for the maintenance steps' pack-building commands. Git defaults to
+    /// one thread per core, which lets a single gc/repack take the whole box; nothing waits on a
+    /// background step, so 1 trades wall time for a near-invisible CPU footprint (a full stays
+    /// well inside its 60-min budget even single-threaded). 0 = git's default.
+    pub pack_threads: u64,
 }
 
 impl Default for MaintenanceSettings {
@@ -96,6 +106,8 @@ impl Default for MaintenanceSettings {
             quick_budget_secs: 30 * 60,
             full_budget_secs: 60 * 60,
             fsck_after_full: true,
+            failed_step_backoff_ms: MS_PER_DAY,
+            pack_threads: 2,
         }
     }
 }
@@ -632,7 +644,13 @@ pub fn decide(scan: &RepoScan, settings: &MaintenanceSettings, now_ms: i64) -> P
         Some(t) => now_ms - t >= settings.full_min_interval_ms,
         None => last_quick.is_none_or(|q| now_ms - q >= settings.full_min_interval_ms),
     };
-    if activity_since_full && full_age_ok {
+    // A full needs something to work on. Without this, an unborn repo (no commits — e.g. a
+    // handful of loose objects and no pack) loops forever: gc completes in ~0.1 s but finds
+    // nothing reachable, writes neither a pack nor a commit-graph, and the repo looks
+    // "neverMaintained" again on the very next tick. Once a real repo crosses the loose
+    // threshold, quick packs it first, which creates the pack the rate-limit keys on.
+    let full_has_material = counts.packs > 0 || counts.loose >= settings.loose_threshold;
+    if activity_since_full && full_age_ok && full_has_material {
         let share = counts.small_pack_share();
         if share >= settings.small_pack_share_threshold {
             return Plan::Full {
@@ -694,6 +712,11 @@ pub struct RepoOverviewRow {
     /// `quick` | `full` | `nothing`
     pub plan: String,
     pub reason: String,
+    /// Set when the repo's newest journaled run failed or timed out within the backoff window:
+    /// ticks skip the repo (whatever `plan` says) until this time. Derived from the throw-away
+    /// journal, so a deleted DB clears it — which just means the repo is retried sooner.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_failure_backoff_until_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -709,12 +732,23 @@ fn repo_dir_created_at_ms(repo_path: &Path) -> Option<i64> {
 }
 
 /// Scan every repo the way a tick does and report the decision each would get right now.
-/// Read-only — no marker, no lock, nothing runs.
+/// Read-only — no marker, no lock, nothing runs. `latest_run_state_and_start_by_repo_id` (from
+/// the journal, one batched query) only feeds the backoff annotation — never the plan itself.
 pub fn repo_overview(
     repos_dir: &Path,
     settings: &MaintenanceSettings,
+    latest_run_state_and_start_by_repo_id: &std::collections::HashMap<String, (String, i64)>,
     now_ms: i64,
 ) -> Vec<RepoOverviewRow> {
+    let failure_backoff_until_ms = |repo_id: &str| -> Option<i64> {
+        latest_run_state_and_start_by_repo_id
+            .get(repo_id)
+            .and_then(|(run_state, started_at_ms)| {
+                let until_ms = started_at_ms + settings.failed_step_backoff_ms;
+                (matches!(run_state.as_str(), "failed" | "timed_out") && until_ms > now_ms)
+                    .then_some(until_ms)
+            })
+    };
     list_repos(repos_dir)
         .repos
         .into_iter()
@@ -725,6 +759,7 @@ pub fn repo_overview(
                     Plan::Quick { reason } => ("quick".to_string(), reason),
                     Plan::Full { reason } => ("full".to_string(), reason),
                 };
+                let in_failure_backoff_until_ms = failure_backoff_until_ms(&scan.repo_id);
                 RepoOverviewRow {
                     repo_id: scan.repo_id,
                     created_at_ms: repo_dir_created_at_ms(&path),
@@ -739,10 +774,12 @@ pub fn repo_overview(
                     last_full_at_ms: scan.state.last_full_at_ms,
                     plan,
                     reason,
+                    in_failure_backoff_until_ms,
                     error: None,
                 }
             }
             Err(e) => RepoOverviewRow {
+                in_failure_backoff_until_ms: failure_backoff_until_ms(&repo_id),
                 repo_id,
                 created_at_ms: repo_dir_created_at_ms(&path),
                 loose: 0,
@@ -1046,14 +1083,12 @@ pub async fn run_quick_step(
             "pack-objects -q objects/pack/loose- < {} ids",
             ids.len()
         ));
-        result = run_git_step(
-            repo_path,
-            &["pack-objects", "-q", "objects/pack/loose-"],
-            Some(ids),
-            budget,
-            shutdown,
-        )
-        .await;
+        let threads_arg = format!("pack.threads={}", settings.pack_threads);
+        let mut pack_args = vec!["pack-objects", "-q", "objects/pack/loose-"];
+        if settings.pack_threads > 0 {
+            pack_args.splice(0..0, ["-c", threads_arg.as_str()]);
+        }
+        result = run_git_step(repo_path, &pack_args, Some(ids), budget, shutdown).await;
         if result.is_ok() {
             outcome.commands.push("prune-packed -q".to_string());
             result = run_git_step(
@@ -1075,9 +1110,14 @@ pub async fn run_quick_step(
         outcome
             .commands
             .push("repack -d --geometric=2 --write-midx -q".to_string());
+        let threads_arg = format!("pack.threads={}", settings.pack_threads);
+        let mut repack_args = vec!["repack", "-d", "--geometric=2", "--write-midx", "-q"];
+        if settings.pack_threads > 0 {
+            repack_args.splice(0..0, ["-c", threads_arg.as_str()]);
+        }
         result = run_git_step(
             repo_path,
-            &["repack", "-d", "--geometric=2", "--write-midx", "-q"],
+            &repack_args,
             None,
             remaining(budget, started),
             shutdown,
@@ -1126,22 +1166,20 @@ pub async fn run_full_step(
         Err(e) => return unreadable_outcome(outcome, e),
     };
     remove_stale_tmp_packs(repo_path);
-    let result = run_git_step(
-        repo_path,
-        &[
-            "-c",
-            "repack.writeBitmaps=false",
-            "-c",
-            "gc.writeCommitGraph=true",
-            "gc",
-            "--cruft",
-            &prune_arg,
-        ],
-        None,
-        budget,
-        shutdown,
-    )
-    .await;
+    let threads_arg = format!("pack.threads={}", settings.pack_threads);
+    let mut gc_args = vec![
+        "-c",
+        "repack.writeBitmaps=false",
+        "-c",
+        "gc.writeCommitGraph=true",
+        "gc",
+        "--cruft",
+        &prune_arg,
+    ];
+    if settings.pack_threads > 0 {
+        gc_args.splice(0..0, ["-c", threads_arg.as_str()]);
+    }
+    let result = run_git_step(repo_path, &gc_args, None, budget, shutdown).await;
     let mut outcome = finish_outcome(outcome, result, started, repo_path);
     if outcome.state == "completed" && settings.fsck_after_full {
         // Same budget and shutdown handling as the gc itself: a stuck fsck must not pin the
@@ -1475,8 +1513,60 @@ pub async fn run_tick(state: &AppState, shutdown: &mut watch::Receiver<bool>) ->
             plan @ Plan::Full { .. } => full.push((scan, plan)),
         }
     }
-    quick.sort_by_key(|(s, _)| s.last_write_at_ms);
-    full.sort_by_key(|(s, _)| s.last_write_at_ms);
+    // Failure backoff: a repo whose last journaled run failed or timed out is retried at most
+    // once per `failed_step_backoff_ms` (default daily), and retry-eligible failures go to the
+    // back of the queue behind healthy repos. One batched query — never one per repo.
+    let backoff_ms = state.maintenance.settings.failed_step_backoff_ms;
+    let latest_run_state_and_start_by_repo_id = state
+        .maintenance
+        .db()
+        .latest_run_state_and_start_by_repo_id();
+    let last_run_failed_or_timed_out = |repo_id: &str| -> bool {
+        latest_run_state_and_start_by_repo_id
+            .get(repo_id)
+            .is_some_and(|(run_state, _)| matches!(run_state.as_str(), "failed" | "timed_out"))
+    };
+    let mut backed_off = 0usize;
+    let mut apply_backoff = |list: Vec<(RepoScan, Plan)>| -> Vec<(RepoScan, Plan)> {
+        let mut kept = Vec::with_capacity(list.len());
+        for (scan, plan) in list {
+            let failed_recently = latest_run_state_and_start_by_repo_id
+                .get(&scan.repo_id)
+                .is_some_and(|(run_state, started_at_ms)| {
+                    matches!(run_state.as_str(), "failed" | "timed_out")
+                        && now - started_at_ms < backoff_ms
+                });
+            if failed_recently {
+                tracing::debug!(
+                    "[GC] repo={} skipped: in failure backoff ({} h)",
+                    scan.repo_id,
+                    backoff_ms / MS_PER_HOUR
+                );
+                backed_off += 1;
+            } else {
+                kept.push((scan, plan));
+            }
+        }
+        kept
+    };
+    let mut quick = apply_backoff(quick);
+    let mut full = apply_backoff(full);
+    if backed_off > 0 {
+        tracing::info!(
+            "[GC] tick: {} repo(s) in failure backoff, skipped",
+            backed_off
+        );
+    }
+    // Healthy repos first; repos whose retry-eligible failure is older than the backoff go to
+    // the back of the queue.
+    let sort_key = |scan: &RepoScan| {
+        (
+            last_run_failed_or_timed_out(&scan.repo_id),
+            scan.last_write_at_ms,
+        )
+    };
+    quick.sort_by_key(|(s, _)| sort_key(s));
+    full.sort_by_key(|(s, _)| sort_key(s));
     summary.due_quick = quick.len();
     summary.due_full = full.len();
     tracing::info!(
@@ -2096,6 +2186,21 @@ mod tests {
             decide(&scan_with(compact, now - 1, full_8d), &s, now),
             Plan::Full { ref reason } if reason == "lastFullAgeH=192"
         ));
+        // Unborn repo: a few loose objects, no pack, no commit-graph — a full would run every
+        // tick and change nothing. Must decide Nothing.
+        let unborn = ObjectCounts {
+            loose: 2,
+            loose_bytes: 100,
+            packs: 0,
+            pack_bytes: 0,
+            largest_pack_bytes: 0,
+        };
+        assert_eq!(
+            decide(&scan_with(unborn, now - 1, RepoGcState::default()), &s, now),
+            Plan::Nothing,
+            "pack-less repo below the loose threshold has nothing a full can do"
+        );
+
         // Graph-less repo (never a commit-graph, e.g. no reachable commits): fulls are
         // rate-limited by the newest pack instead of firing every tick.
         let graphless_recent_pack = RepoGcState {
@@ -2459,18 +2564,35 @@ mod tests {
         let (done_id, done_path) = init_repo(&repos_dir, "ov-done");
         commit_a_file(&done_path, "d");
         git(&done_path, &["gc", "-q", "--prune=1.hour.ago"]);
-        let rows = repo_overview(&repos_dir, &fast_settings(), now_ms());
+        let now = now_ms();
+        // The never-maintained repo's newest journaled run failed just now ⇒ the overview
+        // annotates it with the backoff deadline; the plan itself stays purely derived.
+        let latest_run_state_and_start_by_repo_id = std::collections::HashMap::from([
+            (never_id.clone(), ("failed".to_string(), now - 1)),
+            (done_id.clone(), ("completed".to_string(), now - 1)),
+        ]);
+        let rows = repo_overview(
+            &repos_dir,
+            &fast_settings(),
+            &latest_run_state_and_start_by_repo_id,
+            now,
+        );
         assert_eq!(rows.len(), 2);
         let never = rows.iter().find(|r| r.repo_id == never_id).unwrap();
         assert_eq!(never.plan, "full");
         assert_eq!(never.reason, "neverMaintained");
         assert_eq!(never.last_full_at_ms, None);
+        assert_eq!(
+            never.in_failure_backoff_until_ms,
+            Some(now - 1 + fast_settings().failed_step_backoff_ms)
+        );
         let done = rows.iter().find(|r| r.repo_id == done_id).unwrap();
         assert!(done.created_at_ms.is_some(), "APFS records dir birth time");
         assert_eq!(done.plan, "nothing");
         assert!(done.last_full_at_ms.is_some());
         assert_eq!(done.packs, 1);
         assert!(done.error.is_none());
+        assert_eq!(done.in_failure_backoff_until_ms, None);
     }
 
     /// A manual run forces the step even when the due-rules say nothing, and journals it with
@@ -2513,6 +2635,68 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::NotFound(_)), "{:?}", err);
+    }
+
+    /// A repo whose last journaled step failed is retried at most once per backoff window;
+    /// deleting the journal DB re-enables the retry (safe direction).
+    #[tokio::test]
+    async fn tick_backs_off_repos_whose_last_step_failed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repos_dir = tmp.path().join("repos");
+        fs::create_dir_all(&repos_dir).unwrap();
+        let state = make_state(&repos_dir, fast_settings());
+        state.maintenance.set_enabled(true).unwrap();
+        let (id, path) = init_repo(&repos_dir, "backoff");
+        commit_a_file(&path, "b");
+        // Journal a fresh failed full for this repo.
+        let mut failed = StepOutcome {
+            mode: StepMode::Full,
+            state: "failed".to_string(),
+            reason: "neverMaintained".to_string(),
+            started_at_ms: now_ms() - state.maintenance.settings.failed_step_backoff_ms - 1,
+            duration_ms: 1,
+            before: ObjectCounts::default(),
+            after: ObjectCounts::default(),
+            commands: vec![],
+            exit_code: Some(128),
+            stderr: "fatal: unable to read …".to_string(),
+            fsck_clean: None,
+        };
+        // A failure OLDER than the window ⇒ retried (and this real full completes).
+        state.maintenance.db().record_run(&id, &failed).unwrap();
+        let mut rx = shutdown_rx();
+        let summary = run_tick(&state, &mut rx).await;
+        assert_eq!(summary.ran.len(), 1, "{:?}", summary);
+        assert_eq!(summary.ran[0].repo_id, id);
+
+        // Make the repo genuinely due again: loose ≥ threshold AND the derived last_quick /
+        // last_full aged past the rate limits (back-date the pack + commit-graph mtimes).
+        write_loose_blobs(&path, 4, "bo");
+        let two_days_ago = SystemTime::now() - Duration::from_secs(2 * 24 * 3600);
+        for entry in fs::read_dir(path.join("objects/pack")).unwrap().flatten() {
+            fs::File::open(entry.path())
+                .unwrap()
+                .set_modified(two_days_ago)
+                .unwrap();
+        }
+        let graph = path.join("objects/info/commit-graph");
+        if graph.exists() {
+            fs::File::open(&graph)
+                .unwrap()
+                .set_modified(two_days_ago)
+                .unwrap();
+        }
+        // Journal a FRESH failure — `last_run` is the newest row — ⇒ backed off.
+        failed.started_at_ms = now_ms();
+        state.maintenance.db().record_run(&id, &failed).unwrap();
+        let summary = run_tick(&state, &mut rx).await;
+        assert!(summary.ran.is_empty(), "in backoff: {:?}", summary.ran);
+
+        // The DB vanishes ⇒ retry (missing journal = no backoff, the safe direction).
+        fs::remove_file(state.maintenance.db_path()).unwrap();
+        state.maintenance.set_enabled(true).unwrap(); // recreate db with the switch row
+        let summary = run_tick(&state, &mut rx).await;
+        assert_eq!(summary.ran.len(), 1, "{:?}", summary);
     }
 
     #[tokio::test]

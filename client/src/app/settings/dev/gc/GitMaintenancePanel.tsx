@@ -196,6 +196,8 @@ const HELP = {
   repo: 'The bare repo under the repos directory, split as organisation / workbook / connection.',
   created:
     "Creation (birth) time of the repo directory on disk, straight from the filesystem — works regardless of whether this server's database knows the repo. Not used in any decision.",
+  connector:
+    "The connector service (Stripe, HubSpot, …) of the repo's connection, from this server's database. Blank for workbook-level repos and for repos whose connection is not in this database.",
   user: "The user owning the repo's workbook (repo id → workbook → user), looked up by the server. Blank for repos whose workbook no longer exists in this database.",
   objects:
     'Three lines, each: count · storage size · share of the repo bytes. ⭘ LOOSE = unpacked object files under objects/xx/ — the disk bloat and read-performance problem; a QUICK step is due at ≥ 500 of them. ▣ SMALL PACKS = every *.pack except the biggest; > 10 packs makes a QUICK (roll-up) due, and ≥ 15% of the bytes sitting outside the biggest pack makes a FULL due. ⬒ BIGGEST PACK = the consolidated main pack; the ideal repo is one pack (plus possibly a small cruft pack of aging garbage), no loose. All counted on disk at scan time.',
@@ -206,12 +208,12 @@ const HELP = {
   lastFull:
     'DERIVED from disk: the mtime of objects/info/commit-graph — only a real git gc writes that file (a manual /gc or /repair counts too, as it should). Decision: rate-limits FULL to at most once per day; over 7 days old forces one if there was activity. Nothing is stored — a deleted journal DB changes nothing here.',
   nextTick:
-    'The decision the loop would take right now, computed from the columns to the left: FULL if activity since the last full AND last full ≥ 24 h ago AND (small-pack share ≥ 15% OR packs > 10 OR last full > 7 d). Else QUICK if last quick ≥ 1 h ago AND (loose ≥ 500 OR packs > 10). Else NOTHING. The reason line shows which rule fired.',
+    'The decision the loop would take right now, computed from the columns to the left: FULL if activity since the last full AND last full ≥ 24 h ago AND (small-pack share ≥ 15% OR packs > 10 OR last full > 7 d). Else QUICK if last quick ≥ 1 h ago AND (loose ≥ 500 OR packs > 10). Else NOTHING. The reason line shows which rule fired. A red ⏸ line means the last run failed or timed out, so ticks skip the repo — whatever the plan says — until the shown time (failure backoff, default 24 h). Manual ▶ / ⏩ runs ignore the backoff.',
   runWhen: 'When the step started — date, time, and how long ago.',
   runMode:
     'quick = pack all loose objects + prune-packed + geometric repack (deletes nothing, safe next to writers). full = git gc --cruft --prune=1.hour.ago with bitmaps off, then an fsck canary: reachable objects → one pack, young garbage → a cruft pack with per-object ages (deleted at a later full once past the grace), old garbage → deleted. The line underneath is the reason it was due.',
   runState:
-    'completed (green) is the good case. failed / timed_out / aborted: the step did not finish — nothing advanced, the repo stays due and is retried. fsck_failed / fsck_inconclusive: the gc itself completed but the fsck canary found a problem / could not finish — look at stderr.',
+    'completed (green) is the good case. failed / timed_out: the step did not finish — nothing advanced, and the repo goes into failure backoff: ticks retry it at most once per 24 h (manual runs still work). aborted: shutdown or switch-off cut the step short; no backoff. fsck_failed / fsck_inconclusive: the gc itself completed but the fsck canary found a problem / could not finish — look at stderr.',
   runLoose: 'Loose-object count on disk, before → after the step.',
   runPacks: 'Pack count on disk, before → after the step.',
   runPackedBytes: 'Total pack bytes on disk, before → after the step.',
@@ -453,6 +455,7 @@ function ReposTable({
       <Table.Thead>
         <Table.Tr>
           <Th label="Repo" help={HELP.repo} />
+          <Th label="Connector" help={HELP.connector} />
           <Th label="User" help={HELP.user} />
           <Th label="Created" help={HELP.created} />
           <Th label="Objects" help={HELP.objects} />
@@ -471,6 +474,17 @@ function ReposTable({
               {row.error && (
                 <Text size="xs" c="red">
                   {row.error}
+                </Text>
+              )}
+            </Table.Td>
+            <Table.Td>
+              {row.service ? (
+                <Badge variant="light" color="gray">
+                  {row.service}
+                </Badge>
+              ) : (
+                <Text size="xs" c="dimmed">
+                  —
                 </Text>
               )}
             </Table.Td>
@@ -505,6 +519,11 @@ function ReposTable({
                 {row.reason && (
                   <Text size="xs" c="dimmed">
                     {row.reason}
+                  </Text>
+                )}
+                {row.inFailureBackoffUntilMs !== undefined && (
+                  <Text size="xs" c="red">
+                    ⏸ failed — retries {new Date(row.inFailureBackoffUntilMs).toLocaleString()}
                   </Text>
                 )}
               </Stack>
@@ -542,7 +561,7 @@ function ReposTable({
             </Table.Td>
           </Table.Tr>
         ))}
-        {rows.length === 0 && <EmptyRow colSpan={9} text="No repos found under the repos directory." />}
+        {rows.length === 0 && <EmptyRow colSpan={10} text="No repos found under the repos directory." />}
       </Table.Tbody>
     </Table>
   );

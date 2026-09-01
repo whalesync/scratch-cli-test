@@ -53,10 +53,13 @@ pub async fn get_settings(State(state): State<AppState>) -> Response {
 pub async fn get_repos(State(state): State<AppState>) -> Response {
     let repos_dir = state.repos_dir.clone();
     let settings = state.maintenance.settings.clone();
+    let db = state.maintenance.db().clone();
     let rows = tokio::task::spawn_blocking(move || {
+        let latest_run_state_and_start_by_repo_id = db.latest_run_state_and_start_by_repo_id();
         crate::service::maintenance::repo_overview(
             &repos_dir,
             &settings,
+            &latest_run_state_and_start_by_repo_id,
             crate::service::maintenance::now_ms(),
         )
     })

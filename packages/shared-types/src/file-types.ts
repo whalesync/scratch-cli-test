@@ -143,6 +143,8 @@ export interface GitMaintenanceRepoRow {
   /** Owner of the repo's workbook — enriched by the server (scratch-git knows nothing about users). */
   userName?: string | null;
   userEmail?: string | null;
+  /** The connector service of the repo's ConnectorAccount (e.g. `stripe`) — server-enriched; null for workbook-level repos or accounts unknown to this database. */
+  service?: string | null;
   loose: number;
   /** Total bytes of the loose object files. */
   looseBytes: number;
@@ -159,6 +161,11 @@ export interface GitMaintenanceRepoRow {
   /** What the next tick would do: `quick` | `full` | `nothing`. */
   plan: 'quick' | 'full' | 'nothing';
   reason: string;
+  /**
+   * Set when the repo's newest journaled run failed or timed out within the backoff window:
+   * ticks skip the repo (whatever `plan` says) until this time. Manual runs still work.
+   */
+  inFailureBackoffUntilMs?: number;
   /** Set when the repo could not be scanned. */
   error?: string;
 }
@@ -203,6 +210,10 @@ export interface GitMaintenanceStatusResponse {
     quickBudgetSecs: number;
     fullBudgetSecs: number;
     fsckAfterFull: boolean;
+    /** `-c pack.threads` cap for maintenance git commands (1 = background-friendly; 0 = git default). */
+    packThreads: number;
+    /** A repo whose last journaled run failed/timed out is skipped by ticks for this long (default 24 h). */
+    failedStepBackoffMs: number;
   };
   tickInProgress: boolean;
   current: { repoId: string; mode: 'quick' | 'full'; startedAtMs: number } | null;

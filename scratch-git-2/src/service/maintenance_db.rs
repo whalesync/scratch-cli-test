@@ -12,6 +12,7 @@
 //! - **reads assume defaults** when the DB, a table, or a row is missing — they never create
 //!   the file, never fail the caller, and log at warn when the file exists but cannot be read.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -272,7 +273,35 @@ impl MaintenanceDb {
         Ok(conn.last_insert_rowid())
     }
 
-    /// Most recent run for one repo, if any (test helper; production reads use `recent_runs`).
+    /// The newest run's `state` and `started_at_ms` for every repo with any journaled run, in
+    /// ONE query — the tick's failure-backoff check must not open a connection per repo (and
+    /// `sort_by_key` re-evaluates its key, so a per-repo query there multiplies further).
+    /// Missing/unreadable DB ⇒ empty map, which disables backoff and fails toward retrying.
+    pub fn latest_run_state_and_start_by_repo_id(&self) -> HashMap<String, (String, i64)> {
+        self.read_or_default(HashMap::new(), |conn| {
+            // Oldest-first scan; later rows overwrite, leaving the newest per repo — the same
+            // (started_at_ms, id) ordering `last_run` uses. Retention pruning keeps this small.
+            let mut stmt = conn.prepare(
+                "SELECT repo_id, state, started_at_ms FROM maintenance_runs
+                 ORDER BY started_at_ms ASC, id ASC",
+            )?;
+            let mut newest_state_and_start_by_repo_id = HashMap::new();
+            for row in stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })? {
+                let (repo_id, state, started_at_ms) = row?;
+                newest_state_and_start_by_repo_id.insert(repo_id, (state, started_at_ms));
+            }
+            Ok(newest_state_and_start_by_repo_id)
+        })
+    }
+
+    /// Most recent run for one repo, if any. Production code uses the batched
+    /// `latest_run_state_and_start_by_repo_id` instead; tests assert on full rows.
     #[cfg(test)]
     pub fn last_run(&self, repo_id: &str) -> Option<MaintenanceRunRow> {
         self.read_or_default(None, |conn| {

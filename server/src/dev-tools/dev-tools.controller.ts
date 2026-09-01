@@ -789,14 +789,26 @@ export class DevToolsController {
     }
     const rows = await this.scratchGitClient.getMaintenanceRepos();
     const workbookIds = [...new Set(rows.map((row) => row.repoId.split('/')[1]).filter((id): id is string => !!id))];
-    const workbooks = await this.dbService.client.workbook.findMany({
-      where: { id: { in: workbookIds } },
-      select: { id: true, user: { select: { name: true, email: true } } },
-    });
+    const [workbooks, connectorAccounts] = await Promise.all([
+      this.dbService.client.workbook.findMany({
+        where: { id: { in: workbookIds } },
+        select: { id: true, user: { select: { name: true, email: true } } },
+      }),
+      this.dbService.client.connectorAccount.findMany({
+        where: { repoPath: { in: rows.map((row) => row.repoId) } },
+        select: { repoPath: true, service: true },
+      }),
+    ]);
     const userByWorkbookId = new Map(workbooks.map((workbook) => [workbook.id, workbook.user]));
+    const serviceByRepoPath = new Map(connectorAccounts.map((account) => [account.repoPath, account.service]));
     return rows.map((row) => {
       const user = userByWorkbookId.get(row.repoId.split('/')[1] ?? '');
-      return { ...row, userName: user?.name ?? null, userEmail: user?.email ?? null };
+      return {
+        ...row,
+        userName: user?.name ?? null,
+        userEmail: user?.email ?? null,
+        service: serviceByRepoPath.get(row.repoId) ?? null,
+      };
     });
   }
 

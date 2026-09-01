@@ -47,7 +47,12 @@ no overlap):
    repo that cannot be fully read counts as *unreadable* and is skipped — a partial view is never
    treated as truth.
 4. **Decide** per repo (pure function `decide()`, table-tested), then run due steps serially —
-   quick steps first, then fulls, oldest-written first.
+   quick steps first, then fulls, oldest-written first. **Failure backoff:** a repo whose newest
+   journaled run `failed`/`timed_out` is skipped for 24 h (`failed_step_backoff_ms`) so a broken
+   repo (e.g. pre-existing corruption) can't burn every tick, and once eligible again it sorts
+   behind healthy repos. One batched journal query per tick; a missing/deleted DB just means the
+   repo is retried — the journal only ever *slows* retries, never gates work. Manual runs bypass
+   the backoff. The dev-tools Repos tab shows a red ⏸ line with the retry time.
 5. Journal every outcome and the tick itself; prune the journal (30-day retention; vanished-repo
    rows only after a complete scan).
 
