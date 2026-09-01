@@ -5,16 +5,11 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/{{syncId}}/run?pullFirst=true
+  url: {{baseUrl}}/workbooks/{{workbookId}}/syncs/{{syncId}}/run
   body: none
   auth: inherit
 }
 
-params:query {
-  pullFirst: true
-}
-
 docs {
-  Manually triggers a sync run. `pullFirst=true` enqueues a pull-then-sync job;
-  omit it (or set false) for sync-only. Returns { success, jobId, message }.
+  Manually triggers a sync run. Returns { success, jobId, message }.
 }

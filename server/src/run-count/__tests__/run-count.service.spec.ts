@@ -18,7 +18,6 @@ describe('runTypeForJobType', () => {
     expect(runTypeForJobType(JobType.ApplyPatches)).toBeUndefined();
     expect(runTypeForJobType(JobType.RehostAssets)).toBeUndefined();
     expect(runTypeForJobType(JobType.DeleteWorkbook)).toBeUndefined();
-    expect(runTypeForJobType(JobType.TemporarySyncWithPull)).toBeUndefined();
   });
 });
 

@@ -11,7 +11,6 @@ import { PullFilesJobDefinition } from './job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobDefinition } from './job-definitions/pull-linked-folder-files.job';
 import { RehostAssetsJobDefinition } from './job-definitions/rehost-assets.job';
 import { SyncDataFoldersJobDefinition } from './job-definitions/sync-data-folders.job';
-import { TemporarySyncWithPullJobDefinition } from './job-definitions/temporary-sync-with-pull.job';
 
 export type JobDefinition =
   | ApplyPatchesJobDefinition
@@ -23,8 +22,7 @@ export type JobDefinition =
   | PullLinkedFolderFilesJobDefinition
   | PullFilesJobDefinition
   | RehostAssetsJobDefinition
-  | SyncDataFoldersJobDefinition
-  | TemporarySyncWithPullJobDefinition;
+  | SyncDataFoldersJobDefinition;
 export type JobData = JobDefinition['data'];
 export type JobTypes = JobDefinition['type'];
 export type JobProgress = Progress<JobDefinition['publicProgress'], JobDefinition['initialJobProgress']>;

@@ -123,11 +123,6 @@ export class SyncController {
     @Param('workbookId') workbookId: WorkbookId,
     @Param('syncId') syncId: SyncId,
     @Req() req: RequestWithUser,
-    // THROWAWAY opt-in: when `pullFirst=true`, enqueue the temporary
-    // pull-then-sync job instead of the plain sync job. Remove once the real
-    // job-dependency system lands. Backwards compatible — omitting it keeps the
-    // existing sync-only behavior.
-    @Query('pullFirst') pullFirst?: string,
   ) {
     const actor = userToActor(req.user);
     await this.workbookService.assertWritableWorkbook(actor, workbookId);
@@ -162,28 +157,20 @@ export class SyncController {
       organizationId: req.user.organizationId ?? workbook.organizationId,
     };
 
-    const shouldPullFirst = pullFirst === 'true';
-    const job = shouldPullFirst
-      ? await this.bullEnqueuerService.enqueueTemporarySyncWithPullJob(
-          workbookId,
-          syncId,
-          enqueueActor,
-          createRunContext('web'),
-        )
-      : await this.bullEnqueuerService.enqueueSyncDataFoldersJob(
-          workbookId,
-          syncId,
-          enqueueActor,
-          undefined,
-          createRunContext('web'),
-        );
+    const job = await this.bullEnqueuerService.enqueueSyncDataFoldersJob(
+      workbookId,
+      syncId,
+      enqueueActor,
+      undefined,
+      createRunContext('web'),
+    );
 
     this.posthogService.trackStartSyncRun(userToActor(req.user), sync);
 
     return {
       success: true,
       jobId: job.id,
-      message: shouldPullFirst ? 'Pull-then-sync job queued successfully' : 'Sync job queued successfully',
+      message: 'Sync job queued successfully',
     };
   }
   @Post(':syncId/sync-one-record')

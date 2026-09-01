@@ -15,7 +15,7 @@ const LOG_SOURCE = 'RunCountService';
  * user-facing run executions are counted; everything not in this map is intentionally NOT counted:
  *  - `apply-patches` is part of the publish flow — counting it would double-count a single publish
  *    (the `publish` job already increments PUBLISH).
- *  - `rehost-assets`, `delete-workbook`, `temporary-sync-with-pull` are internal/throwaway.
+ *  - `rehost-assets`, `delete-workbook` are internal.
  */
 export const RUN_COUNTABLE_JOB_TYPES: Readonly<Record<string, RunType>> = {
   [JobType.PullLinkedFolderFiles]: RunType.PULL,

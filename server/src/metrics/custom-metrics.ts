@@ -286,8 +286,6 @@ export const JOB_COMPLETED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.DiscardPendingChanges]: CustomMetric.JOB_DISCARD_PENDING_CHANGES_COMPLETED,
   [JobType.CleanupConnectionIndexRows]: CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_COMPLETED,
   [JobType.ApplySyncDraft]: CustomMetric.JOB_APPLY_SYNC_DRAFT_COMPLETED,
-  // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
-  [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_COMPLETED,
 };
 
 export const JOB_FAILED_METRIC: Record<JobTypes, CustomMetric> = {
@@ -301,8 +299,6 @@ export const JOB_FAILED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.DiscardPendingChanges]: CustomMetric.JOB_DISCARD_PENDING_CHANGES_FAILED,
   [JobType.CleanupConnectionIndexRows]: CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_FAILED,
   [JobType.ApplySyncDraft]: CustomMetric.JOB_APPLY_SYNC_DRAFT_FAILED,
-  // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
-  [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_FAILED,
 };
 
 export const JOB_CANCELED_METRIC: Record<JobTypes, CustomMetric> = {
@@ -316,8 +312,6 @@ export const JOB_CANCELED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.DiscardPendingChanges]: CustomMetric.JOB_DISCARD_PENDING_CHANGES_CANCELED,
   [JobType.CleanupConnectionIndexRows]: CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_CANCELED,
   [JobType.ApplySyncDraft]: CustomMetric.JOB_APPLY_SYNC_DRAFT_CANCELED,
-  // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
-  [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_CANCELED,
 };
 
 export const JOB_STALLED_METRIC: Record<JobTypes, CustomMetric> = {
@@ -331,6 +325,4 @@ export const JOB_STALLED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.DiscardPendingChanges]: CustomMetric.JOB_DISCARD_PENDING_CHANGES_STALLED,
   [JobType.CleanupConnectionIndexRows]: CustomMetric.JOB_CLEANUP_CONNECTION_INDEX_ROWS_STALLED,
   [JobType.ApplySyncDraft]: CustomMetric.JOB_APPLY_SYNC_DRAFT_STALLED,
-  // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
-  [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_STALLED,
 };

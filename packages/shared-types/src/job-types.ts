@@ -36,9 +36,6 @@ export const JobType = {
    * progress through `ApplySyncDraftPublicProgress`. Enqueued by POST /sync-drafts/:draftId/save.
    */
   ApplySyncDraft: 'apply-sync-draft',
-  // THROWAWAY (no Linear issue): temporary "pull then sync" job used to unblock
-  // development of the real job-dependency system. Remove once dependencies land.
-  TemporarySyncWithPull: 'temporary-sync-with-pull',
 } as const;
 
 export type JobType = (typeof JobType)[keyof typeof JobType];
