@@ -6,7 +6,6 @@ import { FlagDataType } from './types';
  * Use ALL CAPS for both enum and flag names separated by underscores.
  */
 export enum SystemFeatureFlag {
-  SAMPLE_SYSTEM_FLAG = 'sample_system_flag',
   /**
    * DEV-10316 kill switch. When enabled for an organization, the
    * `/upload-patch/commit` endpoint refuses a desktop/CLI publish whose
