@@ -12,9 +12,7 @@ import {
 } from '../airtable-field-value-canonicalizer';
 import { buildAirtableJsonTableSpec } from '../airtable-json-schema';
 import { AirtableBase, AirtableDataType, AirtableTableV2 } from '../airtable-types';
-// Registers the Airtable connector with the registry (its canonicalizer hook is
-// deliberately NOT registered yet — see the DEV-10556 comment in its
-// `connectorRegistry.register` block).
+// Registers the Airtable connector (and its canonicalizer hook) with the registry.
 import '../airtable-connector';
 
 function expectSame(airtableType: string, format: string | undefined, pulled: unknown, written: unknown): void {
@@ -72,7 +70,7 @@ describe('airtableFieldValueCanonicalizerForColumnType', () => {
   });
 });
 
-describe('Airtable resolver on a real built table spec (hook written but not registered — DEV-10556)', () => {
+describe('Airtable resolver on a real built table spec (registered — DEV-10556 / DEV-11420)', () => {
   const BASE = { id: 'app1', name: 'My Base' } as unknown as AirtableBase;
   const table = {
     id: 'tbl1',
@@ -88,13 +86,17 @@ describe('Airtable resolver on a real built table spec (hook written but not reg
     ],
   } as unknown as AirtableTableV2;
 
-  it('is NOT registered with the connector registry yet — the registry resolves nothing for Airtable', () => {
+  it('is registered with the connector registry — the registry resolves the writable columns for Airtable', () => {
     const spec = buildAirtableJsonTableSpec({ wsId: 'tbl1', remoteId: ['app1', 'tbl1'] }, BASE, table);
-    expect(resolveFieldValueCanonicalizersForTable(Service.AIRTABLE, spec).size).toBe(0);
+    const registered = resolveFieldValueCanonicalizersForTable(Service.AIRTABLE, spec);
+    expect([...registered.keys()].sort()).toEqual(['fields.Name', 'fields.Done', 'fields.Tags', 'fields.When'].sort());
+    const done = registered.get('fields.Done');
+    if (!done) throw new Error('expected a canonicalizer for fields.Done');
+    expect(areFieldValuesCanonicallyEqual(done, undefined, false)).toBe(true);
   });
 
   it('resolves a canonicalizer for every writable column and none for computed columns or the envelope', () => {
-    // Run the (unregistered) resolver over the spec's fields the way the registry helper would.
+    // Run the resolver directly over the spec's fields the way the registry helper would.
     const tableSpec = buildAirtableJsonTableSpec({ wsId: 'tbl1', remoteId: ['app1', 'tbl1'] }, BASE, table);
     const canonicalizers = new Map<string, (value: unknown) => unknown>();
     for (const schemaField of extractSchemaFields(tableSpec.schema)) {

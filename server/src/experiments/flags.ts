@@ -170,11 +170,11 @@ export enum UserFlag {
    * This flag only affects the sync. The publish diff (`computeChangedFields`)
    * never uses canonicalizers, so a local edit always publishes.
    *
-   * Named for Notion because only Notion registers canonicalizers today. The
-   * Airtable and Postgres/Supabase implementations exist but are not
-   * registered — their `resolveFieldValueCanonicalizer` lines are commented
-   * out in their `connectorRegistry.register` blocks. Registering another
-   * connector should come with its own flag, or a rename of this one.
+   * Gates the canonicalizers of EVERY connector that registers a
+   * `resolveFieldValueCanonicalizer` hook — Notion, Airtable, Postgres and
+   * Supabase today (DEV-11420 registered the last three). The name is
+   * historical: it was coined when only Notion registered one, and the PostHog
+   * flag key is kept so existing per-user rollouts carry over unchanged.
    *
    * Fail-closed: defaults to false; an unmatched user or a PostHog outage
    * also yields false. Checked server-side only — not exposed to the client.

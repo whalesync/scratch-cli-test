@@ -27,7 +27,7 @@ function readEnvFile(file) {
 }
 const env = readEnvFile(path.join(REPO_ROOT, 'local/audit-creds/airtable.env'));
 const TOKEN = env.apiKey;
-const BASE = env.AIRTABLE_SEED_BASE_ID || 'appGoopxI4Px4dyuv';
+const BASE = process.env.AIRTABLE_SEED_BASE_ID || env.AIRTABLE_SEED_BASE_ID || 'appGoopxI4Px4dyuv';
 
 async function at(method, endpoint, body) {
   const res = await fetch(`https://api.airtable.com/v0${endpoint}`, {

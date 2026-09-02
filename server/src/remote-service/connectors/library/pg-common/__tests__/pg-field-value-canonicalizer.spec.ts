@@ -14,9 +14,7 @@ import {
   resolvePgFieldValueCanonicalizer,
 } from '../pg-field-value-canonicalizer';
 import { mapPgType } from '../pg-type-mapping';
-// Register both SQL connectors with the registry (their shared canonicalizer hook
-// is deliberately NOT registered yet — see the DEV-10556 comments in their
-// `connectorRegistry.register` blocks).
+// Registers both SQL connectors (and their shared canonicalizer hook) with the registry.
 import '../../postgres/postgres-connector';
 import '../../supabase/supabase-connector';
 
@@ -84,7 +82,7 @@ describe('pgFieldValueCanonicalizerForColumnType', () => {
   });
 });
 
-describe('Postgres / Supabase resolver on an annotated table spec (hook written but not registered — DEV-10556)', () => {
+describe('Postgres / Supabase resolver on an annotated table spec (registered — DEV-10556 / DEV-11420)', () => {
   /** Mirrors what both connectors' `fetchJsonTableSpec` build: a flat object of columns annotated with their pg type. */
   function buildTableSpec(): BaseJsonTableSpec {
     const column = (dataType: string, udtName: string) => {
@@ -105,14 +103,18 @@ describe('Postgres / Supabase resolver on an annotated table spec (hook written 
   }
 
   it.each([Service.POSTGRES, Service.SUPABASE])(
-    'is NOT registered with the connector registry yet — the registry resolves nothing for %s',
+    'is registered with the connector registry — the registry resolves the re-rendered column families for %s',
     (service) => {
-      expect(resolveFieldValueCanonicalizersForTable(service, buildTableSpec()).size).toBe(0);
+      const registered = resolveFieldValueCanonicalizersForTable(service, buildTableSpec());
+      expect([...registered.keys()].sort()).toEqual(['amount', 'created_at', 'id', 'payload', 'price'].sort());
+      const createdAt = registered.get('created_at');
+      if (!createdAt) throw new Error('expected a canonicalizer for created_at');
+      expect(areFieldValuesCanonicallyEqual(createdAt, '2026-07-23T21:12:27.000Z', '2026-07-23T21:12:27Z')).toBe(true);
     },
   );
 
   it('resolves canonicalizers for the re-rendered column families when run directly', () => {
-    // Run the (unregistered) resolver over the spec's fields the way the registry helper would.
+    // Run the resolver directly over the spec's fields the way the registry helper would.
     const tableSpec = buildTableSpec();
     const canonicalizers = new Map<string, (value: unknown) => unknown>();
     for (const schemaField of extractSchemaFields(tableSpec.schema)) {

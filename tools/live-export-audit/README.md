@@ -54,6 +54,8 @@ torture set is identical. Each one is idempotent — re-running updates rather t
   (mints a QBO token out-of-band and re-encrypts it into the connection, for dev servers whose
   `.env` lacks `QUICKBOOKS_CLIENT_ID`/`_SECRET` and so can't refresh)
 - `seeds/pipedrive/`
+- `seeds/airtable/` — `seed.mjs` (honours `AIRTABLE_SEED_BASE_ID` from the env or `airtable.env`), `crud-pass.mjs`
+- `seeds/postgres/` — `seed.mjs`, `crud-pass.mjs` (plain SQL through the server's `pg`; table ids are `public/<table>`)
 
 A `crud-pass.mjs` must make the create target a title the site does **not** already have — a
 previous pass leaves its created record behind, and silently reusing it turns the create assertion
