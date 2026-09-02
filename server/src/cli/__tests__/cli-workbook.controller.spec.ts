@@ -11,6 +11,7 @@ import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { PublishPlanCrudService } from 'src/publish-plan/publish-plan-crud.service';
+import { PublishPlanDiffService } from 'src/publish-plan/publish-plan-diff.service';
 import { RoutineService } from 'src/routine/routine.service';
 import type { RepoId } from 'src/scratch-git/scratch-git.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -88,6 +89,7 @@ describe('CliWorkbookController', () => {
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
   let publishPlanBuildService: jest.Mocked<PublishPlanBuildService>;
   let publishPlanCrudService: jest.Mocked<PublishPlanCrudService>;
+  let publishPlanDiffService: jest.Mocked<PublishPlanDiffService>;
   let auditLogService: jest.Mocked<AuditLogService>;
   let routineService: jest.Mocked<RoutineService>;
 
@@ -158,6 +160,11 @@ describe('CliWorkbookController', () => {
       listPublishPlanRecords: jest.fn(),
     } as unknown as jest.Mocked<PublishPlanCrudService>;
 
+    publishPlanDiffService = {
+      listChangedFilesForPublishPlan: jest.fn(),
+      getFileDiffForPublishPlan: jest.fn(),
+    } as unknown as jest.Mocked<PublishPlanDiffService>;
+
     auditLogService = {
       logEvent: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<AuditLogService>;
@@ -176,6 +183,7 @@ describe('CliWorkbookController', () => {
       bullEnqueuerService,
       publishPlanBuildService,
       publishPlanCrudService,
+      publishPlanDiffService,
       auditLogService,
       routineService,
     );

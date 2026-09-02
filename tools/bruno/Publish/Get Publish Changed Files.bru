@@ -1,0 +1,31 @@
+meta {
+  name: Get Publish Changed Files
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/{{planId}}/changed-files
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~from: pre-main
+  ~to: post-main
+  ~page: 1
+  ~pageSize: 100
+  ~folderPath: /Companies
+  ~status: modified
+}
+
+docs {
+  The files that differ between two anchors of a publish, `from` → `to`, each one
+  of `pre-main` (`main` before the run), `pre-dirty` (`dirty` before the run — the
+  approved edits) or `post-main` (`main` after the run). Default `pre-main` →
+  `post-main` = what the publish changed live; `pre-main` → `pre-dirty` = what
+  was staged; `pre-dirty` → `post-main` = what the connector changed vs what we
+  sent. Each entry is `{ path, status }` (`added` / `modified` / `deleted`),
+  sorted by path. `folderPath` and `status` filter; `page` / `pageSize` (max 1000)
+  paginate. `counts` holds per-status totals for the whole comparison. Read-only.
+}

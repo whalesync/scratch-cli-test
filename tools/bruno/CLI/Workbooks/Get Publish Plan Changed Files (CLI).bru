@@ -1,0 +1,27 @@
+meta {
+  name: Get Publish Plan Changed Files (CLI)
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/publish-v2/{{planId}}/changed-files
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~from: pre-main
+  ~to: post-main
+  ~page: 1
+  ~pageSize: 100
+  ~folderPath: /Companies
+  ~status: modified
+}
+
+docs {
+  CLI shim for the publish changed-files list: the files that differ between two
+  anchors of a publish (`from` → `to`, each `pre-main` / `pre-dirty` /
+  `post-main`; default `pre-main` → `post-main`), as `{ path, status }` rows
+  sorted by path. Same anchors, filters and pagination as the web route. Read-only.
+}

@@ -1,10 +1,14 @@
 import type { Asset, FileIndex, FileReference } from '../../db';
 import type {
+  PublishDiffAnchor,
+  PublishPlanChangedFilesResponse,
   PublishPlanEntity,
+  PublishPlanFileDiff,
   PublishPlanListResponse,
   PublishPlanOperationEntity,
   PublishPlanRecordsResponse,
 } from '../../dto/publish-plan/publish-plan.dto';
+import type { FileDiffStatus } from '../../file-types';
 import type { Http } from '../http';
 
 /**
@@ -117,6 +121,54 @@ export function createPublishPlansApi(http: Http) {
           hasError: options?.hasError ? 'true' : undefined,
         },
         fallbackMessage: 'Failed to list publish plan operations',
+      });
+      return res.data;
+    },
+
+    /**
+     * The files that differ between two anchors of a publish (`from` → `to`,
+     * default pre-publish `main` → post-publish `main`), paginated. `folderPath`
+     * restricts to one folder (prefix match on the workbook path); `status`
+     * restricts to added / modified / deleted. See {@link PublishPlanChangedFilesResponse}
+     * and {@link PublishDiffAnchor}.
+     */
+    listPublishPlanChangedFiles: async (
+      workbookId: string,
+      planId: string,
+      options?: {
+        from?: PublishDiffAnchor;
+        to?: PublishDiffAnchor;
+        page?: number;
+        pageSize?: number;
+        folderPath?: string;
+        status?: FileDiffStatus;
+      },
+    ): Promise<PublishPlanChangedFilesResponse> => {
+      const res = await http.get<PublishPlanChangedFilesResponse>(
+        `/workbook/${workbookId}/publish-v2/${planId}/changed-files`,
+        {
+          params: options,
+          fallbackMessage: 'Failed to list publish plan changed files',
+        },
+      );
+      return res.data;
+    },
+
+    /**
+     * Content of one record file at two anchors of a publish (`from` → `to`,
+     * default pre-publish `main` → post-publish `main`), plus a sparse
+     * field-level diff. `path` is the full workbook path of the file (e.g.
+     * `/Companies/rec_123.json`). See {@link PublishPlanFileDiff} and {@link PublishDiffAnchor}.
+     */
+    getPublishPlanFileDiff: async (
+      workbookId: string,
+      planId: string,
+      path: string,
+      options?: { from?: PublishDiffAnchor; to?: PublishDiffAnchor },
+    ): Promise<PublishPlanFileDiff> => {
+      const res = await http.get<PublishPlanFileDiff>(`/workbook/${workbookId}/publish-v2/${planId}/file-diff`, {
+        params: { path, from: options?.from, to: options?.to },
+        fallbackMessage: 'Failed to fetch publish plan file diff',
       });
       return res.data;
     },

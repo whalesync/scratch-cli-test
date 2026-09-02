@@ -92,7 +92,9 @@ pub async fn file(
             let branch = query.branch.as_deref().unwrap_or(MAIN_BRANCH);
 
             let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let content = git_repo.get_file_content(branch, file_path)?;
+            // `branch` may also be a full commit SHA (publish-diff reads pass
+            // the SHAs persisted on the PublishPlan row).
+            let content = git_repo.get_file_content_at_ref_or_commit_sha(branch, file_path)?;
 
             match content {
                 Some(c) => Ok(json!({ "content": c })),

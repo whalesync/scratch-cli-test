@@ -1,4 +1,5 @@
 import { PublishPlanStatus } from '../../enums/enums';
+import type { FileDiffStatus } from '../../file-types';
 
 export { PublishPlanStatus };
 
@@ -152,4 +153,98 @@ export interface PublishPlanListResponse {
   total: number;
   page: number;
   pageSize: number;
+}
+
+// ── Publish diffs (DEV-11427) ─────────────────────────────────────────────────
+//
+// "What did this publish change?" A publish run records three commits on the
+// connection repo, and both diff endpoints compare any two of them, chosen by
+// the `from` / `to` anchors:
+//
+//   pre-main   `main` before the run  (PublishPlan.preMainCommitSha,  tag main_pre_plan_<id>)
+//   pre-dirty  `dirty` before the run (PublishPlan.preDirtyCommitSha, tag dirty_plan_<id>)
+//              — the approved edits that were about to be published
+//   post-main  `main` after the run   (PublishPlan.postMainCommitSha, tag main_plan_<id>)
+//              — what actually landed
+//
+// Useful pairs:
+//   pre-main  → post-main  (default)  what this publish changed live. Connector-rejected
+//                                     records never reach `main`, so they never appear.
+//   pre-main  → pre-dirty             what was staged for publish ("old vs edits"). Note
+//                                     `dirty` is the connection's whole approved set, so a
+//                                     scoped plan shows edits outside its scope here too.
+//   pre-dirty → post-main             what the connector changed relative to what we sent
+//                                     (normalisation, server-computed fields). A rejected
+//                                     record shows the REVERSE of the user's edit here.
+//
+// Created records are renamed on publish (placeholder name on `dirty`, remote id on
+// `main`), so a single `path` may only exist on one side of a pair that spans `dirty`;
+// the caller picks the path per operation.
+
+/** Named commit of a publish run to diff from / to. */
+export type PublishDiffAnchor = 'pre-main' | 'pre-dirty' | 'post-main';
+
+export const PUBLISH_DIFF_ANCHORS: readonly PublishDiffAnchor[] = ['pre-main', 'pre-dirty', 'post-main'];
+
+/**
+ * One file that differs between the two anchors.
+ */
+export interface PublishPlanChangedFile {
+  /** Full workbook path of the record file, with a leading `/` (e.g. `/Companies/rec_123.json`). */
+  path: string;
+  /** `added` = absent at `from`, present at `to`; `modified` = differs; `deleted` = present at `from`, absent at `to`. */
+  status: FileDiffStatus;
+}
+
+/**
+ * Paginated list of the files that differ between two anchors of a publish, plus
+ * per-status totals across the whole comparison (ignoring pagination and filters).
+ */
+export interface PublishPlanChangedFilesResponse {
+  planId: string;
+  connectorAccountId: string | null;
+  /** The older side of the comparison. */
+  from: PublishDiffAnchor;
+  /** The newer side of the comparison. */
+  to: PublishDiffAnchor;
+  /** Commit at `from`. `null` only for `pre-main` on a run that recorded none (then every file is `added`). */
+  baseCommitSha: string | null;
+  /** Commit at `to`. */
+  headCommitSha: string;
+  data: PublishPlanChangedFile[];
+  /** Number of files matching the filters (before pagination). */
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Per-status counts across the entire comparison, ignoring filters and pagination. */
+  counts: { added: number; modified: number; deleted: number };
+}
+
+/**
+ * The content of one record file at two anchors of a publish.
+ */
+export interface PublishPlanFileDiff {
+  planId: string;
+  /** Full workbook path of the record file, with a leading `/`. */
+  path: string;
+  /** The older side of the comparison. */
+  from: PublishDiffAnchor;
+  /** The newer side of the comparison. */
+  to: PublishDiffAnchor;
+  /** How the file differs between the anchors; `unchanged` when byte-identical on both sides. */
+  status: FileDiffStatus | 'unchanged';
+  baseCommitSha: string | null;
+  headCommitSha: string;
+  /** Raw file content at `from`; `null` when the file did not exist there. */
+  before: string | null;
+  /** Raw file content at `to`; `null` when the file did not exist there. */
+  after: string | null;
+  /**
+   * Sparse deep diff of the record: only the field paths whose value changed, holding the
+   * value at `to` (same shape as a plan operation's `changedFields`). `null` when either
+   * side is missing or is not a JSON object, so callers can fall back to a text diff of
+   * `before` / `after`. An empty object with `status: 'modified'` means only formatting
+   * changed.
+   */
+  changedFields: Record<string, unknown> | null;
 }

@@ -144,6 +144,8 @@ POST   /workbook/:workbookId/publish-v2/run-job                 # Run publish jo
 GET    /workbook/:workbookId/publish-v2                         # List publish pipelines
 GET    /workbook/:workbookId/publish-v2/by-job/:jobId           # Get pipeline by job ID
 GET    /workbook/:workbookId/publish-v2/:pipelineId/operations  # Get pipeline operations
+GET    /workbook/:workbookId/publish-v2/:planId/changed-files   # Files a publish changed on main
+GET    /workbook/:workbookId/publish-v2/:planId/file-diff       # Before/after of one file across a publish
 GET    /workbook/:workbookId/publish-v2/index/files             # Get publish index files
 GET    /workbook/:workbookId/publish-v2/index/refs              # Get publish index refs
 GET    /workbook/:workbookId/publish-v2/index/assets            # Get publish index assets
@@ -1841,6 +1843,34 @@ GET /workbook/:workbookId/publish-v2/:pipelineId/operations
 ```
 
 Returns the individual operations within a publish pipeline.
+
+### Publish diff anchors
+
+A publish run records three commits on the connection repo, and both diff endpoints below compare any two of them, chosen with the `from` and `to` query params (each `pre-main`, `pre-dirty`, or `post-main`; they must differ):
+
+| Anchor      | Commit                                   | Meaning                                              |
+| ----------- | ---------------------------------------- | ---------------------------------------------------- |
+| `pre-main`  | `preMainCommitSha` / tag `main_pre_plan_<id>` | `main` before the run — what was live               |
+| `pre-dirty` | `preDirtyCommitSha` / tag `dirty_plan_<id>`   | `dirty` before the run — the approved edits staged  |
+| `post-main` | `postMainCommitSha` / tag `main_plan_<id>`    | `main` after the run — what actually landed         |
+
+Useful pairs: `pre-main → post-main` (default) is what the publish changed live; `pre-main → pre-dirty` is what was staged ("old vs edits"); `pre-dirty → post-main` is what the connector changed relative to what we sent (normalisation, server-computed fields). Note that `dirty` is the connection's whole approved set, so a scoped plan shows edits outside its scope in the `pre-dirty` pairs, and a record the connector rejected shows the reverse of the user's edit in `pre-dirty → post-main`. Created records are renamed on publish (placeholder name on `dirty`, remote id on `main`), so the caller picks the path per operation when a pair spans `dirty`. `to=post-main` returns 400 until a run has completed (including completed-with-errors).
+
+### Get Publish Changed Files
+
+```
+GET /workbook/:workbookId/publish-v2/:planId/changed-files?from=pre-main&to=post-main
+```
+
+Returns the files that differ between the two anchors. Each entry is `{ path, status }` with `status` one of `added`, `modified`, `deleted`; `path` is the file's full workbook path. Paginated with `page` / `pageSize` (max 1000); `folderPath` restricts to one folder and `status` to one status. The response echoes `from` / `to` and their SHAs, and carries per-status `counts` across the whole comparison.
+
+### Get Publish File Diff
+
+```
+GET /workbook/:workbookId/publish-v2/:planId/file-diff?path=/Folder/record.json&from=pre-main&to=post-main
+```
+
+Returns the content of one record file at the two anchors: `before` (at `from`, `null` if absent there), `after` (at `to`, `null` if absent there), `status` (`added` / `modified` / `deleted` / `unchanged`), and `changedFields` — a sparse deep diff holding only the changed field paths with their value at `to` (`null` when either side is missing or not a JSON object; an empty object with `status: modified` means only formatting changed).
 
 ### Get Publish Index Files
 

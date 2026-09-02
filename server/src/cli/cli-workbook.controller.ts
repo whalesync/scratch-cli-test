@@ -16,6 +16,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { PublishPlanChangedFilesResponse, PublishPlanFileDiff } from '@spinner/shared-types';
 import { DeleteWorkbookResponseDto, PushRoutineFilesResponse, WorkbookId } from '@spinner/shared-types';
 import type { Request, Response } from 'express';
 import { AuditLogService } from 'src/audit/audit-log.service';
@@ -28,6 +29,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildDto, PublishPlanRunDto } from 'src/publish-plan/dto/publish-v2.dto';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { PublishPlanCrudService } from 'src/publish-plan/publish-plan-crud.service';
+import { PublishPlanDiffService } from 'src/publish-plan/publish-plan-diff.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { PushRoutineFilesDto } from 'src/routine/dto/push-routine-files.dto';
 import { RoutineService } from 'src/routine/routine.service';
@@ -70,6 +72,7 @@ export class CliWorkbookController {
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly publishPlanBuildService: PublishPlanBuildService,
     private readonly publishPlanCrudService: PublishPlanCrudService,
+    private readonly publishPlanDiffService: PublishPlanDiffService,
     private readonly auditLogService: AuditLogService,
     private readonly routineService: RoutineService,
   ) {
@@ -651,6 +654,56 @@ export class CliWorkbookController {
       page: page ? parseInt(page, 10) : undefined,
       pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
     });
+  }
+
+  /**
+   * CLI shim — the files that differ between two anchors of a publish (`from` →
+   * `to`, each `pre-main` | `pre-dirty` | `post-main`; default pre-publish `main`
+   * → post-publish `main`), paginated (DEV-11427). Mirrors the web client's
+   * `/workbook/:id/publish-v2/:planId/changed-files`. Read-only; no audit log entry.
+   */
+  @Get(':id/publish-v2/:planId/changed-files')
+  async getPublishPlanChangedFiles(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Param('planId') planId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('folderPath') folderPath?: string,
+    @Query('status') status?: string,
+  ): Promise<PublishPlanChangedFilesResponse> {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
+    return this.publishPlanDiffService.listChangedFilesForPublishPlan(id, planId, {
+      from,
+      to,
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+      folderPath,
+      status,
+    });
+  }
+
+  /**
+   * CLI shim — content of one record file at two anchors of a publish (`from` →
+   * `to`, default pre-publish `main` → post-publish `main`), plus a sparse
+   * field-level diff (DEV-11427). Mirrors the web client's
+   * `/workbook/:id/publish-v2/:planId/file-diff`. Read-only; no audit log entry.
+   */
+  @Get(':id/publish-v2/:planId/file-diff')
+  async getPublishPlanFileDiff(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Param('planId') planId: string,
+    @Query('path') path: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<PublishPlanFileDiff> {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
+    return this.publishPlanDiffService.getFileDiffForPublishPlan(id, planId, path, { from, to });
   }
 
   // ── Workbook repo endpoints ─────────────────────────────────────────────────

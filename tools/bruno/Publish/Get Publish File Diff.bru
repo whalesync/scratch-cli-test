@@ -1,0 +1,28 @@
+meta {
+  name: Get Publish File Diff
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/workbook/{{workbookId}}/publish-v2/{{planId}}/file-diff?path=/Companies/rec_123.json
+  body: none
+  auth: inherit
+}
+
+params:query {
+  path: /Companies/rec_123.json
+  ~from: pre-main
+  ~to: post-main
+}
+
+docs {
+  Content of one record file at two anchors of a publish, `from` → `to`, each
+  one of `pre-main` (`main` before the run), `pre-dirty` (`dirty` before the run
+  — the approved edits) or `post-main` (`main` after the run). Default
+  `pre-main` → `post-main`. `before` is `null` when the file is absent at
+  `from`, `after` is `null` when absent at `to`. `status` is `added` /
+  `modified` / `deleted` / `unchanged`. `changedFields` is a sparse deep diff
+  holding only the changed field paths with their value at `to` (`null` when
+  either side is missing or not a JSON object). Read-only.
+}

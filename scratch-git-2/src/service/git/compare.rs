@@ -164,6 +164,25 @@ impl GitRepo {
         Ok(dirty)
     }
 
+    /// Every (non-dotfile) file in a commit's tree reported as `"added"` — the
+    /// diff of a commit against the empty tree. Used by the publish-diff compare
+    /// endpoint when a publish had no recorded pre-publish `main` commit.
+    pub fn list_commit_files_as_added(
+        &self,
+        commit_oid: ObjectId,
+    ) -> Result<Vec<DirtyFile>, AppError> {
+        let commit = self
+            .repo
+            .find_commit(commit_oid)
+            .map_err(|e| AppError::internal(format!("Failed to find commit: {}", e)))?;
+        let tree = commit
+            .tree()
+            .map_err(|e| AppError::internal(format!("Failed to get tree: {}", e)))?;
+        let mut added = Vec::new();
+        self.add_all_from_tree(&tree, String::new(), "added", &mut added)?;
+        Ok(added)
+    }
+
     fn compare_trees_recursive(
         &self,
         tree_a: &gix::Tree<'_>,

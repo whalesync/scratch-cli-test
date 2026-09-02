@@ -308,3 +308,199 @@ pub async fn folder_diff(
         Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
     }
 }
+
+#[derive(Deserialize)]
+pub struct CompareQuery {
+    /// Older side of the comparison: a branch name, a tag name, or a full
+    /// 40-char commit SHA. Omitted ⇒ the empty tree, so every file in `head`
+    /// is reported as `"added"`.
+    pub base: Option<String>,
+    /// Newer side of the comparison: a branch name, a tag name, or a full
+    /// 40-char commit SHA. Required.
+    pub head: Option<String>,
+}
+
+/// `GET /api/repo/diff/{id}/compare?base=<ref|sha>&head=<ref|sha>` — the list
+/// of files that differ between two arbitrary commits, as
+/// `[{ path, status: "added" | "modified" | "deleted", oid? }]` (the same shape
+/// as `/status`). Read-only. Backs the server's publish-diff endpoints, which
+/// compare a publish plan's pre-publish `main` commit against its post-publish
+/// `main` commit to show exactly what a publish changed.
+pub async fn compare(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<CompareQuery>,
+) -> Response {
+    let head = match query.head {
+        Some(h) if !h.is_empty() => h,
+        _ => {
+            return envelope_error(
+                &state,
+                Some(&id),
+                AppError::bad_request("Query param head is required"),
+            );
+        }
+    };
+    let base = query.base.filter(|b| !b.is_empty());
+
+    let result = tokio::task::spawn_blocking({
+        let repos_dir = state.repos_dir.clone();
+        let id = id.clone();
+        move || {
+            let git_repo = GitRepo::open(&repos_dir, &id)?;
+            let head_oid = git_repo.resolve_ref_or_commit_sha(&head)?;
+            let changes = match base {
+                Some(base_ref) => {
+                    let base_oid = git_repo.resolve_ref_or_commit_sha(&base_ref)?;
+                    if base_oid == head_oid {
+                        Vec::new()
+                    } else {
+                        git_repo.compare_commits(base_oid, head_oid)?
+                    }
+                }
+                None => git_repo.list_commit_files_as_added(head_oid)?,
+            };
+            Ok::<_, AppError>(serde_json::to_value(&changes).unwrap())
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => envelope_result(&state, &id, inner),
+        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod compare_by_sha_tests {
+    use crate::service::git::repo::GitRepo;
+    use crate::service::types::*;
+    use tempfile::TempDir;
+
+    fn add(path: &str, content: &str) -> FileChange {
+        FileChange {
+            path: path.to_string(),
+            content: Some(content.to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        }
+    }
+
+    /// The publish-diff endpoints hand the git service the raw commit SHAs the
+    /// server persisted on the PublishPlan row (`preMainCommitSha` →
+    /// `postMainCommitSha`). Resolving those SHAs and comparing them must report
+    /// exactly the files the "publish" touched, with the right statuses.
+    #[test]
+    fn compare_by_commit_sha_reports_added_modified_deleted() {
+        let tmp = TempDir::new().unwrap();
+        let repo = GitRepo::init(tmp.path(), "test").unwrap();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                add("Companies/keep.json", "{\"v\":1}"),
+                add("Companies/edit.json", "{\"v\":1}"),
+                add("Companies/gone.json", "{\"v\":1}"),
+            ],
+            "main before publish",
+        )
+        .unwrap();
+        let pre_main_sha = repo.resolve_ref(MAIN_BRANCH).unwrap().to_string();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                FileChange {
+                    path: "Companies/edit.json".to_string(),
+                    content: Some("{\"v\":2}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Modify,
+                },
+                add("Companies/new.json", "{\"v\":1}"),
+                FileChange {
+                    path: "Companies/gone.json".to_string(),
+                    content: None,
+                    oid: None,
+                    change_type: ChangeType::Delete,
+                },
+            ],
+            "main after publish",
+        )
+        .unwrap();
+        let post_main_sha = repo.resolve_ref(MAIN_BRANCH).unwrap().to_string();
+
+        let base_oid = repo.resolve_ref_or_commit_sha(&pre_main_sha).unwrap();
+        let head_oid = repo.resolve_ref_or_commit_sha(&post_main_sha).unwrap();
+        let mut changes = repo.compare_commits(base_oid, head_oid).unwrap();
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+
+        let summary: Vec<(String, String)> =
+            changes.into_iter().map(|c| (c.path, c.status)).collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("Companies/edit.json".to_string(), "modified".to_string()),
+                ("Companies/gone.json".to_string(), "deleted".to_string()),
+                ("Companies/new.json".to_string(), "added".to_string()),
+            ]
+        );
+
+        // A SHA that names no commit in this repo is an error, not a panic.
+        let missing = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+        assert!(repo.resolve_ref_or_commit_sha(missing).is_err());
+
+        // Branch / tag names still resolve through the ref path.
+        assert_eq!(
+            repo.resolve_ref_or_commit_sha(MAIN_BRANCH).unwrap(),
+            head_oid
+        );
+
+        // Reading a file at a raw SHA works on both sides of the publish.
+        assert_eq!(
+            repo.get_file_content_at_ref_or_commit_sha(&pre_main_sha, "Companies/edit.json")
+                .unwrap(),
+            Some("{\"v\":1}".to_string())
+        );
+        assert_eq!(
+            repo.get_file_content_at_ref_or_commit_sha(&post_main_sha, "/Companies/edit.json")
+                .unwrap(),
+            Some("{\"v\":2}".to_string())
+        );
+        assert_eq!(
+            repo.get_file_content_at_ref_or_commit_sha(&post_main_sha, "Companies/gone.json")
+                .unwrap(),
+            None
+        );
+    }
+
+    /// With no base (a publish that recorded no pre-publish `main` commit),
+    /// every non-dotfile in `head` is reported as added.
+    #[test]
+    fn compare_without_base_reports_every_file_as_added() {
+        let tmp = TempDir::new().unwrap();
+        let repo = GitRepo::init(tmp.path(), "test").unwrap();
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                add("A/1.json", "{}"),
+                add("A/.schema.json", "{}"),
+                add("B/2.json", "{}"),
+            ],
+            "seed",
+        )
+        .unwrap();
+        let head_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+
+        let mut added = repo.list_commit_files_as_added(head_oid).unwrap();
+        added.sort_by(|a, b| a.path.cmp(&b.path));
+        let summary: Vec<(String, String)> =
+            added.into_iter().map(|c| (c.path, c.status)).collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("A/1.json".to_string(), "added".to_string()),
+                ("B/2.json".to_string(), "added".to_string()),
+            ]
+        );
+    }
+}

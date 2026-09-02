@@ -15,6 +15,7 @@ import { WorkerEnqueuerModule } from '../worker-enqueuer/worker-enqueuer.module'
 import { ApplyPatchesService } from './apply-patches.service';
 import { PublishPlanBuildService } from './publish-plan-build.service';
 import { PublishPlanCrudService } from './publish-plan-crud.service';
+import { PublishPlanDiffService } from './publish-plan-diff.service';
 import { PublishPlanRunService } from './publish-plan-run.service';
 import { PublishPlanController } from './publish-plan.controller';
 import { RecreatedIdMapService } from './recreated-id-map.service';
@@ -41,6 +42,7 @@ import { SchemaHelperService } from './schema-helper.service';
     FileReferenceService,
     ApplyPatchesService,
     PublishPlanCrudService,
+    PublishPlanDiffService,
     PublishPlanBuildService,
     RefResolverService,
     PublishPlanRunService,
@@ -53,6 +55,7 @@ import { SchemaHelperService } from './schema-helper.service';
     FileReferenceService,
     ApplyPatchesService,
     PublishPlanCrudService,
+    PublishPlanDiffService,
     PublishPlanBuildService,
     RefResolverService,
     PublishPlanRunService,

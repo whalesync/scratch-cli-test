@@ -546,6 +546,26 @@ export class ScratchGitClient {
     ) as Promise<Array<{ path: string; status: 'added' | 'modified' | 'deleted' }>>;
   }
 
+  /**
+   * Files that differ between two arbitrary commits (`base` → `head`), each a
+   * branch name, tag name, or full commit SHA. A `null` base means the empty
+   * tree, so every file in `head` comes back `added`. Paths have no leading `/`.
+   */
+  async compareCommits(
+    repoId: string,
+    baseRefOrSha: string | null,
+    headRefOrSha: string,
+  ): Promise<Array<{ path: string; status: FileDiffStatus }>> {
+    const params = new URLSearchParams({ head: headRefOrSha });
+    if (baseRefOrSha) {
+      params.set('base', baseRefOrSha);
+    }
+    return this.callGitApi(
+      `/api/repo/diff/${this.encodeRepoId(repoId)}/compare?${params.toString()}`,
+      'GET',
+    ) as Promise<Array<{ path: string; status: FileDiffStatus }>>;
+  }
+
   async getGraph(repoId: string): Promise<unknown> {
     return this.callGitApi(`/api/repo/debug/${this.encodeRepoId(repoId)}/graph`, 'GET');
   }

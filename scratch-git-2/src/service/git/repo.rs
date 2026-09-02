@@ -100,6 +100,26 @@ impl GitRepo {
         Ok(oid.detach())
     }
 
+    /// Resolve either a 40-char hex commit SHA or a ref name (branch / tag) to a
+    /// commit id. A SHA must name a commit that exists in this repo; anything
+    /// else falls through to [`GitRepo::resolve_ref`]. Used by the publish-diff
+    /// endpoints, which carry the `preMainCommitSha` / `postMainCommitSha` the
+    /// server persisted on the PublishPlan row rather than the (droppable)
+    /// `main_pre_plan_*` / `main_plan_*` tags.
+    pub fn resolve_ref_or_commit_sha(&self, ref_or_sha: &str) -> Result<ObjectId, AppError> {
+        let looks_like_full_sha =
+            ref_or_sha.len() == 40 && ref_or_sha.bytes().all(|b| b.is_ascii_hexdigit());
+        if looks_like_full_sha {
+            let oid = ObjectId::from_hex(ref_or_sha.as_bytes())
+                .map_err(|e| AppError::bad_request(format!("Invalid commit sha: {}", e)))?;
+            self.repo
+                .find_commit(oid)
+                .map_err(|_| AppError::not_found(format!("Commit not found: {}", ref_or_sha)))?;
+            return Ok(oid);
+        }
+        self.resolve_ref(ref_or_sha)
+    }
+
     pub fn force_ref(&self, branch: &str, oid: ObjectId) -> Result<(), AppError> {
         let full_ref = format!("refs/heads/{}", branch);
         self.repo
@@ -332,6 +352,17 @@ impl GitRepo {
     ) -> Result<Option<String>, AppError> {
         let file_path = file_path.strip_prefix('/').unwrap_or(file_path);
         let commit_oid = self.resolve_ref(branch)?;
+        self.get_file_content_by_commit(commit_oid, file_path)
+    }
+
+    /// Like [`GitRepo::get_file_content`], but `ref_or_sha` may also be a full
+    /// 40-char commit SHA (see [`GitRepo::resolve_ref_or_commit_sha`]).
+    pub fn get_file_content_at_ref_or_commit_sha(
+        &self,
+        ref_or_sha: &str,
+        file_path: &str,
+    ) -> Result<Option<String>, AppError> {
+        let commit_oid = self.resolve_ref_or_commit_sha(ref_or_sha)?;
         self.get_file_content_by_commit(commit_oid, file_path)
     }
 

@@ -513,6 +513,19 @@ export class ScratchGitService {
     return this.scratchGitClient.getFolderDiff(repoId, folderPath);
   }
 
+  /**
+   * Files that differ between two commits of a repo (`base` → `head`), each a
+   * branch name, tag name, or full commit SHA. A `null` base compares against
+   * the empty tree (every file in `head` is `added`). Paths have no leading `/`.
+   */
+  async compareCommits(
+    repoId: string,
+    baseRefOrSha: string | null,
+    headRefOrSha: string,
+  ): Promise<Array<{ path: string; status: FileDiffStatus }>> {
+    return this.scratchGitClient.compareCommits(repoId, baseRefOrSha, headRefOrSha);
+  }
+
   async getGraph(repoId: string): Promise<unknown> {
     return this.scratchGitClient.getGraph(repoId);
   }

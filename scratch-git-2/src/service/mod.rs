@@ -278,6 +278,7 @@ pub async fn run() {
             "/api/repo/diff/{id}/folder-diff",
             get(routes::diff::folder_diff),
         )
+        .route("/api/repo/diff/{id}/compare", get(routes::diff::compare))
         // Tag
         .route("/api/repo/tag/{id}", post(routes::tag::write_tag))
         // Index

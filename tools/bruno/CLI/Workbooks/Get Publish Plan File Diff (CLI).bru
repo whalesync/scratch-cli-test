@@ -1,0 +1,24 @@
+meta {
+  name: Get Publish Plan File Diff (CLI)
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/cli/v1/workbooks/{{workbookId}}/publish-v2/{{planId}}/file-diff?path=/Companies/rec_123.json
+  body: none
+  auth: inherit
+}
+
+params:query {
+  path: /Companies/rec_123.json
+  ~from: pre-main
+  ~to: post-main
+}
+
+docs {
+  CLI shim for the publish file diff: content of one record file at two anchors
+  of a publish (`from` → `to`, each `pre-main` / `pre-dirty` / `post-main`;
+  default `pre-main` → `post-main`), with `status` and a sparse `changedFields`
+  deep diff. Same shape as the web route. Read-only.
+}

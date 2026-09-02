@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
-import type { WorkbookId } from '@spinner/shared-types';
+import type { PublishPlanChangedFilesResponse, PublishPlanFileDiff, WorkbookId } from '@spinner/shared-types';
 import { Progress } from 'src/types/progress';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
@@ -12,6 +12,7 @@ import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
 import { PublishPlanBuildDto, PublishPlanRunDto } from './dto/publish-v2.dto';
 import { PublishPlanBuildService } from './publish-plan-build.service';
 import { PublishPlanCrudService } from './publish-plan-crud.service';
+import { PublishPlanDiffService } from './publish-plan-diff.service';
 import { PublishPlanRunService } from './publish-plan-run.service';
 
 @Controller('workbook/:workbookId/publish-v2')
@@ -21,6 +22,7 @@ export class PublishPlanController {
     private readonly publishPlanService: PublishPlanBuildService,
     private readonly publishRunService: PublishPlanRunService,
     private readonly publishAdminService: PublishPlanCrudService,
+    private readonly publishPlanDiffService: PublishPlanDiffService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly db: DbService,
   ) {}
@@ -187,6 +189,58 @@ export class PublishPlanController {
       phase,
       filename,
     });
+  }
+
+  // ── Publish diffs (DEV-11427) ────────────────────────────────────
+
+  /**
+   * The files that differ between two anchors of a publish (`from` → `to`, each
+   * `pre-main` | `pre-dirty` | `post-main`; default pre-publish `main` →
+   * post-publish `main`), paginated. `folderPath` narrows to one folder;
+   * `status` narrows to `added` / `modified` / `deleted`.
+   */
+  @Get(':planId/changed-files')
+  changedFiles(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Param('planId') planId: string,
+    @Req() req: RequestWithUser,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('folderPath') folderPath?: string,
+    @Query('status') status?: string,
+  ): Promise<PublishPlanChangedFilesResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.publishPlanDiffService.listChangedFilesForPublishPlan(workbookId, planId, {
+      from,
+      to,
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+      folderPath,
+      status,
+    });
+  }
+
+  /**
+   * Content of one record file at two anchors of a publish (`from` → `to`, each
+   * `pre-main` | `pre-dirty` | `post-main`; default pre-publish `main` →
+   * post-publish `main`), plus a sparse field-level diff. `path` is the file's
+   * full workbook path.
+   */
+  @Get(':planId/file-diff')
+  fileDiff(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Param('planId') planId: string,
+    @Query('path') path: string,
+    @Req() req: RequestWithUser,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<PublishPlanFileDiff> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.publishPlanDiffService.getFileDiffForPublishPlan(workbookId, planId, path, { from, to });
   }
 
   @Get('index/files')
