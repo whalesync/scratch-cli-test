@@ -2,14 +2,14 @@
 
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { json } from '@codemirror/lang-json';
-import { unifiedMergeView } from '@codemirror/merge';
-import { EditorView, lineNumbers } from '@codemirror/view';
+import { EditorView } from '@codemirror/view';
 import { Badge, Group, Loader, Modal, ScrollArea, SegmentedControl, Stack, Text, Title } from '@mantine/core';
 import { PublishPlanOperationEntity, WorkbookId } from '@spinner/shared-types';
 import { Change, diffJson, diffLines } from 'diff';
 import { GitCompareIcon } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MergeEditor } from '../shared/MergeEditor';
+import { UnifiedDiffView } from '../shared/UnifiedDiffView';
 
 /* ================================================================
    Types
@@ -134,33 +134,6 @@ function InlineDiffView({ left, right, useJsonDiff = true }: { left: string; rig
       ))}
     </div>
   );
-}
-
-function UnifiedCodeDiffView({ left, right }: { left: string; right: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const view = new EditorView({
-      doc: right,
-      extensions: [
-        json(),
-        EditorView.editable.of(false),
-        EditorView.lineWrapping,
-        lineNumbers(),
-        unifiedMergeView({
-          original: left,
-          mergeControls: false,
-        }),
-      ],
-      parent: containerRef.current,
-    });
-
-    return () => view.destroy();
-  }, [left, right]);
-
-  return <div ref={containerRef} style={{ height: '100%', overflow: 'hidden' }} />;
 }
 
 function SideBySideDiffView({
@@ -393,7 +366,7 @@ export function RecordPlanModal({ opened, onClose, workbookId, publishPlanId, fi
           ) : engine === 'text' ? (
             <div style={{ height: 500 }}>
               {layout === 'inline' ? (
-                <UnifiedCodeDiffView left={left} right={right} />
+                <UnifiedDiffView original={left} modified={right} />
               ) : (
                 <MergeEditor original={left} modified={right} extensions={[json(), EditorView.editable.of(false)]} />
               )}

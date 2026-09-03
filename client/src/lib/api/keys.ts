@@ -128,5 +128,9 @@ export const SWR_KEYS = {
     refIndex: (workbookId: WorkbookId, page: number) => ['publish-plans', 'ref-index', workbookId, page] as const,
     assetIndex: (workbookId: WorkbookId, dataFolderId: string, page: number) =>
       ['publish-plans', 'asset-index', workbookId, dataFolderId, page] as const,
+    changedFiles: (workbookId: WorkbookId, planId: string, from: string, to: string, page: number) =>
+      ['publish-plans', 'changed-files', workbookId, planId, from, to, page] as const,
+    fileDiff: (workbookId: WorkbookId, planId: string, filePath: string, from: string, to: string) =>
+      ['publish-plans', 'file-diff', workbookId, planId, filePath, from, to] as const,
   },
 };

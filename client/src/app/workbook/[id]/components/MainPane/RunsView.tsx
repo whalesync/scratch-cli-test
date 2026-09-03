@@ -8,6 +8,7 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useJobs } from '@/hooks/use-jobs';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useSyncStore } from '@/stores/sync-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
@@ -17,6 +18,7 @@ import {
   ActionIcon,
   Badge,
   Box,
+  Button,
   Center,
   Code,
   Collapse,
@@ -33,24 +35,32 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import type { Job, WorkbookId } from '@spinner/shared-types';
+import type { Job, PublishPlanChangedFilesResponse, WorkbookId } from '@spinner/shared-types';
 import {
   AlertCircleIcon,
   CheckIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
   ChevronRightIcon,
   ClockIcon,
   CopyIcon,
+  GitCompareIcon,
   InfoIcon,
   ListIcon,
   RefreshCwIcon,
   SquareIcon,
   XIcon,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { PlanEntriesModal } from '../modals/PlanEntriesModal';
+import {
+  FILE_DIFF_STATUS_LABEL,
+  FILE_DIFF_STATUS_TEXT_COLOR,
+  PublishFileDiffModal,
+} from '../modals/PublishFileDiffModal';
 
 const ACTIVE_STATES = new Set(['active', 'waiting', 'pending', 'delayed']);
 
@@ -888,6 +898,8 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: Job; isDev
         </Table.Tbody>
       </Table>
 
+      {!isJobActive && <PublishPlanChangedFilesTable workbookId={workbookId} publishPlanId={p.id} />}
+
       {operationsModalPublishPlanId && (
         <PlanEntriesModal
           opened={!!operationsModalPublishPlanId}
@@ -895,6 +907,171 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: Job; isDev
           workbookId={workbookId}
           publishPlanId={operationsModalPublishPlanId}
           initialHasErrorFilter={operationsModalHasErrorFilter}
+        />
+      )}
+    </Box>
+  );
+}
+
+const CHANGED_FILES_PAGE_SIZE = 50;
+
+/**
+ * Link to a record file in the Files tab. Workbook paths carry a leading `/`
+ * (`/Companies/rec_123.json`) but the Files route takes bare segments, each URL-encoded.
+ */
+function buildFilesTabHrefForWorkbookPath(workbookId: WorkbookId, workbookFilePath: string): string {
+  const encodedPath = workbookFilePath
+    .replace(/^\//, '')
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return `/workbook/${workbookId}/files/${encodedPath}`;
+}
+
+/**
+ * The files a publish actually changed on `main` (pre-publish `main` → post-publish
+ * `main`), with a per-file diff for added and modified records. Only rendered once the job has
+ * finished, since the post-publish commit does not exist before then.
+ */
+function PublishPlanChangedFilesTable({
+  workbookId,
+  publishPlanId,
+}: {
+  workbookId: WorkbookId;
+  publishPlanId: string;
+}) {
+  const from = 'pre-main';
+  const to = 'post-main';
+  const [page, setPage] = useState(1);
+  const [diffModalFilePath, setDiffModalFilePath] = useState<string | null>(null);
+
+  const {
+    data: changedFiles,
+    error,
+    isLoading,
+  } = useSWR<PublishPlanChangedFilesResponse, Error>(
+    SWR_KEYS.publishPlans.changedFiles(workbookId, publishPlanId, from, to, page),
+    () =>
+      scratchApiClient.publish.listPublishPlanChangedFiles(workbookId, publishPlanId, {
+        from,
+        to,
+        page,
+        pageSize: CHANGED_FILES_PAGE_SIZE,
+      }),
+  );
+
+  const totalPages = changedFiles ? Math.max(1, Math.ceil(changedFiles.total / CHANGED_FILES_PAGE_SIZE)) : 1;
+
+  return (
+    <Box mt="md">
+      <Group gap="sm" mb={6}>
+        <Text12Medium c="var(--fg-secondary)">Changed files</Text12Medium>
+        {changedFiles && (
+          <Text12Regular c="var(--fg-muted)">
+            {formatNumber(changedFiles.total)} files · {formatNumber(changedFiles.counts.added)} added ·{' '}
+            {formatNumber(changedFiles.counts.modified)} modified · {formatNumber(changedFiles.counts.deleted)} deleted
+          </Text12Regular>
+        )}
+      </Group>
+
+      {isLoading ? (
+        <Center py="sm">
+          <Loader size="sm" />
+        </Center>
+      ) : error ? (
+        <Text12Regular c="var(--fg-muted)">
+          {error instanceof Error ? error.message : 'Failed to load changed files'}
+        </Text12Regular>
+      ) : !changedFiles || changedFiles.data.length === 0 ? (
+        <Text12Regular c="var(--fg-muted)">No files changed on main by this publish.</Text12Regular>
+      ) : (
+        <>
+          <Table withColumnBorders>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th style={{ width: 100 }}>Status</Table.Th>
+                <Table.Th>File</Table.Th>
+                <Table.Th style={{ width: 120 }}>Changes</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {changedFiles.data.map((changedFile) => (
+                <Table.Tr key={changedFile.path}>
+                  <Table.Td>
+                    <Text size="xs" fw={600} c={FILE_DIFF_STATUS_TEXT_COLOR[changedFile.status]}>
+                      {FILE_DIFF_STATUS_LABEL[changedFile.status]}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    {changedFile.status === 'deleted' ? (
+                      <Text size="xs" ff="monospace">
+                        {changedFile.path}
+                      </Text>
+                    ) : (
+                      <Text
+                        size="xs"
+                        ff="monospace"
+                        c="blue"
+                        component={Link}
+                        href={buildFilesTabHrefForWorkbookPath(workbookId, changedFile.path)}
+                        style={{ textDecoration: 'underline' }}
+                      >
+                        {changedFile.path}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {changedFile.status !== 'deleted' && (
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        leftSection={<GitCompareIcon size={12} />}
+                        onClick={() => setDiffModalFilePath(changedFile.path)}
+                      >
+                        View diff
+                      </Button>
+                    )}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+
+          {totalPages > 1 && (
+            <Group justify="center" gap="sm" mt="xs">
+              <ActionIcon
+                variant="subtle"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+              >
+                <ChevronLeftIcon size={14} />
+              </ActionIcon>
+              <Text size="xs" c="dimmed">
+                Page {page} of {totalPages}
+              </Text>
+              <ActionIcon
+                variant="subtle"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((currentPage) => Math.min(totalPages, currentPage + 1))}
+              >
+                <ChevronRightIcon size={14} />
+              </ActionIcon>
+            </Group>
+          )}
+        </>
+      )}
+
+      {diffModalFilePath && (
+        <PublishFileDiffModal
+          opened
+          onClose={() => setDiffModalFilePath(null)}
+          workbookId={workbookId}
+          publishPlanId={publishPlanId}
+          filePath={diffModalFilePath}
+          from={from}
+          to={to}
         />
       )}
     </Box>
