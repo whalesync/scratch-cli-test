@@ -27,6 +27,13 @@ import {
   trackPublishUploadStarted,
 } from '../../lib/posthog';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
+import {
+  decidePublishTerminalMode,
+  isPartialConnectionSuccess,
+  publishedRecordCountFromProgress,
+  summarizePublishedRecordCounts,
+  type ConnectionPublishStatus,
+} from './publish-terminal-status';
 import type { SingleConnectionPublishTarget } from './single-connection-publish-target';
 import type { SingleFolderPublishTarget } from './single-folder-publish-target';
 import type { SingleRecordPublishTarget } from './single-record-publish-target';
@@ -43,6 +50,10 @@ type PublishMode =
   | 'uploaded'
   | 'publishing'
   | 'complete'
+  // DEV-10598: some records published but others were rejected in the same run.
+  // A distinct "completed-with-errors" terminal state instead of a flat `error`,
+  // so the successes aren't hidden behind "Publish failed".
+  | 'partial'
   | 'error'
   | 'stale'
   // DEV-10316: the connection has unpublished changes on the server — either
@@ -82,7 +93,7 @@ interface ConnectionPublishState {
    * `completed` — run-job terminal with no failures.
    * `failed` — plan-job or run-job failed, or run-job's progress reports failures.
    */
-  status: 'pending' | 'planning' | 'plan-no-diff' | 'running' | 'completed' | 'failed';
+  status: ConnectionPublishStatus;
   planJobId?: string;
   runJobId?: string;
   pipelineId?: string;
@@ -94,6 +105,14 @@ interface ConnectionPublishState {
    * land in `failed-patches.json`. Empty/undefined when nothing was rejected.
    */
   failedOperations?: PublishFailedOperation[];
+  /**
+   * DEV-10598: the run-job's per-record success/fail counts, captured on the
+   * terminal branch. Let the terminal UI present a `failed` connection that also
+   * published some records as a partial success instead of a flat failure. Both
+   * undefined until the run-job reaches a terminal state.
+   */
+  successCount?: number;
+  failedCount?: number;
 }
 
 interface PublishChangesModalProps {
@@ -200,6 +219,8 @@ function modeTitle(mode: PublishMode, scopeNoun: string | null): string {
       return 'Publishing changes';
     case 'complete':
       return capitalizedScopeNoun ? `${capitalizedScopeNoun} published` : 'Published';
+    case 'partial':
+      return capitalizedScopeNoun ? `${capitalizedScopeNoun} partially published` : 'Publish partially completed';
     case 'error':
       return 'Publish failed';
     case 'stale':
@@ -231,7 +252,15 @@ interface PublishPipelineProgress {
   totalCount?: number;
   currentPhase?: string;
   currentTableName?: string;
-  successCount?: number;
+  /**
+   * DEV-10598: the run reports SUCCESSFUL record operations as the per-phase
+   * `*Executed` tallies — there is NO `successCount` on the wire (see
+   * `PublishPublicProgress` in @spinner/shared-types). Sum the record-level
+   * phases via `publishedRecordCountFromProgress` to get "records published".
+   */
+  editsExecuted?: number;
+  createsExecuted?: number;
+  deletesExecuted?: number;
   failedCount?: number;
   /**
    * Bounded per-record connector rejections from the run, each carrying the
@@ -386,6 +415,14 @@ function ConnectionPublishRow({ connection, job }: { connection: ConnectionPubli
   const shownFailureRecordCount = failureGroups.reduce((sum, group) => sum + group.records.length, 0);
   const unshownFailureCount = Math.max(0, (progress?.failedCount ?? 0) - shownFailureRecordCount);
 
+  // DEV-10598: a `failed` connection that still published some records is a
+  // partial success — present it distinctly (amber) and keep its successes
+  // visible after the run ends. The terminal counts are captured on the
+  // connection state (not `job.publicProgress`, which is a live-progress source).
+  const isPartial = isPartialConnectionSuccess(connection);
+  const terminalSuccessCount = connection.successCount ?? 0;
+  const terminalFailedCount = connection.failedCount ?? 0;
+
   const statusLabel = (() => {
     switch (connection.status) {
       case 'pending':
@@ -399,7 +436,7 @@ function ConnectionPublishRow({ connection, job }: { connection: ConnectionPubli
       case 'completed':
         return 'Complete';
       case 'failed':
-        return 'Failed';
+        return isPartial ? 'Partial' : 'Failed';
     }
   })();
 
@@ -408,7 +445,9 @@ function ConnectionPublishRow({ connection, job }: { connection: ConnectionPubli
       case 'completed':
         return 'green';
       case 'failed':
-        return 'red';
+        // Orange matches the codebase's existing "completed-with-errors"
+        // convention (see lib/publish-plan-status.ts).
+        return isPartial ? 'orange' : 'red';
       case 'plan-no-diff':
         return 'gray';
       case 'running':
@@ -443,10 +482,10 @@ function ConnectionPublishRow({ connection, job }: { connection: ConnectionPubli
         <>
           <Progress value={pct} size="sm" mb="sm" animated={job?.state === 'active'} />
 
-          {((progress?.successCount ?? 0) > 0 || (progress?.failedCount ?? 0) > 0) && (
+          {(publishedRecordCountFromProgress(progress) > 0 || (progress?.failedCount ?? 0) > 0) && (
             <Group gap="xs" mb="xs">
               <Badge color="green" variant="light">
-                {(progress?.successCount ?? 0).toLocaleString()} succeeded
+                {publishedRecordCountFromProgress(progress).toLocaleString()} succeeded
               </Badge>
               <Badge color="red" variant="light">
                 {(progress?.failedCount ?? 0).toLocaleString()} failed
@@ -492,6 +531,17 @@ function ConnectionPublishRow({ connection, job }: { connection: ConnectionPubli
             </Table.Tbody>
           </Table>
         </>
+      )}
+
+      {isPartial && (
+        <Group gap="xs" mt="sm">
+          <Badge color="green" variant="light">
+            {terminalSuccessCount.toLocaleString()} published
+          </Badge>
+          <Badge color="red" variant="light">
+            {terminalFailedCount.toLocaleString()} failed
+          </Badge>
+        </Group>
       )}
 
       {connection.status === 'failed' && (failureGroups.length > 0 || connection.failureMessage) && (
@@ -1415,19 +1465,26 @@ export function PublishChangesModal({
         // failed-patches.json. Set on both terminal branches (a "failed"
         // connection here is one with row-level rejections, which is exactly
         // when failedOperations is non-empty).
+        // DEV-10598: also capture the per-record success/fail counts on both
+        // terminal branches so the terminal UI can present a "failed" connection
+        // that still published some records as a partial success.
         const finalProgress = finalJob.publicProgress as PublishPipelineProgress | undefined;
         const failedOperations = finalProgress?.failedOperations ?? [];
+        const successCount = publishedRecordCountFromProgress(finalProgress);
+        const failedCount = finalProgress?.failedCount ?? 0;
 
         if (finalJob.state !== 'completed' || hasPublishFailures(finalJob)) {
           updateConn({
             status: 'failed',
             failureMessage: getPublishFailureMessage(finalJob),
             failedOperations,
+            successCount,
+            failedCount,
           });
           return null;
         }
 
-        updateConn({ status: 'completed', failedOperations });
+        updateConn({ status: 'completed', failedOperations, successCount, failedCount });
         return null;
       } catch (err) {
         updateConn({
@@ -1776,7 +1833,7 @@ export function PublishChangesModal({
               event: 'complete',
               jobId,
               state: job.state,
-              successCount: progress?.successCount,
+              successCount: publishedRecordCountFromProgress(progress),
               failedCount: progress?.failedCount,
               summary,
               errorSummary: failed ? getPublishFailureMessage(job) : undefined,
@@ -1896,7 +1953,9 @@ export function PublishChangesModal({
     if (conn?.status === 'failed') {
       setPublishErrorDetails([`${conn.connectionName}: ${conn.failureMessage ?? 'failed'}`]);
       setError(`${conn.connectionName} failed`);
-      setMode('error');
+      // DEV-10598: a connection that published some records before others were
+      // rejected is a partial success, not a flat failure.
+      setMode(isPartialConnectionSuccess(conn) ? 'partial' : 'error');
       return;
     }
     setMode('complete');
@@ -1937,7 +1996,9 @@ export function PublishChangesModal({
     if (conn?.status === 'failed') {
       setPublishErrorDetails([`${conn.connectionName}: ${conn.failureMessage ?? 'failed'}`]);
       setError(`${conn.connectionName} failed`);
-      setMode('error');
+      // DEV-10598: a connection that published some records before others were
+      // rejected is a partial success, not a flat failure.
+      setMode(isPartialConnectionSuccess(conn) ? 'partial' : 'error');
       return;
     }
     setMode('complete');
@@ -2019,7 +2080,9 @@ export function PublishChangesModal({
       return;
     }
     setPublishErrorDetails(failedConnections.map((c) => `${c.connectionName}: ${c.failureMessage ?? 'failed'}`));
-    setMode('error');
+    // DEV-10598: if some records published despite the failures, present a
+    // partial success instead of a flat "Publish failed".
+    setMode(decidePublishTerminalMode(publishConnections));
     setError(failedConnections.map((c) => `${c.connectionName} failed`).join('; '));
   }, [
     mode,
@@ -2351,6 +2414,59 @@ export function PublishChangesModal({
                           ? `${workspaceName} is now in sync.`
                           : 'Your changes were published.'}
                 </Alert>
+                <Group justify="flex-end">
+                  <Button onClick={() => handleClose()} loading={closing}>
+                    Close
+                  </Button>
+                </Group>
+              </>
+            )}
+
+            {mode === 'partial' && (
+              <>
+                <Alert color="orange" title="Partial success">
+                  {(() => {
+                    const { publishedRecordCount, failedRecordCount } =
+                      summarizePublishedRecordCounts(publishConnections);
+                    // Whole-connection failures (plan/transport/crash) carry no
+                    // per-record count, so state the published total precisely
+                    // but describe the failures qualitatively rather than risk a
+                    // contradictory "0 failed". The per-connection rows below
+                    // carry the exact breakdown.
+                    const publishedClause = `Published ${publishedRecordCount.toLocaleString()} record${
+                      publishedRecordCount === 1 ? '' : 's'
+                    } successfully.`;
+                    const failedClause =
+                      failedRecordCount > 0
+                        ? ` ${failedRecordCount.toLocaleString()} record${
+                            failedRecordCount === 1 ? '' : 's'
+                          } could not be published.`
+                        : ' Some changes could not be published.';
+                    return `${publishedClause}${failedClause} Review the failures below and re-publish them once fixed.`;
+                  })()}
+                </Alert>
+                {publishErrorDetails.length > 0 && (
+                  <Stack gap="xs">
+                    {publishErrorDetails.map((message, index) => (
+                      <Text key={`${index}-${message}`} size="sm">
+                        {message}
+                      </Text>
+                    ))}
+                  </Stack>
+                )}
+                <Stack gap="md">
+                  {publishConnections.map((conn) => {
+                    const activeJobId = conn.runJobId ?? conn.planJobId;
+                    const job = jobs.find((j) => j.bullJobId === activeJobId);
+                    return (
+                      <ConnectionPublishRow
+                        key={conn.connectionId || conn.connectionName}
+                        connection={conn}
+                        job={job}
+                      />
+                    );
+                  })}
+                </Stack>
                 <Group justify="flex-end">
                   <Button onClick={() => handleClose()} loading={closing}>
                     Close
