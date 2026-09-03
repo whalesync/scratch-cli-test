@@ -55,7 +55,7 @@ export function PublishFileDiffModal({
   from = 'pre-main',
   to = 'post-main',
 }: PublishFileDiffModalProps) {
-  const [layout, setLayout] = useState<DiffLayout>('inline');
+  const [layout, setLayout] = useState<DiffLayout>('sideBySide');
 
   const {
     data: fileDiff,
