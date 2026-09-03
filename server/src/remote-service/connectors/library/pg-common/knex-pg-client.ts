@@ -9,8 +9,7 @@
 import knex, { type Knex } from 'knex';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
 import {
-  decodeColumnIdentifierSentinelDots,
-  encodeColumnIdentifierDotsForKnex,
+  decodeColumnIdentifierForKnex,
   escapeKnexColumnIdentifierSpecialCharacters,
 } from './knex-column-identifier-dot-encoding';
 import {
@@ -43,9 +42,9 @@ import { buildAddColumnsQuery, buildCreateTableQuery, type ForeignKeyResolutions
 /**
  * Make a column name safe for knex's query builder — delegates to the shared
  * {@link escapeKnexColumnIdentifierSpecialCharacters} (`?` binding-placeholder
- * escape + DEV-11063 dot sentinel), which the DDL side (`pg-create-schema.ts`)
- * uses too. Apply to column identifiers only, never to a `schema.table`
- * reference.
+ * escape + the `.` and `" as "` sentinels), which the DDL side
+ * (`pg-create-schema.ts`) uses too. Apply to column identifiers only, never to a
+ * `schema.table` reference.
  */
 function escapeKnexSpecialCharacters(column: string): string {
   return escapeKnexColumnIdentifierSpecialCharacters(column);
@@ -64,7 +63,14 @@ function escapeKnexSpecialCharacters(column: string): string {
  * query builder (the only `... AS ...` it uses lives inside `knex.raw` strings, which bypass this
  * path). So overriding `alias` to rejoin the halves into one correctly-quoted identifier is a safe,
  * global fix. Each half is a `wrapIdentifierImpl` result (`"…"` with any inner `"` doubled); we
- * unwrap both, rejoin with " as ", and re-quote. (DEV-11051)
+ * unwrap both, rejoin with " as ", and re-quote.
+ *
+ * As of DEV-11170 this is the belt-and-suspenders FALLBACK: column identifiers routed through {@link
+ * escapeKnexColumnIdentifierSpecialCharacters} / `encodeColumnIdentifierForKnex` are sentinel-encoded
+ * so knex never splits them and their exact casing is preserved. This override only fires for an
+ * identifier path that bypassed that encoding, where it still yields ONE valid identifier but — since
+ * knex has already discarded the separator's casing before `alias` runs — lowercases the " as ".
+ * (DEV-11051, DEV-11170)
  */
 function rejoinKnexAliasSplitIdentifier(quotedFirstHalf: string, quotedSecondHalf: string): string {
   const unwrapQuotedIdentifier = (quoted: string): string =>
@@ -78,11 +84,14 @@ function rejoinKnexAliasSplitIdentifier(quotedFirstHalf: string, quotedSecondHal
  * verbatim through knex's formatter even when it contains a substring knex would otherwise treat as
  * structure (Connector Prime Directive):
  *
- *  - `" as "` — override `client.alias` to rejoin the mis-split halves ({@link
- *    rejoinKnexAliasSplitIdentifier}, DEV-11051).
- *  - `.` — install a `wrapIdentifier` hook that decodes the sentinel a column name's dots were
- *    encoded to ({@link decodeColumnIdentifierSentinelDots}, DEV-11063) back to a literal `.` before
- *    the default quoting, so the encoded name is emitted as one identifier (`"Dealroom.co URL"`).
+ *  - `.` (DEV-11063) and `" as "` (DEV-11170) — install a `wrapIdentifier` hook that decodes the
+ *    sentinels a column name's dots and `" as "` separator-spaces were encoded to ({@link
+ *    decodeColumnIdentifierForKnex}) back to their literals before the default quoting, so the
+ *    encoded name is emitted as one verbatim, correctly-cased identifier (`"Dealroom.co URL"`,
+ *    `"Certified AS Organic"`).
+ *  - `" as "` fallback — also override `client.alias` to rejoin any mis-split halves for an
+ *    identifier path that bypassed the sentinel encoding ({@link rejoinKnexAliasSplitIdentifier},
+ *    DEV-11051); it yields one valid identifier but lowercases the separator.
  *
  * Exported so tests can build SQL strings through a connection-less knex with the same behavior the
  * {@link KnexPGClient} constructor applies. `knex.client` is typed `any`; narrow it to just the two
@@ -94,7 +103,7 @@ export function applyVerbatimIdentifierQuoting(knexInstance: Knex): void {
     config: { wrapIdentifier?: (value: string, origImpl: (value: string) => string) => string };
   };
   knexClientHooks.alias = rejoinKnexAliasSplitIdentifier;
-  knexClientHooks.config.wrapIdentifier = (value, origImpl) => origImpl(decodeColumnIdentifierSentinelDots(value));
+  knexClientHooks.config.wrapIdentifier = (value, origImpl) => origImpl(decodeColumnIdentifierForKnex(value));
 }
 
 /** Escape an array of column names for use in Knex select(). */
@@ -178,8 +187,9 @@ export class KnexPGClient {
       pool: { min: 0, max: 1, createTimeoutMillis: 10_000 },
     });
 
-    // Preserve column names containing " as " (e.g. Pipedrive's "Marked as done time") verbatim
-    // across CREATE / INSERT / SELECT / UPDATE — see {@link rejoinKnexAliasSplitIdentifier}.
+    // Preserve column names containing "." or " as " (e.g. Pipedrive's "Marked as done time", or a
+    // mixed-case "Certified AS Organic") verbatim and with their exact casing across CREATE / INSERT
+    // / SELECT / UPDATE — see {@link applyVerbatimIdentifierQuoting}.
     applyVerbatimIdentifierQuoting(this.knex);
   }
 
@@ -921,18 +931,14 @@ export class KnexPGClient {
     const selection = columns ? escapeColumns(columns) : '*';
     let query = this.knex(`${schema}.${tableName}`)
       .select(selection)
-      .orderBy(encodeColumnIdentifierDotsForKnex(primaryId))
+      .orderBy(escapeKnexSpecialCharacters(primaryId))
       .offset(offset)
       .limit(limit);
     if (filter) {
       query = query.whereRaw(filter);
     }
     if (modifiedSinceColumn && modifiedSinceDatetime) {
-      query = query.where(
-        this.knex.ref(encodeColumnIdentifierDotsForKnex(modifiedSinceColumn)),
-        '>',
-        modifiedSinceDatetime,
-      );
+      query = query.where(this.knex.ref(escapeKnexSpecialCharacters(modifiedSinceColumn)), '>', modifiedSinceDatetime);
     }
     const rows = (await query) as Record<string, unknown>[];
     return rows.map(sanitizeRow);
@@ -949,7 +955,7 @@ export class KnexPGClient {
     const escaped = escapeColumns(columns);
     const rows = (await this.knex(`${schema}.${tableName}`)
       .select(escaped)
-      .whereIn(encodeColumnIdentifierDotsForKnex(primaryId), ids)) as Record<string, unknown>[];
+      .whereIn(escapeKnexSpecialCharacters(primaryId), ids)) as Record<string, unknown>[];
     return rows.map(sanitizeRow);
   }
 
@@ -1013,7 +1019,7 @@ export class KnexPGClient {
     const escapedData = escapeObjectKeys(filteredData);
 
     const rows = (await this.knex(`${schema}.${tableName}`)
-      .where(encodeColumnIdentifierDotsForKnex(primaryId), recordId)
+      .where(escapeKnexSpecialCharacters(primaryId), recordId)
       .update(escapedData)
       .returning('*')) as Record<string, unknown>[];
 
@@ -1180,7 +1186,7 @@ export class KnexPGClient {
     primaryId: string,
   ): Promise<void | 'not_found'> {
     const count = await this.knex(`${schema}.${tableName}`)
-      .where(encodeColumnIdentifierDotsForKnex(primaryId), recordId)
+      .where(escapeKnexSpecialCharacters(primaryId), recordId)
       .del();
 
     if (count === 0) {

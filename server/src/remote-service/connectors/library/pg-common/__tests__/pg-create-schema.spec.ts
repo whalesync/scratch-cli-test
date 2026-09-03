@@ -1,6 +1,9 @@
 import { type CreateFieldSpec, type CreateFieldType } from '@spinner/shared-types';
 import knex, { type Knex } from 'knex';
-import { encodeColumnIdentifierDotsForKnex } from '../knex-column-identifier-dot-encoding';
+import {
+  encodeColumnIdentifierDotsForKnex,
+  escapeKnexColumnIdentifierSpecialCharacters,
+} from '../knex-column-identifier-dot-encoding';
 import { applyVerbatimIdentifierQuoting } from '../knex-pg-client';
 import {
   buildAddColumnsQuery,
@@ -279,6 +282,91 @@ describe('applyVerbatimIdentifierQuoting — column names containing " as "', ()
     expect(quotingKnex('pipedrive.Activities').select('Subject').toQuery()).toBe(
       'select "Subject" from "pipedrive"."Activities"',
     );
+  });
+
+  // DEV-11170: knex splits " as " case-insensitively but the alias rejoin hardcodes a lowercase
+  // separator, so a mixed-case "Certified AS Organic" was emitted as "Certified as Organic" — the
+  // destination column diverged from the source name. The sentinel encoding now neutralizes the
+  // separator before knex sees it, preserving the exact casing across every path.
+  it('preserves a mixed-case " AS " separator verbatim in CREATE TABLE (DEV-11170)', () => {
+    const sql = buildCreateTableQuery(
+      quotingKnex,
+      'pipedrive',
+      'Products',
+      [field('Certified AS Organic', { kind: 'text' })],
+      new Map(),
+    ).toString();
+
+    expect(sql).toContain('"Certified AS Organic" text');
+    expect(sql).not.toContain('"Certified as Organic"');
+  });
+
+  it('preserves a mixed-case " AS " separator verbatim in ALTER TABLE ADD COLUMN (DEV-11170)', () => {
+    const sql = buildAddColumnsQuery(
+      quotingKnex,
+      'pipedrive',
+      'Products',
+      [field('Certified AS Organic', { kind: 'text' })],
+      new Map(),
+    ).toString();
+
+    expect(sql).toContain('"Certified AS Organic" text');
+    expect(sql).not.toContain('"Certified as Organic"');
+  });
+
+  it('encodes a mixed-case " AS " column so INSERT / SELECT / UPDATE quote it verbatim (DEV-11170)', () => {
+    // Mirrors the DML path: KnexPGClient escapes column identifiers via
+    // escapeKnexColumnIdentifierSpecialCharacters before handing them to knex.
+    const encoded = escapeKnexColumnIdentifierSpecialCharacters('Certified AS Organic');
+    expect(
+      quotingKnex('pipedrive.Products')
+        .insert({ [encoded]: 'x' })
+        .toQuery(),
+    ).toContain('("Certified AS Organic")');
+    expect(quotingKnex('pipedrive.Products').select(encoded).toQuery()).toContain('select "Certified AS Organic"');
+    expect(
+      quotingKnex('pipedrive.Products')
+        .update({ [encoded]: 'x' })
+        .toQuery(),
+    ).toContain('set "Certified AS Organic" =');
+  });
+
+  it('keeps read-path WHERE / ORDER BY casing consistent with the created column (DEV-11170)', () => {
+    // The primaryId / modifiedSinceColumn read paths escape via escapeKnexColumnIdentifierSpecialCharacters
+    // (the same full escaper CREATE/DML use), so a mixed-case " AS " column is addressed with the SAME
+    // casing CREATE TABLE used — no case-sensitive "column does not exist" mismatch on re-read.
+    const encoded = escapeKnexColumnIdentifierSpecialCharacters('Certified AS Organic');
+    expect(quotingKnex('pipedrive.Products').where(encoded, 'x').toQuery()).toContain('where "Certified AS Organic" =');
+    expect(quotingKnex('pipedrive.Products').select('*').orderBy(encoded).toQuery()).toContain(
+      'order by "Certified AS Organic"',
+    );
+  });
+
+  it('escapes a "?" placeholder in a read-path column identifier, not as a $n binding (DEV-11170)', () => {
+    // Read paths now use the same full escaper as CREATE/DML, so a "?" (knex's positional-binding
+    // placeholder) in a primaryId / modifiedSinceColumn is quoted verbatim rather than rewritten to a
+    // "$n" reference (which would corrupt the identifier and desync the value bindings).
+    const encoded = escapeKnexColumnIdentifierSpecialCharacters('Marked AS Done?');
+    const whereSql = quotingKnex('pipedrive.Activities').where(encoded, '>', 'x').toQuery();
+    expect(whereSql).toContain('where "Marked AS Done?" >');
+    expect(whereSql).not.toContain('Marked AS Done$');
+    expect(quotingKnex('pipedrive.Activities').select('*').orderBy(encoded).toQuery()).toContain(
+      'order by "Marked AS Done?"',
+    );
+  });
+
+  it('detects " as " case-insensitively (like knex) while preserving the exact casing (DEV-11170)', () => {
+    for (const columnName of ['Marked As Done', 'Marked aS Done', 'Marked AS Done']) {
+      const sql = buildCreateTableQuery(
+        quotingKnex,
+        'pipedrive',
+        'Activities',
+        [field(columnName, { kind: 'text' })],
+        new Map(),
+      ).toString();
+      expect(sql).toContain(`"${columnName}" text`);
+      expect(sql).not.toContain('"Marked" as "Done"');
+    }
   });
 });
 
