@@ -1870,7 +1870,9 @@ Returns the files that differ between the two anchors. Each entry is `{ path, st
 GET /workbook/:workbookId/publish-v2/:planId/file-diff?path=/Folder/record.json&from=pre-main&to=post-main
 ```
 
-Returns the content of one record file at the two anchors: `before` (at `from`, `null` if absent there), `after` (at `to`, `null` if absent there), `status` (`added` / `modified` / `deleted` / `unchanged`), and `changedFields` — a sparse deep diff holding only the changed field paths with their value at `to` (`null` when either side is missing or not a JSON object; an empty object with `status: modified` means only formatting changed).
+Returns the content of one record file at the two anchors: `before` (at `from`, `null` if absent there), `after` (at `to`, `null` if absent there), `status` (`added` / `modified` / `deleted` / `unchanged`), and `changedFields` — a sparse deep diff holding only the changed field paths with their value at `to` (`null` when either side is missing or not a JSON object; an empty object with `status: modified` means the service only re-rendered or re-formatted the file).
+
+When the connection's connector declares field-value canonicalizers for the record's table (Airtable, Notion, Postgres, Supabase), `before`, `after` and `changedFields` show each canonicalized field in its canonical form — e.g. an Airtable empty field omitted on read as `null`, a Postgres timestamp as epoch milliseconds — so a value the service merely re-rendered does not read as a change. That rendering is lossy and for display only; it is not the file content in git. `status` always reflects the raw bytes, matching the changed-files list.
 
 ### Get Publish Index Files
 

@@ -7,10 +7,21 @@ import type {
   PublishPlanFileDiff,
 } from '@spinner/shared-types';
 import { PUBLISH_DIFF_ANCHORS } from '@spinner/shared-types';
+import cloneDeep from 'lodash/cloneDeep';
+import isEqual from 'lodash/isEqual';
+import { WSLogger } from 'src/logger';
+import {
+  FieldValueCanonicalizerMap,
+  resolveFieldValueCanonicalizersForTable,
+} from 'src/remote-service/connectors/field-value-canonicalization';
+import type { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
+import { readFieldValueAtPath, setFieldValueAtPath } from 'src/utils/field-path';
 import { DbService } from '../db/db.service';
 import { ScratchGitNotFoundError } from '../scratch-git/scratch-git.client';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { computeChangedFields } from './diff-utils';
+import { SchemaHelperService } from './schema-helper.service';
+import { parsePath } from './utils';
 
 const DEFAULT_CHANGED_FILES_PAGE_SIZE = 100;
 const MAX_CHANGED_FILES_PAGE_SIZE = 1000;
@@ -25,6 +36,8 @@ const DEFAULT_TO_ANCHOR: PublishDiffAnchor = 'post-main';
 interface PublishPlanCommitRange {
   planId: string;
   connectorAccountId: string | null;
+  /** The connection's service (`Service` enum value); `null` when the plan's connection is gone. */
+  connectorService: string | null;
   repoId: string;
   from: PublishDiffAnchor;
   to: PublishDiffAnchor;
@@ -49,12 +62,20 @@ interface PublishPlanCommitRange {
  *
  * This is deliberately separate from the plan/operations tables: the plan says
  * what we *intended* to send; the commits say what was staged and what shipped.
+ *
+ * The per-file diff renders record fields in the connector's CANONICAL form
+ * (see `field-value-canonicalization.ts`) on both sides before comparing them,
+ * so a value the service merely re-rendered — an Airtable empty field omitted
+ * on read, a Postgres timestamp re-spelled, a Notion span decorated — reads as
+ * unchanged instead of drowning out the real edits. That rendering is for
+ * DISPLAY ONLY: it is lossy by design and never feeds a publish.
  */
 @Injectable()
 export class PublishPlanDiffService {
   constructor(
     private readonly db: DbService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly schemaService: SchemaHelperService,
   ) {}
 
   /**
@@ -130,6 +151,14 @@ export class PublishPlanDiffService {
    * Content of one record file at the two anchors, plus a sparse field-level
    * diff when both sides are JSON objects. 404s when the file exists at neither
    * anchor.
+   *
+   * When the connection's connector declares field-value canonicalizers for the
+   * file's table, every canonicalized field is replaced by its canonical form on
+   * both sides — in the returned `before` / `after` content as well as in the
+   * diff — so the response shows the change the service actually holds rather
+   * than how it re-rendered the value. `status` still reflects the raw bytes,
+   * matching the changed-files list: a file the service only re-rendered is
+   * `modified` with an empty `changedFields`.
    */
   async getFileDiffForPublishPlan(
     workbookId: string,
@@ -158,6 +187,26 @@ export class PublishPlanDiffService {
       );
     }
 
+    const beforeRecord = parseJsonObjectOrNull(before);
+    const afterRecord = parseJsonObjectOrNull(after);
+
+    // The table spec drives both the canonical rendering and the schema-aware
+    // diff (keyed arrays, atomic asset fields). Only a JSON record needs it.
+    const tableSpec =
+      beforeRecord || afterRecord
+        ? await this.resolveTableSpecForRecordFile(workbookId, commitRange.connectorAccountId, filePath)
+        : null;
+    const canonicalizerByFieldPath = resolveFieldValueCanonicalizersForTable(
+      commitRange.connectorService ?? '',
+      tableSpec,
+    );
+    const beforeCanonicalRecord = beforeRecord
+      ? canonicalizeRecordFieldsForDisplay(beforeRecord, canonicalizerByFieldPath, tableSpec)
+      : null;
+    const afterCanonicalRecord = afterRecord
+      ? canonicalizeRecordFieldsForDisplay(afterRecord, canonicalizerByFieldPath, tableSpec)
+      : null;
+
     return {
       planId: commitRange.planId,
       path: toWorkbookPath(filePath),
@@ -166,10 +215,34 @@ export class PublishPlanDiffService {
       status: classifyFileDiffStatus(before, after),
       baseCommitSha: commitRange.baseCommitSha,
       headCommitSha: commitRange.headCommitSha,
-      before,
-      after,
-      changedFields: computeChangedFieldsBetweenJsonRecords(before, after),
+      before: renderRecordContentForDisplay(before, beforeRecord, beforeCanonicalRecord),
+      after: renderRecordContentForDisplay(after, afterRecord, afterCanonicalRecord),
+      changedFields:
+        beforeCanonicalRecord && afterCanonicalRecord
+          ? computeChangedFields(beforeCanonicalRecord, afterCanonicalRecord, tableSpec?.schema ?? null)
+          : null,
     };
+  }
+
+  /**
+   * The table spec (schema.json) of the folder a record file lives in, scoped to
+   * the plan's connection so a folder path shared by two connections resolves
+   * to the right one. `null` when the folder or its schema cannot be found —
+   * the diff then falls back to a plain structural compare of the raw content.
+   */
+  private async resolveTableSpecForRecordFile(
+    workbookId: string,
+    connectorAccountId: string | null,
+    filePath: string,
+  ): Promise<BaseJsonTableSpec | null> {
+    const { folderPath } = parsePath(toWorkbookPath(filePath));
+    const dataFolderInfo = await this.schemaService.getDataFolderInfo(
+      workbookId,
+      folderPath,
+      undefined,
+      connectorAccountId,
+    );
+    return dataFolderInfo?.spec ?? null;
   }
 
   /**
@@ -200,6 +273,7 @@ export class PublishPlanDiffService {
         id: true,
         status: true,
         connectorAccountId: true,
+        connectorAccount: { select: { service: true } },
         preMainCommitSha: true,
         preDirtyCommitSha: true,
         postMainCommitSha: true,
@@ -243,6 +317,7 @@ export class PublishPlanDiffService {
     return {
       planId: plan.id,
       connectorAccountId: plan.connectorAccountId,
+      connectorService: plan.connectorAccount?.service ?? null,
       repoId,
       from,
       to,
@@ -299,17 +374,58 @@ function classifyFileDiffStatus(before: string | null, after: string | null): Fi
 }
 
 /**
- * Sparse deep diff of two record files, or `null` when either side is missing
- * or is not a JSON object (callers then fall back to a text diff).
+ * A copy of `record` in which every field the connector declares a canonicalizer
+ * for holds its canonical form instead of the stored value. Fields without a
+ * canonicalizer, and fields whose canonical form already equals the stored value,
+ * are left as they are. An absent field whose canonical form is a value (e.g.
+ * Airtable's omitted-on-read empty field → `null`) is materialised, so both
+ * sides of the diff spell "empty" the same way.
+ *
+ * Display only: the canonical form is lossy (numbers rounded, instants reduced
+ * to epoch milliseconds, rich text flattened) and must never be written back or
+ * fed into a publish. A canonicalizer that throws leaves its field as stored.
  */
-function computeChangedFieldsBetweenJsonRecords(
-  before: string | null,
-  after: string | null,
-): Record<string, unknown> | null {
-  const beforeRecord = parseJsonObjectOrNull(before);
-  const afterRecord = parseJsonObjectOrNull(after);
-  if (!beforeRecord || !afterRecord) return null;
-  return computeChangedFields(beforeRecord, afterRecord);
+function canonicalizeRecordFieldsForDisplay(
+  record: Record<string, unknown>,
+  canonicalizerByFieldPath: FieldValueCanonicalizerMap,
+  tableSpec: BaseJsonTableSpec | null,
+): Record<string, unknown> {
+  if (canonicalizerByFieldPath.size === 0) return record;
+
+  const canonicalRecord = cloneDeep(record);
+  for (const [fieldPath, canonicalizer] of canonicalizerByFieldPath) {
+    const storedValue = readFieldValueAtPath(canonicalRecord, fieldPath);
+    let canonicalValue: unknown;
+    try {
+      canonicalValue = canonicalizer(storedValue);
+    } catch (error) {
+      WSLogger.warn({
+        source: 'PublishPlanDiffService.canonicalizeRecordFieldsForDisplay',
+        message: `Field-value canonicalizer for ${fieldPath} threw; showing the stored value`,
+        error,
+      });
+      continue;
+    }
+    if (canonicalValue === undefined || isEqual(canonicalValue, storedValue)) continue;
+    setFieldValueAtPath(canonicalRecord, fieldPath, canonicalValue, tableSpec?.schema);
+  }
+  return canonicalRecord;
+}
+
+/**
+ * The content to return for one side of the diff: the raw file content when
+ * nothing was canonicalized (byte-for-byte what is in git), otherwise the
+ * canonical record pretty-printed. `parsedRecord` is `null` when the raw
+ * content is missing or is not a JSON object.
+ */
+function renderRecordContentForDisplay(
+  rawContent: string | null,
+  parsedRecord: Record<string, unknown> | null,
+  canonicalRecord: Record<string, unknown> | null,
+): string | null {
+  if (rawContent === null || parsedRecord === null || canonicalRecord === null) return rawContent;
+  if (canonicalRecord === parsedRecord || isEqual(canonicalRecord, parsedRecord)) return rawContent;
+  return JSON.stringify(canonicalRecord, null, 2);
 }
 
 function parseJsonObjectOrNull(content: string | null): Record<string, unknown> | null {

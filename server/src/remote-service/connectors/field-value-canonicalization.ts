@@ -21,10 +21,13 @@ import type { BaseJsonTableSpec } from './types';
  * of that field to a CANONICAL form — ideally a primitive — such that two values
  * the service would treat as the same value have deep-equal canonical forms.
  * The sync's per-field overlay consults these canonicalizers for EQUALITY ONLY:
- * a canonical value is never written to disk and never sent to a service.
- * (Sync-only for now — the publish plan's `computeChangedFields` deliberately
- * does not consult them yet, so a local edit that only differs canonically
- * still publishes.)
+ * a canonical value is never written to disk and never sent to a service. The
+ * read-only publish diff view (`PublishPlanDiffService.getFileDiffForPublishPlan`)
+ * additionally renders record fields in their canonical forms, for DISPLAY
+ * ONLY, so that view shows what actually changed rather than how the service
+ * re-rendered it. (The publish-plan build's `computeChangedFields` deliberately
+ * does not consult them, so a local edit that only differs canonically still
+ * publishes.)
  *
  * Connectors opt in by registering `resolveFieldValueCanonicalizer` on their
  * {@link ConnectorRegistration}; connectors whose read and write shapes already

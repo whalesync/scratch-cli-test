@@ -235,16 +235,24 @@ export interface PublishPlanFileDiff {
   status: FileDiffStatus | 'unchanged';
   baseCommitSha: string | null;
   headCommitSha: string;
-  /** Raw file content at `from`; `null` when the file did not exist there. */
+  /**
+   * File content at `from`, for display; `null` when the file did not exist there.
+   *
+   * When the connection's connector declares field-value canonicalizers for the record's
+   * table, each canonicalized field is shown in its canonical form (e.g. an omitted Airtable
+   * empty field as `null`, a Postgres timestamp as epoch milliseconds) and the content is
+   * re-serialised. That form is lossy and is NOT the file in git — use it only to show what
+   * changed. Otherwise this is the raw file content.
+   */
   before: string | null;
-  /** Raw file content at `to`; `null` when the file did not exist there. */
+  /** File content at `to`, rendered like `before`; `null` when the file did not exist there. */
   after: string | null;
   /**
-   * Sparse deep diff of the record: only the field paths whose value changed, holding the
-   * value at `to` (same shape as a plan operation's `changedFields`). `null` when either
-   * side is missing or is not a JSON object, so callers can fall back to a text diff of
-   * `before` / `after`. An empty object with `status: 'modified'` means only formatting
-   * changed.
+   * Sparse deep diff of the record, computed over the canonical forms in `before` / `after`:
+   * only the field paths whose value changed, holding the value at `to` (same shape as a plan
+   * operation's `changedFields`). `null` when either side is missing or is not a JSON object,
+   * so callers can fall back to a text diff of `before` / `after`. An empty object with
+   * `status: 'modified'` means the service only re-rendered or re-formatted the file.
    */
   changedFields: Record<string, unknown> | null;
 }

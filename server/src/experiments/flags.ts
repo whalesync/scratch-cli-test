@@ -166,8 +166,11 @@ export enum UserFlag {
    * (`SyncService.syncTableMapping`). When FALSE (default): values are
    * compared exactly as before DEV-10556.
    *
-   * This flag only affects the sync. The publish diff (`computeChangedFields`)
-   * never uses canonicalizers, so a local edit always publishes.
+   * This flag only affects the sync. The publish-plan build
+   * (`computeChangedFields` in `PublishPlanBuildService`) never uses
+   * canonicalizers, so a local edit always publishes. The read-only publish
+   * diff view (`PublishPlanDiffService`) renders canonical forms for display
+   * regardless of this flag; nothing it returns feeds a publish.
    *
    * Gates the canonicalizers of EVERY connector that registers a
    * `resolveFieldValueCanonicalizer` hook — Notion, Airtable, Postgres and

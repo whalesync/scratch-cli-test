@@ -1,8 +1,43 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
+import { ConnectorRegistration, connectorRegistry } from 'src/remote-service/connectors/connector-registry';
+import { emptyAsNull, isoInstantTruncatedTo } from 'src/remote-service/connectors/field-value-canonicalizers';
+import type { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { DbService } from '../../db/db.service';
 import { ScratchGitNotFoundError } from '../../scratch-git/scratch-git.client';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
 import { PublishPlanDiffService } from '../publish-plan-diff.service';
+import { SchemaHelperService } from '../schema-helper.service';
+
+/**
+ * A stand-in connector that declares field-value canonicalizers the way
+ * Airtable does (empty spellings → `null`, date-times → epoch ms at second
+ * precision), registered once for this file. `Plain` declares nothing.
+ */
+const CANONICALIZING_SERVICE = 'TEST_PUBLISH_DIFF_CANONICALIZING_SERVICE';
+const STRUCTURAL_SERVICE = 'TEST_PUBLISH_DIFF_STRUCTURAL_SERVICE';
+
+function makeCanonicalizingTableSpec(): BaseJsonTableSpec {
+  return {
+    schema: Type.Object({
+      id: Type.String(),
+      fields: Type.Object({
+        Notes: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'singleLineText' }),
+        Done: Type.Boolean({ [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'checkbox' }),
+        When: Type.String({ [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'dateTime' }),
+        Plain: Type.String(),
+      }),
+    }),
+  } as unknown as BaseJsonTableSpec;
+}
+
+const testRegistrationBase = {
+  metadata: {} as ConnectorRegistration['metadata'],
+  advancedSettings: [],
+  supportedAuthMethods: [],
+  createConnector: () => Promise.reject(new Error('not instantiable in this test')),
+} satisfies Omit<ConnectorRegistration, 'service'>;
 
 /**
  * Coverage for the publish-diff read endpoints (DEV-11427): the list of files
@@ -20,7 +55,23 @@ describe('PublishPlanDiffService', () => {
   let compareCommits: jest.Mock;
   let getRepoFile: jest.Mock;
   let getBranchHead: jest.Mock;
+  let getDataFolderInfo: jest.Mock;
   let service: PublishPlanDiffService;
+
+  beforeAll(() => {
+    connectorRegistry.register({
+      ...testRegistrationBase,
+      service: CANONICALIZING_SERVICE,
+      resolveFieldValueCanonicalizer: (context) => {
+        const dataType = context.fieldSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
+        if (dataType === 'checkbox') return emptyAsNull({ falseIsEmpty: true });
+        if (dataType === 'singleLineText') return emptyAsNull();
+        if (dataType === 'dateTime') return isoInstantTruncatedTo('second');
+        return undefined;
+      },
+    });
+    connectorRegistry.register({ ...testRegistrationBase, service: STRUCTURAL_SERVICE });
+  });
 
   const completedPlanRow = {
     id: 'plan1',
@@ -41,6 +92,7 @@ describe('PublishPlanDiffService', () => {
     ]);
     getRepoFile = jest.fn();
     getBranchHead = jest.fn().mockResolvedValue(null);
+    getDataFolderInfo = jest.fn().mockResolvedValue(null);
 
     const db = { client: { publishPlan: { findFirst: publishPlanFindFirst } } } as unknown as DbService;
     const scratchGitService = {
@@ -49,7 +101,8 @@ describe('PublishPlanDiffService', () => {
       getRepoFile,
       getBranchHead,
     } as unknown as ScratchGitService;
-    service = new PublishPlanDiffService(db, scratchGitService);
+    const schemaService = { getDataFolderInfo } as unknown as SchemaHelperService;
+    service = new PublishPlanDiffService(db, scratchGitService, schemaService);
   });
 
   describe('listChangedFilesForPublishPlan', () => {
@@ -332,6 +385,103 @@ describe('PublishPlanDiffService', () => {
     it('400s when no path is given', async () => {
       await expect(service.getFileDiffForPublishPlan('wb1', 'plan1', '')).rejects.toBeInstanceOf(BadRequestException);
       expect(getRepoFile).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The per-file diff renders both sides in the connector's canonical field
+   * forms (display only) so a value the service merely re-rendered does not
+   * show up as a change. The stand-in connector above mirrors Airtable: an
+   * omitted / `""` / `false` field canonicalises to `null`, a date-time to
+   * epoch milliseconds at second precision.
+   */
+  describe('getFileDiffForPublishPlan canonical rendering', () => {
+    const WHEN_EPOCH_MS = Date.parse('2026-07-23T21:12:27Z');
+
+    beforeEach(() => {
+      publishPlanFindFirst.mockResolvedValue({
+        ...completedPlanRow,
+        connectorAccount: { service: CANONICALIZING_SERVICE },
+      });
+      getDataFolderInfo.mockResolvedValue({ id: 'df1', tableId: ['tbl1'], spec: makeCanonicalizingTableSpec() });
+    });
+
+    it('renders both sides canonically and diffs the canonical forms, so a service re-rendering is not a change', async () => {
+      // What the sync staged (write shapes) vs what the service stored (read shapes):
+      // the empty Notes / Done are omitted on read, the date-time is re-spelled.
+      const staged = JSON.stringify({
+        id: 'rec_1',
+        fields: { Notes: '', Done: false, When: '2026-07-23T21:12:27.000+00:00', Plain: 'x' },
+      });
+      const landed = JSON.stringify({ id: 'rec_1', fields: { When: '2026-07-23T21:12:27Z', Plain: 'y' } });
+      getRepoFile.mockImplementation((_repoId: string, sha: string) =>
+        Promise.resolve({ content: sha === PRE_DIRTY_SHA ? staged : landed }),
+      );
+
+      const result = await service.getFileDiffForPublishPlan('wb1', 'plan1', '/Companies/rec_1.json', {
+        from: 'pre-dirty',
+        to: 'post-main',
+      });
+
+      expect(getDataFolderInfo).toHaveBeenCalledWith('wb1', '/Companies', undefined, 'ca1');
+      expect(result.status).toBe('modified');
+      expect(JSON.parse(result.before ?? '')).toEqual({
+        id: 'rec_1',
+        fields: { Notes: null, Done: null, When: WHEN_EPOCH_MS, Plain: 'x' },
+      });
+      expect(JSON.parse(result.after ?? '')).toEqual({
+        id: 'rec_1',
+        fields: { Notes: null, Done: null, When: WHEN_EPOCH_MS, Plain: 'y' },
+      });
+      expect(result.changedFields).toEqual({ fields: { Plain: 'y' } });
+    });
+
+    it('returns the raw file content byte-for-byte when every stored value is already canonical', async () => {
+      const before = '{"id":"rec_1","fields":{"Notes":null,"Done":null,"Plain":"x"}}';
+      const after = '{"id":"rec_1","fields":{"Notes":null,"Done":null,"Plain":"y"}}';
+      getRepoFile.mockImplementation((_repoId: string, sha: string) =>
+        Promise.resolve({ content: sha === PRE_MAIN_SHA ? before : after }),
+      );
+
+      const result = await service.getFileDiffForPublishPlan('wb1', 'plan1', '/Companies/rec_1.json');
+
+      expect(result).toMatchObject({ status: 'modified', before, after, changedFields: { fields: { Plain: 'y' } } });
+    });
+
+    it('canonicalizes the surviving side of an added file', async () => {
+      getRepoFile.mockImplementation((_repoId: string, sha: string) =>
+        Promise.resolve(
+          sha === POST_MAIN_SHA
+            ? { content: JSON.stringify({ id: 'rec_new', fields: { Done: false, Plain: 'x' } }) }
+            : null,
+        ),
+      );
+
+      const result = await service.getFileDiffForPublishPlan('wb1', 'plan1', '/Companies/rec_new.json');
+
+      expect(result).toMatchObject({ status: 'added', before: null, changedFields: null });
+      expect(JSON.parse(result.after ?? '')).toEqual({
+        id: 'rec_new',
+        fields: { Done: null, Plain: 'x', Notes: null },
+      });
+    });
+
+    it('leaves content untouched when the connection declares no canonicalizers', async () => {
+      publishPlanFindFirst.mockResolvedValue({
+        ...completedPlanRow,
+        connectorAccount: { service: STRUCTURAL_SERVICE },
+      });
+      const before = JSON.stringify({ id: 'rec_1', fields: { Done: false, Plain: 'x' } });
+      const after = JSON.stringify({ id: 'rec_1', fields: { Plain: 'x' } });
+      getRepoFile.mockImplementation((_repoId: string, sha: string) =>
+        Promise.resolve({ content: sha === PRE_MAIN_SHA ? before : after }),
+      );
+
+      const result = await service.getFileDiffForPublishPlan('wb1', 'plan1', '/Companies/rec_1.json');
+
+      // No canonicalizers → structural compare: dropping `Done` is not reported
+      // (computeChangedFields ignores deleted keys), and content is raw.
+      expect(result).toMatchObject({ status: 'modified', before, after, changedFields: {} });
     });
   });
 });

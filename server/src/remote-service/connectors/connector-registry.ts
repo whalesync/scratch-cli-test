@@ -164,10 +164,12 @@ export interface ConnectorRegistration {
    * `resolveFieldValueCanonicalizersForTable`). Return a canonicalizer for a
    * field whose read shape differs from its write shape; return `undefined` for
    * a field that should compare structurally. The canonicalizer must be pure,
-   * total and synchronous, and is used for EQUALITY ONLY — the sync's per-field
-   * overlay consults it to decide whether a field changed; its output is never
-   * written or sent anywhere. (Sync-only for now — the publish plan's
-   * `computeChangedFields` deliberately does not consult it yet.)
+   * total and synchronous, and its output is never written to disk or sent to
+   * a service: the sync's per-field overlay consults it for EQUALITY ONLY, to
+   * decide whether a field changed, and the read-only publish diff view
+   * (`PublishPlanDiffService`) shows fields in their canonical form for
+   * DISPLAY ONLY. (The publish-plan build's `computeChangedFields`
+   * deliberately does not consult it.)
    *
    * Connectors whose read and write shapes already match (a store that returns
    * exactly what it was given) omit the hook and keep the structural compare.
