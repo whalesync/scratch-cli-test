@@ -9,6 +9,7 @@ import {
   type PublishOrigin,
 } from '@spinner/shared-types';
 import axios from 'axios';
+import { chunk } from 'lodash';
 import { WSLogger } from 'src/logger';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
@@ -33,6 +34,7 @@ import {
 } from '../remote-service/connectors/types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
+import { deduplicateFileName, resolveBaseFileName, sanitizeRecordIdForFileName } from '../workbook/util';
 import { pickByShape } from './diff-utils';
 import { collapseFailedOperationsByPath } from './failed-operations.util';
 import { FileIndexEntry, FileIndexService } from './file-index.service';
@@ -43,6 +45,16 @@ import { RefResolverService } from './ref-resolver.service';
 import { SchemaHelperService } from './schema-helper.service';
 import { PublishPlanInfo, PublishPlanStatus } from './types';
 import { parsePath } from './utils';
+
+/**
+ * How many published creates the rename phase reads back from git at a time
+ * to ask the connector for filenames. A rename batch holds up to 1000 files
+ * (one git commit per batch); reading all of their contents at once would hold
+ * up to 1000 full records in memory, whereas the create phase only ever held
+ * one connector-sized batch. Each chunk's contents are dropped once its
+ * suggested names are captured.
+ */
+const RENAME_PHASE_RECORD_CONTENT_READ_CHUNK_SIZE = 100;
 
 // Upper bound on the number of per-record failures echoed back onto the
 // run-job's terminal progress payload. The connector-rejected count
@@ -1059,7 +1071,7 @@ export class PublishPlanRunService {
           );
           break;
         case 'rename-files':
-          await this.dispatchRenameBatch(entries, workbookId, repoId, planId);
+          await this.dispatchRenameBatch(entries, connector, tableSpec, workbookId, repoId, planId);
           break;
         default:
           throw new Error(`Unknown phase: ${phase}`);
@@ -1771,8 +1783,25 @@ export class PublishPlanRunService {
     return deleteEntriesWithoutRemoteRecordId;
   }
 
+  /**
+   * Rename the pending-named files (`scratch_pending_<id>.json`) that the
+   * create phase just published to their final names.
+   *
+   * The name comes from the same source pull uses: the connector's own
+   * `getSuggestedRecordFileNames` over the created record (the create phase
+   * committed the connector-returned record to `main` under the pending path),
+   * normalized by `resolveBaseFileName` and deduplicated against every filename
+   * already indexed for the folder. Without this a Live Export destination whose
+   * spec has no `slugPath` (Notion, Attio, Airtable, …) ended up as
+   * `<recordId>.json` for every synced record while pulled folders got readable
+   * names (DEV-11438). The record id remains the fallback when the connector has
+   * no suggestion, the suggestion normalizes to nothing usable, or the file
+   * can't be read back.
+   */
   private async dispatchRenameBatch(
     entries: PublishOperation[],
+    connector: Connector,
+    tableSpec: BaseJsonTableSpec,
     workbookId: string,
     repoId: string,
     planId: string,
@@ -1809,6 +1838,20 @@ export class PublishPlanRunService {
 
       const filenameToRecordId = new Map(indexRecords.map((r) => [r.filename, r.recordId]));
 
+      const suggestedNameByPendingFilename = await this.suggestFinalFileNamesForPendingFiles(
+        folderPath,
+        filenames,
+        connector,
+        tableSpec,
+        workbookId,
+        repoId,
+      );
+
+      // Every filename already in the folder is taken. Seeding from the index
+      // (rather than the batch alone) is what stops a suggested name from
+      // clobbering an existing record's file, exactly as pull does.
+      const usedFileNamesInFolder = new Set(await this.fileIndexService.listFilenamesForFolder(workbookId, folderPath));
+
       const renames: { oldName: string; newName: string }[] = [];
       const fileIndexUpdates: FileIndexEntry[] = [];
       const refUpdates: { oldPath: string; newPath: string }[] = [];
@@ -1830,7 +1873,19 @@ export class PublishPlanRunService {
           });
           continue;
         }
-        const newName = `${recordId}.json`;
+        // The pending name is the file's own slot — it stops being taken the
+        // moment we rename away from it, so it must not count as a collision.
+        usedFileNamesInFolder.delete(oldName);
+        // Sanitized once and used both as the fallback base and as the
+        // collision-breaking suffix, mirroring pull. A raw id can contain path
+        // separators (Shopify GIDs), which would turn the filename into a
+        // nested path.
+        const sanitizedRecordId = sanitizeRecordIdForFileName(recordId);
+        const baseName = resolveBaseFileName({
+          slugValue: suggestedNameByPendingFilename.get(oldName),
+          idValue: sanitizedRecordId,
+        });
+        const newName = deduplicateFileName(baseName, '.json', usedFileNamesInFolder, sanitizedRecordId);
 
         if (oldName === newName) continue;
 
@@ -1865,6 +1920,73 @@ export class PublishPlanRunService {
         }
       }
     }
+  }
+
+  /**
+   * Ask the connector what each pending file should be called, from the record
+   * the create phase committed to `main`. Returns a map keyed by the pending
+   * filename; a file that couldn't be read or parsed, or that the connector has
+   * no suggestion for, is simply absent (the caller falls back to the record id).
+   * A throwing connector is logged and treated the same — naming must never
+   * fail a publish whose creates already landed.
+   */
+  private async suggestFinalFileNamesForPendingFiles(
+    folderPath: string,
+    pendingFilenames: string[],
+    connector: Connector,
+    tableSpec: BaseJsonTableSpec,
+    workbookId: string,
+    repoId: string,
+  ): Promise<Map<string, string>> {
+    const suggestedNameByPendingFilename = new Map<string, string>();
+    try {
+      // Read the committed records a chunk at a time so a 1000-file rename
+      // batch never holds every record's content in memory at once; only the
+      // suggested names survive from one chunk to the next.
+      for (const pendingFilenamesChunk of chunk(pendingFilenames, RENAME_PHASE_RECORD_CONTENT_READ_CHUNK_SIZE)) {
+        const committedFiles = await this.scratchGitService.readRepoFilesFromFolder(
+          repoId,
+          'main',
+          folderPath,
+          pendingFilenamesChunk,
+        );
+        const parsedRecordsWithFilename: { filename: string; record: ConnectorFile }[] = [];
+        for (const file of committedFiles) {
+          if (file.content === null) continue;
+          const { filename } = parsePath(file.path);
+          try {
+            const parsed = JSON.parse(file.content) as unknown;
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              parsedRecordsWithFilename.push({ filename, record: parsed as ConnectorFile });
+            }
+          } catch {
+            // Unreadable content: fall back to the record id for this file.
+          }
+        }
+        if (parsedRecordsWithFilename.length === 0) continue;
+
+        const suggestions = connector.getSuggestedRecordFileNames(
+          parsedRecordsWithFilename.map((r) => r.record),
+          tableSpec,
+        );
+        for (let i = 0; i < parsedRecordsWithFilename.length; i++) {
+          const suggestion = suggestions[i];
+          if (typeof suggestion === 'string' && suggestion.trim()) {
+            suggestedNameByPendingFilename.set(parsedRecordsWithFilename[i].filename, suggestion);
+          }
+        }
+      }
+    } catch (err) {
+      // A partially-filled map is fine: the files already named keep their
+      // suggestion, the rest fall back to the record id.
+      WSLogger.warn({
+        source: 'PublishRunService.suggestFinalFileNamesForPendingFiles',
+        message: 'Could not derive connector-suggested filenames for published creates; falling back to record ids',
+        workbookId,
+        data: { folderPath, count: pendingFilenames.length, error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+    return suggestedNameByPendingFilename;
   }
 
   /**

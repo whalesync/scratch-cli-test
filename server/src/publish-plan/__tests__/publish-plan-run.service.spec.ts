@@ -34,6 +34,9 @@ function makeMockConnector() {
     updateRecords: jest.fn().mockResolvedValue(undefined),
     createRecords: jest.fn().mockResolvedValue([]),
     deleteRecords: jest.fn().mockResolvedValue(undefined),
+    // Default: no suggestion for any record (the rename phase then falls back
+    // to the record id). The rename tests override this per case.
+    getSuggestedRecordFileNames: jest.fn((records: unknown[]) => records.map(() => undefined)),
     // Default passthrough: surface the raw message. Tests that exercise the
     // failure path override this to assert the extracted, user-facing reason
     // (e.g. a service's validation message) is what gets persisted/logged.
@@ -83,9 +86,11 @@ function makeDbMock() {
       },
       fileReference: {
         deleteMany: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({}),
       },
       fileIndex: {
         deleteMany: jest.fn().mockResolvedValue({}),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       user: {
         // runPipeline looks up the plan's user to scope the
@@ -126,11 +131,14 @@ describe('PublishPlanRunService', () => {
       commitFilesToBranch: jest.fn().mockResolvedValue({ created: [], updated: [], unchanged: [] }),
       deleteFilesFromBranch: jest.fn().mockResolvedValue(undefined),
       rebaseDirty: jest.fn().mockResolvedValue(undefined),
+      renameFiles: jest.fn().mockResolvedValue(undefined),
+      readRepoFilesFromFolder: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     fileIndexService = {
       getRecordId: jest.fn().mockResolvedValue('rec_123'),
       upsertBatch: jest.fn().mockResolvedValue(undefined),
+      listFilenamesForFolder: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<FileIndexService>;
 
     fileReferenceService = {
@@ -297,7 +305,7 @@ describe('PublishPlanRunService', () => {
    * phase. Generalization of `setupEditPhaseEntries` for create/delete.
    */
   function setupPhaseEntries(
-    phase: 'edit' | 'create' | 'delete' | 'backfill',
+    phase: 'edit' | 'create' | 'delete' | 'backfill' | 'rename-files',
     entries: Array<{
       id: string;
       filePath: string;
@@ -1484,6 +1492,208 @@ describe('PublishPlanRunService', () => {
         where: { id: { in: ['op_a', 'op_b'] } },
         data: { status: 'failed-batch', error: 'HubSpot is down', errorCode: null },
       });
+    });
+  });
+  describe('dispatchRenameBatch — connector-suggested filenames for published creates (DEV-11438)', () => {
+    const PENDING_A = 'scratch_pending_aaa.json';
+    const PENDING_B = 'scratch_pending_bbb.json';
+
+    /**
+     * Models the state the create phase leaves behind: the pending-named file
+     * is indexed under its real record id, and `main` holds the
+     * connector-returned record at the pending path.
+     */
+    function setupPublishedCreates(
+      files: Array<{ pendingFilename: string; recordId: string; committedRecord: Record<string, unknown> }>,
+    ) {
+      setupPhaseEntries(
+        'rename-files',
+        files.map((f, i) => ({ id: `op_rename_${i}`, filePath: `articles/${f.pendingFilename}`, content: {} })),
+      );
+      db.client.fileIndex.findMany.mockResolvedValue(
+        files.map((f) => ({
+          workbookId: WORKBOOK_ID,
+          folderPath: 'articles',
+          filename: f.pendingFilename,
+          recordId: f.recordId,
+        })),
+      );
+      jest
+        .mocked(scratchGitService.readRepoFilesFromFolder)
+        .mockResolvedValue(
+          files.map((f) => ({ path: `articles/${f.pendingFilename}`, content: JSON.stringify(f.committedRecord) })),
+        );
+    }
+
+    function renamesSent(): { oldName: string; newName: string }[] {
+      const calls = jest.mocked(scratchGitService.renameFiles).mock.calls;
+      return calls.flatMap((call) => call[2]);
+    }
+
+    it("renames a pending file to the connector's suggested name, normalized like a pulled file", async () => {
+      setTableSpecIdColumnRemoteId('id');
+      setupPublishedCreates([
+        { pendingFilename: PENDING_A, recordId: 'rec_1', committedRecord: { id: 'rec_1', title: 'Google Inc.' } },
+      ]);
+      jest.mocked(connector.getSuggestedRecordFileNames).mockReturnValue(['Google Inc.']);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(connector.getSuggestedRecordFileNames).toHaveBeenCalledWith(
+        [{ id: 'rec_1', title: 'Google Inc.' }],
+        expect.objectContaining({ idPath: 'id' }),
+      );
+      expect(scratchGitService.readRepoFilesFromFolder).toHaveBeenCalledWith(REPO_ID, 'main', 'articles', [PENDING_A]);
+      expect(renamesSent()).toEqual([{ oldName: PENDING_A, newName: 'google-inc.json' }]);
+      expect(fileIndexService.upsertBatch).toHaveBeenCalledWith([
+        {
+          workbookId: WORKBOOK_ID,
+          folderPath: 'articles',
+          recordId: 'rec_1',
+          filename: 'google-inc.json',
+          connectorAccountId: CONNECTOR_ACCOUNT_ID,
+        },
+      ]);
+      expect(db.client.fileReference.updateMany).toHaveBeenCalledWith({
+        where: { workbookId: WORKBOOK_ID, sourceFilePath: `articles/${PENDING_A}` },
+        data: { sourceFilePath: 'articles/google-inc.json' },
+      });
+    });
+
+    it('falls back to <recordId>.json when the connector has no suggestion (previous behavior)', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      setupPublishedCreates([{ pendingFilename: PENDING_A, recordId: 'rec_1', committedRecord: { id: 'rec_1' } }]);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(renamesSent()).toEqual([{ oldName: PENDING_A, newName: 'rec_1.json' }]);
+    });
+
+    it('falls back to the record id when the suggestion normalizes to nothing usable', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      setupPublishedCreates([{ pendingFilename: PENDING_A, recordId: 'rec_1', committedRecord: { id: 'rec_1' } }]);
+      jest.mocked(connector.getSuggestedRecordFileNames).mockReturnValue(['???']);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(renamesSent()).toEqual([{ oldName: PENDING_A, newName: 'rec_1.json' }]);
+    });
+
+    it('suffixes the record id when the suggested name collides with an existing file in the folder', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      setupPublishedCreates([
+        { pendingFilename: PENDING_A, recordId: 'rec_1', committedRecord: { id: 'rec_1', title: 'Atlas' } },
+      ]);
+      jest.mocked(fileIndexService.listFilenamesForFolder).mockResolvedValue(['atlas.json', PENDING_A]);
+      jest.mocked(connector.getSuggestedRecordFileNames).mockReturnValue(['Atlas']);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(renamesSent()).toEqual([{ oldName: PENDING_A, newName: 'atlas-rec_1.json' }]);
+    });
+
+    it('deduplicates within the batch when two created records suggest the same name', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      setupPublishedCreates([
+        { pendingFilename: PENDING_A, recordId: 'rec_1', committedRecord: { id: 'rec_1', title: 'Atlas' } },
+        { pendingFilename: PENDING_B, recordId: 'rec_2', committedRecord: { id: 'rec_2', title: 'Atlas' } },
+      ]);
+      jest.mocked(connector.getSuggestedRecordFileNames).mockReturnValue(['Atlas', 'Atlas']);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(renamesSent()).toEqual([
+        { oldName: PENDING_A, newName: 'atlas.json' },
+        { oldName: PENDING_B, newName: 'atlas-rec_2.json' },
+      ]);
+    });
+
+    it('sanitizes a path-like record id in the fallback name (Shopify GIDs must not become nested paths)', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      setupPublishedCreates([
+        {
+          pendingFilename: PENDING_A,
+          recordId: 'gid://shopify/Product/123',
+          committedRecord: { id: 'gid://shopify/Product/123' },
+        },
+      ]);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(renamesSent()).toEqual([{ oldName: PENDING_A, newName: 'gid-shopify-Product-123.json' }]);
+    });
+
+    it('still renames to the record id when the committed file cannot be read back', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      setupPublishedCreates([{ pendingFilename: PENDING_A, recordId: 'rec_1', committedRecord: { id: 'rec_1' } }]);
+      jest.mocked(scratchGitService.readRepoFilesFromFolder).mockRejectedValue(new Error('git down'));
+      jest.mocked(connector.getSuggestedRecordFileNames).mockReturnValue(['Never Used']);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(connector.getSuggestedRecordFileNames).not.toHaveBeenCalled();
+      expect(renamesSent()).toEqual([{ oldName: PENDING_A, newName: 'rec_1.json' }]);
+    });
+
+    it('still renames to the record id when the connector throws while suggesting', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      setupPublishedCreates([{ pendingFilename: PENDING_A, recordId: 'rec_1', committedRecord: { id: 'rec_1' } }]);
+      jest.mocked(connector.getSuggestedRecordFileNames).mockImplementation(() => {
+        throw new Error('bad record shape');
+      });
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(renamesSent()).toEqual([{ oldName: PENDING_A, newName: 'rec_1.json' }]);
+    });
+
+    it('reads committed records back in chunks of 100 so a large rename batch never holds every record at once', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      const files = Array.from({ length: 250 }, (_, i) => ({
+        pendingFilename: `scratch_pending_${i}.json`,
+        recordId: `rec_${i}`,
+        committedRecord: { id: `rec_${i}`, title: `Record ${i}` },
+      }));
+      setupPublishedCreates(files);
+      // Serve exactly the filenames each chunk asks for, so the assertion
+      // below proves the chunks are what got read (not the whole batch).
+      jest
+        .mocked(scratchGitService.readRepoFilesFromFolder)
+        .mockImplementation((_repoId, _branch, _folder, filenames: string[]) =>
+          Promise.resolve(
+            filenames.map((filename) => {
+              const file = files.find((f) => f.pendingFilename === filename);
+              return { path: `articles/${filename}`, content: file ? JSON.stringify(file.committedRecord) : null };
+            }),
+          ),
+        );
+      jest
+        .mocked(connector.getSuggestedRecordFileNames)
+        .mockImplementation((records: unknown[]) => records.map((r) => (r as { title: string }).title));
+
+      await service.runPipeline(PLAN_ID);
+
+      const readCalls = jest.mocked(scratchGitService.readRepoFilesFromFolder).mock.calls;
+      expect(readCalls.map((call) => call[3].length)).toEqual([100, 100, 50]);
+      expect(jest.mocked(connector.getSuggestedRecordFileNames).mock.calls.map((call) => call[0].length)).toEqual([
+        100, 100, 50,
+      ]);
+      const renames = renamesSent();
+      expect(renames).toHaveLength(250);
+      expect(renames[0]).toEqual({ oldName: 'scratch_pending_0.json', newName: 'record-0.json' });
+      expect(renames[249]).toEqual({ oldName: 'scratch_pending_249.json', newName: 'record-249.json' });
+    });
+
+    it('leaves a pending file alone (no rename) when its create never produced an index row', async () => {
+      setTableSpecIdColumnRemoteId('id');
+      setupPublishedCreates([{ pendingFilename: PENDING_A, recordId: 'rec_1', committedRecord: { id: 'rec_1' } }]);
+      db.client.fileIndex.findMany.mockResolvedValue([]);
+      jest.mocked(connector.getSuggestedRecordFileNames).mockReturnValue(['Orphan']);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(scratchGitService.renameFiles).not.toHaveBeenCalled();
+      expect(fileIndexService.upsertBatch).not.toHaveBeenCalled();
     });
   });
 });
