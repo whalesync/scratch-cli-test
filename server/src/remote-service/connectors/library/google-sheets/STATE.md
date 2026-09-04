@@ -63,6 +63,7 @@ Legend: ✅ verified · 🔄 built, not live-verified · ⬜ not yet · ➖ N/A 
 - **Write**: always `RAW` — no locale re-parsing, no formula injection.
 - **Dates**: serials on disk; the new generic transformer pair `serial_date_to_iso` / `iso_to_serial_date` (shared-types `transform/serial-date.ts` + sync transformers + display arm + client-safe codec arms) converts at every boundary: grid display/edit, export from Sheets, and the Live Export destination pack (`x-scratch-suggested-in-transformer`).
 - **Cells are scalars**: lists/objects in a record fail publish loudly (never silently stringified). multiSelect columns are comma-joined text by construction.
+- **Field-value canonicalizers — empty-cell churn (DEV-10556).** A cell has one spelling of "empty" (the pull stores `null`), but a Live Export sync derives the destination value from the SOURCE shape — an empty multi-select joins to `''`, a null source stays `null`, an un-collapsed empty list is `[]` — so every empty cell differed structurally from the re-derived value and the row re-published on every run. `google-sheets-field-value-canonicalizer.ts` (registered as `resolveFieldValueCanonicalizer`) canonicalises `undefined` / `null` / `''` / `[]` to `[]` (the empty multi-select the sync derives; compared, never written) for EVERY writable data column — Sheets has no column types, so a multiSelect column is indistinguishable from any other TEXT column in the pull schema. Non-empty values compare structurally (RAW write ≡ UNFORMATTED_VALUE read); the managed `scratch_id` column declares nothing. See `google-sheets-field-value-canonicalizer.spec.ts` and [CONNECTOR_GUIDE → Field Value Canonicalizers](../../CONNECTOR_GUIDE.md#field-value-canonicalizers-diff-stability).
 - Records/spec are addressed by `sheetId` via `*ByDataFilter` + `GridRange` everywhere except `values.append` (A1 with a title-quoting helper) — immune to tab renames and A1 quoting bugs.
 
 ## Live Export (destination)
@@ -121,9 +122,9 @@ Per-source details live in each source's LIVE_EXPORT_AUDIT.md (GOOGLE_SHEETS sec
 
 Dest-side bugs found by the round, all fixed in-branch (see the round-1 commit + follow-ups):
 created-field resolution (slug-keyed schema vs name-keyed plan), string-coerced booleans/numbers
-(missing packs), INSERT_ROWS format inheritance (bold header leak / unformatted dates / displaced
+(missing packs), INSERT*ROWS format inheritance (bold header leak / unformatted dates / displaced
 checkboxes — Ryder's screenshots), ''-vs-empty cells (typed updateCells + null-skipping appends).
-Cross-checks that PASSED: FK resolution to destination scr_ ids across co-created tables on three
+Cross-checks that PASSED: FK resolution to destination scr* ids across co-created tables on three
 sources (single + relational chains), epoch→ISO→serial date chain (Stripe), extreme dates, 2001/4001-char
 texts, unicode/zero-width, comma-bearing selects, all-empty records, 200+-row pagination, CRUD mirror +
 out-of-band-delete drift restore (Sanity).

@@ -47,6 +47,7 @@ import {
   orderFieldsForCreateTable,
 } from './google-sheets-create-schema';
 import { buildGoogleSheetsDefaultView } from './google-sheets-default-view';
+import { resolveGoogleSheetsFieldValueCanonicalizer } from './google-sheets-field-value-canonicalizer';
 import { mapHeadersToFieldKeys, slugifyHeaderToFieldKey } from './google-sheets-headers';
 import {
   analyzeScratchIdColumnState,
@@ -1358,6 +1359,7 @@ connectorRegistry.register({
   // ceilings burst-free.
   rateLimiterSpec: { points: 1, duration: 1 },
   supportedAuthMethods: ['oauth'],
+  resolveFieldValueCanonicalizer: resolveGoogleSheetsFieldValueCanonicalizer,
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Google Sheets', Service.GOOGLE_SHEETS);
