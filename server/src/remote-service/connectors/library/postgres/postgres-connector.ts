@@ -805,9 +805,6 @@ connectorRegistry.register({
   advancedSettings: PostgresConnector.advancedSettings,
   supportedAuthMethods: ['user_provided_params'],
   resolveIncrementalPullSupport: ({ options }) => pgIncrementalPullSupport(options),
-  // DEV-10556 / DEV-11420: the sync consults these only for users with the
-  // ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS flag on (the flag gates every
-  // connector's canonicalizers; its name predates the non-Notion registrations).
   resolveFieldValueCanonicalizer: resolvePgFieldValueCanonicalizer,
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {

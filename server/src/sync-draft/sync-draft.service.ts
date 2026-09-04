@@ -793,8 +793,8 @@ export class SyncDraftService {
    * acting user, per `ENABLE_LIVE_EXPORT_INCREMENTAL_DESTINATION_PULL` and its payload (a plain
    * array of service ids, or `["*"]`). `null` = nothing enrolled — fail-closed on a missing user
    * row, an unmatched user, a PostHog outage, or a malformed payload (which is logged so a typo
-   * in the flag is noticed rather than silently disabling the experiment). Mirrors
-   * `SyncService.fieldValueCanonicalizersEnabledForActor` for the user lookup.
+   * in the flag is noticed rather than silently disabling the experiment). Mirrors how the
+   * publish run service evaluates UPDATE_RECORDS_RETURNS_REMOTE_DATA for the user lookup.
    */
   private async incrementalPullDestinationServicesForActor(
     actor: Actor,

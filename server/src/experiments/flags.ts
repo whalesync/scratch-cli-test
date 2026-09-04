@@ -154,35 +154,6 @@ export enum UserFlag {
    */
   MINIMUM_SUPPORTED_DESKTOP_VERSION = 'MINIMUM_SUPPORTED_DESKTOP_VERSION',
   /**
-   * DEV-10556 rollout gate for field-value canonicalizers. A canonicalizer
-   * teaches the sync that two differently-shaped values mean the same thing to
-   * the destination service (e.g. Notion returns a decorated copy of the title
-   * we wrote). Without them, a sync sees those values as different, rewrites
-   * every record, and re-publishes unchanged data on every Live Export run.
-   * See CONNECTOR_GUIDE → "Field Value Canonicalizers".
-   *
-   * When TRUE for the acting user: during a sync, a field whose new value is
-   * canonically equal to the stored value is left untouched
-   * (`SyncService.syncTableMapping`). When FALSE (default): values are
-   * compared exactly as before DEV-10556.
-   *
-   * This flag only affects the sync. The publish-plan build
-   * (`computeChangedFields` in `PublishPlanBuildService`) never uses
-   * canonicalizers, so a local edit always publishes. The read-only publish
-   * diff view (`PublishPlanDiffService`) renders canonical forms for display
-   * regardless of this flag; nothing it returns feeds a publish.
-   *
-   * Gates the canonicalizers of EVERY connector that registers a
-   * `resolveFieldValueCanonicalizer` hook — Notion, Airtable, Postgres and
-   * Supabase today (DEV-11420 registered the last three). The name is
-   * historical: it was coined when only Notion registered one, and the PostHog
-   * flag key is kept so existing per-user rollouts carry over unchanged.
-   *
-   * Fail-closed: defaults to false; an unmatched user or a PostHog outage
-   * also yields false. Checked server-side only — not exposed to the client.
-   */
-  ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS = 'ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS',
-  /**
    * DEV-11069 experiment. Lets a Live Export pull only new and changed records
    * from its destination, instead of every record on every run.
    *

@@ -23,6 +23,9 @@ evaluated once per table mapping against the acting user's
 registered connectors; its Notion-branded name is historical and the PostHog key was kept so existing
 per-user rollouts carry over. Renaming it is a separate PostHog change.
 
+> **Update 2026-09-04:** the flag has since been fully launched and removed from the code. The canonical skip now runs
+> for every sync with no per-user gate.
+
 ## What "works" means
 
 Each connector has to satisfy two claims, and the second is as important as the first:
@@ -98,8 +101,9 @@ family.
 ### Prerequisites
 
 - Local stack up (`yarn dev`, Postgres + Redis via `server/localdev`, scratch-git).
-- The flag on for the acting user. If PostHog already evaluates
-  `ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS` true for you (it did for the 2026-09-01 runs, via local
+- The flag on for the acting user (**no longer needed as of 2026-09-04** — the flag was removed and the
+  canonicalizers are always on; the control runs below can no longer be reproduced by flipping it). If PostHog
+  already evaluated `ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS` true for you (it did for the 2026-09-01 runs, via local
   evaluation with the server's PostHog keys) nothing is needed. Otherwise force it in `server/.env`:
 
   ```

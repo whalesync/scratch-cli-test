@@ -746,9 +746,6 @@ connectorRegistry.register({
   rateLimiterSpec: { points: 5, duration: 1 },
   resolveIncrementalPullSupport: ({ options, tableSpec }) => airtableIncrementalPullSupport(options, tableSpec),
   incrementalPullAutoDetectsFromSchema: true,
-  // DEV-10556 / DEV-11420: the sync consults these only for users with the
-  // ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS flag on (the flag gates every
-  // connector's canonicalizers; its name predates the non-Notion registrations).
   resolveFieldValueCanonicalizer: resolveAirtableFieldValueCanonicalizer,
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

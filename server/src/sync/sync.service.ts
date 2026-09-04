@@ -43,8 +43,6 @@ import {
 import chunk from 'lodash/chunk';
 import isEqual from 'lodash/isEqual';
 import { DbService } from 'src/db/db.service';
-import { ExperimentsService } from 'src/experiments/experiments.service';
-import { UserFlag } from 'src/experiments/flags';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { resolveMatchedRecordArchiveRepairFieldsForService } from 'src/remote-service/connectors/connector-registry';
@@ -257,25 +255,7 @@ export class SyncService {
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookRepoService: WorkbookRepoService,
     private readonly workbookService: WorkbookService,
-    private readonly experimentsService: ExperimentsService,
   ) {}
-
-  /**
-   * Whether DEV-10556 field-value canonicalizers are enabled for the acting
-   * user (`ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS`, fail-closed). Evaluated
-   * once per table mapping against the actor's user row, mirroring how the
-   * publish run service evaluates UPDATE_RECORDS_RETURNS_REMOTE_DATA.
-   */
-  private async fieldValueCanonicalizersEnabledForActor(actor: Actor): Promise<boolean> {
-    const actingUser = await this.db.client.user.findUnique({
-      where: { id: actor.userId },
-      select: { id: true, role: true },
-    });
-    if (!actingUser) {
-      return false;
-    }
-    return this.experimentsService.getBooleanFlag(UserFlag.ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS, false, actingUser);
-  }
 
   /**
    * Read choke point — fetches a Sync row and resolves its on-disk mappings
@@ -1287,11 +1267,11 @@ export class SyncService {
     // a mapped value canonically equal to what the matched record already holds is
     // NOT overlaid in Pass 2 / Pass 3, so a no-op sync leaves the record untouched
     // instead of rewriting every field in the minimal write shape and re-publishing.
-    // Rollout-gated per acting user by ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS
-    // (fail-closed): when the flag is off, the compare stays purely structural.
-    const destinationFieldCanonicalizers = (await this.fieldValueCanonicalizersEnabledForActor(actor))
-      ? resolveFieldValueCanonicalizersForTable(destinationFolder.connectorService ?? '', destinationTableSpec)
-      : new Map<string, never>();
+    // Connectors that declare no canonicalizer keep the purely structural compare.
+    const destinationFieldCanonicalizers = resolveFieldValueCanonicalizersForTable(
+      destinationFolder.connectorService ?? '',
+      destinationTableSpec,
+    );
     if (destinationFieldCanonicalizers.size > 0) {
       WSLogger.debug({
         source: 'SyncService.syncTableMapping',

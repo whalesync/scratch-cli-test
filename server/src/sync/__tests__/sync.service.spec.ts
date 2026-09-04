@@ -4,7 +4,6 @@ import type { ColumnMapping, DataFolderId, SaveSyncBody, SyncId, WorkbookId } fr
 import { ConstantTypeMismatchError } from '@spinner/shared-types';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
-import { ExperimentsService } from 'src/experiments/experiments.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
@@ -143,9 +142,6 @@ describe('SyncService', () => {
       scratchGitService,
       workbookRepoService,
       workbookService,
-      // DEV-10556 canonicalizer rollout flag: default OFF in unit tests
-      // (fail-closed, matching production).
-      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
     );
   });
 

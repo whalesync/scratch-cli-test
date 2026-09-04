@@ -1274,7 +1274,7 @@ Rules of thumb:
 - **Declare nothing for read-only / computed fields** (they are never written) and for values that rotate on their own (expiring file URLs).
 - **Test it against real shapes**: a pulled value vs the packed write shape → equal; a content change → different; a clear → different. See `notion-field-value-canonicalizer.spec.ts`, `airtable-field-value-canonicalizer.spec.ts`, `pg-field-value-canonicalizer.spec.ts`.
 
-**Rollout status:** the comparison path is gated per acting user by the fail-closed `ENABLE_NOTION_FIELD_VALUE_CANONICALIZERS` user flag (`experiments/flags.ts`), evaluated once per sync table mapping; with the flag off the compare stays purely structural. **Registered hooks today:** Notion (envelopes, dates, options, relations), Airtable (omitted-empty fields, date precision, numbers) and Postgres/Supabase (`pg-common`: timestamps, floats, numeric strings, json) — the last three were switched on by DEV-11420. The flag's name predates the non-Notion registrations; it gates all four.
+**Rollout status:** fully launched — the comparison path runs for every sync (the per-user rollout flag it sat behind was removed once it reached 100%). Canonicalizers are resolved once per sync table mapping; a field without one keeps the purely structural compare. **Registered hooks today:** Notion (envelopes, dates, options, relations), Airtable (omitted-empty fields, date precision, numbers) and Postgres/Supabase (`pg-common`: timestamps, floats, numeric strings, json) — the last three were switched on by DEV-11420.
 
 ### Read-Only Fields on Publish
 
