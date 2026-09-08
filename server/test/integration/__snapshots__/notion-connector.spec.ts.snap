@@ -5,16 +5,16 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
   "basePath": [],
   "id": {
     "remoteId": [
-      "36b81e58-1794-80d8-89a4-d65d5dd08119",
-      "36b81e58-1794-80fb-bfb8-000b87a88bb4",
+      "65a5265f-8b0a-45d3-8a6d-687bd50c80b6",
+      "f9449577-ccb0-43d9-b00d-f8d2cc978609",
     ],
     "wsId": "scratch_integration_test",
   },
   "idPath": "id",
   "name": "scratch_integration_test",
-  "remoteWebUrl": "https://www.notion.so/36b81e58179480d889a4d65d5dd08119",
+  "remoteWebUrl": "https://www.notion.so/65a5265f8b0a45d38a6d687bd50c80b6",
   "schema": {
-    "$id": "notion/36b81e58-1794-80d8-89a4-d65d5dd08119",
+    "$id": "notion/65a5265f-8b0a-45d3-8a6d-687bd50c80b6",
     "properties": {
       "archived": {
         "description": "Is page archived (legacy; absent under 2026-03-11+)",
@@ -431,7 +431,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
               "urlExpires": true,
             },
             "x-scratch-connector-data-type": "files",
-            "x-scratch-remote-field-id": "%60GG%5C",
+            "x-scratch-remote-field-id": "rGFM",
             "x-scratch-virtual-fields": [
               {
                 "displayLabel": "Attachments",
@@ -503,7 +503,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             ],
             "type": "object",
             "x-scratch-connector-data-type": "rich_text",
-            "x-scratch-remote-field-id": "~Uxu",
+            "x-scratch-remote-field-id": "f%5D%3B%3C",
             "x-scratch-suggested-in-transformer": {
               "options": {
                 "emptyTemplate": {
@@ -555,7 +555,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             ],
             "type": "object",
             "x-scratch-connector-data-type": "checkbox",
-            "x-scratch-remote-field-id": "%5BK%7BH",
+            "x-scratch-remote-field-id": "%3CDdV",
             "x-scratch-suggested-in-transformer": {
               "options": {
                 "emptyTemplate": {
@@ -645,7 +645,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             ],
             "type": "object",
             "x-scratch-connector-data-type": "date",
-            "x-scratch-remote-field-id": "QHsk",
+            "x-scratch-remote-field-id": "LzDu",
             "x-scratch-suggested-in-transformer": {
               "options": {
                 "emptyTemplate": {
@@ -691,7 +691,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             ],
             "type": "object",
             "x-scratch-connector-data-type": "number",
-            "x-scratch-remote-field-id": "D%3A%3EQ",
+            "x-scratch-remote-field-id": "kev~",
             "x-scratch-suggested-in-transformer": {
               "options": {
                 "emptyTemplate": {
@@ -735,7 +735,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             ],
             "type": "object",
             "x-scratch-connector-data-type": "url",
-            "x-scratch-remote-field-id": "IlY%60",
+            "x-scratch-remote-field-id": "bzG%3C",
             "x-scratch-suggested-in-transformer": {
               "options": {
                 "emptyTemplate": {
@@ -800,7 +800,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "rollup",
             "x-scratch-readonly": true,
-            "x-scratch-remote-field-id": "J%40iC",
+            "x-scratch-remote-field-id": "Y%5D~Y",
           },
           "Linked Items": {
             "description": "Linked Items",
@@ -817,11 +817,11 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
                     "id": {
                       "type": "string",
                       "x-scratch-foreign-key": {
-                        "inverseFieldId": "hVNF",
-                        "linkedTableId": "36b81e58-1794-808e-ad29-d981a07c2ab3",
+                        "inverseFieldId": "%5EVrd",
+                        "linkedTableId": "9742ca5d-8911-4948-a805-f519ce3abf6c",
                         "linkedTableRemoteId": [
-                          "36b81e58-1794-808e-ad29-d981a07c2ab3",
-                          "36b81e58-1794-8014-b4ac-000b8da2d174",
+                          "9742ca5d-8911-4948-a805-f519ce3abf6c",
+                          "36081426-f6ec-40b7-8076-257106321fcf",
                         ],
                       },
                     },
@@ -846,14 +846,14 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "relation",
             "x-scratch-foreign-key": {
-              "inverseFieldId": "hVNF",
-              "linkedTableId": "36b81e58-1794-808e-ad29-d981a07c2ab3",
+              "inverseFieldId": "%5EVrd",
+              "linkedTableId": "9742ca5d-8911-4948-a805-f519ce3abf6c",
               "linkedTableRemoteId": [
-                "36b81e58-1794-808e-ad29-d981a07c2ab3",
-                "36b81e58-1794-8014-b4ac-000b8da2d174",
+                "9742ca5d-8911-4948-a805-f519ce3abf6c",
+                "36081426-f6ec-40b7-8076-257106321fcf",
               ],
             },
-            "x-scratch-remote-field-id": "%7DeDv",
+            "x-scratch-remote-field-id": "%5CiKo",
             "x-scratch-suggested-in-transformer": {
               "options": {
                 "elementTransformer": {
@@ -1002,7 +1002,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             ],
             "type": "object",
             "x-scratch-connector-data-type": "email",
-            "x-scratch-remote-field-id": "RD%5D%3E",
+            "x-scratch-remote-field-id": "%5DjZ%60",
             "x-scratch-suggested-in-transformer": {
               "options": {
                 "emptyTemplate": {
@@ -1062,7 +1062,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             ],
             "type": "object",
             "x-scratch-connector-data-type": "select",
-            "x-scratch-remote-field-id": "uHj%7B",
+            "x-scratch-remote-field-id": "HVVL",
             "x-scratch-suggested-in-transformer": {
               "options": {
                 "emptyTemplate": {
@@ -1199,7 +1199,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "formula",
             "x-scratch-readonly": true,
-            "x-scratch-remote-field-id": "ii%3Eo",
+            "x-scratch-remote-field-id": "%60inV",
           },
           "Status": {
             "description": "Status",
@@ -1245,7 +1245,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             ],
             "type": "object",
             "x-scratch-connector-data-type": "status",
-            "x-scratch-remote-field-id": "InW%7B",
+            "x-scratch-remote-field-id": "V%5Eql",
           },
           "Tags": {
             "description": "Tags",
@@ -1287,7 +1287,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             ],
             "type": "object",
             "x-scratch-connector-data-type": "multi_select",
-            "x-scratch-remote-field-id": "_Ru_",
+            "x-scratch-remote-field-id": "DJoY",
           },
         },
         "type": "object",

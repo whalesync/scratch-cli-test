@@ -6,6 +6,20 @@ This guide is the source of truth for the test fixture: the spec discovers the d
 
 ---
 
+## Fast path: the setup script
+
+Steps 3–5b (both databases, all properties, the seed rows, and the preserved fixture row) can be provisioned automatically by [`scripts/setup-notion-test-data.ts`](../../scripts/setup-notion-test-data.ts). You still do steps 1–2 (create the workspace + integration) and step 6 (share the root page) by hand, then:
+
+```bash
+# from server/ — NOTION_API_KEY in .env.integration; <rootPageId> is a page you
+# own that is SHARED with the integration (child databases inherit the connection).
+npx ts-node scripts/setup-notion-test-data.ts <rootPageId>
+```
+
+It's idempotent (safe to re-run) and prints a summary. **One caveat:** Notion's public API cannot create a `status`-type property, so the script creates `Status` as a `select` fallback and prints a warning; the suite passes either way, but for true status-type fidelity in the snapshot, replace it with a real Status property in the UI (step 3). The manual steps below remain the source of truth for exactly what the script builds.
+
+---
+
 ## 1. Create a Notion workspace
 
 A free personal workspace is fine. If you already have one you can use it — the integration only sees databases you explicitly share with it.
@@ -100,6 +114,25 @@ The exact contents don't matter for assertions — only that there are ≥1 rows
 
 ---
 
+## 5b. Add the preserved round-trip fixture row
+
+The CRUD round-trip suite (`NotionConnector — CRUD round-trip`) **never creates or deletes pages** — Notion has no permanent-delete, so any page it created would count against the free-plan block quota forever (trashed pages are not reclaimed). Instead it mutates **one preserved fixture row in place** (edit a property, and trash-then-restore), then restores it in `afterAll`. That row must already exist, exactly like Affinity's `[Do Not Touch]` fixtures.
+
+Add **one** row to the `Scratch Integration Test` database with these values:
+
+| Property      | Value                                                  |
+| ------------- | ------------------------------------------------------ |
+| `Name`        | **exactly** `[Do Not Touch] Roundtrip Fixture`         |
+| `Description` | any baseline string, e.g. `Roundtrip fixture baseline` |
+| `Done`        | **unchecked (false)**                                  |
+| `Priority`    | **`Low`**                                              |
+
+> **`Done = false` and `Priority = Low` are load-bearing.** The read-only smoke suite asserts things like `filtered.length < unfiltered.length` on a `Done = true` filter, so the fixture must be `Done = false` and `Priority = Low` to stay out of those result sets. Do **not** set `Done = true`. Leave other properties empty, and **do not add extra columns** for this row — a new column would move the `fetchJsonTableSpec` snapshot.
+
+**If `beforeAll` throws "round-trip fixture ... not found":** the row is missing — add it with the exact title and values above, then re-run. If a rare hard-crash left it mid-trash, the row may be in Notion's **Trash** (sidebar → Trash) — restore it there rather than creating a duplicate, so its `Done` / `Priority` values are preserved.
+
+---
+
 ## 6. Share both databases with the integration
 
 The integration can't see anything you haven't explicitly granted access to.
@@ -146,7 +179,8 @@ If a property-coverage assertion fails, the error names the missing property. Re
 ## Costs
 
 - Notion free tier is sufficient (no API rate-limit tier, no storage cost).
-- The CRUD round-trip creates and archives 2–3 pages per run. They're cleaned up in `afterAll`; leftovers from a failed run are findable in Notion by the `Spinner Roundtrip` title prefix.
+- The CRUD round-trip consumes **zero net block quota**: it never creates a page. It mutates the single preserved fixture row from step 5b in place — a `Description` edit and a trash → in-place-restore — and restores it in `afterAll`. (Earlier revisions created + trashed 2–3 pages per run; because Notion has no permanent-delete, those trashed pages counted against the free-plan quota forever and eventually exhausted the workspace — which is why this suite now uses a preserved fixture.)
+- Only residual case: a hard worker-kill (SIGKILL/OOM/timeout) between the trash and the restore can leave the fixture in Notion's Trash. That's a single page, and it fails loudly on the next run's `beforeAll` — restore it from Trash (see step 5b). It is not a runaway leak.
 
 ---
 

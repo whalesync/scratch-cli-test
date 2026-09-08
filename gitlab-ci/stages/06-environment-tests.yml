@@ -27,10 +27,12 @@ environment tests for test env post-deploy:
     # all is safe. Define these as masked CI/CD variables in the GitLab project settings to enable the
     # corresponding connector. (Most connectors ALSO have a fake-backed spec that runs with no key —
     # e.g. hubspot-connector.spec.ts; the *-live.spec.ts variants below need a real credential.)
-    # Notion — [TEMPORARILY DISABLED] the test workspace has used all of its free blocks, so createRecords
-    # fails and notion-connector.spec.ts fails every post-deploy run. Deletes only trash pages (no
-    # permanent-delete API), so each run leaks more. Re-enable after migrating to a new test account.
-    # NOTION_API_KEY: "${INTEGRATION_TEST_NOTION_API_KEY}"
+    # Notion — dedicated free test workspace. The CRUD round-trip mutates a single preserved fixture row
+    # ("[Do Not Touch] Roundtrip Fixture") in place — update + trash/restore — and NEVER creates pages, so
+    # it consumes zero net block quota (Notion has no permanent-delete: trashed pages count against the
+    # free-plan quota forever, which exhausted the previous workspace). Setup + fixture:
+    # server/test/integration/notion-setup.md. Also runs the fetchJsonTableSpec snapshot contract.
+    NOTION_API_KEY: "${INTEGRATION_TEST_NOTION_API_KEY}"
     # HubSpot — dedicated test portal. HUBSPOT_API_KEY is a Private App access token (`pat-na1-…`) with
     # crm.objects.contacts + crm.objects.companies read & write scopes; enables hubspot-connector-live.spec.ts
     # (associations round-trip, DEV-10847). Provision the portal + token and set INTEGRATION_TEST_HUBSPOT_API_KEY.

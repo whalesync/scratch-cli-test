@@ -13,8 +13,16 @@
  *      builds a schema, and pulls records. Captures a `fetchJsonTableSpec`
  *      snapshot — the diff against the v5 SDK output is the gate for
  *      Phase 3 / Phase 4.
- *   2. CRUD round-trip: create → update → delete (archive) one page, and
- *      confirm `updateRecords` throws on a read-only property edit (DEV-10597).
+ *   2. CRUD round-trip: exercises update / delete / restore against a single
+ *      PRESERVED fixture page (never creates a page), so it consumes zero net
+ *      Notion block quota. It updates a writable property in place, confirms
+ *      `updateRecords` throws on a read-only property edit (DEV-10597), and
+ *      trashes-then-restores the fixture in place (DEV-10957/DEV-11013). Notion
+ *      has no permanent-delete — every created page counts against the free-plan
+ *      quota forever (trashed pages are not reclaimed) — so creating a page per
+ *      run leaked quota until the workspace was exhausted; the preserved-fixture
+ *      pattern (mirroring Affinity) is the durable fix. All three tests mutate
+ *      the same fixture and restore it in `afterAll`.
  *
  * Requires NOTION_API_KEY in .env.integration. See
  * `server/test/integration/notion-setup.md` for the one-time Notion workspace
@@ -54,7 +62,14 @@ const API_KEY = process.env.NOTION_API_KEY;
  */
 const PRIMARY_DB_NAME = 'Scratch Integration Test';
 
-const ROUND_TRIP_TITLE_PREFIX = 'Spinner Roundtrip';
+/**
+ * Title of the single PRESERVED fixture row the CRUD round-trip suite mutates in
+ * place. It is never created or deleted by the suite (Notion has no permanent
+ * delete, so any created page leaks quota forever). See notion-setup.md → "5b.
+ * Preserved round-trip fixture" for the required row and its property values
+ * (`Done` = false, `Priority` = Low are load-bearing for the smoke filter tests).
+ */
+const ROUNDTRIP_FIXTURE_TITLE = '[Do Not Touch] Roundtrip Fixture';
 
 function createConnector(): NotionConnector {
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -529,13 +544,34 @@ describeIfKey('NotionConnector — live API', () => {
 });
 
 // ===========================================================================
-// CRUD round-trip
+// CRUD round-trip (preserved fixture, zero-quota)
+//
+// Notion's public API has no permanent-delete: `deleteRecords` only trashes a
+// page (`in_trash: true`), and trashed pages keep counting against the free-plan
+// block quota. So a suite that CREATES a page per run leaks quota forever — that
+// is exactly what exhausted the test workspace and got this suite disabled.
+//
+// The durable fix (mirroring Affinity's `[Do Not Touch]` preserved fixture) is
+// to mutate ONE preserved fixture page in place and never create a page:
+//   A. update a writable property (Description), then restore it in afterAll.
+//   B. confirm updateRecords throws on a read-only property edit (DEV-10597).
+//   C. trash the fixture, assert in_trash, then RESTORE it in place via the
+//      updateRecords un-archive path (DEV-10957/DEV-11013).
+// Net Notion quota consumed per run: zero.
+//
+// All three tests mutate the same fixture, so they must run serially in
+// declaration order (Jest runs `it`s in order). C is declared LAST so that if it
+// fails mid-way the only follow-up needed is the afterAll safety net.
 // ===========================================================================
 
-describeIfKey('NotionConnector — CRUD round-trip', () => {
+describeIfKey('NotionConnector — CRUD round-trip (preserved fixture, zero-quota)', () => {
   let connector: NotionConnector;
   let tableSpec: BaseJsonTableSpec;
-  const cleanups: Array<() => Promise<void>> = [];
+  // Captured while the fixture is live: a trashed page is NOT returned by a
+  // data-source query (so it can't be re-discovered by title), but IS readable
+  // by id via fetchById — so restore/read after trashing goes through this id.
+  let fixturePageId: string;
+  let originalDescription: string;
 
   beforeAll(async () => {
     connector = createConnector();
@@ -543,87 +579,90 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     const found = tables.find((t) => t.displayName === PRIMARY_DB_NAME);
     if (!found) throw new Error(`Test database "${PRIMARY_DB_NAME}" not found.`);
     tableSpec = await connector.fetchJsonTableSpec(found.id);
+
+    // Discover the preserved fixture ROW by scanning pulled pages' titles. The
+    // fixture is a page/row, not a table, so searchTables is the wrong tool —
+    // pull the primary DB and match the title with readTitle.
+    const titlePropName = findTitlePropertyName(tableSpec);
+    const pages = await pullAll(connector, tableSpec, { excludePageContent: true });
+    const fixture = pages.find((p) => readTitle(p, titlePropName) === ROUNDTRIP_FIXTURE_TITLE);
+    if (!fixture) {
+      throw new Error(
+        `Notion round-trip fixture page "${ROUNDTRIP_FIXTURE_TITLE}" not found in "${PRIMARY_DB_NAME}". ` +
+          `The CRUD suite mutates this preserved row in place and never creates pages — it must exist. ` +
+          `See server/test/integration/notion-setup.md → "5b. Preserved round-trip fixture" to (re)create it. ` +
+          `If a prior run crashed mid-trash, the row may be in Notion's Trash — restore it there rather than ` +
+          `creating a duplicate.`,
+      );
+    }
+    fixturePageId = fixture.id as string;
+    originalDescription = readRichText(fixture, 'Description');
   });
 
   afterAll(async () => {
-    // Best-effort cleanup; swallow individual failures so one bad delete
-    // doesn't block the others. Leftovers are findable in Notion by the
-    // ROUND_TRIP_TITLE_PREFIX.
-    await Promise.allSettled(cleanups.map((fn) => fn()));
+    // Safety net so a crash never leaves the shared fixture in a bad state.
+    // Sequential (not concurrent): both operations PATCH the same page, and the
+    // un-archive must land before the Description restore. Best-effort — swallow
+    // failures so cleanup can't mask a test result.
+    try {
+      const current = await fetchById(connector, tableSpec, fixturePageId);
+      if (current && current.in_trash === true) {
+        // Empty diff: buildNotionUnarchiveFields(current) clears only the flag
+        // the page carries (`in_trash`), not spellings the API version rejects.
+        await connector.updateRecords(tableSpec, [{ ...current }], [{}]);
+      }
+    } catch {
+      // ignore — surfaced loudly on the next run's beforeAll if truly stuck.
+    }
+    try {
+      const current = await fetchById(connector, tableSpec, fixturePageId);
+      if (current) {
+        await connector.updateRecords(
+          tableSpec,
+          [{ ...current }],
+          [{ properties: { Description: { rich_text: [{ text: { content: originalDescription } }] } } }],
+        );
+      }
+    } catch {
+      // ignore — the Description drift is cosmetic and self-heals next run.
+    }
   });
 
-  it('creates a page, updates a writable property, then trashes it', async () => {
-    const titlePropName = findTitlePropertyName(tableSpec);
-    const initialTitle = `${ROUND_TRIP_TITLE_PREFIX} ${Date.now()}`;
-    const updatedDescription = `Updated at ${new Date().toISOString()}`;
+  // ── A: writable update in place (reversible) ──
+  it('updates a writable property (Description) in place, creating no page', async () => {
+    const updatedDescription = `Roundtrip update ${new Date().toISOString()}`;
 
-    // ── Create ──
-    const created = await connector.createRecords(tableSpec, [
-      {
-        properties: {
-          [titlePropName]: { title: [{ text: { content: initialTitle } }] },
-        },
-      },
-    ]);
-    expect(created).toHaveLength(1);
-    const pageId = (created[0] as Record<string, unknown>).id as string;
-    expect(pageId).toMatch(/^[0-9a-f-]{32,36}$/i);
-    cleanups.push(async () => {
-      await connector.deleteRecords(tableSpec, [{ id: pageId }]);
-    });
+    const before = await fetchById(connector, tableSpec, fixturePageId);
+    expect(before).not.toBeNull();
 
-    // Verify create via pullRecordFilesByIds.
-    const afterCreate = await fetchById(connector, tableSpec, pageId);
-    expect(afterCreate).not.toBeNull();
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(readTitle(afterCreate!, titlePropName)).toBe(initialTitle);
-
-    // ── Update — Description (rich_text) — passes through transformPropertiesForUpdate ──
+    // Pass the full file as `files[i]` so the connector can look up property
+    // types when filtering read-only props, and the sparse change as
+    // `changedFields[i]` (passes through transformPropertiesForUpdate).
     const richTextChange = {
       properties: {
         Description: { rich_text: [{ text: { content: updatedDescription } }] },
       },
     };
-    // Pass the full file as `files[i]` so the connector can look up types when
-    // filtering read-only props, and the sparse change as `changedFields[i]`.
-    await connector.updateRecords(tableSpec, [{ ...(afterCreate as Record<string, unknown>) }], [richTextChange]);
+    await connector.updateRecords(tableSpec, [{ ...(before as Record<string, unknown>) }], [richTextChange]);
 
-    const afterUpdate = await fetchById(connector, tableSpec, pageId);
+    const afterUpdate = await fetchById(connector, tableSpec, fixturePageId);
     expect(afterUpdate).not.toBeNull();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(readRichText(afterUpdate!, 'Description')).toBe(updatedDescription);
-
-    // ── Delete (move to trash) ──
-    await connector.deleteRecords(tableSpec, [{ id: pageId }]);
-
-    const afterDelete = await fetchById(connector, tableSpec, pageId);
-    // Trashed pages remain readable. Under the 2026-03-11 API version the page
-    // carries `in_trash: true`; the legacy `archived` field is no longer present
-    // in responses (it was only emitted for API versions prior to 2026-03-11).
-    expect(afterDelete).not.toBeNull();
-    expect((afterDelete as Record<string, unknown>).in_trash).toBe(true);
+    // Original Description is restored in afterAll.
   });
 
-  it('updateRecords throws on a read-only property edit (formula, rollup, created_time)', async () => {
-    const titlePropName = findTitlePropertyName(tableSpec);
-    const title = `${ROUND_TRIP_TITLE_PREFIX} readonly-filter ${Date.now()}`;
-
-    const [created] = await connector.createRecords(tableSpec, [
-      { properties: { [titlePropName]: { title: [{ text: { content: title } }] } } },
-    ]);
-    const pageId = (created as Record<string, unknown>).id as string;
-    cleanups.push(async () => {
-      await connector.deleteRecords(tableSpec, [{ id: pageId }]);
-    });
-
-    const fullPage = await fetchById(connector, tableSpec, pageId);
+  // ── B: read-only edit is surfaced, not silently dropped (DEV-10597) ──
+  it('updateRecords throws on a read-only property edit (formula, rollup)', async () => {
+    const fullPage = await fetchById(connector, tableSpec, fixturePageId);
     expect(fullPage).not.toBeNull();
 
-    // Build a `changedFields` bag that ONLY mutates read-only props. Per
-    // DEV-10597 (commit 4c5b626f), a sparse diff that edits a read-only
-    // property means the user genuinely edited a read-only field, so the
-    // connector surfaces a `NonWritableFieldEditError` rather than silently
-    // dropping the PATCH and reporting success.
+    // A `changedFields` bag that ONLY mutates read-only props. Per DEV-10597
+    // (commit 4c5b626f), a sparse diff that edits a read-only property means the
+    // user genuinely edited a read-only field, so the connector surfaces a
+    // `NonWritableFieldEditError` rather than silently dropping the PATCH and
+    // reporting success. The throw happens before any write — zero quota, and it
+    // leaves the fixture untouched.
     const readOnlyChange = {
       properties: {
         Score: { formula: { type: 'number', number: 999 } }, // formula — read-only
@@ -633,6 +672,32 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     await expect(
       connector.updateRecords(tableSpec, [{ ...(fullPage as Record<string, unknown>) }], [readOnlyChange]),
     ).rejects.toThrow(/read-only and cannot be published/);
+  });
+
+  // ── C: trash then restore in place (reversible) — declared LAST ──
+  it('trashes the fixture then restores it in place (live delete-path, zero net quota)', async () => {
+    // ── Delete (move to trash) ──
+    await connector.deleteRecords(tableSpec, [{ id: fixturePageId }]);
+
+    const afterDelete = await fetchById(connector, tableSpec, fixturePageId);
+    // Trashed pages remain readable by id. Under the 2026-03-11 API version the
+    // page carries `in_trash: true`; the legacy `archived` field is no longer
+    // emitted (only for API versions prior to 2026-03-11).
+    expect(afterDelete).not.toBeNull();
+    expect((afterDelete as Record<string, unknown>).in_trash).toBe(true);
+
+    // ── Restore in place ── pass the trashed file (it reports `in_trash: true`)
+    // back with an EMPTY changed diff. `buildNotionUnarchiveFields(file)` clears
+    // exactly the flag the page carries — under 2026-03-11 that's `in_trash`
+    // alone; it must NOT also send `archived`, which the API rejects ("body.archived
+    // should be not present"). So we rely on the file's own flag rather than
+    // hard-coding all three spellings. The page is un-trashed in place — same id,
+    // no delete/recreate (DEV-10957).
+    await connector.updateRecords(tableSpec, [{ ...(afterDelete as Record<string, unknown>) }], [{}]);
+
+    const afterRestore = await fetchById(connector, tableSpec, fixturePageId);
+    expect(afterRestore).not.toBeNull();
+    expect((afterRestore as Record<string, unknown>).in_trash).not.toBe(true);
   });
 });
 
