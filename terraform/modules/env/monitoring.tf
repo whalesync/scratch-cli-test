@@ -106,6 +106,7 @@ locals {
     "bel", "irl", "gbr", "deu", "fra", "nld", # Western/Central Europe — major cloud regions
     "swe", "fin", "che", "ita", "esp", "pol", # Nordics + Southern/Central Europe — major cloud regions
     "aus", "nzl",                             # English-speaking (Oceania)
+    "kor",                                    # Asia — AWS ap-northeast-2 (Seoul); Supabase pooler
   ]
   # Rendered filter fragments.
   flow_log_suspicious_ports_clause  = "(${join(" OR ", local.flow_log_suspicious_ports)})"
