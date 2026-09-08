@@ -1346,6 +1346,29 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           `Remove ${filesToDelete.length} deleted files from ${folderPath}`,
         );
 
+        // Drop the deleted files' FileIndex rows too. The index seeds the
+        // filename-collision set for every later pull and published create
+        // (`listFilenamesForFolder`), so a row left behind here makes a record
+        // that is deleted upstream and re-created with a new id come back as
+        // `<name>-<id>.json` instead of `<name>.json` (DEV-11438). The git
+        // deletion above already happened, so an index failure is logged and
+        // the deletion is still reported rather than hidden.
+        try {
+          await this.fileIndexService.deleteRowsForDeletedFiles(
+            dataFolder.workbookId,
+            dataFolder.connectorAccountId,
+            filesToDelete,
+          );
+        } catch (indexCleanupError) {
+          WSLogger.error({
+            source: LOG_SOURCE,
+            message: 'Deleted stale files from main but failed to remove their FileIndex rows',
+            workbookId: dataFolder.workbookId,
+            dataFolderId: dataFolder.id,
+            error: indexCleanupError,
+          });
+        }
+
         return { deleted: filesToDelete.length, deletedPaths: filesToDelete };
       }
     } catch (err) {

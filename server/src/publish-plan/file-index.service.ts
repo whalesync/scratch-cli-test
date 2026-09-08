@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { chunk } from 'lodash';
 import { DbService } from '../db/db.service';
 import { escapeLikeWildcards } from '../utils/prisma-like';
+import { parsePath } from './utils';
 
 export interface FileIndexEntry {
   workbookId: string;
@@ -249,6 +250,48 @@ export class FileIndexService {
       select: { filename: true },
     });
     return entries.map((e) => e.filename);
+  }
+
+  /**
+   * Delete the index rows for record files that a pull's stale-file cleanup has
+   * just removed from the repo — every row whose (folderPath, filename) matches
+   * one of `deletedFilePaths` (`<folderPath>/<filename>`, no leading slash).
+   *
+   * Without this the index keeps a row for every file a full pull ever deleted,
+   * and `listFilenamesForFolder` — which seeds the filename-collision set for
+   * pulled and published creates — keeps reporting those ghost names as taken.
+   * A record that was deleted upstream and re-created with a new id then gets
+   * an id-suffixed filename (`brand-new-company-<id>.json`) for no reason
+   * (DEV-11438).
+   *
+   * Scoped strictly to `connectorAccountId`, like `deleteRowsOwnedByDeletedFolder`:
+   * folder paths are workbook-global, so two connections can hold an
+   * identically-named file at the same path, and only this connection's row
+   * may go. Legacy rows with a NULL connection are intentionally not matched
+   * (see the `connectorAccountId` schema comment).
+   */
+  async deleteRowsForDeletedFiles(
+    workbookId: string,
+    connectorAccountId: string | null,
+    deletedFilePaths: string[],
+  ): Promise<void> {
+    const filenamesByFolderPath = new Map<string, string[]>();
+    for (const deletedFilePath of deletedFilePaths) {
+      const { folderPath, filename } = parsePath(deletedFilePath);
+      const filenames = filenamesByFolderPath.get(folderPath);
+      if (filenames) {
+        filenames.push(filename);
+      } else {
+        filenamesByFolderPath.set(folderPath, [filename]);
+      }
+    }
+    for (const [folderPath, filenames] of filenamesByFolderPath) {
+      for (const filenameChunk of chunk(filenames, 1000)) {
+        await this.db.client.fileIndex.deleteMany({
+          where: { workbookId, connectorAccountId, folderPath, filename: { in: filenameChunk } },
+        });
+      }
+    }
   }
 
   async deleteForWorkbook(workbookId: string): Promise<void> {

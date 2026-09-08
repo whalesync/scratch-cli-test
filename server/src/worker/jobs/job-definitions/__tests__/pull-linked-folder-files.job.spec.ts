@@ -165,6 +165,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       getFilenamesByRecordIds: jest.fn().mockResolvedValue(new Map()),
       listFilenamesForFolder: jest.fn().mockResolvedValue([]),
       upsertBatch: jest.fn().mockResolvedValue(undefined),
+      deleteRowsForDeletedFiles: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<FileIndexService>;
 
     mockFileReferenceService = {
@@ -1157,6 +1158,72 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           [string, string, string[], string]
         >;
         expect(deleteCalls[0][2]).toEqual(['Products/stale.json']);
+      });
+
+      // (h) DEV-11438: a stale file's FileIndex row must go with it. The index seeds the
+      // filename-collision set for later pulls and published creates, so a leftover row
+      // makes a re-created record come back id-suffixed (`stale-<id>.json`).
+      it('removes the FileIndex rows of the stale files it deletes, scoped to the connection', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, {
+          lastFullPullAt: new Date('2026-04-15T00:00:00.000Z'),
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(false); // full pull → deletion runs
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+        (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
+          { name: 'stale.json', path: 'Products/stale.json', type: 'file' },
+          { name: 'also-stale.json', path: 'Products/also-stale.json', type: 'file' },
+        ]);
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'full' } });
+
+        expect(mockFileIndexService.deleteRowsForDeletedFiles).toHaveBeenCalledTimes(1);
+        expect(mockFileIndexService.deleteRowsForDeletedFiles).toHaveBeenCalledWith('wkb_123', 'coa_123', [
+          'Products/stale.json',
+          'Products/also-stale.json',
+        ]);
+      });
+
+      it('does not touch the FileIndex when nothing is stale', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, {
+          lastFullPullAt: new Date('2026-04-15T00:00:00.000Z'),
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(false);
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+        (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'full' } });
+
+        expect(mockScratchGitService.deleteFilesFromBranch).not.toHaveBeenCalled();
+        expect(mockFileIndexService.deleteRowsForDeletedFiles).not.toHaveBeenCalled();
+      });
+
+      it('still reports the git deletion when the FileIndex cleanup fails', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, {
+          lastFullPullAt: new Date('2026-04-15T00:00:00.000Z'),
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(false);
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+        (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
+          { name: 'stale.json', path: 'Products/stale.json', type: 'file' },
+        ]);
+        (mockFileIndexService.deleteRowsForDeletedFiles as jest.Mock).mockRejectedValue(new Error('db down'));
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'full' } });
+
+        expect(mockScratchGitService.deleteFilesFromBranch).toHaveBeenCalledTimes(1);
+        expect(mockPostHogService.trackPullCompleted).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ result: 'success', filesDeleted: 1 }),
+        );
       });
     });
   });

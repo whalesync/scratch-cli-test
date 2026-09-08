@@ -140,3 +140,59 @@ describe('FileIndexService.getRecordIds', () => {
     expect(result.has(fileIndexLookupKey(lookup))).toBe(false);
   });
 });
+
+describe('FileIndexService.deleteRowsForDeletedFiles', () => {
+  let service: FileIndexService;
+  let fileIndexDeleteMany: jest.Mock;
+
+  beforeEach(() => {
+    fileIndexDeleteMany = jest.fn().mockResolvedValue({ count: 0 });
+    const db = {
+      client: { fileIndex: { deleteMany: fileIndexDeleteMany } },
+    } as unknown as DbService;
+    service = new FileIndexService(db);
+  });
+
+  it('deletes by (folderPath, filename) grouped per folder and scoped to the connection', async () => {
+    await service.deleteRowsForDeletedFiles('wkb_1', 'coa_1', [
+      'Companies/google.json',
+      'Companies/atlas.json',
+      'Contacts/marcos.json',
+    ]);
+
+    expect(fileIndexDeleteMany).toHaveBeenCalledTimes(2);
+    expect(fileIndexDeleteMany).toHaveBeenCalledWith({
+      where: {
+        workbookId: 'wkb_1',
+        connectorAccountId: 'coa_1',
+        folderPath: 'Companies',
+        filename: { in: ['google.json', 'atlas.json'] },
+      },
+    });
+    expect(fileIndexDeleteMany).toHaveBeenCalledWith({
+      where: {
+        workbookId: 'wkb_1',
+        connectorAccountId: 'coa_1',
+        folderPath: 'Contacts',
+        filename: { in: ['marcos.json'] },
+      },
+    });
+  });
+
+  it('chunks a large folder into deletes of at most 1000 filenames', async () => {
+    const paths = Array.from({ length: 2500 }, (_, i) => `Companies/rec-${i}.json`);
+
+    await service.deleteRowsForDeletedFiles('wkb_1', 'coa_1', paths);
+
+    const chunkSizes = fileIndexDeleteMany.mock.calls.map(
+      (call: [{ where: { filename: { in: string[] } } }]) => call[0].where.filename.in.length,
+    );
+    expect(chunkSizes).toEqual([1000, 1000, 500]);
+  });
+
+  it('issues no delete for an empty list', async () => {
+    await service.deleteRowsForDeletedFiles('wkb_1', 'coa_1', []);
+
+    expect(fileIndexDeleteMany).not.toHaveBeenCalled();
+  });
+});
