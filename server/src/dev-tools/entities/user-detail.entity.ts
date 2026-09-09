@@ -1,10 +1,13 @@
-import { AuditLogEvent } from '@prisma/client';
+import { AuditLogEvent, Subscription } from '@prisma/client';
+import { SubscriptionAdminDetails } from '@spinner/shared-types';
 import { AuditLogEventEntity } from 'src/audit/entities/audit-log-event.entity';
 import { UserCluster, WorkbookCluster } from 'src/db/cluster-types';
+import { getLastestExpiringSubscription } from 'src/payment/helpers';
 import { ConnectorAccount } from 'src/remote-service/connector-account/entities/connector-account.entity';
 import { User } from 'src/users/entities/user.entity';
 
 export class DataFolderSummary {
+  id: string;
   name: string;
   connectorService: string | null;
   path: string | null;
@@ -12,6 +15,7 @@ export class DataFolderSummary {
   options: Record<string, unknown> | null;
 
   constructor(dataFolder: WorkbookCluster.DataFolder) {
+    this.id = dataFolder.id;
     this.name = dataFolder.name;
     this.connectorService = dataFolder.connectorAccount?.service?.toString() ?? null;
     this.path = dataFolder.path;
@@ -81,6 +85,7 @@ export class UserDetail {
    * organization (hard-delete then removes the whole org and every workbook it owns).
    */
   externallySharedWorkspaceCountLostOnHardDelete: number;
+  subscriptionDetails: SubscriptionAdminDetails | null;
 
   constructor(
     user: UserCluster.User,
@@ -92,6 +97,7 @@ export class UserDetail {
   ) {
     this.user = new User(user);
     this.externallySharedWorkspaceCountLostOnHardDelete = externallySharedWorkspaceCountLostOnHardDelete;
+    this.subscriptionDetails = toSubscriptionAdminDetails(user.organization?.subscriptions ?? []);
 
     const connectionsByWorkbook = new Map<string, ConnectorAccount[]>();
     for (const connector of connectors) {
@@ -115,4 +121,25 @@ export class UserDetail {
     });
     this.auditLogs = auditLogs.map((auditLog) => new AuditLogEventEntity(auditLog));
   }
+}
+
+/**
+ * Admin-only extra subscription detail for the dev-tools User Details panel. Maps the user's
+ * latest-expiring raw subscription row straight through — this is deliberately kept off the shared
+ * `SubscriptionInfo` (built in the `User` constructor and sent on every user payload). Returns
+ * `null` when the user has no real subscription (the synthetic Free plan has no backing row).
+ */
+function toSubscriptionAdminDetails(subscriptions: Subscription[]): SubscriptionAdminDetails | null {
+  const latestExpiringSubscription = getLastestExpiringSubscription(subscriptions);
+  if (!latestExpiringSubscription) {
+    return null;
+  }
+  return {
+    createdAt: latestExpiringSubscription.createdAt.toISOString(),
+    updatedAt: latestExpiringSubscription.updatedAt.toISOString(),
+    stripeStatus: latestExpiringSubscription.stripeStatus,
+    expiration: latestExpiringSubscription.expiration.toISOString(),
+    cancelAt: latestExpiringSubscription.cancelAt ? latestExpiringSubscription.cancelAt.toISOString() : null,
+    metadata: (latestExpiringSubscription.metadata ?? null) as Record<string, unknown> | null,
+  };
 }

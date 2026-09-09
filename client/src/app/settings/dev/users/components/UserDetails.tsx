@@ -322,6 +322,41 @@ export const UserDetailsCard = ({
             <TextTitle3>Billing</TextTitle3>
           </Group>
           <LabelValuePair label="Subscription" value={<SubscriptionInfo user={details.user} />} />
+          {details.subscriptionDetails && (
+            <>
+              <LabelValuePair label="Trial" value={details.user.subscription?.isTrial ? 'Yes' : 'No'} />
+              <LabelValuePair label="Stripe Status" value={details.subscriptionDetails.stripeStatus ?? '—'} />
+              <LabelValuePair
+                label="Created"
+                value={new Date(details.subscriptionDetails.createdAt).toLocaleString()}
+              />
+              <LabelValuePair
+                label="Last Updated"
+                value={new Date(details.subscriptionDetails.updatedAt).toLocaleString()}
+              />
+              <LabelValuePair
+                label="Cancels At"
+                value={
+                  details.subscriptionDetails.cancelAt
+                    ? new Date(details.subscriptionDetails.cancelAt).toLocaleString()
+                    : '—'
+                }
+              />
+              <LabelValuePair
+                label="Metadata"
+                value={
+                  details.subscriptionDetails.metadata &&
+                  Object.keys(details.subscriptionDetails.metadata).length > 0 ? (
+                    <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {JSON.stringify(details.subscriptionDetails.metadata, null, 2)}
+                    </Code>
+                  ) : (
+                    '—'
+                  )
+                }
+              />
+            </>
+          )}
           <Group justify="flex-start">
             <ButtonPrimaryLight onClick={handleStartTrial} loading={saving} size="xs">
               Start 14-day Pro trial
@@ -454,7 +489,7 @@ export const UserDetailsCard = ({
                         </Table.Thead>
                         <Table.Tbody>
                           {workbook.dataFolders.map((df) => (
-                            <Table.Tr key={df.path ?? df.name}>
+                            <Table.Tr key={df.id}>
                               <Table.Td>{df.name}</Table.Td>
                               <Table.Td>{df.path ?? '-'}</Table.Td>
                               <Table.Td>{df.connectorService ?? '-'}</Table.Td>
