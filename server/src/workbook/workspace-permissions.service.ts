@@ -116,6 +116,83 @@ export class WorkspacePermissionsService {
     });
   }
 
+  /**
+   * For each given workbook, counts how many users it is shared with *beyond its owner* (the number of
+   * `WorkspacePermission` holders excluding the workbook's creator/owner) and, of those, how many are
+   * non-org (external) users whose organization differs from the workbook's. Powers the admin user-details
+   * view's per-workspace sharing counts and the hard-delete "external users will lose access" warning.
+   *
+   * The workbook creator is granted a `WorkspacePermission` at creation, so a private, unshared workspace
+   * has exactly one permission (the owner) and reports `sharedWithUserCount: 0`. A permission holder with
+   * no organization (null) is treated as non-org.
+   */
+  async getSharedAccessCountsByWorkbookIds(
+    workbooks: Array<{ id: string; organizationId: string; ownerUserId: string | null }>,
+  ): Promise<Map<string, { sharedWithUserCount: number; nonOrgUserCount: number }>> {
+    const sharedAccessCountsByWorkbookId = new Map<string, { sharedWithUserCount: number; nonOrgUserCount: number }>();
+    for (const workbook of workbooks) {
+      sharedAccessCountsByWorkbookId.set(workbook.id, { sharedWithUserCount: 0, nonOrgUserCount: 0 });
+    }
+    if (workbooks.length === 0) {
+      return sharedAccessCountsByWorkbookId;
+    }
+
+    const workbookById = new Map(workbooks.map((workbook) => [workbook.id, workbook]));
+    const permissions = await this.db.client.workspacePermission.findMany({
+      where: { workbookId: { in: workbooks.map((workbook) => workbook.id) } },
+      select: {
+        workbookId: true,
+        userId: true,
+        user: { select: { organizationId: true } },
+      },
+    });
+
+    for (const permission of permissions) {
+      const workbook = workbookById.get(permission.workbookId);
+      const counts = sharedAccessCountsByWorkbookId.get(permission.workbookId);
+      if (!workbook || !counts) {
+        continue;
+      }
+      // Only count users the workbook has been *shared with*, never its own creator/owner.
+      if (permission.userId === workbook.ownerUserId) {
+        continue;
+      }
+      counts.sharedWithUserCount += 1;
+      if (permission.user.organizationId !== workbook.organizationId) {
+        counts.nonOrgUserCount += 1;
+      }
+    }
+
+    return sharedAccessCountsByWorkbookId;
+  }
+
+  /**
+   * Counts workbooks owned by the organization that are shared with at least one non-org (external) user.
+   * Used to warn admins before a hard-delete of the organization's sole member, which deletes the entire
+   * organization and every workbook it owns (org-scoped, per `DevToolsService.hardDeleteUser`) — so the
+   * count spans all org-owned workbooks, not just the ones a given user can reach via a permission.
+   */
+  async countExternallySharedWorkbooksInOrganization(organizationId: string): Promise<number> {
+    const organizationWorkbooks = await this.db.client.workbook.findMany({
+      where: { organizationId },
+      select: { id: true, userId: true, organizationId: true },
+    });
+    const sharedAccessCounts = await this.getSharedAccessCountsByWorkbookIds(
+      organizationWorkbooks.map((workbook) => ({
+        id: workbook.id,
+        organizationId: workbook.organizationId,
+        ownerUserId: workbook.userId,
+      })),
+    );
+    let externallySharedWorkbookCount = 0;
+    for (const counts of sharedAccessCounts.values()) {
+      if (counts.nonOrgUserCount > 0) {
+        externallySharedWorkbookCount += 1;
+      }
+    }
+    return externallySharedWorkbookCount;
+  }
+
   async listInvitesByWorkbook(workbookId: WorkbookId) {
     return this.db.client.workspaceInvites.findMany({
       where: { workbookId },

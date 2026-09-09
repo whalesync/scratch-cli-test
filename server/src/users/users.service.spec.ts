@@ -442,3 +442,44 @@ describe('UsersService — Whalesync shadow users', () => {
     });
   });
 });
+
+describe('UsersService.isSoleMemberOfOrganization', () => {
+  function createService(userCountResult: number) {
+    const userCount = jest.fn().mockResolvedValue(userCountResult);
+    const dbService = {
+      client: { user: { count: userCount } },
+    } as unknown as jest.Mocked<DbService>;
+
+    const service = new UsersService(
+      dbService,
+      {} as never, // postHogService — unused
+      {} as never, // configService — unused
+      {} as never, // slackNotificationService — unused
+      {} as never, // emailService — unused
+      {} as never, // workbookProvisioningService — unused
+      {} as never, // experimentsService — unused
+      {} as never, // stripePaymentService — unused
+    );
+    return { service, userCount };
+  }
+
+  it('returns false for a user with no organization without querying', async () => {
+    const { service, userCount } = createService(1);
+
+    await expect(service.isSoleMemberOfOrganization({ organizationId: null })).resolves.toBe(false);
+    expect(userCount).not.toHaveBeenCalled();
+  });
+
+  it('returns true when the organization has exactly one member', async () => {
+    const { service, userCount } = createService(1);
+
+    await expect(service.isSoleMemberOfOrganization({ organizationId: 'org_solo' })).resolves.toBe(true);
+    expect(userCount).toHaveBeenCalledWith({ where: { organizationId: 'org_solo' } });
+  });
+
+  it('returns false when the organization has more than one member', async () => {
+    const { service } = createService(2);
+
+    await expect(service.isSoleMemberOfOrganization({ organizationId: 'org_shared' })).resolves.toBe(false);
+  });
+});

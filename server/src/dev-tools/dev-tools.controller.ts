@@ -62,6 +62,7 @@ import { User } from 'src/users/entities/user.entity';
 import { requestToActor, userToActor } from 'src/users/types';
 import { UsersService } from 'src/users/users.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
+import { WorkspacePermissionsService } from 'src/workbook/workspace-permissions.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { DbJobStatus, dbJobToJobEntity } from '../job/entities/job.entity';
@@ -88,6 +89,7 @@ export class DevToolsController {
     private readonly dbService: DbService,
     private readonly usersService: UsersService,
     private readonly snapshotService: WorkbookService,
+    private readonly workspacePermissionsService: WorkspacePermissionsService,
     private readonly connectorAccountService: ConnectorAccountService,
     private readonly auditLogService: AuditLogService,
     private readonly devToolsService: DevToolsService,
@@ -138,7 +140,29 @@ export class DevToolsController {
     const snapshots = await this.snapshotService.findAllForUser(actor);
     const connectorAccounts = await this.connectorAccountService.findAllForOrganization(actor);
     const auditLogs = await this.auditLogService.findEventsForUser(actor.userId, 20, undefined);
-    return new UserDetail(targetUser, snapshots, connectorAccounts, auditLogs);
+    const sharedAccessCountsByWorkbookId = await this.workspacePermissionsService.getSharedAccessCountsByWorkbookIds(
+      snapshots.map((workbook) => ({
+        id: workbook.id,
+        organizationId: workbook.organizationId,
+        ownerUserId: workbook.userId,
+      })),
+    );
+    const isSoleMemberOfOrganization = await this.usersService.isSoleMemberOfOrganization(targetUser);
+    // A hard-delete only tears down workspaces when the user is their org's sole member, and then it deletes
+    // every workbook the organization owns — so the "external users will lose access" count is org-scoped,
+    // not derived from the membership-scoped snapshot list above.
+    const externallySharedWorkspaceCountLostOnHardDelete =
+      isSoleMemberOfOrganization && targetUser.organizationId
+        ? await this.workspacePermissionsService.countExternallySharedWorkbooksInOrganization(targetUser.organizationId)
+        : 0;
+    return new UserDetail(
+      targetUser,
+      snapshots,
+      connectorAccounts,
+      auditLogs,
+      sharedAccessCountsByWorkbookId,
+      externallySharedWorkspaceCountLostOnHardDelete,
+    );
   }
 
   /* Admin tool to set user settings for a target user */

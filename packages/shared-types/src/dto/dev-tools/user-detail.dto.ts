@@ -23,6 +23,12 @@ export interface WorkbookSummary {
   name: string;
   numTables: number;
   isPendingDelete: boolean;
+  /** True when the target user owns the workbook; false when they only have access via a shared workspace permission. */
+  isOwnedByUser: boolean;
+  /** Number of users the workbook is shared with beyond its owner (0 for a private, unshared workbook). */
+  sharedWithUserCount: number;
+  /** Of those shared-with users, how many are non-org (external) — their organization differs from the workbook's. */
+  nonOrgUserCount: number;
   connections: ConnectionSummary[];
   dataFolders: DataFolderSummary[];
 }
@@ -32,4 +38,10 @@ export interface UserDetails {
   user: User;
   workbooks: WorkbookSummary[];
   auditLogs: AuditLogEvent[];
+  /**
+   * Number of workspaces a hard-delete of this user would delete that are shared with external (non-org)
+   * users who would therefore lose access. Non-zero only when the user is the sole member of their
+   * organization (hard-delete then removes the whole org and every workbook it owns).
+   */
+  externallySharedWorkspaceCountLostOnHardDelete: number;
 }

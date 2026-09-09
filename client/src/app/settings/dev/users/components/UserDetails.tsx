@@ -11,6 +11,7 @@ import { getBuildFlavor } from '@/utils/build';
 import { RouteUrls } from '@/utils/route-urls';
 import {
   Accordion,
+  Alert,
   Anchor,
   Card,
   Checkbox,
@@ -26,6 +27,7 @@ import {
 } from '@mantine/core';
 import { ConnectorAccountId, IdPrefixes, User, UserDetails } from '@spinner/shared-types';
 import {
+  AlertTriangleIcon,
   BuildingIcon,
   CreditCardIcon,
   FolderIcon,
@@ -36,6 +38,7 @@ import {
   SquarePenIcon,
   Trash2Icon,
   UserCogIcon,
+  UsersIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useState } from 'react';
@@ -65,6 +68,11 @@ export const UserDetailsCard = ({
   const [credentialsMap, setCredentialsMap] = useState<Record<string, Record<string, unknown> | null>>({});
   const [loadingCredentials, setLoadingCredentials] = useState<Record<string, boolean>>({});
   const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
+
+  // Number of org workspaces a hard-delete of this user would delete that are shared with external (non-org)
+  // users who would lose access. Server-computed org-scoped (non-zero only when the user is the org's sole
+  // member); see GET /dev-tools/users/:id/details.
+  const externalWorkspacesLostOnHardDelete = details.externallySharedWorkspaceCountLostOnHardDelete;
 
   useEffect(() => {
     setActiveWorkbookTab(details.workbooks[0]?.id ?? null);
@@ -360,7 +368,19 @@ export const UserDetailsCard = ({
             <Tabs value={activeWorkbookTab} onChange={setActiveWorkbookTab}>
               <Tabs.List>
                 {details.workbooks.map((workbook) => (
-                  <Tabs.Tab key={workbook.id} value={workbook.id}>
+                  <Tabs.Tab
+                    key={workbook.id}
+                    value={workbook.id}
+                    rightSection={
+                      workbook.isOwnedByUser ? undefined : (
+                        <Tooltip label="Accessed via workspace permission (not owned by this user)">
+                          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                            <StyledLucideIcon Icon={UsersIcon} size={14} c="var(--fg-secondary)" />
+                          </span>
+                        </Tooltip>
+                      )
+                    }
+                  >
                     {workbook.name}
                   </Tabs.Tab>
                 ))}
@@ -385,12 +405,41 @@ export const UserDetailsCard = ({
                       copyValue={workbook.id}
                     />
                     <LabelValuePair
+                      label="Access"
+                      value={
+                        workbook.isOwnedByUser ? (
+                          <BadgeOK>Owner</BadgeOK>
+                        ) : (
+                          <Badge color="gray" icon={UsersIcon}>
+                            Via workspace permission
+                          </Badge>
+                        )
+                      }
+                    />
+                    <LabelValuePair
                       label="Status"
                       value={
                         workbook.isPendingDelete ? <BadgeError>Pending Deletion</BadgeError> : <BadgeOK>Active</BadgeOK>
                       }
                     />
                     <LabelValuePair label="Tables" value={String(workbook.numTables)} />
+                    <LabelValuePair
+                      label="Shared with"
+                      value={
+                        <Group gap="xs">
+                          <Tooltip label="People with access via a workspace permission, not counting the owner">
+                            <span>{`${workbook.sharedWithUserCount} ${
+                              workbook.sharedWithUserCount === 1 ? 'person' : 'people'
+                            }`}</span>
+                          </Tooltip>
+                          {workbook.nonOrgUserCount > 0 && (
+                            <Badge color="red" icon={UsersIcon}>
+                              {`${workbook.nonOrgUserCount} external`}
+                            </Badge>
+                          )}
+                        </Group>
+                      }
+                    />
                     <TextTitle4>Data Folders</TextTitle4>
                     {workbook.dataFolders.length > 0 ? (
                       <Table>
@@ -503,6 +552,18 @@ export const UserDetailsCard = ({
             Permanently delete this user and all of their resources. If they are the sole member of their organization,
             the organization is deleted too. This cannot be undone.
           </Text13Book>
+          {externalWorkspacesLostOnHardDelete > 0 && (
+            <Alert
+              color="orange"
+              variant="light"
+              icon={<StyledLucideIcon Icon={AlertTriangleIcon} size={16} />}
+              title="External collaborators will lose access"
+            >
+              {`Deleting this user deletes their organization and every workbook it owns, including ${externalWorkspacesLostOnHardDelete} ${
+                externalWorkspacesLostOnHardDelete === 1 ? 'workspace' : 'workspaces'
+              } shared with external (non-org) users — those users will lose access.`}
+            </Alert>
+          )}
           <Group justify="flex-start">
             <ButtonDangerLight onClick={() => setHardDeleteOpen(true)} size="xs">
               Hard-delete user

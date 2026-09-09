@@ -516,9 +516,7 @@ export class DevToolsService {
 
     const organizationId = targetUser.organizationId ?? undefined;
 
-    const isSoleMemberOfOrganization = organizationId
-      ? (await this.dbService.client.user.count({ where: { organizationId } })) === 1
-      : false;
+    const isSoleMemberOfOrganization = await this.usersService.isSoleMemberOfOrganization(targetUser);
 
     // Only tear down workbooks when the user is the sole member of their org: delete every workbook owned
     // by the org (org-scoped) so the subsequent organization delete cascade can't orphan a git repo. When

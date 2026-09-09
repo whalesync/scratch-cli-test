@@ -553,6 +553,18 @@ export class UsersService {
   }
 
   /**
+   * Whether the user is the only member of their organization. Drives whether tearing the user down also
+   * deletes the organization and all of its workbooks (see `DevToolsService.hardDeleteUser`) and whether a
+   * hard-delete would strand external collaborators — a user with no organization is never a sole member.
+   */
+  public async isSoleMemberOfOrganization(user: Pick<UserCluster.User, 'organizationId'>): Promise<boolean> {
+    if (!user.organizationId) {
+      return false;
+    }
+    return (await this.db.client.user.count({ where: { organizationId: user.organizationId } })) === 1;
+  }
+
+  /**
    * Deletes a shadow user's database rows during deprovisioning. Call this only AFTER the user's
    * workbooks have been torn down via `WorkbookService.delete` (workbooks FK both the user and the
    * auto-created organization). Deleting the user cascades its `ApiToken` rows; the auto-created

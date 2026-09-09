@@ -91,13 +91,13 @@ describe('DevToolsService.hardDeleteUser', () => {
   let service: DevToolsService;
   let usersService: {
     findOne: jest.Mock;
+    isSoleMemberOfOrganization: jest.Mock;
     revokeWhalesyncSessionTokens: jest.Mock;
     deleteShadowUserAndOrganization: jest.Mock;
   };
   let workbookService: { findAllForUser: jest.Mock; executeHardDeleteWorkbook: jest.Mock };
   let auditLogService: { logEvent: jest.Mock };
   let posthogService: { trackHardDeleteUser: jest.Mock };
-  let userCount: jest.Mock;
   let workbookFindMany: jest.Mock;
 
   const actingAdmin: Actor = { userId: 'usr_admin', organizationId: 'org_admin' };
@@ -111,13 +111,13 @@ describe('DevToolsService.hardDeleteUser', () => {
   }
 
   beforeEach(() => {
-    userCount = jest.fn();
     workbookFindMany = jest.fn();
     const dbService = {
-      client: { user: { count: userCount }, workbook: { findMany: workbookFindMany } },
+      client: { workbook: { findMany: workbookFindMany } },
     };
     usersService = {
       findOne: jest.fn(),
+      isSoleMemberOfOrganization: jest.fn().mockResolvedValue(false),
       revokeWhalesyncSessionTokens: jest.fn().mockResolvedValue(0),
       deleteShadowUserAndOrganization: jest.fn().mockResolvedValue(undefined),
     };
@@ -159,7 +159,7 @@ describe('DevToolsService.hardDeleteUser', () => {
 
   it('sole member: tears down every org workbook and deletes the organization too', async () => {
     usersService.findOne.mockResolvedValue(makeTargetUser());
-    userCount.mockResolvedValue(1); // the target is the only member
+    usersService.isSoleMemberOfOrganization.mockResolvedValue(true); // the target is the only member
     workbookFindMany.mockResolvedValue([{ id: 'wkb_1' }, { id: 'wkb_2' }]);
 
     const result = await service.hardDeleteUser('usr_target', actingAdmin);
@@ -176,7 +176,7 @@ describe('DevToolsService.hardDeleteUser', () => {
 
   it('not sole member: deletes no workbooks and preserves the organization', async () => {
     usersService.findOne.mockResolvedValue(makeTargetUser());
-    userCount.mockResolvedValue(2); // another member remains
+    usersService.isSoleMemberOfOrganization.mockResolvedValue(false); // another member remains
 
     const result = await service.hardDeleteUser('usr_target', actingAdmin);
 

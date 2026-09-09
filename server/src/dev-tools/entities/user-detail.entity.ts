@@ -25,14 +25,28 @@ export class WorkbookSummary {
   name: string;
   numTables: number;
   isPendingDelete: boolean;
+  /** True when the target user is the workbook's creator/owner; false when they only have access via a shared workspace permission. */
+  isOwnedByUser: boolean;
+  /** Number of users the workbook is shared with beyond its owner (0 for a private, unshared workbook). */
+  sharedWithUserCount: number;
+  /** Of those shared-with users, how many are non-org (external) — their organization differs from the workbook's. */
+  nonOrgUserCount: number;
   connections: ConnectionSummary[];
   dataFolders: DataFolderSummary[];
 
-  constructor(workbook: WorkbookCluster.Workbook, connections: ConnectorAccount[]) {
+  constructor(
+    workbook: WorkbookCluster.Workbook,
+    connections: ConnectorAccount[],
+    isOwnedByUser: boolean,
+    sharedAccessCounts: { sharedWithUserCount: number; nonOrgUserCount: number },
+  ) {
     this.id = workbook.id;
     this.name = workbook.name ?? 'Unnamed snapshot';
     this.numTables = workbook.dataFolders.length;
     this.isPendingDelete = workbook.isPendingDelete;
+    this.isOwnedByUser = isOwnedByUser;
+    this.sharedWithUserCount = sharedAccessCounts.sharedWithUserCount;
+    this.nonOrgUserCount = sharedAccessCounts.nonOrgUserCount;
     this.connections = connections.map((c) => new ConnectionSummary(c));
     this.dataFolders = workbook.dataFolders.map((df) => new DataFolderSummary(df));
   }
@@ -61,14 +75,23 @@ export class UserDetail {
   user: User;
   workbooks: WorkbookSummary[];
   auditLogs: AuditLogEventEntity[];
+  /**
+   * Number of workspaces a hard-delete of this user would delete that are shared with external (non-org)
+   * users who would therefore lose access. Non-zero only when the user is the sole member of their
+   * organization (hard-delete then removes the whole org and every workbook it owns).
+   */
+  externallySharedWorkspaceCountLostOnHardDelete: number;
 
   constructor(
     user: UserCluster.User,
     workspaces: WorkbookCluster.Workbook[],
     connectors: ConnectorAccount[],
     auditLogs: AuditLogEvent[],
+    sharedAccessCountsByWorkbookId: Map<string, { sharedWithUserCount: number; nonOrgUserCount: number }>,
+    externallySharedWorkspaceCountLostOnHardDelete: number,
   ) {
     this.user = new User(user);
+    this.externallySharedWorkspaceCountLostOnHardDelete = externallySharedWorkspaceCountLostOnHardDelete;
 
     const connectionsByWorkbook = new Map<string, ConnectorAccount[]>();
     for (const connector of connectors) {
@@ -77,9 +100,19 @@ export class UserDetail {
       connectionsByWorkbook.set(connector.workbookId, list);
     }
 
-    this.workbooks = workspaces.map(
-      (workbook) => new WorkbookSummary(workbook, connectionsByWorkbook.get(workbook.id) ?? []),
-    );
+    this.workbooks = workspaces.map((workbook) => {
+      const isOwnedByUser = workbook.userId === user.id;
+      const sharedAccessCounts = sharedAccessCountsByWorkbookId.get(workbook.id) ?? {
+        sharedWithUserCount: 0,
+        nonOrgUserCount: 0,
+      };
+      return new WorkbookSummary(
+        workbook,
+        connectionsByWorkbook.get(workbook.id) ?? [],
+        isOwnedByUser,
+        sharedAccessCounts,
+      );
+    });
     this.auditLogs = auditLogs.map((auditLog) => new AuditLogEventEntity(auditLog));
   }
 }
