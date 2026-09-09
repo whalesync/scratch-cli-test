@@ -241,9 +241,15 @@ case "$sub" in
   *) echo "error: subcommand '$sub' not allowed (read-only only)" >&2; exit 2 ;;
 esac
 for a in "$@"; do case "$a" in
-  -o|--output|--output=*|--output-directory=*|--ext-diff|--upload-pack=*|--exec=*|--exec-path=*)
+  -o|--output|--output=*|--output-directory=*|--ext-diff|--upload-pack=*|--exec=*|--exec-path=*|\
+  --no-index|--lost-found|--textconv|--filters)
     echo "error: flag '$a' not allowed" >&2; exit 2 ;;
 esac; done
+# fsck is the only allowed subcommand with a --l* flag (--lost-found), which writes as root
+# under REPO_ROOT; reject it and every prefix abbreviation (--lo/--los/--lost/...) too.
+if [ "$sub" = fsck ]; then for a in "$@"; do case "$a" in
+  --l*) echo "error: flag '$a' not allowed" >&2; exit 2 ;;
+esac; done; fi
 exec /usr/bin/git --no-pager -C "$real" "$sub" "$@"
 WRAP
 

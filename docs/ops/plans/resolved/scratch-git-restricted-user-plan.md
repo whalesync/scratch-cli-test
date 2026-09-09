@@ -153,9 +153,15 @@ case "$sub" in
   *) echo "error: subcommand '$sub' not allowed (read-only only)" >&2; exit 2 ;;
 esac
 for a in "$@"; do case "$a" in
-  -o|--output|--output=*|--output-directory=*|--ext-diff|--upload-pack=*|--exec=*|--exec-path=*)
+  -o|--output|--output=*|--output-directory=*|--ext-diff|--upload-pack=*|--exec=*|--exec-path=*|\
+  --no-index|--lost-found|--textconv|--filters)
     echo "error: flag '$a' not allowed" >&2; exit 2 ;;
 esac; done
+# fsck is the only allowed subcommand with a --l* flag (--lost-found), which writes as root
+# under REPO_ROOT; reject it and every prefix abbreviation (--lo/--los/--lost/...) too.
+if [ "$sub" = fsck ]; then for a in "$@"; do case "$a" in
+  --l*) echo "error: flag '$a' not allowed" >&2; exit 2 ;;
+esac; done; fi
 exec /usr/bin/git --no-pager -C "$real" "$sub" "$@"
 WRAP
 
@@ -175,7 +181,9 @@ rm -f /tmp/gitops.sudoers
 # ---------- end restricted read-only ops tooling ----------
 ```
 
-Core safety properties: wrappers are root-owned (caller can't edit them) and hard-code absolute `/usr/bin/docker` and `/usr/bin/git` with `env_reset`/`secure_path` (no `$PATH` shadowing); the `sudoers` line carries **no wildcards** (all argument policy lives in the wrappers); container names and repo IDs are allowlist/regex-validated; the repo path is canonicalized and contained under `/mnt/disks/data/repos`; `git` runs `--no-pager` (no pager `!sh` escape) with a read-only subcommand allowlist.
+Core safety properties: wrappers are root-owned (caller can't edit them) and hard-code absolute `/usr/bin/docker` and `/usr/bin/git` with `env_reset`/`secure_path` (no `$PATH` shadowing); the `sudoers` line carries **no wildcards** (all argument policy lives in the wrappers); container names and repo IDs are allowlist/regex-validated; the repo path is canonicalized and contained under `/mnt/disks/data/repos`; `git` runs `--no-pager` (no pager `!sh` escape) with a read-only subcommand allowlist and a flag denylist that blocks filesystem-escaping / write / exec flags (`--no-index`, `--lost-found`, `--textconv`, `--filters`, `--output`, `--ext-diff`, …).
+
+> **Security patch — DEV-10632 (2026-09-08, Chris Hoefgen).** The original denylist omitted `--no-index`, so the restricted read-only tier could run `git diff --no-index <a> <b>` as root and read any root-readable file (confirmed on the `spv1eu-test` VM). The wrapper above now also denies `--no-index`, `--lost-found`, `--textconv`, and `--filters`, and rejects every `--l*` prefix abbreviation when the subcommand is `fsck`. On a live VM the patch must be re-applied out-of-band as an admin — `metadata_startup_script` is frozen by `ignore_changes` (see [Activation & rollout](#activation--rollout)).
 
 > The snapshot-recovery VM in `runbook-scratch-git-repo-recovery.md` uses its own inline startup script and is admin-only/temporary — intentionally out of scope.
 
@@ -277,7 +285,7 @@ Cleanup (`docker … prune`, `journalctl --vacuum`), disk-space fixes, deleting 
 1. SSH succeeds as the gcp-ro SA via `connect_to_git_service_ssh.sh test` (proves osLogin + IAP + actAs are all in place).
 2. `sudo -l` lists **only** the four `/usr/local/sbin/gitops-*` commands (NOPASSWD).
 3. Capabilities work: `sudo gitops-ps`; `sudo gitops-logs scratch-git-proxy 50`; `sudo gitops-disk`; `sudo gitops-git org_…/wkb_…/coa_… log -n 5`.
-4. Denials all fail: `docker ps` (socket denied — not in docker group); `sudo docker ps` (not in sudoers); `sudo rm -rf /mnt/disks/data`; `sudo gitops-logs evil 10` (name allowlist); `sudo gitops-git ../../etc/passwd log` (path containment); `sudo gitops-git org_…/… push` (write subcommand).
+4. Denials all fail: `docker ps` (socket denied — not in docker group); `sudo docker ps` (not in sudoers); `sudo rm -rf /mnt/disks/data`; `sudo gitops-logs evil 10` (name allowlist); `sudo gitops-git ../../etc/passwd log` (path containment); `sudo gitops-git org_…/… push` (write subcommand); `sudo gitops-git org_…/… diff --no-index /dev/null /etc/shadow` (flag denylist — arbitrary read, DEV-10632); `sudo gitops-git org_…/… fsck --lost-found` and `… fsck --lo` (flag denylist — root write).
 5. As a `role_operations` (osAdminLogin) identity: confirm break-glass still works — `sudo docker ps`, `sudo docker exec …`, manual `rm` all succeed.
 6. `connect_to_git_service.sh test` still port-forwards 3100 (unchanged).
 
