@@ -6898,7 +6898,12 @@ fn download_single_repo(
         });
     };
     let old_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
-    if old_main_hash.as_deref() == Some(new_main_hash.as_str()) {
+    // A post-publish reconcile MUST run the full approved-set partition even when
+    // `main` didn't move: an all-rejected publish commits nothing server-side, so
+    // `main` stays put, yet the rejected records still need routing out of
+    // `accepted-patches.json` into `failed-patches.json` (DEV-11169). Only a plain
+    // pull (`post_publish.is_none()`) may take this fast path.
+    if post_publish.is_none() && old_main_hash.as_deref() == Some(new_main_hash.as_str()) {
         // `main` didn't move, so file CONTENT is unchanged. The on-disk folder
         // STRUCTURE can still be stale, though: a table deselected in an earlier
         // session leaves an (effectively empty) folder behind, and because the

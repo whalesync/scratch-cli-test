@@ -4056,6 +4056,108 @@ fn reconcile_moves_failed_op_to_failed_patches() {
     );
 }
 
+/// DEV-11169: the DESKTOP post-publish reconcile — `download_single_repo` with
+/// `Some(post_publish)` — must route a connector-rejected record into
+/// `failed-patches.json` even when the connector rejected EVERY record, so the
+/// server committed nothing and origin `main` never advanced. This is the
+/// desktop-path analog of `reconcile_moves_failed_op_to_failed_patches`, which
+/// covers the short-circuit-free CLI-native `reconcile_accepted_after_publish`.
+/// Before the fix, the "main didn't move" short-circuit returned `up_to_date`
+/// early and left the rejected patch stranded in `accepted-patches.json`, where
+/// it would re-publish on the next run instead of surfacing as a failure.
+#[test]
+fn download_reconcile_routes_failed_op_to_failed_patches_when_main_did_not_advance() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // main has Acme (industry=Tech); the user approved industry -> SaaS, so the
+    // edited value sits in the worktree and is captured as an accepted patch.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"industry": "SaaS"}),
+            revert: false,
+        }],
+    };
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // The connector rejected this record. It was the only record, so the server
+    // committed nothing and origin `main` did NOT advance — the exact scenario
+    // the "main didn't move" short-circuit used to skip past on the desktop path.
+    let failed_op = crate::api::JobFailedOperation {
+        file_path: "posts/rec_acme.json".into(),
+        phase: "edit".into(),
+        error: Some("industry must be one of: Tech, Bio".into()),
+        error_code: None,
+        field_errors: Some(
+            [(
+                "/industry".to_string(),
+                "industry must be one of: Tech, Bio".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+        ),
+    };
+    let succeeded_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let result = download_single_repo(
+        &ctx,
+        &workspace_dir,
+        "test-token",
+        &[],
+        Some(PostPublishReconcile {
+            failed_ops: &[failed_op],
+            succeeded_paths: &succeeded_paths,
+        }),
+    )
+    .unwrap();
+    // The reconcile ran the full partition instead of the bare `up_to_date`
+    // short-circuit — which returns "downloaded" (before the fix this was
+    // "up_to_date" from the early return).
+    assert_eq!(result.status, "downloaded");
+
+    // Moved OUT of accepted-patches.json (before the fix it stayed, stranded)...
+    let accepted_after = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert!(
+        accepted_after.patches.is_empty(),
+        "an all-rejected desktop publish must not re-strand the failed patch in accepted-patches.json"
+    );
+    // ...and INTO failed-patches.json, carrying the connector error + field error.
+    let failed_after = crate::shared::failed_patches::load(&connection_dir).unwrap();
+    assert_eq!(failed_after.patches.len(), 1);
+    assert_eq!(failed_after.patches[0].path, "posts/rec_acme.json");
+    assert_eq!(
+        failed_after.patches[0].error.as_deref(),
+        Some("industry must be one of: Tech, Bio")
+    );
+    assert_eq!(
+        failed_after.patches[0]
+            .field_errors
+            .as_ref()
+            .and_then(|m| m.get("/industry"))
+            .map(String::as_str),
+        Some("industry must be one of: Tech, Bio")
+    );
+}
+
 #[test]
 fn reconcile_moves_all_failed_ops_when_more_than_twenty() {
     // DEV-10756: the reconcile partitions purely on membership in the failed set,
