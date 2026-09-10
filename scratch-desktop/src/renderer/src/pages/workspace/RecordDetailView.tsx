@@ -34,6 +34,7 @@ import {
   applyAcceptedRecordChangeToOpenRecordData,
   applyDiscardedRecordChangeToOpenRecordData,
   applyRejectedRecordChangeToOpenRecordData,
+  findNextRecordIndexNeedingReview,
   getRecordName,
   rowHasUnreviewedChanges,
   toDisplayString,
@@ -418,8 +419,30 @@ export const RecordDetailView = memo(function RecordDetailView({
     [recordData, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll],
   );
 
+  const recordDataRef = useRef(recordData);
+  recordDataRef.current = recordData;
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const selectedIndexRef = useRef(selectedIndex);
+  selectedIndexRef.current = selectedIndex;
+
+  // After a record is fully approved, move on to the next record on the page that still needs
+  // review (forward first, wrapping to the start) instead of leaving the user to pick the next one
+  // from the record list by hand. Stays on the current record when nothing else needs review, or
+  // when the user already navigated elsewhere while the approve was in flight. Mirrors the
+  // stepper advance in the v2 review drawer (FolderReviewSurface.nextChangedRecordAfter).
+  const advanceToNextRecordNeedingReviewAfterApproval = useCallback(
+    (approvedFilename: string) => {
+      if (filenameRef.current !== approvedFilename) return;
+      const nextIndex = findNextRecordIndexNeedingReview(rowsRef.current, selectedIndexRef.current);
+      if (nextIndex !== null) onSelectIndex(nextIndex);
+    },
+    [onSelectIndex],
+  );
+
   const handleAccept = useCallback(() => {
     if (!currentRecordCliPath) return;
+    const approvedFilename = filenameRef.current;
     void window.scratchDesktop
       .acceptRecord(workspacePath, currentRecordCliPath)
       .then((result) => {
@@ -432,6 +455,7 @@ export const RecordDetailView = memo(function RecordDetailView({
           applyAcceptedRecordChangeToOpenRecordData,
           onSingleRecordAcceptedApplyOptimistically,
         );
+        if (approvedFilename) advanceToNextRecordNeedingReviewAfterApproval(approvedFilename);
       })
       .catch((err: unknown) => {
         console.error('acceptRecord failed', err);
@@ -446,6 +470,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     currentRecordCliPath,
     applyOptimisticRecordReviewAction,
     onSingleRecordAcceptedApplyOptimistically,
+    advanceToNextRecordNeedingReviewAfterApproval,
   ]);
 
   const handleReject = useCallback(() => {
@@ -539,7 +564,6 @@ export const RecordDetailView = memo(function RecordDetailView({
 
   const filenameRef = useRef(currentFilename);
   filenameRef.current = currentFilename;
-
   const handleApproveFieldClick = useCallback(
     (fieldName: string, value: string, logLabel: string) => {
       const filename = filenameRef.current;
@@ -553,12 +577,27 @@ export const RecordDetailView = memo(function RecordDetailView({
           );
           setValidationReloadKey((k) => k + 1);
           onSingleFieldAcceptedApplyOptimistically?.(filename, fieldName, result.value);
+          // Approving the record's LAST unreviewed field completes its review, so advance exactly
+          // like the record-level Approve does (same rule as the v2 review drawer).
+          const recordDataBeforeAccept = recordDataRef.current;
+          const recordDataAfterAccept = recordDataBeforeAccept
+            ? applyAcceptedFieldChangeToOpenRecordData(recordDataBeforeAccept, fieldName, result.value)
+            : null;
+          if (recordDataAfterAccept && !rowHasUnreviewedChanges(recordDataAfterAccept.row)) {
+            advanceToNextRecordNeedingReviewAfterApproval(filename);
+          }
         })
         .catch((err: unknown) => {
           console.error(`[acceptUnreviewedFieldEdit] ${logLabel} failed:`, err);
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, onSingleFieldAcceptedApplyOptimistically],
+    [
+      clearFieldEdit,
+      folderPath,
+      workspacePath,
+      onSingleFieldAcceptedApplyOptimistically,
+      advanceToNextRecordNeedingReviewAfterApproval,
+    ],
   );
 
   const handleRejectUnreviewedFieldClick = useCallback(

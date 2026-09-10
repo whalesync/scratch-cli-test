@@ -74,6 +74,27 @@ export function rowHasUnreviewedChanges(
   );
 }
 
+/**
+ * Index of the next record in `rows` that still needs review, used to auto-advance the detail
+ * view after the record at `currentIndex` is approved. Searches forward from the current record
+ * first (the natural top-to-bottom review order), then wraps to the start so records skipped
+ * earlier are not stranded. Never returns `currentIndex` itself — the caller has just reviewed
+ * that record and its row may not have flipped to approved yet. Null when no other record on
+ * the page needs review, in which case the caller stays put.
+ */
+export function findNextRecordIndexNeedingReview(
+  rows: ReadonlyArray<{ __rowStatus?: DiffRowStatus; __changedFields?: string[]; [key: string]: unknown }>,
+  currentIndex: number,
+): number | null {
+  if (rows.length === 0) return null;
+  for (let offset = 1; offset < rows.length; offset++) {
+    const candidateIndex = (currentIndex + offset) % rows.length;
+    if (candidateIndex === currentIndex) continue;
+    if (rowHasUnreviewedChanges(rows[candidateIndex])) return candidateIndex;
+  }
+  return null;
+}
+
 export function getRecordName(row: Record<string, unknown>, titleColumnId: string | null): string {
   if (titleColumnId) {
     const raw = (row as { __raw?: Record<string, unknown> }).__raw;
