@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { compareFlattenedRecordVersions, deriveKeyedArrayPathsFromColumnIds, flattenObject } from '../local-files';
+import {
+  BASELINE_UNAVAILABLE_MESSAGE,
+  compareFlattenedRecordVersions,
+  deriveKeyedArrayPathsFromColumnIds,
+  flattenObject,
+} from '../local-files';
 
 /**
  * Verbatim keyed arrays (`x-scratch-array-keyed-by`, DEV-10637): the diff must be
@@ -121,5 +126,40 @@ describe('compareFlattenedRecordVersions — per-element keyed-array dots', () =
     expect(result?.row.__changedFields).toEqual([]);
     expect(result?.row.__unpublishedFields).toEqual([TIER]);
     expect(result?.row.__masterFields[TIER]).toBe('Enterprise');
+  });
+});
+
+describe('compareFlattenedRecordVersions — missing baseline (DEV-11059)', () => {
+  const working = { id: 'rec_1', name: 'Edited' };
+
+  it('classifies an EXISTING record with no approved/published baseline as baselineUnavailable (not added)', () => {
+    const result = compareFlattenedRecordVersions(working, undefined, undefined, 'rec_1.json', true);
+    expect(result?.row.__rowStatus).toBe('baselineUnavailable');
+    // No phantom field diff: the create branch marks every field changed; this must not.
+    expect(result?.row.__changedFields).toEqual([]);
+    expect(result?.row.__baselineError).toBe(BASELINE_UNAVAILABLE_MESSAGE);
+  });
+
+  it('still classifies a genuine create (record not in the service) as added', () => {
+    const result = compareFlattenedRecordVersions(working, undefined, undefined, 'rec_1.json', false);
+    expect(result?.row.__rowStatus).toBe('added');
+    expect(result?.row.__baselineError).toBeUndefined();
+  });
+
+  it('defaults to added when the existence flag is omitted (backwards-compatible)', () => {
+    const result = compareFlattenedRecordVersions(working, undefined, undefined, 'rec_1.json');
+    expect(result?.row.__rowStatus).toBe('added');
+  });
+
+  it('is unaffected when a baseline exists: an edited existing record is still modified', () => {
+    const result = compareFlattenedRecordVersions(
+      { id: 'rec_1', name: 'New' },
+      { id: 'rec_1', name: 'Old' },
+      { id: 'rec_1', name: 'Old' },
+      'rec_1.json',
+      true,
+    );
+    expect(result?.row.__rowStatus).toBe('modified');
+    expect(result?.row.__changedFields).toEqual(['name']);
   });
 });

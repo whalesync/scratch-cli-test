@@ -39,6 +39,8 @@ import {
   collectReferencedIds,
   extractFolderReferenceInfo,
   resolveLinkedFolder,
+  resolveRemoteIdPath,
+  workingRecordExistsInService,
   type FolderReferenceInfo,
 } from './reference-labels';
 import {
@@ -392,7 +394,12 @@ export type RowStatus =
   | 'deleted'
   | 'deletedUnpublished'
   | 'unchanged'
-  | 'invalidJson';
+  | 'invalidJson'
+  // DEV-11059: an existing (already-in-service) record whose published `refs/heads/main`
+  // baseline failed to resolve, so no diff can be computed. Rendered like `invalidJson`
+  // (a row-level "needs attention" state), NEVER as an `added` create — otherwise the
+  // edit is hidden and the user approves blind.
+  | 'baselineUnavailable';
 export type DiffGridFilterKind = 'unreviewed' | 'unpublished' | 'pending' | 'has-problems';
 
 export type DiffGridFilter =
@@ -413,6 +420,8 @@ export interface DiffRow extends Record<string, unknown> {
   __filename: string;
   /** Set when __rowStatus is invalidJson (which side failed is encoded in the string). */
   __parseError?: string;
+  /** DEV-11059: message for a `baselineUnavailable` row (why the published baseline couldn't be loaded). */
+  __baselineError?: string;
   /**
    * Publish redesign (DEV-10048): per-field connector rejection messages for a
    * record that a prior publish failed, keyed by dot-path field key (from
@@ -1189,6 +1198,7 @@ function makeDiffRow(
   masterFields: Record<string, unknown>,
   filename: string,
   parseError?: string,
+  baselineError?: string,
 ): DiffRow {
   const row: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(base)) row[k] = v;
@@ -1201,20 +1211,51 @@ function makeDiffRow(
   if (parseError !== undefined) {
     row['__parseError'] = parseError;
   }
+  if (baselineError !== undefined) {
+    row['__baselineError'] = baselineError;
+  }
   return row as DiffRow;
 }
+
+/** DEV-11059 banner text for a record whose published baseline could not be loaded. */
+export const BASELINE_UNAVAILABLE_MESSAGE =
+  "Couldn't load the published version of this record, so its changes can't be diffed. Re-pull this connection to review.";
 
 export function compareFlattenedRecordVersions(
   workingRow: Record<string, unknown> | undefined,
   dirtyRow: Record<string, unknown> | undefined,
   masterRow: Record<string, unknown> | undefined,
   filename: string,
+  // DEV-11059: true when the working record already exists in the external service (carries a
+  // concrete, non-sentinel remote id). Distinguishes an existing record whose published baseline
+  // failed to resolve (→ `baselineUnavailable`) from a genuine not-yet-published create (→ `added`).
+  workingRecordExistsInExternalService = false,
 ): { row: DiffRow; columns: string[] } | null {
   const columnSet = new Set<string>();
 
   if (workingRow && !dirtyRow) {
     const allFields = Object.keys(workingRow);
     for (const k of allFields) columnSet.add(k);
+    // No approved/published baseline for a record that already exists in the service means the
+    // `refs/heads/main` blob failed to resolve (missing/stale main, path desync, native read
+    // failure) — surface a "can't diff" state instead of a phantom "Record added" create, which
+    // would hide the real edit and let the user approve blind (DEV-11059).
+    if (workingRecordExistsInExternalService) {
+      return {
+        row: makeDiffRow(
+          workingRow,
+          'baselineUnavailable',
+          [],
+          {},
+          [],
+          {},
+          filename,
+          undefined,
+          BASELINE_UNAVAILABLE_MESSAGE,
+        ),
+        columns: Array.from(columnSet),
+      };
+    }
     return { row: makeDiffRow(workingRow, 'added', allFields, {}, [], {}, filename), columns: Array.from(columnSet) };
   }
 
@@ -1296,6 +1337,9 @@ function compareRecordSnapshots(
   d: JsonFileSnapshot,
   m: JsonFileSnapshot,
   filename: string,
+  // DEV-11059: dot-path to the record's remote id, resolved from the folder schema. Lets the
+  // classifier tell an existing-record-with-missing-baseline apart from a genuine create.
+  resolvedIdPath: string,
 ): { row: DiffRow; columns: string[] } | null {
   const displayRaw: Record<string, unknown> =
     w.kind === 'ok' ? w.raw : d.kind === 'ok' ? d.raw : m.kind === 'ok' ? m.raw : {};
@@ -1320,7 +1364,10 @@ function compareRecordSnapshots(
   const wRow = w.kind === 'ok' ? w.flat : undefined;
   const dRow = d.kind === 'ok' ? d.flat : undefined;
   const mRow = m.kind === 'ok' ? m.flat : undefined;
-  const result = compareFlattenedRecordVersions(wRow, dRow, mRow, filename);
+  // Read the id from the raw (non-flattened) working record: the id column may not be among the
+  // view's flattened leaf paths, and the sentinel/scalar check needs the verbatim value.
+  const workingExistsInService = w.kind === 'ok' ? workingRecordExistsInService(w.raw, resolvedIdPath) : false;
+  const result = compareFlattenedRecordVersions(wRow, dRow, mRow, filename, workingExistsInService);
   if (result) {
     (result.row as Record<string, unknown>)['__raw'] = displayRaw;
   }
@@ -1605,6 +1652,9 @@ export async function readDiffGridDataPage(
     new Set(Object.values(cliResult.row_errors).flatMap((errors) => errors.map((e) => e.field_path))),
   );
   const schema = await readConnectionSchema(workspacePath, cliFolder);
+  // DEV-11059: the record's remote-id dot-path, used to tell an existing record whose published
+  // baseline failed to resolve apart from a genuine create (both otherwise land in the `added` branch).
+  const resolvedIdPath = resolveRemoteIdPath(schema);
 
   // Key the diff at the SAME granularity as the rendered columns. The active
   // view drills enveloped (Notion-style) properties to their value leaf — e.g.
@@ -1648,6 +1698,7 @@ export async function readDiffGridDataPage(
       approvedFiles.get(name) ?? missingSnapshot,
       publishedFiles.get(name) ?? missingSnapshot,
       name,
+      resolvedIdPath,
     );
     if (!compared) continue;
     for (const column of compared.columns) columnSet.add(column);
@@ -1659,6 +1710,19 @@ export async function readDiffGridDataPage(
       if (failed.recordError) compared.row.__failedError = failed.recordError;
     }
     rows.push(compared.row);
+  }
+
+  // DEV-11059: an existing record whose published baseline failed to resolve (missing/stale main,
+  // path desync, native read failure) is classed `baselineUnavailable` instead of a phantom create.
+  // Log the per-page count so the condition is visible in support logs, not silently swallowed.
+  const baselineUnavailableCount = rows.reduce(
+    (count, row) => (row.__rowStatus === 'baselineUnavailable' ? count + 1 : count),
+    0,
+  );
+  if (baselineUnavailableCount > 0) {
+    console.debug(
+      `[local-files] ${baselineUnavailableCount} record(s) in ${cliFolder} could not resolve a published baseline (baselineUnavailable) — re-pull to recover.`,
+    );
   }
 
   const errorFilenames = new Set(errorFilenameList);
@@ -1908,6 +1972,8 @@ export async function readDiffRecordData(
 
   const relPath = relative(workspacePath, folderPath);
   const schema = await readConnectionSchema(workspacePath, relPath);
+  // DEV-11059: remote-id dot-path — see readDiffGridDataPage.
+  const resolvedIdPath = resolveRemoteIdPath(schema);
   const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
   const columnIds = schemaColumns.map((c) => c.id);
   const leafPaths = new Set(columnIds);
@@ -1926,7 +1992,7 @@ export async function readDiffRecordData(
   const d = approvedAndPublished.approved.get(filename) ?? missingSnapshot;
   const m = approvedAndPublished.published.get(filename) ?? missingSnapshot;
 
-  const compared = compareRecordSnapshots(w, d, m, filename);
+  const compared = compareRecordSnapshots(w, d, m, filename, resolvedIdPath);
   if (!compared) {
     return null;
   }

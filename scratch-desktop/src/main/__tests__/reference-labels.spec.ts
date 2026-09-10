@@ -7,6 +7,8 @@ import {
   referenceIdToString,
   referenceNameToString,
   resolveLinkedFolder,
+  resolveRemoteIdPath,
+  workingRecordExistsInService,
   type FolderReferenceInfo,
 } from '../reference-labels';
 
@@ -151,5 +153,39 @@ describe('buildIdToNameMap', () => {
     const records = [{ id: 'rec_ok', name: 'Keep' }, { id: 'rec_noname', name: { rich: 'text' } }, { name: 'no id' }];
     const map = buildIdToNameMap(records, 'id', ['name']);
     expect(Array.from(map.entries())).toEqual([['rec_ok', 'Keep']]);
+  });
+});
+
+describe('resolveRemoteIdPath (DEV-11059)', () => {
+  it('prefers the DEV-10092 idPath, then the legacy idColumnRemoteId, then the default', () => {
+    expect(resolveRemoteIdPath({ idPath: 'id.record_id', idColumnRemoteId: 'id' })).toBe('id.record_id');
+    expect(resolveRemoteIdPath({ idColumnRemoteId: 'remote_id' })).toBe('remote_id');
+    expect(resolveRemoteIdPath({})).toBe(DEFAULT_REFERENCE_ID_PATH);
+    expect(resolveRemoteIdPath(null)).toBe(DEFAULT_REFERENCE_ID_PATH);
+  });
+});
+
+describe('workingRecordExistsInService (DEV-11059)', () => {
+  it('is true for a concrete, non-sentinel remote id (string or number)', () => {
+    expect(workingRecordExistsInService({ id: 'rec_123' }, 'id')).toBe(true);
+    expect(workingRecordExistsInService({ id: 42 }, 'id')).toBe(true);
+  });
+
+  it('reads a nested id path (e.g. Attio id.record_id)', () => {
+    expect(workingRecordExistsInService({ id: { record_id: 'r_1' } }, 'id.record_id')).toBe(true);
+  });
+
+  it('is false for a not-yet-published create: no id, empty, or a Scratch pending sentinel', () => {
+    expect(workingRecordExistsInService({ name: 'no id here' }, 'id')).toBe(false);
+    expect(workingRecordExistsInService({ id: '' }, 'id')).toBe(false);
+    expect(workingRecordExistsInService({ id: null }, 'id')).toBe(false);
+    // Sync-created and revert-recreated records carry non-empty sentinel ids before publish.
+    expect(workingRecordExistsInService({ id: 'scratch_pending_publish_abc123' }, 'id')).toBe(false);
+    expect(workingRecordExistsInService({ id: 'scratch_pending_recreate_rec_old' }, 'id')).toBe(false);
+  });
+
+  it('is false when the id path resolves to an object or array (not a single id)', () => {
+    expect(workingRecordExistsInService({ id: { a: 1 } }, 'id')).toBe(false);
+    expect(workingRecordExistsInService({ id: ['a', 'b'] }, 'id')).toBe(false);
   });
 });

@@ -201,7 +201,11 @@ export function ReviewTableGrid({
       const readOnlyTheme = isReadOnly ? { textDark: getCssVar('--fg-muted') } : {};
       const themeOverride = { ...rowTheme, ...diffTheme, ...readOnlyTheme };
       const allowOverlay =
-        !isReadOnly && status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';
+        !isReadOnly &&
+        status !== 'deleted' &&
+        status !== 'deletedUnpublished' &&
+        status !== 'invalidJson' &&
+        status !== 'baselineUnavailable';
 
       // Foreign-key (reference) cell: show the linked record's name(s) when resolved (DEV-10530);
       // the raw id stays in data/copyData so editing, copy, and publish use the verbatim value.
@@ -291,7 +295,7 @@ export function ReviewTableGrid({
         // (invalidJson) is always an error.
         const validationLevel =
           recordValidationLevelByFilename.get(row.__filename) ??
-          (row.__rowStatus === 'invalidJson' ? 'error' : undefined);
+          (row.__rowStatus === 'invalidJson' || row.__rowStatus === 'baselineUnavailable' ? 'error' : undefined);
         if (validationLevel) {
           drawValidationWarningIcon(
             ctx,
@@ -453,7 +457,8 @@ export function ReviewTableGrid({
         !colId ||
         r.__rowStatus === 'deleted' ||
         r.__rowStatus === 'deletedUnpublished' ||
-        r.__rowStatus === 'invalidJson'
+        r.__rowStatus === 'invalidJson' ||
+        r.__rowStatus === 'baselineUnavailable'
       ) {
         return;
       }

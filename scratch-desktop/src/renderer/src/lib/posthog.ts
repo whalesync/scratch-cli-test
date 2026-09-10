@@ -46,6 +46,7 @@ export enum PostHogEvents {
   APPROVE_RECORD_CHANGE = 'approve_record_change',
   REJECT_RECORD_CHANGE = 'reject_record_change',
   SELECT_CHANGE_TYPE_CHIP = 'select_change_type_chip',
+  BASELINE_UNAVAILABLE_RECORD_VIEWED = 'baseline_unavailable_record_viewed',
 }
 
 export type CloudSyncSurface = 'open' | 'create';
@@ -122,6 +123,19 @@ export async function initPostHog(): Promise<void> {
 
 export async function trackPageView(url: string): Promise<void> {
   await captureEvent(PostHogEvents.PAGE_VIEW, { url });
+}
+
+/**
+ * DEV-11059: the user opened a record whose published (`refs/heads/main`) baseline couldn't be
+ * loaded, so its edit can't be diffed (surfaced as "needs attention" rather than a phantom
+ * "Record added"). Tracked to measure how often this still occurs in the wild. `folderPath`
+ * carries the connection dir (the connector), never record data.
+ */
+export async function trackBaselineUnavailableRecordViewed(props: {
+  folderPath: string;
+  filename: string;
+}): Promise<void> {
+  await captureEvent(PostHogEvents.BASELINE_UNAVAILABLE_RECORD_VIEWED, props);
 }
 
 export async function trackOpenWorkspace(workspaceId: string): Promise<void> {

@@ -97,6 +97,7 @@ describe('getStatusDotVar', () => {
       deletedUnpublished: '--delete-approved-stroke',
       unchanged: null,
       invalidJson: null,
+      baselineUnavailable: null,
     };
     expect(STATUS_DOT_VAR).toEqual(expected);
     for (const status of Object.keys(expected) as RowStatus[]) {
@@ -116,6 +117,7 @@ describe('isFullyApprovedRowStatus', () => {
       deletedUnpublished: true,
       unchanged: false,
       invalidJson: false,
+      baselineUnavailable: false,
     };
     for (const status of Object.keys(expected) as RowStatus[]) {
       expect(isFullyApprovedRowStatus(status)).toBe(expected[status]);
@@ -134,6 +136,7 @@ describe('status cell token maps', () => {
       deletedUnpublished: '--delete-approved-bg',
       unchanged: null,
       invalidJson: '#fff7ed',
+      baselineUnavailable: '#fff7ed',
     };
     expect(STATUS_CELL_TINT_VAR).toEqual(expected);
   });
@@ -148,6 +151,7 @@ describe('status cell token maps', () => {
       deletedUnpublished: '--delete-needs-review-stroke',
       unchanged: null,
       invalidJson: null,
+      baselineUnavailable: null,
     };
     expect(STATUS_CELL_STROKE_VAR).toEqual(expected);
   });

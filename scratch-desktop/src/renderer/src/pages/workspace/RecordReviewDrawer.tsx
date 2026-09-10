@@ -109,6 +109,12 @@ const STATE_BADGE_BY_ROW_STATUS: Record<DiffRowStatus, StateBadge> = {
     backgroundColor: 'var(--delete-needs-review-bg)',
     foregroundColor: 'var(--delete-needs-review-stroke)',
   },
+  // DEV-11059: existing record whose published baseline couldn't be loaded — a "can't diff" problem.
+  baselineUnavailable: {
+    label: 'UNAVAILABLE',
+    backgroundColor: 'var(--delete-needs-review-bg)',
+    foregroundColor: 'var(--delete-needs-review-stroke)',
+  },
 };
 
 const EMPTY_VALUE_PLACEHOLDER = '(empty)';
@@ -680,6 +686,17 @@ export const RecordReviewDrawer = memo(function RecordReviewDrawer({
             {recordData.row.__parseError && recordData.row.__parseError.length > 0
               ? recordData.row.__parseError
               : 'This record file is not valid JSON on disk.'}
+          </Text13Regular>
+        </Box>
+      );
+    } else if (rowStatus === 'baselineUnavailable') {
+      // DEV-11059: no published baseline resolved, so there is no diff to render.
+      bodyContent = (
+        <Box style={{ padding: '12px 0' }}>
+          <Text13Regular c="var(--mantine-color-orange-8)" style={{ whiteSpace: 'pre-wrap' }}>
+            {recordData.row.__baselineError && recordData.row.__baselineError.length > 0
+              ? recordData.row.__baselineError
+              : "Couldn't load the published version of this record, so its changes can't be diffed. Re-pull this connection to review."}
           </Text13Regular>
         </Box>
       );

@@ -25,13 +25,16 @@ export interface DiffRecordData {
       | 'deleted'
       | 'deletedUnpublished'
       | 'unchanged'
-      | 'invalidJson';
+      | 'invalidJson'
+      | 'baselineUnavailable';
     __changedFields: string[];
     __fromFields: Record<string, unknown>;
     __unpublishedFields: string[];
     __masterFields: Record<string, unknown>;
     __filename: string;
     __parseError?: string;
+    /** DEV-11059: message for a `baselineUnavailable` row (published baseline couldn't be loaded). */
+    __baselineError?: string;
     __raw: Record<string, unknown>;
   };
   columns: DiffRecordColumn[];
@@ -66,6 +69,7 @@ export function rowHasUnreviewedChanges(
     row.__rowStatus === 'added' ||
     row.__rowStatus === 'deleted' ||
     row.__rowStatus === 'invalidJson' ||
+    row.__rowStatus === 'baselineUnavailable' ||
     (row.__changedFields?.length ?? 0) > 0
   );
 }
@@ -112,7 +116,8 @@ export function deriveRowStatusAfterEdit(row: DiffRow): DiffRowStatus {
     row.__rowStatus === 'addedUnpublished' ||
     row.__rowStatus === 'deleted' ||
     row.__rowStatus === 'deletedUnpublished' ||
-    row.__rowStatus === 'invalidJson'
+    row.__rowStatus === 'invalidJson' ||
+    row.__rowStatus === 'baselineUnavailable'
   ) {
     return row.__rowStatus;
   }
@@ -247,7 +252,12 @@ export function applyAcceptedRecordChangeToOpenRecordData(prev: DiffRecordData):
 export function applyRejectedRecordChangeToOpenRecordData(prev: DiffRecordData): DiffRecordData | null {
   const prevRow = prev.row;
 
-  if (prevRow.__rowStatus === 'added' || prevRow.__rowStatus === 'addedUnpublished') return null;
+  if (
+    prevRow.__rowStatus === 'added' ||
+    prevRow.__rowStatus === 'addedUnpublished' ||
+    prevRow.__rowStatus === 'baselineUnavailable'
+  )
+    return null;
   if (prevRow.__rowStatus === 'deleted') {
     return { ...prev, row: { ...prevRow, __rowStatus: 'unchanged', __changedFields: [], __fromFields: {} } };
   }
@@ -274,7 +284,8 @@ export function applyDiscardedRecordChangeToOpenRecordData(prev: DiffRecordData)
     prevRow.__rowStatus === 'addedUnpublished' ||
     prevRow.__rowStatus === 'deleted' ||
     prevRow.__rowStatus === 'deletedUnpublished' ||
-    prevRow.__rowStatus === 'invalidJson'
+    prevRow.__rowStatus === 'invalidJson' ||
+    prevRow.__rowStatus === 'baselineUnavailable'
   ) {
     return null;
   }

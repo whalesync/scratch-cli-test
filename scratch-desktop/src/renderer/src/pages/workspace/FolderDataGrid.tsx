@@ -407,6 +407,7 @@ function getStatusCellTint(status: RowStatus): string | undefined {
     case 'deletedUnpublished':
       return DIFF_DELETE_APPROVED_BG();
     case 'invalidJson':
+    case 'baselineUnavailable':
       return '#fff7ed';
     default:
       return undefined;
@@ -429,6 +430,7 @@ function getRowTextColor(status: RowStatus): string | undefined {
 function getRowTint(status: RowStatus): string | undefined {
   switch (status) {
     case 'invalidJson':
+    case 'baselineUnavailable':
       return '#fff7ed';
     default:
       return undefined;
@@ -1133,6 +1135,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       deletedUnpublished: 6,
       unchanged: 7,
       invalidJson: 8,
+      baselineUnavailable: 9,
     };
     const sorted = [...rows].sort((a, b) => {
       const aOrder = statusOrder[a.__rowStatus] ?? 99;
@@ -1518,7 +1521,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const buildCellPopoverState = useCallback(
     (col: number, row: number): CellPopoverState | null => {
       const record = pagedRows[row] as DiffRow | undefined;
-      if (!record || record.__rowStatus === 'invalidJson') return null;
+      if (!record || record.__rowStatus === 'invalidJson' || record.__rowStatus === 'baselineUnavailable') return null;
 
       // Record-level popover for needs-review creates/deletes
       if (record.__rowStatus === 'added' || record.__rowStatus === 'deleted') {
@@ -1930,7 +1933,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const readOnlyTheme = isReadOnly ? { textDark: getCssVar('--fg-muted') } : {};
       const themeOverride = { ...rowTheme, ...diffTheme, ...failedTheme, ...readOnlyTheme };
       const allowOverlay =
-        !isReadOnly && status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';
+        !isReadOnly &&
+        status !== 'deleted' &&
+        status !== 'deletedUnpublished' &&
+        status !== 'invalidJson' &&
+        status !== 'baselineUnavailable';
 
       // Editable codec column: a foreign-key ARRAY flattened for display (e.g.
       // HubSpot's "Associated X", native `[{ id, type }, …]`). Show AND edit the
@@ -2249,7 +2256,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         const isDeletedReview = row.__rowStatus === 'deleted';
         const isDeletedApproved = row.__rowStatus === 'deletedUnpublished';
         const hasUnreviewed =
-          isCreateReview || isDeletedReview || row.__rowStatus === 'invalidJson' || row.__changedFields.length > 0;
+          isCreateReview ||
+          isDeletedReview ||
+          row.__rowStatus === 'invalidJson' ||
+          row.__rowStatus === 'baselineUnavailable' ||
+          row.__changedFields.length > 0;
         const hasApproved = isCreateApproved || isDeletedApproved || row.__unpublishedFields.length > 0;
         if (hasUnreviewed || hasApproved) {
           const kind: StatusIconKind =
@@ -2445,7 +2456,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
       if (!r || !colId) return;
-      if (r.__rowStatus === 'deleted' || r.__rowStatus === 'deletedUnpublished' || r.__rowStatus === 'invalidJson')
+      if (
+        r.__rowStatus === 'deleted' ||
+        r.__rowStatus === 'deletedUnpublished' ||
+        r.__rowStatus === 'invalidJson' ||
+        r.__rowStatus === 'baselineUnavailable'
+      )
         return;
       const { diffKind } = getCellDiffState(r, colId, viewColMap.get(colId));
       setActiveEditorDiffKind(diffKind ?? 'none');
@@ -2469,7 +2485,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         !colId ||
         r.__rowStatus === 'deleted' ||
         r.__rowStatus === 'deletedUnpublished' ||
-        r.__rowStatus === 'invalidJson'
+        r.__rowStatus === 'invalidJson' ||
+        r.__rowStatus === 'baselineUnavailable'
       ) {
         return;
       }

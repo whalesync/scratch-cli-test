@@ -21,7 +21,11 @@ export type RowStatus =
   | 'deleted'
   | 'deletedUnpublished'
   | 'unchanged'
-  | 'invalidJson';
+  | 'invalidJson'
+  // DEV-11059: an existing (already-pulled) record whose published `refs/heads/main`
+  // baseline failed to resolve, so we cannot compute a diff. Handled like `invalidJson`
+  // (a row-level "can't diff — needs attention" state), NEVER as an `added` create.
+  | 'baselineUnavailable';
 
 export interface DiffRow {
   [key: string]: unknown;
@@ -32,6 +36,8 @@ export interface DiffRow {
   __masterFields: Record<string, unknown>;
   __filename: string;
   __parseError?: string;
+  /** DEV-11059: message for a `baselineUnavailable` row (why the published baseline couldn't be loaded). */
+  __baselineError?: string;
   /** DEV-10048: per-field connector rejection messages from a prior failed publish. */
   __failedFields?: Record<string, string>;
   /** DEV-10048: record-level connector rejection message from a prior failed publish. */
@@ -100,7 +106,8 @@ function deriveRowStatusAfterEdit(row: DiffRow): RowStatus {
     row.__rowStatus === 'addedUnpublished' ||
     row.__rowStatus === 'deleted' ||
     row.__rowStatus === 'deletedUnpublished' ||
-    row.__rowStatus === 'invalidJson'
+    row.__rowStatus === 'invalidJson' ||
+    row.__rowStatus === 'baselineUnavailable'
   ) {
     return row.__rowStatus;
   }
@@ -132,11 +139,13 @@ function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: D
     prevRow.__rowStatus === 'added' ||
     prevRow.__rowStatus === 'deleted' ||
     prevRow.__rowStatus === 'invalidJson' ||
+    prevRow.__rowStatus === 'baselineUnavailable' ||
     prevRow.__changedFields.length > 0;
   const nextHasUnreviewed =
     nextRow.__rowStatus === 'added' ||
     nextRow.__rowStatus === 'deleted' ||
     nextRow.__rowStatus === 'invalidJson' ||
+    nextRow.__rowStatus === 'baselineUnavailable' ||
     nextRow.__changedFields.length > 0;
   const prevHadUnpublished =
     prevRow.__rowStatus === 'addedUnpublished' ||
@@ -313,7 +322,8 @@ export function applyDiscardedRecordChangeToFolderDiffData(result: DiffGridResul
     prevRow.__rowStatus === 'addedUnpublished' ||
     prevRow.__rowStatus === 'deleted' ||
     prevRow.__rowStatus === 'deletedUnpublished' ||
-    prevRow.__rowStatus === 'invalidJson'
+    prevRow.__rowStatus === 'invalidJson' ||
+    prevRow.__rowStatus === 'baselineUnavailable'
   ) {
     return result;
   }

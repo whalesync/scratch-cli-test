@@ -30,15 +30,16 @@ export interface CellDiffState {
 }
 
 export function getCellDiffState(row: DiffRow, fieldName: string, viewCol: TableViewCol | undefined): CellDiffState {
-  // Row-level statuses (added, deleted, invalidJson) are styled at the row level — don't
-  // overlay per-cell diff colours on top. Exception: an approved create ('addedUnpublished')
-  // with edited fields should still show per-cell diffs for those edits.
+  // Row-level statuses (added, deleted, invalidJson, baselineUnavailable) are styled at the
+  // row level — don't overlay per-cell diff colours on top. Exception: an approved create
+  // ('addedUnpublished') with edited fields should still show per-cell diffs for those edits.
   if (
     row.__rowStatus === 'added' ||
     (row.__rowStatus === 'addedUnpublished' && row.__changedFields.length === 0) ||
     row.__rowStatus === 'deleted' ||
     row.__rowStatus === 'deletedUnpublished' ||
-    row.__rowStatus === 'invalidJson'
+    row.__rowStatus === 'invalidJson' ||
+    row.__rowStatus === 'baselineUnavailable'
   ) {
     return { diffKind: null, fromValue: '', classification: null };
   }

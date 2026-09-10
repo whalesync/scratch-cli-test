@@ -16,6 +16,7 @@
  * tested without a workspace on disk.
  */
 
+import { isScratchPendingPublishId, isScratchPendingRecreateId } from '@spinner/shared-types';
 import { getByPath } from '../shared/schema-columns';
 
 /** The default remote-id path when a folder's schema declares none (mirrors the Rust `DEFAULT_ID_PATH`). */
@@ -55,6 +56,38 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * The dot-path to a record's remote id, resolved from a folder's `schema.json`
+ * wrapper with the server's current precedence: the DEV-10092 `idPath` field
+ * first, then the legacy `idColumnRemoteId`, then the default top-level `id`.
+ * (The server now emits `idPath` and deletes `idColumnRemoteId`, but older
+ * on-disk schemas still carry the legacy key — accept either.)
+ */
+export function resolveRemoteIdPath(schemaWrapper: Record<string, unknown> | null): string {
+  if (schemaWrapper) {
+    const idPath = asString(schemaWrapper.idPath);
+    if (idPath) return idPath;
+    const legacyIdPath = asString(schemaWrapper.idColumnRemoteId);
+    if (legacyIdPath) return legacyIdPath;
+  }
+  return DEFAULT_REFERENCE_ID_PATH;
+}
+
+/**
+ * True when a working record already exists in the external service — it carries a
+ * concrete remote id at `idPath`: a non-empty scalar that is NOT a Scratch pending
+ * sentinel. A genuine not-yet-published create instead has no id there, or a
+ * `scratch_pending_publish_` (sync-created) / `scratch_pending_recreate_`
+ * (revert-recreated) sentinel. DEV-11059 uses this to tell an edited *existing*
+ * record whose published (`refs/heads/main`) baseline failed to resolve apart from a
+ * brand-new local create — the former must never render as "Record added".
+ */
+export function workingRecordExistsInService(rawRecord: Record<string, unknown>, idPath: string): boolean {
+  const idString = referenceIdToString(getByPath(rawRecord, idPath));
+  if (idString == null) return false;
+  return !isScratchPendingPublishId(idString) && !isScratchPendingRecreateId(idString);
+}
+
+/**
  * Distil a folder's `schema.json` wrapper into the metadata needed to resolve
  * references into it. Returns null only when the wrapper itself is missing.
  */
@@ -68,7 +101,7 @@ export function extractFolderReferenceInfo(
   const wsId = idObject ? asString(idObject.wsId) : null;
   const remoteIdSegments = idObject ? asStringArray(idObject.remoteId) : [];
   const slug = asString(schemaWrapper.slug);
-  const idPath = asString(schemaWrapper.idColumnRemoteId) ?? DEFAULT_REFERENCE_ID_PATH;
+  const idPath = resolveRemoteIdPath(schemaWrapper);
   const titleSegments = asStringArray(schemaWrapper.titleColumnRemoteId);
 
   return {

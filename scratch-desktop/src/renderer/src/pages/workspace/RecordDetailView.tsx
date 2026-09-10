@@ -26,6 +26,7 @@ import { Text12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
 import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../components/ScratchJsonCodeMirror';
+import { trackBaselineUnavailableRecordViewed } from '../../lib/posthog';
 import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import {
@@ -208,6 +209,10 @@ export const RecordDetailView = memo(function RecordDetailView({
     recordData?.row.__rowStatus === 'deletedUnpublished';
   const isDeleted = recordData?.row.__rowStatus === 'deleted' || recordData?.row.__rowStatus === 'deletedUnpublished';
   const isCreated = recordData?.row.__rowStatus === 'added' || recordData?.row.__rowStatus === 'addedUnpublished';
+  // DEV-11059: no published baseline resolved, so there is no diff to review. Suppress every
+  // review/publish affordance — approving here would stage the working values blind, the exact
+  // failure this ticket is about. Recovery is a re-pull, surfaced by the banner.
+  const isBaselineUnavailable = recordData?.row.__rowStatus === 'baselineUnavailable';
   const currentFilename =
     recordData?.row.__filename ?? (typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined);
 
@@ -217,6 +222,15 @@ export const RecordDetailView = memo(function RecordDetailView({
     const dir = folderPath.replace(/\/$/, '');
     return `${dir}/${currentFilename.replace(/^\//, '')}`;
   }, [folderPath, currentFilename]);
+
+  // DEV-11059: the opened record's published baseline couldn't be loaded, so its edit can't be
+  // diffed (shown as "needs attention", not "Record added"). Emit once per opened record to
+  // measure how often this still happens in production.
+  useEffect(() => {
+    if (recordData?.row.__rowStatus === 'baselineUnavailable' && currentFilename) {
+      void trackBaselineUnavailableRecordViewed({ folderPath, filename: currentFilename });
+    }
+  }, [recordData?.row.__rowStatus, currentFilename, folderPath]);
 
   const currentRecordCliPath = useMemo(() => {
     const filename = typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined;
@@ -701,7 +715,8 @@ export const RecordDetailView = memo(function RecordDetailView({
       (recordData.row.__rowStatus === 'addedUnpublished' && recordData.row.__changedFields.length === 0) ||
       recordData.row.__rowStatus === 'deleted' ||
       recordData.row.__rowStatus === 'deletedUnpublished' ||
-      recordData.row.__rowStatus === 'invalidJson';
+      recordData.row.__rowStatus === 'invalidJson' ||
+      recordData.row.__rowStatus === 'baselineUnavailable';
     const changedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__changedFields);
     const unpublishedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__unpublishedFields);
     const recordColumnIdSet = new Set(recordData.columns.map((c) => c.id));
@@ -1009,7 +1024,23 @@ export const RecordDetailView = memo(function RecordDetailView({
               </Group>
             </Box>
           )}
+          {recordData?.row.__rowStatus === 'baselineUnavailable' && (
+            <Box
+              style={{
+                padding: '8px 12px',
+                borderBottom: '0.5px solid var(--fg-divider)',
+                backgroundColor: '#fff7ed',
+              }}
+            >
+              <Text12Regular c="var(--mantine-color-orange-8)" style={{ whiteSpace: 'pre-wrap' }}>
+                {typeof recordData.row.__baselineError === 'string' && recordData.row.__baselineError.length > 0
+                  ? recordData.row.__baselineError
+                  : "Couldn't load the published version of this record, so its changes can't be diffed. Re-pull this connection to review."}
+              </Text12Regular>
+            </Box>
+          )}
           {recordData?.row.__rowStatus !== 'invalidJson' &&
+            recordData?.row.__rowStatus !== 'baselineUnavailable' &&
             typeof recordData?.row.__parseError === 'string' &&
             recordData.row.__parseError.length > 0 && (
               <Box
@@ -1030,7 +1061,7 @@ export const RecordDetailView = memo(function RecordDetailView({
               </TextTitle2>
 
               <Group gap={6} align="center" wrap="nowrap">
-                {!focusedFieldName && hasUnreviewedChanges && !isDeleted && !isCreated && (
+                {!focusedFieldName && hasUnreviewedChanges && !isDeleted && !isCreated && !isBaselineUnavailable && (
                   <>
                     <UnstyledButton
                       onClick={() => {
@@ -1067,7 +1098,8 @@ export const RecordDetailView = memo(function RecordDetailView({
                   hasPublishableChanges &&
                   !hasUnreviewedChanges &&
                   !isDeleted &&
-                  !isCreated && (
+                  !isCreated &&
+                  !isBaselineUnavailable && (
                     <>
                       <UnstyledButton
                         onClick={() => {
@@ -1107,30 +1139,34 @@ export const RecordDetailView = memo(function RecordDetailView({
                     </IconButtonGhost>
                   </>
                 )}
-                {!focusedFieldName && (hasUnreviewedChanges || hasPublishableChanges) && !isDeleted && !isCreated && (
-                  <Menu position="bottom-end" withinPortal zIndex={10020}>
-                    <Menu.Target>
-                      <IconButtonGhost
-                        size="compact-xs"
-                        aria-label="More actions"
-                        data-testid="record-detail-more-actions"
-                      >
-                        <StyledLucideIcon Icon={EllipsisVertical} size="sm" />
-                      </IconButtonGhost>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Item
-                        c="red"
-                        leftSection={<StyledLucideIcon Icon={Trash2} size={14} />}
-                        onClick={handleDiscard}
-                        disabled={!currentRecordCliPath}
-                        data-testid="record-detail-discard"
-                      >
-                        Discard all unpublished changes
-                      </Menu.Item>
-                    </Menu.Dropdown>
-                  </Menu>
-                )}
+                {!focusedFieldName &&
+                  (hasUnreviewedChanges || hasPublishableChanges) &&
+                  !isDeleted &&
+                  !isCreated &&
+                  !isBaselineUnavailable && (
+                    <Menu position="bottom-end" withinPortal zIndex={10020}>
+                      <Menu.Target>
+                        <IconButtonGhost
+                          size="compact-xs"
+                          aria-label="More actions"
+                          data-testid="record-detail-more-actions"
+                        >
+                          <StyledLucideIcon Icon={EllipsisVertical} size="sm" />
+                        </IconButtonGhost>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item
+                          c="red"
+                          leftSection={<StyledLucideIcon Icon={Trash2} size={14} />}
+                          onClick={handleDiscard}
+                          disabled={!currentRecordCliPath}
+                          data-testid="record-detail-discard"
+                        >
+                          Discard all unpublished changes
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
                 <IconButtonGhost onClick={onClose}>
                   <StyledLucideIcon Icon={X} size="md" />
                 </IconButtonGhost>

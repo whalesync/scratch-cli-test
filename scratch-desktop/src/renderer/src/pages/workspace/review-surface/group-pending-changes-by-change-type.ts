@@ -39,7 +39,8 @@ export type ChangeRowStatus =
   | 'deleted'
   | 'deletedUnpublished'
   | 'unchanged'
-  | 'invalidJson';
+  | 'invalidJson'
+  | 'baselineUnavailable';
 
 /**
  * The structural subset of `FolderDataGrid`'s `DiffRow` that this selector reads.
@@ -127,7 +128,10 @@ export function groupPendingChangesByChangeType(
       case 'deleted':
         deletedRecordCount += 1;
         break;
+      // DEV-11059: a record whose published baseline couldn't be loaded joins the same
+      // "needs attention" bucket as an unparseable one — neither has a reviewable field diff.
       case 'invalidJson':
+      case 'baselineUnavailable':
         invalidJsonRecordCount += 1;
         break;
       default:

@@ -166,9 +166,16 @@ export function buildByTypeGroupModel(
     groups.push(buildRecordLevelGroup('deleted', 'Removed', DELETED_DOT_COLOR_VAR, deletedRows));
   }
 
-  const invalidJsonRows = buildRecordLevelRows(rows, 'invalidJson', titleColumnId);
-  if (invalidJsonRows.length > 0) {
-    groups.push(buildRecordLevelGroup('invalidJson', 'Needs attention', INVALID_JSON_DOT_COLOR_VAR, invalidJsonRows));
+  // "Needs attention" = records with no reviewable field diff: unparseable files (invalidJson) and,
+  // per DEV-11059, existing records whose published baseline couldn't be loaded (baselineUnavailable).
+  const needsAttentionRows = [
+    ...buildRecordLevelRows(rows, 'invalidJson', titleColumnId),
+    ...buildRecordLevelRows(rows, 'baselineUnavailable', titleColumnId),
+  ];
+  if (needsAttentionRows.length > 0) {
+    groups.push(
+      buildRecordLevelGroup('invalidJson', 'Needs attention', INVALID_JSON_DOT_COLOR_VAR, needsAttentionRows),
+    );
   }
 
   return groups;

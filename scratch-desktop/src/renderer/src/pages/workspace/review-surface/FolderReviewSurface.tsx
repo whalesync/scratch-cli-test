@@ -462,6 +462,7 @@ export function FolderReviewSurface(props: FolderReviewSurfaceProps): ReactEleme
         rowBeforeAccept.__rowStatus !== 'added' &&
         rowBeforeAccept.__rowStatus !== 'deleted' &&
         rowBeforeAccept.__rowStatus !== 'invalidJson' &&
+        rowBeforeAccept.__rowStatus !== 'baselineUnavailable' &&
         rowBeforeAccept.__changedFields.filter((changedFieldPath) => changedFieldPath !== fieldName).length === 0;
       if (acceptRemovesLastUnreviewedChange) {
         // `nextChangedRecordAfter` reads the current `drawerFilenames` (still including `filename`, since the
