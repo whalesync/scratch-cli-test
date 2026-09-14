@@ -158,6 +158,10 @@ class MutationsGenerator {
    * selection because it is type-scoped-skipped in the codegen config (e.g. Linear's
    * feature-gated `Project.identifier`). Mirrors the typebox plugin's `skipFieldsByType` so the
    * response body a delete mutation requests back can't select a field the query fields exclude.
+   *
+   * Consulted at both levels of a mutation's response selection: against the *payload* type for
+   * its top-level fields (dropping an unused extra like Shopify's `ProductCreatePayload.shop`),
+   * and against an expanded field's own type for that field's scalar leaves.
    */
   private isTypeScopedSkippedField(
     parentTypeName: string,
@@ -500,6 +504,17 @@ class MutationsGenerator {
         continue;
       }
 
+      // A payload field the codegen config drops for this payload type. Reaching for this
+      // (rather than a blanket skip) matters because the same field name is legitimate
+      // elsewhere: Shopify's `ProductCreatePayload.shop` is unused by the client, but its
+      // `analyticsToken` leaf needs an API scope most store tokens lack, so selecting it makes
+      // Shopify return a field-level access-denied error for a create that actually succeeded.
+      // Checked after the entity-field branch so the config can only drop *extra* payload
+      // fields, never the entity the mutation exists to return.
+      if (this.isTypeScopedSkippedField(returnType.name, name)) {
+        continue;
+      }
+
       const fieldType = this.unwrapOutputType(field.type);
 
       if (isScalarType(fieldType) || isEnumType(fieldType)) {
@@ -766,6 +781,17 @@ ${responseBody}
     for (const [name, field] of Object.entries(fields)) {
       if (name === outputFieldName) {
         lines.push(`    ${name} {\n      \${QUERY_FIELDS}\n    }`);
+        continue;
+      }
+
+      // A payload field the codegen config drops for this payload type. Reaching for this
+      // (rather than a blanket skip) matters because the same field name is legitimate
+      // elsewhere: Shopify's `ProductCreatePayload.shop` is unused by the client, but its
+      // `analyticsToken` leaf needs an API scope most store tokens lack, so selecting it makes
+      // Shopify return a field-level access-denied error for a create that actually succeeded.
+      // Checked after the entity-field branch so the config can only drop *extra* payload
+      // fields, never the entity the mutation exists to return.
+      if (this.isTypeScopedSkippedField(returnType.name, name)) {
         continue;
       }
 

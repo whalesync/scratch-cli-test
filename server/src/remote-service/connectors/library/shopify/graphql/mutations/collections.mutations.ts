@@ -47,40 +47,6 @@ export const COLLECTIONS_UPDATE_MUTATION = `mutation CollectionUpdate($input: Co
 export const COLLECTIONS_DELETE_MUTATION = `mutation CollectionDelete($input: CollectionDeleteInput!) {
   collectionDelete(input: $input) {
     deletedCollectionId
-    shop {
-      analyticsToken
-      checkoutApiSupported
-      contactEmail
-      createdAt
-      currencyCode
-      customerAccounts
-      description
-      email
-      enabledPresentmentCurrencies
-      ianaTimezone
-      id
-      marketingSmsConsentEnabledAtCheckout
-      myshopifyDomain
-      name
-      orderNumberFormatPrefix
-      orderNumberFormatSuffix
-      publicationCount
-      richTextEditorUrl
-      setupRequired
-      shipsToCountries
-      shopOwnerName
-      storefrontUrl
-      taxShipping
-      taxesIncluded
-      timezoneAbbreviation
-      timezoneOffset
-      timezoneOffsetMinutes
-      transactionalSmsDisabled
-      unitSystem
-      updatedAt
-      url
-      weightUnit
-    }
     userErrors {
       field
       message

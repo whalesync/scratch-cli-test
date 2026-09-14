@@ -22,7 +22,10 @@ export interface FieldFilterConfig {
   skipFields: Set<string>;
   /**
    * Fields to skip only within a specific GraphQL type, keyed by GraphQL type name → the field
-   * names to drop from that type's generated schema AND query selection. Reach for this (rather
+   * names to drop from that type's generated schema AND query selection. Keying it on a
+   * *mutation payload* type instead drops that field from the mutation's response selection —
+   * how Shopify's unused, scope-gated `ProductCreatePayload.shop` is kept out of the generated
+   * mutations (DEV-10683). Reach for this (rather
    * than {@link skipFields}) when the field name is legitimate on other types but must not be
    * pulled on this one — e.g. Linear's `Project.identifier` / `Project.previousIdentifiers`, which
    * the opt-in "Project IDs" workspace feature gates: selecting either one fails the ENTIRE

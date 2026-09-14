@@ -168,6 +168,19 @@ export const SHOPIFY_FIELD_FILTERS: FieldFilterConfig = {
     "apiKey",
   ]),
 
+  skipFieldsByType: {
+    // DEV-10683: these mutation payloads each carry a `shop: Shop!` field that nothing in
+    // `shopify-api-client.ts` reads. Auto-expanding it selects `Shop.analyticsToken`, which
+    // requires an API scope many store tokens lack — Shopify then returns a field-level
+    // access-denied error alongside a payload whose entity was in fact created/deleted
+    // successfully, and the client discards the whole response. Dropping the unused field
+    // removes the trigger. Scoped per payload type rather than a blanket `shop` skip so a
+    // future payload that genuinely needs shop data can still select it.
+    ProductCreatePayload: new Set(["shop"]),
+    ProductDeletePayload: new Set(["shop"]),
+    CollectionDeletePayload: new Set(["shop"]),
+  },
+
   skipConnections: new Set([
     "variants",
     "media",

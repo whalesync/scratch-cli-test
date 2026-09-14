@@ -15,40 +15,6 @@ export const PRODUCTS_CREATE_MUTATION = `mutation ProductCreate($product: Produc
     product {
       ${PRODUCTS_QUERY_FIELDS}
     }
-    shop {
-      analyticsToken
-      checkoutApiSupported
-      contactEmail
-      createdAt
-      currencyCode
-      customerAccounts
-      description
-      email
-      enabledPresentmentCurrencies
-      ianaTimezone
-      id
-      marketingSmsConsentEnabledAtCheckout
-      myshopifyDomain
-      name
-      orderNumberFormatPrefix
-      orderNumberFormatSuffix
-      publicationCount
-      richTextEditorUrl
-      setupRequired
-      shipsToCountries
-      shopOwnerName
-      storefrontUrl
-      taxShipping
-      taxesIncluded
-      timezoneAbbreviation
-      timezoneOffset
-      timezoneOffsetMinutes
-      transactionalSmsDisabled
-      unitSystem
-      updatedAt
-      url
-      weightUnit
-    }
     userErrors {
       field
       message
@@ -81,40 +47,6 @@ export const PRODUCTS_DELETE_MUTATION = `mutation ProductDelete($input: ProductD
       deletedProductId
       id
       status
-    }
-    shop {
-      analyticsToken
-      checkoutApiSupported
-      contactEmail
-      createdAt
-      currencyCode
-      customerAccounts
-      description
-      email
-      enabledPresentmentCurrencies
-      ianaTimezone
-      id
-      marketingSmsConsentEnabledAtCheckout
-      myshopifyDomain
-      name
-      orderNumberFormatPrefix
-      orderNumberFormatSuffix
-      publicationCount
-      richTextEditorUrl
-      setupRequired
-      shipsToCountries
-      shopOwnerName
-      storefrontUrl
-      taxShipping
-      taxesIncluded
-      timezoneAbbreviation
-      timezoneOffset
-      timezoneOffsetMinutes
-      transactionalSmsDisabled
-      unitSystem
-      updatedAt
-      url
-      weightUnit
     }
     userErrors {
       field
