@@ -14,7 +14,7 @@ Scratch has **< 10 external (non-`@whalesync.com`) active users and no growth fo
 
 ## Headline
 
-August 2026 Scratch spend was **$1,781/mo** (`spv1eu-production` $1,130 + `spv1eu-test` $651). Right-sizing to actual scale removes an estimated **~$650–$850/mo (≈40–48%)** near-term, more once the 2 TB production disk is right-sized. (Note: the parent project's "$5k off $13k/mo" target spans the Whalesync `wsv1-*` projects too — Scratch is a smaller slice, so this is Scratch's realistic contribution, not the whole $5k.)
+August 2026 Scratch spend was **$1,781/mo** (`spv1eu-production` $1,130 + `spv1eu-test` $651). Right-sizing to actual scale removes an estimated **~$560–$760/mo (≈31–43%)** near-term, more once the 2 TB production disk is right-sized — now the *primary* scratch-git lever after #6 was rejected (see [Appendix A](#appendix-a-scratch-git-host-right-sizing-verification-dev-11822)). (Note: the parent project's "$5k off $13k/mo" target spans the Whalesync `wsv1-*` projects too — Scratch is a smaller slice, so this is Scratch's realistic contribution, not the whole $5k.)
 
 ## Where the money goes (Aug 2026)
 
@@ -53,7 +53,7 @@ Tiered by risk. `file:line` are the exact knobs to change. Maps to the six asks 
 | # | Change | file:line | Risk | Est. save/mo |
 |---|---|---|---|---:|
 | 5 | **Cloud Run instance counts + fold `cron` → `worker`** (same image): removes 1 always-on instance + its otel sidecar per env. Then prod api `2→1`, worker `2→1`; test api & client `min=0`, worker `min=1` | cron hardcoded `services.tf:468-469`; api `eu-production.tf:74-75`/`eu-test.tf:67-68`; worker `eu-production.tf:76-77`/`eu-test.tf:69-70` | prod min=1 → brief unavailability during deploy/crash; test → cold starts (fine at this scale) | **~$250** |
-| 6 | **Prod scratch-git VM `e2-highmem-4` → `e2-highmem-2`** (32 GB → 16 GB) | `eu-production.tf:66` | Perf if memory-bound (Rust git service + Docker) — check RAM/CPU first | **~$90** |
+| 6 | ~~**Prod scratch-git VM `e2-highmem-4` → `e2-highmem-2`**~~ — **REJECTED after verification; keep `e2-highmem-4`** (see [Appendix A](#appendix-a-scratch-git-host-right-sizing-verification-dev-11822)). Prod is memory-bound: used-memory recurrently peaks **~25 GiB** and CPU **~4 vCPU**, so 16 GB OOMs (reviving the 2026-04-17 outage) and 32 GiB needs 4 vCPU on E2. Saving redirects to the disk (#2/#3/#9). | `eu-production.tf:71` | Verified via Cloud Monitoring (DEV-11822) | ~~$90~~ → **$0** |
 | 7 | **Test Cloud SQL tier `db-custom-2-8192` → `db-custom-1-4096`** (add per-env `db_tier` override) | `eu-test.tf` (default `terraform/modules/env/variables.tf:61-65`) | Negligible for test | **~$50** |
 
 ### Tier 3 — Per-item availability decisions (recommendation given; final call per line item)
@@ -75,9 +75,9 @@ Tiered by risk. `file:line` are the exact knobs to change. Maps to the six asks 
 | Bucket | Near-term save/mo |
 |---|---:|
 | Tier 1 (quick, no-risk) | ~$255 |
-| Tier 2 (right-size, verify) | ~$390 |
+| Tier 2 (right-size, verify) | ~$300 (was ~$390; **#6 rejected** — see [Appendix A](#appendix-a-scratch-git-host-right-sizing-verification-dev-11822)) |
 | Tier 3 DB (recommended) | ~$155 |
-| **Near-term total** | **~$650–$850/mo (≈40–48% of $1,781)** |
+| **Near-term total** | **~$560–$760/mo (≈31–43% of $1,781)** |
 | Later: 2 TB disk right-size (post-DEV-11253) | +~$150 |
 
 ## Key decisions / caveats
@@ -94,3 +94,66 @@ Every figure traces to two sources of truth:
 1. **Billing** — Aug CSV aggregation: prod $1,129.67 / test $651.50 / **$1,781.17** total, and the per-service SKU lines above.
 2. **Terraform** — every `file:line` was read directly (env configs `terraform/envs/eu-{production,test}/*.tf`; modules `env`, `gce`, `scratch_git_gce`, `cloudsql`, `redis`, `cloudnat`, `cloudrun_lb`, `static_bucket_lb`).
 3. **Live check** — production DB size confirmed **12 GB**.
+
+---
+
+## Appendix A: scratch-git host right-sizing verification (DEV-11822)
+
+*Added 2026-09-17 (Chris Hoefgen, with Claude) — resolves recommendation #6.*
+
+**Determination: keep `e2-highmem-4`; do not downsize.** Recommendation #6 proposed prod `scratch-git`
+`e2-highmem-4` (4 vCPU / 32 GiB) → `e2-highmem-2` (2 vCPU / 16 GiB), gated on verifying CPU/RAM. The
+measurement below **fails that gate**: prod is genuinely memory- and CPU-bound at peak, so 16 GiB would
+OOM and 2 vCPU would saturate. **No terraform change was made.**
+([DEV-11822](https://linear.app/whalesync/issue/DEV-11822).)
+
+**Method.** Read-only Cloud Monitoring REST (`projects/<proj>/timeSeries`), both `spv1eu-*` envs,
+20–40-day windows at daily alignment. Memory & disk from the Ops Agent installed by
+`modules/scratch_git_gce/scripts/startup.sh` (`agent.googleapis.com/*`, filter
+`metadata.system_labels."name"="scratch-git"`); CPU from the hypervisor
+(`compute.googleapis.com/instance/cpu/utilization`). `state="used"` = non-cache, non-reclaimable memory.
+
+| Signal | **Prod** (`e2-highmem-4`, 4 vCPU / 32 GiB) | **Test** (`e2-medium`, 2 vCPU / 4 GiB) |
+|---|---|---|
+| Used memory — idle | ~2.5 GiB | ~0.8 GiB |
+| Used memory — **peak** | **25.23 GiB** — recurs 20–25 GiB every 1–3 days, ongoing (Sep 1 = 24.2, 3 = 24.6, 9 = 20.9, 14 = 23.5, 15 = 23.1, 17 = 21.3) | **3.06 GiB** (77% of 4 GiB) |
+| Used memory — avg *daily peak* | ~16 GiB (`percent_used` daily-max: mean 50.35%, max 77.69%) | ~1.1 GiB |
+| Agent-gap check | 480 / 480 hourly points → peaks **real, not** OOM-truncated | — |
+| CPU util — steady / peak | ~0.13 (~0.5 vCPU) / **0.995** (~4 vCPU); recent daily peaks 0.4–0.87 | ~0.045 / rare 1.05 spikes |
+| Data disk | `/dev/sda`: **25.8 GiB used / 1888 GiB = 1.4% full** (2000 GB `pd-ssd`) | `/dev/sdb`: 0.5 / 46 GiB = 1.1% |
+
+**Interpretation.** `e2-highmem-2` = 16 GiB / 2 vCPU. Prod's recurring **25 GiB working set > 16 GiB → OOM**
+(reviving the [2026-04-17 large-pull outage](/docs/ops/incidents/2026-04-17-scratch-git-unresponsive-prod-outage.md)
+the VM was upsized to fix), and ~3.5–4 vCPU peaks saturate 2 vCPU. Even the *average* daily peak (~16 GiB)
+sits on the ceiling, and it is `state="used"` (no reclaimable slack). On E2, 32 GiB **requires** 4 vCPU
+(no 2 vCPU / 32 GiB shape) and E2 is already the cheapest family, so `e2-highmem-4` is the smallest
+same-capacity option — **right-sized, not oversized**. **Test** is at its floor (`e2-small` = 2 GiB would
+OOM). → no machine-type change in either env.
+
+**Redirect.** The genuine over-provisioning on this host is the **2 TB `pd-ssd` data disk at 1.4% full**
+(25.8 GiB used) — pursue #2 (`pd-ssd`→`pd-balanced`), #3 (snapshot cadence), and #9 (shrink 2 TB, gated on
+DEV-11253) instead; far larger than #6's ~$90/mo and independent of the memory/CPU the workload needs.
+Optionally a 1-year Committed-Use Discount on `e2-highmem-4` (~$55/mo, no size change), or bound
+scratch-git peak memory (git GC/pack tuning, pull batching) and re-measure before revisiting #6.
+
+**Reproduction** (read-only; needs an authenticated `gcloud`):
+
+```bash
+TOKEN=$(gcloud auth print-access-token)
+# P in { spv1eu-production, spv1eu-test }; alignmentPeriod 86400s; ALIGN_MAX (peaks) / ALIGN_MEAN (steady)
+# MEM  filter: metric.type="agent.googleapis.com/memory/bytes_used"
+#              AND metadata.system_labels."name"="scratch-git" AND metric.label.state="used"
+# CPU  filter: metric.type="compute.googleapis.com/instance/cpu/utilization"
+#              AND resource.type="gce_instance" AND metric.label.instance_name="scratch-git"
+# DISK filter: metric.type="agent.googleapis.com/disk/bytes_used"
+#              AND metadata.system_labels."name"="scratch-git"
+curl -s -G "https://monitoring.googleapis.com/v3/projects/$P/timeSeries" \
+  -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: $P" \
+  --data-urlencode "filter=<one of the above>" \
+  --data-urlencode "interval.startTime=$(date -u -v-20d +%Y-%m-%dT%H:%M:%SZ)" \
+  --data-urlencode "interval.endTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --data-urlencode "aggregation.alignmentPeriod=86400s" \
+  --data-urlencode "aggregation.perSeriesAligner=ALIGN_MAX"
+```
+
+Expect prod used-memory peaks 20–25 GiB, CPU peaks ~0.4–1.0 util, `/dev/sda` ~1–2% full.
