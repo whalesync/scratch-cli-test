@@ -42,6 +42,8 @@ module "eu_test" {
   whalesync_app_origins = ["https://test.whalesync.com", "https://staging.whalesync.com"]
 
   # Database
+  # DEV-11819: test idles at ~8% CPU / ~40% mem — drop below the prod-inherited db-custom-2-8192 default.
+  db_tier              = "db-custom-1-4096"
   db_disk_size         = 10
   db_high_availability = false
 
