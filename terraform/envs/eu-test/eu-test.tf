@@ -68,12 +68,19 @@ module "eu_test" {
   scratch_git_disk_size_gb            = 50
 
   # Services
+  # Cost right-size (DEV-11812): test scales to zero for the request-driven api/client
+  # and keeps a single always-on worker; memory trimmed to 1Gi (worker overridden here
+  # since prod worker stays at 2Gi).
   force_reload_services             = var.force_reload_services
   maintenance_mode_enabled          = var.maintenance_mode_enabled
-  api_service_min_instance_count    = 2
-  api_service_max_instance_count    = 2
-  worker_service_min_instance_count = 2
-  worker_service_max_instance_count = 2
+  api_service_min_instance_count    = 0
+  api_service_max_instance_count    = 1
+  client_service_min_instance_count = 0
+  client_service_max_instance_count = 1
+  worker_service_min_instance_count = 1
+  worker_service_max_instance_count = 1
+  worker_service_memory_limit       = "1Gi"
+  worker_service_node_options       = "--max-old-space-size=900"
   worker_concurrency                = 10
 
 

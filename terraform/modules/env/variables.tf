@@ -341,13 +341,13 @@ variable "client_service_cpu_limit" {
 
 variable "client_service_memory_limit" {
   type        = string
-  default     = "2Gi"
+  default     = "512Mi"
   description = "Memory limit for the client service (e.g., '512Mi', '1Gi', '2Gi')."
 }
 
 variable "client_service_node_options" {
   type        = string
-  default     = ""
+  default     = "--max-old-space-size=400"
   description = "Node.js options for the client service (e.g., '--max-old-space-size=512')."
 }
 
@@ -399,13 +399,13 @@ variable "api_service_cpu_limit" {
 
 variable "api_service_memory_limit" {
   type        = string
-  default     = "2Gi"
+  default     = "1Gi"
   description = "Memory limit for the api service (e.g., '512Mi', '1Gi', '2Gi')."
 }
 
 variable "api_service_node_options" {
   type        = string
-  default     = "--max-old-space-size=1900"
+  default     = "--max-old-space-size=900"
   description = "Node.js options for the api service (e.g., '--max-old-space-size=512')."
 }
 
@@ -422,13 +422,13 @@ variable "cron_service_cpu_limit" {
 
 variable "cron_service_memory_limit" {
   type        = string
-  default     = "2Gi"
+  default     = "512Mi"
   description = "Memory limit for the cron service (e.g., '512Mi', '1Gi', '2Gi')."
 }
 
 variable "cron_service_node_options" {
   type        = string
-  default     = "--max-old-space-size=1900"
+  default     = "--max-old-space-size=400"
   description = "Node.js options for the cron service (e.g., '--max-old-space-size=512')."
 }
 
