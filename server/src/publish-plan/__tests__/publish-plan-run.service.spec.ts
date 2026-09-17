@@ -759,6 +759,29 @@ describe('PublishPlanRunService', () => {
         expect(nullIdMarkedSuccess).toBe(false);
       });
 
+      // DEV-11385: a mixed delete batch must count only the un-executed (null
+      // remoteRecordId) delete as an error, not the whole batch size. The valid
+      // delete succeeds and the null-id delete is marked failed-batch, so
+      // processBatch returns 1 (not the batch size of 2) and the surfaced
+      // errorCount matches the number that actually failed.
+      it('counts only the null-remoteRecordId delete as an error, not the whole batch', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        setupPhaseEntries('delete', [
+          { id: 'op_null', filePath: 'articles/unindexed.json', content: null, remoteRecordId: null },
+          { id: 'op_valid', filePath: 'articles/published.json', content: null, remoteRecordId: 'rec_pub_1' },
+        ]);
+        const onError = jest.fn();
+
+        await service.runPipeline(PLAN_ID, undefined, undefined, undefined, onError);
+
+        expect(onError).toHaveBeenCalledWith(
+          expect.objectContaining({
+            errorCount: 1,
+            lastSyncError: expect.stringContaining('1 of 2 entries') as string,
+          }),
+        );
+      });
+
       // DEV-10595: the anomaly is charted so its prod frequency is visible.
       it('emits the publish-delete-missing-remote-id counter with the terminal failed count', async () => {
         setTableSpecIdColumnRemoteId('id');
