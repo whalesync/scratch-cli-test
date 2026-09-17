@@ -257,11 +257,42 @@ resource "google_artifact_registry_repository" "default" {
   repository_id          = "${var.env_name}-registry"
   description            = "Scratchpaper ${var.env_name} registry"
   format                 = "DOCKER"
-  cleanup_policy_dry_run = true
+  cleanup_policy_dry_run = var.artifact_registry_cleanup_policy_dry_run
   location               = var.gcp_region
   docker_config {
     immutable_tags = false
   }
+
+  # Delete untagged versions past the hygiene window (DEV-11811).
+  cleanup_policies {
+    id     = "delete-untagged"
+    action = "DELETE"
+    condition {
+      tag_state  = "UNTAGGED"
+      older_than = "${var.artifact_registry_delete_untagged_older_than_days * 86400}s"
+    }
+  }
+
+  # Safety guard: always keep the most-recent N versions per package (protects the
+  # running Cloud Run image + recent rollback targets). KEEP overrides DELETE.
+  cleanup_policies {
+    id     = "keep-most-recent"
+    action = "KEEP"
+    most_recent_versions {
+      keep_count = var.artifact_registry_keep_most_recent_versions_count
+    }
+  }
+
+  # Reclaim old per-commit images beyond the keep window. CI always SHA-tags, so
+  # the bloat is tagged versions; this rule (guarded by keep-most-recent) removes them.
+  cleanup_policies {
+    id     = "delete-old-versions"
+    action = "DELETE"
+    condition {
+      older_than = "${var.artifact_registry_delete_versions_older_than_days * 86400}s"
+    }
+  }
+
   depends_on = [google_project_service.services]
 }
 

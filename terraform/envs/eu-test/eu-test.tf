@@ -55,6 +55,12 @@ module "eu_test" {
   enable_desktop_release_monitoring = false
   enable_github_release_monitoring  = false
 
+  # Artifact Registry cleanup (DEV-11811) — more aggressive; test churns fast.
+  # Enforced in test (dry_run false); prod stays dry-run until the delete list is reviewed.
+  artifact_registry_cleanup_policy_dry_run          = false
+  artifact_registry_keep_most_recent_versions_count = 5
+  artifact_registry_delete_versions_older_than_days = 14
+
   # Scratch Git
   enable_scratch_git                  = true
   scratch_git_boot_disk_size_gb       = 30

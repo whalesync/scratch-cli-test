@@ -53,6 +53,30 @@ variable "maintenance_mode_enabled" {
   description = "When set to true, sets the MAINTENANCE_MODE_ENABLED environment variable on the client Cloud Run service."
 }
 
+variable "artifact_registry_cleanup_policy_dry_run" {
+  type        = bool
+  default     = true
+  description = "When true, cleanup policies only log what they would delete without deleting. Set false to actually enforce the delete rules."
+}
+
+variable "artifact_registry_keep_most_recent_versions_count" {
+  type        = number
+  default     = 10
+  description = "Number of most-recent image versions to keep per package (spinner-server/client/scratch-git). KEEP rule; protects the running Cloud Run image + recent rollback targets from the delete-old rule (KEEP overrides DELETE)."
+}
+
+variable "artifact_registry_delete_versions_older_than_days" {
+  type        = number
+  default     = 30
+  description = "Delete image versions older than this many days, EXCEPT the most-recent-N kept above. This is what actually reclaims accumulated per-commit images (CI always SHA-tags, so nothing goes untagged)."
+}
+
+variable "artifact_registry_delete_untagged_older_than_days" {
+  type        = number
+  default     = 7
+  description = "Delete untagged image versions older than this many days (hygiene; rare here since CI always SHA-tags)."
+}
+
 variable "db_version" {
   type    = string
   default = "POSTGRES_17"

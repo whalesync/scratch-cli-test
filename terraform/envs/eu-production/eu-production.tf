@@ -61,6 +61,11 @@ module "eu_production" {
   enable_desktop_release_monitoring = true
   enable_github_release_monitoring  = true
 
+  # Artifact Registry cleanup (DEV-11811).
+  artifact_registry_cleanup_policy_dry_run          = false
+  artifact_registry_keep_most_recent_versions_count = 10
+  artifact_registry_delete_versions_older_than_days = 14
+
   # Scratch Git
   enable_scratch_git                  = true
   scratch_git_machine_type            = "e2-highmem-4" # 4 vCPUs, 2 cores, 32 GB memory
