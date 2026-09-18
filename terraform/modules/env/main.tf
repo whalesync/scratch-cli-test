@@ -458,9 +458,11 @@ module "scratch_git_gce" {
   vpc_cidr_ranges         = [for s in local.custom_subnetworks : s.ip_cidr_range]
   boot_disk_size_gb       = var.scratch_git_boot_disk_size_gb
   disk_size_gb            = var.scratch_git_disk_size_gb
+  disk_type               = var.scratch_git_disk_type
   disk_source_snapshot    = var.scratch_git_disk_source_snapshot
   initialize_filesystem   = var.scratch_git_initialize_filesystem
   snapshot_hours_in_cycle = var.scratch_git_snapshot_hours_in_cycle
+  snapshot_retention_days = var.scratch_git_snapshot_retention_days
   labels                  = merge(local.default_labels, local.vanta_user_data_labels)
 
   depends_on = [module.vpc, module.iam-sa]

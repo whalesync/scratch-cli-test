@@ -492,6 +492,12 @@ variable "scratch_git_disk_size_gb" {
   description = "Size of the persistent data disk for the scratch-git GCE instance in GB."
 }
 
+variable "scratch_git_disk_type" {
+  type        = string
+  default     = "pd-ssd"
+  description = "Persistent disk type for the scratch-git data disk (e.g. pd-ssd, pd-balanced)."
+}
+
 variable "scratch_git_boot_disk_size_gb" {
   type        = number
   default     = 30
@@ -502,6 +508,12 @@ variable "scratch_git_snapshot_hours_in_cycle" {
   type        = number
   default     = 4
   description = "Hours between each disk snapshot for the scratch-git data disk (1, 2, 3, 4, 6, 8, 12, or 24)."
+}
+
+variable "scratch_git_snapshot_retention_days" {
+  type        = number
+  default     = 14
+  description = "Days to retain scratch-git data disk snapshots before automatic deletion."
 }
 
 variable "scratch_git_disk_source_snapshot" {

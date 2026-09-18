@@ -67,10 +67,12 @@ module "eu_production" {
   artifact_registry_delete_versions_older_than_days = 14
 
   # Scratch Git
-  enable_scratch_git                  = true
-  scratch_git_machine_type            = "e2-highmem-4" # 4 vCPUs, 2 cores, 32 GB memory
-  scratch_git_boot_disk_size_gb       = 30
-  scratch_git_snapshot_hours_in_cycle = 1
+  enable_scratch_git            = true
+  scratch_git_machine_type      = "e2-highmem-4" # 4 vCPUs, 2 cores, 32 GB memory
+  scratch_git_boot_disk_size_gb = 30
+  # Snapshot cost right-size (DEV-11823): 4h cadence, 7-day retention
+  scratch_git_snapshot_hours_in_cycle = 4
+  scratch_git_snapshot_retention_days = 7
   scratch_git_disk_size_gb            = 2000
 
   # Services

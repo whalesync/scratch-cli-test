@@ -64,9 +64,11 @@ module "eu_test" {
   artifact_registry_delete_versions_older_than_days = 14
 
   # Scratch Git
-  enable_scratch_git                  = true
-  scratch_git_boot_disk_size_gb       = 30
+  enable_scratch_git            = true
+  scratch_git_boot_disk_size_gb = 30
+  # Snapshot retention right-size (DEV-11823)
   scratch_git_snapshot_hours_in_cycle = 12
+  scratch_git_snapshot_retention_days = 7
   scratch_git_disk_size_gb            = 50
 
   # Services
