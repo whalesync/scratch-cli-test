@@ -30,6 +30,8 @@ resource "google_compute_backend_service" "default" {
   # Security headers added to every response
   custom_response_headers = var.custom_response_headers
 
+  security_policy = var.security_policy
+
   backend {
     group = google_compute_region_network_endpoint_group.cloudrun_neg.id
   }
@@ -78,6 +80,19 @@ resource "google_compute_managed_ssl_certificate" "default" {
 resource "google_compute_url_map" "default" {
   name            = "${var.name}-url-map"
   default_service = google_compute_backend_service.default.id
+
+  dynamic "default_custom_error_response_policy" {
+    for_each = var.custom_error_response != null ? [var.custom_error_response] : []
+    content {
+      error_service = default_custom_error_response_policy.value.error_service
+
+      error_response_rule {
+        match_response_codes   = default_custom_error_response_policy.value.match_response_codes
+        path                   = default_custom_error_response_policy.value.path
+        override_response_code = default_custom_error_response_policy.value.override_response_code
+      }
+    }
+  }
 }
 
 # Enforce TLS 1.2+ (disable deprecated TLS 1.0/1.1) — DEV-11003 / pentest SCR-008

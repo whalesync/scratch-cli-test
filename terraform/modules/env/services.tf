@@ -148,8 +148,15 @@ module "client_lb" {
   enable_http_redirect    = true
   log_sample_rate         = 1.0
   custom_response_headers = local.security_response_headers
+  security_policy         = local.maintenance_security_policy_self_link
+  custom_error_response   = local.maintenance_client_custom_error_response
 
-  depends_on = [google_cloud_run_v2_service.client_service]
+  # The maintenance rules must exist first: attaching a security policy that is still being changed fails.
+  depends_on = [
+    google_cloud_run_v2_service.client_service,
+    google_compute_security_policy_rule.maintenance_bypass,
+    google_compute_security_policy_rule.maintenance_lockdown,
+  ]
 }
 
 #endregion
@@ -425,6 +432,7 @@ resource "google_cloud_run_v2_service" "api_service" {
       template[0].containers[0].image, # Ignore changes to the image version after initial creation
       client,
       client_version,
+      scaling, # Service-level manual scaling is flipped at runtime during maintenance windows
     ]
   }
 }
@@ -447,6 +455,16 @@ module "api_lb" {
   enable_http_redirect    = true
   log_sample_rate         = 1.0
   custom_response_headers = local.security_response_headers
+  security_policy         = local.maintenance_security_policy_self_link
+  custom_error_response   = local.maintenance_api_custom_error_response
+
+  # Waits for the maintenance rules, and for the client load balancer so the two attachments of the same security
+  # policy never run concurrently (the first eu-test apply lost that race).
+  depends_on = [
+    google_compute_security_policy_rule.maintenance_bypass,
+    google_compute_security_policy_rule.maintenance_lockdown,
+    module.client_lb,
+  ]
 }
 
 #endregion
@@ -704,6 +722,7 @@ resource "google_cloud_run_v2_service" "cron_service" {
       template[0].containers[0].image, # Ignore changes to the image version after initial creation
       client,
       client_version,
+      scaling, # Service-level manual scaling is flipped at runtime during maintenance windows
     ]
   }
 }
@@ -965,6 +984,7 @@ resource "google_cloud_run_v2_service" "worker_service" {
       template[0].containers[0].image, # Ignore changes to the image version after initial creation
       client,
       client_version,
+      scaling, # Service-level manual scaling is flipped at runtime during maintenance windows
     ]
   }
 }

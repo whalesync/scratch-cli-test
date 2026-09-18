@@ -48,3 +48,20 @@ variable "custom_response_headers" {
   default     = []
   description = "Response headers the load balancer adds to every response, each in 'Header-Name: value' format (e.g. security headers)."
 }
+
+variable "security_policy" {
+  type        = string
+  default     = null
+  description = "Self link of a Cloud Armor backend security policy to attach to the backend service. Null attaches none."
+}
+
+variable "custom_error_response" {
+  type = object({
+    error_service          = string
+    match_response_codes   = list(string)
+    path                   = string
+    override_response_code = number
+  })
+  default     = null
+  description = "Serve an object from a backend bucket (error_service) when a response matches match_response_codes, optionally rewriting the status code. The object path must start with '/'. Null configures none."
+}

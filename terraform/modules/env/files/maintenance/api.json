@@ -1,0 +1,5 @@
+{
+  "statusCode": 503,
+  "error": "Service Unavailable",
+  "message": "Scratch is temporarily unavailable for maintenance. Please try again shortly. Status: https://status.scratch.md"
+}

@@ -121,18 +121,20 @@ terraform output nat_egress_ip
 
 ## Maintenance Mode
 
-To enable maintenance mode for the client service, run `terraform apply` with the `maintenance_mode_enabled` variable set to `true`. This sets the `MAINTENANCE_MODE_ENABLED` environment variable on the client Cloud Run service, which causes it to serve the static maintenance page instead of the normal app.
+Maintenance mode is flipped with a script, not with `terraform apply`:
 
 ```bash
-cd terraform/envs/eu-production
-terraform apply -var maintenance_mode_enabled=true
+terraform/tools/maintenance_mode.sh production status
+terraform/tools/maintenance_mode.sh production on
+terraform/tools/maintenance_mode.sh production resume-backends
+terraform/tools/maintenance_mode.sh production off
 ```
 
-To disable maintenance mode, run `terraform apply` again without the flag (it defaults to `false`):
+It blocks public traffic to the client and API load balancers with a Cloud Armor rule (the public sees a 503 maintenance page or JSON error) and scales `api-service`, `worker-service`, and `cron-service` to zero. Read [the maintenance mode runbook](/docs/ops/runbook-maintenance-mode.md) before using it on production.
 
-```bash
-terraform apply
-```
+Terraform only creates the scaffolding in [`modules/env/maintenance.tf`](/terraform/modules/env/maintenance.tf). It deliberately ignores the lockdown rule's action, the bypass allowlist, and the services' manual scaling, so an apply never starts or ends a window.
+
+> **Deprecated:** the `maintenance_mode_enabled` variable (client-only, 307 redirect, needs an apply and a new revision) still exists and will be removed once the mechanism above is verified in production. Do not use it for new windows.
 
 ## DNS Management
 
