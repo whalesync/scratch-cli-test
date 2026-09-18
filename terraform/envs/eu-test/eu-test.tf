@@ -69,7 +69,12 @@ module "eu_test" {
   # Snapshot retention right-size (DEV-11823)
   scratch_git_snapshot_hours_in_cycle = 12
   scratch_git_snapshot_retention_days = 7
-  scratch_git_disk_size_gb            = 50
+  # Disk right-size (DEV-11823 MR2): 50 GB pd-ssd -> 20 GB pd-balanced
+  scratch_git_disk_size_gb = 20
+  scratch_git_disk_type    = "pd-balanced"
+  # Restored-from snapshot (DEV-11823). Do NOT remove: `snapshot` is ForceNew, so clearing it
+  # destroys+recreates the disk EMPTY. Keep the referenced snapshot retained.
+  scratch_git_disk_source_snapshot = "projects/spv1eu-test/global/snapshots/scratch-git-data-test-shrunk-202609181419"
 
   # Services
   # Cost right-size (DEV-11812): test scales to zero for the request-driven api/client

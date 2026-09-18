@@ -45,7 +45,7 @@ Existing safety net: `scratch_git_disk_usage_too_high` alert at **80%** (`terraf
 
 - **MR1:** **zero downtime** — only the snapshot `google_compute_resource_policy` (+ attachment) is recreated; the data disk and VM keep serving. Already applied live to both envs with no interruption.
 - **MR2 · test:** run **anytime**; test tolerates downtime and needs no maintenance mode.
-- **MR2 · prod:** **requires a scheduled maintenance window**. The disk `type` is a ForceNew field and `replace_triggered_by` recreates the VM with it, so scratch-git is unavailable during the recreate. Put the app into **maintenance mode** for the window using `terraform/tools/maintenance_mode.sh` (Cloud Armor 503 + Cloud Run scale-to-zero — built in a parallel session; **confirm it is merged and tested before relying on it**). The bulk ~26 GiB copy runs **live beforehand**; the window covers only the final delta sync + terraform recreate + health check — **estimate ~20–40 min**.
+- **MR2 · prod:** **requires a scheduled maintenance window**. The disk `type` is a ForceNew field and `replace_triggered_by` recreates the VM with it, so scratch-git is unavailable during the recreate. Put the app into **maintenance mode** for the window using `terraform/tools/maintenance_mode.sh` (Cloud Armor 503 + Cloud Run scale-to-zero — built in a parallel session; **confirm it is merged and tested before relying on it**). We use a **stop-first single copy** — quiesce by stopping the scratch-git containers, then one rsync (no live pre-copy) — so there is no git-gc-vs-writer race. The whole ~26 GiB copy runs **inside** the window, but it is a fast local disk-to-disk transfer; the window covers stop + copy + snapshot + terraform recreate + health check — **estimate ~20–40 min**.
 
 ## Hard constraints that shape MR2
 
@@ -65,7 +65,7 @@ Plan gate used: the plan showed only `google_compute_resource_policy.snapshot_sc
 
 ## MR2 — migrate to a right-sized `pd-balanced` disk (PENDING)
 
-Combines the type change (#2) and the shrink (#9) in one operation, since both need the same disruptive recreate. Method: **temp-disk rsync → snapshot the temp disk → recreate the managed disk from that snapshot** via the existing `runbook-scratch-git-full-disk-restore.md`. The temp disk stays out of terraform state.
+Combines the type change (#2) and the shrink (#9) in one operation, since both need the same disruptive recreate. Method (both envs): **stop the scratch-git containers → single rsync onto a temp disk → snapshot the temp disk → recreate the managed disk from that snapshot** via the existing `runbook-scratch-git-full-disk-restore.md`. The temp disk stays out of terraform state.
 
 ### Target size
 
@@ -100,22 +100,60 @@ gcloud compute instances attach-disk scratch-git \
   --disk=scratch-git-data-migrate --device-name=migrate-disk \
   --zone=europe-west1-b --project=spv1eu-production
 
-# 3. Copy the data (break-glass root SSH on the VM)
-#    - format + mount the temp disk at /mnt/disks/data-new
-#    - LIVE pre-copy while the service still runs (bulk of ~26 GiB):
-#        rsync -aHAX --numeric-ids /mnt/disks/data/ /mnt/disks/data-new/
-#    - stop scratch-git containers to quiesce writes, then a FAST delta rsync (same command)
-#    - verify: du -sh both mounts, file counts match, spot `git fsck` a repo under repos/
+# 3. Copy the data — runs ON THE VM (break-glass root SSH). First push the baseline recorder, then SSH in:
+gcloud compute scp --tunnel-through-iap terraform/tools/scratch_git_migration_baseline.sh \
+  scratch-git:/tmp/ --zone=europe-west1-b --project=spv1eu-production
+gcloud compute ssh scratch-git --project=spv1eu-production --zone=europe-west1-b --tunnel-through-iap
+```
 
-# 4. Snapshot the temp (now 200 GB-source) disk
+Then, on the VM (stop-first, single copy — as a `role_operations@` identity you land sudo-capable):
+
+```bash
+sudo -i
+sudo -l                                          # confirm (ALL) NOPASSWD = root tier
+
+# format + mount the temp disk (must NOT collide with google-data-disk / /mnt/disks/data)
+mkfs.ext4 -F /dev/disk/by-id/google-migrate-disk
+mkdir -p /mnt/disks/data-new
+mount /dev/disk/by-id/google-migrate-disk /mnt/disks/data-new
+
+# QUIESCE: stop the app containers (leave the proxy) -- halts writers AND after-job git gc
+docker ps --format '{{.Names}}'                  # confirm names, then:
+docker stop scratch-git-blue scratch-git-green
+
+# COPY -- the minimal VM image has NO rsync; use tar (or: cp -a /mnt/disks/data/. /mnt/disks/data-new/)
+tar -C /mnt/disks/data -cf - --numeric-owner --xattrs --acls . \
+  | tar -C /mnt/disks/data-new -xf - --numeric-owner --xattrs --acls
+
+# VERIFY: sizes match, ref fingerprints match, fsck clean
+du -xsh /mnt/disks/data /mnt/disks/data-new
+bash /tmp/scratch_git_migration_baseline.sh /mnt/disks/data      source
+bash /tmp/scratch_git_migration_baseline.sh /mnt/disks/data-new  copy
+#   -> the two MANIFEST SHA256 must MATCH, fsck failures: 0.  WRITE DOWN that SHA256.
+
+sync && umount /mnt/disks/data-new
+exit                                             # leave root, then exit SSH
+```
+
+Back on your laptop:
+
+```bash
+# 4. Snapshot the temp (now 200 GB-source, unmounted) disk
 gcloud compute snapshots create scratch-git-data-shrunk-$(date +%Y%m%d%H%M) \
   --source-disk=scratch-git-data-migrate --source-disk-zone=europe-west1-b \
   --project=spv1eu-production
 
-# 5. Detach + delete the temp disk (its data is captured in the snapshot)
+# 5. Detach the temp disk (KEEP it as a rollback path — delete in step 9 after verify).
+#    Detaching BEFORE terraform keeps the live VM matching the module's single inline
+#    attached_disk, so the step-6 plan stays clean.
 gcloud compute instances detach-disk scratch-git --disk=scratch-git-data-migrate \
   --zone=europe-west1-b --project=spv1eu-production
-gcloud compute disks delete scratch-git-data-migrate --zone=europe-west1-b --project=spv1eu-production
+
+# 5b. Download the baseline reports off the VM BEFORE terraform — step 6 recreates the VM and wipes /tmp,
+#     losing the pre-migration source/copy manifests you compare the post-restore run against.
+#     (If scp is permission-denied, `sudo chmod -R a+r /tmp/scratch-git-baseline` on the VM first.)
+gcloud compute scp --tunnel-through-iap --recurse scratch-git:/tmp/scratch-git-baseline \
+  ./dev-11823-baseline/ --zone=europe-west1-b --project=spv1eu-production
 ```
 
 6. **Terraform (deploy owner, isolated MR)** — in `eu-production.tf` set:
@@ -126,9 +164,9 @@ gcloud compute disks delete scratch-git-data-migrate --zone=europe-west1-b --pro
    scratch_git_initialize_filesystem = false
    ```
    `terraform plan` must show **only** destroy+recreate of `google_compute_disk.data` (from the snapshot, at 200 GB `pd-balanced`) + the VM recreate — nothing else. `terraform apply` (never `-auto-approve`).
-7. **Verify** (see below), then **remove the `scratch_git_disk_source_snapshot` line** (restore-runbook step 6); re-plan shows no changes; commit.
+7. **Verify** (see below). **Keep the `scratch_git_disk_source_snapshot` line committed — do NOT remove it.** `snapshot` is a ForceNew field, so clearing it makes Terraform destroy+recreate the disk **empty** (and the VM via `replace_triggered_by`). The committed config permanently references the shrunk snapshot, and that snapshot must be **retained** (see cleanup). A re-plan should show no disk/VM replacement. *(To fully decouple later: `terraform state rm` the disk then `terraform import` it — re-reads it with `snapshot` unset. State surgery; do it deliberately.)*
 8. **(prod)** `terraform/tools/maintenance_mode.sh off production`.
-9. **Cleanup:** delete the migration snapshots after a soak period; old 2 TB auto-snapshots age out under the new 7-day retention.
+9. **Cleanup:** after a soak, delete the temp disk (`scratch-git-data-migrate`) and the **premigrate** snapshot; **keep the shrunk snapshot** (the disk's committed `snapshot` reference points at it — deleting it would break a future recreate). Old 2 TB auto-snapshots age out under the new 7-day retention.
 
 ### Diagram
 
@@ -150,7 +188,7 @@ Migration path (data-preserving, prod = maintenance window):
 - **Cost:** validate in the GCP Pricing Calculator (europe-west1); confirm the drop on the next billing cycle (test first).
 - **Plan gates:** MR1 → only the snapshot policy; MR2 → only `google_compute_disk.data` + VM. Abort on any unexpected resource.
 - **Health:** `terraform/tools/connect_to_git_service.sh <env>` → `curl http://127.0.0.1:3100/health`; `connect_to_git_service_ssh.sh <env>` → `sudo gitops-disk` (new size + correct usage + ext4) and `sudo gitops-ps` (containers up, no restart loop).
-- **Data integrity:** spot-check repos (`sudo gitops-git <org/wkb/coa> log`), confirm `dirty`-branch edits survived; optionally re-verify a workbook in the app.
+- **Data integrity:** run `terraform/tools/scratch_git_migration_baseline.sh` (as root) on the quiesced source, again on the rsync'd copy, and once more after the restore — the printed `MANIFEST SHA256` must match all three (it fingerprints every repo's `main`/`dirty`/other refs). Also spot-check repos (`sudo gitops-git <org/wkb/coa> log`), confirm `dirty`-branch edits survived; optionally re-verify a workbook in the app.
 - **Monitoring:** confirm the 80% disk alert still evaluates against the smaller disk (its absolute headroom is now smaller — a plus for sensitivity).
 
 ## Rollback (MR2)
@@ -161,7 +199,7 @@ Re-point `scratch_git_disk_source_snapshot` to the pre-migration 2 TB snapshot (
 
 - **Combined type-change + shrink** in one window (not staged) — both require the same recreate, so one maintenance window captures the full ~$320/mo.
 - **200 GB** prod target (not 100 GB) — the ~$10/mo delta buys IOPS + headroom insurance.
-- **Data-preserving migration** (rsync → small snapshot → restore), never wipe-and-repull, because the `dirty` branch holds non-re-hydratable edits.
+- **Data-preserving migration** (rsync → small snapshot → restore), never wipe-and-repull, because the `dirty` branch holds non-re-hydratable edits. The copy is **stop-first, single rsync** (quiesce by stopping the containers; full outage during the copy) — chosen over live pre-copy + delta to remove the git-gc-vs-writer race entirely; the copy is a fast local disk-to-disk transfer.
 - **Early-warning alert deferred**, not dropped — the repo currently has **zero** PromQL/GMP alerts (all `monitoring.tf` policies are `condition_threshold`), so the loose-object / staging-orphan gauges (`scratch_git_repo_loose_objects`, `scratch_git_staging_orphan_bytes`) are emitted but unalerted. Adding one is greenfield and must be validated with a real `terraform plan` before it can be trusted; it should land before MR2's prod shrink since a smaller disk has less absolute headroom.
 
 ## Follow-ups
