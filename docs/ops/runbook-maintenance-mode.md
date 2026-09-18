@@ -52,7 +52,7 @@ terraform/tools/maintenance_mode.sh <test|production> off [--no-notify]
 | `on --lockdown-only` | Blocks the public but leaves the backends running. Use it when the work does not need the datastores quiet. |
 | `on --preview` | Dry run. Cloud Armor logs the denials it would make and blocks nothing. Clear it with `off`. |
 | `resume-backends` | Starts api, worker, and cron in that order while the lockdown stays on, so a bypassed developer can test before reopening. |
-| `off` | Resumes any stopped backend, verifies `/health` through the bypass, reopens both hosts, and clears the bypass list. It refuses to reopen onto an unhealthy API. |
+| `off` | Resumes any stopped backend, verifies `/health` through the bypass, reopens both hosts, clears the bypass list, and invalidates the client CDN cache. It waits for both hosts to probe open several times in a row before it declares OFF, and refuses to reopen onto an unhealthy API. |
 
 Requirements: an authenticated `gcloud` with a `role_operations@` identity, and a `gcloud` recent enough to know `gcloud run services update --scaling` (run `gcloud components update` if it rejects the flag).
 
@@ -63,7 +63,9 @@ The script posts to the developer Slack channel through the webhook stored in th
 | Moment | Message |
 | --- | --- |
 | `on`, right after you confirm | Maintenance mode is starting, who started it, and whether the backends will be stopped |
+| `on`, as each backend is quiesced | `Stopping <service>...` then `<service> stopped`, per service in shutdown order (cron, worker, api) |
 | `on`, when everything is in place | Maintenance mode is ACTIVE: both hosts verified blocked, backends stopped (or left running), size of the bypass list |
+| `resume-backends` / `off`, as each backend is started | `Starting <service>...` per service in resume order (api, worker, cron), then a per-service confirmation (api reports whether it verified healthy or could not be probed from this machine) |
 | `off`, right after you confirm | Maintenance mode is being turned OFF, and by whom |
 | `off`, when both hosts answer normally again | Maintenance mode is OFF |
 | Any of `on`, `resume-backends`, `off` exits with an error | The operation did NOT complete, the reason, and the current lockdown state |
@@ -111,6 +113,7 @@ Wait for `Lockdown is ON and the backends are stopped.` Then confirm from a netw
 
 ### After the window
 
+- Cloud Armor's `allow` rule takes a few minutes to reach every Google edge. `off` waits until both hosts probe open several times in a row, but a short tail of `502 denied_by_security_policy` for external callers (for example Whalesync's session-token and live-export requests) immediately after reopen is normal, not a regression. Confirm it clears in the load balancer logs before escalating.
 - Re-enable the `AUTO_PUSH_PROD` schedule and lift the merge hold.
 - Re-enable the scratch-git GC loop if you turned it off. Remove alert snoozes.
 - Check `/settings/dev/jobs` for jobs left `failed`. Interrupted jobs normally resume by themselves within a minute of the worker starting.
@@ -135,6 +138,7 @@ Wait for `Lockdown is ON and the backends are stopped.` Then confirm from a netw
 | `gcloud` rejects `--scaling` | Old gcloud. Run `gcloud components update`. |
 | A public page still renders during a window | A CDN cache hit. Cloud Armor backend policies are skipped on cache hits. `on` invalidates the client cache, and only prerendered public pages and static assets are cacheable at all. Re-run the invalidation from the console if it matters. |
 | Maintenance ended by itself | Someone replaced or re-created the lockdown rule resource in Terraform, which resets it to `allow`. `ignore_changes` protects against a normal apply, not against a replacement. Run `on` again. |
+| External callers still get `502 denied_by_security_policy` just after `off` | Cloud Armor's `allow` rule is still propagating to some edges. `off` waits for several consecutive open probes, but global propagation can lag a few minutes. Confirm the 502s stop in the load balancer logs (`resource.type="http_load_balancer" AND httpRequest.status=502 AND jsonPayload.statusDetails="denied_by_security_policy"`); no action is needed unless they persist past ~10 minutes. |
 | A backend came back during a window | Check whether someone deployed or changed scaling by hand. Manual scaling is a service-level setting that a new revision should not change, but a deploy during a window is untested and deploys are meant to be held. Check `status` and re-run `on`. |
 
 ## Known limitations

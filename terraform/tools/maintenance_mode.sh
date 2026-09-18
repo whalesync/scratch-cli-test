@@ -131,6 +131,11 @@ MAX_BYPASS_CIDRS=10
 PROPAGATION_POLL_INTERVAL_SECONDS=10
 PROPAGATION_TIMEOUT_SECONDS=600
 API_HEALTHY_TIMEOUT_SECONDS=300
+# On reopen, both hosts must probe open this many times in a row before maintenance mode is declared OFF. A single
+# poll can pass the moment the operator's own Cloud Armor edge picks up the 'allow' rule, while other edges still serve
+# the deny (this is what left external callers such as Whalesync on 502 after a past reopen); requiring several
+# consecutive open probes, PROPAGATION_POLL_INTERVAL_SECONDS apart, keeps us from announcing OFF prematurely.
+REOPEN_STABILITY_CONFIRMATIONS=3
 # Pause between resuming one backend and the next, so the BullMQ worker exists before the scheduler and reapers on
 # the cron service start producing and reconciling work.
 BACKEND_RESUME_SETTLE_SECONDS=45
@@ -300,21 +305,33 @@ caller_is_in_bypass_allowlist() {
     echo ",$(current_bypass_cidrs)," | grep -q ",${caller_ip}/32,"
 }
 
-# $1 = "unavailable" or "open". Polls both hosts until they agree or the timeout passes.
+# $1 = "unavailable" or "open". $2 (optional) = how many consecutive matching probes are required before returning
+# success (default 1). Polls both hosts until they agree that many times in a row, or the timeout passes. The
+# consecutive-probe requirement is used on reopen to absorb Cloud Armor propagation skew across Google's edges.
 wait_until_both_hosts_are() {
-    local wanted_state="$1" elapsed_seconds=0 client_code api_code
+    local wanted_state="$1" required_consecutive_matches="${2:-1}"
+    local elapsed_seconds=0 client_code api_code consecutive_matches=0 this_probe_matched
     while [ "$elapsed_seconds" -le "$PROPAGATION_TIMEOUT_SECONDS" ]; do
         client_code="$(client_host_status_code)"
         api_code="$(api_host_status_code)"
-        echo "  ${elapsed_seconds}s: ${client_host} -> ${client_code}, ${api_host} -> ${api_code}"
+        this_probe_matched="false"
         if [ "$wanted_state" = "unavailable" ]; then
             if status_code_means_unavailable "$client_code" && status_code_means_unavailable "$api_code"; then
-                return 0
+                this_probe_matched="true"
             fi
         else
             if status_code_means_open "$client_code" && [ "$api_code" = "200" ]; then
-                return 0
+                this_probe_matched="true"
             fi
+        fi
+        if [ "$this_probe_matched" = "true" ]; then
+            consecutive_matches=$((consecutive_matches + 1))
+        else
+            consecutive_matches=0
+        fi
+        echo "  ${elapsed_seconds}s: ${client_host} -> ${client_code}, ${api_host} -> ${api_code} (${consecutive_matches}/${required_consecutive_matches} in a row)"
+        if [ "$consecutive_matches" -ge "$required_consecutive_matches" ]; then
+            return 0
         fi
         sleep "$PROPAGATION_POLL_INTERVAL_SECONDS"
         elapsed_seconds=$((elapsed_seconds + PROPAGATION_POLL_INTERVAL_SECONDS))
@@ -459,6 +476,7 @@ resume_backends() {
     lockdown_state_now="$(lockdown_state)"
     for service_name in $BACKEND_SERVICES_IN_RESUME_ORDER; do
         echo "Scaling $service_name back to automatic..."
+        send_slack_notification ":arrow_up: Starting *${service_name}* on ${environment_short_name}..."
         set_cloud_run_service_scaling "$service_name" "auto"
         if [ "$service_name" = "api-service" ]; then
             # The API is only reachable from here if the load balancer is open or this machine is bypassed.
@@ -466,13 +484,18 @@ resume_backends() {
                 echo "Waiting for the API to report healthy..."
                 wait_until_api_is_healthy ||
                     die "the API did not become healthy within ${API_HEALTHY_TIMEOUT_SECONDS}s. Is Postgres accepting connections? New instances exit at boot when it is not. worker-service and cron-service were left at 0."
+                send_slack_notification ":white_check_mark: *api-service* is up and reporting healthy on ${environment_short_name}."
             else
                 echo "This machine is not in the bypass allowlist, so API health cannot be probed. Settling for ${BACKEND_RESUME_SETTLE_SECONDS}s."
+                send_slack_notification ":hourglass_flowing_sand: *api-service* was started on ${environment_short_name}, but its health cannot be probed from this machine (not in the bypass allowlist)."
                 sleep "$BACKEND_RESUME_SETTLE_SECONDS"
             fi
         elif [ "$service_name" = "worker-service" ]; then
             echo "Giving the worker ${BACKEND_RESUME_SETTLE_SECONDS}s to start before the scheduler and reapers resume..."
+            send_slack_notification ":white_check_mark: *worker-service* started on ${environment_short_name}."
             sleep "$BACKEND_RESUME_SETTLE_SECONDS"
+        else
+            send_slack_notification ":white_check_mark: *${service_name}* started on ${environment_short_name}."
         fi
     done
     echo "Backends resumed."
@@ -588,7 +611,9 @@ Started by $(effective_gcloud_identity). Public traffic is about to be blocked, 
     else
         for service_name in $BACKEND_SERVICES_IN_QUIESCE_ORDER; do
             echo "Scaling $service_name to 0..."
+            send_slack_notification ":arrow_down: Stopping *${service_name}* on ${environment_short_name}..."
             set_cloud_run_service_scaling "$service_name" "0"
+            send_slack_notification ":black_square_for_stop: *${service_name}* stopped on ${environment_short_name}."
         done
         echo "Lockdown is ON and the backends are stopped."
         send_slack_notification ":lock: *Maintenance mode is ACTIVE on ${environment_short_name}.* Both hosts are verified blocked, and cron-service, worker-service and api-service are stopped. ${bypass_summary_for_slack}"
@@ -662,9 +687,15 @@ Backends are resumed and checked first, then ${client_host} and ${api_host} reop
     set_lockdown_rule "allow" "--no-preview" "OFF $(change_stamp)"
     set_bypass_cidrs "$BYPASS_PLACEHOLDER_CIDR" "Maintenance bypass allowlist (empty)"
 
-    echo "Waiting for both hosts to reopen..."
-    wait_until_both_hosts_are "open" ||
-        die "both hosts did not report open within ${PROPAGATION_TIMEOUT_SECONDS}s. The rule IS set to allow; check '$0 $environment_short_name status' and the Cloud Run services."
+    # Mirror the invalidation done when turning lockdown ON, so the client's cached maintenance page is dropped and
+    # returning visitors get the live app instead of a stale 503 asset served straight from the CDN.
+    echo "Invalidating the client CDN cache (so the cached maintenance page stops serving)..."
+    gcloud_in_target_project compute url-maps invalidate-cdn-cache "$client_url_map_name" --global --path='/*' --async >/dev/null 2>&1 ||
+        echo "  warning: CDN invalidation failed; the cached maintenance page may keep serving briefly. Continuing."
+
+    echo "Waiting for both hosts to reopen and stay open (Cloud Armor changes take a few minutes to reach every edge)..."
+    wait_until_both_hosts_are "open" "$REOPEN_STABILITY_CONFIRMATIONS" ||
+        die "both hosts did not stay open within ${PROPAGATION_TIMEOUT_SECONDS}s. The rule IS set to allow; check '$0 $environment_short_name status' and the Cloud Run services."
 
     if [ "$a_window_is_active" = "true" ]; then
         send_slack_notification ":white_check_mark: *Maintenance mode is OFF on ${environment_short_name}.* ${client_host} and ${api_host} are verified open again."
