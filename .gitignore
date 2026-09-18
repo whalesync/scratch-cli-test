@@ -17,6 +17,9 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 *.tfstate
 *.tfstate.backup
 *.tfstate.lock.info
+
+# Saved terraform plan files (e.g. scoped `-target` applies)
+*.tfplan
 local
 
 # Environment

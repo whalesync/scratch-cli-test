@@ -66,6 +66,11 @@ module "eu_production" {
   artifact_registry_keep_most_recent_versions_count = 10
   artifact_registry_delete_versions_older_than_days = 14
 
+  # Database
+  # DEV-11820: downsize the machine tier only; HA stays on so the resize is a ~60s failover, not a full restart.
+  # Target gated on live memory — see docs/ops/dev-11808-scratch-hosting-cost-review.md (Appendix B).
+  db_tier = "db-custom-1-4096"
+
   # Scratch Git
   enable_scratch_git            = true
   scratch_git_machine_type      = "e2-highmem-4" # 4 vCPUs, 2 cores, 32 GB memory

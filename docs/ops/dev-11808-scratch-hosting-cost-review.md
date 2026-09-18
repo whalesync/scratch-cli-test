@@ -157,3 +157,48 @@ curl -s -G "https://monitoring.googleapis.com/v3/projects/$P/timeSeries" \
 ```
 
 Expect prod used-memory peaks 20–25 GiB, CPU peaks ~0.4–1.0 util, `/dev/sda` ~1–2% full.
+
+---
+
+## Appendix B: production database downsize (DEV-11820)
+
+*Added 2026-09-18 (Chris Hoefgen, with Claude) — carries out recommendation #8a. Terraform MR: [!3350](https://gitlab.com/whalesync/spinner/-/merge_requests/3350) (draft — not yet applied).*
+
+**Determination: downsize is safe — halve the machine tier, keep HA.** Recommendation #8a proposed the `spv1eu-production` primary DB `db-custom-2-8192` (2 vCPU / 8 GB) → `db-custom-1-4096` (1 vCPU / 4 GB); the DB is only ~12 GB and idles at ~15% CPU / ~40% memory. ([DEV-11820](https://linear.app/whalesync/issue/DEV-11820).) The sibling test downsize (DEV-11819) already shipped in commit `fde3f54e3` (`eu-test` → `db-custom-1-4096`, Zonal). Note DEV-11820's issue description says `spv1eu-test`, but that's a copy-paste from DEV-11819 — this work targets **production**.
+
+**General plan:**
+
+- Set `db_tier` from the inherited default `db-custom-2-8192` to **`db-custom-1-4096`** — a one-line override in `terraform/envs/eu-production/eu-production.tf`.
+- **Keep HA on** (`db_high_availability = true`, unchanged). This is deliberate: on an HA instance a machine-type change is applied by **failing over to the standby (~60 s)** rather than a multi-minute full restart, so the outage stays well inside the 15-minute target and automatic failover is preserved. HA→Zonal (#8b) is **not** bundled in here.
+- **Target tier is gated on a live memory check.** Prod runs at ~40% of 8 GB (~3.2 GB working set) ≈ 80% of a 4 GB instance. Before apply, confirm the real working set, peak CPU, and peak connections in Cloud Monitoring (same read-only `timeSeries` method as Appendix A, filtering the Cloud SQL instance); if 4 GB is tight, fall back to **`db-custom-1-6144`** (1 vCPU / 6 GB). Leave `db_disk_size` unset — Cloud SQL cannot shrink a disk.
+- Apply manually in a low-traffic window after an on-demand backup (`cd terraform/envs/eu-production && terraform plan/apply`); the plan must show a single in-place `tier` change — no destroy/replace, no disk resize. Rollback is symmetric: revert the line and re-apply (another ~60 s failover).
+- The maintenance-mode tooling now on master (`terraform/tools/maintenance_mode.sh` — LB lockdown + backend quiesce) is available but **not needed** here: it scales the backends to zero, which would last longer than the ~60 s HA-failover blip. A low-traffic window is sufficient.
+
+**Scoped apply — only the Cloud SQL instance.** The maintenance-mode terraform (`6f0bde526`) and the scratch-git snapshot right-size (`06230ff1f`) are merged to master but **not yet applied to prod**, so a plain `terraform apply` in `envs/eu-production` would apply all three pending changes at once. Restrict the apply to the DB instance with `-target`, and apply a saved plan file so you ship exactly what you reviewed:
+
+```bash
+cd terraform/envs/eu-production
+terraform init
+
+# Plan ONLY the Cloud SQL instance (target = its full module-nested address)
+terraform plan \
+  -target='module.eu_production.module.db_primary.google_sql_database_instance.primary' \
+  -out=db-tier.tfplan
+
+# Review: exactly ONE in-place update to google_sql_database_instance.primary changing
+# `tier` (db-custom-2-8192 -> db-custom-1-4096) — no destroy/replace, no disk resize, and
+# nothing about Cloud Armor / backend / scratch-git snapshots.
+
+terraform apply db-tier.tfplan   # never -auto-approve
+```
+
+`-target` pulls in the target plus its *upstream* dependencies (the VPC/private-IP wiring and the random name suffix — none of which change), not its dependents, so the module's `google_sql_user` / `google_sql_database` resources are left alone. Terraform prints a *"Resource targeting is in effect … not for routine use"* warning — expected for this one-change-at-a-time apply. The maintenance-mode and DEV-11823 snapshot changes stay pending in prod and must be applied separately; the next untargeted `terraform plan` will surface them.
+
+**Savings:**
+
+| Target tier | vCPU / RAM | Est. saving vs `db-custom-2-8192` |
+|---|---|---:|
+| `db-custom-1-4096` (primary target) | 1 / 4 GB | **~$52/mo** |
+| `db-custom-1-6144` (memory fallback) | 1 / 6 GB | ~$26/mo |
+
+The instance is Regional/HA, so the tier is billed for both the primary and the standby — halving the vCPU saves on both. Confirm the exact `europe-west1` figure on the GCP Pricing Calculator before apply.
