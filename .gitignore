@@ -99,7 +99,9 @@ client/next-env.d.ts
 /scratch-desktop/dist-release-test
 
 .gstack/
-.conductor/
+.conductor/*
+# ...but track the team-shared Conductor config (settings.local.toml stays ignored)
+!.conductor/settings.toml
 
 # design-sync (Claude Design converter) — transient build/verification state
 .design-sync/sb-reference/
