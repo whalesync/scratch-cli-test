@@ -58,24 +58,28 @@ Requirements: an authenticated `gcloud` with a `role_operations@` identity, and 
 
 ### Slack notifications
 
-The script posts to the developer Slack channel through the webhook stored in the environment's `SLACK_NOTIFICATION_WEBHOOK_URL` secret, the same webhook the server uses. Test and production each have their own secret value.
+The script posts to the developer Slack channel through the webhook stored in the environment's `SLACK_NOTIFICATION_WEBHOOK_URL` secret, the same webhook the server uses. Separately, when a window is enabled or disabled it posts one summary ping to the **#on-call** channel through the environment's `SLACK_ON_CALL_NOTIFICATION_WEBHOOK_URL` secret. Test and production each have their own value for both secrets.
 
-| Moment | Message |
-| --- | --- |
-| `on`, right after you confirm | Maintenance mode is starting, who started it, and whether the backends will be stopped |
-| `on`, as each backend is quiesced | `Stopping <service>...` then `<service> stopped`, per service in shutdown order (cron, worker, api) |
-| `on`, when everything is in place | Maintenance mode is ACTIVE: both hosts verified blocked, backends stopped (or left running), size of the bypass list |
-| `resume-backends` / `off`, as each backend is started | `Starting <service>...` per service in resume order (api, worker, cron), then a per-service confirmation (api reports whether it verified healthy or could not be probed from this machine) |
-| `off`, right after you confirm | Maintenance mode is being turned OFF, and by whom |
-| `off`, when both hosts answer normally again | Maintenance mode is OFF |
-| Any of `on`, `resume-backends`, `off` exits with an error | The operation did NOT complete, the reason, and the current lockdown state |
+| Moment | Channel | Message |
+| --- | --- | --- |
+| `on`, right after you confirm | dev | Maintenance mode is starting, who started it, and whether the backends will be stopped |
+| `on`, as each backend is quiesced | dev | `Stopping <service>...` then `<service> stopped`, per service in shutdown order (cron, worker, api) |
+| `on`, when everything is in place | dev | Maintenance mode is ACTIVE: both hosts verified blocked, backends stopped (or left running), size of the bypass list |
+| `on`, once the window is fully enabled | #on-call | Maintenance mode ENABLED, who by and when, whether backends were stopped or left running |
+| `resume-backends` / `off`, as each backend is started | dev | `Starting <service>...` per service in resume order (api, worker, cron), then a per-service confirmation (api reports whether it verified healthy or could not be probed from this machine) |
+| `off`, right after you confirm | dev | Maintenance mode is being turned OFF, and by whom |
+| `off`, when both hosts answer normally again | dev | Maintenance mode is OFF |
+| `off`, once a real window is fully disabled | #on-call | Maintenance mode DISABLED, who by and when |
+| Any of `on`, `resume-backends`, `off` exits with an error | dev | The operation did NOT complete, the reason, and the current lockdown state |
 
 Things to know:
 
-- Notifications never block a window. If the secret cannot be read, is not a Slack webhook URL, or Slack is down, the script prints a warning and carries on.
-- The webhook URL is read into memory at run time. It is never printed, and it is passed to `curl` on stdin so it does not show up in the process list.
+- Notifications never block a window. If a secret cannot be read, is not a Slack webhook URL, or Slack is down, the script prints a warning and carries on. This is independent per webhook, so a missing `SLACK_ON_CALL_NOTIFICATION_WEBHOOK_URL` only skips the #on-call ping.
+- The #on-call ping fires only on a clean finish of `on`/`off` — a mid-flip failure is reported to the dev channel, not #on-call. An `off` that only clears a `--preview` or runs with nothing on does not ping #on-call.
+- Each webhook URL is read into memory at run time. It is never printed, and it is passed to `curl` on stdin so it does not show up in the process list.
 - `--preview`, and an `off` that only clears a preview, are not announced. Bypass addresses are never posted, only how many there are.
-- Pass `--no-notify` to stay quiet, for example while rehearsing on test. The secret is then not read at all.
+- Pass `--no-notify` to stay quiet, for example while rehearsing on test. Neither secret is then read at all.
+- The `SLACK_ON_CALL_NOTIFICATION_WEBHOOK_URL` secret is provisioned empty by Terraform; set its value per environment with `terraform/tools/update_secret_value.sh <test|production> SLACK_ON_CALL_NOTIFICATION_WEBHOOK_URL`. Until it is set, the #on-call ping is skipped with a warning.
 
 ## Procedure
 

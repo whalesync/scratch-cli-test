@@ -78,7 +78,14 @@ module "eu_production" {
   # Snapshot cost right-size (DEV-11823): 4h cadence, 7-day retention
   scratch_git_snapshot_hours_in_cycle = 4
   scratch_git_snapshot_retention_days = 7
-  scratch_git_disk_size_gb            = 2000
+  # Disk right-size (DEV-11823 MR2, prod leg): 2000 GB pd-ssd -> 200 GB pd-balanced
+  scratch_git_disk_size_gb = 200
+  scratch_git_disk_type    = "pd-balanced"
+  # Restored-from snapshot (DEV-11823). Do NOT remove: `snapshot` is ForceNew, so clearing it
+  # destroys+recreates the disk EMPTY. Keep the referenced snapshot retained.
+  scratch_git_disk_source_snapshot = "projects/spv1eu-production/global/snapshots/scratch-git-data-shrunk-202609221539"
+  # Restoring a populated snapshot, not formatting a blank disk.
+  scratch_git_initialize_filesystem = false
 
   # Services
   # Cost right-size (DEV-11812): drop the pinned min=2 to a single always-on instance

@@ -9,7 +9,8 @@ set -euo pipefail
 #   nothing touches Postgres, Redis or scratch-git during the window.
 #
 # Both layers are GCP control-plane changes: no Terraform apply, no new Cloud Run revision, no Postgres/Redis.
-# Slack is told when a window starts, when it is fully active, and when it ends (see "Slack notifications" below).
+# Slack is told when a window starts, when it is fully active, and when it ends (see "Slack notifications" below); the
+# #on-call channel additionally gets one ping when a window is enabled ('on') or disabled ('off').
 # Full procedure, checklists and what each audience sees: docs/ops/runbook-maintenance-mode.md
 
 usage() {
@@ -28,8 +29,9 @@ flags for 'on':
   --preview                          Dry run: log would-be denials without blocking anything. Clear with 'off'.
 
 flags for 'on', 'resume-backends' and 'off':
-  --no-notify                        Do not post to Slack. By default the script posts to the webhook stored in the
-                                     environment's SLACK_NOTIFICATION_WEBHOOK_URL secret.
+  --no-notify                        Do not post to Slack (neither the general window notices nor the #on-call ping).
+                                     By default the script posts to the webhooks stored in the environment's
+                                     SLACK_NOTIFICATION_WEBHOOK_URL and SLACK_ON_CALL_NOTIFICATION_WEBHOOK_URL secrets.
 
 Runbook: docs/ops/runbook-maintenance-mode.md
 USAGE
@@ -141,6 +143,7 @@ REOPEN_STABILITY_CONFIRMATIONS=3
 BACKEND_RESUME_SETTLE_SECONDS=45
 
 SLACK_WEBHOOK_SECRET_NAME="SLACK_NOTIFICATION_WEBHOOK_URL"
+SLACK_ON_CALL_WEBHOOK_SECRET_NAME="SLACK_ON_CALL_NOTIFICATION_WEBHOOK_URL"
 SLACK_REQUEST_TIMEOUT_SECONDS=10
 
 # The scheduler and reapers (cron) stop first, then the job consumer (worker), then the API.
@@ -357,11 +360,14 @@ wait_until_api_is_healthy() {
 ## Slack notifications
 ## ---------------------------------------------------------------------------------------------------------------------
 
-# The webhook URL is a credential. It is read from Secret Manager into memory, never printed, and handed to curl on
+# Each webhook URL is a credential. It is read from Secret Manager into memory, never printed, and handed to curl on
 # stdin so it does not appear in the process list. Notifications never fail the caller: a maintenance window must not
-# depend on Slack.
+# depend on Slack. There are two independent targets: the general maintenance webhook (window start / active / end)
+# and the #on-call webhook (a single ping when a window opens or closes).
 slack_webhook_url=""
 slack_webhook_url_load_was_attempted="false"
+on_call_webhook_url=""
+on_call_webhook_url_load_was_attempted="false"
 
 # Must be called directly, not inside $(...), so the loaded value survives.
 load_slack_webhook_url_once() {
@@ -382,25 +388,68 @@ load_slack_webhook_url_once() {
     esac
 }
 
+# Must be called directly, not inside $(...), so the loaded value survives. Mirrors load_slack_webhook_url_once for the
+# separate #on-call webhook.
+load_on_call_webhook_url_once() {
+    if [ "$on_call_webhook_url_load_was_attempted" = "true" ]; then
+        return 0
+    fi
+    on_call_webhook_url_load_was_attempted="true"
+    on_call_webhook_url="$(gcloud_in_target_project secrets versions access latest --secret="$SLACK_ON_CALL_WEBHOOK_SECRET_NAME" 2>/dev/null || true)"
+    case "$on_call_webhook_url" in
+        https://hooks.slack.com/*) ;;
+        "")
+            echo "  warning: could not read the $SLACK_ON_CALL_WEBHOOK_SECRET_NAME secret in $gcp_project_id. Continuing WITHOUT an #on-call notification."
+            ;;
+        *)
+            on_call_webhook_url=""
+            echo "  warning: the $SLACK_ON_CALL_WEBHOOK_SECRET_NAME secret in $gcp_project_id is not a Slack webhook URL. Continuing WITHOUT an #on-call notification."
+            ;;
+    esac
+}
+
 # Escapes backslashes and double quotes, and turns real newlines into \n, so the value is safe inside a JSON string.
 json_string_escape() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{ printf "%s%s", (NR > 1 ? "\\n" : ""), $0 }'
 }
 
-# $1 = message in Slack mrkdwn. Same {"text": ...} payload the server's SlackNotificationService sends.
+# $1 = an already-loaded https://hooks.slack.com/... webhook URL, $2 = message in Slack mrkdwn. Posts the same
+# {"text": ...} payload the server's SlackNotificationService sends. Returns 0 only on an HTTP 200 from Slack. The URL
+# is handed to curl on stdin (--config -) so it never appears in the process list. This is the one place a webhook URL
+# touches curl.
+post_message_to_slack_webhook_url() {
+    local webhook_url="$1" message_text="$2" request_payload response_status_code
+    request_payload="{\"text\":\"$(json_string_escape "$message_text")\"}"
+    response_status_code="$(printf 'url = "%s"\n' "$webhook_url" | curl --config - --silent --output /dev/null \
+        --write-out '%{http_code}' --max-time "$SLACK_REQUEST_TIMEOUT_SECONDS" --request POST \
+        --header 'Content-Type: application/json' --data "$request_payload" 2>/dev/null)" || true
+    [ "$response_status_code" = "200" ]
+}
+
+# $1 = message in Slack mrkdwn. Posts to the general maintenance webhook.
 send_slack_notification() {
-    local message_text="$1" request_payload response_status_code
+    local message_text="$1"
     [ "$slack_notifications_enabled" = "true" ] || return 0
     load_slack_webhook_url_once
     [ -n "$slack_webhook_url" ] || return 0
-    request_payload="{\"text\":\"$(json_string_escape "$message_text")\"}"
-    response_status_code="$(printf 'url = "%s"\n' "$slack_webhook_url" | curl --config - --silent --output /dev/null \
-        --write-out '%{http_code}' --max-time "$SLACK_REQUEST_TIMEOUT_SECONDS" --request POST \
-        --header 'Content-Type: application/json' --data "$request_payload" 2>/dev/null)" || true
-    if [ "$response_status_code" = "200" ]; then
+    if post_message_to_slack_webhook_url "$slack_webhook_url" "$message_text"; then
         echo "  Slack notified."
     else
-        echo "  warning: the Slack notification was not delivered (HTTP ${response_status_code:-none}). Continuing."
+        echo "  warning: the Slack notification was not delivered. Continuing."
+    fi
+}
+
+# $1 = message in Slack mrkdwn. Posts to the separate #on-call webhook. Like send_slack_notification, it respects
+# --no-notify and never fails the caller.
+send_on_call_notification() {
+    local message_text="$1"
+    [ "$slack_notifications_enabled" = "true" ] || return 0
+    load_on_call_webhook_url_once
+    [ -n "$on_call_webhook_url" ] || return 0
+    if post_message_to_slack_webhook_url "$on_call_webhook_url" "$message_text"; then
+        echo "  #on-call notified."
+    else
+        echo "  warning: the #on-call notification was not delivered. Continuing."
     fi
 }
 
@@ -620,6 +669,12 @@ Started by $(effective_gcloud_identity). Public traffic is about to be blocked, 
     fi
     slack_operation_in_flight_description=""
 
+    if [ "$lockdown_only" = "true" ]; then
+        send_on_call_notification ":rotating_light: *Maintenance mode ENABLED on ${environment_short_name}* (${client_host}, ${api_host}) $(change_stamp). Both hosts verified blocked; backends left running (lockdown only)."
+    else
+        send_on_call_notification ":rotating_light: *Maintenance mode ENABLED on ${environment_short_name}* (${client_host}, ${api_host}) $(change_stamp). Both hosts verified blocked; cron-service, worker-service and api-service are stopped."
+    fi
+
     cat <<REMINDERS
 
 Before you start the maintenance work:
@@ -699,6 +754,7 @@ Backends are resumed and checked first, then ${client_host} and ${api_host} reop
 
     if [ "$a_window_is_active" = "true" ]; then
         send_slack_notification ":white_check_mark: *Maintenance mode is OFF on ${environment_short_name}.* ${client_host} and ${api_host} are verified open again."
+        send_on_call_notification ":white_check_mark: *Maintenance mode DISABLED on ${environment_short_name}* (${client_host}, ${api_host}) $(change_stamp). Both hosts verified open again."
     fi
     slack_operation_in_flight_description=""
 
