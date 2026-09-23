@@ -862,21 +862,13 @@ resource "google_monitoring_alert_policy" "scratch_git_disk_usage_too_high" {
       }
     }
   }
-  conditions {
-    display_name = "VM Instance - Disk metric missing"
-    condition_absent {
-      aggregations {
-        alignment_period   = "300s"
-        per_series_aligner = "ALIGN_MAX"
-      }
-      duration = "300s"
-      filter   = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/disk/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\""
-      trigger {
-        count = 1
-      }
-    }
-  }
+  # NB: no metric-absence condition here. "Disk metric absent" is owned by scratch_git_ops_agent_unresponsive
+  # below, which gates on Compute Engine uptime (AND_WITH_MATCHING_RESOURCE) so it won't false-fire while the VM
+  # is intentionally down. An ungated absence condition here false-fired on every VM recreate — the disk metric
+  # is keyed by (instance_id, device), and a recreate changes both (new instance_id, and the kernel can swap the
+  # data disk's device letter), so the old absence series die and stick as an un-closable incident.
   alert_strategy {
+    auto_close = "604800s"
     notification_channel_strategy {
       renotify_interval = local.extended_renotify_interval
     }
