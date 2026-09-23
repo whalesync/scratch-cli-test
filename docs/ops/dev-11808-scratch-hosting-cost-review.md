@@ -14,7 +14,7 @@ Scratch has **< 10 external (non-`@whalesync.com`) active users and no growth fo
 
 ## Headline
 
-August 2026 Scratch spend was **$1,781/mo** (`spv1eu-production` $1,130 + `spv1eu-test` $651). Right-sizing to actual scale removes an estimated **~$560–$760/mo (≈31–43%)** near-term, more once the 2 TB production disk is right-sized — now the *primary* scratch-git lever after #6 was rejected (see [Appendix A](#appendix-a-scratch-git-host-right-sizing-verification-dev-11822)). (Note: the parent project's "$5k off $13k/mo" target spans the Whalesync `wsv1-*` projects too — Scratch is a smaller slice, so this is Scratch's realistic contribution, not the whole $5k.)
+August 2026 Scratch spend was **$1,781/mo** (`spv1eu-production` $1,130 + `spv1eu-test` $651). Right-sizing to actual scale removes an estimated **~$510–$710/mo (≈29–40%)** near-term (the prod DB downsize #8a was reverted — see [Appendix B](#appendix-b-production-database-downsize-dev-11820)), more once the 2 TB production disk is right-sized — now the *primary* scratch-git lever after #6 was rejected (see [Appendix A](#appendix-a-scratch-git-host-right-sizing-verification-dev-11822)). (Note: the parent project's "$5k off $13k/mo" target spans the Whalesync `wsv1-*` projects too — Scratch is a smaller slice, so this is Scratch's realistic contribution, not the whole $5k.)
 
 ## Where the money goes (Aug 2026)
 
@@ -52,7 +52,7 @@ Tiered by risk. `file:line` are the exact knobs to change. Maps to the six asks 
 
 | # | Change | file:line | Risk | Est. save/mo |
 |---|---|---|---|---:|
-| 5 | **Cloud Run instance counts + fold `cron` → `worker`** (same image): removes 1 always-on instance + its otel sidecar per env. Then prod api `2→1`, worker `2→1`; test api & client `min=0`, worker `min=1` | cron hardcoded `services.tf:468-469`; api `eu-production.tf:74-75`/`eu-test.tf:67-68`; worker `eu-production.tf:76-77`/`eu-test.tf:69-70` | prod min=1 → brief unavailability during deploy/crash; test → cold starts (fine at this scale) | **~$250** |
+| 5 | **Cloud Run instance counts + fold `cron` → `worker`** (same image): removes 1 always-on instance + its otel sidecar per env. Then prod api `2→1`, worker `2→1`; test api & client `min=0`, worker `min=1`. **Note (2026-09-23):** prod worker memory was *raised* 2Gi → 3Gi after OOMs on large sync/publish jobs (see [Appendix B](#appendix-b-production-database-downsize-dev-11820)) | cron hardcoded `services.tf:468-469`; api `eu-production.tf:74-75`/`eu-test.tf:67-68`; worker `eu-production.tf:76-77`/`eu-test.tf:69-70` | prod min=1 → brief unavailability during deploy/crash; test → cold starts (fine at this scale) | **~$250** |
 | 6 | ~~**Prod scratch-git VM `e2-highmem-4` → `e2-highmem-2`**~~ — **REJECTED after verification; keep `e2-highmem-4`** (see [Appendix A](#appendix-a-scratch-git-host-right-sizing-verification-dev-11822)). Prod is memory-bound: used-memory recurrently peaks **~25 GiB** and CPU **~4 vCPU**, so 16 GB OOMs (reviving the 2026-04-17 outage) and 32 GiB needs 4 vCPU on E2. Saving redirects to the disk (#2/#3/#9). | `eu-production.tf:71` | Verified via Cloud Monitoring (DEV-11822) | ~~$90~~ → **$0** |
 | 7 | **Test Cloud SQL tier `db-custom-2-8192` → `db-custom-1-4096`** (add per-env `db_tier` override) | `eu-test.tf` (default `terraform/modules/env/variables.tf:61-65`) | Negligible for test | **~$50** |
 
@@ -60,7 +60,7 @@ Tiered by risk. `file:line` are the exact knobs to change. Maps to the six asks 
 
 | # | Change | file:line | Risk / recommendation | Est. save/mo |
 |---|---|---|---|---:|
-| 8a | **Prod Cloud SQL tier `db-custom-2-8192` → `db-custom-1-4096`** (DB is only 12 GB) | default `terraform/modules/env/variables.tf:61-65` | Low at this scale. **Recommend: DO** | ~$52 |
+| 8a | ~~**Prod Cloud SQL tier `db-custom-2-8192` → `db-custom-1-4096`**~~ — **REVERTED 2026-09-23**: at 1 vCPU a single large operation dominates the DB; prod needs ≥ 2 vCPU (see [Appendix B](#appendix-b-production-database-downsize-dev-11820)) | `eu-production.tf` `db_tier` | Shipped, then rolled back | ~~$52~~ → **$0** |
 | 8b | **Prod Cloud SQL Regional HA → Zonal** (`db_high_availability = false`) | `eu-production.tf` (default `variables.tf:106-110`; mapping `terraform/modules/cloudsql/main.tf:22`) | **Loses automatic failover** — a zonal outage means restore-from-backup (backups retained 14 d; PITR already off). **This is the one genuine availability reduction.** **Recommend: DO** given < 10 users + cost, but sign off explicitly | ~$103 |
 | 9 | **Right-size the 2 TB prod disk** — the size is likely inflated by the scratch-git staging-dir growth bug (**DEV-11253**; reaper **DEV-11317**). After cleanup lands and true usage is known, recreate a smaller `pd-balanced` disk | `eu-production.tf:69` | Disruptive one-time migration; **gated on DEV-11253**. **Recommend: DO after DEV-11253** | +~$150 (beyond #2) |
 
@@ -76,8 +76,8 @@ Tiered by risk. `file:line` are the exact knobs to change. Maps to the six asks 
 |---|---:|
 | Tier 1 (quick, no-risk) | ~$255 |
 | Tier 2 (right-size, verify) | ~$300 (was ~$390; **#6 rejected** — see [Appendix A](#appendix-a-scratch-git-host-right-sizing-verification-dev-11822)) |
-| Tier 3 DB (recommended) | ~$155 |
-| **Near-term total** | **~$560–$760/mo (≈31–43% of $1,781)** |
+| Tier 3 DB (recommended) | ~$103 (was ~$155; **#8a reverted** — see [Appendix B](#appendix-b-production-database-downsize-dev-11820)) |
+| **Near-term total** | **~$510–$710/mo (≈29–40% of $1,781)** |
 | Later: 2 TB disk right-size (post-DEV-11253) | +~$150 |
 
 ## Key decisions / caveats
@@ -202,3 +202,35 @@ terraform apply db-tier.tfplan   # never -auto-approve
 | `db-custom-1-6144` (memory fallback) | 1 / 6 GB | ~$26/mo |
 
 The instance is Regional/HA, so the tier is billed for both the primary and the standby — halving the vCPU saves on both. Confirm the exact `europe-west1` figure on the GCP Pricing Calculator before apply.
+
+### Update 2026-09-23 — reverted; prod worker memory raised
+
+*Added 2026-09-23 (Chris Hoefgen, with Claude).*
+
+**DB: back to `db-custom-2-8192`.** The 1 vCPU / 4 GB tier was applied, and it did not hold up in production. The ~15% average CPU hid the peaks. With one vCPU, a single large operation (a big sync or publish) can take the entire CPU and starve every other query. **Prod needs at least 2 vCPU**, so `eu-production.tf` now pins `db_tier = "db-custom-2-8192"` explicitly (the pre-DEV-11820 tier) instead of relying on the module default. HA stays on, so the upsize is another ~60 s failover. The ~$52/mo saving is withdrawn. eu-test stays on `db-custom-1-4096` (DEV-11819).
+
+**Worker: 2Gi → 3Gi.** The prod `worker-service` (runs sync/publish jobs) has been hitting Cloud Run's container memory limit on large jobs:
+
+```
+2026-09-23T15:56:57Z  worker-service  Memory limit of 2176 MiB exceeded with 2216 MiB used.
+2026-08-26T15:07:27Z  worker-service  Memory limit of 2176 MiB exceeded with 2333 MiB used.
+```
+
+2176 MiB is the 2 GiB app container plus the 128 MiB otel sidecar, so Cloud Run enforces the limit on the instance total. These were container OOMs, not V8 `heap out of memory`. The `--max-old-space-size=1900` heap cap left only ~150 MiB for non-heap memory (native buffers, Prisma, code space). The worker now runs `worker_service_memory_limit = "3Gi"` with `--max-old-space-size=2560`, which leaves ~512 MiB for non-heap memory and ~50% headroom over the observed peaks. CPU stays at 1 vCPU: 3 GiB + 128 MiB fits under Cloud Run's 4 GiB-per-vCPU cap. A full 4 GiB app container would push the instance total past 4 GiB and need a second vCPU (~+$47/mo per always-on instance). The memory bump costs about +$5/mo per instance.
+
+**Scoped apply.** One targeted, saved plan per resource. Do the worker first (new revision, no downtime), then the DB in a low-traffic window after an on-demand backup:
+
+```bash
+cd terraform/envs/eu-production
+terraform init
+
+terraform plan -target='module.eu_production.google_cloud_run_v2_service.worker_service' -out=worker-mem.tfplan
+# Review: ONE in-place update — app container memory 2Gi -> 3Gi, NODE_OPTIONS 1900 -> 2560.
+terraform apply worker-mem.tfplan   # never -auto-approve
+
+terraform plan -target='module.eu_production.module.db_primary.google_sql_database_instance.primary' -out=db-tier.tfplan
+# Review: ONE in-place update — tier db-custom-1-4096 -> db-custom-2-8192. No replace, no disk change.
+terraform apply db-tier.tfplan
+```
+
+**Verify.** After the next large sync/publish, check that no new `Memory limit of` entries appear on `worker-service` in Cloud Logging (a new OOM would read `3200 MiB`). Also check that Cloud SQL CPU utilization stays well below saturation.

@@ -67,9 +67,8 @@ module "eu_production" {
   artifact_registry_delete_versions_older_than_days = 14
 
   # Database
-  # DEV-11820: downsize the machine tier only; HA stays on so the resize is a ~60s failover, not a full restart.
-  # Target gated on live memory — see docs/ops/dev-11808-scratch-hosting-cost-review.md (Appendix B).
-  db_tier = "db-custom-1-4096"
+  # DEV-11820: prod needs >=2 vCPU — at 1 vCPU a single heavy query starves the DB.
+  db_tier = "db-custom-2-8192"
 
   # Scratch Git
   enable_scratch_git            = true
@@ -89,8 +88,8 @@ module "eu_production" {
 
   # Services
   # Cost right-size (DEV-11812): drop the pinned min=2 to a single always-on instance
-  # per service while keeping max headroom for bursts. Worker memory stays at the 2Gi
-  # default (highest-memory-risk service); client/api memory trimmed to 1Gi via module defaults.
+  # per service while keeping max headroom for bursts; client/api memory trimmed via module defaults.
+  # Worker memory raised to 3Gi — 2Gi OOM'd on large sync/publish jobs (DEV-11820).
   force_reload_services             = var.force_reload_services
   maintenance_mode_enabled          = var.maintenance_mode_enabled
   api_service_min_instance_count    = 1
@@ -98,6 +97,8 @@ module "eu_production" {
   client_service_min_instance_count = 1
   worker_service_min_instance_count = 1
   worker_service_max_instance_count = 2
+  worker_service_memory_limit       = "3Gi"
+  worker_service_node_options       = "--max-old-space-size=2560"
   worker_concurrency                = 10
 
   # Static Assets
