@@ -258,6 +258,19 @@ labels.service="scratch-git"
 
 ## DevOps Playbook
 
+### Is a repo stuck or just busy? (write-lock queue)
+
+Every write to a repo takes an in-memory `repo:branch` lock. The nginx proxy cuts requests at 300 s (HTTP 504), but work that already holds the lock **keeps running and keeps the lock** after its client is gone — so later writes to that repo queue behind the orphan and 504 too. To see the queue, open the tunnel (above) and call:
+
+```bash
+curl -s -H "Authorization: Bearer $SCRATCH_GIT_AUTH_TOKEN" \
+  'http://127.0.0.1:3100/api/debug/locks?repoIdPrefix=org_xxx/wkb_yyy' | jq
+```
+
+Each row is one holder (`phase: holdingLock`) or waiter (`waitingForLock`) with the request that started it (`requestDescription`, e.g. `POST /api/repo/write/{id}/rebase`), `waitedForLockMilliseconds`, `heldLockMilliseconds`, and `requestingClientDisconnected: true` for an orphan still running. Omit `repoIdPrefix` to list every repo.
+
+The same events are logged with a `[LOCK]` prefix: waits ≥ 1 s when the lock is acquired, holds ≥ 10 s when released, waiters that gave up (their operation never ran), clients that disconnected while their operation kept the lock, and when such an orphan finally releases it.
+
 ### Resizing the ScratchGit Persistent Data Disk
 
 The persistent disk can be expanded online without data loss or downtime. GCP only supports **increasing** disk size, never decreasing.

@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
 use serde_json::json;
 
-use crate::service::envelope::{envelope_error, envelope_result};
+use crate::service::envelope::{envelope, envelope_error, envelope_result};
 use crate::service::error::AppError;
 use crate::service::git::repo::GitRepo;
 use crate::service::state::AppState;
@@ -16,6 +17,23 @@ pub async fn slow_request() -> impl IntoResponse {
     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
     tracing::info!("[debug] slow_request: done");
     axum::Json(json!({ "ok": true, "slept_seconds": 30 }))
+}
+
+#[derive(Deserialize)]
+pub struct LocksQuery {
+    /// Only show repos whose id starts with this (e.g. `org_x/wkb_y`). Omit for all.
+    #[serde(rename = "repoIdPrefix")]
+    pub repo_id_prefix: Option<String>,
+}
+
+/// `GET /api/debug/locks[?repoIdPrefix=…]` → every current `repo:branch` write-lock
+/// holder and waiter: which request, how long it waited, how long it has held the
+/// lock, and whether its client already disconnected (an orphan still running).
+pub async fn locks(State(state): State<AppState>, Query(query): Query<LocksQuery>) -> Response {
+    let lock_holders_and_waiters = state
+        .repo_locks
+        .snapshot_lock_activity(query.repo_id_prefix.as_deref());
+    envelope(&state, None, lock_holders_and_waiters)
 }
 
 pub async fn graph(State(state): State<AppState>, Path(id): Path<String>) -> Response {

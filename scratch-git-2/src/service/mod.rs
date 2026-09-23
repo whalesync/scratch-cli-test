@@ -11,7 +11,7 @@ pub mod slack;
 pub mod state;
 pub mod types;
 
-use axum::extract::{Request, State};
+use axum::extract::{MatchedPath, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -30,7 +30,12 @@ async fn timing_middleware(req: Request, next: Next) -> impl IntoResponse {
     let method = req.method().clone();
     let uri = req.uri().clone();
 
-    let response = next.run(req).await;
+    // Scoped for the whole request so `RepoLocks` can say which operation holds
+    // or waits for a repo lock (`GET /api/debug/locks`, `[LOCK]` logs).
+    let request_description_for_lock_tracking = describe_request_for_lock_tracking(&req);
+    let response = git::lock_activity::CURRENT_REQUEST_DESCRIPTION
+        .scope(request_description_for_lock_tracking, next.run(req))
+        .await;
 
     let duration = start.elapsed();
     if duration.as_millis() > 100 {
@@ -43,6 +48,33 @@ async fn timing_middleware(req: Request, next: Next) -> impl IntoResponse {
     }
 
     response
+}
+
+/// `POST /api/repo/write/{id}/files?branch=dirty` — the route template (the repo id
+/// is tracked separately) plus the query string, which carries the branch/folder.
+fn describe_request_for_lock_tracking(req: &Request) -> Arc<str> {
+    const MAXIMUM_QUERY_STRING_CHARACTERS: usize = 200;
+    let path_or_route_template = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|matched_path| matched_path.as_str().to_string())
+        .unwrap_or_else(|| req.uri().path().to_string());
+    let query_string_suffix = match req.uri().query() {
+        Some(query) => {
+            let truncated_query: String = query
+                .chars()
+                .take(MAXIMUM_QUERY_STRING_CHARACTERS)
+                .collect();
+            format!("?{truncated_query}")
+        }
+        None => String::new(),
+    };
+    Arc::from(format!(
+        "{} {}{}",
+        req.method(),
+        path_or_route_template,
+        query_string_suffix
+    ))
 }
 
 /// Result of evaluating a request against the shared-token policy.
@@ -326,6 +358,7 @@ pub async fn run() {
         )
         .route("/api/staging", get(routes::staging::list_staging))
         // Debug
+        .route("/api/debug/locks", get(routes::debug::locks))
         .route("/api/repo/debug/{id}/graph", get(routes::debug::graph))
         .route(
             "/api/repo/debug/slow-request",
@@ -587,5 +620,46 @@ mod auth_tests {
         assert!(!bearer_tokens_match("abc", "abd"));
         assert!(!bearer_tokens_match("abc", "abcd"));
         assert!(!bearer_tokens_match("", "abc"));
+    }
+}
+
+#[cfg(test)]
+mod lock_tracking_request_description_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request as HttpRequest;
+    use tower::ServiceExt; // for `oneshot`
+
+    /// The timing middleware must expose the matched route template + query to
+    /// the handler's task so `RepoLocks` can label lock holders and waiters.
+    #[tokio::test]
+    async fn timing_middleware_scopes_route_template_and_query_for_lock_tracking() {
+        let router = Router::new()
+            .route(
+                "/api/repo/write/{id}/files",
+                post(|| async {
+                    git::lock_activity::CURRENT_REQUEST_DESCRIPTION
+                        .with(|request_description| request_description.to_string())
+                }),
+            )
+            .layer(middleware::from_fn(timing_middleware));
+
+        let response = router
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/api/repo/write/org_a%2Fwkb_b%2Fcoa_c/files?branch=dirty")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "POST /api/repo/write/{id}/files?branch=dirty"
+        );
     }
 }
