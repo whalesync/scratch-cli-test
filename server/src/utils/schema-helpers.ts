@@ -112,6 +112,14 @@ export interface SchemaField {
    * at every destination (DEV-11288).
    */
   enumValues?: string[];
+  /**
+   * True when the schema explicitly allows `null` for this field — a nullable union
+   * (`Union([String, Null])`, serialized as an `anyOf`/`oneOf` with a `{ type: 'null' }` arm) or a
+   * `type` array that includes `'null'`. Read by the transform picker so a coercion into a column that
+   * can hold `null` keeps an unset source as `null` rather than inventing an empty value (DEV-11902).
+   * Absent when the schema doesn't declare `null`.
+   */
+  nullable?: boolean;
   remoteFieldId?: string;
   /** Unpack transform applied when this field is a sync source (native → plain). */
   suggestedTransformer?: TransformerConfig;
@@ -149,6 +157,18 @@ function resolveSchemaType(schema: TSchema): string {
     if (real.length >= 1) return resolveSchemaType(real[0]);
   }
   return 'unknown';
+}
+
+/**
+ * Whether a JSON Schema explicitly allows `null`: a `type` of (or including) `'null'`, or an
+ * anyOf/oneOf union with a nullable arm (TypeBox's `Union([String, Null])`). See {@link SchemaField.nullable}.
+ */
+function schemaExplicitlyAllowsNull(schema: TSchema): boolean {
+  const declaredType: unknown = schema.type;
+  if (declaredType === 'null') return true;
+  if (Array.isArray(declaredType) && declaredType.includes('null')) return true;
+  const variants = (schema.anyOf || schema.oneOf) as TSchema[] | undefined;
+  return variants?.some((variant) => schemaExplicitlyAllowsNull(variant)) ?? false;
 }
 
 /**
@@ -269,6 +289,7 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     if (format) field.format = format;
     const enumValues = resolveSchemaStringEnumValues(schema);
     if (enumValues) field.enumValues = enumValues;
+    if (schemaExplicitlyAllowsNull(schema)) field.nullable = true;
     if (schema.description) field.description = schema.description;
     const remoteFieldId = schema[X_SCRATCH_REMOTE_FIELD_ID] as string | undefined;
     if (remoteFieldId) field.remoteFieldId = remoteFieldId;

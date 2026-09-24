@@ -39,8 +39,8 @@ const packCoerce = (targetType: 'number' | 'boolean'): TransformerConfig => ({
 });
 // The pack-less coercion floor into a native-scalar destination column (Supabase/Postgres numeric,
 // Airtable Number/checkbox) ALSO carries `preserveNull`, so an empty/unset source stays null into the raw
-// column instead of coercing to a spurious `0` / `false` (DEV-11079). Only `number`/`integer`/`boolean`
-// floors preserve null; a `string`/`array` floor keeps its well-defined empty (`''` / `[]`).
+// column instead of coercing to a spurious `0` / `false` (DEV-11079). A `string`/`array` floor preserves
+// null only into a destination declared `nullable` (DEV-11902); otherwise it keeps its empty (`''` / `[]`).
 const floorCoerce = (targetType: 'number' | 'integer' | 'boolean'): TransformerConfig => ({
   type: 'auto_convert',
   options: { targetType, preserveNull: true },
@@ -219,6 +219,68 @@ describe('getSuggestedTransform', () => {
       expect(
         chainOf(getSuggestedTransform(col({ primitiveType: 'number' }), col({ primitiveType: 'string' }))),
       ).toEqual([autoConvert('string')]);
+    });
+  });
+
+  // DEV-11902: a null source coerced into a NULLABLE string/array destination column (a Supabase `text` column
+  // created for a downgraded `text[]` / `bytea` / `jsonb` source) must stay null, not land as `''` / `[]`. A
+  // destination that doesn't declare `null` keeps the empty-value default (the Moco → Audienceful case).
+  describe('string/array coercions preserve null into a nullable destination (DEV-11902)', () => {
+    const preservingNull = (targetType: 'string' | 'array'): TransformerConfig => ({
+      type: 'auto_convert',
+      options: { targetType, preserveNull: true },
+    });
+
+    it('joins a Postgres text[] into a nullable text column, preserving null', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ cardinality: 'multi', primitiveType: 'array' }),
+            col({ primitiveType: 'string', logicalType: 'string', nullable: true }),
+          ),
+        ),
+      ).toEqual([preservingNull('string')]);
+    });
+
+    it('floors an unknown-typed source (bytea / jsonb) into a nullable text column, preserving null', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(col({}), col({ primitiveType: 'string', logicalType: 'string', nullable: true })),
+        ),
+      ).toEqual([preservingNull('string')]);
+    });
+
+    it('wraps a scalar into a nullable array column, preserving null', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ primitiveType: 'string' }),
+            col({ cardinality: 'multi', primitiveType: 'array', nullable: true }),
+          ),
+        ),
+      ).toEqual([preservingNull('array')]);
+    });
+
+    it('keeps the empty-value default into a string column that does NOT declare null', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(
+            col({ cardinality: 'multi', primitiveType: 'array' }),
+            col({ primitiveType: 'string', logicalType: 'string' }),
+          ),
+        ),
+      ).toEqual([autoConvert('string')]);
+      expect(chainOf(getSuggestedTransform(col({}), col({ primitiveType: 'string' })))).toEqual([
+        autoConvert('string'),
+      ]);
+    });
+
+    it('still preserves null into a native-scalar column regardless of nullability (DEV-11079)', () => {
+      expect(
+        chainOf(
+          getSuggestedTransform(col({ primitiveType: 'string' }), col({ primitiveType: 'number', nullable: true })),
+        ),
+      ).toEqual([floorCoerce('number')]);
     });
   });
 

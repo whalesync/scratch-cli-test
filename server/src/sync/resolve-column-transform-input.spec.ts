@@ -239,6 +239,50 @@ describe('columnTransformInputFromSchemaField (destination side)', () => {
   it('handles an undefined destination field', () => {
     expect(columnTransformInputFromSchemaField(undefined)).toEqual({ cardinality: 'single' });
   });
+
+  it('carries a nullable destination column through to the picker (DEV-11902)', () => {
+    // A Supabase `text` column created nullable for a downgraded `text[]` source, as stored in its schema.
+    const [destField] = extractSchemaFields(
+      Type.Object({ 'Pharmacies Desired': Type.Union([Type.String(), Type.Null()]) }),
+    );
+    expect(destField.nullable).toBe(true);
+    expect(columnTransformInputFromSchemaField(destField)).toEqual({
+      cardinality: 'single',
+      primitiveType: 'string',
+      logicalType: 'string',
+      nullable: true,
+    });
+  });
+
+  it('does not mark a column nullable when its schema does not declare null', () => {
+    const [destField] = extractSchemaFields(Type.Object({ Name: Type.String() }));
+    expect(destField.nullable).toBeUndefined();
+    expect(columnTransformInputFromSchemaField(destField)).not.toHaveProperty('nullable');
+  });
+});
+
+describe('end-to-end: a null Supabase text[] into a nullable Supabase text column (DEV-11902)', () => {
+  it('picks a join that keeps null instead of writing an empty string', () => {
+    const sourceSchema = Type.Object({
+      pharmacies_desired: Type.Union([Type.Array(Type.String()), Type.Null()]),
+    });
+    const sourceInput = resolveColumnTransformInput({
+      columnId: 'pharmacies_desired',
+      schema: sourceSchema,
+      fieldsByPath: new Map(extractSchemaFields(sourceSchema).map((field) => [field.path, field])),
+      view: null,
+    });
+    const [destinationField] = extractSchemaFields(
+      Type.Object({ 'Pharmacies Desired': Type.Union([Type.String(), Type.Null()]) }),
+    );
+    const suggestion = getSuggestedTransform(sourceInput, columnTransformInputFromSchemaField(destinationField));
+    expect(suggestion).toEqual({
+      result: 'valid',
+      options: [
+        { transformerChain: [{ type: 'auto_convert', options: { targetType: 'string', preserveNull: true } }] },
+      ],
+    });
+  });
 });
 
 describe('end-to-end: a fancy Notion rich_text SOURCE into two Airtable destinations', () => {

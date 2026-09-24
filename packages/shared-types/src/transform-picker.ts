@@ -114,6 +114,13 @@ export interface ColumnTransformInput {
    * source (a raw number into a text slot, a first-/join-collapsed array, a JSON object) first (DEV-10952).
    */
   fromCoreInputType?: PackInputPrimitive;
+  /**
+   * Whether the column's schema explicitly allows `null`. Read on the DESTINATION: a coercion into a
+   * nullable column carries `preserveNull`, so an unset source lands as `null` instead of the target
+   * type's empty value (`''` / `[]`) — which a nullable column can tell apart from a real empty
+   * (DEV-11902). Absent/false keeps the empty-value default, for services that don't model `null`.
+   */
+  nullable?: boolean;
 }
 
 const AUTO_CONVERTIBLE_TARGET_TYPES: ReadonlySet<string> = new Set<AutoConvertOptions['targetType']>([
@@ -138,14 +145,32 @@ const NON_SCALAR_SOURCE_PRIMITIVE_TYPES: ReadonlySet<string> = new Set(['object'
  * number publishing as `0` or a cleared checkbox as `false` (DEV-11079). Mirrors {@link packInputCoercion}'s
  * native-scalar preserveNull (DEV-10953) for the pack-less raw-scalar destinations (Supabase/Postgres
  * numeric, Airtable Number) that go through the floor rather than a `fromCore` pack. `'string'` and
- * `'array'` are excluded: `null → ''` / `null → []` is the well-defined empty for those and stays
- * byte-identical to today's behaviour.
+ * `'array'` are excluded: `null → ''` / `null → []` is the well-defined empty for a destination that
+ * doesn't model `null` (the Moco → Audienceful churn `auto_convert`'s empty-value default was added
+ * for). A destination whose schema DOES declare the column nullable keeps `null` for these too — see
+ * {@link preserveNullOptionForCoercionInto}.
  */
 const PRESERVE_NULL_FLOOR_TARGET_TYPES: ReadonlySet<string> = new Set<AutoConvertOptions['targetType']>([
   'number',
   'integer',
   'boolean',
 ]);
+
+/**
+ * The `preserveNull` option for an `auto_convert` coercing INTO `destination` as `targetType`, or undefined
+ * to keep `auto_convert`'s empty-value default. Native scalars (number/integer/boolean) always keep `null`
+ * (a spurious `0`/`false` is never an honest empty — DEV-11079). `string`/`array` keep `null` only when the
+ * destination column is declared nullable: there `null` is a distinct, representable value, so turning an
+ * unset source into `''`/`[]` would silently change it — e.g. a null Postgres `text[]` landing as `''` in a
+ * nullable `text` column (DEV-11902).
+ */
+function preserveNullOptionForCoercionInto(
+  destination: ColumnTransformInput,
+  targetType: AutoConvertOptions['targetType'],
+): { preserveNull: true } | undefined {
+  if (PRESERVE_NULL_FLOOR_TARGET_TYPES.has(targetType)) return { preserveNull: true };
+  return destination.nullable === true ? { preserveNull: true } : undefined;
+}
 
 /**
  * Whether a source field's declared type (from {@link FieldTransformHints.type}) gives NO guarantee
@@ -285,9 +310,10 @@ interface CardinalityReshape {
  */
 function selectCardinalityReshape(
   sourceCardinality: ColumnCardinality,
-  destinationCardinality: ColumnCardinality,
+  destination: ColumnTransformInput,
   destinationLogicalType: string | undefined,
 ): CardinalityReshape {
+  const destinationCardinality = destination.cardinality;
   // single→single and multi→multi: identity — no reshape.
   if (sourceCardinality === destinationCardinality) return { transformers: [] };
 
@@ -302,7 +328,12 @@ function selectCardinalityReshape(
       // jsonpath `join_comma` would — so an un-enhanced column keeps landing exactly as today, and only a
       // column whose `toCore` already yields clean strings gets the tidy join. Total either way.
       return {
-        transformers: [{ type: TransformerTypes.AutoConvert, options: { targetType: 'string' } }],
+        transformers: [
+          {
+            type: TransformerTypes.AutoConvert,
+            options: { targetType: 'string', ...preserveNullOptionForCoercionInto(destination, 'string') },
+          },
+        ],
         outputPrimitive: 'string',
       };
     }
@@ -312,9 +343,15 @@ function selectCardinalityReshape(
     };
   }
 
-  // single→multi: wrap the scalar into a one-element array (`"x"` → `["x"]`, `null` → `[]`). Lossless.
+  // single→multi: wrap the scalar into a one-element array (`"x"` → `["x"]`, `null` → `[]`, or `null` into a
+  // nullable destination). Lossless.
   return {
-    transformers: [{ type: TransformerTypes.AutoConvert, options: { targetType: 'array' } }],
+    transformers: [
+      {
+        type: TransformerTypes.AutoConvert,
+        options: { targetType: 'array', ...preserveNullOptionForCoercionInto(destination, 'array') },
+      },
+    ],
     outputPrimitive: 'array',
   };
 }
@@ -341,12 +378,16 @@ function coercionFloorForDestination(
     source.primitiveType !== undefined &&
     source.primitiveType === targetType;
   if (isSameShapeSameType) return undefined;
-  // preserveNull for native-scalar floor targets (number/integer/boolean) so a cleared source stays
-  // `null` into the raw destination column instead of becoming a spurious `0` / `false` (DEV-11079).
-  const preserveNull = PRESERVE_NULL_FLOOR_TARGET_TYPES.has(targetType) ? { preserveNull: true } : undefined;
+  // preserveNull so a cleared source stays `null` into the raw destination column: always for native
+  // scalars (not a spurious `0` / `false` — DEV-11079), and for string/array when the column is nullable
+  // (not a spurious `''` / `[]` — DEV-11902).
+  const autoConvertTargetType = targetType as AutoConvertOptions['targetType'];
   return {
     type: TransformerTypes.AutoConvert,
-    options: { targetType: targetType as AutoConvertOptions['targetType'], ...preserveNull },
+    options: {
+      targetType: autoConvertTargetType,
+      ...preserveNullOptionForCoercionInto(destination, autoConvertTargetType),
+    },
   };
 }
 
@@ -408,7 +449,7 @@ export function getSuggestedTransform(
   //    envelope's raw JSON `logicalType` (a Notion property envelope is `object`, which would otherwise
   //    force take-first).
   const collapseLogicalType = destination.fromCoreInputType === 'string' ? 'string' : destination.logicalType;
-  const reshape = selectCardinalityReshape(source.cardinality, destination.cardinality, collapseLogicalType);
+  const reshape = selectCardinalityReshape(source.cardinality, destination, collapseLogicalType);
   transformerChain.push(...reshape.transformers);
 
   // The JSON primitive the chain is known to produce BEFORE the destination stage: the reshape's
