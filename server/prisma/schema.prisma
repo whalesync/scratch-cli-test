@@ -609,6 +609,12 @@ model FileIndex {
   folderPath         String
   recordId           String
   filename           String
+  // Stamped when the row is created or changes (filename/connection), and otherwise
+  // refreshed at most once per FILE_INDEX_LAST_SEEN_AT_REFRESH_INTERVAL_HOURS (24h) by
+  // `FileIndexService.upsertBatch` — so an unchanged re-pull writes nothing. A row a pull
+  // still sees therefore carries a timestamp from within the last day; orphans keep ageing.
+  // Not indexed: nothing queries by it (the old (workbookId, folderPath, lastSeenAt) index
+  // was dropped — it had no reader and it was the index generic query plans misused).
   lastSeenAt         DateTime?
 
   // NOTE: the unique key intentionally does NOT include connectorAccountId. The
@@ -623,7 +629,6 @@ model FileIndex {
   // legacy (unscoped) records. Tracked separately from DEV-10880.
   @@unique([workbookId, folderPath, recordId])
   @@index([workbookId, folderPath, filename])
-  @@index([workbookId, folderPath, lastSeenAt])
 }
 
 // Tracks dependencies between files

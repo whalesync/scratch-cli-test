@@ -19,6 +19,7 @@ import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.ser
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { createIntegrationTestDbService } from './integration-db-service';
 import { createReadRepoFilesByFolderMock } from './sync-test-helpers';
 
 describe('SyncService - fillSyncCaches', () => {
@@ -43,7 +44,7 @@ describe('SyncService - fillSyncCaches', () => {
 
   beforeEach(async () => {
     // Create mock instances
-    dbService = { client: prisma } as unknown as DbService;
+    dbService = createIntegrationTestDbService(prisma);
 
     // We'll mock DataFolderService since it depends on git operations
     dataFolderService = {
@@ -407,7 +408,7 @@ describe('SyncService - syncTableMapping', () => {
       '/dest': { idPath: 'id' },
     };
 
-    dbService = { client: prisma } as unknown as DbService;
+    dbService = createIntegrationTestDbService(prisma);
 
     dataFolderService = {
       getAllFileContentsByFolderId: jest.fn(),
@@ -2109,7 +2110,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
   beforeEach(async () => {
     writtenFilesByCall = [];
 
-    dbService = { client: prisma } as unknown as DbService;
+    dbService = createIntegrationTestDbService(prisma);
 
     dataFolderService = {
       getAllFileContentsByFolderId: jest.fn(),
@@ -2990,7 +2991,7 @@ describe('SyncService - lookup_field transformer', () => {
   beforeEach(async () => {
     writtenFiles = [];
 
-    dbService = { client: prisma } as unknown as DbService;
+    dbService = createIntegrationTestDbService(prisma);
 
     dataFolderService = {
       getAllFileContentsByFolderId: jest.fn(),

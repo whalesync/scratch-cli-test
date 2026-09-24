@@ -15,9 +15,10 @@ import { DbService } from 'src/db/db.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { Service } from 'src/remote-service/connectors/service-constants';
+import { createIntegrationTestDbService } from './integration-db-service';
 
 function makeDbService(prisma: PrismaClient): DbService {
-  return { client: prisma } as unknown as DbService;
+  return createIntegrationTestDbService(prisma);
 }
 
 jest.setTimeout(60_000);

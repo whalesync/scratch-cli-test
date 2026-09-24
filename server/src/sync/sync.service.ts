@@ -2481,14 +2481,19 @@ export class SyncService {
       return new Map();
     }
 
-    const mappings = await this.db.client.syncRemoteIdMapping.findMany({
-      where: {
-        syncId,
-        dataFolderId,
-        sourceRemoteId: { in: sourceRemoteIds },
-      },
-      select: { sourceRemoteId: true, destinationRemoteId: true, destinationFilePath: true },
-    });
+    // Custom plan: a cached generic plan walks every mapping row of the sync through the
+    // single-column syncId/dataFolderId indexes instead of probing the unique key — ~12 s per
+    // 1000-id page on a 110k-row folder versus ~20 ms (see DbService helper).
+    const mappings = await this.db.runQueryWithCustomPlanForBoundParameterValues(
+      this.db.client.syncRemoteIdMapping.findMany({
+        where: {
+          syncId,
+          dataFolderId,
+          sourceRemoteId: { in: sourceRemoteIds },
+        },
+        select: { sourceRemoteId: true, destinationRemoteId: true, destinationFilePath: true },
+      }),
+    );
 
     return new Map(
       mappings.map((m) => [

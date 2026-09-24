@@ -163,7 +163,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
     mockFileIndexService = {
       getFilenamesByRecordIds: jest.fn().mockResolvedValue(new Map()),
-      listFilenamesForFolder: jest.fn().mockResolvedValue([]),
+      readRecordIdToFilenameMapForFolder: jest.fn().mockResolvedValue(new Map()),
       upsertBatch: jest.fn().mockResolvedValue(undefined),
       deleteRowsForDeletedFiles: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<FileIndexService>;
@@ -400,17 +400,20 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     });
 
     describe('Phase 1 filename dedup seeding', () => {
-      it('seeds usedFileNames from listFilenamesForFolder so a new record can’t clobber an existing one’s prior filename', async () => {
+      it('seeds usedFileNames from the folder’s index snapshot so a new record can’t clobber an existing one’s prior filename', async () => {
         // Regression for the data-loss bug: a new record whose suggested
         // filename matched another (not-in-this-batch) record's prior filename
         // would claim the bare name and clobber that record at stage time.
-        // The fix seeds usedFileNames from FileIndexService.listFilenamesForFolder
-        // before any batch runs. This test pins the wiring end-to-end.
+        // The fix seeds usedFileNames from the folder's FileIndex snapshot
+        // (readRecordIdToFilenameMapForFolder) before any batch runs. This test
+        // pins the wiring end-to-end.
         const { mockConnector, params } = setupStandardMocks();
 
         // Simulate a previously-pulled record already occupying "john-smith.json"
         // that does NOT appear in this pull's batch (the bug condition).
-        (mockFileIndexService.listFilenamesForFolder as jest.Mock).mockResolvedValue(['john-smith.json']);
+        (mockFileIndexService.readRecordIdToFilenameMapForFolder as jest.Mock).mockResolvedValue(
+          new Map([['recOld', 'john-smith.json']]),
+        );
 
         // The new record has the same suggested slug. Without the seed, it
         // would stage to "john-smith.json" and silently overwrite the existing
@@ -433,7 +436,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         await handler.run(params);
 
-        expect(mockFileIndexService.listFilenamesForFolder).toHaveBeenCalledWith('wkb_123', 'Products');
+        expect(mockFileIndexService.readRecordIdToFilenameMapForFolder).toHaveBeenCalledWith('wkb_123', 'Products');
 
         expect(mockScratchGitService.stageFiles).toHaveBeenCalledWith(
           'test-job-id',
@@ -443,6 +446,42 @@ describe('PullLinkedFolderFilesJobHandler', () => {
               path: 'john-smith-recNew.json', // NOT "john-smith.json"
             }),
           ]),
+        );
+      });
+
+      it('keeps a re-pulled record at its indexed filename using the one folder read, with no per-page lookup', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+
+        // recExisting was renamed by the user; its suggested slug no longer matches its file.
+        (mockFileIndexService.readRecordIdToFilenameMapForFolder as jest.Mock).mockResolvedValue(
+          new Map([['recExisting', 'hand-picked-name.json']]),
+        );
+
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'recExisting', slug: 'jane-doe', title: 'Jane Doe' }],
+            connectorProgress: {},
+          });
+          await callback({ files: [{ id: 'recOther', slug: 'bob', title: 'Bob' }], connectorProgress: {} });
+        });
+
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
+          created: [],
+          updated: [],
+          unchanged: [],
+        });
+
+        await handler.run(params);
+
+        expect(mockFileIndexService.readRecordIdToFilenameMapForFolder).toHaveBeenCalledTimes(1);
+        expect(mockFileIndexService.getFilenamesByRecordIds).not.toHaveBeenCalled();
+        expect(mockScratchGitService.stageFiles).toHaveBeenCalledWith(
+          'test-job-id',
+          'Products',
+          expect.arrayContaining([expect.objectContaining({ path: 'hand-picked-name.json' })]),
         );
       });
     });

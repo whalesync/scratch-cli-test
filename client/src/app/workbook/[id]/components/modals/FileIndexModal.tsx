@@ -56,7 +56,9 @@ export function FileIndexModal({ opened, onClose, workbookId }: FileIndexModalPr
                   <Table.Th>Folder</Table.Th>
                   <Table.Th>Filename</Table.Th>
                   <Table.Th>Record ID</Table.Th>
-                  <Table.Th>Last Seen</Table.Th>
+                  <Table.Th title="Set on create or rename; otherwise refreshed at most once a day while pulls keep seeing the row">
+                    Last Seen (±1 day)
+                  </Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>

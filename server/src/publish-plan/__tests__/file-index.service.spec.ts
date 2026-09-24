@@ -1,5 +1,6 @@
+import { Prisma } from '@prisma/client';
 import { DbService } from '../../db/db.service';
-import { fileIndexLookupKey, FileIndexService, pickPreferredRecordId } from '../file-index.service';
+import { FileIndexEntry, fileIndexLookupKey, FileIndexService, pickPreferredRecordId } from '../file-index.service';
 
 describe('pickPreferredRecordId', () => {
   it('prefers the row belonging to the requested connection', () => {
@@ -48,12 +49,29 @@ describe('FileIndexService.getRecordIds', () => {
   let service: FileIndexService;
   let fileIndexFindMany: jest.Mock;
 
+  let runQueryWithCustomPlan: jest.Mock;
+
   beforeEach(() => {
     fileIndexFindMany = jest.fn();
+    runQueryWithCustomPlan = jest.fn((query: Promise<unknown>) => query);
     const db = {
       client: { fileIndex: { findMany: fileIndexFindMany } },
+      runQueryWithCustomPlanForBoundParameterValues: runQueryWithCustomPlan,
     } as unknown as DbService;
     service = new FileIndexService(db);
+  });
+
+  it('runs every per-folder chunk with a custom query plan (skewed tenants make generic plans scan whole folders)', async () => {
+    fileIndexFindMany.mockResolvedValue([]);
+    const lookups = [
+      ...Array.from({ length: 1500 }, (_, i) => ({ folderPath: 'Contacts', filename: `c-${i}.json` })),
+      { folderPath: 'Companies', filename: 'google.json' },
+    ];
+
+    await service.getRecordIds('wkb_1', lookups);
+
+    expect(fileIndexFindMany).toHaveBeenCalledTimes(3);
+    expect(runQueryWithCustomPlan).toHaveBeenCalledTimes(3);
   });
 
   /** Both connections hold `Contacts/marcos.json`, with distinct record ids. */
@@ -149,6 +167,7 @@ describe('FileIndexService.deleteRowsForDeletedFiles', () => {
     fileIndexDeleteMany = jest.fn().mockResolvedValue({ count: 0 });
     const db = {
       client: { fileIndex: { deleteMany: fileIndexDeleteMany } },
+      runQueryWithCustomPlanForBoundParameterValues: (query: Promise<unknown>) => query,
     } as unknown as DbService;
     service = new FileIndexService(db);
   });
@@ -194,5 +213,53 @@ describe('FileIndexService.deleteRowsForDeletedFiles', () => {
     await service.deleteRowsForDeletedFiles('wkb_1', 'coa_1', []);
 
     expect(fileIndexDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('FileIndexService.upsertBatch', () => {
+  let service: FileIndexService;
+  let executeRaw: jest.Mock;
+
+  beforeEach(() => {
+    executeRaw = jest.fn().mockResolvedValue(0);
+    const db = { client: { $executeRaw: executeRaw } } as unknown as DbService;
+    service = new FileIndexService(db);
+  });
+
+  const entry = (recordId: string, filename: string, connectorAccountId: string | null = 'coa_1'): FileIndexEntry => ({
+    workbookId: 'wkb_1',
+    folderPath: 'Contacts',
+    recordId,
+    filename,
+    connectorAccountId,
+  });
+
+  /** The bound values of the multi-row VALUES list passed to one `$executeRaw` call. */
+  const boundValuesOfStatement = (callIndex: number): unknown[] =>
+    (executeRaw.mock.calls[callIndex] as [TemplateStringsArray, Prisma.Sql, ...unknown[]])[1].values;
+  const BOUND_VALUES_PER_ROW = 5;
+
+  it('writes one multi-row statement per 1000 entries instead of one statement per row', async () => {
+    await service.upsertBatch(Array.from({ length: 2500 }, (_, i) => entry(`rec_${i}`, `f-${i}.json`)));
+
+    expect(executeRaw).toHaveBeenCalledTimes(3);
+    expect(boundValuesOfStatement(0)).toHaveLength(1000 * BOUND_VALUES_PER_ROW);
+    expect(boundValuesOfStatement(2)).toHaveLength(500 * BOUND_VALUES_PER_ROW);
+  });
+
+  it('collapses a key repeated within the batch to its LAST entry (ON CONFLICT cannot touch a row twice)', async () => {
+    await service.upsertBatch([entry('rec_a', 'first.json'), entry('rec_b', 'b.json'), entry('rec_a', 'second.json')]);
+
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+    const boundValues = boundValuesOfStatement(0);
+    expect(boundValues).toHaveLength(2 * BOUND_VALUES_PER_ROW);
+    expect(boundValues).toContain('second.json');
+    expect(boundValues).not.toContain('first.json');
+  });
+
+  it('issues no statement for an empty batch', async () => {
+    await service.upsertBatch([]);
+
+    expect(executeRaw).not.toHaveBeenCalled();
   });
 });

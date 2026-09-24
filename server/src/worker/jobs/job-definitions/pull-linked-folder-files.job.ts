@@ -1031,10 +1031,17 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // with full visibility into every recordId in the pull and rename before
     // commit. That's a larger refactor — this seed patches the symptom while
     // keeping Phase 1's naming responsibility intact.
+    //
+    // The same single read also answers every page's "what is this record's current filename"
+    // question: the index isn't written for this folder until the Phase-2 index loop, after the
+    // fetch, so a start-of-fetch snapshot is exactly what a per-page lookup would have seen —
+    // without one query per connector page (hundreds per folder on a large pull).
     const folderPathForIndex = dataFolder.path?.replace(/^\//, '') ?? '';
-    const usedFileNames = new Set<string>(
-      await this.fileIndexService.listFilenamesForFolder(dataFolder.workbookId, folderPathForIndex),
+    const indexedFilenameByRecordIdInFolder = await this.fileIndexService.readRecordIdToFilenameMapForFolder(
+      dataFolder.workbookId,
+      folderPathForIndex,
     );
+    const usedFileNames = new Set<string>(indexedFilenameByRecordIdInFolder.values());
 
     // Names minted during THIS run, so a record re-delivered by the connector
     // (e.g. Notion's 10k-continuation boundary minute) resolves to the file it
@@ -1053,13 +1060,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
       const { files, connectorProgress } = callbackParams;
 
-      // Resolve filenames (DB query) — needed for proper file naming
-      const recordIds = files.map((f) => readRecordIdAsString(f, tableSpec.idPath) ?? '');
-      const existingFileNames = await this.fileIndexService.getFilenamesByRecordIds(
-        dataFolder.workbookId,
-        dataFolder.path?.replace(/^\//, '') ?? '',
-        recordIds,
-      );
+      // Resolve this page's existing filenames from the folder snapshot — needed for proper file naming
+      const existingFileNames = new Map<string, string>();
+      for (const file of files) {
+        const recordId = readRecordIdAsString(file, tableSpec.idPath) ?? '';
+        const indexedFilename = indexedFilenameByRecordIdInFolder.get(recordId);
+        if (indexedFilename !== undefined) existingFileNames.set(recordId, indexedFilename);
+      }
 
       const suggestedFileNames = connector.getSuggestedRecordFileNames(files, tableSpec);
       const builtFiles = buildGitFilesFromConnectorFiles(

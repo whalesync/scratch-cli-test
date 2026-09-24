@@ -139,6 +139,7 @@ describe('PublishPlanRunService', () => {
       getRecordId: jest.fn().mockResolvedValue('rec_123'),
       upsertBatch: jest.fn().mockResolvedValue(undefined),
       listFilenamesForFolder: jest.fn().mockResolvedValue([]),
+      getRecordIdsByFilenamesInFolder: jest.fn().mockResolvedValue(new Map()),
     } as unknown as jest.Mocked<FileIndexService>;
 
     fileReferenceService = {
@@ -1533,14 +1534,9 @@ describe('PublishPlanRunService', () => {
         'rename-files',
         files.map((f, i) => ({ id: `op_rename_${i}`, filePath: `articles/${f.pendingFilename}`, content: {} })),
       );
-      db.client.fileIndex.findMany.mockResolvedValue(
-        files.map((f) => ({
-          workbookId: WORKBOOK_ID,
-          folderPath: 'articles',
-          filename: f.pendingFilename,
-          recordId: f.recordId,
-        })),
-      );
+      jest
+        .mocked(fileIndexService.getRecordIdsByFilenamesInFolder)
+        .mockResolvedValue(new Map(files.map((f) => [f.pendingFilename, f.recordId])));
       jest
         .mocked(scratchGitService.readRepoFilesFromFolder)
         .mockResolvedValue(
@@ -1707,10 +1703,59 @@ describe('PublishPlanRunService', () => {
       expect(renames[249]).toEqual({ oldName: 'scratch_pending_249.json', newName: 'record-249.json' });
     });
 
+    /** 1100 published creates → two rename batches (1000 + 100) in one folder. */
+    function setupTwoRenameBatchesOfPublishedCreates(titleForRecordIndex: (i: number) => string) {
+      setTableSpecIdColumnRemoteId('id');
+      const files = Array.from({ length: 1100 }, (_, i) => ({
+        pendingFilename: `scratch_pending_${i}.json`,
+        recordId: `rec_${i}`,
+        committedRecord: { id: `rec_${i}`, title: titleForRecordIndex(i) },
+      }));
+      setupPublishedCreates(files);
+      jest
+        .mocked(scratchGitService.readRepoFilesFromFolder)
+        .mockImplementation((_repoId, _branch, _folder, filenames: string[]) =>
+          Promise.resolve(
+            filenames.map((filename) => {
+              const file = files.find((f) => f.pendingFilename === filename);
+              return { path: `articles/${filename}`, content: file ? JSON.stringify(file.committedRecord) : null };
+            }),
+          ),
+        );
+      jest
+        .mocked(connector.getSuggestedRecordFileNames)
+        .mockImplementation((records: unknown[]) => records.map((r) => (r as { title: string }).title));
+    }
+
+    it('reads the folder’s taken filenames once for the whole rename phase, not once per 1000-entry batch', async () => {
+      // Record 1050 (second batch) suggests the same name record 0 (first batch) was just renamed to.
+      setupTwoRenameBatchesOfPublishedCreates((i) => (i === 1050 ? 'Record 0' : `Record ${i}`));
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(fileIndexService.listFilenamesForFolder).toHaveBeenCalledTimes(1);
+      // The first batch's rename is remembered in memory across batches, so the collision is
+      // still caught without re-reading the folder.
+      expect(renamesSent()).toContainEqual({ oldName: 'scratch_pending_0.json', newName: 'record-0.json' });
+      expect(renamesSent()).toContainEqual({
+        oldName: 'scratch_pending_1050.json',
+        newName: 'record-0-rec_1050.json',
+      });
+    });
+
+    it('re-reads the folder’s taken filenames after a rename batch fails, instead of trusting the in-memory set', async () => {
+      setupTwoRenameBatchesOfPublishedCreates((i) => `Record ${i}`);
+      jest.mocked(scratchGitService.renameFiles).mockRejectedValueOnce(new Error('scratch-git 504'));
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(fileIndexService.listFilenamesForFolder).toHaveBeenCalledTimes(2);
+    });
+
     it('leaves a pending file alone (no rename) when its create never produced an index row', async () => {
       setTableSpecIdColumnRemoteId('id');
       setupPublishedCreates([{ pendingFilename: PENDING_A, recordId: 'rec_1', committedRecord: { id: 'rec_1' } }]);
-      db.client.fileIndex.findMany.mockResolvedValue([]);
+      jest.mocked(fileIndexService.getRecordIdsByFilenamesInFolder).mockResolvedValue(new Map());
       jest.mocked(connector.getSuggestedRecordFileNames).mockReturnValue(['Orphan']);
 
       await service.runPipeline(PLAN_ID);

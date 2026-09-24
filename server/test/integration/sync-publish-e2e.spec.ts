@@ -43,6 +43,7 @@ import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { SyncDataFoldersJobHandler } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
+import { createIntegrationTestDbService } from './integration-db-service';
 
 type ParsedRecord = Record<string, unknown>;
 
@@ -116,7 +117,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     vfs = new VirtualGitFs();
 
     // ---- DB Service (real) ----
-    dbService = { client: prisma } as unknown as DbService;
+    dbService = createIntegrationTestDbService(prisma);
 
     // ---- Mock: ScratchGitService ----
     scratchGitService = {
@@ -1262,7 +1263,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     vfs = new VirtualGitFs();
 
     // ---- DB Service (real) ----
-    dbService = { client: prisma } as unknown as DbService;
+    dbService = createIntegrationTestDbService(prisma);
 
     // ---- Mock: ScratchGitService (V2-aware) ----
     // resolveRepoId returns the composite ID for V2 workbooks

@@ -106,6 +106,7 @@ import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/sc
 import { EncryptionService } from 'src/utils/encryption';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { PullLinkedFolderFilesJobHandler } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
+import { createIntegrationTestDbService } from './integration-db-service';
 import { VirtualGitFs } from './virtual-git-fs';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -141,7 +142,7 @@ const CONNECTION_DISPLAY_NAME = 'FEP Test PostgreSQL';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeDbService(prisma: PrismaClient): DbService {
-  return { client: prisma } as unknown as DbService;
+  return createIntegrationTestDbService(prisma);
 }
 
 function makeNoopProgress() {

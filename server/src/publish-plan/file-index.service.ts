@@ -1,8 +1,17 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash';
 import { DbService } from '../db/db.service';
 import { escapeLikeWildcards } from '../utils/prisma-like';
 import { parsePath } from './utils';
+
+/**
+ * How stale a FileIndex row's `lastSeenAt` may get before `upsertBatch` rewrites an otherwise
+ * unchanged row just to refresh it. Keeps repeated pulls of an unchanged folder write-free while
+ * leaving `lastSeenAt` a day-granular liveness signal (orphan investigations rely on live rows
+ * being re-stamped and orphans ageing — see DEV-10885 / DEV-11242).
+ */
+export const FILE_INDEX_LAST_SEEN_AT_REFRESH_INTERVAL_HOURS = 24;
 
 export interface FileIndexEntry {
   workbookId: string;
@@ -29,96 +38,55 @@ export class FileIndexService {
   constructor(private readonly db: DbService) {}
 
   /**
-   * Bulk upsert index entries.
-   * Uses raw SQL for performance to handle conflicts (update lastSeenAt).
+   * Bulk upsert index entries: one multi-row `INSERT ... ON CONFLICT DO UPDATE` per chunk.
+   *
+   * An existing row is only rewritten when something about it changed — its filename (a rename),
+   * its connection (a backfill of the DEV-10880 discriminator) — or when its `lastSeenAt` is older
+   * than {@link FILE_INDEX_LAST_SEEN_AT_REFRESH_INTERVAL_HOURS}. Re-pulling a large unchanged
+   * folder used to rewrite every row (and, while `lastSeenAt` was indexed, every index) on every
+   * run; now it writes nothing until the daily refresh is due. `lastSeenAt` therefore means "a
+   * pull or publish saw this row within that interval of this timestamp", which still separates
+   * live rows from orphans that nothing re-affirms any more.
    */
   async upsertBatch(entries: FileIndexEntry[]): Promise<void> {
     if (entries.length === 0) return;
 
-    // Chunking is handled by the caller or we can do it here if needed.
-    // Ideally caller handles chunking (e.g. 500 at a time).
+    // A multi-row ON CONFLICT DO UPDATE fails if one statement touches the same key twice, so
+    // collapse duplicates first. Last entry wins, matching the per-row upserts this replaced.
+    const lastEntryByUniqueKey = new Map<string, FileIndexEntry>();
+    for (const entry of entries) {
+      lastEntryByUniqueKey.set(JSON.stringify([entry.workbookId, entry.folderPath, entry.recordId]), entry);
+    }
+    const dedupedEntries = [...lastEntryByUniqueKey.values()];
 
-    // We strive to use Prisma's createMany, but it doesn't support "ON CONFLICT UPDATE"
-    // for all databases universally in a clean way via the typed API until recent versions,
-    // and even then, `upsert` is single-row.
-    // Given the prototype used raw SQL, we will implement optimized batching.
-
-    // However, Prisma `createMany` with `skipDuplicates` ignores updates. We want to update `lastSeenAt`.
-    // So we use a transaction of upserts or raw SQL. Raw SQL is faster for bulk.
-
-    const now = new Date();
-
-    // Use Prisma Transaction for upserts.
-    // Chunking to avoid the 32,767 bind-parameter limit (int16 max in Postgres'
-    // extended protocol; see publish-plan-build.service.ts for the measurement)
-    const chunks = chunk(entries, 1000);
-
-    for (const c of chunks) {
-      await this.db.client.$transaction(
-        c.map((entry) =>
-          this.db.client.fileIndex.upsert({
-            where: {
-              workbookId_folderPath_recordId: {
-                workbookId: entry.workbookId,
-                folderPath: entry.folderPath,
-                recordId: entry.recordId,
-              },
-            },
-            update: {
-              filename: entry.filename, // Filename might change (rename)
-              // Backfill the connection discriminator when a caller supplies one, but
-              // leave an already-set value intact when it passes null — `undefined` tells
-              // Prisma to skip the field rather than clobber it back to NULL. Every
-              // connector-backed caller now supplies a real id, so in practice this only
-              // skips for a connector-less (scratch) row, whose NULL is already correct.
-              connectorAccountId: entry.connectorAccountId ?? undefined,
-              lastSeenAt: now,
-            },
-            create: {
-              workbookId: entry.workbookId,
-              folderPath: entry.folderPath,
-              recordId: entry.recordId,
-              filename: entry.filename,
-              connectorAccountId: entry.connectorAccountId ?? null,
-              lastSeenAt: now,
-            },
-          }),
+    // 5 bind parameters per row, well under the 32,767 bind-parameter limit (int16 max in
+    // Postgres' extended protocol; see publish-plan-build.service.ts for the measurement).
+    // `lastSeenAt` is stamped in SQL as UTC wall-clock time, the same convention Prisma uses
+    // for its `timestamp(3)` DateTime columns.
+    for (const entryChunk of chunk(dedupedEntries, 1000)) {
+      const values = Prisma.join(
+        entryChunk.map(
+          (entry) =>
+            Prisma.sql`(gen_random_uuid()::text, ${entry.workbookId}, ${entry.folderPath}, ${entry.recordId}, ${entry.filename}, ${entry.connectorAccountId}, NOW() AT TIME ZONE 'UTC')`,
         ),
       );
+      // `connectorAccountId`: backfill the connection discriminator when a caller supplies one,
+      // but never clobber an already-set value back to NULL. Every connector-backed caller now
+      // supplies a real id, so in practice a NULL only arrives for a connector-less (scratch)
+      // row, whose NULL is already correct.
+      await this.db.client.$executeRaw`
+        INSERT INTO "FileIndex" ("id", "workbookId", "folderPath", "recordId", "filename", "connectorAccountId", "lastSeenAt")
+        VALUES ${values}
+        ON CONFLICT ("workbookId", "folderPath", "recordId") DO UPDATE
+        SET "filename" = EXCLUDED."filename",
+            "connectorAccountId" = COALESCE(EXCLUDED."connectorAccountId", "FileIndex"."connectorAccountId"),
+            "lastSeenAt" = EXCLUDED."lastSeenAt"
+        WHERE "FileIndex"."filename" IS DISTINCT FROM EXCLUDED."filename"
+           OR "FileIndex"."connectorAccountId" IS DISTINCT FROM COALESCE(EXCLUDED."connectorAccountId", "FileIndex"."connectorAccountId")
+           OR "FileIndex"."lastSeenAt" IS NULL
+           OR "FileIndex"."lastSeenAt" < EXCLUDED."lastSeenAt" - make_interval(hours => ${FILE_INDEX_LAST_SEEN_AT_REFRESH_INTERVAL_HOURS}::int)
+      `;
     }
-  }
-
-  /**
-   * Find entries that haven't been seen since the given timestamp.
-   * These likely represent records deleted upstream.
-   */
-  async findStaleEntries(workbookId: string, folderPath: string, before: Date, limit: number) {
-    return this.db.client.fileIndex.findMany({
-      where: {
-        workbookId,
-        folderPath,
-        OR: [{ lastSeenAt: { lt: before } }, { lastSeenAt: null }],
-      },
-      take: limit,
-    });
-  }
-
-  /**
-   * Remove specific entries by ID.
-   */
-  async removeBatch(ids: string[]): Promise<void> {
-    if (ids.length === 0) return;
-    await this.db.client.fileIndex.deleteMany({
-      where: {
-        id: { in: ids },
-      },
-    });
-  }
-
-  async countEntries(workbookId: string, folderPath: string): Promise<number> {
-    return this.db.client.fileIndex.count({
-      where: { workbookId, folderPath },
-    });
   }
 
   async getRecordId(
@@ -181,10 +149,12 @@ export class FileIndexService {
     const rowsByPath = new Map<string, { connectorAccountId: string | null; recordId: string }[]>();
     for (const [folderPath, filenameSet] of filenamesByFolder) {
       for (const filenameChunk of chunk([...filenameSet], 1000)) {
-        const entries = await this.db.client.fileIndex.findMany({
-          where: { workbookId, folderPath, filename: { in: filenameChunk } },
-          select: { folderPath: true, filename: true, recordId: true, connectorAccountId: true },
-        });
+        const entries = await this.db.runQueryWithCustomPlanForBoundParameterValues(
+          this.db.client.fileIndex.findMany({
+            where: { workbookId, folderPath, filename: { in: filenameChunk } },
+            select: { folderPath: true, filename: true, recordId: true, connectorAccountId: true },
+          }),
+        );
         for (const e of entries) {
           const path = `${e.folderPath}:${e.filename}`;
           const rows = rowsByPath.get(path);
@@ -227,15 +197,55 @@ export class FileIndexService {
 
     const map = new Map<string, string>();
     for (const recordIdChunk of chunk(recordIds, 1000)) {
-      const entries = await this.db.client.fileIndex.findMany({
-        where: { workbookId, folderPath, recordId: { in: recordIdChunk } },
-        select: { recordId: true, filename: true },
-      });
+      const entries = await this.db.runQueryWithCustomPlanForBoundParameterValues(
+        this.db.client.fileIndex.findMany({
+          where: { workbookId, folderPath, recordId: { in: recordIdChunk } },
+          select: { recordId: true, filename: true },
+        }),
+      );
       for (const e of entries) {
         map.set(e.recordId, e.filename);
       }
     }
     return map;
+  }
+
+  /**
+   * `filename → recordId` for the given filenames in one folder, across every connection
+   * (the last matching row wins for a filename two connections share). Used by publish's
+   * rename phase to find the ids its create phase assigned to pending files.
+   */
+  async getRecordIdsByFilenamesInFolder(
+    workbookId: string,
+    folderPath: string,
+    filenames: string[],
+  ): Promise<Map<string, string>> {
+    const recordIdByFilename = new Map<string, string>();
+    for (const filenameChunk of chunk(filenames, 1000)) {
+      const entries = await this.db.runQueryWithCustomPlanForBoundParameterValues(
+        this.db.client.fileIndex.findMany({
+          where: { workbookId, folderPath, filename: { in: filenameChunk } },
+          select: { filename: true, recordId: true },
+        }),
+      );
+      for (const entry of entries) {
+        recordIdByFilename.set(entry.filename, entry.recordId);
+      }
+    }
+    return recordIdByFilename;
+  }
+
+  /**
+   * `recordId → filename` for every row indexed in the folder, in one query. A full pull reads
+   * this once up front instead of looking up each connector page's record ids separately; the
+   * map's values double as the folder's taken-filename set.
+   */
+  async readRecordIdToFilenameMapForFolder(workbookId: string, folderPath: string): Promise<Map<string, string>> {
+    const entries = await this.db.client.fileIndex.findMany({
+      where: { workbookId, folderPath },
+      select: { recordId: true, filename: true },
+    });
+    return new Map(entries.map((entry) => [entry.recordId, entry.filename]));
   }
 
   /**
@@ -287,9 +297,11 @@ export class FileIndexService {
     }
     for (const [folderPath, filenames] of filenamesByFolderPath) {
       for (const filenameChunk of chunk(filenames, 1000)) {
-        await this.db.client.fileIndex.deleteMany({
-          where: { workbookId, connectorAccountId, folderPath, filename: { in: filenameChunk } },
-        });
+        await this.db.runQueryWithCustomPlanForBoundParameterValues(
+          this.db.client.fileIndex.deleteMany({
+            where: { workbookId, connectorAccountId, folderPath, filename: { in: filenameChunk } },
+          }),
+        );
       }
     }
   }

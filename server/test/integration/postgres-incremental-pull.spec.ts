@@ -58,6 +58,7 @@ import {
   PullLinkedFolderFilesJobHandler,
   PullLinkedFolderFilesPublicProgress,
 } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
+import { createIntegrationTestDbService } from './integration-db-service';
 import { VirtualGitFs } from './virtual-git-fs';
 
 const TABLE = 'test_inc_products';
@@ -72,7 +73,7 @@ const WATERMARK_2 = new Date('2026-06-01T02:00:00.000Z'); // past EDITED_ROW_TS 
 const OLD_TS = new Date('2020-01-01T00:00:00.000Z'); // un-edited rows: well outside any window
 
 function makeDbService(prisma: PrismaClient): DbService {
-  return { client: prisma } as unknown as DbService;
+  return createIntegrationTestDbService(prisma);
 }
 
 function makeNoopProgress() {

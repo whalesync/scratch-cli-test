@@ -72,6 +72,7 @@ import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.ser
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import type { JobData } from 'src/worker/jobs/union-types';
+import { createIntegrationTestDbService } from './integration-db-service';
 
 describe('Webflow folder migration — live-pipeline quiesce/release (DB-backed)', () => {
   let prisma: PrismaClient;
@@ -119,7 +120,7 @@ describe('Webflow folder migration — live-pipeline quiesce/release (DB-backed)
 
   beforeAll(async () => {
     prisma = new PrismaClient();
-    dbService = { client: prisma } as unknown as DbService;
+    dbService = createIntegrationTestDbService(prisma);
 
     migrationLockService = new MigrationLockService(dbService);
     // This test never exercises interval validation, so the config service is unused at runtime.

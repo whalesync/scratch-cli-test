@@ -12,7 +12,6 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { createSyncId, createWorkbookId, type SyncId, type WorkbookId } from '@spinner/shared-types';
-import { DbService } from 'src/db/db.service';
 import { ExperimentsService } from 'src/experiments/experiments.service';
 import { JobService } from 'src/job/job.service';
 import { RoutineService } from 'src/routine/routine.service';
@@ -23,6 +22,7 @@ import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { createIntegrationTestDbService } from './integration-db-service';
 
 describe('SyncDraftService (real DB)', () => {
   let prisma: PrismaClient;
@@ -39,7 +39,7 @@ describe('SyncDraftService (real DB)', () => {
   });
 
   beforeEach(async () => {
-    const dbService = { client: prisma } as unknown as DbService;
+    const dbService = createIntegrationTestDbService(prisma);
     const workbookService = {
       assertWritableWorkbook: jest.fn().mockResolvedValue({ id: workbookId }),
       assertReadableWorkbook: jest.fn().mockResolvedValue({ id: workbookId }),

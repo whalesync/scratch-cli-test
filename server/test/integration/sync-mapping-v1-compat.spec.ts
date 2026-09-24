@@ -37,6 +37,7 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { createIntegrationTestDbService } from './integration-db-service';
 import { createReadRepoFilesByFolderMock } from './sync-test-helpers';
 
 describe('SyncService - v1 compatibility regression gate', () => {
@@ -86,7 +87,7 @@ describe('SyncService - v1 compatibility regression gate', () => {
       '/dest': { idPath: 'id' },
     };
 
-    dbService = { client: prisma } as unknown as DbService;
+    dbService = createIntegrationTestDbService(prisma);
 
     dataFolderService = {
       getAllFileContentsByFolderId: jest.fn(),

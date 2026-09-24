@@ -21,9 +21,9 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
-import { DbService } from 'src/db/db.service';
 import { MigrationLockService } from 'src/migration-lock/migration-lock.service';
 import { ScheduleService } from 'src/schedule/schedule.service';
+import { createIntegrationTestDbService } from './integration-db-service';
 
 describe('connection quiesce (DB-backed)', () => {
   let prisma: PrismaClient;
@@ -38,7 +38,7 @@ describe('connection quiesce (DB-backed)', () => {
 
   beforeAll(async () => {
     prisma = new PrismaClient();
-    const db = { client: prisma } as unknown as DbService;
+    const db = createIntegrationTestDbService(prisma);
     migrationLock = new MigrationLockService(db);
     // This test never exercises interval validation, so the config service is unused at runtime.
     scheduleService = new ScheduleService(db, {

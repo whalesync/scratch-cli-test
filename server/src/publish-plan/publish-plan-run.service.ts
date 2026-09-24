@@ -227,6 +227,10 @@ export class PublishPlanRunService {
     // Cache folder options per dataFolderId — handed to the connector's write calls
     // so their read-back honors the folder's settings (e.g. Notion `excludePageContent`).
     const dataFolderOptionsCache = new Map<string, DataFolderOptions | undefined>();
+    // Rename phase: every filename taken in a folder, read from the FileIndex once per folder
+    // for the whole run and kept current in memory as renames land — instead of re-reading the
+    // whole folder for every 1000-entry rename batch (quadratic on a large first publish).
+    const usedFileNamesByFolderPathInRenamePhase = new Map<string, Set<string>>();
 
     try {
       const allPhases = ['asset-upload', 'edit', 'create', 'delete', 'backfill', 'rename-files'] as const;
@@ -361,6 +365,7 @@ export class PublishPlanRunService {
               plan.id,
               repoId,
               useRemoteReturnedRows,
+              usedFileNamesByFolderPathInRenamePhase,
             );
             if (failedEntryCountInBatch > 0) {
               cumulativeErrorCount += 1;
@@ -467,6 +472,7 @@ export class PublishPlanRunService {
                 plan.id,
                 repoId,
                 useRemoteReturnedRows,
+                usedFileNamesByFolderPathInRenamePhase,
               );
               if (failedEntryCountInBatch > 0) {
                 cumulativeErrorCount += failedEntryCountInBatch;
@@ -540,6 +546,7 @@ export class PublishPlanRunService {
               plan.id,
               repoId,
               useRemoteReturnedRows,
+              usedFileNamesByFolderPathInRenamePhase,
             );
             if (retryFailedEntryCount > 0) {
               // Individual retry failed — this entry stays as failed-batch
@@ -1022,6 +1029,7 @@ export class PublishPlanRunService {
     planId: string,
     repoId: string,
     useRemoteReturnedRows: boolean,
+    usedFileNamesByFolderPathInRenamePhase: Map<string, Set<string>>,
   ): Promise<number> {
     try {
       // Populated only by the delete phase: ops the dispatcher could not execute
@@ -1071,7 +1079,15 @@ export class PublishPlanRunService {
           );
           break;
         case 'rename-files':
-          await this.dispatchRenameBatch(entries, connector, tableSpec, workbookId, repoId, planId);
+          await this.dispatchRenameBatch(
+            entries,
+            connector,
+            tableSpec,
+            workbookId,
+            repoId,
+            planId,
+            usedFileNamesByFolderPathInRenamePhase,
+          );
           break;
         default:
           throw new Error(`Unknown phase: ${phase}`);
@@ -1805,6 +1821,7 @@ export class PublishPlanRunService {
     workbookId: string,
     repoId: string,
     planId: string,
+    usedFileNamesByFolderPathInRenamePhase: Map<string, Set<string>>,
   ): Promise<void> {
     // Scope the rename's index rows to the plan's connection, like the create and edit
     // dispatch sites do. On the common path the row already exists (the create dispatch
@@ -1828,15 +1845,11 @@ export class PublishPlanRunService {
       const filenames = folderEntries.map((e) => parsePath(e.filePath).filename);
 
       // Find the recordIds that were assigned during the 'create' phase
-      const indexRecords = await this.db.client.fileIndex.findMany({
-        where: {
-          workbookId,
-          folderPath,
-          filename: { in: filenames },
-        },
-      });
-
-      const filenameToRecordId = new Map(indexRecords.map((r) => [r.filename, r.recordId]));
+      const filenameToRecordId = await this.fileIndexService.getRecordIdsByFilenamesInFolder(
+        workbookId,
+        folderPath,
+        filenames,
+      );
 
       const suggestedNameByPendingFilename = await this.suggestFinalFileNamesForPendingFiles(
         folderPath,
@@ -1849,8 +1862,15 @@ export class PublishPlanRunService {
 
       // Every filename already in the folder is taken. Seeding from the index
       // (rather than the batch alone) is what stops a suggested name from
-      // clobbering an existing record's file, exactly as pull does.
-      const usedFileNamesInFolder = new Set(await this.fileIndexService.listFilenamesForFolder(workbookId, folderPath));
+      // clobbering an existing record's file, exactly as pull does. Read once per
+      // folder per run: the rename phase runs last, after every create has written
+      // its row, and the loop below keeps the set current (drops the pending name,
+      // `deduplicateFileName` adds the new one).
+      let usedFileNamesInFolder = usedFileNamesByFolderPathInRenamePhase.get(folderPath);
+      if (usedFileNamesInFolder === undefined) {
+        usedFileNamesInFolder = new Set(await this.fileIndexService.listFilenamesForFolder(workbookId, folderPath));
+        usedFileNamesByFolderPathInRenamePhase.set(folderPath, usedFileNamesInFolder);
+      }
 
       const renames: { oldName: string; newName: string }[] = [];
       const fileIndexUpdates: FileIndexEntry[] = [];
@@ -1898,25 +1918,32 @@ export class PublishPlanRunService {
       }
 
       if (renames.length > 0) {
-        // Apply batch rename directly via Git
-        await this.scratchGitService.renameFiles(
-          repoId,
-          folderPath,
-          renames,
-          `Publish V2 rename batch (${renames.length})`,
-        );
+        try {
+          // Apply batch rename directly via Git
+          await this.scratchGitService.renameFiles(
+            repoId,
+            folderPath,
+            renames,
+            `Publish V2 rename batch (${renames.length})`,
+          );
 
-        // Update FileIndex
-        // The file-index.service upsertBatch correctly handles updating based on compound unique key
-        // BUT upsert is on (workbookId, folderPath, recordId), so changing the filename is just an update.
-        await this.fileIndexService.upsertBatch(fileIndexUpdates);
+          // Update FileIndex
+          // The file-index.service upsertBatch correctly handles updating based on compound unique key
+          // BUT upsert is on (workbookId, folderPath, recordId), so changing the filename is just an update.
+          await this.fileIndexService.upsertBatch(fileIndexUpdates);
 
-        // Update outbound references in FileReference table
-        for (const ref of refUpdates) {
-          await this.db.client.fileReference.updateMany({
-            where: { workbookId, sourceFilePath: ref.oldPath },
-            data: { sourceFilePath: ref.newPath },
-          });
+          // Update outbound references in FileReference table
+          for (const ref of refUpdates) {
+            await this.db.client.fileReference.updateMany({
+              where: { workbookId, sourceFilePath: ref.oldPath },
+              data: { sourceFilePath: ref.newPath },
+            });
+          }
+        } catch (error) {
+          // The in-memory set already records these renames, but they didn't (all) land.
+          // Forget it so the next batch or the per-entry retry reseeds from the index.
+          usedFileNamesByFolderPathInRenamePhase.delete(folderPath);
+          throw error;
         }
       }
     }
