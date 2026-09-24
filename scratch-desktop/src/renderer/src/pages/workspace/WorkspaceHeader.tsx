@@ -1,7 +1,8 @@
 import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
+import { StatusChip, type StatusChipTone } from '@/components/base/status-chip';
 import { Text12Medium, Text12Regular } from '@/components/base/text';
 import { WorkspaceSwitcher } from '@/components/workspace-switcher';
-import { Badge, Group, HoverCard, Indicator, Loader, Stack, Tooltip } from '@mantine/core';
+import { Group, HoverCard, Indicator, Loader, Stack, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
 import { Workspace } from '@spinner/shared-types';
 import {
@@ -247,6 +248,10 @@ export function WorkspaceHeader({
               </ButtonSecondaryGhost>
             </Tooltip>
           ))}
+        {/* "Pull all" deliberately keeps its static icon while a pull runs: it is disabled
+            for the duration, and a spinner on a disabled control invites clicks that can
+            never do anything. The PullProgressPill to its left is the one place pull status
+            lives, and it is the clickable one. */}
         {compact ? (
           <Tooltip label={PULL_ALL_TOOLTIP}>
             <IconButtonGhost
@@ -255,14 +260,14 @@ export function WorkspaceHeader({
               onClick={handlePullAllMenu}
               aria-label="Pull all"
             >
-              {pullingAll ? <Loader size={12} /> : <CloudDownload size={12} />}
+              <CloudDownload size={12} />
             </IconButtonGhost>
           </Tooltip>
         ) : (
           <Tooltip label={PULL_ALL_TOOLTIP}>
             <ButtonSecondaryGhost
               size="compact-xs"
-              leftSection={pullingAll ? <Loader size={12} /> : <CloudDownload size={12} />}
+              leftSection={<CloudDownload size={12} />}
               rightSection={<ChevronDown size={12} />}
               disabled={!isDownloaded || anyRunning}
               onClick={handlePullAllMenu}
@@ -276,25 +281,12 @@ export function WorkspaceHeader({
             {/* "Needs review" signpost — the prior step. These records aren't publishable
                 until accepted, so they get their own count distinct from the publish CTA. */}
             {unreviewedCount > 0 && (
-              <Tooltip
-                label={`${unreviewedCount.toLocaleString()} change${unreviewedCount === 1 ? '' : 's'} still need review before they can be published`}
+              <StatusChip
+                tone="info"
+                tooltip={`${unreviewedCount.toLocaleString()} change${unreviewedCount === 1 ? '' : 's'} still need review before they can be published`}
               >
-                <Badge
-                  size="sm"
-                  radius="sm"
-                  styles={{
-                    root: {
-                      backgroundColor: 'var(--modified-needs-review-bg)',
-                      color: 'var(--modified-needs-review-stroke)',
-                      textTransform: 'none',
-                      fontWeight: 500,
-                      cursor: 'default',
-                    },
-                  }}
-                >
-                  {compact ? formatHeaderCount(unreviewedCount) : `${formatHeaderCount(unreviewedCount)} to review`}
-                </Badge>
-              </Tooltip>
+                {compact ? formatHeaderCount(unreviewedCount) : `${formatHeaderCount(unreviewedCount)} to review`}
+              </StatusChip>
             )}
             {/* "Publish all" — carries the pending-to-publish count ("X to update", DEV-10449),
                 is promoted to the primary CTA when there's something approved, and reveals a
@@ -428,34 +420,36 @@ function PublishBreakdown({ total, breakdown }: { total: number; breakdown: Appr
 /**
  * Ambient, non-blocking indicator that a pull is running (or just finished /
  * failed) in the background. Clicking it reopens the detail modal. (DEV-10501)
+ *
+ * Rendered as a StatusChip rather than a ghost button so it doesn't read as another
+ * toolbar action sitting next to "Re-download files" and "Pull all".
  */
 function PullProgressPill({ pull, onClick }: { pull: PullTracker; onClick: () => void }) {
   const { phase, completedCount, totalCount } = pull;
 
-  let leftSection: ReactNode;
+  let icon: ReactNode;
   let label: string;
-  let colorProps: { c?: string; color?: string } = {};
+  let tone: StatusChipTone;
   let tooltip = 'Show pull progress';
 
   if (phase === 'done') {
-    leftSection = <Check size={12} />;
+    icon = <Check size={12} />;
     label = 'Pull complete';
-    colorProps = { c: 'green.7', color: 'green.7' };
+    tone = 'success';
   } else if (phase === 'error' || phase === 'download-error') {
-    leftSection = <TriangleAlert size={12} />;
+    icon = <TriangleAlert size={12} />;
     label = 'Pull failed';
-    colorProps = { c: 'red.6', color: 'red.6' };
+    tone = 'error';
     tooltip = 'Show pull error';
   } else {
-    leftSection = <Loader size={12} />;
+    icon = <Loader size={12} color="currentColor" />;
     label = totalCount > 0 ? `Pulling… ${completedCount.toLocaleString()}/${totalCount.toLocaleString()}` : 'Pulling…';
+    tone = 'info';
   }
 
   return (
-    <Tooltip label={tooltip}>
-      <ButtonSecondaryGhost size="compact-xs" leftSection={leftSection} onClick={onClick} {...colorProps}>
-        {label}
-      </ButtonSecondaryGhost>
-    </Tooltip>
+    <StatusChip icon={icon} tone={tone} tooltip={tooltip} onClick={onClick}>
+      {label}
+    </StatusChip>
   );
 }

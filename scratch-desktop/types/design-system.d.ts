@@ -59,6 +59,25 @@ export declare const SettingsUserPage: FC;
 /** Billing settings page: usage, subscription, and upgrade plan cards. No props. */
 export declare const SettingsBillingPage: FC;
 
+// ── Status ──────────────────────────────────────────────────────────────────────
+/**
+ * Ambient indicator of some state — a running job, a pending count. Flat and tinted with no
+ * button chrome, so it reads as a report rather than a control even when it sits in a toolbar
+ * beside real actions. Supplying `onClick` makes it a button that drills into detail while
+ * keeping the chip look.
+ */
+export declare const StatusChip: FC<{
+  /** Leading glyph — a spinner, a state icon, or nothing at all. */
+  icon?: ReactNode;
+  /** Semantic tone. Drives the wash + stroke colour pair only, never the shape. */
+  tone?: 'info' | 'success' | 'error';
+  /** Optional hover explanation. */
+  tooltip?: string;
+  /** Makes the chip a button that drills into detail. */
+  onClick?: () => void;
+  children: ReactNode;
+}>;
+
 // ── Icon buttons (square, icon-only; pass an icon element as children) ───────────
 /** Icon-only primary action. Square, yellow fill + highlight border. */
 export declare const IconButtonPrimaryOutline: FC<DSButtonProps>;

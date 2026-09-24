@@ -1,0 +1,36 @@
+/**
+ * A status chip is deliberately NOT a button: flat, tinted, no border and no
+ * hover fill, so that in a toolbar full of ghost action buttons the eye can tell
+ * "this reports state" from "this does something" at a glance.
+ */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Matches the height of the toolbar's compact-xs buttons so chips sit on the same baseline. */
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  white-space: nowrap;
+  font: inherit;
+}
+
+/**
+ * A chip that drills into detail keeps the chip look and only gains a pointer
+ * and a faint ring in its own tone — enough to invite a click, not enough to
+ * read as one of the toolbar's actions.
+ */
+.clickable {
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+}
+
+.clickable:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+}

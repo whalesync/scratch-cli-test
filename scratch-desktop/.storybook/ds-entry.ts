@@ -5,6 +5,7 @@ export {
   Box,
   Checkbox,
   Group,
+  Loader,
   MantineProvider,
   Select,
   SimpleGrid,
@@ -15,6 +16,7 @@ export {
   Textarea,
 } from '@mantine/core';
 export * from '../src/renderer/src/components/base/buttons';
+export * from '../src/renderer/src/components/base/status-chip';
 export * from '../src/renderer/src/components/base/text';
 // The theme object, exported so cfg.provider can $ref it. We deliberately do NOT re-export
 // AppMantineProvider: it pulls in @mantine/notifications, which resolves @mantine/core via CJS
