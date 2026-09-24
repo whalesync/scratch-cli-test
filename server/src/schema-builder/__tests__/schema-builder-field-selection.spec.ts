@@ -16,6 +16,38 @@ function planFieldName(field: SchemaField): string {
 }
 
 describe('selectPlanFieldsFromTableView', () => {
+  // DEV-11903: the plan types a created column for the value the sync copies, so the selection surfaces each
+  // column's own unpack transform — its codec.toCore, else its jsonpath displayTransformer.
+  it('surfaces the unpack transform of each view column (codec.toCore, else a jsonpath displayTransformer)', () => {
+    const schema = Type.Object({
+      owner: Type.Object({ name: Type.String() }),
+      emails: Type.Array(Type.Object({ address: Type.String() })),
+      plain: Type.String(),
+    });
+    const view: TableView = {
+      name: 'Default',
+      cols: [
+        {
+          kind: 'col',
+          path: 'owner',
+          name: 'Owner',
+          displayTransformer: { type: 'jsonpath', options: { expression: '$.name' } },
+        },
+        {
+          kind: 'col',
+          path: 'emails',
+          name: 'Emails',
+          codec: { toCore: { type: 'jsonpath', options: { expression: '$[*].address', arrayHandling: 'array' } } },
+        },
+        { kind: 'col', path: 'plain', name: 'Plain' },
+      ],
+    };
+    expect(selectPlanFieldsFromTableView({ schema, view }).viewUnpackTransformerByPath).toEqual({
+      owner: { type: 'jsonpath', options: { expression: '$.name' } },
+      emails: { type: 'jsonpath', options: { expression: '$[*].address', arrayHandling: 'array' } },
+    });
+  });
+
   // ── Notion regression: real generated schema + curated default view ──────────
   // Plan generation drives off the curated view (not the raw flattener), which used
   // to emit several columns all named "object"/"id" by recursing into Notion's

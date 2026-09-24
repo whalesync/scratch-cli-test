@@ -16,6 +16,7 @@ import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
+  X_SCRATCH_NATIVE_COLUMN_TYPE,
   X_SCRATCH_READONLY,
   type CreateFieldResult,
   type CreateTableResult,
@@ -61,6 +62,8 @@ import {
   pgIncrementalPullSupport,
   pickTitleColumnPath,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
+  postgresNativeColumnTypeAnnotation,
+  prepareRecordsForPgInsert,
   replaceEmptyStringsWithNullForPgTypedColumns,
   resolvePgFieldValueCanonicalizer,
   resolvePgModifiedAtField,
@@ -646,6 +649,13 @@ export class SupabaseConnector extends Connector {
         // Annotate with connector data type
         const annotated = { ...colSchema, [X_SCRATCH_CONNECTOR_DATA_TYPE]: pgType } as TSchema;
 
+        // The exact native type (`text[]`, `numeric(10,2)`), so a same-type-system Live Export can
+        // recreate the column verbatim instead of approximating it (DEV-11903).
+        const nativeColumnType = postgresNativeColumnTypeAnnotation(col);
+        if (nativeColumnType) {
+          (annotated as Record<string, unknown>)[X_SCRATCH_NATIVE_COLUMN_TYPE] = nativeColumnType;
+        }
+
         // Preserve VARCHAR(n)/CHAR(n) length limits from information_schema
         if (col.character_maximum_length !== null) {
           (annotated as Record<string, unknown>)[X_SCRATCH_MAX_LENGTH] = col.character_maximum_length;
@@ -909,15 +919,11 @@ export class SupabaseConnector extends Connector {
 
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
-    const columnNamesRejectingEmptyString = collectPgColumnNamesRejectingEmptyString(tableSpec);
+    const recordsReadyForInsert = prepareRecordsForPgInsert(tableSpec, files);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
       const pk = tableSpec.idPath;
-
-      const recordsWithEmptyTypedValuesNulled = files.map((file) =>
-        replaceEmptyStringsWithNullForPgTypedColumns(file, columnNamesRejectingEmptyString),
-      );
-      return client.insertMany(schema, tableName, pk, recordsWithEmptyTypedValuesNulled);
+      return client.insertMany(schema, tableName, pk, recordsReadyForInsert);
     }, resolved.connectionString);
   }
 

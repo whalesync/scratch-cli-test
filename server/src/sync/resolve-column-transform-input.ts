@@ -142,7 +142,7 @@ function findSchemaFieldOrAncestor(path: string, fieldsByPath: Map<string, Schem
  * expression and array-handling that render the grid cell also produce the sync's source value. Mirrors
  * `foreignKeyIdExtractionTransformer`. Undefined for a non-jsonpath (e.g. computed-field) display transformer.
  */
-function displayTransformerAsToCore(
+export function displayTransformerAsToCore(
   displayTransformer: TableViewCol['displayTransformer'],
 ): TransformerConfig | undefined {
   if (displayTransformer?.type !== 'jsonpath') return undefined;

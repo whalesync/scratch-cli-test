@@ -58,15 +58,100 @@ describe('buildCreateTableQuery', () => {
       ['number integer', { kind: 'number', format: 'integer' }, '"value" integer'],
       ['number plain', { kind: 'number', format: 'plain' }, '"value" double precision'],
       ['number unset', { kind: 'number' }, '"value" double precision'],
-      ['number decimal w/ precision', { kind: 'number', format: 'decimal', precision: 2 }, '"value" decimal(10, 2)'],
+      ['number decimal w/ precision', { kind: 'number', format: 'decimal', precision: 2 }, '"value" numeric(10,2)'],
       ['number decimal no precision', { kind: 'number', format: 'decimal' }, '"value" numeric'],
       ['number percent', { kind: 'number', format: 'percent' }, '"value" numeric'],
       ['date', { kind: 'date' }, '"value" date'],
       ['date w/ time', { kind: 'date', includesTime: true }, '"value" timestamptz'],
       ['currency default scale', { kind: 'currency', currencyCode: 'USD' }, '"value" decimal(12, 4)'],
       ['currency precision 2', { kind: 'currency', currencyCode: 'USD', precision: 2 }, '"value" decimal(10, 2)'],
+      // DEV-11903: structured values keep their shape.
+      ['json', { kind: 'json' }, '"value" jsonb'],
+      ['text list', { kind: 'text', isArray: true }, '"value" text[]'],
+      ['boolean list', { kind: 'boolean', isArray: true }, '"value" boolean[]'],
+      ['integer list', { kind: 'number', format: 'integer', isArray: true }, '"value" integer[]'],
+      ['number list', { kind: 'number', isArray: true }, '"value" double precision[]'],
+      ['decimal list', { kind: 'number', format: 'decimal', precision: 2, isArray: true }, '"value" numeric(10,2)[]'],
     ])('maps %s', (_label, fieldType, expectedColumn) => {
       expect(createTableSql([field('value', fieldType)])).toContain(expectedColumn);
+    });
+  });
+
+  // DEV-11903: a same-type-system source column is recreated with its exact native type.
+  describe('native Postgres column type', () => {
+    it.each<[string, string]>([
+      ['integer', '"value" integer'],
+      ['bigint', '"value" bigint'],
+      ['text[]', '"value" text[]'],
+      ['numeric(10,2)', '"value" numeric(10,2)'],
+      ['character varying(50)', '"value" character varying(50)'],
+      ['timestamp(3) with time zone', '"value" timestamp(3) with time zone'],
+      ['jsonb', '"value" jsonb'],
+      ['uuid', '"value" uuid'],
+    ])('creates %s verbatim instead of the logical type', (nativeType, expectedColumn) => {
+      const sql = createTableSql([
+        field('value', { kind: 'text' }, { nativeFieldType: { typeSystem: 'postgres', type: nativeType } }),
+      ]);
+      expect(sql).toContain(expectedColumn);
+      expect(sql).not.toContain('"value" text,');
+    });
+
+    it('applies NOT NULL to a native-typed column only when required', () => {
+      const sql = createTableSql([
+        field(
+          'value',
+          { kind: 'number' },
+          { nativeFieldType: { typeSystem: 'postgres', type: 'integer' }, required: true },
+        ),
+      ]);
+      expect(sql).toContain('"value" integer not null');
+    });
+
+    it.each(['bytea', 'interval', 'public.mood', 'text); drop table users; --', 'jsonb[]', '"char"'])(
+      'refuses to create non-recreatable / unsafe type %s, failing the field with a reason',
+      (nativeType) => {
+        const skipped = new Map<string, string>();
+        const sql = createTableSql(
+          [
+            field('value', { kind: 'text' }, { nativeFieldType: { typeSystem: 'postgres', type: nativeType } }),
+            field('other', { kind: 'text' }),
+          ],
+          new Map(),
+          skipped,
+        );
+        expect(skipped.get('value')).toContain("can't create");
+        expect(sql).not.toContain('"value"');
+        expect(sql).not.toContain('drop table');
+        expect(sql).toContain('"other" text');
+      },
+    );
+
+    it('ignores a native type from another type system and creates the logical type', () => {
+      const sql = createTableSql([
+        field('value', { kind: 'text' }, { nativeFieldType: { typeSystem: 'mysql', type: 'mediumtext' } }),
+      ]);
+      expect(sql).toContain('"value" text');
+      expect(sql).not.toContain('mediumtext');
+    });
+
+    it('never lets a native type override a foreign key (its type comes from the referenced primary key)', () => {
+      const sql = createTableSql(
+        [
+          field(
+            'owner_id',
+            { kind: 'foreignKey', target: { existingRemoteTableId: ['public', 'users'] } },
+            { nativeFieldType: { typeSystem: 'postgres', type: 'text' } },
+          ),
+        ],
+        new Map([
+          [
+            'owner_id',
+            { kind: 'resolved', targetTableQualified: 'public.users', targetPkColumn: 'id', targetPkType: 'uuid' },
+          ],
+        ]),
+      );
+      expect(sql).toContain('"owner_id" uuid');
+      expect(sql).toContain('references "public"."users"');
     });
   });
 
@@ -214,7 +299,7 @@ describe('buildAddColumnsQuery', () => {
 });
 
 describe('POSTGRES_SCHEMA_CREATION_CAPABILITIES', () => {
-  it('supports all 12 logical field kinds, with no mandatory primary field and 63-char name limits', () => {
+  it('supports all 13 logical field kinds, with no mandatory primary field and 63-char name limits', () => {
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds).toEqual(
       expect.arrayContaining([
         'text',
@@ -231,10 +316,16 @@ describe('POSTGRES_SCHEMA_CREATION_CAPABILITIES', () => {
         'foreignKey',
       ]),
     );
-    expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds).toHaveLength(12);
+    expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds).toHaveLength(13);
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.primaryField).toBeNull();
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxTableNameLength).toBe(63);
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxFieldNameLength).toBe(63);
+  });
+
+  it('declares the postgres native type system and list columns of text/number/boolean (DEV-11903)', () => {
+    expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds).toContain('json');
+    expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.nativeTypeSystem).toBe('postgres');
+    expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.supportedArrayElementKinds).toEqual(['text', 'number', 'boolean']);
   });
 });
 

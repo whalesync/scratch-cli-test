@@ -336,14 +336,18 @@ export class SchemaBuilderService {
       // `id` columns. Fall back to raw schema flattening when no view is stored
       // (e.g. connectors that don't build a default view).
       const storedView = await this.dataFolderService.getStoredView(source.dataFolderId as DataFolderId, actor);
-      const { schemaFields, viewTypeByPath } = storedView
+      const { schemaFields, viewTypeByPath, viewUnpackTransformerByPath } = storedView
         ? selectPlanFieldsFromTableView({
             schema: stored.schema as TSchema,
             view: storedView,
             titlePath: toDotPath(stored.titlePath),
             idPath: typeof stored.idPath === 'string' ? stored.idPath : undefined,
           })
-        : { schemaFields: extractSchemaFields(stored.schema as TSchema), viewTypeByPath: undefined };
+        : {
+            schemaFields: extractSchemaFields(stored.schema as TSchema),
+            viewTypeByPath: undefined,
+            viewUnpackTransformerByPath: undefined,
+          };
 
       // When the source targets an existing destination table, resolve that
       // folder's current fields now so the generator can diff against them.
@@ -371,6 +375,7 @@ export class SchemaBuilderService {
             }
           : {}),
         ...(viewTypeByPath ? { viewTypeByPath } : {}),
+        ...(viewUnpackTransformerByPath ? { viewUnpackTransformerByPath } : {}),
         ...(existingDestination ? { existingDestination } : {}),
       });
     }
@@ -417,6 +422,13 @@ export class SchemaBuilderService {
       // Absent ⇒ true: only a destination that explicitly can't hold a two-way link (Postgres/Supabase)
       // drops both sides of a reciprocal N→N pair from a symmetric source (DEV-10753).
       destinationSupportsManyToManyForeignKeys: destinationCapabilities?.supportsManyToManyForeignKeys ?? true,
+      // JSON / list columns and the native type system the destination recreates exact source types in, so a
+      // structured or same-type-system source column keeps its type instead of flattening to text (DEV-11903).
+      destinationFieldTypeSupport: {
+        supportedFieldKinds: destinationCapabilities?.supportedFieldKinds,
+        supportedArrayElementKinds: destinationCapabilities?.supportedArrayElementKinds,
+        nativeTypeSystem: destinationCapabilities?.nativeTypeSystem,
+      },
     });
 
     // Sync transforms are NOT computed here: in a create plan every mapped
@@ -614,10 +626,19 @@ export class SchemaBuilderService {
 
       const meaningfulColumnNames = await this.deriveMeaningfulColumnNames(folder.id as DataFolderId, actor);
       if (!meaningfulColumnNames) continue;
-      const folderColumnNameSet = new Set(meaningfulColumnNames.map(normalizeNameForUniqueness));
+      // Either naming of the folder's columns may be the one the plan used: the display label (how a
+      // cross-service plan names fields) or the column's own name (how a same-type-system plan keeps
+      // source columns verbatim — DEV-11903).
+      const intendedNamesExactlyMatch = (folderColumnNames: string[]): boolean => {
+        const folderColumnNameSet = new Set(folderColumnNames.map(normalizeNameForUniqueness));
+        return (
+          folderColumnNameSet.size === intendedColumnNameSet.size &&
+          [...intendedColumnNameSet].every((columnName) => folderColumnNameSet.has(columnName))
+        );
+      };
       const columnsExactlyMatch =
-        folderColumnNameSet.size === intendedColumnNameSet.size &&
-        [...intendedColumnNameSet].every((columnName) => folderColumnNameSet.has(columnName));
+        intendedNamesExactlyMatch(meaningfulColumnNames.displayNames) ||
+        intendedNamesExactlyMatch(meaningfulColumnNames.columnNames);
       if (!columnsExactlyMatch) continue;
 
       adoptableFolders.push({
@@ -653,9 +674,14 @@ export class SchemaBuilderService {
    * The meaningful (user-editable) column names of a stored folder — derived the SAME way the plan
    * generator derives a source's columns (curated default view when present, raw schema flatten
    * otherwise), so connector system fields (`id`, `createdTime`, …) are excluded and the set lines
-   * up with a createSpec's field names. Null when the folder has no stored schema.
+   * up with a createSpec's field names. Returned two ways, parallel: each column's display name
+   * (`displayLabel ?? last path segment`, how a cross-service plan names it) and its own column name (its
+   * full path, how a same-type-system plan names it — DEV-11903). Null when the folder has no stored schema.
    */
-  private async deriveMeaningfulColumnNames(dataFolderId: DataFolderId, actor: Actor): Promise<string[] | null> {
+  private async deriveMeaningfulColumnNames(
+    dataFolderId: DataFolderId,
+    actor: Actor,
+  ): Promise<{ displayNames: string[]; columnNames: string[] } | null> {
     const stored = await this.dataFolderService.getStoredSchema(dataFolderId, actor);
     if (!stored) return null;
     const storedView = await this.dataFolderService.getStoredView(dataFolderId, actor);
@@ -667,7 +693,10 @@ export class SchemaBuilderService {
           idPath: typeof stored.idPath === 'string' ? stored.idPath : undefined,
         }).schemaFields
       : extractSchemaFields(stored.schema as TSchema);
-    return schemaFields.map((field) => field.displayLabel ?? lastPathSegment(field.path));
+    return {
+      displayNames: schemaFields.map((field) => field.displayLabel ?? lastPathSegment(field.path)),
+      columnNames: schemaFields.map((field) => field.path),
+    };
   }
 
   // ── execution core (BullMQ-wrappable) ──────────────────────────────────────

@@ -54,8 +54,10 @@ export function mapKindToNativeType(kind: CreateFieldKind): AirtableApiCreateFie
   switch (kind) {
     // Both text kinds become `multilineText` — see `buildAirtableCreateField` for why
     // `text` does not map to `singleLineText`.
+    // `json` isn't a supported kind here (see AIRTABLE_SCHEMA_CREATION_CAPABILITIES) — mapped for exhaustiveness.
     case 'text':
     case 'longText':
+    case 'json':
       return 'multilineText';
     case 'number':
       return 'number';
@@ -95,12 +97,14 @@ export function isAirtablePrimaryEligibleKind(kind: CreateFieldKind): boolean {
  * `kinds` is the set of primary-eligible kinds.
  */
 export const AIRTABLE_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
-  supportedFieldKinds: [...CREATE_FIELD_KINDS],
+  // Every kind except `json`: Airtable has no structured-JSON field, so the plan generator keeps flattening
+  // an object source to text (with its "syncing as plain text" note) rather than claiming a JSON column.
+  supportedFieldKinds: CREATE_FIELD_KINDS.filter((kind) => kind !== 'json'),
   primaryField: {
     displayName: 'Primary field',
     description:
       "Airtable requires a primary field. It's the first column and describes each record, usually its name or title.",
-    kinds: CREATE_FIELD_KINDS.filter(isAirtablePrimaryEligibleKind),
+    kinds: CREATE_FIELD_KINDS.filter((kind) => kind !== 'json' && isAirtablePrimaryEligibleKind(kind)),
     docsLink: {
       label: 'Learn about primary fields',
       url: 'https://support.airtable.com/docs/the-primary-field',
@@ -176,8 +180,12 @@ export function buildAirtableCreateField(spec: ResolvedCreateFieldSpec, ctx: { b
     // identically, so choosing it costs nothing and choosing `singleLineText` destroys
     // data (DEV-11147). Plain multiline text, not richText — richText would route
     // pulled values through the AirMark↔HTML converters, changing the stored shape.
+    //
+    // `json` is unreachable in practice — it isn't in the supported kinds, so validation rejects it first.
+    // JSON text is the faithful fallback if a spec ever carries it.
     case 'text':
     case 'longText':
+    case 'json':
       return { field: { ...common, type: 'multilineText' } };
     case 'url':
       return { field: { ...common, type: 'url' } };

@@ -15,6 +15,14 @@ export interface InformationSchemaColumn {
   is_identity: string;
   identity_increment: string | null;
   identity_cycle: string;
+  /**
+   * Exact native type via `format_type(atttypid, atttypmod)` (e.g. `integer`, `text[]`, `numeric(10,2)`,
+   * `character varying(50)`), schema-qualified when the type is off the search_path. Null/absent when the
+   * catalog row couldn't be joined. Drives the `x-scratch-native-column-type` annotation (DEV-11903).
+   */
+  native_type?: string | null;
+  /** Whether the column's type — its ELEMENT type, for an array — lives in `pg_catalog` (a built-in type). */
+  native_type_is_built_in?: boolean | null;
 }
 
 export interface TableName {

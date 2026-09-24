@@ -267,7 +267,8 @@ describe('PostgresConnector empty-string coercion for typed columns', () => {
 
     expect(mockInsertMany).toHaveBeenCalledTimes(1);
     expect(mockInsertMany).toHaveBeenCalledWith('public', 'typed_records', 'id', [
-      // Empty datetime → null; a real text empty string is preserved; other columns untouched.
+      // Empty datetime → null; a real text empty string is preserved; other columns untouched (a jsonb
+      // OBJECT binds fine as-is — only jsonb arrays are pre-serialized, see pg-json-column-insert-serialization).
       { name: 'Has empty timestamp', close_date: null, revenue: 100, is_active: true, metadata: { k: 'v' } },
       // Empty strings in numeric/boolean/jsonb → null; the real timestamp is preserved; text '' stays.
       { name: '', close_date: '2026-01-01T00:00:00.000Z', revenue: null, is_active: null, metadata: null },
@@ -711,7 +712,7 @@ describe('PostgresConnector schema creation', () => {
     expect(connector.supportsSchemaCreation()).toBe(true);
 
     const capabilities = connector.getSchemaCreationCapabilities();
-    expect(capabilities.supportedFieldKinds).toHaveLength(12);
+    expect(capabilities.supportedFieldKinds).toHaveLength(13);
     expect(capabilities.primaryField).toBeNull();
     expect(capabilities.maxTableNameLength).toBe(63);
     expect(capabilities.maxFieldNameLength).toBe(63);

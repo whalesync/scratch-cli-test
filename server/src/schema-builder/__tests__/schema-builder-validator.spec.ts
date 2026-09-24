@@ -34,6 +34,36 @@ describe('createSchemaTablesSchema (zod contract)', () => {
     expect(createSchemaTablesSchema.safeParse(validRequest).success).toBe(true);
   });
 
+  // DEV-11903: zod strips unknown keys, so the new fields must be declared to survive a parse (the draft
+  // PATCH path parses specs with these schemas).
+  it('keeps nativeFieldType, isArray and the json kind through a parse', () => {
+    const parsed = createSchemaTablesSchema.parse({
+      ...validRequest,
+      tables: [
+        {
+          ref: 't1',
+          name: 'Requests',
+          fields: [
+            {
+              name: 'pharmacies_desired',
+              fieldType: { kind: 'text', isArray: true },
+              nativeFieldType: { typeSystem: 'postgres', type: 'text[]' },
+            },
+            { name: 'payload', fieldType: { kind: 'json' } },
+          ],
+        },
+      ],
+    });
+    expect(parsed.tables[0].fields).toEqual([
+      {
+        name: 'pharmacies_desired',
+        fieldType: { kind: 'text', isArray: true },
+        nativeFieldType: { typeSystem: 'postgres', type: 'text[]' },
+      },
+      { name: 'payload', fieldType: { kind: 'json' } },
+    ]);
+  });
+
   it('rejects duplicate field names case-insensitively', () => {
     const codes = issueCodes({
       ...validRequest,
@@ -278,6 +308,29 @@ describe('validateTablesAgainstCapabilities', () => {
     });
     const codes = validateTablesAgainstCapabilities(data, capabilities).map((i) => i.code);
     expect(codes).toContain('UNSUPPORTED_FIELD_KIND');
+  });
+
+  // DEV-11903: a list column is only creatable where the connector declares the element kind.
+  it('flags a list field the connector cannot create, and accepts one it can', () => {
+    const data = parse({
+      connectorAccountId: 'c',
+      tables: [
+        {
+          ref: 't1',
+          name: 'T',
+          fields: [
+            { name: 'Title', fieldType: { kind: 'text' }, isPrimary: true },
+            { name: 'Tags', fieldType: { kind: 'text', isArray: true } },
+          ],
+        },
+      ],
+    });
+    expect(validateTablesAgainstCapabilities(data, capabilities)).toEqual([
+      expect.objectContaining({ code: 'UNSUPPORTED_ARRAY_FIELD', path: 'tables[0].fields[1].fieldType.isArray' }),
+    ]);
+    expect(validateTablesAgainstCapabilities(data, { ...capabilities, supportedArrayElementKinds: ['text'] })).toEqual(
+      [],
+    );
   });
 
   it('flags a missing required primary field', () => {

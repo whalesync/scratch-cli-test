@@ -6,6 +6,7 @@ import {
   X_SCRATCH_AIRTABLE_FIELD_ORDER,
   X_SCRATCH_ASSET_TABLE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_NATIVE_COLUMN_TYPE,
   X_SCRATCH_PREFIX,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
@@ -13,6 +14,7 @@ import {
   X_SCRATCH_SUGGESTED_IN_TRANSFORMER_INPUT_TYPE,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
+  type NativeColumnTypeAnnotation,
   type PackInputPrimitive,
 } from '@spinner/shared-types';
 import { keyedArrayItemSchema, segmentFieldPathAgainstSchema } from 'src/utils/field-path';
@@ -120,6 +122,15 @@ export interface SchemaField {
    * Absent when the schema doesn't declare `null`.
    */
   nullable?: boolean;
+  /**
+   * For an `array` field, the JSON type of its elements (`'string'`, `'number'`, `'object'`, …), unwrapping
+   * nullable unions on both the array and its items. Lets the create-schema plan generator create a LIST
+   * column of that element type (a Postgres `text[]`) instead of flattening the array to text. Absent for
+   * non-arrays and for arrays that declare no `items`.
+   */
+  arrayItemType?: string;
+  /** The field's exact native column type, from the `x-scratch-native-column-type` annotation (DEV-11903). */
+  nativeColumnType?: NativeColumnTypeAnnotation;
   remoteFieldId?: string;
   /** Unpack transform applied when this field is a sync source (native → plain). */
   suggestedTransformer?: TransformerConfig;
@@ -169,6 +180,34 @@ function schemaExplicitlyAllowsNull(schema: TSchema): boolean {
   if (Array.isArray(declaredType) && declaredType.includes('null')) return true;
   const variants = (schema.anyOf || schema.oneOf) as TSchema[] | undefined;
   return variants?.some((variant) => schemaExplicitlyAllowsNull(variant)) ?? false;
+}
+
+/**
+ * The JSON type of an array schema's elements, unwrapping nullable unions around the array and around
+ * its `items`. Undefined when the schema isn't an array or declares no single `items` schema. See
+ * {@link SchemaField.arrayItemType}.
+ */
+function resolveSchemaArrayItemType(schema: TSchema): string | undefined {
+  if (schema.type === 'array') {
+    const items = schema.items as TSchema | TSchema[] | undefined;
+    if (!items || Array.isArray(items)) return undefined;
+    const itemType = resolveSchemaType(items);
+    return itemType === 'unknown' ? undefined : itemType;
+  }
+  const variants = (schema.anyOf || schema.oneOf) as TSchema[] | undefined;
+  const nonNullVariants = variants?.filter((variant) => variant.type !== 'null') ?? [];
+  return nonNullVariants.length === 1 ? resolveSchemaArrayItemType(nonNullVariants[0]) : undefined;
+}
+
+/** The `x-scratch-native-column-type` annotation, when present and well-formed. */
+function readNativeColumnTypeAnnotation(schema: TSchema): NativeColumnTypeAnnotation | undefined {
+  const annotation: unknown = schema[X_SCRATCH_NATIVE_COLUMN_TYPE];
+  if (typeof annotation !== 'object' || annotation === null) return undefined;
+  const { typeSystem, type, isRecreatableVerbatim } = annotation as Record<string, unknown>;
+  if (typeof typeSystem !== 'string' || typeof type !== 'string' || typeof isRecreatableVerbatim !== 'boolean') {
+    return undefined;
+  }
+  return { typeSystem, type, isRecreatableVerbatim };
 }
 
 /**
@@ -290,6 +329,10 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     const enumValues = resolveSchemaStringEnumValues(schema);
     if (enumValues) field.enumValues = enumValues;
     if (schemaExplicitlyAllowsNull(schema)) field.nullable = true;
+    const arrayItemType = resolveSchemaArrayItemType(schema);
+    if (arrayItemType) field.arrayItemType = arrayItemType;
+    const nativeColumnType = readNativeColumnTypeAnnotation(schema);
+    if (nativeColumnType) field.nativeColumnType = nativeColumnType;
     if (schema.description) field.description = schema.description;
     const remoteFieldId = schema[X_SCRATCH_REMOTE_FIELD_ID] as string | undefined;
     if (remoteFieldId) field.remoteFieldId = remoteFieldId;

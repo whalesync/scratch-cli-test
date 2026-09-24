@@ -34,7 +34,9 @@ export const GOOGLE_SHEETS_MAX_FIELD_NAME_LENGTH = 255;
 export const GOOGLE_SHEETS_NEW_SHEET_ROW_COUNT = 1000;
 
 export const GOOGLE_SHEETS_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
-  supportedFieldKinds: [...CREATE_FIELD_KINDS],
+  // Every kind except `json`: a cell holds a scalar, so the plan generator keeps flattening an object source
+  // to text (with its "syncing as plain text" note) rather than claiming a JSON column.
+  supportedFieldKinds: CREATE_FIELD_KINDS.filter((kind) => kind !== 'json'),
   // No mandatory primary field — but when a plan designates one, the connector
   // orders it right after the Scratch ID column (column B), the spot both
   // humans and the title-column heuristic treat as "the" identifying column.
@@ -85,6 +87,7 @@ export function buildGoogleSheetsColumn(spec: ResolvedCreateFieldSpec): BuiltGoo
     case 'url':
     case 'email':
     case 'phone':
+    case 'json': // unreachable in practice — `json` isn't in the supported kinds, so validation rejects it first
       // TEXT format keeps hand-typed entries verbatim (no locale date/number coercion).
       return { column: { header: spec.name, numberFormat: { type: 'TEXT' } } };
     case 'number':

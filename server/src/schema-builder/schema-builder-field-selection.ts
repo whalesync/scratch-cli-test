@@ -1,5 +1,6 @@
 import type { TSchema } from '@sinclair/typebox';
-import type { TablePropertyType, TableView, TableViewCol } from '@spinner/shared-types';
+import type { TablePropertyType, TableView, TableViewCol, TransformerConfig } from '@spinner/shared-types';
+import { displayTransformerAsToCore } from 'src/sync/resolve-column-transform-input';
 import { extractSchemaFields, type SchemaField } from 'src/utils/schema-helpers';
 
 /**
@@ -32,6 +33,13 @@ export interface PlanFieldSelection {
   schemaFields: SchemaField[];
   /** `TablePropertyType` display hint per derived field path (from the view). */
   viewTypeByPath: Record<string, TablePropertyType>;
+  /**
+   * The view column's own unpack transform per derived field path — its `codec.toCore`, else its jsonpath
+   * `displayTransformer` — exactly the `toCore` the sync resolves ahead of the schema's
+   * `suggestedTransformer` (see `resolveColumnTransformInput`). The plan generator reads it so a created
+   * column is typed for the value the sync actually copies, not the raw structure behind it (DEV-11903).
+   */
+  viewUnpackTransformerByPath: Record<string, TransformerConfig>;
 }
 
 /**
@@ -70,6 +78,7 @@ export function selectPlanFieldsFromTableView(args: {
 
   const schemaFields: SchemaField[] = [];
   const viewTypeByPath: Record<string, TablePropertyType> = {};
+  const viewUnpackTransformerByPath: Record<string, TransformerConfig> = {};
   const alreadySelectedBackingPaths = new Set<string>();
 
   for (const col of visibleColumns(args.view)) {
@@ -100,6 +109,7 @@ export function selectPlanFieldsFromTableView(args: {
       schemaFields.push(derivedSubfield);
       const subfieldViewType = selectedSubfield.type ?? col.type;
       if (subfieldViewType) viewTypeByPath[subfieldPath] = subfieldViewType;
+      if (selectedSubfield.codec?.toCore) viewUnpackTransformerByPath[subfieldPath] = selectedSubfield.codec.toCore;
       continue;
     }
 
@@ -134,9 +144,11 @@ export function selectPlanFieldsFromTableView(args: {
     // destination field must be built for THAT type — not text.
     const columnLogicalType = col.logicalType ?? col.type;
     if (columnLogicalType) viewTypeByPath[path] = columnLogicalType;
+    const columnUnpackTransformer = col.codec?.toCore ?? displayTransformerAsToCore(col.displayTransformer);
+    if (columnUnpackTransformer) viewUnpackTransformerByPath[path] = columnUnpackTransformer;
   }
 
-  return { schemaFields, viewTypeByPath };
+  return { schemaFields, viewTypeByPath, viewUnpackTransformerByPath };
 }
 
 /**

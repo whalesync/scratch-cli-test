@@ -18,6 +18,7 @@ import { type Knex } from 'knex';
 import { assertUnreachable } from 'src/utils/asserts';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
 import { escapeKnexColumnIdentifierSpecialCharacters } from './knex-column-identifier-dot-encoding';
+import { isRecreatablePostgresNativeColumnType, POSTGRES_NATIVE_TYPE_SYSTEM } from './pg-native-column-type';
 
 /**
  * Name of the auto-generated primary-key column injected into every created
@@ -138,6 +139,11 @@ export const POSTGRES_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities =
   // represent the one-side of a 1→N relationship but not a two-way N→N link. The plan generator drops
   // both sides of a reciprocal N→N pair from a symmetric source rather than suggesting an unusable one.
   supportsManyToManyForeignKeys: false,
+  // Postgres and Supabase share one type system: a source column annotated with its exact Postgres type
+  // is recreated with that type (`applyNativeColumnType`) instead of its logical approximation.
+  nativeTypeSystem: POSTGRES_NATIVE_TYPE_SYSTEM,
+  // `text[]`, `integer[]` / `double precision[]` / `numeric[]`, and `boolean[]`.
+  supportedArrayElementKinds: ['text', 'number', 'boolean'],
 };
 
 /**
@@ -172,28 +178,58 @@ function applyRequired(column: Knex.ColumnBuilder, field: ResolvedCreateFieldSpe
   }
 }
 
-/** Map a `number` field to its Knex column. integer → int4; decimal → numeric(scale+headroom, scale); plain/percent → double/numeric. */
+/** The native Postgres type of a `number` field's values (the element type, for an `isArray` list). */
+function postgresNativeTypeForNumberField(
+  fieldType: Extract<ResolvedCreateFieldSpec['fieldType'], { kind: 'number' }>,
+): string {
+  const format = fieldType.format ?? 'plain';
+  switch (format) {
+    case 'integer':
+      return 'integer';
+    case 'decimal':
+      return fieldType.precision !== undefined
+        ? `numeric(${fieldType.precision + NUMERIC_PRECISION_HEADROOM},${fieldType.precision})`
+        : 'numeric';
+    case 'percent':
+      return 'numeric';
+    case 'plain':
+      return 'double precision';
+    default:
+      return assertUnreachable(format);
+  }
+}
+
+/**
+ * Create the column with the field's exact native Postgres type (DEV-11903), or return a skip reason.
+ * The plan generator only sets `nativeFieldType` for a recreatable source type, but the spec arrives
+ * from a client, so the type is re-checked here before it reaches `specificType` (raw SQL) — a type
+ * outside the recreatable grammar/allowlist fails the field instead of being interpolated.
+ */
+function applyNativeColumnType(
+  table: Knex.CreateTableBuilder,
+  knexColumnName: string,
+  field: ResolvedCreateFieldSpec,
+  nativeColumnType: string,
+): string | undefined {
+  if (!isRecreatablePostgresNativeColumnType(nativeColumnType)) {
+    return `field "${field.name}" asks for native Postgres type "${nativeColumnType}", which the Postgres connector can't create — remove the native type to create it from its logical type instead`;
+  }
+  applyRequired(table.specificType(knexColumnName, nativeColumnType), field);
+  return undefined;
+}
+
+/**
+ * Map a `number` field to its column: integer → `integer` (int4, so node-pg returns a JS number matching the
+ * read-side `number` schema); decimal → `numeric(scale+headroom, scale)` (or bare `numeric`); percent →
+ * `numeric`; plain → `double precision`. Shares {@link postgresNativeTypeForNumberField} with list columns,
+ * so a scalar number column and a `number[]` list never map a format differently.
+ */
 function applyNumberColumn(
   table: Knex.CreateTableBuilder,
   name: string,
   fieldType: Extract<ResolvedCreateFieldSpec['fieldType'], { kind: 'number' }>,
 ): Knex.ColumnBuilder {
-  const format = fieldType.format ?? 'plain';
-  switch (format) {
-    case 'integer':
-      // int4 (not bigint) so node-pg returns a JS number matching the read-side `number` schema.
-      return table.integer(name);
-    case 'decimal':
-      return fieldType.precision !== undefined
-        ? table.decimal(name, fieldType.precision + NUMERIC_PRECISION_HEADROOM, fieldType.precision)
-        : table.specificType(name, 'numeric');
-    case 'percent':
-      return table.specificType(name, 'numeric');
-    case 'plain':
-      return table.double(name);
-    default:
-      return assertUnreachable(format);
-  }
+  return table.specificType(name, postgresNativeTypeForNumberField(fieldType));
 }
 
 /**
@@ -253,11 +289,24 @@ function applyCreateFieldColumn(
   // "Featured$1" — SANITY Live Export audit 2026-08-01); escape both so the column is emitted as
   // one verbatim identifier. Every name handed to a knex column method below goes through this.
   const knexColumnName = escapeKnexColumnIdentifierSpecialCharacters(field.name);
+  // A same-type-system source column carries its exact Postgres type; create exactly that (DEV-11903). A
+  // native type from another type system doesn't apply here — the logical `fieldType` below is used. A
+  // foreign key always takes its type from the referenced primary key (and needs its constraint), so a
+  // native type never overrides one.
+  if (field.nativeFieldType?.typeSystem === POSTGRES_NATIVE_TYPE_SYSTEM && fieldType.kind !== 'foreignKey') {
+    return applyNativeColumnType(table, knexColumnName, field, field.nativeFieldType.type);
+  }
+
   // `description` is intentionally not mapped to COMMENT ON COLUMN in v1: the read side
   // reads information_schema (not pg_description), so it would not round-trip. select /
   // multiSelect option lists are likewise not enforced (no enum/CHECK) — stored as text / text[].
   switch (fieldType.kind) {
     case 'text':
+      applyRequired(
+        fieldType.isArray ? table.specificType(knexColumnName, 'text[]') : table.text(knexColumnName),
+        field,
+      );
+      return undefined;
     case 'longText':
     case 'url':
     case 'email':
@@ -269,10 +318,21 @@ function applyCreateFieldColumn(
       applyRequired(table.specificType(knexColumnName, 'text[]'), field);
       return undefined;
     case 'boolean':
-      applyRequired(table.boolean(knexColumnName), field);
+      applyRequired(
+        fieldType.isArray ? table.specificType(knexColumnName, 'boolean[]') : table.boolean(knexColumnName),
+        field,
+      );
       return undefined;
     case 'number':
-      applyRequired(applyNumberColumn(table, knexColumnName, fieldType), field);
+      applyRequired(
+        fieldType.isArray
+          ? table.specificType(knexColumnName, `${postgresNativeTypeForNumberField(fieldType)}[]`)
+          : applyNumberColumn(table, knexColumnName, fieldType),
+        field,
+      );
+      return undefined;
+    case 'json':
+      applyRequired(table.jsonb(knexColumnName), field);
       return undefined;
     case 'currency': {
       // currencyCode is metadata only — stored as a scaled numeric.

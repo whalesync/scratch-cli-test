@@ -1,10 +1,11 @@
-import { TransformerTypes } from '@spinner/shared-types';
+import { CREATE_FIELD_KINDS, TransformerTypes, type CreateFieldType } from '@spinner/shared-types';
 import type { SchemaField } from 'src/utils/schema-helpers';
 import { linkedTableIdIndexKeysForRemoteTableId } from '../foreign-key-linked-table-id';
 import {
   generateCreatePlanFromSources,
   inferLogicalFieldType,
   PlanGeneratorSource,
+  type DestinationFieldTypeSupport,
 } from '../schema-builder-plan-generator';
 
 const field = (overrides: Partial<SchemaField> & { path: string }): SchemaField => ({
@@ -1343,5 +1344,313 @@ describe('generateCreatePlanFromSources — reciprocal foreign keys (DEV-10753)'
       destinationSupportsManyToManyForeignKeys: false,
     });
     expect(notes.find((n) => n.fieldName === 'project')).toMatchObject({ status: 'mapped', mappedKind: 'foreignKey' });
+  });
+});
+
+// DEV-11903: richer destination types keep a source value's shape instead of flattening it to text.
+describe('inferLogicalFieldType — destination field-type support (DEV-11903)', () => {
+  const postgresLikeSupport: DestinationFieldTypeSupport = {
+    supportedFieldKinds: [...CREATE_FIELD_KINDS],
+    supportedArrayElementKinds: ['text', 'number', 'boolean'],
+    nativeTypeSystem: 'postgres',
+  };
+  // Airtable-like: every base kind, but no JSON column and no list columns.
+  const noStructuredTypesSupport: DestinationFieldTypeSupport = {
+    supportedFieldKinds: CREATE_FIELD_KINDS.filter((kind) => kind !== 'json'),
+  };
+
+  it.each<[string, SchemaField, CreateFieldType]>([
+    [
+      'an array of strings → a text list',
+      field({ path: 'tags', type: 'array', arrayItemType: 'string' }),
+      { kind: 'text', isArray: true },
+    ],
+    [
+      'an array of integers → an integer list',
+      field({ path: 'ids', type: 'array', arrayItemType: 'integer' }),
+      { kind: 'number', format: 'integer', isArray: true },
+    ],
+    [
+      'an array of numbers → a number list',
+      field({ path: 'n', type: 'array', arrayItemType: 'number' }),
+      { kind: 'number', isArray: true },
+    ],
+    [
+      'an array of booleans → a boolean list',
+      field({ path: 'b', type: 'array', arrayItemType: 'boolean' }),
+      { kind: 'boolean', isArray: true },
+    ],
+    ['an object → json', field({ path: 'address', type: 'object' }), { kind: 'json' }],
+  ])('maps %s', (_label, sourceField, expectedFieldType) => {
+    expect(inferLogicalFieldType(sourceField, undefined, 'HubSpot', postgresLikeSupport)).toEqual({
+      status: 'mapped',
+      fieldType: expectedFieldType,
+    });
+  });
+
+  it("keeps a Postgres text[] (view hint 'object') as a text list", () => {
+    expect(
+      inferLogicalFieldType(
+        field({ path: 'pharmacies_desired', type: 'array', arrayItemType: 'string' }),
+        'object',
+        'Supabase',
+        postgresLikeSupport,
+      ),
+    ).toEqual({ status: 'mapped', fieldType: { kind: 'text', isArray: true } });
+  });
+
+  it("does not promote a primitive or an untyped column under an 'object' view hint", () => {
+    for (const type of ['string', 'unknown']) {
+      expect(
+        inferLogicalFieldType(field({ path: 'x', type }), 'object', 'Supabase', postgresLikeSupport),
+      ).toMatchObject({
+        status: 'downgraded',
+        fieldType: { kind: 'text' },
+      });
+    }
+  });
+
+  // A jsonb destination declares no shape, so the sync reads it as single-valued and would JOIN an array into
+  // one string before writing it — an array that can't get a list column stays text instead (review fix).
+  it.each<[string, SchemaField, DestinationFieldTypeSupport]>([
+    ['an array of objects', field({ path: 'people', type: 'array', arrayItemType: 'object' }), postgresLikeSupport],
+    ['an array with no declared items', field({ path: 'a', type: 'array' }), postgresLikeSupport],
+    [
+      'an array whose element kind has no list column',
+      field({ path: 'tags', type: 'array', arrayItemType: 'string' }),
+      { supportedFieldKinds: ['text', 'json'] },
+    ],
+  ])('never gives %s a json column — it flattens to text', (_label, sourceField, support) => {
+    expect(inferLogicalFieldType(sourceField, undefined, 'HubSpot', support)).toMatchObject({
+      status: 'downgraded',
+      fieldType: { kind: 'text' },
+    });
+  });
+
+  it('still downgrades structured values to text when the destination has neither JSON nor list columns', () => {
+    expect(
+      inferLogicalFieldType(field({ path: 'o', type: 'object' }), undefined, 'HubSpot', noStructuredTypesSupport),
+    ).toMatchObject({ status: 'downgraded', fieldType: { kind: 'text' } });
+    expect(
+      inferLogicalFieldType(
+        field({ path: 'tags', type: 'array', arrayItemType: 'string' }),
+        undefined,
+        'HubSpot',
+        noStructuredTypesSupport,
+      ),
+    ).toMatchObject({ status: 'downgraded', fieldType: { kind: 'text' } });
+  });
+
+  it("follows an unpack codec's output instead of the raw structure", () => {
+    const listCodecField = field({
+      path: 'people',
+      type: 'object',
+      suggestedTransformer: {
+        type: TransformerTypes.JSONPath,
+        options: { expression: '$[*]', arrayHandling: 'array' },
+      },
+    });
+    expect(inferLogicalFieldType(listCodecField, undefined, 'Notion', postgresLikeSupport).fieldType).toEqual({
+      kind: 'text',
+      isArray: true,
+    });
+    const scalarCodecField = field({
+      path: 'notes',
+      type: 'object',
+      suggestedTransformer: {
+        type: TransformerTypes.JSONPath,
+        options: { expression: '$[*]', arrayHandling: 'concat' },
+      },
+    });
+    expect(inferLogicalFieldType(scalarCodecField, undefined, 'Notion', postgresLikeSupport)).toMatchObject({
+      status: 'downgraded',
+      fieldType: { kind: 'text' },
+    });
+  });
+});
+
+describe('generateCreatePlanFromSources — native column types (DEV-11903)', () => {
+  const native = (type: string, isRecreatableVerbatim = true) => ({
+    typeSystem: 'postgres',
+    type,
+    isRecreatableVerbatim,
+  });
+
+  // The wkb_2De3VHK6wS shape: a Supabase `oon_pharmacy_requests` table, annotated by the pg read side.
+  const supabaseSource: PlanGeneratorSource = {
+    ref: 'oon',
+    dataFolderId: 'oon',
+    tableName: 'oon_pharmacy_requests',
+    remoteTableIds: ['api.oon_pharmacy_requests'],
+    idFieldPath: 'id',
+    connectorService: 'SUPABASE',
+    serviceDisplayName: 'Supabase',
+    schemaFields: [
+      field({ path: 'id', type: 'string', nativeColumnType: native('uuid') }),
+      field({
+        path: 'request_id_autonumber',
+        type: 'number',
+        displayLabel: 'Request Id Autonumber',
+        nativeColumnType: native('integer'),
+      }),
+      field({
+        path: 'pharmacies_desired',
+        type: 'array',
+        arrayItemType: 'string',
+        displayLabel: 'Pharmacies Desired',
+        nativeColumnType: native('text[]'),
+      }),
+      field({
+        path: 'estimated_monthly_revenue',
+        type: 'string',
+        displayLabel: 'Estimated Monthly Revenue',
+        nativeColumnType: native('numeric(12,2)'),
+      }),
+      field({
+        path: 'id_file_bytes',
+        type: 'unknown',
+        displayLabel: 'Id File Bytes',
+        nativeColumnType: native('bytea', false),
+      }),
+    ],
+    viewTypeByPath: { pharmacies_desired: 'object', request_id_autonumber: 'number' },
+  };
+
+  const postgresDestinationSupport: DestinationFieldTypeSupport = {
+    supportedFieldKinds: [...CREATE_FIELD_KINDS],
+    supportedArrayElementKinds: ['text', 'number', 'boolean'],
+    nativeTypeSystem: 'postgres',
+  };
+
+  it('recreates each recreatable column with its exact native type and keeps the source column names', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [supabaseSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationConnectorService: 'SUPABASE',
+      destinationFieldTypeSupport: postgresDestinationSupport,
+    });
+    const fieldsByName = new Map(tables[0].fields.map((createdField) => [createdField.name, createdField]));
+
+    expect(fieldsByName.get('request_id_autonumber')).toEqual({
+      name: 'request_id_autonumber',
+      fieldType: { kind: 'number' },
+      nativeFieldType: { typeSystem: 'postgres', type: 'integer' },
+    });
+    expect(fieldsByName.get('pharmacies_desired')).toEqual({
+      name: 'pharmacies_desired',
+      fieldType: { kind: 'text', isArray: true },
+      nativeFieldType: { typeSystem: 'postgres', type: 'text[]' },
+    });
+    expect(fieldsByName.get('estimated_monthly_revenue')?.nativeFieldType).toEqual({
+      typeSystem: 'postgres',
+      type: 'numeric(12,2)',
+    });
+    // No flattening note once the exact type is kept.
+    expect(notes.find((note) => note.sourceFieldPath === 'pharmacies_desired')).toEqual({
+      sourceDataFolderId: 'oon',
+      sourceFieldPath: 'pharmacies_desired',
+      fieldName: 'pharmacies_desired',
+      status: 'mapped',
+      mappedKind: 'text',
+    });
+  });
+
+  it('falls back to the logical type (and its note) for a type that is not recreatable, still under the source name', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [supabaseSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationFieldTypeSupport: postgresDestinationSupport,
+    });
+    const bytesField = tables[0].fields.find((createdField) => createdField.name === 'id_file_bytes');
+    expect(bytesField).toEqual({ name: 'id_file_bytes', fieldType: { kind: 'text' } });
+    expect(notes.find((note) => note.sourceFieldPath === 'id_file_bytes')).toMatchObject({ status: 'downgraded' });
+  });
+
+  it('keeps display-label names and adds no native type for a destination of another type system', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [supabaseSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationFieldTypeSupport: { supportedFieldKinds: CREATE_FIELD_KINDS.filter((kind) => kind !== 'json') },
+    });
+    const pharmaciesField = tables[0].fields.find((createdField) => createdField.name === 'Pharmacies Desired');
+    expect(pharmaciesField).toEqual({ name: 'Pharmacies Desired', fieldType: { kind: 'text' } });
+    expect(tables[0].fields.some((createdField) => createdField.nativeFieldType !== undefined)).toBe(false);
+  });
+
+  it('gives a cross-service string[] a text list on a destination with list columns but no shared type system', () => {
+    const hubspotSource: PlanGeneratorSource = {
+      ref: 'deals',
+      dataFolderId: 'deals',
+      tableName: 'Deals',
+      remoteTableIds: ['deals'],
+      schemaFields: [field({ path: 'labels', type: 'array', arrayItemType: 'string', displayLabel: 'Labels' })],
+    };
+    const { tables } = generateCreatePlanFromSources({
+      sources: [hubspotSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationFieldTypeSupport: postgresDestinationSupport,
+    });
+    expect(tables[0].fields).toEqual([{ name: 'Labels', fieldType: { kind: 'text', isArray: true } }]);
+  });
+
+  it("types the created column for a VIEW unpack transform's output, which the sync applies ahead of the schema's", () => {
+    // An object field flattened by the view's jsonpath displayTransformer syncs a single string, so it must
+    // not become a jsonb column; one whose view codec emits a list becomes a text list.
+    const viewCodecSource: PlanGeneratorSource = {
+      ref: 'people',
+      dataFolderId: 'people',
+      tableName: 'People',
+      remoteTableIds: ['people'],
+      schemaFields: [
+        field({ path: 'owner', type: 'object', displayLabel: 'Owner' }),
+        field({ path: 'emails', type: 'object', displayLabel: 'Emails' }),
+      ],
+      viewUnpackTransformerByPath: {
+        owner: { type: TransformerTypes.JSONPath, options: { expression: '$.name' } },
+        emails: { type: TransformerTypes.JSONPath, options: { expression: '$[*].address', arrayHandling: 'array' } },
+      },
+    };
+    const { tables } = generateCreatePlanFromSources({
+      sources: [viewCodecSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationFieldTypeSupport: postgresDestinationSupport,
+    });
+    expect(tables[0].fields).toEqual([
+      { name: 'Owner', fieldType: { kind: 'text' } },
+      { name: 'Emails', fieldType: { kind: 'text', isArray: true } },
+    ]);
+  });
+
+  describe('re-planning into a table created before (add-fields diff)', () => {
+    const intoExisting = (existingFieldName: string): PlanGeneratorSource => ({
+      ...supabaseSource,
+      schemaFields: supabaseSource.schemaFields.filter((schemaField) => schemaField.path === 'pharmacies_desired'),
+      existingDestination: {
+        dataFolderId: 'destOon',
+        remoteTableId: ['proj', 'source_raw', 'oon_pharmacy_requests'],
+        // Created back when a text[] source flattened to text.
+        existingFields: [{ name: existingFieldName, columnPath: existingFieldName, kind: 'text' }],
+      },
+    });
+
+    it.each(['Pharmacies Desired', 'pharmacies_desired'])(
+      'adopts the existing text column named %s instead of proposing a duplicate',
+      (existingFieldName) => {
+        const { fieldPlans, notes } = generateCreatePlanFromSources({
+          sources: [intoExisting(existingFieldName)],
+          destinationConnectorAccountId: 'destConn',
+          destinationFieldTypeSupport: postgresDestinationSupport,
+        });
+        expect(fieldPlans[0].fields).toEqual([]);
+        expect(notes).toEqual([
+          expect.objectContaining({
+            sourceFieldPath: 'pharmacies_desired',
+            fieldName: existingFieldName,
+            status: 'adopted',
+            existingDestinationColumnId: existingFieldName,
+          }),
+        ]);
+      },
+    );
   });
 });

@@ -265,13 +265,28 @@ export class KnexPGClient {
    * an equivalent `pg_attribute`-based query for them.
    */
   async findAllColumnsInTable(schema: string, tableName: string): Promise<InformationSchemaColumn[]> {
+    // `native_type` / `native_type_is_built_in` come from the catalog (information_schema has no exact
+    // type spelling): the column's `pg_attribute` row, and the namespace of its type — or of the array's
+    // ELEMENT type — to tell built-ins from user-defined enums/domains/extension types (DEV-11903).
     const result = await this.knex.raw<{ rows: InformationSchemaColumn[] }>(
-      `SELECT column_name, data_type, column_default, is_updatable, is_nullable,
-              domain_name, udt_name, character_maximum_length, is_identity,
-              identity_increment, identity_cycle
-       FROM information_schema.columns
-       WHERE table_schema = ? AND table_name = ?
-       ORDER BY ordinal_position`,
+      `SELECT c.column_name, c.data_type, c.column_default, c.is_updatable, c.is_nullable,
+              c.domain_name, c.udt_name, c.character_maximum_length, c.is_identity,
+              c.identity_increment, c.identity_cycle,
+              format_type(a.atttypid, a.atttypmod) AS native_type,
+              (base_type_namespace.nspname = 'pg_catalog') AS native_type_is_built_in
+       FROM information_schema.columns c
+       LEFT JOIN pg_catalog.pg_attribute a
+         ON a.attrelid = (quote_ident(c.table_schema) || '.' || quote_ident(c.table_name))::regclass
+        AND a.attname = c.column_name
+       LEFT JOIN pg_catalog.pg_type column_type ON column_type.oid = a.atttypid
+       LEFT JOIN pg_catalog.pg_type base_type
+         ON base_type.oid = CASE
+              WHEN column_type.typelem <> 0 AND column_type.typlen = -1 THEN column_type.typelem
+              ELSE column_type.oid
+            END
+       LEFT JOIN pg_catalog.pg_namespace base_type_namespace ON base_type_namespace.oid = base_type.typnamespace
+       WHERE c.table_schema = ? AND c.table_name = ?
+       ORDER BY c.ordinal_position`,
       [schema, tableName],
     );
     if (result.rows.length > 0) {
@@ -314,12 +329,17 @@ export class KnexPGClient {
          END AS character_maximum_length,
          'NO' AS is_identity,
          NULL AS identity_increment,
-         'NO' AS identity_cycle
+         'NO' AS identity_cycle,
+         format_type(a.atttypid, a.atttypmod) AS native_type,
+         (base_type_namespace.nspname = 'pg_catalog') AS native_type_is_built_in
        FROM pg_attribute a
        JOIN pg_class c ON c.oid = a.attrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
        JOIN pg_type t ON t.oid = a.atttypid
        JOIN pg_namespace tn ON tn.oid = t.typnamespace
+       JOIN pg_type base_type
+         ON base_type.oid = CASE WHEN t.typelem <> 0 AND t.typlen = -1 THEN t.typelem ELSE t.oid END
+       JOIN pg_namespace base_type_namespace ON base_type_namespace.oid = base_type.typnamespace
        WHERE n.nspname = ? AND c.relname = ? AND c.relkind = 'm'
          AND a.attnum > 0 AND NOT a.attisdropped
        ORDER BY a.attnum`,

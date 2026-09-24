@@ -12,6 +12,7 @@ import {
   IncrementalPullSupport,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
+  X_SCRATCH_NATIVE_COLUMN_TYPE,
   type CreateFieldResult,
   type CreateTableResult,
   type ForeignKeyOptionSchema,
@@ -57,6 +58,8 @@ import {
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
   POSTGRES_SYSTEM_SCHEMAS,
+  postgresNativeColumnTypeAnnotation,
+  prepareRecordsForPgInsert,
   replaceEmptyStringsWithNullForPgTypedColumns,
   resolvePgFieldValueCanonicalizer,
   resolvePgModifiedAtField,
@@ -294,6 +297,13 @@ export class PostgresConnector extends Connector {
         const { schema: colSchema, pgType } = mapPgType(col.data_type, col.udt_name, isNullable);
 
         const annotated = { ...colSchema, [CONNECTOR_DATA_TYPE]: pgType } as TSchema;
+
+        // The exact native type (`text[]`, `numeric(10,2)`), so a same-type-system Live Export can
+        // recreate the column verbatim instead of approximating it (DEV-11903).
+        const nativeColumnType = postgresNativeColumnTypeAnnotation(col);
+        if (nativeColumnType) {
+          (annotated as Record<string, unknown>)[X_SCRATCH_NATIVE_COLUMN_TYPE] = nativeColumnType;
+        }
 
         if (col.character_maximum_length !== null) {
           (annotated as Record<string, unknown>)[X_SCRATCH_MAX_LENGTH] = col.character_maximum_length;
@@ -652,13 +662,10 @@ export class PostgresConnector extends Connector {
 
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const [schema, tableName] = tableSpec.id.remoteId;
-    const columnNamesRejectingEmptyString = collectPgColumnNamesRejectingEmptyString(tableSpec);
+    const recordsReadyForInsert = prepareRecordsForPgInsert(tableSpec, files);
     return this.withPgClient(async (client) => {
       const pk = tableSpec.idPath;
-      const recordsWithEmptyTypedValuesNulled = files.map((file) =>
-        replaceEmptyStringsWithNullForPgTypedColumns(file, columnNamesRejectingEmptyString),
-      );
-      return client.insertMany(schema, tableName, pk, recordsWithEmptyTypedValuesNulled);
+      return client.insertMany(schema, tableName, pk, recordsReadyForInsert);
     });
   }
 

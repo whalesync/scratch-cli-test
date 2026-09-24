@@ -122,6 +122,19 @@ export function validateFieldsAgainstCapabilities(
         message: `this connector does not support the "${field.fieldType.kind}" field kind`,
       });
     }
+    // A LIST column (`text[]`) is only creatable where the connector declares that element kind; elsewhere
+    // the field would silently land as a single value, so reject it up front.
+    const fieldType = field.fieldType;
+    const requestsArrayColumn =
+      (fieldType.kind === 'text' || fieldType.kind === 'number' || fieldType.kind === 'boolean') &&
+      fieldType.isArray === true;
+    if (requestsArrayColumn && !(capabilities.supportedArrayElementKinds ?? []).includes(fieldType.kind)) {
+      issues.push({
+        path: `${fieldPath}.fieldType.isArray`,
+        code: 'UNSUPPORTED_ARRAY_FIELD',
+        message: `this connector can't create a list of "${fieldType.kind}" values`,
+      });
+    }
     if (capabilities.maxFieldNameLength !== undefined && field.name.length > capabilities.maxFieldNameLength) {
       issues.push({
         path: `${fieldPath}.name`,

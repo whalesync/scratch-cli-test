@@ -6,11 +6,14 @@ import type {
   CreateTableSpec,
   FieldMappingNote,
   ForeignKeyTarget,
+  NativeFieldType,
   Service,
   TableMappingNote,
   TablePropertyType,
+  TransformerConfig,
 } from '@spinner/shared-types';
 import { TIME_BEARING_DATE_FORMATS } from '@spinner/shared-types';
+import { transformerOutputCardinality } from 'src/sync/resolve-column-transform-input';
 import type { SchemaField } from 'src/utils/schema-helpers';
 import {
   firstIndexedValueForLookupKeys,
@@ -25,9 +28,12 @@ import { allocateUniqueName, elideNameToMaxLength, normalizeNameForUniqueness } 
  * Pure and connector-agnostic — it reads only generic signals (the JSON-Schema
  * primitive type, generic `x-scratch-*` annotations surfaced by
  * `extractSchemaFields`, and, when available, a column's `TablePropertyType`
- * display hint). No per-connector native-type knowledge enters here. When a
- * field can't be mapped confidently it is downgraded to `text` with a note;
- * foreign keys that can't be resolved are flagged `unsupported` and omitted.
+ * display hint). No per-connector native-type knowledge enters here: a source
+ * column's exact native type (`x-scratch-native-column-type`) is passed through
+ * OPAQUELY as `nativeFieldType` when the destination declares the same native
+ * type system, never interpreted (DEV-11903). When a field can't be mapped
+ * confidently it is downgraded to `text` with a note; foreign keys that can't be
+ * resolved are flagged `unsupported` and omitted.
  */
 
 /** One source table feeding the generated plan. */
@@ -67,6 +73,12 @@ export interface PlanGeneratorSource {
   remoteTableIds: string[];
   /** Optional `TablePropertyType` per field path (from the source's TableView). */
   viewTypeByPath?: Record<string, TablePropertyType>;
+  /**
+   * Optional view-declared unpack transform per field path (a view column's `codec.toCore` / jsonpath
+   * `displayTransformer`). The sync applies it ahead of the schema's `suggestedTransformer`, so the created
+   * column is typed for its output (DEV-11903). See `PlanFieldSelection.viewUnpackTransformerByPath`.
+   */
+  viewUnpackTransformerByPath?: Record<string, TransformerConfig>;
   /**
    * Set when this source's destination table ALREADY EXISTS. The generator then
    * emits an add-fields plan (the source fields diffed against this destination's
@@ -112,6 +124,21 @@ export interface GeneratedPlan {
   notes: FieldMappingNote[];
   /** One entry per new table renamed (suffixed) to avoid a name collision. */
   tableNotes: TableMappingNote[];
+}
+
+/**
+ * What the destination can create beyond the base logical kinds (DEV-11903): the structured kinds and list
+ * columns that let a source value keep its shape, and the native type system it can recreate exact source
+ * types in. Taken from the destination's `SchemaCreationCapabilities`. Absent (or an absent member) ⇒ that
+ * capability is off, and the generator flattens structured values to text exactly as before.
+ */
+export interface DestinationFieldTypeSupport {
+  /** Logical kinds the destination can create; `json` among them lets an object/array source stay JSON. */
+  supportedFieldKinds?: CreateFieldKind[];
+  /** Element kinds the destination can create as a list column (`fieldType.isArray`). */
+  supportedArrayElementKinds?: CreateFieldKind[];
+  /** The native type system the destination creates columns in (e.g. `'postgres'`). */
+  nativeTypeSystem?: string;
 }
 
 export function generateCreatePlanFromSources(args: {
@@ -186,6 +213,11 @@ export function generateCreatePlanFromSources(args: {
    * Absent ⇒ treated as true (no special N→N handling). See DEV-10753.
    */
   destinationSupportsManyToManyForeignKeys?: boolean;
+  /**
+   * The richer field types the destination can create — JSON and list columns, and the native type system
+   * whose exact source types it recreates verbatim. Absent ⇒ structured values flatten to text. (DEV-11903)
+   */
+  destinationFieldTypeSupport?: DestinationFieldTypeSupport;
 }): GeneratedPlan {
   // linkedTableId → in-plan table ref (for resolving sibling foreign keys).
   const linkedIdToRef = new Map<string, string>();
@@ -235,6 +267,7 @@ export function generateCreatePlanFromSources(args: {
           args.destinationMaxFieldNameLength,
           args.destinationSupportsManyToManyForeignKeys ?? true,
           args.destinationServiceDisplayName,
+          args.destinationFieldTypeSupport,
         ),
       );
     } else {
@@ -247,6 +280,7 @@ export function generateCreatePlanFromSources(args: {
           reservedFieldNames: args.destinationReservedFieldNames,
           maxFieldNameLength: args.destinationMaxFieldNameLength,
           destinationSupportsManyToManyForeignKeys: args.destinationSupportsManyToManyForeignKeys ?? true,
+          destinationFieldTypeSupport: args.destinationFieldTypeSupport,
         },
         linkedIdToRef,
         mappingByLinkedId,
@@ -503,6 +537,7 @@ function buildAddFieldsPlanForSource(
   maxFieldNameLength: number | undefined,
   destinationSupportsManyToManyForeignKeys: boolean,
   destinationServiceDisplayName: string | undefined,
+  destinationFieldTypeSupport: DestinationFieldTypeSupport | undefined,
 ): CreateSchemaFieldsPlan {
   const existingDestinationFieldsByName = new Map(
     existingDestination.existingFields.map((field) => [normalizeNameForUniqueness(field.name), field] as const),
@@ -517,6 +552,7 @@ function buildAddFieldsPlanForSource(
       reservedFieldNames,
       maxFieldNameLength,
       destinationSupportsManyToManyForeignKeys,
+      destinationFieldTypeSupport,
     },
     linkedIdToRef,
     mappingByLinkedId,
@@ -561,6 +597,8 @@ interface CreateFieldSpecOptions {
    * linked record syncs. Absent ⇒ true (no narrowing). See DEV-10753.
    */
   destinationSupportsManyToManyForeignKeys?: boolean;
+  /** Richer field types the destination can create (JSON, lists, native types). See {@link DestinationFieldTypeSupport}. */
+  destinationFieldTypeSupport?: DestinationFieldTypeSupport;
 }
 
 /** Map every field of a source to a create-field spec, pushing a note per field. */
@@ -623,7 +661,24 @@ function mapSchemaFieldToCreateFieldSpec(
   // The destination auto-creates its own id column — never recreate it.
   if (source.idFieldPath !== undefined && schemaField.path === source.idFieldPath) return null;
 
-  const requestedFieldName = schemaField.displayLabel ?? lastPathSegment(schemaField.path);
+  // Infer the created column's type from the value the sync will actually copy: a view-declared unpack
+  // transform takes precedence over the schema's own `suggestedTransformer`, exactly as it does when the
+  // sync resolves the column's `toCore` (DEV-11903).
+  const viewUnpackTransformer = source.viewUnpackTransformerByPath?.[schemaField.path];
+  const schemaFieldAsSynced: SchemaField = viewUnpackTransformer
+    ? { ...schemaField, suggestedTransformer: viewUnpackTransformer }
+    : schemaField;
+
+  // A column copied within ONE native type system (Supabase → Postgres) keeps the source's own column name
+  // (`pharmacies_desired`, not the view's display label "Pharmacies Desired") — the destination is the same
+  // kind of database, so its columns should read exactly like the source's (DEV-11903). The column name is
+  // the field's full path: a native-typed column is a top-level column, and its name may itself contain dots.
+  const displayFieldName = schemaField.displayLabel ?? lastPathSegment(schemaField.path);
+  const nativeColumnTypeInDestinationTypeSystem = nativeColumnTypeSharedWithDestination(
+    schemaField,
+    options.destinationFieldTypeSupport,
+  );
+  const requestedFieldName = nativeColumnTypeInDestinationTypeSystem ? schemaField.path : displayFieldName;
 
   // This side of a symmetric relationship was chosen for suppression (DEV-10753): the other side is
   // suggested instead, or — for a many-to-many the destination can't hold — neither side is. Record a
@@ -649,23 +704,39 @@ function mapSchemaFieldToCreateFieldSpec(
   // When it's a plain field whose kind matches the source, ADOPT it — map to the
   // existing column — so re-adding a previously-unmapped field reuses it instead of
   // failing to recreate it. Otherwise (a foreign key, or a different kind) skip it.
-  const existingField = options.existingDestinationFieldsByName?.get(normalizeNameForUniqueness(requestedFieldName));
+  //
+  // The display-label name is tried too: a destination table created before same-type-system columns kept
+  // their source names holds the display-labelled column ("Pharmacies Desired"), and re-planning against it
+  // must still find that column rather than propose a duplicate under the new name.
+  const existingField =
+    options.existingDestinationFieldsByName?.get(normalizeNameForUniqueness(requestedFieldName)) ??
+    options.existingDestinationFieldsByName?.get(normalizeNameForUniqueness(displayFieldName));
   if (existingField) {
     if (!schemaField.foreignKey) {
-      const sourceKind = inferLogicalFieldType(
-        schemaField,
-        source.viewTypeByPath?.[schemaField.path],
+      // Compatible when the existing column's kind matches what this field maps to now OR what it mapped to
+      // before the destination's richer types were considered — a column created back when a `text[]`/JSON
+      // source flattened to text is still the right column to map that source into.
+      const viewType = source.viewTypeByPath?.[schemaField.path];
+      const sourceKindWithDestinationSupport = inferLogicalFieldType(
+        schemaFieldAsSynced,
+        viewType,
         source.serviceDisplayName,
+        options.destinationFieldTypeSupport,
       ).fieldType.kind;
-      if (sourceKind === existingField.kind) {
+      const sourceKindWithBaseLogicalTypes = inferLogicalFieldType(schemaField, viewType, source.serviceDisplayName)
+        .fieldType.kind;
+      if (
+        sourceKindWithDestinationSupport === existingField.kind ||
+        sourceKindWithBaseLogicalTypes === existingField.kind
+      ) {
         notes.push({
           sourceDataFolderId: source.dataFolderId,
           sourceFieldPath: schemaField.path,
-          fieldName: requestedFieldName,
+          fieldName: existingField.name,
           status: 'adopted',
           mappedKind: existingField.kind,
           existingDestinationColumnId: existingField.columnPath,
-          message: `a "${existingField.kind}" field named "${requestedFieldName}" already exists on the destination; mapping to it`,
+          message: `a "${existingField.kind}" field named "${existingField.name}" already exists on the destination; mapping to it`,
         });
         return null;
       }
@@ -673,9 +744,9 @@ function mapSchemaFieldToCreateFieldSpec(
     notes.push({
       sourceDataFolderId: source.dataFolderId,
       sourceFieldPath: schemaField.path,
-      fieldName: requestedFieldName,
+      fieldName: existingField.name,
       status: 'exists',
-      message: `Skipping "${requestedFieldName}", a field with that name already exists in ${
+      message: `Skipping "${existingField.name}", a field with that name already exists in ${
         options.destinationServiceDisplayName ?? 'the destination'
       } with an incompatible type`,
     });
@@ -779,21 +850,49 @@ function mapSchemaFieldToCreateFieldSpec(
   }
 
   const inferred = inferLogicalFieldType(
-    schemaField,
+    schemaFieldAsSynced,
     source.viewTypeByPath?.[schemaField.path],
     source.serviceDisplayName,
+    options.destinationFieldTypeSupport,
   );
-  const message = composeNoteMessage(renameClause, inferred.message);
+  // Same native type system and a type the destination can recreate verbatim: create the source's exact
+  // column type. Nothing is lost, so any flattening note from the logical inference no longer applies; the
+  // inferred logical type stays on the spec as the fallback for a consumer that doesn't use native types.
+  const nativeFieldType: NativeFieldType | undefined = nativeColumnTypeInDestinationTypeSystem?.isRecreatableVerbatim
+    ? {
+        typeSystem: nativeColumnTypeInDestinationTypeSystem.typeSystem,
+        type: nativeColumnTypeInDestinationTypeSystem.type,
+      }
+    : undefined;
+  const status = nativeFieldType ? 'mapped' : inferred.status;
+  const message = composeNoteMessage(renameClause, nativeFieldType ? undefined : inferred.message);
   notes.push({
     sourceDataFolderId: source.dataFolderId,
     sourceFieldPath: schemaField.path,
     fieldName,
-    status: inferred.status,
+    status,
     mappedKind: inferred.fieldType.kind,
     ...(message ? { message } : {}),
     ...(renamedFromName ? { renamedFromName } : {}),
   });
-  return buildFieldSpec(fieldName, inferred.fieldType, isPrimary, schemaField.description);
+  return buildFieldSpec(fieldName, inferred.fieldType, isPrimary, schemaField.description, nativeFieldType);
+}
+
+/**
+ * The field's native column type when it belongs to the destination's native type system (Supabase →
+ * Postgres), else undefined. Recreatable or not, a match means the source and destination are the same
+ * kind of database — which is what keeps the source's column names verbatim; recreatability separately
+ * decides whether the exact TYPE is copied.
+ */
+function nativeColumnTypeSharedWithDestination(
+  schemaField: SchemaField,
+  destinationFieldTypeSupport: DestinationFieldTypeSupport | undefined,
+): SchemaField['nativeColumnType'] {
+  const destinationNativeTypeSystem = destinationFieldTypeSupport?.nativeTypeSystem;
+  if (destinationNativeTypeSystem === undefined) return undefined;
+  return schemaField.nativeColumnType?.typeSystem === destinationNativeTypeSystem
+    ? schemaField.nativeColumnType
+    : undefined;
 }
 
 /**
@@ -839,8 +938,11 @@ export interface InferredFieldType {
 /**
  * Map a non-foreignKey source field to a logical create field type using only
  * generic signals. Prefers a `TablePropertyType` display hint when available,
- * otherwise falls back to the JSON-Schema primitive. Only structurally complex
- * (object/array) values are downgraded to `text`.
+ * otherwise falls back to the JSON-Schema primitive. Structurally complex
+ * values keep their shape — an array of primitives as a list, an object as
+ * `json` — when `destinationFieldTypeSupport` says the destination can hold it, and are
+ * downgraded to `text` otherwise (always, when it is omitted — e.g. when inferring
+ * an existing destination column's kind).
  *
  * Read-only/computed source fields are NOT downgraded: this tool copies a table
  * for use in a sync, so a read-only source date should become a real `date`
@@ -860,9 +962,13 @@ export function inferLogicalFieldType(
   field: SchemaField,
   viewType?: TablePropertyType,
   sourceServiceDisplayName?: string,
+  destinationFieldTypeSupport?: DestinationFieldTypeSupport,
 ): InferredFieldType {
   // "this Notion object field" when we know the source service, "this object field" otherwise.
   const sourceServiceQualifier = sourceServiceDisplayName ? `${sourceServiceDisplayName} ` : '';
+  // A structured value keeps its shape when the destination can hold it: a list column for an array of
+  // primitives, a JSON column for an object. Otherwise it is flattened to text, with a note (DEV-11903).
+  const structuredValueFieldType = fieldTypeKeepingStructuredValue(field, destinationFieldTypeSupport);
   if (viewType) {
     switch (viewType) {
       case 'checkbox':
@@ -905,6 +1011,9 @@ export function inferLogicalFieldType(
       case 'string':
         return { status: 'mapped', fieldType: { kind: 'text' } };
       case 'object':
+        if (structuredValueFieldType && STRUCTURED_JSON_TYPES_UNDER_OBJECT_VIEW_HINT.has(field.type)) {
+          return { status: 'mapped', fieldType: structuredValueFieldType };
+        }
         return {
           status: 'downgraded',
           fieldType: { kind: 'text' },
@@ -927,6 +1036,7 @@ export function inferLogicalFieldType(
       return { status: 'mapped', fieldType: { kind: 'text' } };
     case 'object':
     case 'array':
+      if (structuredValueFieldType) return { status: 'mapped', fieldType: structuredValueFieldType };
       return {
         status: 'downgraded',
         fieldType: { kind: 'text' },
@@ -941,6 +1051,64 @@ export function inferLogicalFieldType(
         }field type "${field.type}", syncing as plain text`,
       };
   }
+}
+
+/**
+ * JSON types a column the view hints as `'object'` must actually carry to be kept structured. A primitive
+ * under an `'object'` hint isn't a structured value, and an `'unknown'` one may be a view column with no
+ * backing schema field at all (whose value a codec may already have flattened) — both stay text. A Postgres
+ * `jsonb` column (schema type `unknown`) keeps its type through `nativeFieldType` instead.
+ */
+const STRUCTURED_JSON_TYPES_UNDER_OBJECT_VIEW_HINT: ReadonlySet<string> = new Set(['object', 'array']);
+
+/** The list-column element kind for an array's JSON element type, when it is a primitive a list can hold. */
+function arrayElementFieldType(arrayItemType: string | undefined): CreateFieldType | undefined {
+  switch (arrayItemType) {
+    case 'string':
+      return { kind: 'text', isArray: true };
+    case 'integer':
+      return { kind: 'number', format: 'integer', isArray: true };
+    case 'number':
+      return { kind: 'number', isArray: true };
+    case 'boolean':
+      return { kind: 'boolean', isArray: true };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The field type that keeps a structured source value's shape on this destination, or undefined when the
+ * destination can't hold it (the caller then flattens to text). An array of primitives becomes a list
+ * column of that element kind when the destination supports one; an object becomes `json` when supported.
+ *
+ * Any other array — of objects, or of an element kind the destination has no list for — is NOT given a
+ * `json` column: a JSON destination column declares no shape, so the sync's transform picker reads it as
+ * single-valued and would join the array into one string before writing it (DEV-11903 review). Such an
+ * array keeps flattening to text, where that join is the intended, honest result.
+ */
+function fieldTypeKeepingStructuredValue(
+  field: SchemaField,
+  destinationFieldTypeSupport: DestinationFieldTypeSupport | undefined,
+): CreateFieldType | undefined {
+  if (!destinationFieldTypeSupport) return undefined;
+  // A field with an unpack codec doesn't sync its raw structure: the sync copies the codec's CoreValue — a
+  // string, or a list of strings. So the created column follows the codec's output: a text list when it
+  // emits a list (and the destination has one), else the base text mapping.
+  if (field.suggestedTransformer) {
+    const codecEmitsList = transformerOutputCardinality(field.suggestedTransformer) === 'multi';
+    return codecEmitsList && (destinationFieldTypeSupport.supportedArrayElementKinds ?? []).includes('text')
+      ? { kind: 'text', isArray: true }
+      : undefined;
+  }
+  if (field.type === 'array') {
+    const listFieldType = arrayElementFieldType(field.arrayItemType);
+    const destinationHasThisListKind =
+      listFieldType !== undefined &&
+      (destinationFieldTypeSupport.supportedArrayElementKinds ?? []).includes(listFieldType.kind);
+    return destinationHasThisListKind ? listFieldType : undefined;
+  }
+  return (destinationFieldTypeSupport.supportedFieldKinds ?? []).includes('json') ? { kind: 'json' } : undefined;
 }
 
 /**
@@ -1203,10 +1371,12 @@ function buildFieldSpec(
   fieldType: CreateFieldType,
   isPrimary: boolean,
   description?: string,
+  nativeFieldType?: NativeFieldType,
 ): CreateFieldSpec {
   return {
     name,
     fieldType,
+    ...(nativeFieldType ? { nativeFieldType } : {}),
     ...(isPrimary ? { isPrimary: true } : {}),
     ...(description ? { description } : {}),
   };

@@ -6,6 +6,7 @@ import {
   type CreateSchemaFieldsDto,
   type CreateSchemaTablesDto,
   type CreateTableSpec,
+  type NativeFieldType,
   type ValidateSchemaIssue,
 } from '@spinner/shared-types';
 
@@ -36,7 +37,11 @@ export const FIELD_KIND_LABELS: Record<CreateFieldKind, string> = {
   phone: 'Phone',
   currency: 'Currency',
   foreignKey: 'Foreign key',
+  json: 'JSON',
 };
+
+/** Kinds whose fields can hold a LIST of values (`fieldType.isArray`, e.g. a Postgres `text[]`). */
+export const LIST_CAPABLE_FIELD_KINDS: ReadonlySet<CreateFieldKind> = new Set(['text', 'number', 'boolean']);
 
 export const NUMBER_FORMATS: NumberFieldFormat[] = ['plain', 'integer', 'decimal', 'percent'];
 
@@ -59,6 +64,16 @@ export interface EditorField {
    */
   isSourceRecordId: boolean;
   description: string;
+  /**
+   * The source's exact native column type a generated plan carried (`CreateFieldSpec.nativeFieldType`),
+   * with the logical field type it was generated alongside. Re-emitted only while the field's logical type
+   * is still exactly that one: the native type describes the ORIGINAL column, so ANY edit to the data type —
+   * the kind, "List of values", a number's format or precision — drops it and the edited logical type is
+   * created instead.
+   */
+  nativeFieldTypeFromPlan: { nativeFieldType: NativeFieldType; generatedWithFieldType: CreateFieldType } | null;
+  // text / number / boolean: a list of values rather than a single value
+  isArray: boolean;
   // number / currency precision (text input, parsed on submit)
   precision: string;
   // number
@@ -104,6 +119,8 @@ export function makeEmptyField(): EditorField {
     required: false,
     isSourceRecordId: false,
     description: '',
+    nativeFieldTypeFromPlan: null,
+    isArray: false,
     precision: '',
     format: 'plain',
     includesTime: false,
@@ -160,17 +177,20 @@ export function findDuplicateFieldNameIds(fields: { id: string; name: string }[]
 export function toCreateFieldType(field: EditorField): CreateFieldType {
   switch (field.kind) {
     case 'text':
-    case 'longText':
     case 'boolean':
+      return { kind: field.kind, ...(field.isArray ? { isArray: true } : {}) };
+    case 'longText':
     case 'url':
     case 'email':
     case 'phone':
+    case 'json':
       return { kind: field.kind };
     case 'number':
       return {
         kind: 'number',
         ...(field.precision.trim() ? { precision: Number(field.precision) } : {}),
         ...(field.format !== 'plain' ? { format: field.format } : {}),
+        ...(field.isArray ? { isArray: true } : {}),
       };
     case 'date':
       return { kind: 'date', ...(field.includesTime ? { includesTime: true } : {}) };
@@ -205,10 +225,39 @@ export function toCreateFieldType(field: EditorField): CreateFieldType {
   }
 }
 
+/** Order-insensitive structural equality for plain JSON values (field types built in different key orders). */
+function areJsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (typeof left !== 'object' || typeof right !== 'object' || left === null || right === null) return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).filter((key) => leftRecord[key] !== undefined);
+  const rightKeys = Object.keys(rightRecord).filter((key) => rightRecord[key] !== undefined);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => areJsonValuesEqual(leftRecord[key], rightRecord[key]))
+  );
+}
+
+/**
+ * The plan's native type for this field, while the field's logical type is still exactly the one the plan
+ * generated it with — see {@link EditorField.nativeFieldTypeFromPlan}. Null once the data type was edited.
+ */
+export function nativeFieldTypeStillApplying(field: EditorField): NativeFieldType | null {
+  const nativeFieldTypeFromPlan = field.nativeFieldTypeFromPlan;
+  if (!nativeFieldTypeFromPlan) return null;
+  return areJsonValuesEqual(toCreateFieldType(field), nativeFieldTypeFromPlan.generatedWithFieldType)
+    ? nativeFieldTypeFromPlan.nativeFieldType
+    : null;
+}
+
 export function toCreateFieldSpec(field: EditorField): CreateFieldSpec {
+  const nativeFieldType = nativeFieldTypeStillApplying(field);
   return {
     name: field.name.trim(),
     fieldType: toCreateFieldType(field),
+    ...(nativeFieldType ? { nativeFieldType } : {}),
     ...(field.description.trim() ? { description: field.description.trim() } : {}),
     ...(field.required ? { required: true } : {}),
     ...(field.isPrimary ? { isPrimary: true } : {}),
@@ -289,12 +338,20 @@ export function editorFieldFromSpec(spec: CreateFieldSpec): EditorField {
     required: spec.required ?? false,
     isSourceRecordId: spec.isSourceRecordId ?? false,
     description: spec.description ?? '',
+    nativeFieldTypeFromPlan: spec.nativeFieldType
+      ? { nativeFieldType: spec.nativeFieldType, generatedWithFieldType: spec.fieldType }
+      : null,
   };
   const fieldType = spec.fieldType;
   switch (fieldType.kind) {
+    case 'text':
+    case 'boolean':
+      editor.isArray = fieldType.isArray ?? false;
+      break;
     case 'number':
       editor.precision = fieldType.precision != null ? String(fieldType.precision) : '';
       editor.format = fieldType.format ?? 'plain';
+      editor.isArray = fieldType.isArray ?? false;
       break;
     case 'date':
       editor.includesTime = fieldType.includesTime ?? false;
@@ -325,7 +382,7 @@ export function editorFieldFromSpec(spec: CreateFieldSpec): EditorField {
       // 'existing' mode, so the user binds it to a table before creating.
       break;
     default:
-      // Plain kinds (text/longText/boolean/url/email/phone) carry no extra inputs.
+      // Plain kinds (longText/url/email/phone/json) carry no extra inputs.
       break;
   }
   return editor;

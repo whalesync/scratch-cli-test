@@ -18,8 +18,10 @@ import { CREATE_FIELD_KINDS, MAX_NUMBER_PRECISION, type CreateFieldKind } from '
 import { PlusIcon, Trash2Icon } from 'lucide-react';
 import {
   FIELD_KIND_LABELS,
+  LIST_CAPABLE_FIELD_KINDS,
   NUMBER_FORMATS,
   makeEmptyChoiceOption,
+  nativeFieldTypeStillApplying,
   type EditorChoiceOption,
   type EditorField,
   type NumberFieldFormat,
@@ -56,6 +58,7 @@ export function CreateSchemaFieldRow({
     onChange({ options: field.options.map((option) => (option.id === optionId ? { ...option, ...updates } : option)) });
   };
   const addOption = () => onChange({ options: [...field.options, makeEmptyChoiceOption()] });
+  const nativeFieldTypeFromPlan = nativeFieldTypeStillApplying(field);
   const removeOption = (optionId: string) =>
     onChange({ options: field.options.filter((option) => option.id !== optionId) });
 
@@ -95,6 +98,13 @@ export function CreateSchemaFieldRow({
           </Text12Regular>
         )}
 
+        {nativeFieldTypeFromPlan && (
+          <Text12Regular c="var(--fg-secondary)">
+            Created with the source&apos;s exact column type: {nativeFieldTypeFromPlan.type}. Editing the data type
+            creates the edited type instead.
+          </Text12Regular>
+        )}
+
         {renderKindInputs(
           field,
           onChange,
@@ -105,6 +115,13 @@ export function CreateSchemaFieldRow({
         )}
 
         <Group gap="lg">
+          {LIST_CAPABLE_FIELD_KINDS.has(field.kind) && (
+            <Checkbox
+              label="List of values"
+              checked={field.isArray}
+              onChange={(event) => onChange({ isArray: event.currentTarget.checked })}
+            />
+          )}
           <Checkbox
             label="Primary field"
             checked={field.isPrimary}
@@ -140,6 +157,7 @@ function renderKindInputs(
     case 'url':
     case 'email':
     case 'phone':
+    case 'json':
       return null;
     case 'number':
       return (

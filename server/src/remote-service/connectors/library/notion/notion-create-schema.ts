@@ -37,7 +37,9 @@ export type NotionPropertiesMap = Record<string, NotionPropertyConfig>;
  * and the primary field (mapped to Notion's `title`) must be text-like.
  */
 export const NOTION_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
-  supportedFieldKinds: [...CREATE_FIELD_KINDS],
+  // Every kind except `json`: Notion has no structured-JSON property, so the plan generator keeps flattening
+  // an object source to text (with its "syncing as plain text" note) rather than claiming a JSON column.
+  supportedFieldKinds: CREATE_FIELD_KINDS.filter((kind) => kind !== 'json'),
   primaryField: {
     displayName: 'Title',
     description: 'Notion requires a title property. It names each record and appears at the top of every page.',
@@ -198,8 +200,11 @@ export function mapCreateFieldToNotionProperty(
 
   const fieldType = field.fieldType;
   switch (fieldType.kind) {
+    // `json` is unreachable in practice — it isn't in the supported kinds, so validation rejects it first.
+    // JSON text is the faithful fallback if a spec ever carries it.
     case 'text':
     case 'longText':
+    case 'json':
       return { config: withDescription({ rich_text: {} }, field) };
     case 'number':
       return {

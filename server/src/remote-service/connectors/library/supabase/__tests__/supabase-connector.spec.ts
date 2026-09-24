@@ -3,6 +3,7 @@ import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
+  X_SCRATCH_NATIVE_COLUMN_TYPE,
   X_SCRATCH_READONLY,
   type CreateFieldSpec,
 } from '@spinner/shared-types';
@@ -134,6 +135,56 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     expect(properties.short_code[X_SCRATCH_MAX_LENGTH]).toBe(11);
     expect(properties.fixed_code[X_SCRATCH_MAX_LENGTH]).toBe(5);
     expect(properties.id[X_SCRATCH_MAX_LENGTH]).toBeUndefined();
+  });
+
+  it('annotates each column with its exact native Postgres type (DEV-11903)', async () => {
+    const spec = await fetchSchema([
+      buildColumn({
+        column_name: 'id',
+        data_type: 'integer',
+        udt_name: 'int4',
+        native_type: 'integer',
+        native_type_is_built_in: true,
+      }),
+      buildColumn({
+        column_name: 'pharmacies_desired',
+        data_type: 'ARRAY',
+        udt_name: '_text',
+        native_type: 'text[]',
+        native_type_is_built_in: true,
+      }),
+      buildColumn({
+        column_name: 'id_file_bytes',
+        data_type: 'bytea',
+        udt_name: 'bytea',
+        native_type: 'bytea',
+        native_type_is_built_in: true,
+      }),
+      buildColumn({
+        column_name: 'mood',
+        data_type: 'USER-DEFINED',
+        udt_name: 'mood',
+        native_type: 'mood',
+        native_type_is_built_in: false,
+      }),
+      buildColumn({ column_name: 'unjoined' }),
+    ]);
+
+    const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
+    expect(properties.pharmacies_desired[X_SCRATCH_NATIVE_COLUMN_TYPE]).toEqual({
+      typeSystem: 'postgres',
+      type: 'text[]',
+      isRecreatableVerbatim: true,
+    });
+    expect(properties.id[X_SCRATCH_NATIVE_COLUMN_TYPE]).toEqual({
+      typeSystem: 'postgres',
+      type: 'integer',
+      isRecreatableVerbatim: true,
+    });
+    // Annotated (so a same-type-system export still recognizes the column), but not recreated verbatim.
+    expect(properties.id_file_bytes[X_SCRATCH_NATIVE_COLUMN_TYPE]).toMatchObject({ isRecreatableVerbatim: false });
+    expect(properties.mood[X_SCRATCH_NATIVE_COLUMN_TYPE]).toMatchObject({ isRecreatableVerbatim: false });
+    expect(properties.unjoined[X_SCRATCH_NATIVE_COLUMN_TYPE]).toBeUndefined();
   });
 
   it('omits x-scratch-max-length for unbounded text columns', async () => {
@@ -895,7 +946,7 @@ describe('SupabaseConnector schema creation', () => {
     expect(connector.supportsSchemaCreation()).toBe(true);
 
     const capabilities = connector.getSchemaCreationCapabilities();
-    expect(capabilities.supportedFieldKinds).toHaveLength(12);
+    expect(capabilities.supportedFieldKinds).toHaveLength(13);
     expect(capabilities.primaryField).toBeNull();
     expect(capabilities.maxTableNameLength).toBe(63);
     expect(capabilities.maxFieldNameLength).toBe(63);

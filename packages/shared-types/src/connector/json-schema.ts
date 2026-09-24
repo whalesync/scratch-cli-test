@@ -27,6 +27,30 @@ export const X_SCRATCH_WRITE_ONCE = 'x-scratch-write-once';
 // The native, connector-specific data type of the field.
 export const X_SCRATCH_CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
 
+// The field's EXACT native column type within a named type system, as an object
+// `{ typeSystem, type, isRecreatableVerbatim }` (see `NativeColumnTypeAnnotation`). Unlike the coarse
+// `x-scratch-connector-data-type`, `type` is the service's own spelling of the column type
+// (Postgres: `format_type()` output such as `integer`, `text[]`, `character varying(50)`). Read by the
+// create-schema plan generator: when the destination creates columns in the SAME type system and the
+// type is recreatable verbatim, the created column keeps this exact type instead of the lossy logical
+// fallback (DEV-11903). Opaque to everything except the connectors of that type system.
+export const X_SCRATCH_NATIVE_COLUMN_TYPE = 'x-scratch-native-column-type';
+
+/** Value of the {@link X_SCRATCH_NATIVE_COLUMN_TYPE} annotation. */
+export interface NativeColumnTypeAnnotation {
+  /** The type system the `type` belongs to (e.g. `'postgres'`, shared by the Postgres and Supabase connectors). */
+  typeSystem: string;
+  /** The service's own spelling of the column type (e.g. `'text[]'`, `'numeric(10,2)'`). */
+  type: string;
+  /**
+   * Whether a destination of the same type system can create a column of exactly this type AND round-trip
+   * the value as pulled into it. False for types that may not exist in another database (enums, domains,
+   * extension types) or whose pulled value doesn't write back as-is (Postgres `bytea`, `interval`); those
+   * fall back to the logical type mapping.
+   */
+  isRecreatableVerbatim: boolean;
+}
+
 // An object describing a foreign key configuration for a field.
 export const X_SCRATCH_FOREIGN_KEY_OPTIONS = 'x-scratch-foreign-key';
 

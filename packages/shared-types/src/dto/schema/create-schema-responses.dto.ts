@@ -83,6 +83,21 @@ export interface SchemaCreationCapabilities {
    * the same name (`DUPLICATE_TABLE_NAME`). Absent ⇒ treated as `true`.
    */
   requiresUniqueTableNames?: boolean;
+  /**
+   * The native type system this connector creates columns in (e.g. `'postgres'`, shared by the Postgres
+   * and Supabase connectors). A source column annotated with the same type system
+   * (`x-scratch-native-column-type`) is planned with a `CreateFieldSpec.nativeFieldType`, so the created
+   * column keeps the source's exact type; the connector honors that native type at create time. Absent ⇒
+   * the connector creates from the logical `fieldType` only. (DEV-11903)
+   */
+  nativeTypeSystem?: string;
+  /**
+   * The logical kinds this connector can create as a LIST column (`fieldType.isArray`) — e.g. Postgres's
+   * `text[]` / `numeric[]` / `boolean[]`. The plan generator maps an array-of-primitives source to an array
+   * field only when its element kind is listed here, and downgrades it to text otherwise. Absent ⇒ no
+   * array fields. (DEV-11903)
+   */
+  supportedArrayElementKinds?: CreateFieldKind[];
 }
 
 /**

@@ -23,6 +23,8 @@ describe('SchemaBuilderService.findAdoptableOrphanFolder', () => {
     folders: FolderRow[];
     mappedDestinationFolderIds?: string[];
     columnNamesByFolderId: Record<string, string[] | null>;
+    /** A stored view per folder whose column display names differ from the column names (Postgres). */
+    displayNamesByColumnNameByFolderId?: Record<string, Record<string, string>>;
   }): SchemaBuilderService {
     const mappedDestinationFolderIds = new Set(opts.mappedDestinationFolderIds ?? []);
     const db = {
@@ -40,7 +42,14 @@ describe('SchemaBuilderService.findAdoptableOrphanFolder', () => {
     const dataFolderService = {
       // View absent → derivation falls back to raw schema flattening; the crafted schemas below are
       // flat top-level properties, so each property name IS the meaningful column name.
-      getStoredView: jest.fn().mockResolvedValue(null),
+      getStoredView: jest.fn((dataFolderId: string) => {
+        const displayNamesByColumnName = opts.displayNamesByColumnNameByFolderId?.[dataFolderId];
+        if (!displayNamesByColumnName) return Promise.resolve(null);
+        return Promise.resolve({
+          name: 'Default',
+          cols: Object.entries(displayNamesByColumnName).map(([path, name]) => ({ kind: 'col', path, name })),
+        });
+      }),
       getStoredSchema: jest.fn((dataFolderId: string) => {
         const columnNames = opts.columnNamesByFolderId[dataFolderId];
         if (!columnNames) return Promise.resolve(null);
@@ -86,6 +95,32 @@ describe('SchemaBuilderService.findAdoptableOrphanFolder', () => {
       remoteTableId: ['base1', 'tbl_orphan'],
       actualName: 'Countries',
     });
+  });
+
+  // DEV-11903: a same-type-system plan (Supabase → Postgres) names fields by their source COLUMN names, while
+  // the Postgres orphan's default view shows humanized display names — the orphan must still be recognized.
+  it('adopts an orphan whose column names (not its view display names) match a same-type-system plan', async () => {
+    const service = buildService({
+      folders: [
+        {
+          id: 'dfd_orphan',
+          name: 'Countries',
+          connectorAccountId: DESTINATION_CONNECTOR,
+          tableId: ['base1', 'countries'],
+        },
+      ],
+      columnNamesByFolderId: { dfd_orphan: ['slug', 'country_code'] },
+      displayNamesByColumnNameByFolderId: { dfd_orphan: { slug: 'Slug', country_code: 'Country Code' } },
+    });
+    const adopted = await service.findAdoptableOrphanFolder(
+      WORKBOOK_ID,
+      DESTINATION_CONNECTOR,
+      INTENDED_PARENT,
+      INTENDED_TABLE_NAME,
+      ['slug', 'country_code'],
+      ACTOR,
+    );
+    expect(adopted?.dataFolderId).toBe('dfd_orphan');
   });
 
   it('declines a same-named folder with an extra column (a foreign table, not our orphan)', async () => {

@@ -40,6 +40,7 @@ export const CREATE_FIELD_KINDS = [
   'phone',
   'currency',
   'foreignKey',
+  'json',
 ] as const;
 
 /** A single choice for a select / multiSelect field. */
@@ -88,15 +89,23 @@ export type ForeignKeyTarget = z.infer<typeof foreignKeyTargetSchema>;
  * each variant validates its own options (a select needs choices, a currency
  * needs an ISO-4217 code, a foreignKey needs a resolvable target, etc.).
  */
+/**
+ * Marks a `text` / `number` / `boolean` field as holding a LIST of that value type (a Postgres `text[]`,
+ * `integer[]`, `boolean[]`) rather than a single value. Only destinations that declare the kind in
+ * `SchemaCreationCapabilities.supportedArrayElementKinds` accept it; the validator rejects it elsewhere.
+ */
+const isArrayFieldSchema = z.boolean().optional();
+
 export const createFieldTypeSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('text') }),
+  z.object({ kind: z.literal('text'), isArray: isArrayFieldSchema }),
   z.object({ kind: z.literal('longText') }),
   z.object({
     kind: z.literal('number'),
     precision: z.number().int().min(0).max(MAX_NUMBER_PRECISION).optional(),
     format: z.enum(['plain', 'integer', 'decimal', 'percent']).optional(),
+    isArray: isArrayFieldSchema,
   }),
-  z.object({ kind: z.literal('boolean') }),
+  z.object({ kind: z.literal('boolean'), isArray: isArrayFieldSchema }),
   z.object({ kind: z.literal('date'), includesTime: z.boolean().optional() }),
   z.object({
     kind: z.literal('select'),
@@ -132,14 +141,34 @@ export const createFieldTypeSchema = z.discriminatedUnion('kind', [
     target: foreignKeyTargetSchema,
     allowMultiple: z.boolean().optional(),
   }),
+  // A structured JSON value kept whole (a Postgres `jsonb` column) instead of being flattened to text.
+  z.object({ kind: z.literal('json') }),
 ]);
 export type CreateFieldType = z.infer<typeof createFieldTypeSchema>;
 export type CreateFieldKind = CreateFieldType['kind'];
 
+/**
+ * An exact, destination-native column type to create instead of mapping `fieldType`. Set by plan
+ * generation only when the source column and the destination belong to the SAME type system
+ * (`SchemaCreationCapabilities.nativeTypeSystem`, e.g. Supabase → Postgres), so the created column is
+ * byte-for-byte the source's type (`integer`, `text[]`, `numeric(10,2)`) rather than the lossy logical
+ * approximation. Opaque outside the connector that owns the type system: frontends show `type` verbatim
+ * and pass the object through; a destination of a different type system ignores it and creates
+ * `fieldType`. The connector validates `type` before using it and fails the field on a type it can't
+ * create. Clear it when the user changes the field's kind — it describes the ORIGINAL type.
+ */
+export const nativeFieldTypeSchema = z.object({
+  typeSystem: z.string().min(1),
+  type: z.string().min(1),
+});
+export type NativeFieldType = z.infer<typeof nativeFieldTypeSchema>;
+
 /** One field to create on a table. */
 export const createFieldSpecSchema = z.object({
   name: z.string().min(1).max(MAX_FIELD_NAME_LENGTH),
+  /** The logical type — always set, and the fallback when `nativeFieldType` is absent or not applicable. */
   fieldType: createFieldTypeSchema,
+  nativeFieldType: nativeFieldTypeSchema.optional(),
   description: z.string().optional(),
   /** Best-effort: the connector may not support per-field requiredness. */
   required: z.boolean().optional(),

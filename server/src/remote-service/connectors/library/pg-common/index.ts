@@ -44,6 +44,13 @@ export {
   pgIncrementalPullSupport,
   resolvePgModifiedAtField,
 } from './pg-incremental';
+export { prepareRecordsForPgInsert } from './pg-insert-record-preparation';
+export { collectPgJsonColumnNames, serializeJsonColumnArraysForInsert } from './pg-json-column-insert-serialization';
+export {
+  POSTGRES_NATIVE_TYPE_SYSTEM,
+  isRecreatablePostgresNativeColumnType,
+  postgresNativeColumnTypeAnnotation,
+} from './pg-native-column-type';
 export {
   PG_BOOLEAN_TYPES,
   PG_DATE_TYPES,
