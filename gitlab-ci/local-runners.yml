@@ -204,6 +204,10 @@ local build and test scratch-git:
   extends:
     - .build-and-test-scratch-git
     - .local-runner-defaults
+  variables:
+    # Native: this binary only feeds `local build scratch-git docker image`,
+    # which builds a native-arch image that's never pushed.
+    SCRATCH_GIT_RELEASE_FOR_AMD64: "false"
   rules:
     - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, scratch-git]
@@ -211,8 +215,9 @@ local build and test scratch-git:
 # Builds a native-arch image from the native-arch binary that `local build and
 # test scratch-git` above just produced — scratch-git-2/Dockerfile COPYs that
 # binary in rather than compiling it in-image, so the two have to agree. The
-# shared-runner job pins linux/amd64 and checks the binary matches; here both
-# sides are simply the host's arch.
+# shared-runner job pins linux/amd64 and checks the binary matches, and its
+# binary is always x86-64 (cross-compiled when the host isn't); here both sides
+# are simply the host's arch.
 local build scratch-git docker image:
   extends:
     - .build-scratch-git-docker-image

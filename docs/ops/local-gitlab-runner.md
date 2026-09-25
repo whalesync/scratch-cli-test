@@ -155,13 +155,23 @@ Two things to know:
   rather than compiling it. Each Dockerfile's header comment carries its full
   command. For purely local debugging, native is fine and faster.
 
-`build scratch-git docker image` additionally checks the prebuilt Rust binary's
-ELF architecture before building, because `scratch-git-2/Dockerfile` COPYs that
-binary in rather than compiling it in-image — an aarch64 binary inside a
-linux/amd64 image builds fine and then dies at startup with
-`exec format error`. The check follows `DOCKER_BUILD_PLATFORM_ARGS`, so it
-enforces x86-64 on the shared runners and skips on your Mac, where the binary
-and the image are both native.
+scratch-git needs one more thing, because `scratch-git-2/Dockerfile` COPYs a
+prebuilt Rust binary in rather than compiling it in-image: the binary itself has
+to be x86-64. So on the shared runners `build and test scratch-git` always
+produces an x86-64 release binary — natively on an x86-64 host, and on any other
+host by cross-compiling with Debian's x86-64 cross toolchain (`cargo build
+--target x86_64-unknown-linux-gnu`, then copying the result to
+`target/release/scratch-git-2`, where the Dockerfile expects it). `cargo test`
+still runs native, whatever the host is. As a backstop, `build scratch-git
+docker image` checks the binary's ELF architecture before building — an aarch64
+binary inside a linux/amd64 image builds fine and then dies at startup with
+`exec format error`. That check follows `DOCKER_BUILD_PLATFORM_ARGS`, so it
+enforces x86-64 on the shared runners and skips on your Mac.
+
+**Your local scratch-git jobs stay native.** `local build and test scratch-git`
+sets `SCRATCH_GIT_RELEASE_FOR_AMD64: "false"` to skip the cross-compile, and
+`local build scratch-git docker image` then bakes that native binary into a
+native image — both sides the host's arch, nothing pushed.
 
 The smoke-test stack (`smoke-tests/docker-compose.smoke-test.yml`) is native
 everywhere: those images are run in place by the job, never pushed or deployed.

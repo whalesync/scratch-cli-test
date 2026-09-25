@@ -229,6 +229,11 @@ include:
   # one warms dep downloads for the other.
   #
   #   cargo         — native host builds       (scratch-git-2/target/{debug,release,...})
+  #                   plus target/x86_64-unknown-linux-gnu, because
+  #                   `build and test scratch-git` cross-compiles its release
+  #                   binary there on a non-x86-64 host. On an x86-64 runner that
+  #                   directory doesn't exist and the cache just warns "no
+  #                   matching files".
   #   cargo_cross   — zigbuild: per-triple dirs under target/<triple>/… **plus**
   #                   target/release — with `--target`, Cargo still puts host-only
   #                   artifacts (proc-macros, build-script outputs) in
@@ -250,6 +255,7 @@ include:
       - .cargo/git
       - scratch-git-2/target/debug
       - scratch-git-2/target/release
+      - scratch-git-2/target/x86_64-unknown-linux-gnu
       - scratch-git-2/target/.rustc_info.json
       - scratch-git-2/target/CACHEDIR.TAG
     policy: pull-push

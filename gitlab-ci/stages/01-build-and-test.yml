@@ -286,16 +286,19 @@ build server docker image:
 
 .build-and-test-scratch-git:
   stage: build and test
-  # Deliberately NOT pinned to a platform — this builds for the host arch, so a
-  # Mac local runner stays native and fast. `build scratch-git docker image`
-  # COPYs this job's binary straight into the image, and it builds for the same
-  # host arch, so the two always match: amd64 on the shared runners (what we
-  # deploy), arm64 on a Mac (a throwaway MR artifact that is never pushed).
+  # `cargo test` runs native, on whatever architecture the host happens to be.
+  # The release binary is different: `build scratch-git docker image` COPYs it
+  # straight into a linux/amd64 image that runs on an x86 GCE VM, so on the
+  # shared runners it is ALWAYS x86-64 — natively on an x86-64 host,
+  # cross-compiled on anything else (see SCRATCH_GIT_RELEASE_FOR_AMD64 in the
+  # script below). `local build and test scratch-git` opts out and stays fully
+  # native: its binary only feeds a native-arch image that is never pushed.
   image: rust:slim-bookworm
   interruptible: true
   variables:
     CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
     CARGO_INCREMENTAL: "0"
+    SCRATCH_GIT_RELEASE_FOR_AMD64: "true"
   cache:
     - !reference [.caches, cargo]
   artifacts:
@@ -309,7 +312,23 @@ build server docker image:
     - command -v git && git --version
     - cd scratch-git-2
     - cargo test
-    - cargo build --release --bin scratch-git-2
+    # `apt-get update` because before_script deleted /var/lib/apt/lists/*. The
+    # CC_/AR_ exports are required on top of the linker: ring, libsqlite3-sys
+    # (bundled), zstd-sys, lzma-sys and bzip2-sys all compile C through the `cc`
+    # crate, which otherwise reaches for the host compiler.
+    - |
+      if [ "$SCRATCH_GIT_RELEASE_FOR_AMD64" = "true" ] && [ "$(uname -m)" != "x86_64" ]; then
+        apt-get update && apt-get install -y gcc-x86-64-linux-gnu libc6-dev-amd64-cross
+        rustup target add x86_64-unknown-linux-gnu
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc
+        export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc
+        export AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar
+        cargo build --release --bin scratch-git-2 --target x86_64-unknown-linux-gnu
+        # Same path the Dockerfile COPYs from and the image job's ELF check reads.
+        cp target/x86_64-unknown-linux-gnu/release/scratch-git-2 target/release/scratch-git-2
+      else
+        cargo build --release --bin scratch-git-2
+      fi
 
 build and test scratch-git:
   extends: .build-and-test-scratch-git
@@ -406,7 +425,9 @@ fill fallback cross-compile cache for scratch-git-2:
         if [ "$elf_machine_of_prebuilt_binary" != "$expected_elf_machine_for_target_platform" ]; then
           echo "error: $path_of_prebuilt_scratch_git_binary has ELF e_machine 0x${elf_machine_of_prebuilt_binary},"
           echo "but this image is built with '${DOCKER_BUILD_PLATFORM_ARGS}' (expected 0x${expected_elf_machine_for_target_platform})."
-          echo "The binary comes from 'build and test scratch-git', which builds for its host arch."
+          echo "The binary comes from 'build and test scratch-git', which builds x86-64 when"
+          echo "SCRATCH_GIT_RELEASE_FOR_AMD64 is 'true' (cross-compiling if the host is not x86-64),"
+          echo "and native to the host when it is 'false'."
           echo "Baking a mismatched binary in would produce an image that dies with 'exec format error'."
           exit 1
         fi
