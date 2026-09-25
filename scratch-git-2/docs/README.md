@@ -133,6 +133,13 @@ Run from the **repository root**:
 docker build -t spinner-scratch-git -f scratch-git-2/Dockerfile .
 ```
 
+This builds for your host architecture, matching the binary `cargo build --release`
+just produced. The Dockerfile COPYs that binary in rather than compiling it, so the
+two have to agree — pinning `--platform linux/amd64` on an arm64 machine produces an
+image that builds green and then dies with `exec format error`. Add the pin only for
+an image you intend to push, and only alongside an x86-64 binary in
+`scratch-git-2/target/release/`.
+
 ### Run the container
 
 ```bash

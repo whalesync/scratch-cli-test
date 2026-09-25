@@ -121,6 +121,51 @@ Bump it before running whalesync's `local build and test bottlenose` for the fir
 
 CPU allocation is fine at the default — Docker grabs all host cores.
 
+## Image architecture on Apple Silicon
+
+Everything we deploy runs **linux/amd64** — Cloud Run (client, server) and the
+scratch-git GCE VM. `docker build` with no `--platform` targets the *host*
+architecture, so on an Apple Silicon Mac an unpinned build quietly produces an
+arm64 image: it builds green, and Cloud Run then refuses it with
+`Container manifest type must support amd64/linux`.
+
+The shared-runner image builds in `gitlab-ci/stages/01-build-and-test.yml`
+therefore pass `--platform linux/amd64`, via a `DOCKER_BUILD_PLATFORM_ARGS`
+variable. Those runners are already amd64, so it costs nothing there and pins
+the result against the fleet ever changing architecture.
+
+**Your local jobs deliberately do not.** `.local-docker-build` overrides
+`DOCKER_BUILD_PLATFORM_ARGS` to empty, so `local build client docker image for
+test`, `local build server docker image`, and `local build scratch-git docker
+image` all build native arm64. That's the point of a local runner — fast MR
+feedback — and their image tars are throwaway: the `push images` stage only
+ever consumes artifacts from the shared-runner builds, so a local arm64 image
+can't reach Artifact Registry.
+
+Two things to know:
+
+- **`.local-docker-build` must stay last in each job's `extends:` list.** GitLab
+  resolves `extends` left to right and the last entry wins, so moving it earlier
+  silently restores the amd64 pin and you'd be emulating without noticing.
+- **Hand-built images still need the flag if you intend to push one.**
+  `docker build --platform linux/amd64 -f server/Dockerfile.monorepo -t server .`
+  The client and server Dockerfiles compile in-image, so the flag is all they
+  need. scratch-git also needs an x86-64 binary sitting in
+  `scratch-git-2/target/release/`, because its Dockerfile COPYs that binary in
+  rather than compiling it. Each Dockerfile's header comment carries its full
+  command. For purely local debugging, native is fine and faster.
+
+`build scratch-git docker image` additionally checks the prebuilt Rust binary's
+ELF architecture before building, because `scratch-git-2/Dockerfile` COPYs that
+binary in rather than compiling it in-image — an aarch64 binary inside a
+linux/amd64 image builds fine and then dies at startup with
+`exec format error`. The check follows `DOCKER_BUILD_PLATFORM_ARGS`, so it
+enforces x86-64 on the shared runners and skips on your Mac, where the binary
+and the image are both native.
+
+The smoke-test stack (`smoke-tests/docker-compose.smoke-test.yml`) is native
+everywhere: those images are run in place by the job, never pushed or deployed.
+
 ## Migrating an existing project runner
 
 If you previously registered a project-scoped spinner runner (per the older version of this doc), you have two options:

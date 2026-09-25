@@ -63,6 +63,17 @@ build and test client:
 
 .build-client-docker-image-for-test:
   stage: build and test
+  variables:
+    # Everything we deploy runs linux/amd64 — Cloud Run (client, server) and the
+    # scratch-git GCE VM. `docker build` with no --platform targets the *host*
+    # arch, so without this a builder on an Apple Silicon Mac quietly produces
+    # an arm64 image that Cloud Run refuses with "Container manifest type must
+    # support amd64/linux".
+    #
+    # The local-runner variants of these jobs override this to "" in
+    # .local-docker-build (gitlab-ci/local-runners.yml): their image tars are
+    # never pushed, so they build native-arch for speed.
+    DOCKER_BUILD_PLATFORM_ARGS: "--platform linux/amd64"
   extends:
     - .docker_builder_image
   cache: []
@@ -84,6 +95,7 @@ build and test client:
     # Service-type flags are set in terraform on launch.
     - >
       docker build
+      ${DOCKER_BUILD_PLATFORM_ARGS}
       --build-arg APP_ENV=test
       --build-arg BUILD_VERSION="${BUILD_VERSION}"
       --build-arg CLERK_PUBLISHABLE_KEY="${CLERK_PUBLISHABLE_KEY_DEVELOPMENT}"
@@ -106,6 +118,9 @@ build client docker image for test:
 
 build client docker image for production:
   stage: build and test
+  variables:
+    # See the note on .build-client-docker-image-for-test.
+    DOCKER_BUILD_PLATFORM_ARGS: "--platform linux/amd64"
   extends:
     - .docker_builder_image
   cache: []
@@ -127,6 +142,7 @@ build client docker image for production:
     # Service-type flags are set in terraform on launch.
     - >
       docker build
+      ${DOCKER_BUILD_PLATFORM_ARGS}
       --build-arg APP_ENV=production
       --build-arg BUILD_VERSION="${BUILD_VERSION}"
       --build-arg CLERK_PUBLISHABLE_KEY="${CLERK_PUBLISHABLE_KEY_PRODUCTION}"
@@ -232,6 +248,9 @@ sync_v1_compat:
 
 .build-server-docker-image:
   stage: build and test
+  variables:
+    # See the note on .build-client-docker-image-for-test.
+    DOCKER_BUILD_PLATFORM_ARGS: "--platform linux/amd64"
   extends:
     - .docker_builder_image
   cache: []
@@ -246,6 +265,7 @@ sync_v1_compat:
     - echo "Labelling this build as $BUILD_VERSION"
     - >
       docker build
+      ${DOCKER_BUILD_PLATFORM_ARGS}
       --build-arg BUILD_VERSION="${BUILD_VERSION}"
       -t spinner/spinner-server
       -f server/Dockerfile.monorepo .
@@ -266,6 +286,11 @@ build server docker image:
 
 .build-and-test-scratch-git:
   stage: build and test
+  # Deliberately NOT pinned to a platform — this builds for the host arch, so a
+  # Mac local runner stays native and fast. `build scratch-git docker image`
+  # COPYs this job's binary straight into the image, and it builds for the same
+  # host arch, so the two always match: amd64 on the shared runners (what we
+  # deploy), arm64 on a Mac (a throwaway MR artifact that is never pushed).
   image: rust:slim-bookworm
   interruptible: true
   variables:
@@ -347,6 +372,9 @@ fill fallback cross-compile cache for scratch-git-2:
 
 .build-scratch-git-docker-image:
   stage: build and test
+  variables:
+    # See the note on .build-client-docker-image-for-test.
+    DOCKER_BUILD_PLATFORM_ARGS: "--platform linux/amd64"
   extends:
     - .docker_builder_image
   cache: []
@@ -359,8 +387,33 @@ fill fallback cross-compile cache for scratch-git-2:
   script:
     - BUILD_VERSION=`date +%y.%m.%d.%H.%M.$CI_COMMIT_SHORT_SHA`
     - echo "Labelling this build as $BUILD_VERSION"
+    # This Dockerfile COPYs a prebuilt binary rather than compiling in-image, and
+    # COPY happily drops an aarch64 ELF into a linux/amd64 image — the build
+    # passes and the container then dies at startup with "exec format error".
+    # When we pin a platform, check the binary agrees with it by reading the ELF
+    # header's e_machine field (offset 0x12, little-endian). Nothing to check
+    # when DOCKER_BUILD_PLATFORM_ARGS is empty: the image is built for the same
+    # host arch that just produced the binary.
+    - |
+      case "${DOCKER_BUILD_PLATFORM_ARGS}" in
+        *linux/amd64) expected_elf_machine_for_target_platform=3e00 ;;
+        *linux/arm64) expected_elf_machine_for_target_platform=b700 ;;
+        *)            expected_elf_machine_for_target_platform= ;;
+      esac
+      if [ -n "$expected_elf_machine_for_target_platform" ]; then
+        path_of_prebuilt_scratch_git_binary=scratch-git-2/target/release/scratch-git-2
+        elf_machine_of_prebuilt_binary=$(od -An -t x1 -j 18 -N 2 "$path_of_prebuilt_scratch_git_binary" | tr -d ' \n')
+        if [ "$elf_machine_of_prebuilt_binary" != "$expected_elf_machine_for_target_platform" ]; then
+          echo "error: $path_of_prebuilt_scratch_git_binary has ELF e_machine 0x${elf_machine_of_prebuilt_binary},"
+          echo "but this image is built with '${DOCKER_BUILD_PLATFORM_ARGS}' (expected 0x${expected_elf_machine_for_target_platform})."
+          echo "The binary comes from 'build and test scratch-git', which builds for its host arch."
+          echo "Baking a mismatched binary in would produce an image that dies with 'exec format error'."
+          exit 1
+        fi
+      fi
     - >
       docker build
+      ${DOCKER_BUILD_PLATFORM_ARGS}
       --build-arg BUILD_VERSION="${BUILD_VERSION}"
       -t spinner/spinner-scratch-git
       -f scratch-git-2/Dockerfile .

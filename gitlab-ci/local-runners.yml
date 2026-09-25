@@ -114,6 +114,16 @@ include:
     # The Docker CLI in the CI image is older than Docker Desktop's daemon.
     # Pin the API version to avoid "client version X is too old" errors.
     DOCKER_API_VERSION: "1.44"
+    # Build for the host architecture instead of the deployable linux/amd64 the
+    # shared-runner jobs pin (see .build-client-docker-image-for-test in
+    # stages/01-build-and-test.yml). These jobs exist for fast MR feedback and
+    # their image tars are never pushed — the `push images` stage only ever
+    # consumes artifacts from the shared-runner builds — so emulating amd64 on
+    # an Apple Silicon Mac would cost build time and buy nothing.
+    #
+    # ⚠️  .local-docker-build must stay LAST in each job's `extends:` list, or
+    # the shared template's --platform value wins and you're emulating again.
+    DOCKER_BUILD_PLATFORM_ARGS: ""
 
 # NOTE: .local-macos-runner-defaults and .rules.local_runner_users_{mr,master,prod}
 # are defined in gitlab-ci/common.yml because the release pipeline also uses
@@ -198,6 +208,11 @@ local build and test scratch-git:
     - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, scratch-git]
 
+# Builds a native-arch image from the native-arch binary that `local build and
+# test scratch-git` above just produced — scratch-git-2/Dockerfile COPYs that
+# binary in rather than compiling it in-image, so the two have to agree. The
+# shared-runner job pins linux/amd64 and checks the binary matches; here both
+# sides are simply the host's arch.
 local build scratch-git docker image:
   extends:
     - .build-scratch-git-docker-image

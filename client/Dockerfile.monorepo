@@ -1,5 +1,10 @@
 # Multi-stage Dockerfile for Next.js client in monorepo
-# Build from root directory: docker build -f client/Dockerfile.monorepo -t client .
+# Build from root directory:
+#   docker build --platform linux/amd64 -f client/Dockerfile.monorepo -t client .
+#
+# Keep --platform for any image you intend to push: Cloud Run runs linux/amd64,
+# and an unpinned `docker build` on an Apple Silicon Mac produces an arm64 image
+# Cloud Run refuses. For local-only debugging, drop it and build native.
 # Taken from https://nextjs.org/docs/deployment
 
 # Stage 1: Install dependencies
