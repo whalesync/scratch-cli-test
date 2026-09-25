@@ -248,6 +248,9 @@ Build CLI for test desktop release:
 .package_desktop_linux:
   extends: .package_desktop
   image: node:22
+  # amd64 runner required: electron-builder's bundled fpm (used for the .deb) is x86_64-only.
+  tags:
+    - amd64
   variables:
     PLATFORM: 'linux'
   before_script:
@@ -262,6 +265,9 @@ Build CLI for test desktop release:
 .package_desktop_windows:
   extends: .package_desktop
   image: electronuserland/builder:wine
+  # amd64 runner required: electronuserland/builder:wine is published for amd64 only.
+  tags:
+    - amd64
   variables:
     PLATFORM: 'windows'
   before_script:
