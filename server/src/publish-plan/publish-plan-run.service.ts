@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   type DataFolderOptions,
-  formatRecordJson,
   isScratchPendingPublishId,
   isScratchPendingRecreateId,
   parseScratchPendingRecreateId,
@@ -13,7 +12,9 @@ import { chunk } from 'lodash';
 import { WSLogger } from 'src/logger';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
+import { assertUnreachable } from 'src/utils/asserts';
 import { ParsedContent } from 'src/utils/objects';
+import type { TableSpecStore } from 'src/workbook/table-spec-store/table-spec-store';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
 import { DbService } from '../db/db.service';
 import { ExperimentsService } from '../experiments/experiments.service';
@@ -37,13 +38,23 @@ import { EncryptedData } from '../utils/encryption';
 import { deduplicateFileName, resolveBaseFileName, sanitizeRecordIdForFileName } from '../workbook/util';
 import { pickByShape } from './diff-utils';
 import { collapseFailedOperationsByPath } from './failed-operations.util';
-import { FileIndexEntry, FileIndexService } from './file-index.service';
+import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RecreatedIdMapService } from './recreated-id-map.service';
 import { RefCleanerService } from './ref-cleaner.service';
 import { RefResolverService } from './ref-resolver.service';
+import { ClassicPublishPlanRunStorage } from './run-storage/classic-publish-plan-run-storage';
+import {
+  CreatedRecordToWriteBack,
+  PlanStore,
+  PublishedRecordFileRename,
+  PublishPlanRunOperation,
+  PublishPlanRunStorage,
+  PublishPseudoRefResolver,
+  RecordWriteback,
+} from './run-storage/publish-plan-run-storage-ports';
 import { SchemaHelperService } from './schema-helper.service';
-import { PublishPlanInfo, PublishPlanStatus } from './types';
+import { PublishPlanInfo, PublishPlanPhase, PublishPlanStatus } from './types';
 import { parsePath } from './utils';
 
 /**
@@ -72,20 +83,13 @@ const PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP = 20;
 const DELETE_MISSING_REMOTE_RECORD_ID_ERROR =
   'Could not delete from the external service: no remote record ID is known for this record (its local index entry may be missing). Re-pull the folder and retry.';
 
-// Common shape for any plan-operation row dispatched by the runner. Phases that
-// require a sparse partial (edit/backfill) widen this to UpdatePublishOperation.
-type PublishOperation = {
-  id: string;
-  filePath: string;
-  content: ParsedContent;
-  remoteRecordId?: string | null;
-  dataFolderId?: string | null;
-  // True when the row was built from a revert patch (CLI sent `revert: true`
-  // on the upload-patch DTO; ApplyPatchesService persisted to
-  // UploadPatchMeta; PublishPlanBuildService joined here). Dispatch reads
-  // this to gate FK rewrite against RecreatedIdMap.
-  isRecreate?: boolean;
-};
+// Common shape for any plan operation dispatched by the runner (read through the
+// run's PlanStore). Phases that require a sparse partial (edit/backfill) widen
+// this to UpdatePublishOperation. `isRecreate` is true when the row was built
+// from a revert patch (CLI sent `revert: true` on the upload-patch DTO;
+// ApplyPatchesService persisted to UploadPatchMeta; PublishPlanBuildService
+// joined here). Dispatch reads it to gate FK rewrite against RecreatedIdMap.
+type PublishOperation = PublishPlanRunOperation;
 
 // Operation for the edit/backfill phases — the sparse partial that gets PATCHed.
 // `changedFields` is required at compile time; `narrowToUpdateOps` enforces it at runtime
@@ -122,6 +126,12 @@ function narrowToUpdateOps(entries: PublishOperation[]): UpdatePublishOperation[
 
 @Injectable()
 export class PublishPlanRunService {
+  /**
+   * Where a run reads its plan and writes its results unless the caller passes
+   * its own storage to `runPipeline`: the PublishPlan tables + git + FileIndex.
+   */
+  private readonly classicPublishPlanRunStorage: PublishPlanRunStorage;
+
   constructor(
     private readonly db: DbService,
     private readonly connectorsService: ConnectorsService,
@@ -135,7 +145,15 @@ export class PublishPlanRunService {
     private readonly recreatedIdMapService: RecreatedIdMapService,
     private readonly refCleanerService: RefCleanerService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
-  ) {}
+  ) {
+    this.classicPublishPlanRunStorage = new ClassicPublishPlanRunStorage(
+      db,
+      scratchGitService,
+      fileIndexService,
+      fileReferenceService,
+      refResolverService,
+    );
+  }
 
   async runPipeline(
     pipelineId: string,
@@ -158,20 +176,25 @@ export class PublishPlanRunService {
     }) => Promise<void>,
     onError?: (errorInfo: { lastSyncError: string; errorCount: number }) => void,
     publishOrigin?: PublishOrigin,
+    // Where this run reads its plan and writes its results. Omitted → the classic
+    // storage (PublishPlan tables + git + FileIndex/FileReference).
+    publishPlanRunStorageOverride?: PublishPlanRunStorage,
   ): Promise<PublishPlanInfo> {
-    const plan = await this.db.client.publishPlan.findUnique({ where: { id: pipelineId } });
+    const publishPlanRunStorage = publishPlanRunStorageOverride ?? this.classicPublishPlanRunStorage;
+    const planStore = publishPlanRunStorage.openPlanStore(pipelineId);
+    const plan = await planStore.readPlan();
     if (!plan) {
       throw new Error('Pipeline plan not found');
     }
 
-    // Resolve the correct git repo ID for this plan (V2 uses per-connection repos)
-    const repoId = await this.scratchGitService.resolveConnectionRepoPath(plan.connectorAccountId);
+    const recordWriteback = await publishPlanRunStorage.openRecordWriteback(plan, planStore);
+    const { tableSpecStore, pseudoRefResolver } = publishPlanRunStorage;
 
     // Evaluate the `UPDATE_RECORDS_RETURNS_REMOTE_DATA` flag once per run
     // (against the plan's user) and thread the boolean down through
     // `processBatch` → `dispatchUpdateBatch`. When true, the persisted
-    // rows returned by `connector.updateRecords` drive the git commit on
-    // `main`; when false, the sent payload drives it (current behavior).
+    // rows returned by `connector.updateRecords` drive the write-back;
+    // when false, the sent payload drives it (current behavior).
     // See `docs/plans/2026-05-29-publish-pk-stringification-bug/2026-05-29-publish-pk-stringification-bug.md`.
     const planUser = await this.db.client.user.findUnique({
       where: { id: plan.userId },
@@ -181,36 +204,11 @@ export class PublishPlanRunService {
       ? await this.experimentsService.getBooleanFlag(UserFlag.UPDATE_RECORDS_RETURNS_REMOTE_DATA, false, planUser)
       : false;
 
-    // Tag and persist the starting dirty + main commits on the first run (not on resume).
-    // The primary diff shown in the publish history UI is
-    // (preMainCommitSha → preDirtyCommitSha) — what was about to be published. The
-    // post-publish main SHA is captured below after rebaseDirty.
+    // Capture the starting storage state on the first run (not on resume) so the
+    // publish history UI can show what was about to be published. The
+    // post-publish state is captured below after the reconcile.
     if ((plan.status as PublishPlanStatus) === PublishPlanStatus.Planned) {
-      try {
-        const [dirtySha, mainSha] = await Promise.all([
-          this.scratchGitService.getBranchHead(repoId, 'dirty'),
-          this.scratchGitService.getBranchHead(repoId, 'main'),
-        ]);
-        await this.scratchGitService.writeTag(repoId, `dirty_plan_${plan.id}`, 'dirty');
-        await this.scratchGitService.writeTag(repoId, `main_pre_plan_${plan.id}`, 'main');
-        if (dirtySha || mainSha) {
-          await this.db.client.publishPlan.update({
-            where: { id: pipelineId },
-            data: {
-              ...(dirtySha ? { preDirtyCommitSha: dirtySha } : {}),
-              ...(mainSha ? { preMainCommitSha: mainSha } : {}),
-            },
-          });
-        }
-      } catch (err) {
-        WSLogger.warn({
-          source: 'PublishRunService.runPipeline',
-          message: 'Failed to tag starting commits',
-          error: err,
-          workbookId: plan.workbookId,
-          data: { pipelineId },
-        });
-      }
+      await recordWriteback.captureStorageStateBeforeFirstRun();
     }
 
     // Resolve connector. Pass the plan's user so the connector can evaluate any
@@ -277,9 +275,7 @@ export class PublishPlanRunService {
       // Pre-count total entries per phase across all statuses (for stable progress denominator)
       const totalByPhase = { 'asset-upload': 0, edit: 0, create: 0, delete: 0, backfill: 0, 'rename-files': 0 };
       for (const p of ['asset-upload', 'edit', 'create', 'delete', 'backfill', 'rename-files'] as const) {
-        const count = await this.db.client.publishPlanOperation.count({
-          where: { planId: pipelineId, phase: p },
-        });
+        const count = await planStore.countOperationsInPhase(p);
         totalByPhase[p] = count;
       }
       // Seed completed counts from DB so previously-executed phases don't drop to 0 on resume
@@ -292,9 +288,7 @@ export class PublishPlanRunService {
         'rename-files': 0,
       };
       for (const p of ['asset-upload', 'edit', 'create', 'delete', 'backfill', 'rename-files'] as const) {
-        completedByPhase[p] = await this.db.client.publishPlanOperation.count({
-          where: { planId: pipelineId, phase: p, status: 'success' },
-        });
+        completedByPhase[p] = await planStore.countOperationsInPhaseWithStatus(p, 'success');
       }
 
       const reportRunProgress = async (currentPhase: string) => {
@@ -322,10 +316,7 @@ export class PublishPlanRunService {
         // Set status to {phase}-running
         const phasePrefix =
           currentPhase === 'rename-files' || currentPhase === 'asset-upload' ? currentPhase : currentPhase + 's';
-        await this.db.client.publishPlan.update({
-          where: { id: pipelineId },
-          data: { status: `${phasePrefix}-running` },
-        });
+        await planStore.updatePlanStatus(`${phasePrefix}-running`);
 
         // Only the asset-upload branch below consumes the full rows. Every other
         // phase re-reads its rows per folder (see folderEntryIds), and used to
@@ -334,15 +325,12 @@ export class PublishPlanRunService {
         // At 40k records that was the dominant term in the publish worker's
         // heap and the likely OOM (DEV-11228), so non-asset phases now count
         // instead of materializing.
-        const pendingEntryFilter = { planId: pipelineId, phase: currentPhase, status: 'pending' };
         const assetUploadEntries =
-          currentPhase === 'asset-upload'
-            ? await this.db.client.publishPlanOperation.findMany({ where: pendingEntryFilter })
-            : [];
+          currentPhase === 'asset-upload' ? await planStore.listPendingOperationsInPhase(currentPhase) : [];
         const pendingEntryCount =
           currentPhase === 'asset-upload'
             ? assetUploadEntries.length
-            : await this.db.client.publishPlanOperation.count({ where: pendingEntryFilter });
+            : await planStore.countOperationsInPhaseWithStatus(currentPhase, 'pending');
 
         WSLogger.info({
           source: 'PublishRunService.runPipeline',
@@ -357,13 +345,15 @@ export class PublishPlanRunService {
             abortSignal?.throwIfAborted();
             const failedEntryCountInBatch = await this.processBatch(
               currentPhase,
-              [entry as PublishOperation],
+              [entry],
               connector,
               null as unknown as BaseJsonTableSpec, // TODO: Make tableSpec optional instead
               undefined,
               plan.workbookId,
               plan.id,
-              repoId,
+              planStore,
+              recordWriteback,
+              pseudoRefResolver,
               useRemoteReturnedRows,
               usedFileNamesByFolderPathInRenamePhase,
             );
@@ -380,20 +370,16 @@ export class PublishPlanRunService {
           }
         } else {
           // Standard phase processing: group by dataFolderId, resolve tableSpec
-          const distinctFolders = await this.db.client.publishPlanOperation.findMany({
-            where: { planId: pipelineId, phase: currentPhase, status: 'pending' },
-            select: { dataFolderId: true },
-            distinct: ['dataFolderId'],
-          });
+          const distinctFolderIds = await planStore.listDataFolderIdsWithPendingOperationsInPhase(currentPhase);
 
           WSLogger.info({
             source: 'PublishRunService.runPipeline',
-            message: `Found ${distinctFolders.length} distinct folders/tables to process in ${currentPhase} phase`,
+            message: `Found ${distinctFolderIds.length} distinct folders/tables to process in ${currentPhase} phase`,
             workbookId: plan.workbookId,
-            data: { pipelineId, folders: distinctFolders.map((t) => t.dataFolderId) },
+            data: { pipelineId, folders: distinctFolderIds },
           });
 
-          for (const { dataFolderId } of distinctFolders) {
+          for (const dataFolderId of distinctFolderIds) {
             if (!dataFolderId) continue;
 
             // Check for cancellation between folders
@@ -409,21 +395,19 @@ export class PublishPlanRunService {
             // page) keeps this safe against the status transitions the dispatch
             // performs: a failed batch moves its rows to `failed-batch`, so a
             // re-query-based pager would silently renumber its own pages.
-            const folderEntryIds = await this.db.client.publishPlanOperation.findMany({
-              where: {
-                planId: pipelineId,
-                phase: currentPhase,
-                status: 'pending',
-                dataFolderId,
-              },
-              orderBy: { id: 'asc' },
-              select: { id: true },
-            });
+            const folderEntryIds = await planStore.listPendingOperationIdsInPhaseForDataFolder(
+              currentPhase,
+              dataFolderId,
+            );
 
             if (folderEntryIds.length === 0) continue;
 
             // Resolve table spec + folder options
-            const tableSpec = await this.schemaService.getTableSpecById(dataFolderId, dataFolderSpecCache);
+            const tableSpec = await this.schemaService.getTableSpecById(
+              dataFolderId,
+              dataFolderSpecCache,
+              tableSpecStore,
+            );
             const folderOptions = await this.getFolderOptionsById(dataFolderId, dataFolderOptionsCache);
             if (!tableSpec) {
               WSLogger.warn({
@@ -454,23 +438,21 @@ export class PublishPlanRunService {
               abortSignal?.throwIfAborted();
 
               // Read this batch's full rows now. `batchSize` never exceeds 1000
-              // (the rename-files cap), so the `in` list stays well under the
-              // Postgres bind-parameter limit. Ordering is re-applied because
-              // `in` does not preserve the id list's order.
-              const batchIds = folderEntryIds.slice(i, i + batchSize).map((entry) => entry.id);
-              const batch = await this.db.client.publishPlanOperation.findMany({
-                where: { id: { in: batchIds } },
-                orderBy: { id: 'asc' },
-              });
+              // (the rename-files cap), so the id list stays well under the
+              // Postgres bind-parameter limit.
+              const batchIds = folderEntryIds.slice(i, i + batchSize);
+              const batch = await planStore.readOperationsByIdsOrderedById(batchIds);
               const failedEntryCountInBatch = await this.processBatch(
                 currentPhase,
-                batch as PublishOperation[],
+                batch,
                 connector,
                 tableSpec,
                 folderOptions,
                 plan.workbookId,
                 plan.id,
-                repoId,
+                planStore,
+                recordWriteback,
+                pseudoRefResolver,
                 useRemoteReturnedRows,
                 usedFileNamesByFolderPathInRenamePhase,
               );
@@ -494,10 +476,7 @@ export class PublishPlanRunService {
         // row's payload in memory — whereas a systemic failure (expired token,
         // connector 5xx) marks an entire phase failed, and loading every failed
         // row with its record JSON was a second OOM path on a large publish.
-        const failedEntryIds = await this.db.client.publishPlanOperation.findMany({
-          where: { planId: pipelineId, phase: currentPhase, status: 'failed-batch' },
-          select: { id: true },
-        });
+        const failedEntryIds = await planStore.listFailedOperationIdsInPhase(currentPhase);
 
         if (failedEntryIds.length > 0) {
           WSLogger.warn({
@@ -512,13 +491,11 @@ export class PublishPlanRunService {
           // We can reuse the same table-based iteration logic or just cache specs.
           // Let's iterate individually but verify spec from cache.
 
-          for (const { id: failedEntryId } of failedEntryIds) {
+          for (const failedEntryId of failedEntryIds) {
             // Check for cancellation during retry loop
             abortSignal?.throwIfAborted();
 
-            const entry = (await this.db.client.publishPlanOperation.findUnique({
-              where: { id: failedEntryId },
-            })) as PublishOperation | null;
+            const entry = await planStore.readOperationById(failedEntryId);
             // Defensive: the row was here a moment ago, but a concurrent cancel
             // or cleanup could have removed it. Skip rather than crash the run.
             if (!entry) continue;
@@ -526,13 +503,17 @@ export class PublishPlanRunService {
             let tableSpec: BaseJsonTableSpec | null = null;
             let folderOptions: DataFolderOptions | undefined;
             if (entry.dataFolderId) {
-              tableSpec = await this.schemaService.getTableSpecById(entry.dataFolderId, dataFolderSpecCache);
+              tableSpec = await this.schemaService.getTableSpecById(
+                entry.dataFolderId,
+                dataFolderSpecCache,
+                tableSpecStore,
+              );
               folderOptions = await this.getFolderOptionsById(entry.dataFolderId, dataFolderOptionsCache);
             }
             if (!tableSpec) {
               // Fallback to path lookup if dataFolderId missing (old entries?)
               const { folderPath } = parsePath(entry.filePath);
-              tableSpec = await this.getTableSpecForFolder(plan.workbookId, folderPath, tableSpecCache);
+              tableSpec = await this.getTableSpecForFolder(plan.workbookId, folderPath, tableSpecCache, tableSpecStore);
             }
 
             // Process individually (batch size 1)
@@ -544,7 +525,9 @@ export class PublishPlanRunService {
               folderOptions,
               plan.workbookId,
               plan.id,
-              repoId,
+              planStore,
+              recordWriteback,
+              pseudoRefResolver,
               useRemoteReturnedRows,
               usedFileNamesByFolderPathInRenamePhase,
             );
@@ -563,27 +546,20 @@ export class PublishPlanRunService {
         }
 
         const completedStatus = currentPhase === 'rename-files' ? 'completed' : `${phasePrefix}-completed`;
-        await this.db.client.publishPlan.update({
-          where: { id: pipelineId },
-          data: { status: completedStatus },
-        });
+        await planStore.updatePlanStatus(completedStatus);
       }
 
       // Query final entry counts per phase to determine accurate status
-      const countRows = await this.db.client.publishPlanOperation.groupBy({
-        by: ['status', 'phase'],
-        where: { planId: pipelineId },
-        _count: true,
-      });
+      const countRows = await planStore.countOperationsGroupedByPhaseAndStatus();
 
       const successByPhase: Record<string, number> = {};
       const finalTotalByPhase: Record<string, number> = {};
       let successCount = 0;
       for (const row of countRows) {
-        finalTotalByPhase[row.phase] = (finalTotalByPhase[row.phase] ?? 0) + row._count;
+        finalTotalByPhase[row.phase] = (finalTotalByPhase[row.phase] ?? 0) + row.count;
         if (row.status === 'success') {
-          successByPhase[row.phase] = (successByPhase[row.phase] ?? 0) + row._count;
-          successCount += row._count;
+          successByPhase[row.phase] = (successByPhase[row.phase] ?? 0) + row.count;
+          successCount += row.count;
         }
       }
 
@@ -592,11 +568,7 @@ export class PublishPlanRunService {
       // rejected, plus that pending file's rename), which is two `failed-batch` rows
       // for a single record. Counting rows would double-report it ("2 rejected" for
       // one record) and inflate the total — so count distinct file paths instead.
-      const failedDistinctPaths = await this.db.client.publishPlanOperation.findMany({
-        where: { planId: pipelineId, status: 'failed-batch' },
-        select: { filePath: true },
-        distinct: ['filePath'],
-      });
+      const failedDistinctPaths = await planStore.listDistinctFilePathsWithFailedOperations();
       const failedCount = failedDistinctPaths.length;
 
       // Collect a bounded sample of the per-record connector rejections so the
@@ -606,11 +578,7 @@ export class PublishPlanRunService {
       // surfaced reason is the service's actual rejection, not a downstream rename error.
       let failedOperations: PublishFailedOperation[] | undefined;
       if (failedCount > 0) {
-        const failedRows = await this.db.client.publishPlanOperation.findMany({
-          where: { planId: pipelineId, status: 'failed-batch' },
-          select: { filePath: true, phase: true, error: true, errorCode: true },
-          orderBy: { filePath: 'asc' },
-        });
+        const failedRows = await planStore.listFailedOperationsOrderedByFilePath();
         // Collapse to one entry per record (shared rule; DEV-10756) and slice to
         // the *display* cap. The complete, uncapped set is served separately by
         // `listFailedPublishPlanOperations` for the post-publish reconcile.
@@ -623,14 +591,10 @@ export class PublishPlanRunService {
       // unaffected by the phase retry pass re-touching the same rows; the sentinel
       // reason match excludes connector-rejected deletes (which carry a connector
       // message on `error`, never this string).
-      const deletesMissingRemoteRecordIdCount = await this.db.client.publishPlanOperation.count({
-        where: {
-          planId: pipelineId,
-          phase: 'delete',
-          status: 'failed-batch',
-          error: DELETE_MISSING_REMOTE_RECORD_ID_ERROR,
-        },
-      });
+      const deletesMissingRemoteRecordIdCount = await planStore.countFailedOperationsInPhaseWithError(
+        'delete',
+        DELETE_MISSING_REMOTE_RECORD_ID_ERROR,
+      );
       if (deletesMissingRemoteRecordIdCount > 0) {
         this.metricsService.logValue(CustomMetric.PUBLISH_DELETE_MISSING_REMOTE_ID, deletesMissingRemoteRecordIdCount);
       }
@@ -645,119 +609,20 @@ export class PublishPlanRunService {
             ? (`${lastPhaseRun}s-completed` as PublishPlanStatus)
             : PublishPlanStatus.Completed;
 
-      // Store status + result in DB — keep activeJobId as a trace of which job completed this
-      await this.db.client.publishPlan.update({
-        where: { id: pipelineId },
-        data: {
-          status: finalStatus,
-          result: { successCount, failedCount },
-        },
-      });
+      // Store status + result — keep activeJobId as a trace of which job completed this
+      await planStore.recordPlanFinalStatusAndResult(finalStatus, { successCount, failedCount });
 
-      // Reconcile `dirty` against the post-publish `main` (publish redesign,
-      // DEV-10048). `rebaseDirty` force-resets `dirty` to `main` and re-applies the
-      // user's edits; we hand it a set of paths to *converge to main* (skip
-      // re-applying) so the reconcile is scoped to what this plan touched:
-      //
-      //   - every plan path that did NOT fail (success + no-op edits) converges to
-      //     `main` — this is what stops a no-op/removed-key edit from re-accumulating
-      //     on `dirty` as a phantom (the old bug);
-      //   - failed paths converge too IFF the publish came from the desktop/CLI
-      //     (the failed edit travels back to the client via `failedOperations` and
-      //     lives in its working tree / `failed-patches.json`); for a `web` publish
-      //     they are left on `dirty` (the web has no working tree) and re-surface as
-      //     needs-approval there;
-      //   - a path with ANY still-`pending` op is left on `dirty`. Single-phase
-      //     execution (web "Execute 1 Phase") runs one phase and leaves later
-      //     phases' ops `pending` — those records were NOT published yet, so
-      //     converging them would wrongly drop a not-yet-run create/delete/backfill
-      //     edit from `dirty`. (Also covers a record split across an executed phase
-      //     and a pending one, e.g. a landed `edit` + a pending `backfill`.)
-      //   - paths NOT in this plan (concurrent or partial-scope edits) are never
-      //     excluded, so they are preserved on `dirty`.
-      const planOperationPaths = await this.db.client.publishPlanOperation.findMany({
-        where: { planId: pipelineId },
-        select: { filePath: true, status: true },
-      });
-      const pendingPlanPaths = new Set(
-        planOperationPaths.filter((op) => op.status === 'pending').map((op) => op.filePath),
-      );
-      const failedPlanPaths = new Set(
-        planOperationPaths.filter((op) => op.status === 'failed-batch').map((op) => op.filePath),
-      );
-      // Only paths whose every op has run (none still `pending`) are eligible to
-      // converge. After a full pipeline run nothing is pending, so this is every
-      // plan path — unchanged behavior; it only narrows for single-phase runs.
-      const terminalPlanPaths = [
-        ...new Set(planOperationPaths.map((op) => op.filePath).filter((path) => !pendingPlanPaths.has(path))),
-      ];
-      const isDesktopPublish = publishOrigin === 'desktop';
-      const pathsToConvergeToMain = terminalPlanPaths.filter((path) => isDesktopPublish || !failedPlanPaths.has(path));
-      WSLogger.info({
-        source: 'PublishRunService.runPipeline',
-        message: 'Reconciling dirty against main',
-        workbookId: plan.workbookId,
-        data: {
-          pipelineId,
-          publishOrigin: publishOrigin ?? 'web',
-          terminalPathCount: terminalPlanPaths.length,
-          pendingPathCount: pendingPlanPaths.size,
-          failedPathCount: failedPlanPaths.size,
-          convergePathCount: pathsToConvergeToMain.length,
-        },
-      });
-      await this.scratchGitService.rebaseDirty(repoId, pathsToConvergeToMain);
+      // Reconcile the user's pending edits against what was published, scoped to
+      // what this plan touched (see the classic implementation for the rules).
+      await recordWriteback.reconcileLocalEditsAfterRun({ publishOrigin });
 
-      // Tag and persist the resulting main commit so rollback can reference what was
-      // shipped. Include partial publishes — those commits landed and may still need undo.
-      try {
-        const mainSha = await this.scratchGitService.getBranchHead(repoId, 'main');
-        await this.scratchGitService.writeTag(repoId, `main_plan_${plan.id}`, 'main');
-        if (mainSha) {
-          await this.db.client.publishPlan.update({
-            where: { id: pipelineId },
-            data: { postMainCommitSha: mainSha },
-          });
-        }
-      } catch (err) {
-        WSLogger.warn({
-          source: 'PublishRunService.runPipeline',
-          message: 'Failed to tag completed main commit',
-          error: err,
-          workbookId: plan.workbookId,
-          data: { pipelineId },
-        });
-      }
+      // Capture the resulting storage state so rollback can reference what was
+      // shipped. Include partial publishes — those writes landed and may still need undo.
+      await recordWriteback.captureStorageStateAfterRun();
 
-      // Consume the upload-patch metadata: rows that were flagged
-      // `revert: true` have done their job (PublishPlanOperation.isRecreate
-      // is set, pass4 ran, backfill remapped FKs). Leaving them around would
-      // cause the next publish to inherit a stale revert flag even after a
-      // non-revert edit landed for the same path. Scoped to this plan's
-      // connector account; cross-account meta is untouched.
-      if (plan.connectorAccountId) {
-        try {
-          const deleted = await this.db.client.uploadPatchMeta.deleteMany({
-            where: { workbookId: plan.workbookId, connectorAccountId: plan.connectorAccountId },
-          });
-          if (deleted.count > 0) {
-            WSLogger.info({
-              source: 'PublishRunService.runPipeline',
-              message: `Cleared ${deleted.count} UploadPatchMeta row(s) consumed by completed publish`,
-              workbookId: plan.workbookId,
-              data: { pipelineId, connectorAccountId: plan.connectorAccountId, deleted: deleted.count },
-            });
-          }
-        } catch (err) {
-          WSLogger.warn({
-            source: 'PublishRunService.runPipeline',
-            message: 'Failed to clear UploadPatchMeta after publish — next plan-build may inherit stale revert flags',
-            error: err,
-            workbookId: plan.workbookId,
-            data: { pipelineId, connectorAccountId: plan.connectorAccountId },
-          });
-        }
-      }
+      // Consume the plan-build inputs this run used (upload-patch revert flags),
+      // so the next publish doesn't inherit them.
+      await planStore.releaseInputsConsumedByCompletedRun(plan);
 
       return {
         pipelineId: plan.id,
@@ -781,10 +646,7 @@ export class PublishPlanRunService {
           data: { pipelineId },
         });
         // Keep activeJobId so the canceled job can still be inspected
-        await this.db.client.publishPlan.update({
-          where: { id: pipelineId },
-          data: { status: PublishPlanStatus.Canceled },
-        });
+        await planStore.updatePlanStatus(PublishPlanStatus.Canceled);
         throw err;
       }
 
@@ -795,10 +657,7 @@ export class PublishPlanRunService {
         data: { pipelineId },
       });
       // Keep activeJobId so the failed job can still be inspected
-      await this.db.client.publishPlan.update({
-        where: { id: pipelineId },
-        data: { status: PublishPlanStatus.Failed },
-      });
+      await planStore.updatePlanStatus(PublishPlanStatus.Failed);
       throw err;
     }
   }
@@ -806,20 +665,6 @@ export class PublishPlanRunService {
   /**
    * Resolve the connector instance for the given connector account.
    */
-  /**
-   * Look up the connectorAccountId for a publish plan. Cached effectively by
-   * the calling dispatch loop (each batch resolves once). Returns null if the
-   * plan doesn't exist or has no connector — caller treats null as "skip the
-   * recreate-FK rewrite + remap write" for safety.
-   */
-  private async resolveConnectorAccountIdForPlan(planId: string): Promise<string | null> {
-    const plan = await this.db.client.publishPlan.findUnique({
-      where: { id: planId },
-      select: { connectorAccountId: true },
-    });
-    return plan?.connectorAccountId ?? null;
-  }
-
   /**
    * Rewrite FK fields on revert-originated entries against `RecreatedIdMap`.
    *
@@ -1004,8 +849,9 @@ export class PublishPlanRunService {
     workbookId: string,
     folderPath: string,
     cache: Map<string, BaseJsonTableSpec>,
+    tableSpecStore: TableSpecStore,
   ): Promise<BaseJsonTableSpec> {
-    const spec = await this.schemaService.getTableSpec(workbookId, folderPath, cache);
+    const spec = await this.schemaService.getTableSpec(workbookId, folderPath, cache, tableSpecStore);
     if (!spec) {
       return { name: 'unknown', schema: {} } as BaseJsonTableSpec;
     }
@@ -1020,14 +866,16 @@ export class PublishPlanRunService {
    * Returns the number of entries that failed (0 = the whole batch succeeded).
    */
   private async processBatch(
-    phase: string,
+    phase: PublishPlanPhase,
     entries: PublishOperation[], // Type explicitly if possible, but 'any' avoids circular dep issues for now
     connector: Connector,
     tableSpec: BaseJsonTableSpec,
     folderOptions: DataFolderOptions | undefined,
     workbookId: string,
     planId: string,
-    repoId: string,
+    planStore: PlanStore,
+    recordWriteback: RecordWriteback,
+    pseudoRefResolver: PublishPseudoRefResolver,
     useRemoteReturnedRows: boolean,
     usedFileNamesByFolderPathInRenamePhase: Map<string, Set<string>>,
   ): Promise<number> {
@@ -1041,7 +889,7 @@ export class PublishPlanRunService {
       let createEntriesFailedInBatch: CreateOperationFailedInBatch[] = [];
       switch (phase) {
         case 'asset-upload':
-          await this.dispatchAssetUploadBatch(entries, connector);
+          await this.dispatchAssetUploadBatch(entries, connector, recordWriteback);
           break;
         case 'edit':
         case 'backfill':
@@ -1053,7 +901,9 @@ export class PublishPlanRunService {
             folderOptions,
             workbookId,
             planId,
-            repoId,
+            planStore,
+            recordWriteback,
+            pseudoRefResolver,
             useRemoteReturnedRows,
           );
           break;
@@ -1064,8 +914,9 @@ export class PublishPlanRunService {
             connector,
             tableSpec,
             workbookId,
-            planId,
-            repoId,
+            planStore,
+            recordWriteback,
+            pseudoRefResolver,
           );
           break;
         case 'delete':
@@ -1075,7 +926,7 @@ export class PublishPlanRunService {
             tableSpec,
             workbookId,
             planId,
-            repoId,
+            recordWriteback,
           );
           break;
         case 'rename-files':
@@ -1084,13 +935,14 @@ export class PublishPlanRunService {
             connector,
             tableSpec,
             workbookId,
-            repoId,
-            planId,
+            planStore,
+            recordWriteback,
             usedFileNamesByFolderPathInRenamePhase,
           );
           break;
         default:
-          throw new Error(`Unknown phase: ${phase}`);
+          // Also the runtime guard for a corrupt stored phase: it throws with the offending value.
+          return assertUnreachable(phase);
       }
 
       // Mark every entry the dispatcher actually processed as success. Delete ops
@@ -1103,16 +955,13 @@ export class PublishPlanRunService {
         .filter((e) => !idsWithoutRemoteRecordId.has(e.id) && !idsFailedInBatch.has(e.id))
         .map((e) => e.id);
       if (succeededEntryIds.length > 0) {
-        await this.db.client.publishPlanOperation.updateMany({
-          where: { id: { in: succeededEntryIds } },
-          data: { status: 'success', error: null, errorCode: null },
-        });
+        await planStore.markOperationsSucceeded(succeededEntryIds);
       }
 
       if (idsWithoutRemoteRecordId.size > 0) {
-        await this.db.client.publishPlanOperation.updateMany({
-          where: { id: { in: [...idsWithoutRemoteRecordId] } },
-          data: { status: 'failed-batch', error: DELETE_MISSING_REMOTE_RECORD_ID_ERROR, errorCode: null },
+        await planStore.markOperationsFailed([...idsWithoutRemoteRecordId], {
+          error: DELETE_MISSING_REMOTE_RECORD_ID_ERROR,
+          errorCode: null,
         });
         // Treat the batch as errored so the run reports it and the phase's retry
         // pass re-examines it (it will fail identically and stay failed-batch —
@@ -1123,10 +972,7 @@ export class PublishPlanRunService {
       if (createEntriesFailedInBatch.length > 0) {
         // Each rejected create carries the connector's own reason for that record.
         for (const { id, error } of createEntriesFailedInBatch) {
-          await this.db.client.publishPlanOperation.updateMany({
-            where: { id },
-            data: { status: 'failed-batch', error, errorCode: null },
-          });
+          await planStore.markOperationFailed(id, { error, errorCode: null });
         }
         WSLogger.warn({
           source: 'PublishRunService.processBatch',
@@ -1165,14 +1011,13 @@ export class PublishPlanRunService {
       // it on the record instead of a bare HTTP status code, plus the stable
       // errorCode (when the connector classified the failure) so frontends can
       // attach behavior to the failure kind without parsing the message.
-      await this.db.client.publishPlanOperation.updateMany({
-        where: { id: { in: entries.map((e) => e.id) } },
-        data: {
-          status: 'failed-batch',
+      await planStore.markOperationsFailed(
+        entries.map((e) => e.id),
+        {
           error: connectorErrorDetails.userFriendlyMessage,
           errorCode: connectorErrorDetails.errorCode ?? null,
         },
-      });
+      );
       return entries.length;
     }
   }
@@ -1193,7 +1038,11 @@ export class PublishPlanRunService {
     }
   }
 
-  private async dispatchAssetUploadBatch(entries: PublishOperation[], connector: Connector): Promise<void> {
+  private async dispatchAssetUploadBatch(
+    entries: PublishOperation[],
+    connector: Connector,
+    recordWriteback: RecordWriteback,
+  ): Promise<void> {
     for (const entry of entries) {
       const content = entry.content as Record<string, unknown> | null;
       if (!content) continue;
@@ -1225,38 +1074,37 @@ export class PublishPlanRunService {
       // Upload to remote service
       const result = await connector.uploadFile(buffer, filename, mimeType, metadata);
 
-      // Update the Asset record with the real remote ID and upload timestamp
-      await this.db.client.asset.update({
-        where: { id: assetId },
-        data: {
-          remoteAssetId: result.remoteAssetId,
-          url: result.url,
-          filename: result.filename || filename,
-          mimeType: result.mimeType || mimeType,
-          size: result.size,
-          width: result.width,
-          height: result.height,
-          uploadedAt: new Date(),
-        },
+      // Record the real remote ID (and upload timestamp) for the asset
+      await recordWriteback.recordUploadedAsset({
+        assetId,
+        remoteAssetId: result.remoteAssetId,
+        url: result.url,
+        filename: result.filename || filename,
+        mimeType: result.mimeType || mimeType,
+        size: result.size,
+        width: result.width,
+        height: result.height,
       });
     }
   }
 
   private async dispatchUpdateBatch(
-    phase: string,
+    phase: PublishPlanPhase,
     entries: UpdatePublishOperation[],
     connector: Connector,
     tableSpec: BaseJsonTableSpec,
     folderOptions: DataFolderOptions | undefined,
     workbookId: string,
     planId: string,
-    repoId: string,
+    planStore: PlanStore,
+    recordWriteback: RecordWriteback,
+    pseudoRefResolver: PublishPseudoRefResolver,
     useRemoteReturnedRows: boolean,
   ): Promise<void> {
     const idField = tableSpec.idPath;
     // The connection this plan targets — used to scope pseudo-ref resolution and
     // FileIndex lookups to the right connection (DEV-10880).
-    const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
+    const connectorAccountId = await planStore.readPlanConnectorAccountId();
 
     // `rawContents` is filtered (entries with no `content` are dropped). The
     // filter applies in lockstep with the downstream iteration below.
@@ -1278,10 +1126,7 @@ export class PublishPlanRunService {
     // runs before create) may name a target that creates later this same plan.
     let contentsToResolve = rawContents;
     if (phase === 'backfill') {
-      const unresolvablePseudoRefStrings = await this.refResolverService.findUnresolvablePseudoRefs(
-        workbookId,
-        rawContents,
-      );
+      const unresolvablePseudoRefStrings = await pseudoRefResolver.findUnresolvablePseudoRefs(workbookId, rawContents);
       if (unresolvablePseudoRefStrings.size > 0) {
         WSLogger.warn({
           source: 'PublishPlanRunService.dispatchUpdateBatch',
@@ -1295,10 +1140,8 @@ export class PublishPlanRunService {
         );
       }
     }
-    const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(
-      workbookId,
-      contentsToResolve,
-      (asset) => connector.resolveAssetReference(asset),
+    const resolvedContents = await pseudoRefResolver.resolveBatchPseudoRefs(workbookId, contentsToResolve, (asset) =>
+      connector.resolveAssetReference(asset),
     );
 
     // Backfill-phase FK rewrite via `RecreatedIdMap`. Walk EVERY entry's FK
@@ -1344,8 +1187,7 @@ export class PublishPlanRunService {
       // If absent (backfill for a newly-created record), look up the real ID from the file index.
       let remoteId = entry.remoteRecordId;
       if (!remoteId) {
-        const { folderPath, filename } = parsePath(entry.filePath);
-        remoteId = await this.fileIndexService.getRecordId(workbookId, folderPath, filename, connectorAccountId);
+        remoteId = await recordWriteback.lookupRemoteRecordIdForFile({ filePath: entry.filePath, connectorAccountId });
       }
       if (!remoteId) {
         if (phase === 'backfill') {
@@ -1479,46 +1321,30 @@ export class PublishPlanRunService {
       ? (persistedContents as ParsedContent[])
       : entriesWithOps.map((e) => e.resolvedContent);
 
-    // Update Refs & Git
-    // We can do this in parallel or sequentially. Sequential for safety.
-    const refUpdates = entriesWithOps.map(({ entry }, i) => ({
-      path: entry.filePath,
-      content: contentForCommit[i],
-    }));
-
-    await this.fileReferenceService.updateRefsForFiles(workbookId, 'main', refUpdates);
-
-    // Git Commit (Main) — always commit full content
-    const gitFiles = refUpdates.map((u) => ({
-      path: u.path,
-      content: formatRecordJson(u.content as Record<string, unknown>),
-    }));
-    await this.scratchGitService.commitFilesToBranch(
-      repoId,
-      'main',
-      gitFiles,
-      `Publish V2 ${phase} batch (${entries.length})`,
-    );
-
-    // Git Commit (Dirty) — uses full content, not changedFields
-    const dirtySyncBatch = entriesWithOps.map(({ entry }, i) => ({
-      filePath: entry.filePath,
-      content: formatRecordJson(contentForCommit[i] as Record<string, unknown>),
-    }));
-    await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch, repoId);
+    // Persist the full content (not changedFields) of every updated record.
+    await recordWriteback.writeBackUpdatedRecords({
+      phase,
+      records: entriesWithOps.map(({ entry }, i) => ({
+        operationId: entry.id,
+        filePath: entry.filePath,
+        content: contentForCommit[i],
+      })),
+      dispatchedOperationCount: entries.length,
+    });
   }
 
   private async dispatchCreateBatch(
-    phase: string,
+    phase: PublishPlanPhase,
     entries: PublishOperation[],
     connector: Connector,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
-    planId: string,
-    repoId: string,
+    planStore: PlanStore,
+    recordWriteback: RecordWriteback,
+    pseudoRefResolver: PublishPseudoRefResolver,
   ): Promise<CreateOperationFailedInBatch[]> {
     const idField = tableSpec.idPath;
-    const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
+    const connectorAccountId = await planStore.readPlanConnectorAccountId();
 
     // Per-entry context for revert-creates: the prior remote id encoded in the
     // `scratch_pending_recreate_<old_id>` sentinel that came in on the PK
@@ -1553,7 +1379,7 @@ export class PublishPlanRunService {
     // Every pseudo-ref carries its own connection folder as its first segment, so resolution
     // needs no plan-connection scope — the ref itself says which connection it points at
     // (DEV-11238).
-    const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
+    const resolvedOps = await pseudoRefResolver.resolveBatchPseudoRefs(workbookId, rawOps);
 
     // No FK rewrite here: revert-creates have their FK fields stripped at
     // plan-build (pass4) and re-applied via the BACKFILL phase, which runs
@@ -1607,37 +1433,20 @@ export class PublishPlanRunService {
     }
 
     // Post-process
-    const fileIndexUpdates: {
-      workbookId: string;
-      folderPath: string;
-      filename: string;
-      recordId: string;
-      connectorAccountId: string | null;
-    }[] = [];
-    const refUpdates: { path: string; content: ParsedContent }[] = [];
-    const gitFiles: { path: string; content: string }[] = [];
+    const createdRecordsToWriteBack: CreatedRecordToWriteBack[] = [];
 
     for (let i = 0; i < entriesWithOps.length; i++) {
       const { entry, resolvedOp, priorRemoteId } = entriesWithOps[i];
       const returned = returnedRecords[i] || resolvedOp; // Fallback if connector doesn't return
 
-      // Update File Index. Path-aware read: for a nested id path (Attio's
-      // `id.record_id`) a plain property access returns undefined, which
-      // silently skipped the index row — making the freshly-created record
-      // impossible to update/delete in later publishes.
+      // Extract the created record's id for the write-back. Path-aware read: for
+      // a nested id path (Attio's `id.record_id`) a plain property access returns
+      // undefined, which silently skipped the index row — making the
+      // freshly-created record impossible to update/delete in later publishes.
       const realId = readRecordIdAsString(returned as Record<string, unknown>, idField);
-      if (realId !== null && realId !== '') {
-        const { folderPath, filename } = parsePath(entry.filePath);
-        fileIndexUpdates.push({
-          workbookId,
-          folderPath,
-          filename,
-          recordId: realId,
-          // Scope the freshly-created record to this plan's connection so a
-          // co-pending pseudo-ref backfill resolves to it unambiguously even when
-          // another connection exposes the same folderPath (DEV-10880).
-          connectorAccountId,
-        });
+      const hasUsableRealId = realId !== null && realId !== '';
+      if (hasUsableRealId) {
+        const { folderPath } = parsePath(entry.filePath);
 
         // Revert-create success: record the (prior → new) mapping so future
         // FK rewrites against this folder can relink stale literal ids. The
@@ -1672,35 +1481,20 @@ export class PublishPlanRunService {
         }
       }
 
-      // Update Refs
-      refUpdates.push({ path: entry.filePath, content: returned as ParsedContent });
-
-      // Git
-      gitFiles.push({ path: entry.filePath, content: formatRecordJson(returned as Record<string, unknown>) });
-    }
-
-    if (fileIndexUpdates.length > 0) {
-      await this.fileIndexService.upsertBatch(fileIndexUpdates);
-    }
-
-    await this.fileReferenceService.updateRefsForFiles(workbookId, 'main', refUpdates);
-
-    await this.scratchGitService.commitFilesToBranch(
-      repoId,
-      'main',
-      gitFiles,
-      `Publish V2 create batch (${entries.length})`,
-    );
-
-    // Dirty sync
-    const dirtySyncBatch = entriesWithOps.map(({ entry, resolvedOp }, i) => {
-      const returned = returnedRecords[i] || resolvedOp;
-      return {
+      createdRecordsToWriteBack.push({
+        operationId: entry.id,
         filePath: entry.filePath,
-        content: formatRecordJson(returned as Record<string, unknown>),
-      };
+        content: returned as ParsedContent,
+        createdRemoteRecordId: hasUsableRealId ? realId : null,
+      });
+    }
+
+    await recordWriteback.writeBackCreatedRecords({
+      phase,
+      records: createdRecordsToWriteBack,
+      dispatchedOperationCount: entries.length,
+      connectorAccountId,
     });
-    await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch, repoId);
     return failedOps;
   }
 
@@ -1710,11 +1504,11 @@ export class PublishPlanRunService {
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
-    repoId: string,
+    recordWriteback: RecordWriteback,
   ): Promise<DeleteOperationWithoutRemoteRecordId[]> {
     const idField = tableSpec.idPath;
     const filters: ConnectorFile[] = [];
-    const validEntries: PublishOperation[] = [];
+    const validEntries: { id: string; filePath: string; remoteRecordId: string }[] = [];
     // Delete ops with no resolvable remote id: we cannot delete these from the
     // external service, so collect them and hand them back to processBatch to be
     // marked failed-batch — never silently dropped-then-marked-success (DEV-10595).
@@ -1730,7 +1524,7 @@ export class PublishPlanRunService {
         // contains path metacharacters is not representable here — see the
         // limitation note on `recordWithId`.)
         filters.push(recordWithId(idField, entry.remoteRecordId) as ConnectorFile);
-        validEntries.push(entry);
+        validEntries.push({ id: entry.id, filePath: entry.filePath, remoteRecordId: entry.remoteRecordId });
       } else {
         // A record present in `main` whose remote-id resolution failed (unindexed
         // at pull time, a pruned index row, or a connection-scoping mismatch). This
@@ -1754,47 +1548,13 @@ export class PublishPlanRunService {
     await connector.deleteRecords(tableSpec, filters);
 
     // Cleanup local state
-    const filesToDelete = validEntries.map((e) => e.filePath);
-
-    // 1. Refs
-    await this.db.client.fileReference.deleteMany({
-      where: { workbookId, sourceFilePath: { in: filesToDelete } },
+    await recordWriteback.writeBackDeletedRecords({
+      records: validEntries.map((entry) => ({
+        operationId: entry.id,
+        filePath: entry.filePath,
+        remoteRecordId: entry.remoteRecordId,
+      })),
     });
-
-    // 2. Index — delete by the unique (folderPath, recordId) rather than
-    // (folderPath, filename). Two connections in one workbook can expose the same
-    // connection-relative folderPath with a same-named file (different recordIds);
-    // deleting by filename would also remove the SIBLING connection's index row
-    // (DEV-10880). Every validEntry has a remoteRecordId (filtered above), and
-    // recordId is part of the FileIndex unique key, so this targets exactly the
-    // row being deleted.
-    const fileIndexDeletes = validEntries
-      .filter((e) => e.remoteRecordId)
-      .map((e) => {
-        const { folderPath } = parsePath(e.filePath);
-        return { folderPath, recordId: e.remoteRecordId as string };
-      });
-
-    if (fileIndexDeletes.length > 0) {
-      await this.db.client.fileIndex.deleteMany({
-        where: { workbookId, OR: fileIndexDeletes },
-      });
-    }
-
-    // 3. Git
-    await this.scratchGitService.deleteFilesFromBranch(
-      repoId,
-      'main',
-      filesToDelete,
-      `Publish V2 delete batch (${filesToDelete.length})`,
-    );
-
-    // Dirty sync
-    const dirtySyncBatch = validEntries.map((entry) => ({
-      filePath: entry.filePath,
-      content: null,
-    }));
-    await this.syncBatchToDirtyIfFinal(workbookId, planId, 'delete', dirtySyncBatch, repoId);
 
     return deleteEntriesWithoutRemoteRecordId;
   }
@@ -1819,8 +1579,8 @@ export class PublishPlanRunService {
     connector: Connector,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
-    repoId: string,
-    planId: string,
+    planStore: PlanStore,
+    recordWriteback: RecordWriteback,
     usedFileNamesByFolderPathInRenamePhase: Map<string, Set<string>>,
   ): Promise<void> {
     // Scope the rename's index rows to the plan's connection, like the create and edit
@@ -1828,7 +1588,7 @@ export class PublishPlanRunService {
     // wrote it) and this just re-affirms its connection, but `upsertBatch` can also INSERT
     // here — and an insert with no connection would write a row no scoped lookup can ever
     // resolve, which is precisely what DEV-11242 exists to eliminate.
-    const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
+    const connectorAccountId = await planStore.readPlanConnectorAccountId();
     if (entries.length === 0) return;
 
     // Group operations by folderPath
@@ -1845,11 +1605,7 @@ export class PublishPlanRunService {
       const filenames = folderEntries.map((e) => parsePath(e.filePath).filename);
 
       // Find the recordIds that were assigned during the 'create' phase
-      const filenameToRecordId = await this.fileIndexService.getRecordIdsByFilenamesInFolder(
-        workbookId,
-        folderPath,
-        filenames,
-      );
+      const filenameToRecordId = await recordWriteback.lookupRemoteRecordIdsByFilenameInFolder(folderPath, filenames);
 
       const suggestedNameByPendingFilename = await this.suggestFinalFileNamesForPendingFiles(
         folderPath,
@@ -1857,7 +1613,7 @@ export class PublishPlanRunService {
         connector,
         tableSpec,
         workbookId,
-        repoId,
+        recordWriteback,
       );
 
       // Every filename already in the folder is taken. Seeding from the index
@@ -1868,13 +1624,11 @@ export class PublishPlanRunService {
       // `deduplicateFileName` adds the new one).
       let usedFileNamesInFolder = usedFileNamesByFolderPathInRenamePhase.get(folderPath);
       if (usedFileNamesInFolder === undefined) {
-        usedFileNamesInFolder = new Set(await this.fileIndexService.listFilenamesForFolder(workbookId, folderPath));
+        usedFileNamesInFolder = new Set(await recordWriteback.listFilenamesInFolder(folderPath));
         usedFileNamesByFolderPathInRenamePhase.set(folderPath, usedFileNamesInFolder);
       }
 
-      const renames: { oldName: string; newName: string }[] = [];
-      const fileIndexUpdates: FileIndexEntry[] = [];
-      const refUpdates: { oldPath: string; newPath: string }[] = [];
+      const renames: PublishedRecordFileRename[] = [];
 
       for (const entry of folderEntries) {
         const { filename: oldName } = parsePath(entry.filePath);
@@ -1909,36 +1663,13 @@ export class PublishPlanRunService {
 
         if (oldName === newName) continue;
 
-        renames.push({ oldName, newName });
-        fileIndexUpdates.push({ workbookId, folderPath, recordId, filename: newName, connectorAccountId });
-
-        const oldPathFull = folderPath ? `${folderPath}/${oldName}` : oldName;
-        const newPathFull = folderPath ? `${folderPath}/${newName}` : newName;
-        refUpdates.push({ oldPath: oldPathFull, newPath: newPathFull });
+        renames.push({ oldName, newName, remoteRecordId: recordId });
       }
 
       if (renames.length > 0) {
         try {
-          // Apply batch rename directly via Git
-          await this.scratchGitService.renameFiles(
-            repoId,
-            folderPath,
-            renames,
-            `Publish V2 rename batch (${renames.length})`,
-          );
-
-          // Update FileIndex
-          // The file-index.service upsertBatch correctly handles updating based on compound unique key
-          // BUT upsert is on (workbookId, folderPath, recordId), so changing the filename is just an update.
-          await this.fileIndexService.upsertBatch(fileIndexUpdates);
-
-          // Update outbound references in FileReference table
-          for (const ref of refUpdates) {
-            await this.db.client.fileReference.updateMany({
-              where: { workbookId, sourceFilePath: ref.oldPath },
-              data: { sourceFilePath: ref.newPath },
-            });
-          }
+          // Move the files, their index rows and their outbound references.
+          await recordWriteback.renamePublishedFilesInFolder({ folderPath, renames, connectorAccountId });
         } catch (error) {
           // The in-memory set already records these renames, but they didn't (all) land.
           // Forget it so the next batch or the per-entry retry reseeds from the index.
@@ -1963,7 +1694,7 @@ export class PublishPlanRunService {
     connector: Connector,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
-    repoId: string,
+    recordWriteback: RecordWriteback,
   ): Promise<Map<string, string>> {
     const suggestedNameByPendingFilename = new Map<string, string>();
     try {
@@ -1971,9 +1702,7 @@ export class PublishPlanRunService {
       // batch never holds every record's content in memory at once; only the
       // suggested names survive from one chunk to the next.
       for (const pendingFilenamesChunk of chunk(pendingFilenames, RENAME_PHASE_RECORD_CONTENT_READ_CHUNK_SIZE)) {
-        const committedFiles = await this.scratchGitService.readRepoFilesFromFolder(
-          repoId,
-          'main',
+        const committedFiles = await recordWriteback.readPublishedRecordFilesInFolder(
           folderPath,
           pendingFilenamesChunk,
         );
@@ -2014,82 +1743,5 @@ export class PublishPlanRunService {
       });
     }
     return suggestedNameByPendingFilename;
-  }
-
-  /**
-   * Identifies which files in the batch are going through their final operation
-   * (no later phases pending), and syncs them to the dirty branch.
-   * If content is null, it means the file was deleted.
-   */
-  private async syncBatchToDirtyIfFinal(
-    workbookId: string,
-    planId: string,
-    currentPhase: string,
-    items: { filePath: string; content: string | null }[],
-    repoId: string,
-  ): Promise<void> {
-    if (items.length === 0) return;
-
-    const finalDeletes: string[] = [];
-    const finalCommits: { path: string; content: string }[] = [];
-
-    // Backfill and delete are always the last phase for a record — always sync to dirty
-    if (currentPhase === 'backfill' || currentPhase === 'delete') {
-      for (const item of items) {
-        if (item.content === null) {
-          finalDeletes.push(item.filePath);
-        } else {
-          finalCommits.push({ path: item.filePath, content: item.content });
-        }
-      }
-    } else {
-      // For edit/create: we must check if a backfill or delete entry exists for these files
-      const filePaths = items.map((i) => i.filePath);
-
-      // Find all later pending phases for any of these files
-      const laterEntries = await this.db.client.publishPlanOperation.groupBy({
-        by: ['filePath'],
-        where: {
-          planId,
-          filePath: { in: filePaths },
-          phase: { in: ['backfill', 'delete'] },
-          status: 'pending',
-        },
-        _count: true,
-      });
-
-      // Map of filePath -> count of later pending entries
-      const pendingMap = new Map(laterEntries.map((g) => [g.filePath, g._count]));
-
-      for (const item of items) {
-        if (!pendingMap.has(item.filePath)) {
-          // No backfill or delete coming — this is the final content, sync to dirty
-          if (item.content === null) {
-            finalDeletes.push(item.filePath);
-          } else {
-            finalCommits.push({ path: item.filePath, content: item.content });
-          }
-        }
-      }
-    }
-
-    // Execute batch writes
-    if (finalDeletes.length > 0) {
-      await this.scratchGitService.deleteFilesFromBranch(
-        repoId,
-        'dirty',
-        finalDeletes,
-        `Sync published deletes to dirty (${finalDeletes.length})`,
-      );
-    }
-
-    if (finalCommits.length > 0) {
-      await this.scratchGitService.commitFilesToBranch(
-        repoId,
-        'dirty',
-        finalCommits,
-        `Sync published content to dirty (${finalCommits.length})`,
-      );
-    }
   }
 }

@@ -13,7 +13,6 @@ import {
   ColumnMapping,
   ColumnMappingV2,
   ConstantTypeMismatchError,
-  createPlainId,
   createScratchPendingPublishId,
   createSyncId,
   DataFolderId,
@@ -40,7 +39,6 @@ import {
   ValidateSyncMappingTypesResponse,
   WorkbookId,
 } from '@spinner/shared-types';
-import chunk from 'lodash/chunk';
 import isEqual from 'lodash/isEqual';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
@@ -50,10 +48,19 @@ import { resolveFieldValueCanonicalizersForTable } from 'src/remote-service/conn
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { BaseJsonTableSpec, DotPath, dotPath, readRecordIdAsString } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
-import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { deriveCanonicalMatchKey, getFieldUnpackTransformer } from 'src/sync/record-matching';
 import { findConstantTypeMismatches, getSchemaAtPath, validateSchemaMapping } from 'src/sync/schema-validator';
+import { ClassicPostgresSyncMatchIndex, createClassicSyncStoragePorts } from 'src/sync/storage/classic-sync-storage';
+import type {
+  ForeignKeyRecordCacheEntry,
+  RemoteIdMappingPair,
+  SyncDestinationFolderLocation,
+  SyncMatchIndex,
+  SyncMatchKeyEntry,
+  SyncRecordFile,
+  SyncStoragePorts,
+} from 'src/sync/storage/sync-storage-ports';
 import {
   applyColumnMappings,
   classifyDestinationRecord,
@@ -82,15 +89,13 @@ import { readFieldValueAtPath, setFieldValueAtPath } from 'src/utils/field-path'
 import { safeJsonParse } from 'src/utils/helpers';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { GitTableSpecStore } from 'src/workbook/table-spec-store/git-table-spec-store';
+import { readTableSpecOrNullLoggingFailure, type TableSpecStore } from 'src/workbook/table-spec-store/table-spec-store';
 import { deduplicateFileName, resolveBaseFileName } from 'src/workbook/util';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 
-export interface RemoteIdMappingPair {
-  sourceRemoteId: string;
-  destinationRemoteId: string | null;
-  destinationFilePath: string | null;
-}
+export type { RemoteIdMappingPair } from 'src/sync/storage/sync-storage-ports';
 
 /**
  * Server-internal options for {@link SyncService.createSync} / {@link SyncService.updateSync}
@@ -100,12 +105,6 @@ export interface RemoteIdMappingPair {
  */
 export interface SaveSyncOptions {
   validateAgainstStoredSchemas?: boolean;
-}
-
-interface FileContent {
-  folderId: DataFolderId;
-  path: string;
-  content: string;
 }
 
 interface MatchKeyTransformContext {
@@ -130,14 +129,6 @@ function pushSample<T>(samples: T[], value: T): void {
     samples.push(value);
   }
 }
-
-/**
- * Rows per statement when writing `SyncRemoteIdMapping`. One source page, so a
- * table's mapping writes cost the same whether it holds a thousand records or a
- * hundred thousand. Well under the 32,767 bind-parameter ceiling at three
- * parameters per row.
- */
-const REMOTE_ID_MAPPING_WRITE_CHUNK_SIZE = 1000;
 
 export interface SyncTableMappingResult {
   recordsCreated: number;
@@ -255,7 +246,12 @@ export class SyncService {
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookRepoService: WorkbookRepoService,
     private readonly workbookService: WorkbookService,
-  ) {}
+  ) {
+    this.gitTableSpecStore = new GitTableSpecStore(scratchGitService);
+  }
+
+  /** Where table specs are read from outside a sync run (AI context, preview): the git copy. */
+  private readonly gitTableSpecStore: TableSpecStore;
 
   /**
    * Read choke point — fetches a Sync row and resolves its on-disk mappings
@@ -331,29 +327,20 @@ export class SyncService {
   }
 
   /**
-   * Reads schema from git.
+   * Reads a folder's table spec from `tableSpecStore` (the git copy unless the caller supplies its own
+   * store); null when there is none or it can't be read.
    */
-  private async readSchemaFromGit(
+  private readTableSpecOrNull(
     workbookId: string,
     connectorAccountId: string | null,
     folderPath: string | null,
+    tableSpecStore: TableSpecStore = this.gitTableSpecStore,
   ): Promise<BaseJsonTableSpec | null> {
-    if (folderPath) {
-      try {
-        const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
-        const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
-        if (gitSchema) return gitSchema;
-      } catch (error) {
-        WSLogger.error({
-          source: 'SyncService.readSchemaFromGit',
-          message: 'Failed to read schema from git',
-          error,
-          workbookId,
-          folderPath,
-        });
-      }
-    }
-    return null;
+    return readTableSpecOrNullLoggingFailure(
+      tableSpecStore,
+      { connectorAccountId, folderPath },
+      { source: 'SyncService.readTableSpecOrNull', workbookId },
+    );
   }
 
   /**
@@ -808,7 +795,7 @@ export class SyncService {
       const service = folder.connectorService ? folder.connectorService : null;
       if (service) allServices.add(service);
 
-      const schemaJson = await this.readSchemaFromGit(workbookId, folder.connectorAccountId, folder.path);
+      const schemaJson = await this.readTableSpecOrNull(workbookId, folder.connectorAccountId, folder.path);
       const fields = schemaJson?.schema ? extractSchemaFields(schemaJson.schema) : [];
 
       const accountId = folder.connectorAccountId;
@@ -1083,75 +1070,18 @@ export class SyncService {
   }
 
   /**
-   * Pages through every file in a destination folder on the dirty branch, yielding
-   * one page at a time so no caller has to hold the whole folder in memory.
-   *
-   * Both Pass 1 (match keys + filename dedupe set) and Pass 3 (unmatched-destination
-   * classification) stream the folder independently through this generator rather
-   * than sharing one whole-folder map of parsed records — that map was ~700 MB on a
-   * 42k-record destination and OOM-killed the sync worker (DEV-11194).
-   *
-   * Re-reading is safe because nothing a sync run writes reaches the dirty branch
-   * until the single atomic commit in step 8: Pass 2's output buffers to the git
-   * service's staging area and Pass 3's deletions are applied afterwards. Every
-   * pass therefore sees the same pre-sync destination bytes.
+   * The classic storage a sync run reads and writes when the caller supplies none: record files
+   * on the scratch-git dirty branch, the match index and lookup caches in Postgres.
    */
-  private async *pageThroughDestinationFolderFiles(
-    workbookId: WorkbookId,
-    destinationDataFolderId: DataFolderId,
-    actor: Actor,
-    syncId: SyncId,
-    logContext: { passLabel: string; destinationFolderPath: string | null },
-  ): AsyncGenerator<FileContent[]> {
-    let destinationPageCursor: string | undefined;
-    let destinationPageCounter = 0;
-
-    do {
-      let page: { files: FileContent[]; nextCursor?: string };
-      try {
-        page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
-          workbookId,
-          destinationDataFolderId,
-          actor,
-          DIRTY_BRANCH,
-          destinationPageCursor,
-        );
-      } catch (error) {
-        // An empty (or not-yet-populated) destination folder has zero files, so git
-        // tracks no directory for it and a path-scoped read returns 404. Treat that as
-        // "no existing destination records" rather than failing the whole sync — e.g.
-        // syncing into a brand-new or empty Webflow collection. Every source record
-        // then falls into the unmatched-source (create) path, and Pass 3 sees no
-        // unmatched-destination records. A 404 after pagination has already advanced
-        // (cursor set) is a genuine anomaly and is rethrown.
-        if (error instanceof ScratchGitNotFoundError && destinationPageCursor === undefined) {
-          WSLogger.info({
-            source: 'SyncService.syncTableMapping',
-            message: 'Destination folder not found in git; treating as empty (0 existing records)',
-            syncId,
-            destinationDataFolderId,
-            destinationFolderPath: logContext.destinationFolderPath,
-            pass: logContext.passLabel,
-          });
-          return;
-        }
-        throw error;
-      }
-
-      WSLogger.info({
-        source: 'SyncService.syncTableMapping',
-        message: `${logContext.passLabel}: destination batch`,
-        syncId,
-        records: page.files.length,
-        cursor: destinationPageCursor ?? 'initial',
-        batch: destinationPageCounter,
-      });
-
-      yield page.files;
-
-      destinationPageCursor = page.nextCursor;
-      destinationPageCounter++;
-    } while (destinationPageCursor);
+  private buildDefaultClassicSyncStoragePorts(syncId: SyncId, workbookId: WorkbookId, actor: Actor): SyncStoragePorts {
+    return createClassicSyncStoragePorts({
+      db: this.db,
+      dataFolderService: this.dataFolderService,
+      scratchGitService: this.scratchGitService,
+      syncId,
+      workbookId,
+      actor,
+    });
   }
 
   /**
@@ -1163,6 +1093,9 @@ export class SyncService {
    * @param tableMapping - The table mapping configuration
    * @param workbookId - The workbook ID
    * @param actor - The actor performing the sync
+   * @param storagePorts - Where the run reads and writes records, match keys and lookups;
+   *   defaults to the classic git + Postgres storage. A caller supplying its own must pass the same
+   *   bundle to every call of the run (see {@link SyncStoragePorts})
    * @returns Result containing counts of created/updated records and any errors
    */
   async syncTableMapping(
@@ -1177,7 +1110,10 @@ export class SyncService {
      * Used by syncOneRecord to scope a sync run to a single record.
      */
     onlySourceFilePath?: string,
+    storagePorts: SyncStoragePorts = this.buildDefaultClassicSyncStoragePorts(syncId, workbookId, actor),
   ): Promise<SyncTableMappingResult> {
+    const { recordSource, matchIndex, tableSpecStore } = storagePorts;
+
     // Defensively normalize to v2 — callers may pass either shape. Idempotent
     // for inputs that are already v2.
     const tableMapping = ensureTableMappingV2(inputTableMapping);
@@ -1244,20 +1180,27 @@ export class SyncService {
     }
 
     // Read schema from git first, fall back to DB
-    const sourceTableSpec = await this.readSchemaFromGit(
+    const sourceTableSpec = await this.readTableSpecOrNull(
       workbookId,
       sourceFolder.connectorAccountId,
       sourceFolder.path,
+      tableSpecStore,
     );
 
-    const destinationTableSpec = await this.readSchemaFromGit(
+    const destinationTableSpec = await this.readTableSpecOrNull(
       workbookId,
       destinationFolder.connectorAccountId,
       destinationFolder.path,
+      tableSpecStore,
     );
-    const destinationRepoId = await this.scratchGitService.resolveConnectionRepoPath(
-      destinationFolder.connectorAccountId,
-    );
+    // Get the destination folder path for new files
+    const destinationFolderPath = destinationFolder.path?.replace(/^\//, '') ?? '';
+    const destinationFolderLocation: SyncDestinationFolderLocation = {
+      dataFolderId: tableMapping.destinationDataFolderId,
+      folderPathWithoutLeadingSlash: destinationFolderPath,
+      connectorAccountId: destinationFolder.connectorAccountId,
+    };
+    const destinationOutputSink = await storagePorts.openDestinationOutputSink(destinationFolderLocation);
 
     // Get idPath from schemas
     const sourceIdColumn = this.getIdColumnFromSchema(sourceTableSpec);
@@ -1300,48 +1243,37 @@ export class SyncService {
 
     if (phase === 'DATA') {
       // Clear existing caches for this sync's table mapping
-      await this.clearMatchKeysForDataFolder(syncId, tableMapping.sourceDataFolderId);
-      await this.clearMatchKeysForDataFolder(syncId, tableMapping.destinationDataFolderId);
-      await this.clearRemoteIdMappingsForDataFolder(syncId, tableMapping.sourceDataFolderId);
+      await matchIndex.clearMatchKeysForDataFolder(tableMapping.sourceDataFolderId);
+      await matchIndex.clearMatchKeysForDataFolder(tableMapping.destinationDataFolderId);
+      await matchIndex.clearRemoteIdMappingsForSourceDataFolder(tableMapping.sourceDataFolderId);
 
       // Page through source files — insert match keys and collect FK values per batch
-      let sourceCursor: string | undefined;
       let batchCounter = 0;
-      do {
-        const page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
-          workbookId,
-          tableMapping.sourceDataFolderId,
-          actor,
-          DIRTY_BRANCH,
-          sourceCursor,
-        );
-        const batchRecords = page.files.map((file) => parseFileToRecord(file, sourceIdColumn));
+      for await (const sourceFilePage of recordSource.pageThroughSourceFolderRecordFiles(
+        tableMapping.sourceDataFolderId,
+      )) {
+        const batchRecords = sourceFilePage.map((file) => parseFileToRecord(file, sourceIdColumn));
 
         WSLogger.info({
           source: 'SyncService.syncTableMapping',
           message: `Pass 1: source batch`,
           syncId,
           records: batchRecords.length,
-          cursor: sourceCursor ?? 'initial',
           batch: batchCounter,
         });
 
-        await this.fillSyncCachesBatch(syncId, tableMapping, batchRecords, [], matchKeyTransformContext);
+        await this.fillSyncCachesBatch(syncId, tableMapping, batchRecords, [], matchKeyTransformContext, matchIndex);
         this.collectForeignKeyValues(tableMapping, batchRecords, fkValuesByFolder);
 
-        sourceCursor = page.nextCursor;
         batchCounter++;
-      } while (sourceCursor);
+      }
     }
 
     // Page through destination files — insert match keys and collect used filenames
     // per batch. Each page's parsed records are discarded once the page is handled.
-    for await (const destinationFilePage of this.pageThroughDestinationFolderFiles(
-      workbookId,
+    for await (const destinationFilePage of recordSource.pageThroughDestinationFolderRecordFiles(
       tableMapping.destinationDataFolderId,
-      actor,
-      syncId,
-      { passLabel: 'Pass 1', destinationFolderPath: destinationFolder.path },
+      { syncId, passLabel: 'Pass 1', destinationFolderPath: destinationFolder.path },
     )) {
       const batchRecords: SyncRecord[] = [];
       for (const file of destinationFilePage) {
@@ -1362,37 +1294,37 @@ export class SyncService {
 
       if (phase === 'DATA') {
         // Only need to fill the caches in the first phase
-        await this.fillSyncCachesBatch(syncId, tableMapping, [], batchRecords, matchKeyTransformContext);
+        await this.fillSyncCachesBatch(syncId, tableMapping, [], batchRecords, matchKeyTransformContext, matchIndex);
       }
     }
 
     if (phase === 'DATA') {
       // Finalize caches — join match keys to create remote ID mappings
-      await this.buildRecordMatchingMappings(syncId, tableMapping);
+      await this.buildRecordMatchingMappings(syncId, tableMapping, matchIndex);
 
       // Populate FK record cache for lookup_field transformers
-      await this.populateForeignKeyRecordCache(syncId, fkValuesByFolder, workbookId, actor);
+      await this.populateForeignKeyRecordCache(syncId, fkValuesByFolder, workbookId, storagePorts);
     }
 
     // ===========================================================================================
     // Pass 2: Iterate source pages again to transform and write records using populated caches
     // ===========================================================================================
 
-    // Get the destination folder path for new files
-    const destinationFolderPath = destinationFolder.path?.replace(/^\//, '') ?? '';
-
     // Get the destination idPath from schema
     const destIdColumn = this.getIdColumnFromSchema(destinationTableSpec);
 
     // Create lookup tools for transformers that need FK resolution
     const lookupTools = createLookupTools(
-      this.db,
-      syncId,
-      workbookId,
+      storagePorts.lookupDataProvider,
       sourceFolder.connectorService as Service,
       destinationFolder.connectorService as Service,
       (referencedDataFolderId, onRecordPage) =>
-        this.readSourceRecordsForReferencedFolderInPages(workbookId, referencedDataFolderId, actor, onRecordPage),
+        this.readSourceRecordsForReferencedFolderInPages(
+          workbookId,
+          referencedDataFolderId,
+          storagePorts,
+          onRecordPage,
+        ),
     );
 
     // Track new records so we can backfill SyncRemoteIdMapping with their file paths and record IDs.
@@ -1406,77 +1338,20 @@ export class SyncService {
       }
       const pending = newRecordMappings;
       newRecordMappings = [];
-      await this.updateRemoteIdMappingsForNewRecords(syncId, tableMapping.sourceDataFolderId, pending);
+      await matchIndex.recordDestinationsOfNewlyCreatedRecords(tableMapping.sourceDataFolderId, pending);
     };
 
-    // ── Output-file writer: bounded memory, one commit ─────────────────────────
+    // Transformed destination files queue on `destinationOutputSink` (bounded memory —
+    // see ClassicStagedGitCommitOutputSink, DEV-11193) and land as one unit in step 8.
     //
-    // Transformed destination files are NOT accumulated for the whole table —
-    // holding every serialized record in memory is what OOM-killed the sync
-    // worker on large tables (DEV-11193). Instead, files buffer up to one source
-    // page and then spill to the scratch-git staging area (disk on the git
-    // service, tracked in its SQLite index); step 8 lands everything as exactly
-    // ONE commit via the atomic staged-commit endpoint, so the dirty branch
-    // never shows a partially-synced table and a mid-run failure leaves nothing
-    // behind — the same all-or-nothing contract the old single commitFilesToBranch
-    // call provided. A table whose writes fit in one buffer never touches
-    // staging and commits directly, keeping small syncs (and syncOneRecord) to a
-    // single round-trip.
-    //
-    // Staged paths are relative to the destination folder (scratch-git prefixes
-    // the staging folder name on commit). A destination folder at the repo root
-    // (no path prefix) can't express that split, so it stays on the buffered
-    // direct-commit path regardless of size — connector folders always have a
-    // path, so this is a defensive fallback, not an expected case.
-    //
-    // The staging key carries a per-run random component ON PURPOSE: concurrent
-    // runs of the same sync are not prevented anywhere (a manual trigger during
-    // a scheduled run, a double-enqueue), and a key shared across runs would let
-    // one run's cleanup delete another run's staged rows — or its atomic commit
-    // absorb them — silently landing a partial table as "success". A unique key
-    // also guarantees a crashed attempt's leftover rows can never be committed
-    // by any later run (only this run ever names this key); the leftover
-    // directory itself is disk garbage on the git service until swept, the same
-    // trade the pull jobs make with their per-run staging keys.
-    const stagedWriteFlushThreshold = 1000; // one source page (PAGINATED_FILE_BATCH_SIZE)
-    const stagingJobKey = `sync-${syncId}-${tableMapping.destinationDataFolderId}-${createPlainId()}`;
-    let bufferedFilesToWrite: Array<{ path: string; content: string }> = [];
-    let stagedFileCountBeforeBuffer = 0;
-    let stagingActive = false;
     // Queued files, for the step-8 failure report. A batch write fails as a unit,
     // so every queued file is affected and the count is what callers act on; only
     // a sample of the paths is kept, since holding one path string per record put
     // a second whole-table array next to the one DEV-11193 removed.
-    let queuedFileCount = 0;
     const queuedFilePathSamples: string[] = [];
-    const queueFilePathForErrorReporting = (path: string): void => {
-      queuedFileCount++;
-      pushSample(queuedFilePathSamples, path);
-    };
-
-    const spillBufferedFilesToStaging = async (): Promise<void> => {
-      if (bufferedFilesToWrite.length === 0) {
-        return;
-      }
-      stagingActive = true;
-      const filesRelativeToDestinationFolder = bufferedFilesToWrite.map((file) => {
-        if (!file.path.startsWith(`${destinationFolderPath}/`)) {
-          throw new Error(`Sync write path "${file.path}" is not under destination folder "${destinationFolderPath}"`);
-        }
-        return { path: file.path.slice(destinationFolderPath.length + 1), content: file.content };
-      });
-      await this.scratchGitService.stageFiles(stagingJobKey, destinationFolderPath, filesRelativeToDestinationFolder);
-      stagedFileCountBeforeBuffer += bufferedFilesToWrite.length;
-      bufferedFilesToWrite = [];
-    };
-
-    // Called at page boundaries (never inside a per-record try/catch, so a
-    // staging failure fails the table sync instead of being misattributed to
-    // one record while its file stays buffered).
-    const spillBufferedFilesToStagingIfThresholdReached = async (): Promise<void> => {
-      if (destinationFolderPath !== '' && bufferedFilesToWrite.length >= stagedWriteFlushThreshold) {
-        await spillBufferedFilesToStaging();
-      }
+    const queueFileWrite = (file: { path: string; content: string }): void => {
+      destinationOutputSink.queueRecordFileWrite(file);
+      pushSample(queuedFilePathSamples, file.path);
     };
 
     // Pass 3 'delete' policy collects orphaned destination record paths here;
@@ -1484,19 +1359,12 @@ export class SyncService {
     const filesToDelete: string[] = [];
 
     // Page through source files again for transformation
-    let sourceCursor: string | undefined;
     let sourcePageCounter = 0;
-    do {
-      const page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
-        workbookId,
-        tableMapping.sourceDataFolderId,
-        actor,
-        DIRTY_BRANCH,
-        sourceCursor,
-      );
-
+    for await (const sourceFilePage of recordSource.pageThroughSourceFolderRecordFiles(
+      tableMapping.sourceDataFolderId,
+    )) {
       // Parse this batch of source records
-      const batchRecords = page.files.map((file) => parseFileToRecord(file, sourceIdColumn));
+      const batchRecords = sourceFilePage.map((file) => parseFileToRecord(file, sourceIdColumn));
       let batchRecordsById = new Map(batchRecords.map((r) => [r.id, r]));
 
       // When scoped to a single source file, drop everything else from the batch.
@@ -1504,7 +1372,6 @@ export class SyncService {
       if (onlySourceFilePath !== undefined) {
         batchRecordsById = new Map([...batchRecordsById].filter(([, r]) => r.filePath === onlySourceFilePath));
         if (batchRecordsById.size === 0) {
-          sourceCursor = page.nextCursor;
           sourcePageCounter++;
           continue;
         }
@@ -1515,23 +1382,20 @@ export class SyncService {
         message: `Pass 2: source batch`,
         syncId,
         records: batchRecordsById.size,
-        cursor: sourceCursor ?? 'initial',
         batch: sourcePageCounter,
       });
 
       // Get mappings for this batch
-      const batchMappings = await this.getDestinationMappings(
-        syncId,
+      const batchMappings = await matchIndex.getDestinationMappingsForSourceRemoteIds(
         tableMapping.sourceDataFolderId,
         Array.from(batchRecordsById.keys()),
       );
 
       // Read the existing destination records this page's matched mappings point at,
       // and hold them only for the page (DEV-11194 — the whole-folder map this
-      // replaces was the sync worker's largest allocation). `readRepoFilesByFolder`
-      // groups the paths by folder, so a page costs one optimized tree walk.
-      // Nothing this run has written is on the branch yet (Pass 2 buffers to staging
-      // and lands in step 8), so these are the same bytes Pass 1 read.
+      // replaces was the sync worker's largest allocation).
+      // Nothing this run has written has landed yet (Pass 2 queues on the output
+      // sink, which lands in step 8), so these are the same bytes Pass 1 read.
       const matchedDestinationPathsInPage = Array.from(
         new Set(
           Array.from(batchMappings.values())
@@ -1541,9 +1405,8 @@ export class SyncService {
       );
       const existingDestinationRecordsByPathInPage = new Map<string, SyncRecord>();
       if (matchedDestinationPathsInPage.length > 0) {
-        const existingDestinationFilesInPage = await this.scratchGitService.readRepoFilesByFolder(
-          destinationRepoId,
-          DIRTY_BRANCH,
+        const existingDestinationFilesInPage = await recordSource.readDestinationRecordFilesByPath(
+          destinationFolderLocation,
           matchedDestinationPathsInPage,
         );
         for (const file of existingDestinationFilesInPage) {
@@ -1714,19 +1577,17 @@ export class SyncService {
           }
 
           const content = serializeRecord(transformedFields);
-          bufferedFilesToWrite.push({ path: destinationPath, content });
-          queueFilePathForErrorReporting(destinationPath);
+          queueFileWrite({ path: destinationPath, content });
         } catch (error) {
           recordError(sourceRemoteId, error instanceof Error ? error.message : String(error));
         }
       }
 
-      await spillBufferedFilesToStagingIfThresholdReached();
+      await destinationOutputSink.flushQueuedRecordFileWritesAtPageBoundary();
       await flushNewRecordMappings();
 
-      sourceCursor = page.nextCursor;
       sourcePageCounter++;
-    } while (sourceCursor);
+    }
 
     // ===========================================================================================
     // Pass 3: Apply `unmatchedDestinationPolicy` to records with no source counterpart.
@@ -1776,13 +1637,8 @@ export class SyncService {
           mappingsForPass3.push(m);
         }
 
-        // Hydrate the source-side match-key set for O(1) classification. Uses
-        // the unique (syncId, dataFolderId) index on SyncMatchKeys.
-        const sourceMatchKeyRows = await this.db.client.syncMatchKeys.findMany({
-          where: { syncId, dataFolderId: tableMapping.sourceDataFolderId },
-          select: { matchId: true },
-        });
-        const sourceMatchKeySet = new Set(sourceMatchKeyRows.map((r) => r.matchId));
+        // Hydrate the source-side match-key set for O(1) classification.
+        const sourceMatchKeySet = await matchIndex.loadMatchIdsForDataFolder(tableMapping.sourceDataFolderId);
 
         WSLogger.info({
           source: 'SyncService.syncTableMapping',
@@ -1800,16 +1656,13 @@ export class SyncService {
         const policy = tableMapping.unmatchedDestinationPolicy;
 
         // Stream the destination folder a second time rather than iterating a
-        // whole-folder map (DEV-11194). Pass 2's writes are still buffered/staged
-        // at this point, so this sees the same pre-sync records Pass 1 classified
+        // whole-folder map (DEV-11194). Pass 2's writes are still queued on the
+        // output sink at this point, so this sees the same pre-sync records Pass 1 classified
         // against — records created by this run cannot leak into the classification.
         let destinationRecordsVisitedInPass3 = 0;
-        for await (const destinationFilePage of this.pageThroughDestinationFolderFiles(
-          workbookId,
+        for await (const destinationFilePage of recordSource.pageThroughDestinationFolderRecordFiles(
           tableMapping.destinationDataFolderId,
-          actor,
-          syncId,
-          { passLabel: 'Pass 3', destinationFolderPath: destinationFolder.path },
+          { syncId, passLabel: 'Pass 3', destinationFolderPath: destinationFolder.path },
         )) {
           for (const destinationFile of destinationFilePage) {
             const destRecord = parseFileToRecord(destinationFile, destinationIdColumn);
@@ -1881,13 +1734,12 @@ export class SyncService {
               result.unmatchedDestinationCounts.archived++;
               result.recordsUpdated++;
               pushSample(result.updatedPaths, destPath);
-              bufferedFilesToWrite.push({ path: destPath, content: serializeRecord(transformResult.fields) });
-              queueFilePathForErrorReporting(destPath);
+              queueFileWrite({ path: destPath, content: serializeRecord(transformResult.fields) });
             } catch (error) {
               recordError(destRecord.id, error instanceof Error ? error.message : String(error));
             }
 
-            await spillBufferedFilesToStagingIfThresholdReached();
+            await destinationOutputSink.flushQueuedRecordFileWritesAtPageBoundary();
           }
         }
 
@@ -1906,49 +1758,11 @@ export class SyncService {
     // Earlier pages already flushed; this covers the tail.
     await flushNewRecordMappings();
 
-    // 8. Land all queued writes on the dirty branch as ONE commit. Small runs
-    // (everything still in the buffer) commit directly; larger runs flush the
-    // buffer tail to staging and use the atomic staged commit, which folds the
-    // staged files into a single commit on the scratch-git side.
-    const totalFilesToWrite = stagedFileCountBeforeBuffer + bufferedFilesToWrite.length;
-    if (totalFilesToWrite > 0) {
-      WSLogger.info({
-        source: 'SyncService.syncTableMapping',
-        message: `Committing files to git`,
-        syncId,
-        files: totalFilesToWrite,
-        viaStaging: stagingActive,
-      });
+    // 8. Land all queued writes as ONE unit (on the dirty branch as one commit, for
+    // the classic sink).
+    if (destinationOutputSink.queuedRecordFileWriteCount > 0) {
       try {
-        if (stagingActive) {
-          await spillBufferedFilesToStaging();
-          const atomicCommitResult = await this.scratchGitService.commitStagedFilesAtomic(
-            stagingJobKey,
-            destinationRepoId,
-            DIRTY_BRANCH,
-            destinationFolderPath,
-            'Sync: batch write files',
-          );
-          // The endpoint reports empty success when the staging index is gone
-          // (it can't tell "nothing staged" from "staging state destroyed", e.g.
-          // the git service's local disk was replaced mid-run). We know we
-          // staged files, so zero committed means the writes were lost — fail
-          // loudly instead of reporting a successful sync that wrote nothing.
-          // (No exact-count check: duplicate destination paths legitimately
-          // collapse into one staged row.)
-          if (atomicCommitResult.committed === 0) {
-            throw new Error(
-              `Atomic staged commit wrote 0 of ${totalFilesToWrite} staged file(s) — staging state was lost`,
-            );
-          }
-        } else {
-          await this.scratchGitService.commitFilesToBranch(
-            destinationRepoId,
-            DIRTY_BRANCH,
-            bufferedFilesToWrite,
-            'Sync: batch write files',
-          );
-        }
+        await destinationOutputSink.commitQueuedRecordFileWrites();
       } catch (error) {
         // If the batch write fails, all records are affected. Nothing landed on
         // the branch — staged files only become visible at the atomic commit —
@@ -1957,7 +1771,7 @@ export class SyncService {
         const errorMessage = error instanceof Error ? error.message : String(error);
         // Every queued file failed, so the count is the queued count; the sampled
         // paths give the same first-N detail the old per-path loop surfaced.
-        result.errorCount += queuedFileCount;
+        result.errorCount += destinationOutputSink.queuedRecordFileWriteCount;
         for (const path of queuedFilePathSamples) {
           pushSample(result.errors, { sourceRemoteId: path, error: `Batch write failed: ${errorMessage}` });
         }
@@ -1973,22 +1787,6 @@ export class SyncService {
         result.recordsDeleted = 0;
         result.deletedPaths = [];
         return result;
-      } finally {
-        if (stagingActive) {
-          // Best-effort disk cleanup on the git service; a leftover directory is
-          // harmless garbage (its per-run key is never named again).
-          try {
-            await this.scratchGitService.cleanupStaging(stagingJobKey);
-          } catch (cleanupError) {
-            WSLogger.warn({
-              source: 'SyncService.syncTableMapping',
-              message: 'Failed to clean up sync staging directory',
-              syncId,
-              stagingJobKey,
-              error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-            });
-          }
-        }
       }
     }
 
@@ -2003,12 +1801,7 @@ export class SyncService {
         files: filesToDelete.length,
       });
       try {
-        await this.scratchGitService.deleteFilesFromBranch(
-          destinationRepoId,
-          DIRTY_BRANCH,
-          filesToDelete,
-          'Sync: delete orphaned destination records',
-        );
+        await destinationOutputSink.deleteRecordFiles(filesToDelete);
       } catch (error) {
         // Deletion failed — surface per path and zero the delete counters so the
         // run summary doesn't claim records were removed when none were.
@@ -2093,6 +1886,7 @@ export class SyncService {
     sourceRecords: SyncRecord[],
     destinationRecords: SyncRecord[],
     transformContext?: MatchKeyTransformContext,
+    matchIndex: SyncMatchIndex = new ClassicPostgresSyncMatchIndex(this.db, syncId),
   ): Promise<void> {
     const tableMapping = ensureTableMappingV2(inputTableMapping);
     if (!tableMapping.recordMatching) {
@@ -2104,93 +1898,43 @@ export class SyncService {
         destinationFilePath: null,
       }));
       if (batchMappings.length > 0) {
-        await this.upsertRemoteIdMappings(syncId, tableMapping, batchMappings);
+        await matchIndex.upsertRemoteIdMappingsForSourceDataFolder(tableMapping.sourceDataFolderId, batchMappings);
       }
       return;
     }
 
     // Insert match keys for both sides
     if (sourceRecords.length > 0) {
-      await this.insertSourceMatchKeys(syncId, tableMapping, sourceRecords, transformContext);
+      await this.insertSourceMatchKeys(matchIndex, tableMapping, sourceRecords, transformContext);
     }
     if (destinationRecords.length > 0) {
-      await this.insertDestinationMatchKeys(syncId, tableMapping, destinationRecords, transformContext);
+      await this.insertDestinationMatchKeys(matchIndex, tableMapping, destinationRecords, transformContext);
     }
   }
 
   /**
    * Finalizes sync caches after all batches have been processed.
    * Joins source and destination match keys to create remote ID mappings.
-   * Only needed when recordMatching is configured.
-   *
-   * Both sides of this already live in Postgres, so the join result never travels
-   * through the worker: one statement reads `SyncMatchKeys` and writes
-   * `SyncRemoteIdMapping`, and only the summary counts come back. Selecting every
-   * row and replaying it as one Prisma operation per record is what OOM-killed the
-   * sync worker on large tables — a 42k-record table built 42k upsert operations in
-   * a single `$transaction` and died before sending any of them (DEV-11192).
-   *
-   * `id` and `updatedAt` are set explicitly because raw SQL bypasses Prisma's
-   * client-side `cuid()` / `@updatedAt` defaults (the same reason `run-count`'s raw
-   * upsert sets them); `createdAt` has a database default and is left alone.
-   *
-   * The left join can't fan a source row out: `SyncMatchKeys` is unique on
-   * `(syncId, dataFolderId, matchId)`, so it adds at most one destination row to each.
-   *
-   * The driving side is a different story. That uniqueness covers `matchId`, not
-   * `remoteId`, and `insertMatchKeys` writes one row per record with `skipDuplicates`
-   * — so two source records sharing a `remoteId` but reducing to different match keys
-   * (a record file duplicated on disk with the match-key field edited and the id left
-   * alone) both survive, and produce two `joined` rows with the same `sourceRemoteId`.
-   * That is the `ON CONFLICT` target, and Postgres aborts the whole statement with
-   * "ON CONFLICT DO UPDATE command cannot affect row a second time" rather than
-   * writing anything. `DISTINCT ON` collapses them to one, which is what the previous
-   * per-record upsert loop did by overwriting; the `ORDER BY` makes the survivor
-   * deterministic and prefers a row that actually matched a destination, where the
-   * loop kept whichever happened to be written last. Reported counts are unaffected
-   * — they come from `joined`, not from the rows inserted.
+   * Only needed when recordMatching is configured. See
+   * `ClassicPostgresSyncMatchIndex.joinMatchKeysIntoRemoteIdMappings` for how the classic
+   * index does the join inside Postgres (DEV-11192).
    */
-  async buildRecordMatchingMappings(syncId: SyncId, inputTableMapping: TableMappingV1 | TableMappingV2): Promise<void> {
+  async buildRecordMatchingMappings(
+    syncId: SyncId,
+    inputTableMapping: TableMappingV1 | TableMappingV2,
+    matchIndex: SyncMatchIndex = new ClassicPostgresSyncMatchIndex(this.db, syncId),
+  ): Promise<void> {
     const tableMapping = ensureTableMappingV2(inputTableMapping);
     if (!tableMapping.recordMatching) {
       return;
     }
 
     // Create remote ID mappings for both matched and unmatched source records
-    const [counts] = await this.db.client.$queryRaw<{ total: bigint; matched: bigint }[]>`
-      WITH joined AS (
-        SELECT src."remoteId" as "sourceRemoteId",
-               dest."remoteId" as "destinationRemoteId",
-               dest."filePath" as "destinationFilePath"
-        FROM "SyncMatchKeys" src
-        LEFT JOIN "SyncMatchKeys" dest
-          ON src."syncId" = dest."syncId"
-          AND src."matchId" = dest."matchId"
-          AND dest."dataFolderId" = ${tableMapping.destinationDataFolderId}
-        WHERE src."syncId" = ${syncId}
-          AND src."dataFolderId" = ${tableMapping.sourceDataFolderId}
-      ), upserted AS (
-        INSERT INTO "SyncRemoteIdMapping" (
-          "id", "updatedAt", "syncId", "dataFolderId",
-          "sourceRemoteId", "destinationRemoteId", "destinationFilePath"
-        )
-        SELECT DISTINCT ON ("sourceRemoteId")
-               gen_random_uuid()::text, NOW(), ${syncId}, ${tableMapping.sourceDataFolderId},
-               "sourceRemoteId", "destinationRemoteId", "destinationFilePath"
-        FROM joined
-        ORDER BY "sourceRemoteId", "destinationRemoteId" NULLS LAST, "destinationFilePath" NULLS LAST
-        ON CONFLICT ("syncId", "dataFolderId", "sourceRemoteId")
-        DO UPDATE SET "destinationRemoteId" = EXCLUDED."destinationRemoteId",
-                      "destinationFilePath" = EXCLUDED."destinationFilePath",
-                      "updatedAt" = NOW()
-        RETURNING 1
-      )
-      SELECT (SELECT COUNT(*) FROM joined) AS "total",
-             (SELECT COUNT(*) FROM joined WHERE "destinationRemoteId" IS NOT NULL) AS "matched"
-    `;
+    const { totalSourceRecords, matchedRecords } = await matchIndex.joinMatchKeysIntoRemoteIdMappings({
+      sourceDataFolderId: tableMapping.sourceDataFolderId,
+      destinationDataFolderId: tableMapping.destinationDataFolderId,
+    });
 
-    const totalSourceRecords = Number(counts?.total ?? 0);
-    const matchedRecords = Number(counts?.matched ?? 0);
     WSLogger.info({
       source: 'SyncService.buildRecordMatchingMappings',
       message: 'Built mappings for record matching',
@@ -2275,7 +2019,7 @@ export class SyncService {
   private async readSourceRecordsForReferencedFolderInPages(
     workbookId: WorkbookId,
     referencedFolderId: DataFolderId,
-    actor: Actor,
+    storagePorts: SyncStoragePorts,
     onRecordPage: (recordPage: SyncRecord[]) => void | Promise<void>,
   ): Promise<void> {
     const folder = await this.db.client.dataFolder.findUnique({ where: { id: referencedFolderId } });
@@ -2286,28 +2030,26 @@ export class SyncService {
       });
       return;
     }
-    const referencedSchema = await this.readSchemaFromGit(workbookId, folder.connectorAccountId, folder.path);
+    const referencedSchema = await this.readTableSpecOrNull(
+      workbookId,
+      folder.connectorAccountId,
+      folder.path,
+      storagePorts.tableSpecStore,
+    );
     const idColumn = this.getIdColumnFromSchema(referencedSchema);
-    let cursor: string | undefined;
-    do {
-      const page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
-        workbookId,
-        referencedFolderId,
-        actor,
-        DIRTY_BRANCH,
-        cursor,
-      );
-      await onRecordPage(page.files.map((file) => parseFileToRecord(file, idColumn)));
-      cursor = page.nextCursor;
-    } while (cursor);
+    for await (const referencedFilePage of storagePorts.recordSource.pageThroughSourceFolderRecordFiles(
+      referencedFolderId,
+    )) {
+      await onRecordPage(referencedFilePage.map((file) => parseFileToRecord(file, idColumn)));
+    }
   }
 
   /**
-   * Populates the SyncForeignKeyRecord cache for lookup_field transformers.
+   * Populates the `lookup_field` record cache (SyncForeignKeyRecord, classically) for lookup_field transformers.
    * Uses pre-collected FK values (from collectForeignKeyValues) to fetch and
    * cache the referenced record data.
    *
-   * The cache itself lives in Postgres; memory is only a staging area, so each page of the
+   * The cache itself lives in the lookup data store; memory is only a staging area, so each page of the
    * referenced folder is filtered and inserted as it streams. Peak memory is one page of
    * records, not the whole referenced folder — materializing the folder here is what
    * OOM-killed the sync worker on large tables (DEV-11192).
@@ -2316,14 +2058,15 @@ export class SyncService {
     syncId: SyncId,
     fkValuesByFolder: Map<DataFolderId, Set<string>>,
     workbookId: WorkbookId,
-    actor: Actor,
+    storagePorts: SyncStoragePorts,
   ): Promise<void> {
     if (fkValuesByFolder.size === 0) {
       return;
     }
+    const { lookupDataProvider } = storagePorts;
 
     // Clear existing FK record cache for this sync
-    await this.db.client.syncForeignKeyRecord.deleteMany({ where: { syncId } });
+    await lookupDataProvider.clearForeignKeyRecordCache();
 
     for (const [referencedFolderId, fkValues] of fkValuesByFolder) {
       if (fkValues.size === 0) continue;
@@ -2332,33 +2075,24 @@ export class SyncService {
       await this.readSourceRecordsForReferencedFolderInPages(
         workbookId,
         referencedFolderId,
-        actor,
+        storagePorts,
         async (recordPage) => {
           // One cache entry per referenced record some collected FK value points at. Record ids are
           // unique within a folder, so filtering records against the FK-value set yields the same
           // entries as looking each FK value up in a full-folder index.
-          const entries: Array<{
-            syncId: string;
-            dataFolderId: string;
-            foreignKeyValue: string;
-            recordData: Prisma.InputJsonValue;
-          }> = [];
+          const entries: ForeignKeyRecordCacheEntry[] = [];
 
           for (const record of recordPage) {
             if (!fkValues.has(record.id)) continue;
             entries.push({
-              syncId,
               dataFolderId: referencedFolderId,
               foreignKeyValue: record.id,
-              recordData: record.fields as Prisma.InputJsonValue,
+              recordFields: record.fields,
             });
           }
 
           if (entries.length > 0) {
-            await this.db.client.syncForeignKeyRecord.createMany({
-              data: entries,
-              skipDuplicates: true,
-            });
+            await lookupDataProvider.addForeignKeyRecordsToCache(entries);
             cachedRecordCount += entries.length;
           }
         },
@@ -2375,140 +2109,12 @@ export class SyncService {
     }
   }
 
-  // ===============================================================================================================
-  // SyncRemoteIdMapping methods - for storing and retrieving mapping of source remote IDs to destination remote IDs
-  // ===============================================================================================================
-
-  /**
-   * Upserts remote ID mappings for synced records.
-   * Maps source remote IDs to their corresponding destination remote IDs.
-   *
-   * @param syncId - The sync ID
-   * @param tableMapping - The table mapping containing source/destination DataFolder IDs
-   * @param mappings - Array of source/destination remote ID pairs
-   */
-  private async upsertRemoteIdMappings(
-    syncId: SyncId,
-    tableMapping: TableMappingV2,
-    mappings: RemoteIdMappingPair[],
-  ): Promise<void> {
-    if (mappings.length === 0) {
-      return;
-    }
-
-    // Chunked so the operation list stays bounded no matter how many mappings a
-    // caller passes — matching how the asset and file indexes write their upserts.
-    for (const chunkOfMappings of chunk(mappings, REMOTE_ID_MAPPING_WRITE_CHUNK_SIZE)) {
-      await this.db.client.$transaction(
-        chunkOfMappings.map((mapping) =>
-          this.db.client.syncRemoteIdMapping.upsert({
-            where: {
-              syncId_dataFolderId_sourceRemoteId: {
-                syncId,
-                dataFolderId: tableMapping.sourceDataFolderId,
-                sourceRemoteId: mapping.sourceRemoteId,
-              },
-            },
-            create: {
-              syncId,
-              dataFolderId: tableMapping.sourceDataFolderId,
-              sourceRemoteId: mapping.sourceRemoteId,
-              destinationRemoteId: mapping.destinationRemoteId,
-              destinationFilePath: mapping.destinationFilePath,
-            },
-            update: {
-              destinationRemoteId: mapping.destinationRemoteId,
-              destinationFilePath: mapping.destinationFilePath,
-            },
-          }),
-        ),
-      );
-    }
-  }
-
-  /**
-   * Updates SyncRemoteIdMapping entries for newly created records with their destination file paths
-   * and record IDs. During Phase 1, new records have null destination fields. This backfills them
-   * so Phase 2 FK resolution can resolve references to new records.
-   *
-   * Written as one `UPDATE ... FROM (VALUES ...)` per chunk rather than one statement
-   * per record: a sync where every source record is a create (an empty destination,
-   * the common first run) queued one operation per record here, the same shape that
-   * OOM-killed the worker in `buildRecordMatchingMappings` (DEV-11192).
-   */
-  private async updateRemoteIdMappingsForNewRecords(
-    syncId: SyncId,
-    dataFolderId: DataFolderId,
-    newRecords: Array<{ sourceRemoteId: string; filePath: string; destinationRecordId: string }>,
-  ): Promise<void> {
-    if (newRecords.length === 0) {
-      return;
-    }
-
-    for (const chunkOfRecords of chunk(newRecords, REMOTE_ID_MAPPING_WRITE_CHUNK_SIZE)) {
-      const values = Prisma.join(
-        chunkOfRecords.map(
-          (record) => Prisma.sql`(${record.sourceRemoteId}, ${record.destinationRecordId}, ${record.filePath})`,
-        ),
-      );
-      await this.db.client.$executeRaw`
-        UPDATE "SyncRemoteIdMapping" AS m
-        SET "destinationRemoteId" = v."destinationRecordId",
-            "destinationFilePath" = v."filePath",
-            "updatedAt" = NOW()
-        FROM (VALUES ${values}) AS v("sourceRemoteId", "destinationRecordId", "filePath")
-        WHERE m."syncId" = ${syncId}
-          AND m."dataFolderId" = ${dataFolderId}
-          AND m."sourceRemoteId" = v."sourceRemoteId"
-      `;
-    }
-  }
-
-  /**
-   * Bulk lookup of destination mappings for multiple source remote IDs.
-   *
-   * @param syncId - The sync ID
-   * @param dataFolderId - The source DataFolder ID
-   * @param sourceRemoteIds - Array of source remote IDs to look up
-   * @returns Map of source remote ID to destination mapping (record ID + file path)
-   */
-  private async getDestinationMappings(
-    syncId: SyncId,
-    dataFolderId: DataFolderId,
-    sourceRemoteIds: string[],
-  ): Promise<Map<string, { destinationRemoteId: string | null; destinationFilePath: string | null }>> {
-    if (sourceRemoteIds.length === 0) {
-      return new Map();
-    }
-
-    // Custom plan: a cached generic plan walks every mapping row of the sync through the
-    // single-column syncId/dataFolderId indexes instead of probing the unique key — ~12 s per
-    // 1000-id page on a 110k-row folder versus ~20 ms (see DbService helper).
-    const mappings = await this.db.runQueryWithCustomPlanForBoundParameterValues(
-      this.db.client.syncRemoteIdMapping.findMany({
-        where: {
-          syncId,
-          dataFolderId,
-          sourceRemoteId: { in: sourceRemoteIds },
-        },
-        select: { sourceRemoteId: true, destinationRemoteId: true, destinationFilePath: true },
-      }),
-    );
-
-    return new Map(
-      mappings.map((m) => [
-        m.sourceRemoteId,
-        { destinationRemoteId: m.destinationRemoteId, destinationFilePath: m.destinationFilePath },
-      ]),
-    );
-  }
-
   // ============================================================================
   // SyncMatchKeys methods - for finding matching records across source and destination
   // ============================================================================
 
   /**
-   * Inserts canonical match keys for a batch of SyncRecords on one side.
+   * Derives and stores canonical match keys for a batch of SyncRecords on one side.
    *
    * Each record's value at `matchColumnId` is reduced to a canonical primitive by
    * `deriveCanonicalMatchKey` — using the field's OWN connector-declared extraction
@@ -2517,7 +2123,7 @@ export class SyncService {
    * whose value can't be reduced (non-primitive with no extraction transformer,
    * empty, or missing) are skipped.
    *
-   * @param syncId - The sync ID
+   * @param matchIndex - Where the sync's match keys are stored
    * @param dataFolderId - The DataFolder ID (source or destination)
    * @param records - The SyncRecords to extract match keys from
    * @param matchColumnId - The column ID to extract match values from
@@ -2525,7 +2131,7 @@ export class SyncService {
    *   apply the field's extraction transformer. Omitted (or specless) → primitive-only.
    */
   private async insertMatchKeys(
-    syncId: SyncId,
+    matchIndex: SyncMatchIndex,
     dataFolderId: DataFolderId,
     records: SyncRecord[],
     matchColumnId: string,
@@ -2535,13 +2141,7 @@ export class SyncService {
       ? getFieldUnpackTransformer(fieldReduction.tableSpec, matchColumnId)
       : undefined;
 
-    const matchKeys: Array<{
-      syncId: SyncId;
-      dataFolderId: DataFolderId;
-      matchId: string;
-      remoteId: string;
-      filePath: string;
-    }> = [];
+    const matchKeys: SyncMatchKeyEntry[] = [];
 
     for (const record of records) {
       const matchId = await deriveCanonicalMatchKey(
@@ -2556,25 +2156,17 @@ export class SyncService {
       if (matchId === null) {
         continue;
       }
-      matchKeys.push({ syncId, dataFolderId, matchId, remoteId: record.id, filePath: record.filePath });
+      matchKeys.push({ matchId, remoteId: record.id, filePath: record.filePath });
     }
 
-    if (matchKeys.length === 0) {
-      return;
-    }
-
-    // Use createMany with skipDuplicates to handle duplicates gracefully
-    await this.db.client.syncMatchKeys.createMany({
-      data: matchKeys,
-      skipDuplicates: true,
-    });
+    await matchIndex.addMatchKeysForDataFolder(dataFolderId, matchKeys);
   }
 
   /**
    * Inserts match keys for source records using the TableMapping's recordMatching config.
    */
   private async insertSourceMatchKeys(
-    syncId: SyncId,
+    matchIndex: SyncMatchIndex,
     tableMapping: TableMappingV2,
     records: SyncRecord[],
     transformContext?: MatchKeyTransformContext,
@@ -2583,7 +2175,7 @@ export class SyncService {
       throw new Error('TableMapping must have recordMatching configured');
     }
     await this.insertMatchKeys(
-      syncId,
+      matchIndex,
       tableMapping.sourceDataFolderId,
       records,
       tableMapping.recordMatching.sourceColumnId,
@@ -2597,7 +2189,7 @@ export class SyncService {
    * Inserts match keys for destination records using the TableMapping's recordMatching config.
    */
   private async insertDestinationMatchKeys(
-    syncId: SyncId,
+    matchIndex: SyncMatchIndex,
     tableMapping: TableMappingV2,
     records: SyncRecord[],
     transformContext?: MatchKeyTransformContext,
@@ -2606,7 +2198,7 @@ export class SyncService {
       throw new Error('TableMapping must have recordMatching configured');
     }
     await this.insertMatchKeys(
-      syncId,
+      matchIndex,
       tableMapping.destinationDataFolderId,
       records,
       tableMapping.recordMatching.destinationColumnId,
@@ -2614,24 +2206,6 @@ export class SyncService {
         ? { tableSpec: transformContext.destinationTableSpec, service: transformContext.destinationService }
         : undefined,
     );
-  }
-
-  /**
-   * Clears match keys for a specific sync and DataFolder combination.
-   */
-  private async clearMatchKeysForDataFolder(syncId: SyncId, dataFolderId: DataFolderId): Promise<void> {
-    await this.db.client.syncMatchKeys.deleteMany({
-      where: { syncId, dataFolderId },
-    });
-  }
-
-  /**
-   * Clears remote ID mappings for a specific sync and DataFolder combination.
-   */
-  private async clearRemoteIdMappingsForDataFolder(syncId: SyncId, dataFolderId: DataFolderId): Promise<void> {
-    await this.db.client.syncRemoteIdMapping.deleteMany({
-      where: { syncId, dataFolderId },
-    });
   }
 
   /**
@@ -2660,7 +2234,7 @@ export class SyncService {
       throw new NotFoundException(`Destination folder ${body.destFolderId} not found`);
     }
 
-    const sourceSchema = await this.readSchemaFromGit(workbookId, sourceFolder.connectorAccountId, sourceFolder.path);
+    const sourceSchema = await this.readTableSpecOrNull(workbookId, sourceFolder.connectorAccountId, sourceFolder.path);
     const sourceIdColumn = this.getIdColumnFromSchema(sourceSchema);
 
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(sourceFolder.connectorAccountId);
@@ -2954,7 +2528,7 @@ export class SyncService {
  * @param idPath - The column ID to use as the record ID (from schema.idPath)
  * @returns A SyncRecord with the ID extracted from the specified column
  */
-function parseFileToRecord(file: FileContent, idPath: DotPath): SyncRecord {
+function parseFileToRecord(file: SyncRecordFile, idPath: DotPath): SyncRecord {
   const fields: Record<string, unknown> = {};
 
   if (file.content) {

@@ -521,12 +521,26 @@ The full list of transformer types, labels, and options is defined in `@spinner/
 
 See `transformers/implementations/` for the complete set of transformers.
 
+### Storage ports
+
+`syncTableMapping` reads and writes record files and the sync cache tables only through `SyncStoragePorts` ([storage/sync-storage-ports.ts](storage/sync-storage-ports.ts)):
+
+- `SyncRecordSource` — pages of source / destination record files, and matched destination files by path.
+- `SyncMatchIndex` — match keys and the source→destination remote-id mappings (`SyncMatchKeys` / `SyncRemoteIdMapping`).
+- `SyncDestinationOutputSink` — queues the table's writes, lands them as one unit, then applies Pass 3 deletions.
+- `SyncLookupDataProvider` — what `LookupTools` reads (referenced-folder mappings, the `lookup_field` cache, assets).
+
+- `TableSpecStore` ([../workbook/table-spec-store/](../workbook/table-spec-store/table-spec-store.ts)) — where the folders' table specs are read from (shared with publish).
+
+The default is the classic implementation in [storage/classic-sync-storage.ts](storage/classic-sync-storage.ts) (git `dirty` branch + Postgres). A caller can pass its own ports as `syncTableMapping`'s last argument; this is the seam the Live Export run store plugs into ([plan](../../../docs/plans/2026-09-25-live-export-git-free-run-store/2026-09-25-live-export-git-free-run-store.md)).
+
 ## Key Files
 
 | File                                                                                           | Description                                                                                  |
 | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | [sync.service.ts](sync.service.ts)                                                             | Core sync logic; read choke point (`getSync`/`getMappings`), save path                       |
 | [sync-execution.ts](sync-execution.ts)                                                         | Pure executor helpers: `transformV1ToV2`, `classifyDestinationRecord`, `applyColumnMappings` |
+| [storage/](storage/)                                                                           | Sync storage ports and the classic git + Postgres implementation                             |
 | [sync.controller.ts](sync.controller.ts)                                                       | REST API endpoints                                                                           |
 | [schema-validator.ts](schema-validator.ts)                                                     | Source→dest type compatibility + constant-value type checking                                |
 | [sync-mapping.schema.ts](sync-mapping.schema.ts)                                               | Zod validation schemas (v1 + v2) for request bodies                                          |

@@ -1,6 +1,7 @@
 import { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { Service } from 'src/remote-service/connectors/service-constants';
+import { ClassicPostgresSyncLookupDataProvider } from 'src/sync/storage/classic-sync-storage';
 import { createLookupTools } from '../lookup-tools';
 
 const SYNC_ID = 'sync_1' as SyncId;
@@ -29,8 +30,11 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
       },
     } as unknown as DbService;
 
-    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
-      Promise.resolve(),
+    const lookupTools = createLookupTools(
+      new ClassicPostgresSyncLookupDataProvider(db, SYNC_ID, WORKBOOK_ID),
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      () => Promise.resolve(),
     );
 
     return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((resolution) => {
@@ -65,8 +69,11 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
       },
     } as unknown as DbService;
 
-    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
-      Promise.resolve(),
+    const lookupTools = createLookupTools(
+      new ClassicPostgresSyncLookupDataProvider(db, SYNC_ID, WORKBOOK_ID),
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      () => Promise.resolve(),
     );
 
     return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((resolution) => {
@@ -97,8 +104,11 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
       },
     } as unknown as DbService;
 
-    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
-      Promise.resolve(),
+    const lookupTools = createLookupTools(
+      new ClassicPostgresSyncLookupDataProvider(db, SYNC_ID, WORKBOOK_ID),
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      () => Promise.resolve(),
     );
 
     return lookupTools.getDestinationMappingForSourceFk('src_1', SOURCE_REFERENCED_FOLDER).then((resolution) => {
@@ -126,8 +136,11 @@ describe('createLookupTools.getDestinationMappingForSourceFk (DEV-10880)', () =>
       },
     } as unknown as DbService;
 
-    const lookupTools = createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.WEBFLOW, () =>
-      Promise.resolve(),
+    const lookupTools = createLookupTools(
+      new ClassicPostgresSyncLookupDataProvider(db, SYNC_ID, WORKBOOK_ID),
+      Service.AIRTABLE,
+      Service.WEBFLOW,
+      () => Promise.resolve(),
     );
 
     return lookupTools
@@ -170,7 +183,12 @@ describe('createLookupTools.getDestinationMappingForSourceFk — no_destination_
     } as unknown as DbService;
     // The PAIR being synced is Airtable → Notion while the REFERENCED folder is Stripe, so an
     // assertion of `referencedFolderService: STRIPE` can only pass by reading the folder.
-    return createLookupTools(db, SYNC_ID, WORKBOOK_ID, Service.AIRTABLE, Service.NOTION, () => Promise.resolve());
+    return createLookupTools(
+      new ClassicPostgresSyncLookupDataProvider(db, SYNC_ID, WORKBOOK_ID),
+      Service.AIRTABLE,
+      Service.NOTION,
+      () => Promise.resolve(),
+    );
   }
 
   it('reports an id with NO row as never synced from the referenced folder', async () => {
@@ -239,9 +257,7 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
   it('is the identity function — and reads NO records — when no key path is declared', async () => {
     const readReferencedFolderRecordPages = pagedReaderOf(FRAMER_TAGS);
     const lookupTools = createLookupTools(
-      EMPTY_DB,
-      SYNC_ID,
-      WORKBOOK_ID,
+      new ClassicPostgresSyncLookupDataProvider(EMPTY_DB, SYNC_ID, WORKBOOK_ID),
       Service.AIRTABLE,
       Service.WEBFLOW,
       readReferencedFolderRecordPages,
@@ -256,9 +272,7 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
 
   it("resolves a declared key against the referenced folder's records", async () => {
     const lookupTools = createLookupTools(
-      EMPTY_DB,
-      SYNC_ID,
-      WORKBOOK_ID,
+      new ClassicPostgresSyncLookupDataProvider(EMPTY_DB, SYNC_ID, WORKBOOK_ID),
       Service.AIRTABLE,
       Service.WEBFLOW,
       pagedReaderOf(FRAMER_TAGS),
@@ -272,9 +286,7 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
   it('folds records delivered across multiple pages into one index', async () => {
     // One record per page — the index must accumulate across onRecordPage calls.
     const lookupTools = createLookupTools(
-      EMPTY_DB,
-      SYNC_ID,
-      WORKBOOK_ID,
+      new ClassicPostgresSyncLookupDataProvider(EMPTY_DB, SYNC_ID, WORKBOOK_ID),
       Service.AIRTABLE,
       Service.WEBFLOW,
       pagedReaderOf([FRAMER_TAGS[0]], [FRAMER_TAGS[1]]),
@@ -291,9 +303,7 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
   it('reads the referenced folder ONCE however many values are resolved', async () => {
     const readReferencedFolderRecordPages = pagedReaderOf(FRAMER_TAGS);
     const lookupTools = createLookupTools(
-      EMPTY_DB,
-      SYNC_ID,
-      WORKBOOK_ID,
+      new ClassicPostgresSyncLookupDataProvider(EMPTY_DB, SYNC_ID, WORKBOOK_ID),
       Service.AIRTABLE,
       Service.WEBFLOW,
       readReferencedFolderRecordPages,
@@ -311,9 +321,7 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
   it('keeps a separate index per key path, so one does not answer for another', async () => {
     const readReferencedFolderRecordPages = pagedReaderOf([{ id: 'r1', fields: { slug: 'a', code: 'b' } }]);
     const lookupTools = createLookupTools(
-      EMPTY_DB,
-      SYNC_ID,
-      WORKBOOK_ID,
+      new ClassicPostgresSyncLookupDataProvider(EMPTY_DB, SYNC_ID, WORKBOOK_ID),
       Service.AIRTABLE,
       Service.WEBFLOW,
       readReferencedFolderRecordPages,
@@ -331,9 +339,7 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
 
   it('surfaces an ambiguous key instead of picking a claimant', async () => {
     const lookupTools = createLookupTools(
-      EMPTY_DB,
-      SYNC_ID,
-      WORKBOOK_ID,
+      new ClassicPostgresSyncLookupDataProvider(EMPTY_DB, SYNC_ID, WORKBOOK_ID),
       Service.AIRTABLE,
       Service.WEBFLOW,
       pagedReaderOf([
@@ -349,9 +355,7 @@ describe('createLookupTools.resolveForeignKeyValueToTargetRemoteId (DEV-11085)',
 
   it('surfaces an ambiguous key when its claimants arrive in different pages', async () => {
     const lookupTools = createLookupTools(
-      EMPTY_DB,
-      SYNC_ID,
-      WORKBOOK_ID,
+      new ClassicPostgresSyncLookupDataProvider(EMPTY_DB, SYNC_ID, WORKBOOK_ID),
       Service.AIRTABLE,
       Service.WEBFLOW,
       pagedReaderOf([{ id: 'r1', fields: { slug: 'dup' } }], [{ id: 'r2', fields: { slug: 'dup' } }]),

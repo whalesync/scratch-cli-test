@@ -21,6 +21,7 @@ import {
   PullLinkedFolderFilesJobHandler,
   runWithConcurrency,
 } from '../pull-linked-folder-files.job';
+import type { PullSink } from '../pull-sink/pull-sink';
 
 type PullCallback = (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>;
 
@@ -1263,6 +1264,117 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           expect.anything(),
           expect.objectContaining({ result: 'success', filesDeleted: 1 }),
         );
+      });
+    });
+
+    // The storage seam: with a caller-supplied PullSink the job fetches from the connector and hands
+    // every write to the sink — no git, no index rows — and a sink that isn't the incremental baseline
+    // gets a full pull that leaves the folder's watermarks untouched.
+    describe('with a caller-supplied PullSink', () => {
+      const createRecordingPullSink = (persistsIncrementalPullBaseline: boolean) => {
+        const pagesWritten: ConnectorFile[][] = [];
+        const pullSink: PullSink = {
+          persistsIncrementalPullBaseline,
+          prepareStorageBeforeLoadingFolders: jest.fn().mockResolvedValue(undefined),
+          storeFolderTableSpec: jest.fn().mockResolvedValue(undefined),
+          storeFolderDefaultView: jest.fn().mockResolvedValue(undefined),
+          prepareFolderForIncomingRecordPages: jest.fn().mockResolvedValue(undefined),
+          writeConnectorRecordPage: jest.fn((_folder, connectorRecordsInPage: ConnectorFile[]) => {
+            pagesWritten.push(connectorRecordsInPage);
+            return Promise.resolve();
+          }),
+          releaseRecordPageWritingStateForFolder: jest.fn(),
+          finishFolderAfterAllRecordPagesWritten: jest.fn().mockResolvedValue({
+            created: 0,
+            updated: 0,
+            deleted: 0,
+            createdPaths: [],
+            updatedPaths: [],
+            deletedPaths: [],
+          }),
+          cleanUpTemporaryStorageAfterPullAttempt: jest.fn().mockResolvedValue(undefined),
+          finalizeStorageAfterAllFoldersFinished: jest.fn().mockResolvedValue(undefined),
+        };
+        return { pullSink, pagesWritten };
+      };
+
+      const createHandlerWritingTo = (pullSink: PullSink) =>
+        new PullLinkedFolderFilesJobHandler(
+          mockPrisma,
+          mockConnectorService,
+          mockConnectorAccountService,
+          mockWorkbookEventService,
+          mockScratchGitService,
+          mockFileIndexService,
+          mockFileReferenceService,
+          mockAssetExtractorService,
+          mockAssetIndexService,
+          mockPostHogService,
+          mockExperimentsService,
+          () => pullSink,
+        );
+
+      it('writes the schema and every page through the sink and never touches git or the file index', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        mockConnector.buildDefaultView.mockReturnValue({ columns: [] });
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({ files: [{ id: 'rec1', slug: 'first', title: 'First' }], connectorProgress: {} });
+          await callback({ files: [{ id: 'rec2', slug: 'second', title: 'Second' }], connectorProgress: {} });
+          return {};
+        });
+        const { pullSink, pagesWritten } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        expect(pullSink.prepareStorageBeforeLoadingFolders).toHaveBeenCalledTimes(1);
+        const tableSpecLocation = { connectorAccountId: 'coa_123', folderPath: '/Products' };
+        expect(pullSink.storeFolderTableSpec).toHaveBeenCalledWith(
+          tableSpecLocation,
+          expect.objectContaining({ idPath: 'id' }),
+        );
+        expect(pullSink.storeFolderDefaultView).toHaveBeenCalledWith(tableSpecLocation, { columns: [] });
+        expect(pagesWritten).toEqual([
+          [{ id: 'rec1', slug: 'first', title: 'First' }],
+          [{ id: 'rec2', slug: 'second', title: 'Second' }],
+        ]);
+        expect(pullSink.releaseRecordPageWritingStateForFolder).toHaveBeenCalledTimes(1);
+        expect(pullSink.finishFolderAfterAllRecordPagesWritten).toHaveBeenCalledTimes(1);
+        expect(pullSink.cleanUpTemporaryStorageAfterPullAttempt).toHaveBeenCalledTimes(1);
+        expect(pullSink.finalizeStorageAfterAllFoldersFinished).toHaveBeenCalledTimes(1);
+        for (const gitMethod of Object.values(mockScratchGitService)) {
+          expect(gitMethod).not.toHaveBeenCalled();
+        }
+        expect(mockFileIndexService.readRecordIdToFilenameMapForFolder).not.toHaveBeenCalled();
+        expect(mockFileIndexService.upsertBatch).not.toHaveBeenCalled();
+      });
+
+      it('pulls fully and leaves the watermarks untouched when the sink is not the incremental baseline', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, {
+          lastFullPullAt: new Date('2026-04-15T00:00:00.000Z'),
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockResolvedValue({ newWatermark: new Date('2026-05-14T12:00:00.000Z') });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        const connectorCalls = mockConnector.pullRecordFiles.mock.calls as Array<unknown[]>;
+        expect((connectorCalls[0][3] as { pullMode?: string }).pullMode).toBe('full');
+        expect(pullSink.finishFolderAfterAllRecordPagesWritten).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ mayRemoveRecordsAbsentFromThisPull: true }),
+        );
+        const folderUpdates = (mockPrisma.dataFolder.update as jest.Mock).mock.calls as Array<
+          [{ data: Record<string, unknown> }]
+        >;
+        expect(folderUpdates.length).toBeGreaterThan(0);
+        for (const [update] of folderUpdates) {
+          expect(update.data).not.toHaveProperty('lastFullPullAt');
+          expect(update.data).not.toHaveProperty('lastIncrementalPullAt');
+          expect(update.data).not.toHaveProperty('incrementalCursor');
+        }
       });
     });
   });

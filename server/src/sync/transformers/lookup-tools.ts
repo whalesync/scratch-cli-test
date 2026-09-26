@@ -1,12 +1,5 @@
-import {
-  createAssetId,
-  createScratchPendingPublishId,
-  DataFolderId,
-  Service,
-  SyncId,
-  WorkbookId,
-} from '@spinner/shared-types';
-import { DbService } from 'src/db/db.service';
+import { DataFolderId, Service } from '@spinner/shared-types';
+import type { AssetContentHashIndexForFolderPair, SyncLookupDataProvider } from 'src/sync/storage/sync-storage-ports';
 import { readFieldValueAtPath } from 'src/utils/field-path';
 import { sanitizeConnectionFolderName } from 'src/workbook/connector-folder-path.util';
 import {
@@ -106,9 +99,8 @@ export function createNullLookupTools(): LookupTools {
 /**
  * Factory function to create LookupTools for a specific sync context.
  *
- * @param db - Database service
- * @param syncId - The sync ID for looking up mappings
- * @param workbookId - The workbook ID for asset lookups
+ * @param lookupDataProvider - The sync's lookup data (remote-id mappings, the `lookup_field`
+ *   record cache, assets); `ClassicPostgresSyncLookupDataProvider` reads it from Postgres
  * @param sourceService - The Service of the source connector
  * @param destinationService - The Service of the destination connector
  * @param readReferencedFolderRecordPages - Streams a referenced folder's source records page by
@@ -116,9 +108,7 @@ export function createNullLookupTools(): LookupTools {
  *   target's remote id
  */
 export function createLookupTools(
-  db: DbService,
-  syncId: SyncId,
-  workbookId: WorkbookId,
+  lookupDataProvider: SyncLookupDataProvider,
   sourceService: Service,
   destinationService: Service,
   readReferencedFolderRecordPages: ReadReferencedFolderRecordPages,
@@ -145,10 +135,7 @@ export function createLookupTools(
   const fkMappingCache = new Map<DataFolderId, ReferencedFolderDestinationMappings>();
 
   // Cache for hash matching: loaded once per (sourceFolder, destFolder) pair, then in-memory lookups
-  const hashMatchCache = new Map<
-    string,
-    { sourceHashByRemoteId: Map<string, string>; destRemoteIdsByHash: Map<string, string[]> }
-  >();
+  const hashMatchCache = new Map<string, AssetContentHashIndexForFolderPair>();
 
   // ── Non-id foreign-key target index ───────────────────────────────────────
   //
@@ -194,27 +181,9 @@ export function createLookupTools(
   async function loadDestinationMappingsForReferencedFolder(
     referencedDataFolderId: DataFolderId,
   ): Promise<ReferencedFolderDestinationMappings> {
-    const referencedTablePair = await db.client.syncTablePair.findFirst({
-      where: { syncId, sourceDataFolderId: referencedDataFolderId },
-      select: {
-        destinationDataFolderId: true,
-        // The SOURCE folder's name is the referenced TABLE's name — what an unresolved FK calls
-        // the table it could not find its target in — and its `connectorService` is the service a
-        // missing target would have been deleted FROM, which is not necessarily the service of the
-        // pair currently being synced.
-        sourceDataFolder: { select: { name: true, connectorService: true } },
-        destinationDataFolder: { select: { name: true, connectorAccount: { select: { displayName: true } } } },
-      },
-    });
+    const { referencedTablePair, remoteIdMappingRows: rows } =
+      await lookupDataProvider.loadReferencedFolderRemoteIdMappingRows(referencedDataFolderId);
     const destinationConnectionDisplayName = referencedTablePair?.destinationDataFolder.connectorAccount?.displayName;
-
-    const rows = await db.client.syncRemoteIdMapping.findMany({
-      where: {
-        syncId,
-        dataFolderId: referencedDataFolderId,
-      },
-      select: { sourceRemoteId: true, destinationFilePath: true, destinationRemoteId: true },
-    });
 
     // Only the rows BOTH shapes below drop — see `sourceRemoteIdsSyncedWithoutDestination`.
     const sourceRemoteIdsSyncedWithoutDestination = new Set(
@@ -337,20 +306,16 @@ export function createLookupTools(
       fieldPath: string,
     ): Promise<unknown> {
       // First, try to find the FK record in the cache
-      const cachedRecord = await db.client.syncForeignKeyRecord.findFirst({
-        where: {
-          syncId,
-          dataFolderId: referencedDataFolderId,
-          foreignKeyValue: sourceFkValue,
-        },
-        select: { recordData: true },
-      });
+      const cachedRecordData = await lookupDataProvider.findCachedForeignKeyRecordFields(
+        referencedDataFolderId,
+        sourceFkValue,
+      );
 
-      if (cachedRecord?.recordData) {
+      if (cachedRecordData) {
         // Extract the field using the dot-path.
         // Normalize undefined (missing path) to null so callers can distinguish
         // "record not found" (undefined) from "field is null/missing" (null).
-        const value: unknown = readFieldValueAtPath(cachedRecord.recordData, fieldPath);
+        const value: unknown = readFieldValueAtPath(cachedRecordData, fieldPath);
         return value === undefined ? null : value;
       }
 
@@ -364,63 +329,13 @@ export function createLookupTools(
       sourceDataFolderId: DataFolderId,
       destinationDataFolderId: DataFolderId,
     ): Promise<AssetMappingResult> {
-      // 1. Look up the source asset by (workbookId, sourceDataFolderId, sourceService, remoteAssetId).
-      //    Scoped by dataFolderId (not just service) to correctly handle multiple connections
-      //    of the same service type. sourceService is kept as a secondary safety filter.
-      const sourceAsset = await db.client.asset.findFirst({
-        where: {
-          workbookId,
-          dataFolderId: sourceDataFolderId,
-          service: sourceService,
-          remoteAssetId: sourceAssetRemoteId,
-        },
+      return lookupDataProvider.getOrCreateDestinationAssetMapping({
+        sourceAssetRemoteId,
+        sourceDataFolderId,
+        sourceService,
+        destinationDataFolderId,
+        destinationService,
       });
-
-      if (!sourceAsset) {
-        throw new Error('ASSET_NOT_FOUND');
-      }
-
-      if (!sourceAsset.rehostedUrl) {
-        throw new Error('ASSET_NOT_REHOSTED');
-      }
-
-      // 2. Upsert destination asset — atomic to avoid race conditions when
-      //    concurrent calls process the same source asset.
-      //    Uses the @@unique([sourceAssetId, dataFolderId]) constraint on Asset.
-      const tempId = createScratchPendingPublishId();
-
-      const destAsset = await db.client.asset.upsert({
-        where: {
-          sourceAssetId_dataFolderId: {
-            sourceAssetId: sourceAsset.id,
-            dataFolderId: destinationDataFolderId,
-          },
-        },
-        update: {}, // no-op if already exists
-        create: {
-          id: createAssetId(),
-          workbookId,
-          service: destinationService,
-          dataFolderId: destinationDataFolderId,
-          remoteAssetId: tempId,
-          sourceAssetId: sourceAsset.id,
-          filename: sourceAsset.filename,
-          mimeType: sourceAsset.mimeType,
-          size: sourceAsset.size,
-          width: sourceAsset.width,
-          height: sourceAsset.height,
-          altText: sourceAsset.altText,
-          mediaType: sourceAsset.mediaType,
-          rehostedUrl: sourceAsset.rehostedUrl,
-          rehostedAt: sourceAsset.rehostedAt,
-        },
-        select: { id: true, remoteAssetId: true },
-      });
-
-      // If the returned remoteAssetId matches our tempId, the create path was taken;
-      // otherwise the existing record was returned (update no-op path).
-      const isNew = destAsset.remoteAssetId === tempId;
-      return { destinationAssetId: destAsset.id, destinationAssetRemoteId: destAsset.remoteAssetId, isNew };
     },
 
     async matchDestinationAssetByHash(
@@ -433,36 +348,12 @@ export function createLookupTools(
       // Lazy-load the cache for this folder pair
       let cache = hashMatchCache.get(cacheKey);
       if (!cache) {
-        // Load all source assets with hashes in one query
-        const sourceAssets = await db.client.asset.findMany({
-          where: { workbookId, dataFolderId: sourceDataFolderId, service: sourceService, contentHash: { not: null } },
-          select: { remoteAssetId: true, contentHash: true },
+        cache = await lookupDataProvider.loadAssetContentHashIndexForFolderPair({
+          sourceDataFolderId,
+          sourceService,
+          destinationDataFolderId,
+          destinationService,
         });
-        const sourceHashByRemoteId = new Map<string, string>();
-        for (const a of sourceAssets) {
-          if (a.contentHash) sourceHashByRemoteId.set(a.remoteAssetId, a.contentHash);
-        }
-
-        // Load all destination assets with hashes in one query
-        const destAssets = await db.client.asset.findMany({
-          where: {
-            workbookId,
-            dataFolderId: destinationDataFolderId,
-            service: destinationService,
-            contentHash: { not: null },
-          },
-          select: { remoteAssetId: true, contentHash: true },
-        });
-        const destRemoteIdsByHash = new Map<string, string[]>();
-        for (const a of destAssets) {
-          if (a.contentHash) {
-            const existing = destRemoteIdsByHash.get(a.contentHash) ?? [];
-            existing.push(a.remoteAssetId);
-            destRemoteIdsByHash.set(a.contentHash, existing);
-          }
-        }
-
-        cache = { sourceHashByRemoteId, destRemoteIdsByHash };
         hashMatchCache.set(cacheKey, cache);
       }
 

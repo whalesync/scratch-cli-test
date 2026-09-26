@@ -10,12 +10,15 @@ import { Connector } from '../../remote-service/connectors/connector';
 import { ConnectorsService } from '../../remote-service/connectors/connectors.service';
 import { PartialBatchCreateError } from '../../remote-service/connectors/error';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
+import type { TableSpecStore } from '../../workbook/table-spec-store/table-spec-store';
 import { FileIndexService } from '../file-index.service';
 import { FileReferenceService } from '../file-reference.service';
 import { PublishPlanRunService } from '../publish-plan-run.service';
 import { RecreatedIdMapService } from '../recreated-id-map.service';
 import { RefCleanerService } from '../ref-cleaner.service';
 import { RefResolverService } from '../ref-resolver.service';
+import { ClassicPublishPlanRunStorage } from '../run-storage/classic-publish-plan-run-storage';
+import type { PublishPlanRunStorage, PublishPseudoRefResolver } from '../run-storage/publish-plan-run-storage-ports';
 import { SchemaHelperService } from '../schema-helper.service';
 
 const WORKBOOK_ID = 'wkb_test';
@@ -954,6 +957,54 @@ describe('PublishPlanRunService', () => {
         const [, files] = jest.mocked(connector.updateRecords).mock.calls[0];
         expect(files[0]).toMatchObject({ id: { record_id: 'uuid-from-index' } });
       });
+    });
+  });
+
+  // The storage seam: a caller-supplied PublishPlanRunStorage's table spec store and pseudo-ref
+  // resolver are what the run uses — not the git copy or the FileIndex-backed RefResolverService.
+  describe('with a caller-supplied PublishPlanRunStorage', () => {
+    it('reads table specs and resolves pseudo-refs through the supplied storage', async () => {
+      setupEditPhaseEntries([
+        {
+          id: 'op_1',
+          filePath: 'articles/a1.json',
+          content: { id: 'rec_1', title: 'New' },
+          changedFields: { title: 'New' },
+          remoteRecordId: 'rec_1',
+        },
+      ]);
+      const classicStorage = new ClassicPublishPlanRunStorage(
+        db as unknown as DbService,
+        scratchGitService,
+        fileIndexService,
+        fileReferenceService,
+        refResolverService,
+      );
+      const suppliedTableSpecStore: TableSpecStore = { readTableSpec: jest.fn() };
+      const suppliedPseudoRefResolver: PublishPseudoRefResolver = {
+        findUnresolvablePseudoRefs: jest.fn().mockResolvedValue(new Set<string>()),
+        resolveBatchPseudoRefs: jest.fn((_workbookId: string, contents: Record<string, unknown>[]) =>
+          Promise.resolve(contents),
+        ),
+      };
+      const suppliedStorage: PublishPlanRunStorage = {
+        openPlanStore: (planId) => classicStorage.openPlanStore(planId),
+        openRecordWriteback: (plan, planStore) => classicStorage.openRecordWriteback(plan, planStore),
+        tableSpecStore: suppliedTableSpecStore,
+        pseudoRefResolver: suppliedPseudoRefResolver,
+      };
+
+      await service.runPipeline(PLAN_ID, undefined, undefined, undefined, undefined, undefined, suppliedStorage);
+
+      expect(connector.updateRecords).toHaveBeenCalledTimes(1);
+      expect(schemaService.getTableSpecById).toHaveBeenCalledWith(
+        DATA_FOLDER_ID,
+        expect.any(Map),
+        suppliedTableSpecStore,
+      );
+      expect(suppliedPseudoRefResolver.resolveBatchPseudoRefs).toHaveBeenCalled();
+      expect(refResolverService.resolveBatchPseudoRefs).not.toHaveBeenCalled();
+      expect(refResolverService.findUnresolvablePseudoRefs).not.toHaveBeenCalled();
     });
   });
 

@@ -8,40 +8,38 @@ import { ConnectorsService } from '../remote-service/connectors/connectors.servi
 import { BaseJsonTableSpec, dotPath } from '../remote-service/connectors/types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
+import { GitTableSpecStore } from '../workbook/table-spec-store/git-table-spec-store';
+import { readTableSpecOrNullLoggingFailure, type TableSpecStore } from '../workbook/table-spec-store/table-spec-store';
 
 @Injectable()
 export class SchemaHelperService {
+  /** The default table spec store: the spec file in the connection's git repo. */
+  private readonly gitTableSpecStore: TableSpecStore;
+
   constructor(
     private readonly db: DbService,
     private readonly scratchGitService: ScratchGitService,
     private readonly connectorsService: ConnectorsService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
-  ) {}
+  ) {
+    this.gitTableSpecStore = new GitTableSpecStore(scratchGitService);
+  }
 
   /**
-   * Reads schema from git.
+   * Reads a folder's table spec from `tableSpecStore` (the git copy unless the caller supplies its own
+   * store); null when there is none or it can't be read.
    */
-  private async readSchemaFromGit(
+  private readTableSpecOrNull(
     workbookId: string,
     connectorAccountId: string | null,
     folderPath: string | null,
+    tableSpecStore: TableSpecStore,
   ): Promise<BaseJsonTableSpec | null> {
-    if (folderPath) {
-      try {
-        const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId ?? undefined);
-        const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
-        if (gitSchema) return gitSchema;
-      } catch (error) {
-        WSLogger.error({
-          source: 'SchemaHelperService.readSchemaFromGit',
-          message: 'Failed to read schema from git',
-          error,
-          workbookId,
-          folderPath,
-        });
-      }
-    }
-    return null;
+    return readTableSpecOrNullLoggingFailure(
+      tableSpecStore,
+      { connectorAccountId, folderPath },
+      { source: 'SchemaHelperService.readTableSpecOrNull', workbookId },
+    );
   }
 
   /**
@@ -52,6 +50,7 @@ export class SchemaHelperService {
     workbookId: string,
     folderPath: string,
     cache?: Map<string, BaseJsonTableSpec | null>,
+    tableSpecStore: TableSpecStore = this.gitTableSpecStore,
   ): Promise<BaseJsonTableSpec | null> {
     if (cache && cache.has(folderPath)) {
       return cache.get(folderPath) ?? null;
@@ -66,10 +65,11 @@ export class SchemaHelperService {
         select: { connectorAccountId: true, path: true },
       });
 
-      const spec = await this.readSchemaFromGit(
+      const spec = await this.readTableSpecOrNull(
         workbookId,
         dataFolder?.connectorAccountId ?? null,
         dataFolder?.path ?? null,
+        tableSpecStore,
       );
       if (cache) {
         cache.set(folderPath, spec);
@@ -138,7 +138,12 @@ export class SchemaHelperService {
         return null;
       }
 
-      const spec = await this.readSchemaFromGit(workbookId, dataFolder.connectorAccountId, dataFolder.path);
+      const spec = await this.readTableSpecOrNull(
+        workbookId,
+        dataFolder.connectorAccountId,
+        dataFolder.path,
+        this.gitTableSpecStore,
+      );
       if (!spec) {
         if (cache) {
           cache.set(cacheKey, null);
@@ -168,6 +173,7 @@ export class SchemaHelperService {
   async getTableSpecById(
     dataFolderId: string,
     cache?: Map<string, BaseJsonTableSpec | null>,
+    tableSpecStore: TableSpecStore = this.gitTableSpecStore,
   ): Promise<BaseJsonTableSpec | null> {
     if (cache && cache.has(dataFolderId)) {
       return cache.get(dataFolderId) ?? null;
@@ -179,10 +185,11 @@ export class SchemaHelperService {
         select: { connectorAccountId: true, path: true, workbookId: true },
       });
 
-      const spec = await this.readSchemaFromGit(
+      const spec = await this.readTableSpecOrNull(
         dataFolder?.workbookId ?? '',
         dataFolder?.connectorAccountId ?? null,
         dataFolder?.path ?? null,
+        tableSpecStore,
       );
       if (cache) {
         cache.set(dataFolderId, spec);
