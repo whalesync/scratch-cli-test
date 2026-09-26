@@ -9,6 +9,7 @@ include:
 environment tests for test env post-deploy:
   stage: post-deploy environment tests
   interruptible: false
+  tags: !reference [.runner_tags, high_memory]
   resource_group: test
   services:
     - name: postgres:16
@@ -84,6 +85,7 @@ environment tests for test env post-deploy:
 environment tests for test env pre-deploy:
   stage: pre-deploy environment tests
   interruptible: false
+  tags: !reference [.runner_tags, high_memory]
   resource_group: test
   variables:
     CLERK_SECRET_KEY: "${CLERK_SECRET_KEY_DEVELOPMENT}"

@@ -150,6 +150,7 @@ Bootstrap test desktop release:
 # -----------------------------------------------------------------------------
 .build_cli_for_desktop:
   stage: release desktop app
+  tags: !reference [.runner_tags, high_memory]
   image: unawareguitar/hasty-dolphin:latest
   variables:
     GIT_DEPTH: 0
@@ -235,6 +236,13 @@ Build CLI for test desktop release:
 # -----------------------------------------------------------------------------
 .package_desktop:
   stage: release desktop app
+  # Overridden by all three concrete variants below — .package_desktop_linux and
+  # .package_desktop_windows pin `amd64`, and .package_desktop_mac picks up
+  # `team-macos-release` from .local-macos-runner-defaults. Those pins are about
+  # toolchain and signing, not memory, and no `team-macos-release` runner carries
+  # `high-memory`, so they must win (`extends` replaces arrays; last entry wins).
+  # This line is the floor for any future variant that doesn't pin a runner.
+  tags: !reference [.runner_tags, high_memory]
   before_script:
     - cd scratch-desktop
     - chmod +x scripts/package.sh

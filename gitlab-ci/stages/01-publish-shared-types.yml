@@ -12,6 +12,7 @@ include:
 publish shared-types:
   stage: build and test
   interruptible: false
+  tags: !reference [.runner_tags, high_memory]
   script:
     - cd packages/shared-types
     - !reference [.use_nvm, script]

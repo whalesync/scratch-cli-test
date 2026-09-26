@@ -5,6 +5,7 @@
 # not the native cargo cache.
 .release_rust_cli_zigbuild:
   stage: release CLI app
+  tags: !reference [.runner_tags, high_memory]
   image: unawareguitar/hasty-dolphin:latest
   variables:
     GIT_DEPTH: 0

@@ -125,6 +125,34 @@ include:
     - "*"
     - docs/**/*
 
+# =============================================================================
+# Runner tags
+# =============================================================================
+#
+# `high-memory` routes a job to a runner with enough RAM to compile, test, lint
+# or build a Docker image. Today that tag is carried by the GCP runner and the
+# "Mac fleet" macs; both also accept untagged jobs. So everything light — deploy
+# jobs, image push-only jobs, migrations, release bookkeeping, Slack
+# notifications, the dummy job — stays untagged and can land on any runner,
+# including a small 8 GB mac, while the heavy work is kept off it.
+#
+# Prefer tagging the shared *template* over each concrete job, so every variant
+# inherits it. Two things to keep in mind when you do:
+#
+#   - `extends` REPLACES arrays rather than merging them, and the last entry in
+#     the list wins. That is load-bearing here: the `local *` jobs in
+#     gitlab-ci/local-runners.yml list .local-runner-defaults *after* the
+#     template, so their `tags: ["local-$GITLAB_USER_LOGIN"]` overrides this and
+#     they keep running on the MR author's own runner.
+#   - Do NOT add this next to an existing runner tag. Tags are an AND, not an
+#     OR. The desktop packaging jobs pin `amd64` / `team-macos-release` for
+#     reasons unrelated to memory (electron-builder's bundled fpm is x86_64-only;
+#     mac signing needs a real mac), and no `team-macos-release` runner carries
+#     `high-memory` — adding it there would leave the job pending forever.
+.runner_tags:
+  high_memory:
+    - high-memory
+
 # Shell executor for macOS-native builds (e.g. .dmg packaging).
 # Runs directly on the host — no Docker container. Requires Node 22, Yarn,
 # and Git installed on the machine. See docs/local-gitlab-runner.md.

@@ -23,6 +23,7 @@ include:
 
 .cli-integration-tests:
   stage: build and test
+  tags: !reference [.runner_tags, high_memory]
   image: rust:slim-bookworm
   interruptible: true
   variables:

@@ -24,6 +24,7 @@ include:
 
 .smoke-tests:
   stage: build and test
+  tags: !reference [.runner_tags, high_memory]
   extends:
     - .docker_builder_image
   cache:

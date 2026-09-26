@@ -15,6 +15,7 @@ include:
 .build-and-test-shared-types:
   stage: build and test
   interruptible: true
+  tags: !reference [.runner_tags, high_memory]
   script:
     - cd packages/shared-types
     - !reference [.use_nvm, script]
@@ -38,6 +39,7 @@ build and test shared-types:
 .build-and-test-client:
   stage: build and test
   interruptible: true
+  tags: !reference [.runner_tags, high_memory]
   script:
     - !reference [.build_shared_types, script]
     - cd client
@@ -63,6 +65,7 @@ build and test client:
 
 .build-client-docker-image-for-test:
   stage: build and test
+  tags: !reference [.runner_tags, high_memory]
   variables:
     # Everything we deploy runs linux/amd64 — Cloud Run (client, server) and the
     # scratch-git GCE VM. `docker build` with no --platform targets the *host*
@@ -118,6 +121,7 @@ build client docker image for test:
 
 build client docker image for production:
   stage: build and test
+  tags: !reference [.runner_tags, high_memory]
   variables:
     # See the note on .build-client-docker-image-for-test.
     DOCKER_BUILD_PLATFORM_ARGS: "--platform linux/amd64"
@@ -165,6 +169,7 @@ build client docker image for production:
 .build-and-test-server:
   stage: build and test
   interruptible: true
+  tags: !reference [.runner_tags, high_memory]
   script:
     - !reference [.build_shared_types, script]
     - cd server
@@ -197,6 +202,7 @@ build and test server:
 .integration-test-server:
   stage: build and test
   interruptible: true
+  tags: !reference [.runner_tags, high_memory]
   services:
     - name: postgres:16
       alias: postgres
@@ -248,6 +254,7 @@ sync_v1_compat:
 
 .build-server-docker-image:
   stage: build and test
+  tags: !reference [.runner_tags, high_memory]
   variables:
     # See the note on .build-client-docker-image-for-test.
     DOCKER_BUILD_PLATFORM_ARGS: "--platform linux/amd64"
@@ -293,6 +300,7 @@ build server docker image:
   # cross-compiled on anything else (see SCRATCH_GIT_RELEASE_FOR_AMD64 in the
   # script below). `local build and test scratch-git` opts out and stays fully
   # native: its binary only feeds a native-arch image that is never pushed.
+  tags: !reference [.runner_tags, high_memory]
   image: rust:slim-bookworm
   interruptible: true
   variables:
@@ -344,6 +352,7 @@ build and test scratch-git:
 # miss. Writes to both keys so a cold cache warms whichever job runs next.
 fill fallback cache for scratch-git-2:
   stage: cleanup
+  tags: !reference [.runner_tags, high_memory]
   image: rust:slim-bookworm
   interruptible: true
   allow_failure: true
@@ -365,6 +374,7 @@ fill fallback cache for scratch-git-2:
 
 fill fallback cross-compile cache for scratch-git-2:
   stage: cleanup
+  tags: !reference [.runner_tags, high_memory]
   image: unawareguitar/hasty-dolphin:latest
   interruptible: true
   allow_failure: true
@@ -391,6 +401,7 @@ fill fallback cross-compile cache for scratch-git-2:
 
 .build-scratch-git-docker-image:
   stage: build and test
+  tags: !reference [.runner_tags, high_memory]
   variables:
     # See the note on .build-client-docker-image-for-test.
     DOCKER_BUILD_PLATFORM_ARGS: "--platform linux/amd64"
@@ -459,6 +470,7 @@ build scratch-git docker image:
 .build-and-test-scratch-desktop:
   stage: build and test
   interruptible: true
+  tags: !reference [.runner_tags, high_memory]
   script:
     - !reference [.build_shared_types, script]
     - cd scratch-desktop
