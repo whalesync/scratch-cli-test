@@ -1,0 +1,21 @@
+<mjml>
+  <mj-head>
+    <mj-preview>Your trial has ended and you’re on the Free plan. Re-subscribe to restore your features.</mj-preview>
+    <mj-include path="./partials/attributes.mjml" />
+  </mj-head>
+  <mj-body background-color="#FEFB8A" width="600px">
+    <mj-include path="./partials/header.mjml" />
+    <mj-section>
+      <mj-column>
+        <mj-text align="center" font-size="18px" font-weight="bold">Your account has moved to the Free plan</mj-text>
+        <mj-text>
+          <p>Hi {{userName}},</p>
+          <p>Your Scratch trial has ended, so your account has been moved to the <strong>Free plan</strong>. That means you’ve lost access to the Pro features included in your trial.</p>
+          <p>Your workspaces and data are still here. To turn everything back on and pick up right where you left off, re-subscribe — your features come back immediately.</p>
+          <p>– The Scratch team</p>
+        </mj-text>
+        <mj-button href="{{resubscribeUrl}}">Re-subscribe</mj-button>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

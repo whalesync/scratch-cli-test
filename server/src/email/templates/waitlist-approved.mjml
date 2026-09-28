@@ -1,0 +1,24 @@
+<mjml>
+  <mj-head>
+    <mj-preview>Your waitlist request to use Scratch has been approved</mj-preview>
+    <mj-include path="./partials/attributes.mjml" />
+  </mj-head>
+  <mj-body background-color="#FEFB8A" width="600px">
+    <mj-include path="./partials/header.mjml" />
+    <mj-section>
+      <mj-column>
+        <mj-text align="center" font-size="18px" font-weight="bold">Welcome to Scratch!</mj-text>
+        <mj-text>
+          <p>You're in — thanks for being patient while we got things ready for you.</p>
+          <p>A few things to get you started:</p>
+          <p><strong>1.</strong> <a href="https://calendly.com/d/cx4x-772-kpg/welcome-to-scratch" style="color: #1188E6; text-decoration: none;"><strong>Grab a time with us</strong></a> <strong>for a tour.</strong> Totally optional, but we'd love to hear how you're planning to use it and point you in the right direction.</p>
+          <p><strong>2.</strong> <a href="{{loginUrl}}/downloads" style="color: #1188E6; text-decoration: none;"><strong>Download the app</strong></a> <strong>and connect your data.</strong></p>
+          <p><strong>3. Tell us what's working (and what isn't).</strong> Scratch is in early beta and we're building fast. Email us anytime <a href="mailto:curtis@whalesync.com?subject=Re%3A%20Welcome%20to%20Scratch!" style="color: #1188E6; text-decoration: none;">curtis@whalesync.com</a> • <a href="mailto:ryder@whalesync.com?subject=Re%3A%20Welcome%20to%20Scratch!" style="color: #1188E6; text-decoration: none;">ryder@whalesync.com</a></p>
+          <p>Thanks for trying it.</p>
+          <p>– The Scratch team</p>
+        </mj-text>
+        <mj-button href="{{loginUrl}}/downloads">Download Scratch</mj-button>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

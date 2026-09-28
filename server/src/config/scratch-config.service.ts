@@ -250,12 +250,8 @@ export class ScratchConfigService {
     return token ? token : undefined;
   }
 
-  getSendGridApiKey(): string | undefined {
-    return this.getOptionalEnvVariable('SENDGRID_API_KEY');
-  }
-
-  getSendGridFromEmail(): string {
-    return this.getOptionalEnvVariable<string>('SENDGRID_FROM_EMAIL') ?? 'support@scratch.md';
+  getResendApiKey(): string | undefined {
+    return this.getOptionalEnvVariable('RESEND_API_KEY');
   }
 
   getOpenRouterApiKeyOptional(): string | undefined {

@@ -1,0 +1,18 @@
+<mjml>
+  <mj-head>
+    <mj-preview>{{acceptedByName}} accepted your invitation to collaborate in Scratch</mj-preview>
+    <mj-include path="./partials/attributes.mjml" />
+  </mj-head>
+  <mj-body background-color="#FEFB8A" width="600px">
+    <mj-include path="./partials/header.mjml" />
+    <mj-section>
+      <mj-column>
+        <mj-text align="center" font-size="18px" font-weight="bold">Invite Accepted</mj-text>
+        <mj-text align="center">
+          <p>Your invitation to collaborate in Scratch was accepted by <strong>{{acceptedByName}}</strong>. They now have full access to your workspace <strong>{{workspaceName}}</strong>.</p>
+        </mj-text>
+        <mj-button href="{{workspaceUrl}}">Open Scratch</mj-button>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

@@ -1,12 +1,12 @@
 /**
- * SendGrid dynamic template IDs.
+ * Scratch's email templates. Each value is the name of the template's MJML file in `server/src/email/templates/`.
  */
 export enum EmailTemplate {
-  WorkspaceInvite = 'd-d62ed43be3b64fb6b30d69cd3a1f3495',
-  InviteAccepted = 'd-90e62f0837604ce782d130497c866d31',
-  WaitlistApproved = 'd-58ff7ed006e3405ab0e71c0180fda91c',
-  TrialEndingSoon = 'd-7e18057de95d4cb5bdf10bff8e0cd322',
-  TrialExpired = 'd-527f659a9d824b2b940f2df3d3c87345',
+  WorkspaceInvite = 'workspace-invite',
+  InviteAccepted = 'invite-accepted',
+  WaitlistApproved = 'waitlist-approved',
+  TrialEndingSoon = 'trial-ending-soon',
+  TrialExpired = 'trial-expired',
 }
 
 /** The fields expected for each template. Force the callers to provide it. */

@@ -69,7 +69,12 @@ import { DbJobStatus, dbJobToJobEntity } from '../job/entities/job.entity';
 import { JobService } from '../job/job.service';
 import { UpdateSettingsDto } from '../users/dto/update-settings.dto';
 import { DevToolsService, WorkbookExportJson } from './dev-tools.service';
-import { ChangeUserOrganizationDto, StartUserTrialDto, UpdateDevSubscriptionDto } from './dto/dev-tools.dto';
+import {
+  ChangeUserOrganizationDto,
+  SendTestEmailDto,
+  StartUserTrialDto,
+  UpdateDevSubscriptionDto,
+} from './dto/dev-tools.dto';
 import { UserDetail } from './entities/user-detail.entity';
 
 interface SyncDataFoldersRequestBody {
@@ -983,23 +988,12 @@ export class DevToolsController {
 
   /* Email testing */
   @Post('email/send-test')
-  async sendTestEmail(
-    @Body() body: { templateId: string; to: string; dynamicTemplateData: Record<string, string> },
-    @Req() req: RequestWithUser,
-  ): Promise<{ success: true }> {
+  async sendTestEmail(@Body() dto: SendTestEmailDto, @Req() req: RequestWithUser): Promise<{ success: true }> {
     if (!hasAdminToolsPermission(req.user)) {
       throw new UnauthorizedException('Only admins can send test emails');
     }
 
-    if (!body.templateId || !body.to) {
-      throw new BadRequestException('templateId and to are required');
-    }
-
-    await this.emailService.sendTestEmail({
-      to: body.to,
-      templateId: body.templateId,
-      dynamicTemplateData: body.dynamicTemplateData ?? {},
-    });
+    await this.emailService.sendTestEmail({ to: dto.to, template: dto.template, templateData: dto.templateData });
     return { success: true };
   }
 }

@@ -12,18 +12,19 @@ import { useCallback, useState } from 'react';
 export default function EmailTestingDevPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
   const [recipientEmail, setRecipientEmail] = useState('');
-  const [dynamicData, setDynamicData] = useState<Record<string, string>>({});
+  const [templateData, setTemplateData] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
 
   const fields = selectedTemplate ? EMAIL_TEMPLATE_PAYLOADS[selectedTemplate] : [];
 
+  // The server requires every field the template uses, so start each one blank rather than missing.
   const handleTemplateChange = useCallback((value: EmailTemplate | null) => {
     setSelectedTemplate(value);
-    setDynamicData({});
+    setTemplateData(value ? Object.fromEntries(EMAIL_TEMPLATE_PAYLOADS[value].map((field) => [field, ''])) : {});
   }, []);
 
   const handleFieldChange = useCallback((key: string, value: string) => {
-    setDynamicData((prev) => ({ ...prev, [key]: value }));
+    setTemplateData((prev) => ({ ...prev, [key]: value }));
   }, []);
 
   const handleSend = useCallback(async () => {
@@ -31,7 +32,7 @@ export default function EmailTestingDevPage() {
 
     setSending(true);
     try {
-      const res = await scratchApiClient.devTools.sendTestEmail(selectedTemplate, recipientEmail, dynamicData);
+      const res = await scratchApiClient.devTools.sendTestEmail(selectedTemplate, recipientEmail, templateData);
       if (res.success) {
         notifications.show({ title: 'Email sent', message: `Test email sent to ${recipientEmail}`, color: 'green' });
       } else {
@@ -42,7 +43,7 @@ export default function EmailTestingDevPage() {
     } finally {
       setSending(false);
     }
-  }, [selectedTemplate, recipientEmail, dynamicData]);
+  }, [selectedTemplate, recipientEmail, templateData]);
 
   return (
     <MainContent>
@@ -69,7 +70,7 @@ export default function EmailTestingDevPage() {
             <TextInput
               key={field}
               label={field}
-              value={dynamicData[field] ?? ''}
+              value={templateData[field] ?? ''}
               onChange={(e) => handleFieldChange(field, e.currentTarget.value)}
             />
           ))}

@@ -1,0 +1,21 @@
+<mjml>
+  <mj-head>
+    <mj-preview>Your Scratch trial ends in {{daysRemaining}} days. Add a payment method to keep everything running.</mj-preview>
+    <mj-include path="./partials/attributes.mjml" />
+  </mj-head>
+  <mj-body background-color="#FEFB8A" width="600px">
+    <mj-include path="./partials/header.mjml" />
+    <mj-section>
+      <mj-column>
+        <mj-text align="center" font-size="18px" font-weight="bold">Your trial is almost up</mj-text>
+        <mj-text>
+          <p>Hi {{userName}},</p>
+          <p>Your Scratch trial ends in <strong>{{daysRemaining}} days</strong>. When it does, your account will move to the Free plan and you’ll lose access to <strong>all the features included in your current plan</strong> — your connections will stop syncing and the Pro tools you’ve been using will no longer be available.</p>
+          <p>To keep everything running without interruption, add a payment method before your trial ends. It only takes a minute, and nothing changes for you until then.</p>
+          <p>– The Scratch team</p>
+        </mj-text>
+        <mj-button href="{{upgradeUrl}}">Manage Subscription</mj-button>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

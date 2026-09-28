@@ -1,0 +1,19 @@
+<mjml>
+  <mj-head>
+    <mj-preview>You have been invited by {{inviterName}} to share a workspace in Scratch</mj-preview>
+    <mj-include path="./partials/attributes.mjml" />
+  </mj-head>
+  <mj-body background-color="#FEFB8A" width="600px">
+    <mj-include path="./partials/header.mjml" />
+    <mj-section>
+      <mj-column>
+        <mj-text align="center" font-size="18px" font-weight="bold">Invitation to a shared workspace</mj-text>
+        <mj-text align="center">
+          <p>You have been invited by <strong>{{inviterName}}</strong> to share their Scratch workspace <strong>{{workspaceName}}</strong>.</p>
+          <p>If you do not want to accept, you can ignore this email.</p>
+        </mj-text>
+        <mj-button href="{{loginUrl}}">Open Scratch</mj-button>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

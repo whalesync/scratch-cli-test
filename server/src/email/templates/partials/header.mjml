@@ -1,0 +1,5 @@
+<mj-section padding="50px 50px 0 50px">
+  <mj-column>
+    <mj-image src="{{appUrl}}/email/scratch-logo.png" alt="Scratch" width="100px" align="center" padding="0 0 18px 0" />
+  </mj-column>
+</mj-section>

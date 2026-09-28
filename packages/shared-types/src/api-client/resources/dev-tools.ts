@@ -4,6 +4,7 @@ import type { ListCronJobsResponseDto, TriggerCronJobResponseDto } from '../../d
 import type { ChangeUserOrganizationDto } from '../../dto/dev-tools/change-user-organization.dto';
 import type { GetAllJobsResponseDto } from '../../dto/dev-tools/get-all-jobs.dto';
 import type { HardDeleteUserResponse } from '../../dto/dev-tools/hard-delete-user.dto';
+import type { SendTestEmailDto } from '../../dto/dev-tools/send-test-email.dto';
 import type { UserDetails } from '../../dto/dev-tools/user-detail.dto';
 import type { UpdateSettingsDto } from '../../dto/users/update-settings.dto';
 import type { AdminWorkbookDto } from '../../dto/workbook/admin-workbook.dto';
@@ -146,19 +147,14 @@ export function createDevToolsApi(http: Http) {
     },
 
     sendTestEmail: async <T extends EmailTemplate>(
-      templateId: T,
+      template: T,
       to: string,
-      dynamicTemplateData: EmailTemplatePayload[T],
+      templateData: EmailTemplatePayload[T],
     ): Promise<{ success: true }> => {
-      const res = await http.post<{ success: true }>(
-        '/dev-tools/email/send-test',
-        {
-          templateId,
-          to,
-          dynamicTemplateData,
-        },
-        { fallbackMessage: 'Failed to send test email' },
-      );
+      const body: SendTestEmailDto = { template, to, templateData };
+      const res = await http.post<{ success: true }>('/dev-tools/email/send-test', body, {
+        fallbackMessage: 'Failed to send test email',
+      });
       return res.data;
     },
 
