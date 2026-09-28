@@ -99,6 +99,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     initialPublicProgress: PullLinkedFolderFilesJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
     pullMode?: 'full' | 'incremental',
+    liveExportRunStoreKey?: string,
   ): Promise<Job> {
     const id = `pull-${workbookId}-${createPlainId()}`;
     const data: PullLinkedFolderFilesJobDefinition['data'] = {
@@ -110,6 +111,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: JobType.PullLinkedFolderFiles,
       pullMode,
       initialPublicProgress,
+      ...(liveExportRunStoreKey && { liveExportRunStoreKey }),
     };
     return await this.createAndEnqueue(
       {
@@ -133,6 +135,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     actor: Actor,
     initialPublicProgress: SyncDataFoldersJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
+    liveExportRunStoreKey?: string,
   ): Promise<Job> {
     const id = `sync-${workbookId}-${syncId}-${createPlainId()}`;
     const data: SyncDataFoldersJobDefinition['data'] = {
@@ -143,6 +146,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       trigger: runContext.trigger,
       type: JobType.SyncDataFolders,
       initialPublicProgress,
+      ...(liveExportRunStoreKey && { liveExportRunStoreKey }),
     };
     return await this.createAndEnqueue(
       {
@@ -204,7 +208,12 @@ export class BullEnqueuerService implements OnModuleDestroy {
    * step): clears every connection's leftover working-set edits so the run starts from the published
    * baseline. Workbook-wide — it takes no folder/connection target.
    */
-  async enqueueDiscardPendingChangesJob(workbookId: WorkbookId, actor: Actor, runContext: RunContext): Promise<Job> {
+  async enqueueDiscardPendingChangesJob(
+    workbookId: WorkbookId,
+    actor: Actor,
+    runContext: RunContext,
+    liveExportRunStoreKey?: string,
+  ): Promise<Job> {
     const id = `discard-pending-changes-${workbookId}-${createPlainId()}`;
     const data: DiscardPendingChangesJobDefinition['data'] = {
       workbookId,
@@ -212,6 +221,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       organizationId: actor.organizationId,
       trigger: runContext.trigger,
       type: JobType.DiscardPendingChanges,
+      ...(liveExportRunStoreKey && { liveExportRunStoreKey }),
     };
     return await this.createAndEnqueue(
       {
@@ -284,6 +294,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     runAfterPlan: boolean | undefined,
     folderPath: string | undefined,
     runContext: RunContext,
+    liveExportRunStoreKey?: string,
   ): Promise<Job> {
     const id = `publish-${workbookId}-${createPlainId()}`;
     const data: PublishJobDefinition['data'] = {
@@ -294,6 +305,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       ...(connectorAccountId && { connectorAccountId }),
       ...(runAfterPlan && { runAfterPlan }),
       ...(folderPath && { folderPath }),
+      ...(liveExportRunStoreKey && { liveExportRunStoreKey }),
     };
     return await this.createAndEnqueue(
       {

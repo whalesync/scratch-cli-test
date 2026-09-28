@@ -1,0 +1,16 @@
+meta {
+  name: Delete Run Store Collection
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{scratchGitApiUrl}}/api/run-store/{{runStoreKey}}/collections/staging
+  body: none
+  auth: inherit
+}
+
+docs {
+  Removes every entry of a collection. Returns { deleted } (a count); a missing collection
+  succeeds with 0.
+}

@@ -178,6 +178,7 @@ mod tests {
             gc_state: Arc::new(dashmap::DashMap::new()),
             repo_locks: Arc::new(crate::service::git::lock::RepoLocks::new()),
             maintenance: Arc::new(MaintenanceState::load(&root.join("maintenance"))),
+            run_store: Default::default(),
         }
     }
 

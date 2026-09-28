@@ -15,6 +15,7 @@ interface CapturedWorkbookCreateData {
   organizationId: string;
   name: string;
   managedBy: WorkbookManager | null;
+  settings?: Record<string, unknown>;
   version: number;
   workspacePermissions: { create: { userId: string; role: string } };
   usersWithAsDefault?: { connect: { id: string } };
@@ -117,5 +118,24 @@ describe('WorkbookProvisioningService', () => {
     });
 
     expect(capturedCreateData().managedBy).toBe(WorkbookManager.WS_EXPORT);
+  });
+
+  it('writes initial settings onto the workbook row, and none when omitted', async () => {
+    await service.createWorkbookWithConfigRepo({
+      name: 'CRM Workbook',
+      ownerUserId: OWNER_USER_ID,
+      organizationId: ORGANIZATION_ID,
+      managedByApp: WorkbookManager.WS_EXPORT,
+      settings: { live_export_engine: 'run_store' },
+    });
+    expect(capturedCreateData().settings).toEqual({ live_export_engine: 'run_store' });
+
+    workbookCreate.mockClear();
+    await service.createWorkbookWithConfigRepo({
+      name: 'My Workbook',
+      ownerUserId: OWNER_USER_ID,
+      organizationId: ORGANIZATION_ID,
+    });
+    expect(capturedCreateData()).not.toHaveProperty('settings');
   });
 });

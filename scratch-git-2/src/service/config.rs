@@ -24,6 +24,11 @@ pub struct Config {
     /// the crash-resume design: it covers pulls that legitimately run for days and leaves a window to
     /// debug a failed pull's staging dir before it is swept.
     pub staging_reap_max_age_hours: u64,
+    /// Total byte budget for all Live Export run store dirs (`{staging_dir}/le-<routineRunId>`)
+    /// together (`GIT_LE_RUN_STORE_MAX_BYTES`, default 5 GiB = 5 * 1024^3).
+    /// Creating a run store is refused (507) while the other run stores already use this much; the
+    /// server's hourly staging reaper deletes the oldest terminal-run stores when the total exceeds it.
+    pub run_store_max_bytes: u64,
     /// `<root>/maintenance` — the background-maintenance cache/journal DB (`maintenance.sqlite`,
     /// DEV-11316). `<root>` is the parent of `repos_dir`, the same root `staging/` hangs off, so
     /// on the VM this is `/data/maintenance`. Not separately configurable: one root.
@@ -87,6 +92,11 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(72);
 
+        let run_store_max_bytes = env::var("GIT_LE_RUN_STORE_MAX_BYTES")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(crate::service::run_store::DEFAULT_RUN_STORE_MAX_BYTES);
+
         let maintenance_dir = repos_dir.parent().unwrap_or(&repos_dir).join("maintenance");
 
         Self {
@@ -99,6 +109,7 @@ impl Config {
             slack_notification_webhook_url,
             shared_auth_token,
             staging_reap_max_age_hours,
+            run_store_max_bytes,
             maintenance_dir,
         }
     }

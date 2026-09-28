@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-import { InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { WorkbookManager, type WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -181,6 +181,38 @@ describe('WorkbookService', () => {
       expect(workbookProvisioningService.createWorkbookWithConfigRepo).toHaveBeenCalledWith(
         expect.objectContaining({ managedByApp: WorkbookManager.WS_EXPORT }),
       );
+    });
+
+    it("stores a Live Export's engine choice as its live_export_engine setting", async () => {
+      workbookProvisioningService.createWorkbookWithConfigRepo.mockResolvedValue(
+        createMockWorkbook(2) as unknown as WorkbookCluster.Workbook,
+      );
+
+      await service.create(
+        { name: 'CRM Workbook', managedBy: WorkbookManager.WS_EXPORT, liveExportEngine: 'run_store' },
+        ACTOR,
+      );
+
+      expect(workbookProvisioningService.createWorkbookWithConfigRepo).toHaveBeenCalledWith(
+        expect.objectContaining({ settings: { live_export_engine: 'run_store' } }),
+      );
+    });
+
+    it('creates a Live Export without an engine choice with no settings (classic)', async () => {
+      workbookProvisioningService.createWorkbookWithConfigRepo.mockResolvedValue(
+        createMockWorkbook(2) as unknown as WorkbookCluster.Workbook,
+      );
+
+      await service.create({ name: 'CRM Workbook', managedBy: WorkbookManager.WS_EXPORT }, ACTOR);
+
+      expect(workbookProvisioningService.createWorkbookWithConfigRepo.mock.calls[0][0]).not.toHaveProperty('settings');
+    });
+
+    it('rejects an engine choice on a workbook that is not a Live Export', async () => {
+      await expect(service.create({ name: 'Test Workbook', liveExportEngine: 'run_store' }, ACTOR)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(workbookProvisioningService.createWorkbookWithConfigRepo).not.toHaveBeenCalled();
     });
 
     it('defaults the managing app to null for a standalone Scratch workbook (none supplied)', async () => {

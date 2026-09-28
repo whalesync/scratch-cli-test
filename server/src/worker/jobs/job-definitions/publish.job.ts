@@ -1,13 +1,27 @@
 import {
-  type JobTrigger,
   JobType,
+  type JobTrigger,
   type PublishOrigin,
   type PublishPublicProgress,
   type WorkbookId,
 } from '@spinner/shared-types';
+import type { RunStoreClient, RunStoreKey } from 'src/live-export-run-store/run-store-client';
+import { runStorePublishPipelineId, runStoreRecordsCollection } from 'src/live-export-run-store/run-store-collections';
+import {
+  RunStorePublishPlanBuilder,
+  type RunStorePlanCounts,
+} from 'src/live-export-run-store/run-store-publish-plan-builder';
+import {
+  RunStorePlanStore,
+  RunStorePublishPlanRunStorage,
+} from 'src/live-export-run-store/run-store-publish-plan-run-storage';
 import type { PostHogService } from 'src/posthog/posthog.service';
+import type { FileIndexService } from 'src/publish-plan/file-index.service';
+import type { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { PublishDirtyDriftError, type PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
+import type { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
+import type { PlanStore } from 'src/publish-plan/run-storage/publish-plan-run-storage-ports';
 import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
 import type { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -50,6 +64,12 @@ export type PublishJobDefinition = JobDefinitionBuilder<
      */
     publishOrigin?: PublishOrigin;
     trigger?: JobTrigger;
+    /**
+     * Set when this job is a step of a Live Export routine run that uses the run-store engine: the key
+     * (`le-<routineRunId>`) of the run's disposable run store on scratch-git. Absent → the classic
+     * engine (git + Postgres). See docs/plans/2026-09-25-live-export-git-free-run-store.
+     */
+    liveExportRunStoreKey?: string;
   },
   PublishPublicProgress,
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -59,7 +79,15 @@ export type PublishJobDefinition = JobDefinitionBuilder<
 
 // ── Handler ──────────────────────────────────────────────────────────
 
-// ── Handler ──────────────────────────────────────────────────────────
+/** What a publish job needs to run a Live Export run-store publish. */
+export interface LiveExportRunStorePublishDependencies {
+  runStoreClient: RunStoreClient;
+  refCleanerService: RefCleanerService;
+  fileReferenceService: FileReferenceService;
+  fileIndexService: FileIndexService;
+}
+
+const LIVE_EXPORT_RUN_FAILURE_INSERT_CHUNK_SIZE = 1000;
 
 export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition> {
   constructor(
@@ -69,6 +97,8 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
     private readonly workbookEventService: WorkbookEventService,
     private readonly bullEnqueuerService?: BullEnqueuerService,
     private readonly postHogService?: PostHogService,
+    /** Required for Live Export runs on the run-store engine (`data.liveExportRunStoreKey`). */
+    private readonly liveExportRunStoreDependencies?: LiveExportRunStorePublishDependencies,
   ) {}
 
   async run(params: {
@@ -164,6 +194,22 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
     const onError = (errorInfo: { lastSyncError: string; errorCount: number }) => {
       latestErrorInfo = errorInfo;
     };
+
+    if (data.liveExportRunStoreKey) {
+      // A Live Export run on the run-store engine: plan from, and publish out of, the run store.
+      await this.runLiveExportRunStorePublish({
+        jobId,
+        data,
+        checkpoint,
+        abortSignal,
+        onPlanProgress,
+        onRunProgress,
+        onError,
+        readLatestErrorInfo: () => latestErrorInfo,
+        zeroCounts,
+      });
+      return;
+    }
 
     // The resolved PublishPlan id. Hoisted out of the try so the catch block can cancel
     // the right pipeline — including one this job creates itself (self-planning).
@@ -566,6 +612,271 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       }
 
       throw error;
+    }
+  }
+
+  /**
+   * The publish step of a Live Export run on the run-store engine. The same publish pipeline
+   * (`PublishPlanRunService.runPipeline`) runs, but its plan is built from the run store
+   * (`RunStorePublishPlanBuilder`) instead of a git diff, and it runs against the run store's ports:
+   * nothing is written to PublishPlan/PublishPlanOperation, git or the file indexes. The only
+   * per-record data kept after the run is the list of failures (`LiveExportRunFailure`), copied here
+   * because the run store is deleted when the run ends. Resumable: a redelivered job reuses the plan
+   * and skips the operations it already published (their statuses live in the run store).
+   */
+  private async runLiveExportRunStorePublish(args: {
+    jobId: string;
+    data: PublishJobDefinition['data'];
+    checkpoint: (
+      progress: Omit<
+        Progress<PublishJobDefinition['publicProgress'], PublishJobDefinition['initialJobProgress']>,
+        'timestamp'
+      >,
+    ) => Promise<void>;
+    abortSignal: AbortSignal;
+    onPlanProgress: (counts: RunStorePlanCounts & { step?: string }) => Promise<void>;
+    onRunProgress: Parameters<PublishPlanRunService['runPipeline']>[3];
+    onError: (errorInfo: { lastSyncError: string; errorCount: number }) => void;
+    readLatestErrorInfo: () => { lastSyncError?: string; errorCount: number };
+    zeroCounts: Omit<PublishPublicProgress, 'status'>;
+  }): Promise<void> {
+    const { jobId, data, checkpoint, abortSignal, onPlanProgress, onRunProgress, onError } = args;
+    const dependencies = this.liveExportRunStoreDependencies;
+    if (!dependencies) {
+      throw new Error('PublishJobHandler was built without the Live Export run store dependencies');
+    }
+    if (!data.connectorAccountId) {
+      throw new Error('A Live Export run-store publish needs the destination connection');
+    }
+    const runStoreKey = data.liveExportRunStoreKey as RunStoreKey;
+    const connectorAccountId = data.connectorAccountId;
+    const pipelineId = runStorePublishPipelineId(runStoreKey, connectorAccountId);
+    const routineRunId = runStoreKey.slice('le-'.length);
+
+    let runStorage: RunStorePublishPlanRunStorage | undefined;
+    try {
+      const plannedCounts = await new RunStorePublishPlanBuilder({
+        runStoreClient: dependencies.runStoreClient,
+        runStoreKey,
+        db: this.db,
+        refCleanerService: dependencies.refCleanerService,
+        fileReferenceService: dependencies.fileReferenceService,
+      }).buildPlanUnlessAlreadyBuilt({
+        workbookId: data.workbookId,
+        connectorAccountId,
+        scope: { folderPath: data.folderPath, filePath: data.filePath },
+        onProgress: onPlanProgress,
+      });
+
+      if (!data.runAfterPlan) {
+        await checkpoint({
+          publicProgress: {
+            ...args.zeroCounts,
+            status: 'completed',
+            ...plannedCounts,
+            errorCount: 0,
+            pipelineId,
+          },
+          jobProgress: {},
+          connectorProgress: {},
+        });
+        return;
+      }
+
+      runStorage = new RunStorePublishPlanRunStorage({
+        runStoreClient: dependencies.runStoreClient,
+        runStoreKey,
+        db: this.db,
+        fileIndexService: dependencies.fileIndexService,
+        workbookId: data.workbookId,
+        userId: data.userId,
+        connectorAccountId,
+      });
+      await checkpoint({
+        publicProgress: { ...args.zeroCounts, status: 'running', currentPhase: 'starting', ...plannedCounts },
+        jobProgress: {},
+        connectorProgress: {},
+      });
+
+      const runResult = await this.publishRunService.runPipeline(
+        pipelineId,
+        data.executeSinglePhase,
+        abortSignal,
+        onRunProgress,
+        onError,
+        data.publishOrigin,
+        runStorage,
+      );
+
+      await this.updateDestinationRecordCountsAfterRunStorePublish(
+        runStoreKey,
+        dependencies.runStoreClient,
+        runStorage.openPlanStore(pipelineId),
+      );
+
+      const connectorAccount = await this.db.client.connectorAccount.findUnique({
+        where: { id: connectorAccountId },
+        select: { service: true },
+      });
+      await checkpoint({
+        publicProgress: {
+          status: 'completed',
+          currentPhase: 'done',
+          assetUploadsExecuted: runResult.successByPhase?.['asset-upload'] ?? 0,
+          assetUploadsPlanned: runResult.totalByPhase?.['asset-upload'] ?? 0,
+          editsExecuted: runResult.successByPhase?.edit ?? 0,
+          createsExecuted: runResult.successByPhase?.create ?? 0,
+          deletesExecuted: runResult.successByPhase?.delete ?? 0,
+          backfillsExecuted: runResult.successByPhase?.backfill ?? 0,
+          renameFilesExecuted: 0,
+          editsPlanned: runResult.totalByPhase?.edit ?? 0,
+          createsPlanned: runResult.totalByPhase?.create ?? 0,
+          deletesPlanned: runResult.totalByPhase?.delete ?? 0,
+          backfillsPlanned: runResult.totalByPhase?.backfill ?? 0,
+          renameFilesPlanned: 0,
+          ...args.readLatestErrorInfo(),
+          failedCount: runResult.failedCount ?? 0,
+          failedOperations: runResult.failedOperations ?? [],
+          destinationServiceName: connectorAccount ? getServiceDisplayName(connectorAccount.service) : undefined,
+          pipelineId,
+        },
+        jobProgress: {},
+        connectorProgress: {},
+      });
+
+      this.workbookEventService.sendWorkbookEvent(data.workbookId, {
+        type: 'changes-published',
+        data: { source: 'job', entityId: data.workbookId, message: 'Publish completed', jobId },
+      });
+      try {
+        this.postHogService?.trackPublishCompleted(data.userId, {
+          workbookId: data.workbookId,
+          trigger: data.trigger,
+          result: 'success',
+          totalRecordsPushed:
+            (runResult.successByPhase?.create ?? 0) +
+            (runResult.successByPhase?.edit ?? 0) +
+            (runResult.successByPhase?.delete ?? 0),
+          creates: runResult.successByPhase?.create ?? 0,
+          edits: runResult.successByPhase?.edit ?? 0,
+          deletes: runResult.successByPhase?.delete ?? 0,
+        });
+      } catch (error) {
+        WSLogger.warn({ source: 'PublishJob', message: 'Failed to track publish completed event', error });
+      }
+      WSLogger.info({
+        source: 'PublishJob',
+        message: 'Live Export run-store publish completed',
+        workbookId: data.workbookId,
+        jobId,
+        pipelineId,
+        failedCount: runResult.failedCount ?? 0,
+      });
+    } catch (error) {
+      const isCanceled = error instanceof JobCanceledError || abortSignal.aborted;
+      if (!isCanceled) {
+        await checkpoint({
+          publicProgress: { ...args.zeroCounts, status: 'failed', pipelineId },
+          jobProgress: {},
+          connectorProgress: {},
+        });
+        try {
+          this.postHogService?.trackPublishCompleted(data.userId, {
+            workbookId: data.workbookId,
+            trigger: data.trigger,
+            result: 'failure',
+            totalRecordsPushed: 0,
+            creates: 0,
+            edits: 0,
+            deletes: 0,
+          });
+        } catch {
+          // PostHog tracking should never break the error flow.
+        }
+      }
+      throw error;
+    } finally {
+      // Also after a failed or cancelled run: whatever failed so far must outlive the run store.
+      if (runStorage) {
+        await this.persistLiveExportRunFailures(routineRunId, pipelineId, runStorage.openPlanStore(pipelineId));
+      }
+    }
+  }
+
+  /**
+   * Classic keeps `DataFolder.recordCount` (the Live Export record limit and the folder UI) current through
+   * git and the record-count cron; a run-store run has neither, so the count is derived here: the
+   * destination as this run pulled it, plus what the publish created, minus what it deleted. Never throws.
+   */
+  private async updateDestinationRecordCountsAfterRunStorePublish(
+    runStoreKey: RunStoreKey,
+    runStoreClient: RunStoreClient,
+    planStore: RunStorePlanStore,
+  ): Promise<void> {
+    try {
+      const summary = await runStoreClient.getRunStoreSummary(runStoreKey);
+      if (!summary) return;
+      const pulledCountByCollection = new Map(
+        summary.collections.map((collection) => [collection.collection, collection.entryCount]),
+      );
+      const successfulChangesByDataFolderId = await planStore.countSuccessfulCreatesAndDeletesByDataFolder();
+      for (const [dataFolderId, { creates, deletes }] of successfulChangesByDataFolderId) {
+        const pulledRecordCount = pulledCountByCollection.get(runStoreRecordsCollection(dataFolderId)) ?? 0;
+        await this.db.client.dataFolder.update({
+          where: { id: dataFolderId },
+          data: { recordCount: Math.max(0, pulledRecordCount + creates - deletes) },
+        });
+      }
+    } catch (error) {
+      WSLogger.warn({
+        source: 'PublishJob',
+        message: 'Failed to update destination record counts after a Live Export run-store publish',
+        runStoreKey,
+        error,
+      });
+    }
+  }
+
+  /**
+   * Copies the run's per-record failures out of the (disposable) run store. Idempotent per pipeline.
+   * Never throws: losing the failure list must not fail (or mask the error of) the publish itself.
+   */
+  private async persistLiveExportRunFailures(
+    routineRunId: string,
+    pipelineId: string,
+    planStore: PlanStore,
+  ): Promise<void> {
+    try {
+      await this.copyLiveExportRunFailuresToPostgres(routineRunId, pipelineId, planStore);
+    } catch (error) {
+      WSLogger.warn({
+        source: 'PublishJob',
+        message: 'Failed to persist the per-record failures of a Live Export run-store publish',
+        routineRunId,
+        pipelineId,
+        error,
+      });
+    }
+  }
+
+  private async copyLiveExportRunFailuresToPostgres(
+    routineRunId: string,
+    pipelineId: string,
+    planStore: PlanStore,
+  ): Promise<void> {
+    const failedOperations = await planStore.listFailedOperationsOrderedByFilePath();
+    await this.db.client.liveExportRunFailure.deleteMany({ where: { pipelineId } });
+    for (let index = 0; index < failedOperations.length; index += LIVE_EXPORT_RUN_FAILURE_INSERT_CHUNK_SIZE) {
+      await this.db.client.liveExportRunFailure.createMany({
+        data: failedOperations.slice(index, index + LIVE_EXPORT_RUN_FAILURE_INSERT_CHUNK_SIZE).map((failure) => ({
+          routineRunId,
+          pipelineId,
+          filePath: failure.filePath,
+          phase: failure.phase,
+          error: failure.error,
+          errorCode: failure.errorCode,
+        })),
+      });
     }
   }
 }

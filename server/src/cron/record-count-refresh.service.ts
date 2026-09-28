@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { WorkbookId } from '@spinner/shared-types';
+import { LiveExportEngine, WorkbookId, WorkbookManager } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { RecordCountService } from 'src/record-count/record-count.service';
@@ -45,7 +45,17 @@ export class RecordCountRefreshService {
           isPendingDelete: false,
           connectorAccounts: { some: { repoPath: { not: null } } },
         },
-        select: { id: true },
+        select: {
+          id: true,
+          managedBy: true,
+          // The engine of the latest run that recorded one: whether git reflects the export's last run.
+          routineRuns: {
+            where: { liveExportEngine: { not: null } },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { liveExportEngine: true },
+          },
+        },
         orderBy: { id: 'asc' },
         take: PAGE_SIZE,
         ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
@@ -57,6 +67,14 @@ export class RecordCountRefreshService {
         const chunk = workbooks.slice(start, start + WORKBOOK_CONCURRENCY);
         await Promise.all(
           chunk.map(async (workbook) => {
+            // A Live Export whose last run used the run-store engine left git stale, so git would report
+            // stale counts; that run wrote the true counts itself (RunStorePullSink and the publish job).
+            if (
+              workbook.managedBy === WorkbookManager.WS_EXPORT &&
+              workbook.routineRuns[0]?.liveExportEngine === LiveExportEngine.RUN_STORE
+            ) {
+              return;
+            }
             try {
               await this.recordCount.recomputeRecordCountsForWorkbook(workbook.id as WorkbookId, {
                 emitEvent: false,

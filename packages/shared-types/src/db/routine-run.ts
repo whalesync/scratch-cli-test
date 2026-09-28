@@ -115,6 +115,11 @@ export interface RoutineRun {
   resultWarning: string | null;
   /** Index of the step currently executing (0-based). */
   currentStepIndex: number;
+  /**
+   * The Live Export engine this run uses — `run_store` or `classic` (see LiveExportEngine) — decided when
+   * the run was first driven. Null before that, and for runs from before the engine existed (= classic).
+   */
+  liveExportEngine: string | null;
   /** Per-step records. Present on the run-detail endpoint; omitted from list responses. */
   steps?: RoutineRunStep[];
 }

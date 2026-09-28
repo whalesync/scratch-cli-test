@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::service::envelope::{envelope, envelope_error};
 use crate::service::error::AppError;
 use crate::service::git::repo::GitRepo;
+use crate::service::run_store::is_run_store_key;
 use crate::service::state::AppState;
 use crate::service::types::*;
 
@@ -646,26 +647,36 @@ pub async fn commit_staged_atomic(
 // ---------------------------------------------------------------------------
 // DELETE /api/staging/{jobId} — remove staging directory for a job
 //
-// On macOS, `remove_dir_all` can transiently fail with "Directory not empty"
-// (os error 66) if a file was recently closed (e.g. SQLite WAL). Retry once
-// after a short pause to handle this.
+// Works for pull/sync staging keys and Live Export run store keys (`le-<routineRunId>`) alike;
+// for a run store it goes through `RunStoreState::delete_run_store` so the store's cached SQLite
+// connections are dropped first (otherwise later writes would land in the unlinked file).
 // ---------------------------------------------------------------------------
+
+/// Remove a staging (or run store) directory tree. On macOS, `remove_dir_all` can transiently
+/// fail with "Directory not empty" (os error 66) if a file was recently closed (e.g. SQLite WAL),
+/// so retry once after a short pause.
+pub(crate) fn remove_staging_dir_with_retry(staging_job_dir: &StdPath) -> std::io::Result<()> {
+    if let Err(_first_err) = std::fs::remove_dir_all(staging_job_dir) {
+        std::thread::sleep(Duration::from_millis(100));
+        std::fs::remove_dir_all(staging_job_dir)?;
+    }
+    Ok(())
+}
 
 pub async fn cleanup_staging(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
 ) -> Response {
-    let staging_dir = state.staging_job_path(&job_id);
+    let staging_job_dir = state.staging_job_path(&job_id);
+    let staging_root_dir = state.staging_dir.clone();
+    let run_store_state = state.run_store.clone();
 
     let result: Result<serde_json::Value, AppError> = tokio::task::spawn_blocking(move || {
-        if staging_dir.exists() {
-            if let Err(_first_err) = std::fs::remove_dir_all(&staging_dir) {
-                // Retry once after a brief pause — handles transient macOS "Directory not empty"
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                std::fs::remove_dir_all(&staging_dir).map_err(|e| {
-                    AppError::internal(format!("Failed to remove staging dir: {}", e))
-                })?;
-            }
+        if is_run_store_key(&job_id) {
+            run_store_state.delete_run_store(&staging_root_dir, &job_id)?;
+        } else if staging_job_dir.exists() {
+            remove_staging_dir_with_retry(&staging_job_dir)
+                .map_err(|e| AppError::internal(format!("Failed to remove staging dir: {}", e)))?;
         }
         Ok(json!({ "success": true }))
     })
@@ -710,7 +721,7 @@ pub struct StagingReapSummary {
 }
 
 /// Milliseconds since the Unix epoch for a filesystem mtime, or 0 if it predates the epoch.
-fn system_time_to_millis(time: SystemTime) -> i64 {
+pub(crate) fn system_time_to_millis(time: SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
@@ -720,7 +731,7 @@ fn system_time_to_millis(time: SystemTime) -> i64 {
 /// `len()` is not its tree size, so we descend and sum file lengths. Best-effort: an
 /// unreadable entry is skipped rather than failing the whole scan, since this feeds
 /// observability (the orphan-bytes gauge), not correctness.
-fn dir_size_bytes(path: &StdPath) -> i64 {
+pub(crate) fn dir_size_bytes(path: &StdPath) -> i64 {
     let mut total: i64 = 0;
     let Ok(entries) = std::fs::read_dir(path) else {
         return total;
@@ -739,11 +750,35 @@ fn dir_size_bytes(path: &StdPath) -> i64 {
     total
 }
 
+/// The newest mtime among `path` itself and its immediate child files (0 when unreadable). A
+/// directory's own mtime only moves when an entry is added or removed; a long-lived SQLite file
+/// (a Live Export run store's `run.db` / `run.db-wal`, a pull's `index.db`) is modified in place,
+/// so without the children an in-use dir would look as old as its creation.
+fn newest_mtime_of_dir_or_immediate_child_files_ms(path: &StdPath) -> i64 {
+    let dir_mtime_ms = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(system_time_to_millis)
+        .unwrap_or(0);
+    if dir_mtime_ms == 0 {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return dir_mtime_ms;
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter_map(|entry| entry.metadata().and_then(|m| m.modified()).ok())
+        .map(system_time_to_millis)
+        .fold(dir_mtime_ms, i64::max)
+}
+
 /// Enumerate the immediate child directories of `staging_dir` (one per job), returning each
-/// job's id (directory name), mtime, and recursive size. A missing/unreadable staging root
-/// yields an empty list (nothing has been staged yet). An entry whose mtime can't be read is
-/// reported with `mtime_ms == 0` so the reaper can treat it as unknown rather than ancient.
-fn scan_staging_dirs(staging_dir: &StdPath) -> Vec<StagingDirInfo> {
+/// job's id (directory name), mtime (the newest of the dir and its immediate child files — see
+/// [`newest_mtime_of_dir_or_immediate_child_files_ms`]), and recursive size. A missing/unreadable
+/// staging root yields an empty list (nothing has been staged yet). An entry whose mtime can't be
+/// read is reported with `mtime_ms == 0` so the reaper can treat it as unknown rather than ancient.
+pub(crate) fn scan_staging_dirs(staging_dir: &StdPath) -> Vec<StagingDirInfo> {
     let mut dirs = Vec::new();
     let Ok(entries) = std::fs::read_dir(staging_dir) else {
         return dirs;
@@ -754,11 +789,7 @@ fn scan_staging_dirs(staging_dir: &StdPath) -> Vec<StagingDirInfo> {
             continue;
         }
         let job_id = entry.file_name().to_string_lossy().to_string();
-        let mtime_ms = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(system_time_to_millis)
-            .unwrap_or(0);
+        let mtime_ms = newest_mtime_of_dir_or_immediate_child_files_ms(&entry.path());
         dirs.push(StagingDirInfo {
             size_bytes: dir_size_bytes(&entry.path()),
             job_id,
@@ -774,12 +805,25 @@ fn scan_staging_dirs(staging_dir: &StdPath) -> Vec<StagingDirInfo> {
 /// `GIT_STAGING_REAP_MAX_AGE_HOURS`) is what keeps it from racing the crash-resume design. The
 /// server's hourly cron does the age + job-liveness reap. A dir whose mtime we couldn't read
 /// (`mtime_ms == 0`) is skipped, never assumed ancient.
-pub fn reap_stale_staging_dirs(staging_dir: &StdPath, max_age: Duration) -> StagingReapSummary {
+///
+/// Live Export run store dirs (`le-<routineRunId>`) use `run_store_max_age` instead (production:
+/// `RUN_STORE_STAGING_REAP_MAX_AGE`, 24h) — a run store is never resumed a day later.
+pub fn reap_stale_staging_dirs(
+    staging_dir: &StdPath,
+    max_age: Duration,
+    run_store_max_age: Duration,
+) -> StagingReapSummary {
     let mut summary = StagingReapSummary::default();
     let now_ms = system_time_to_millis(SystemTime::now());
-    let max_age_ms = max_age.as_millis() as i64;
+    let pull_and_sync_staging_max_age_ms = max_age.as_millis() as i64;
+    let run_store_max_age_ms = run_store_max_age.as_millis() as i64;
 
     for info in scan_staging_dirs(staging_dir) {
+        let max_age_ms = if is_run_store_key(&info.job_id) {
+            run_store_max_age_ms
+        } else {
+            pull_and_sync_staging_max_age_ms
+        };
         summary.scanned += 1;
 
         if info.mtime_ms <= 0 {
@@ -793,18 +837,16 @@ pub fn reap_stale_staging_dirs(staging_dir: &StdPath, max_age: Duration) -> Stag
         }
 
         let job_dir = staging_dir.join(&info.job_id);
-        // Mirror `cleanup_staging`: retry once after a brief pause for the transient macOS
-        // "Directory not empty" (os error 66) from a just-closed SQLite WAL.
-        if let Err(_first_err) = std::fs::remove_dir_all(&job_dir) {
-            std::thread::sleep(Duration::from_millis(100));
-            if let Err(second_err) = std::fs::remove_dir_all(&job_dir) {
-                tracing::warn!(
-                    "Failed to reap stale staging dir {:?}: {}",
-                    job_dir,
-                    second_err
-                );
-                continue;
-            }
+        // Same retry-once removal as `cleanup_staging` (transient macOS "Directory not empty").
+        // Runs at boot, before any run store connection has been opened, so there is no cached
+        // connection to drop.
+        if let Err(removal_err) = remove_staging_dir_with_retry(&job_dir) {
+            tracing::warn!(
+                "Failed to reap stale staging dir {:?}: {}",
+                job_dir,
+                removal_err
+            );
+            continue;
         }
 
         summary.reaped_bytes += info.size_bytes;
@@ -816,14 +858,20 @@ pub fn reap_stale_staging_dirs(staging_dir: &StdPath, max_age: Duration) -> Stag
 
 // ---------------------------------------------------------------------------
 // GET /api/staging — list staging directories (jobId + mtime + size) so the
-// server's hourly reaper can find age + job-liveness orphans.
+// server's hourly reaper can find age + job-liveness orphans. Also reports the
+// Live Export run store byte budget (`GIT_LE_RUN_STORE_MAX_BYTES`) so the
+// reaper enforces the same number this service refuses creates at.
 // ---------------------------------------------------------------------------
 
 pub async fn list_staging(State(state): State<AppState>) -> Response {
     let staging_dir = state.staging_dir.clone();
+    let run_store_max_bytes = state.run_store.max_bytes;
 
     let result: Result<serde_json::Value, AppError> = tokio::task::spawn_blocking(move || {
-        Ok(json!({ "stagingDirs": scan_staging_dirs(&staging_dir) }))
+        Ok(json!({
+            "stagingDirs": scan_staging_dirs(&staging_dir),
+            "runStoreMaxBytes": run_store_max_bytes,
+        }))
     })
     .await
     .map_err(|e| AppError::internal(e.to_string()))
@@ -896,6 +944,7 @@ mod tests {
             maintenance: std::sync::Arc::new(crate::service::maintenance::MaintenanceState::load(
                 std::path::Path::new("/nonexistent-maintenance-dir"),
             )),
+            run_store: Default::default(),
         };
 
         (state, repos_dir, staging_dir, index_dir)
@@ -951,7 +1000,7 @@ mod tests {
         // everything older than 0 → this dir qualifies. Exercises the real dir-mtime read
         // without a mtime-backdating dependency.
         std::thread::sleep(Duration::from_millis(10));
-        let summary = reap_stale_staging_dirs(&state.staging_dir, Duration::ZERO);
+        let summary = reap_stale_staging_dirs(&state.staging_dir, Duration::ZERO, Duration::ZERO);
 
         assert!(
             !job_dir.exists(),
@@ -974,7 +1023,11 @@ mod tests {
 
         let job_dir = state.staging_job_path(job_id);
         // A 24h max age dwarfs the dir's real age (a few ms) → it must be left alone.
-        let summary = reap_stale_staging_dirs(&state.staging_dir, Duration::from_secs(24 * 3600));
+        let summary = reap_stale_staging_dirs(
+            &state.staging_dir,
+            Duration::from_secs(24 * 3600),
+            crate::service::run_store::RUN_STORE_STAGING_REAP_MAX_AGE,
+        );
 
         assert!(job_dir.exists(), "a fresh staging dir must not be reaped");
         assert_eq!(summary.scanned, 1);

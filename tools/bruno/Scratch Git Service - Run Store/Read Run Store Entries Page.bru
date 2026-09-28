@@ -1,0 +1,24 @@
+meta {
+  name: Read Run Store Entries Page
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{scratchGitApiUrl}}/api/run-store/{{runStoreKey}}/collections/records/entries?includeBodies=true&limit=1000
+  body: none
+  auth: inherit
+}
+
+params:query {
+  includeBodies: true
+  limit: 1000
+  ~afterKey: Products/rec123.json
+}
+
+docs {
+  One page in ascending key order (UTF-8 byte order), strictly after `afterKey` (the previous
+  page's `nextAfterKey`). `limit` default 1000, 1-10000 (else 400). Returns
+  { entries: [{ key, meta, body? }], nextAfterKey } — `body` only with includeBodies=true (null
+  when the entry has none). A missing collection is an empty page.
+}

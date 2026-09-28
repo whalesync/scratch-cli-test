@@ -7,6 +7,7 @@ use crate::service::config::Config;
 use crate::service::gc_marker::GcStateMap;
 use crate::service::git::lock::RepoLocks;
 use crate::service::maintenance::MaintenanceState;
+use crate::service::run_store::RunStoreState;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -21,6 +22,9 @@ pub struct AppState {
     /// Background maintenance switch + loop status (DEV-11316). The switch is persisted under
     /// `Config::maintenance_dir` and re-read at boot; missing ⇒ off.
     pub maintenance: Arc<MaintenanceState>,
+    /// Live Export run stores (`{staging_dir}/le-<routineRunId>/run.db`): the byte budget
+    /// (`GIT_LE_RUN_STORE_MAX_BYTES`) and the cache of open SQLite connections. See docs/RUN_STORE.md.
+    pub run_store: Arc<RunStoreState>,
 }
 
 impl AppState {
@@ -33,6 +37,7 @@ impl AppState {
             gc_state: Arc::new(DashMap::new()),
             repo_locks: Arc::new(RepoLocks::new()),
             maintenance: Arc::new(MaintenanceState::load(&config.maintenance_dir)),
+            run_store: Arc::new(RunStoreState::new(config.run_store_max_bytes)),
         }
     }
 

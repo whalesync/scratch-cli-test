@@ -1,0 +1,30 @@
+meta {
+  name: Patch Run Store Entry Meta
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{scratchGitApiUrl}}/api/run-store/{{runStoreKey}}/collections/records/entries/patch-meta
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "patches": [
+      { "key": "Products/rec123.json", "metaPatch": { "status": "success", "error": null } },
+      { "key": "does-not-exist", "metaPatch": { "status": "failed" } }
+    ]
+  }
+}
+
+docs {
+  Shallow-merges each metaPatch into the entry's meta (a field set to null is removed; nested
+  objects are replaced, not merged) in one transaction. Bodies are untouched. Returns
+  { missingKeys }.
+}

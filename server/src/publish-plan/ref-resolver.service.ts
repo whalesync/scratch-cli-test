@@ -13,7 +13,7 @@ import { parsePath } from './utils';
  * the user-facing workspace-absolute form into the internal, connection-scoped
  * form the FileIndex is keyed by. See {@link RefResolverService.translatePseudoRef}.
  */
-interface TranslatedPseudoRef {
+export interface TranslatedPseudoRef {
   /**
    * The connection(s) the ref's leading connection folder segment names. Exactly one in every
    * normal workspace; more only when two connections in the workbook sanitize to the same
@@ -42,7 +42,7 @@ export class MalformedPseudoRefError extends Error {
  * ref's leading segment to its connection(s), to name a connection in an error, and to tell
  * the user which folder names their workspace actually has.
  */
-interface ConnectionFolderIndex {
+export interface ConnectionFolderIndex {
   /** Folder name → every connection claiming it (see {@link TranslatedPseudoRef}). */
   folderNameToAccountIds: Map<string, string[]>;
   /** connectorAccountId → the connection's display name, for error messages. */
@@ -130,7 +130,7 @@ export class RefResolverService {
    *
    * @throws {MalformedPseudoRefError} when the ref is not workspace-absolute.
    */
-  private translatePseudoRef(pseudoRefString: string, connectionFolders: ConnectionFolderIndex): TranslatedPseudoRef {
+  protected translatePseudoRef(pseudoRefString: string, connectionFolders: ConnectionFolderIndex): TranslatedPseudoRef {
     const targetPath = pseudoRefString.substring(2); // strip the '@/' marker
     const firstSlashIndex = targetPath.indexOf('/');
     const firstSegment = firstSlashIndex === -1 ? targetPath : targetPath.substring(0, firstSlashIndex);
@@ -175,7 +175,7 @@ export class RefResolverService {
    * per-candidate probe. Unresolvable refs are absent from the returned map (the caller
    * throws with context); a MALFORMED ref never gets this far — `translatePseudoRef` throws.
    */
-  private async resolvePseudoRefStrings(
+  protected async resolvePseudoRefStrings(
     workbookId: string,
     refStrings: string[],
     connectionFolders: ConnectionFolderIndex,

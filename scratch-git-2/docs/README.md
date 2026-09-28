@@ -68,6 +68,13 @@ GIT_STAGING_REAP_MAX_AGE_HOURS=72
                           # `{staging_dir}/{jobId}` directory (DEV-11317). Age-only backstop; the
                           # server's hourly cron adds a job-liveness gate on top. 72h covers
                           # multi-day pulls and leaves a window to debug a failed pull's dir.
+                          # Live Export run store dirs (`le-<routineRunId>`) use a fixed 24h instead.
+GIT_LE_RUN_STORE_MAX_BYTES=5368709120
+                          # Total byte budget (default 5 GiB) for all Live Export run store dirs
+                          # (`{staging_dir}/le-<routineRunId>`) together. Creating a run store is refused
+                          # with 507 while the others already use this much; the server's hourly
+                          # staging reaper deletes the oldest terminal-run stores when over it.
+                          # See RUN_STORE.md.
 BUILD_VERSION=0.0.0-local # Build version label
 RUST_LOG=info             # Log level (debug, trace, etc.)
 SCRATCH_GIT_AUTH_TOKEN=   # Shared bearer token the NestJS server must present (DEV-10600).
@@ -95,6 +102,7 @@ a dev checkout). Nothing else is separately configurable except the legacy `GIT_
 <root>/repos/<org>/<wkb>/<coa>.git        bare repos (GIT_REPOS_DIR)
 <root>/repos/<org>/<wkb>/<coa>.db         per-repo SQLite file index (GIT_INDEX_DIR, defaults to repos)
 <root>/staging/<jobId>/                   per-job staging dirs (GIT_STAGING_DIR)
+<root>/staging/le-<routineRunId>/run.db   Live Export run stores — one SQLite file per run, never git (RUN_STORE.md)
 <root>/maintenance/maintenance.sqlite     background-maintenance cache + 30-day journal (DEV-11316)
 ```
 

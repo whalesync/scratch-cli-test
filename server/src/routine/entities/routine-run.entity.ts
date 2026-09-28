@@ -55,6 +55,7 @@ export const RoutineRunEntity = {
       currentStepSummary: currentStepSummary ?? null,
       resultWarning: run.resultWarning,
       currentStepIndex: run.currentStepIndex,
+      liveExportEngine: run.liveExportEngine,
       ...(run.steps ? { steps: run.steps.map((step) => RoutineRunEntity.stepFrom(step, jobsByBullJobId)) } : {}),
     };
   },

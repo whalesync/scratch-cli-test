@@ -44,6 +44,7 @@ Always run commands from inside `scratch-git-2/` (or the repo root using Turbore
 ## Docs
 
 - [README.md](docs/README.md) — service architecture, environment variables, Docker, deployment, DevOps playbook
+- [RUN_STORE.md](docs/RUN_STORE.md) — the Live Export run store: one SQLite file per routine run (`{staging_dir}/le-<routineRunId>/run.db`), the generic collections/entries `/api/run-store` endpoints, gzip + body limits, lifecycle/reaping, `GIT_LE_RUN_STORE_MAX_BYTES` budget
 - [MAINTENANCE.md](docs/MAINTENANCE.md) — background repo GC: the quick/full maintenance loop, the admin switch (default off), derived timestamps, the throw-away SQLite journal, endpoints, rollout runbook (DEV-11316)
 - [PARITY.md](docs/PARITY.md) — Rust vs Go CLI feature gap tracking
 - [MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) — plan to migrate business logic from NestJS/Postgres into Rust/git

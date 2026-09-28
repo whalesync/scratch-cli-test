@@ -65,6 +65,7 @@ mod tests {
             maintenance: std::sync::Arc::new(crate::service::maintenance::MaintenanceState::load(
                 std::path::Path::new("/nonexistent-maintenance-dir"),
             )),
+            run_store: Default::default(),
         }
     }
 

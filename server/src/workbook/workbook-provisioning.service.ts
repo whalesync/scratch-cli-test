@@ -1,5 +1,10 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import { createWorkbookId, createWorkspacePermissionId, WorkbookManager } from '@spinner/shared-types';
+import {
+  createWorkbookId,
+  createWorkspacePermissionId,
+  WorkbookManager,
+  type WorkbookSettings,
+} from '@spinner/shared-types';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
@@ -15,6 +20,8 @@ export interface CreateWorkbookWithConfigRepoParams {
   organizationId: string;
   /** Which external app manages this workbook, if any. Defaults to a standalone (null) workbook. */
   managedByApp?: WorkbookManager | null;
+  /** Initial `Workbook.settings` (e.g. a Live Export's `live_export_engine`). */
+  settings?: WorkbookSettings;
   /**
    * When true, also set this workbook as the owner's default ("last") workspace. Used by the signup
    * default-workspace flow; the manual "create workspace" flow leaves this false.
@@ -44,7 +51,7 @@ export class WorkbookProvisioningService {
   ) {}
 
   async createWorkbookWithConfigRepo(params: CreateWorkbookWithConfigRepoParams): Promise<WorkbookCluster.Workbook> {
-    const { name, ownerUserId, organizationId, managedByApp, setAsOwnerDefaultWorkspace } = params;
+    const { name, ownerUserId, organizationId, managedByApp, settings, setAsOwnerDefaultWorkspace } = params;
     const workbookId = createWorkbookId();
 
     const newWorkbook = await this.db.client.workbook.create({
@@ -54,6 +61,7 @@ export class WorkbookProvisioningService {
         organizationId,
         name,
         managedBy: managedByApp ?? null,
+        ...(settings ? { settings } : {}),
         version: 2,
         workspacePermissions: {
           create: {

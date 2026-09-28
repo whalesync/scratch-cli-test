@@ -104,6 +104,7 @@ export enum CustomMetric {
   SCRATCH_GIT_REPO_LOOSE_OBJECTS = 'scratch_git_repo_loose_objects', // gauge: max loose objects across all repos
   SCRATCH_GIT_STAGING_ORPHAN_BYTES = 'scratch_git_staging_orphan_bytes', // gauge: reserved, emitted in Phase 3 (DEV-11317)
   SCRATCH_GIT_DISK_PERCENT = 'scratch_git_disk_percent', // gauge: reserved — the Ops-Agent disk metric already covers alerting
+  SCRATCH_GIT_RUN_STORE_BYTES = 'scratch_git_run_store_bytes', // gauge: total bytes of Live Export run store dirs (`le-*`) after the hourly staging reap
   GC_MAINTENANCE_RUN = 'gc_maintenance_run', // counter: emitted in Phase 2 (DEV-11316)
   STAGING_DIR_REAPED = 'staging_dir_reaped', // counter: emitted in Phase 3 (DEV-11317)
   PLAN_TAGS_REAPED = 'plan_tags_reaped', // counter: emitted in Phase 4 (DEV-11318)
@@ -184,6 +185,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.SCRATCH_GIT_REPO_LOOSE_OBJECTS:
     case CustomMetric.SCRATCH_GIT_STAGING_ORPHAN_BYTES:
     case CustomMetric.SCRATCH_GIT_DISK_PERCENT:
+    case CustomMetric.SCRATCH_GIT_RUN_STORE_BYTES:
     case CustomMetric.GC_MAINTENANCE_RUN:
     case CustomMetric.STAGING_DIR_REAPED:
     case CustomMetric.PLAN_TAGS_REAPED:
@@ -270,8 +272,9 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.SCRATCH_GIT_REPO_LOOSE_OBJECTS:
     case CustomMetric.SCRATCH_GIT_STAGING_ORPHAN_BYTES:
     case CustomMetric.SCRATCH_GIT_DISK_PERCENT:
+    case CustomMetric.SCRATCH_GIT_RUN_STORE_BYTES:
       // Gauges: the current disk-observability reading (worst-repo loose objects, orphaned staging
-      // bytes, disk percent) at scan time — not a per-event tally. `..._BYTES` holds raw bytes.
+      // bytes, disk percent, run store bytes) at scan time — not a per-event tally. `..._BYTES` holds raw bytes.
       return CustomMetricUnit.INSTANTANEOUS_COUNT;
     default:
       return assertUnreachable(metric);

@@ -7,6 +7,9 @@ import { AssetIndexService } from 'src/asset/asset-index.service';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { ExperimentsService } from 'src/experiments/experiments.service';
+import type { RunStoreClient, RunStoreKey } from 'src/live-export-run-store/run-store-client';
+import { RUN_STORE_CLIENT } from 'src/live-export-run-store/run-store-client.token';
+import { RunStorePullSink } from 'src/live-export-run-store/run-store-pull-sink';
 import { WSLogger } from 'src/logger';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { PostHogService } from 'src/posthog/posthog.service';
@@ -15,6 +18,7 @@ import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
+import { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { SyncDraftService } from 'src/sync-draft/sync-draft.service';
@@ -61,6 +65,8 @@ export class JobHandlerService {
     private readonly experimentsService: ExperimentsService,
     private readonly auditLogService: AuditLogService,
     private readonly syncDraftService: SyncDraftService,
+    private readonly refCleanerService: RefCleanerService,
+    @Inject(RUN_STORE_CLIENT) private readonly runStoreClient: RunStoreClient,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
   }
@@ -84,6 +90,17 @@ export class JobHandlerService {
           this.assetIndexService,
           this.postHogService,
           this.experimentsService,
+          // A Live Export run on the run-store engine writes its pulls to the run store.
+          data.liveExportRunStoreKey
+            ? () =>
+                new RunStorePullSink(
+                  this.runStoreClient,
+                  data.liveExportRunStoreKey as RunStoreKey,
+                  async (dataFolderId, recordCount) => {
+                    await prisma.dataFolder.update({ where: { id: dataFolderId }, data: { recordCount } });
+                  },
+                )
+            : undefined,
         ) as JobHandler<JobDefinition>;
 
       case JobType.RefreshRecords:
@@ -111,6 +128,7 @@ export class JobHandlerService {
           this.postHogService,
           this.metricsService,
           this.auditLogService,
+          { runStoreClient: this.runStoreClient, db: this.dbService },
         ) as JobHandler<JobDefinition>;
 
       case JobType.RehostAssets:
@@ -145,6 +163,7 @@ export class JobHandlerService {
           prisma,
           this.workbookService,
           this.workbookEventService,
+          this.runStoreClient,
         ) as JobHandler<JobDefinition>;
 
       case JobType.Publish:
@@ -155,6 +174,12 @@ export class JobHandlerService {
           this.workbookEventService,
           this.bullEnqueuerService,
           this.postHogService,
+          {
+            runStoreClient: this.runStoreClient,
+            refCleanerService: this.refCleanerService,
+            fileReferenceService: this.fileReferenceService,
+            fileIndexService: this.fileIndexService,
+          },
         ) as JobHandler<JobDefinition>;
 
       default:

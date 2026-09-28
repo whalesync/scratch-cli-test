@@ -237,6 +237,12 @@ export interface GitStagingDir {
  */
 export interface GitStagingDirsResponse {
   stagingDirs: GitStagingDir[];
+  /**
+   * scratch-git's total byte budget for every Live Export run store dir (`le-<runId>`) together
+   * (`GIT_LE_RUN_STORE_MAX_BYTES`). The reaper enforces this same number. Absent from scratch-git
+   * builds that predate the run store.
+   */
+  runStoreMaxBytes?: number;
 }
 
 /**

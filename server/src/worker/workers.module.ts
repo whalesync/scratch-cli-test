@@ -4,6 +4,7 @@ import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
 import { ExperimentsModule } from 'src/experiments/experiments.module';
+import { LiveExportRunStoreModule } from 'src/live-export-run-store/live-export-run-store.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
 import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
@@ -38,6 +39,7 @@ import { WorkersController } from './test/workers.controller';
     SyncModule,
     SyncDraftModule,
     PublishPlanModule,
+    LiveExportRunStoreModule,
     AssetModule,
     PosthogModule,
     MetricsModule,

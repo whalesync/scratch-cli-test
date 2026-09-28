@@ -11,10 +11,17 @@ import { type JobTrigger, JobType, RunId, TransformerTypes, transformV1ToV2 } fr
 import { createHash } from 'crypto';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { UserCluster } from 'src/db/cluster-types';
+import { DbService } from 'src/db/db.service';
+import type { RunStoreClient, RunStoreKey } from 'src/live-export-run-store/run-store-client';
+import {
+  createRunStoreSyncStoragePorts,
+  resetRunStoreSyncOutputForDestinationFolders,
+} from 'src/live-export-run-store/run-store-sync-storage';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import type { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import type { SyncStoragePorts } from 'src/sync/storage/sync-storage-ports';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
@@ -51,6 +58,12 @@ export type SyncDataFoldersJobDefinition = JobDefinitionBuilder<
     trigger?: JobTrigger;
     progress?: JsonSafeObject;
     initialPublicProgress?: SyncDataFoldersPublicProgress;
+    /**
+     * Set when this job is a step of a Live Export routine run that uses the run-store engine: the key
+     * (`le-<routineRunId>`) of the run's disposable run store on scratch-git. Absent → the classic
+     * engine (git + Postgres). See docs/plans/2026-09-25-live-export-git-free-run-store.
+     */
+    liveExportRunStoreKey?: string;
   },
   SyncDataFoldersPublicProgress,
   Record<string, never>, // jobProgress - empty for now
@@ -68,6 +81,8 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     private readonly postHogService: PostHogService,
     private readonly metricsService: CustomMetricsService,
     private readonly auditLogService: AuditLogService,
+    /** Required for Live Export runs on the run-store engine (`data.liveExportRunStoreKey`). */
+    private readonly liveExportRunStoreDependencies?: { runStoreClient: RunStoreClient; db: DbService },
   ) {}
 
   async run(params: {
@@ -142,6 +157,14 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     }
     const actor: Actor = userToActor(user);
 
+    // A Live Export run on the run-store engine: ONE storage bundle for every table and both phases —
+    // its match index and lookup data live in this process (see createRunStoreSyncStoragePorts).
+    // Undefined → each syncTableMapping call uses the classic git + Postgres storage.
+    const runStoreSyncStoragePorts = await this.createRunStoreSyncStoragePortsIfRunStoreRun(
+      data,
+      sync.syncTablePairs.map((pair) => pair.destinationDataFolderId),
+    );
+
     // Build mapping of data tables
     const dataTables = new Map(
       sync.syncTablePairs
@@ -210,7 +233,15 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
 
       try {
         // Run the sync for this table mapping
-        const result = await this.syncService.syncTableMapping(data.syncId, tableMapping, data.workbookId, actor);
+        const result = await this.syncService.syncTableMapping(
+          data.syncId,
+          tableMapping,
+          data.workbookId,
+          actor,
+          'DATA',
+          undefined,
+          runStoreSyncStoragePorts,
+        );
 
         WSLogger.info({
           source: 'SyncDataFoldersJob',
@@ -295,6 +326,8 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
             data.workbookId,
             actor,
             'FOREIGN_KEY_MAPPING',
+            undefined,
+            runStoreSyncStoragePorts,
           );
 
           WSLogger.info({
@@ -365,8 +398,16 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         data: { lastSyncTime: new Date() },
       });
 
-      // Trigger publish jobs for destination connectors if enabled
-      if (sync.publishAfterSync && totalFilesSynced > 0) {
+      // Trigger publish jobs for destination connectors if enabled. A run-store run publishes through
+      // its routine's own publish step (a separately-planned publish can't see the run store's output).
+      if (sync.publishAfterSync && totalFilesSynced > 0 && runStoreSyncStoragePorts) {
+        WSLogger.info({
+          source: 'SyncDataFoldersJob',
+          message: 'Skipping publish-after-sync: this Live Export run publishes through its routine publish step',
+          syncId: data.syncId,
+          workbookId: data.workbookId,
+        });
+      } else if (sync.publishAfterSync && totalFilesSynced > 0) {
         WSLogger.info({
           source: 'SyncDataFoldersJob',
           message: 'Triggering publish-after-sync',
@@ -448,7 +489,8 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     // scratch repo), so we resolve and dedupe the destination repos rather than GCing a bare
     // workbook id — `wkb_<id>.git` does not exist and used to ENOENT/500 on every sync (DEV-10671).
     const destinationRepoIdsWrittenBySync = new Set<string>();
-    for (const syncTablePair of sync.syncTablePairs) {
+    // A run-store run wrote nothing to git: nothing to compact.
+    for (const syncTablePair of runStoreSyncStoragePorts ? [] : sync.syncTablePairs) {
       try {
         const destinationRepoId = await this.scratchGitService.resolveRepoPathForFolder(
           syncTablePair.destinationDataFolder.connectorAccountId,
@@ -572,6 +614,30 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         });
       }
     }
+  }
+
+  private async createRunStoreSyncStoragePortsIfRunStoreRun(
+    data: SyncDataFoldersJobDefinition['data'],
+    destinationDataFolderIds: string[],
+  ): Promise<SyncStoragePorts | undefined> {
+    if (!data.liveExportRunStoreKey) {
+      return undefined;
+    }
+    if (!this.liveExportRunStoreDependencies) {
+      throw new Error('SyncDataFoldersJobHandler was built without the Live Export run store dependencies');
+    }
+    // Idempotent re-runs: a redelivered job starts again from the pulled records alone.
+    await resetRunStoreSyncOutputForDestinationFolders(
+      this.liveExportRunStoreDependencies.runStoreClient,
+      data.liveExportRunStoreKey as RunStoreKey,
+      destinationDataFolderIds,
+    );
+    return createRunStoreSyncStoragePorts({
+      runStoreClient: this.liveExportRunStoreDependencies.runStoreClient,
+      runStoreKey: data.liveExportRunStoreKey as RunStoreKey,
+      db: this.liveExportRunStoreDependencies.db,
+      syncId: data.syncId,
+    });
   }
 }
 

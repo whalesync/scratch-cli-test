@@ -67,6 +67,12 @@ export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
     pullMode?: 'full' | 'incremental';
     progress?: JsonSafeObject;
     initialPublicProgress?: PullLinkedFolderFilesPublicProgress;
+    /**
+     * Set when this job is a step of a Live Export routine run that uses the run-store engine: the key
+     * (`le-<routineRunId>`) of the run's disposable run store on scratch-git. Absent → the classic
+     * engine (git + Postgres). See docs/plans/2026-09-25-live-export-git-free-run-store.
+     */
+    liveExportRunStoreKey?: string;
   },
   PullLinkedFolderFilesPublicProgress,
   PullLinkedFolderFilesJobProgress,

@@ -1724,6 +1724,7 @@ mod tests {
                 &repos_dir.join("maintenance"),
                 settings,
             )),
+            run_store: Default::default(),
         }
     }
 

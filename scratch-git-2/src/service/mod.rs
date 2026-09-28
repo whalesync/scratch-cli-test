@@ -7,6 +7,7 @@ pub mod graceful_shutdown;
 pub mod maintenance;
 pub mod maintenance_db;
 pub mod routes;
+pub mod run_store;
 pub mod slack;
 pub mod state;
 pub mod types;
@@ -357,6 +358,10 @@ pub async fn run() {
             delete(routes::staging::cleanup_staging),
         )
         .route("/api/staging", get(routes::staging::list_staging))
+        // Live Export run store (`{staging_dir}/le-<routineRunId>/run.db`). Carries its own body
+        // limit and gzip layers; merged before the auth layer below so the same policy applies.
+        // See docs/RUN_STORE.md.
+        .merge(routes::run_store::run_store_router())
         // Debug
         .route("/api/debug/locks", get(routes::debug::locks))
         .route("/api/repo/debug/{id}/graph", get(routes::debug::graph))
@@ -425,12 +430,17 @@ pub async fn run() {
     // any dir older than `GIT_STAGING_REAP_MAX_AGE_HOURS` (default 72h) at boot, before the
     // server's hourly (age + job-liveness) cron next ticks. Age-only because the git service has no
     // BullMQ/DbJob knowledge; the generous threshold keeps it clear of the crash-resume design.
+    // Live Export run store dirs (`le-<routineRunId>`) use a 24h threshold instead (run_store.rs).
     {
         let staging_dir = config.staging_dir.clone();
         let max_age = std::time::Duration::from_secs(config.staging_reap_max_age_hours * 3600);
         tokio::spawn(async move {
             let summary = tokio::task::spawn_blocking(move || {
-                routes::staging::reap_stale_staging_dirs(&staging_dir, max_age)
+                routes::staging::reap_stale_staging_dirs(
+                    &staging_dir,
+                    max_age,
+                    run_store::RUN_STORE_STAGING_REAP_MAX_AGE,
+                )
             })
             .await;
             match summary {

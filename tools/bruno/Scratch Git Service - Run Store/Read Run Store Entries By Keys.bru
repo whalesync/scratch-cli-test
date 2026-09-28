@@ -1,0 +1,26 @@
+meta {
+  name: Read Run Store Entries By Keys
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{scratchGitApiUrl}}/api/run-store/{{runStoreKey}}/collections/records/entries/by-keys
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "keys": ["Products/rec456.json", "does-not-exist", "Products/rec123.json"],
+    "includeBodies": true
+  }
+}
+
+docs {
+  Reads specific entries (max 10000 keys). Returns { entries (request order), missingKeys }.
+}

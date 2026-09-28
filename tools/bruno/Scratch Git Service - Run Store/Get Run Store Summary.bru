@@ -1,0 +1,16 @@
+meta {
+  name: Get Run Store Summary
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{scratchGitApiUrl}}/api/run-store/{{runStoreKey}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  { key, collections: [{ collection, entryCount, bodyBytes }] } — non-empty collections only,
+  sorted by name. 404 when the store doesn't exist.
+}

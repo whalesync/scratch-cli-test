@@ -1,0 +1,17 @@
+meta {
+  name: Merge Run Store Collection Into
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{scratchGitApiUrl}}/api/run-store/{{runStoreKey}}/collections/staging/merge-into/records
+  body: none
+  auth: inherit
+}
+
+docs {
+  Atomically moves every entry of the first collection (`staging`) into the second (`records`),
+  replacing same-key entries, and empties the first. Returns { moved }; a missing/empty source
+  is a no-op (moved 0). Merging a collection into itself is a 400.
+}

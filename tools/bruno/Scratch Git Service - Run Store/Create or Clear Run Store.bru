@@ -1,0 +1,17 @@
+meta {
+  name: Create or Clear Run Store
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{scratchGitApiUrl}}/api/run-store/{{runStoreKey}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Creates the run store, or recreates an existing one empty (idempotent). Returns
+  { key, cleared, bytesInUseByOtherRunStores, runStoreMaxBytes }. Refused with 507 when the
+  OTHER `le-` dirs already use GIT_LE_RUN_STORE_MAX_BYTES; 400 for a malformed key.
+}

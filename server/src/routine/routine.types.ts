@@ -16,6 +16,13 @@ export const ROUTINE_STEP_TIMEOUT_MAX_SECONDS: Record<RoutineAction, number> = {
   [RoutineAction.PUBLISH]: 60 * 60,
 };
 
+/**
+ * Terminal RoutineRun statuses — once a run reaches one it is never re-entered. Shared by the routine
+ * executor's step loop and the staging-dir reaper (a Live Export run store is live only while its run
+ * is not in one of these).
+ */
+export const TERMINAL_ROUTINE_RUN_STATUSES: readonly string[] = ['completed', 'failed', 'cancelled'];
+
 /** The definition fields the parser extracts from a routine YAML file (no DB/run state). */
 export interface ParsedRoutine {
   name: string;

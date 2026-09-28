@@ -1,0 +1,30 @@
+meta {
+  name: Put Run Store Entries
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{scratchGitApiUrl}}/api/run-store/{{runStoreKey}}/collections/records/entries
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "entries": [
+      { "key": "Products/rec123.json", "meta": { "recordId": "rec123" }, "body": "{\"id\":\"rec123\",\"name\":\"Widget\"}" },
+      { "key": "Products/rec456.json", "meta": { "deleted": true } }
+    ]
+  }
+}
+
+docs {
+  Insert-or-replace whole entries (meta and body) in one transaction. `meta` omitted/null = {}
+  (must be a JSON object); `body` omitted/null = no body. Returns { written }. Body limit 512 MB;
+  gzip request bodies are accepted with `Content-Encoding: gzip`.
+}

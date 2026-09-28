@@ -434,6 +434,7 @@ mod tests {
             maintenance: std::sync::Arc::new(crate::service::maintenance::MaintenanceState::load(
                 std::path::Path::new("/nonexistent-maintenance-dir"),
             )),
+            run_store: Default::default(),
         };
         Router::new()
             .route(
@@ -829,6 +830,7 @@ mod tests {
             maintenance: std::sync::Arc::new(crate::service::maintenance::MaintenanceState::load(
                 std::path::Path::new("/nonexistent-maintenance-dir"),
             )),
+            run_store: Default::default(),
         };
         let app = Router::new()
             .route(

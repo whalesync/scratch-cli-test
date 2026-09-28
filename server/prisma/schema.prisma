@@ -1068,7 +1068,16 @@ model RoutineRun {
   /// Index of the step currently executing (0-based).
   currentStepIndex Int @default(0)
 
+  /// Which Live Export engine this run uses: "run_store" (the disposable per-run store on scratch-git,
+  /// see docs/plans/2026-09-25-live-export-git-free-run-store) or "classic" (git + Postgres). Decided once,
+  /// when the run is first driven, so a setting flipped mid-run can't mix engines. Null until then, and for
+  /// runs from before the engine existed (= classic).
+  liveExportEngine String?
+
   steps RoutineRunStep[]
+
+  /// Per-record publish failures of a run that used the run-store engine.
+  liveExportRunFailures LiveExportRunFailure[]
 
   // NOTE: a PARTIAL UNIQUE INDEX enforces "one active run per routine file" —
   //   UNIQUE (workbookId, routineFilePath) WHERE status IN ('pending','running')
@@ -1083,6 +1092,30 @@ model RoutineRun {
 
 /// Per-step execution record within a RoutineRun.
 /// NOTE: Keep this in sync with packages/shared-types/src/db/routine-run.ts
+/// A per-record publish failure of a Live Export run that used the run-store engine. That engine's
+/// publish plan lives in the run's disposable run store (not PublishPlanOperation), so the failures are
+/// copied here when the publish step finishes — the only per-record data such a run keeps. Deleted with
+/// the routine run.
+model LiveExportRunFailure {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  routineRun   RoutineRun @relation(fields: [routineRunId], references: [id], onDelete: Cascade)
+  routineRunId String
+
+  /// The publish step's pipeline id (`le-<routineRunId>.<connectorAccountId>`).
+  pipelineId String
+  filePath   String
+  /// The publish phase the operation failed in ("edit" | "create" | "delete" | "backfill").
+  phase      String
+  error      String?
+  /// Stable ConnectorErrorCode classification, when the connector recognized the failure.
+  errorCode  String?
+
+  @@index([routineRunId])
+  @@index([pipelineId])
+}
+
 model RoutineRunStep {
   id        String   @id // type: RoutineRunStepId
   createdAt DateTime @default(now())

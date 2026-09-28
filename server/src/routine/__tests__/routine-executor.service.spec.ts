@@ -5,6 +5,7 @@ import { RoutineAction, RoutineRunId, RoutineStep, RoutineStepOptions, WorkbookI
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
+import { LiveExportRunLifecycleService } from 'src/live-export-run-store/live-export-run-lifecycle.service';
 import { RunCountService } from 'src/run-count/run-count.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -200,7 +201,16 @@ function makeService(deps: {
     referenceValidator,
     { logEvent: jest.fn() } as unknown as AuditLogService,
     { recordRoutineRun: jest.fn() } as unknown as RunCountService,
+    classicLiveExportRunLifecycle(),
   );
+}
+
+/** Every run is a classic (non-run-store) run: no run store key, nothing to release. */
+function classicLiveExportRunLifecycle(): LiveExportRunLifecycleService {
+  return {
+    resolveRunStoreKeyForRun: jest.fn().mockResolvedValue(undefined),
+    releaseRunStoreOfFinishedRun: jest.fn(),
+  } as unknown as LiveExportRunLifecycleService;
 }
 
 /** A finished job whose waitUntilFinished resolves immediately. */
@@ -291,6 +301,7 @@ describe('RoutineExecutorService.execute', () => {
       undefined,
       expect.objectContaining({ trigger: 'routine', routineRunId: RUN_ID }),
       'incremental',
+      undefined, // no Live Export run store: classic engine
     );
     // publish: runAfterPlan true (PUBLISH), folderPath leading-slash.
     expect(enqueuePublish).toHaveBeenCalledWith(
@@ -300,6 +311,7 @@ describe('RoutineExecutorService.execute', () => {
       true,
       '/blog/posts',
       expect.objectContaining({ trigger: 'routine', routineRunId: RUN_ID }),
+      undefined, // no Live Export run store: classic engine
     );
   });
 
@@ -329,6 +341,7 @@ describe('RoutineExecutorService.execute', () => {
       undefined,
       expect.anything(),
       'full',
+      undefined, // no Live Export run store: classic engine
     );
     expect(run.status).toBe('completed');
   });
@@ -376,6 +389,7 @@ describe('RoutineExecutorService.execute', () => {
       undefined,
       expect.anything(),
       'incremental',
+      undefined, // no Live Export run store: classic engine
     );
   });
 
@@ -1104,6 +1118,7 @@ describe('RoutineExecutorService.triggerRun', () => {
       referenceValidator,
       auditLog,
       { recordRoutineRun: jest.fn() } as unknown as RunCountService,
+      classicLiveExportRunLifecycle(),
     );
   }
 

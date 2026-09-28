@@ -20,6 +20,7 @@ import { Job } from 'bullmq';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
+import { LiveExportRunLifecycleService } from 'src/live-export-run-store/live-export-run-lifecycle.service';
 import { WSLogger } from 'src/logger';
 import { RunCountService } from 'src/run-count/run-count.service';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -40,13 +41,16 @@ import {
   resolveSyncInContext,
   RoutineReferenceValidatorService,
 } from './routine-reference-validator.service';
-import { ROUTINE_STEP_TIMEOUT_MAX_SECONDS, RoutineValidationContext } from './routine.types';
+import {
+  ROUTINE_STEP_TIMEOUT_MAX_SECONDS,
+  RoutineValidationContext,
+  TERMINAL_ROUTINE_RUN_STATUSES,
+} from './routine.types';
 
 /** Terminal DbJob statuses — once a step's job reaches one of these the step is done. */
 const TERMINAL_JOB_STATUSES = ['completed', 'failed', 'canceled'];
 
 /** Terminal RoutineRun statuses — the loop stops re-entering once a run reaches one. */
-const TERMINAL_RUN_STATUSES = ['completed', 'failed', 'cancelled'];
 
 /** Fallback per-action timeout ceiling (seconds) for an unrecognized action — defensive only. */
 const FALLBACK_STEP_TIMEOUT_SECONDS = 30 * 60;
@@ -112,6 +116,7 @@ export class RoutineExecutorService {
     private readonly referenceValidator: RoutineReferenceValidatorService,
     private readonly auditLogService: AuditLogService,
     private readonly runCountService: RunCountService,
+    private readonly liveExportRunLifecycle: LiveExportRunLifecycleService,
   ) {}
 
   /**
@@ -238,7 +243,7 @@ export class RoutineExecutorService {
       throw new NotFoundException(`Routine run ${runId} not found`);
     }
 
-    if (TERMINAL_RUN_STATUSES.includes(run.status)) {
+    if (TERMINAL_ROUTINE_RUN_STATUSES.includes(run.status)) {
       return RoutineRunEntity.from(run);
     }
 
@@ -255,6 +260,7 @@ export class RoutineExecutorService {
         await this.jobService.cancelJob(inFlightStep.jobId, actor);
       }
     }
+    this.liveExportRunLifecycle.releaseRunStoreOfFinishedRun(runId);
 
     await this.auditLogService.logEvent({
       actor,
@@ -297,18 +303,32 @@ export class RoutineExecutorService {
       orderBy: { stepIndex: 'asc' },
     });
 
+    // Classic (git + Postgres) unless this is a Live Export run on the run-store engine — decided on the
+    // run's first drive and kept for its whole life (see LiveExportRunLifecycleService).
+    const liveExportRunStoreKey = await this.liveExportRunLifecycle.resolveRunStoreKeyForRun(
+      claimedRun,
+      steps.map((step) => ({
+        action: step.action,
+        options: step.options,
+        syncId: step.sync ? (resolveSyncInContext(step.sync, context)?.id ?? null) : null,
+        pullDataFolderIds:
+          step.action === String(RoutineAction.PULL) ? this.resolvePullFolderIds(step, context) : undefined,
+      })),
+    );
+
     for (let index = claimedRun.currentStepIndex; index < steps.length; index++) {
       const current = await this.db.client.routineRun.findUnique({ where: { id: runId } });
-      if (!current || TERMINAL_RUN_STATUSES.includes(current.status)) {
+      if (!current || TERMINAL_ROUTINE_RUN_STATUSES.includes(current.status)) {
         // Cancelled (or otherwise finalized) between steps — skip whatever is left and stop.
         if (current?.status === 'cancelled') {
           await this.skipStepsFrom(runId, index);
+          this.liveExportRunLifecycle.releaseRunStoreOfFinishedRun(runId);
         }
         return;
       }
 
       const step = steps[index];
-      const outcome = await this.runStep(claimedRun, step, actor, context, runContext);
+      const outcome = await this.runStep(claimedRun, step, actor, context, runContext, liveExportRunStoreKey);
 
       if (outcome.kind === 'yield') {
         return;
@@ -328,11 +348,13 @@ export class RoutineExecutorService {
           await this.runCountService.recordRoutineRun({ workbookId });
         }
         await this.skipStepsFrom(runId, index + 1);
+        this.liveExportRunLifecycle.releaseRunStoreOfFinishedRun(runId);
         return;
       }
       if (outcome.kind === 'canceled') {
         await this.markRunCancelled(runId);
         await this.skipStepsFrom(runId, index);
+        this.liveExportRunLifecycle.releaseRunStoreOfFinishedRun(runId);
         return;
       }
 
@@ -346,6 +368,7 @@ export class RoutineExecutorService {
     }
 
     const completed = await this.markRunCompleted(runId);
+    this.liveExportRunLifecycle.releaseRunStoreOfFinishedRun(runId);
     // A completed routine counts as one Routine run. Guarded on the transition so a reaper-resumed
     // re-drive can't double-count. Non-fatal — never breaks the run.
     if (completed) {
@@ -366,6 +389,7 @@ export class RoutineExecutorService {
     actor: Actor,
     context: RoutineValidationContext,
     runContext: RunContext,
+    liveExportRunStoreKey: string | undefined,
   ): Promise<RoutineStepOutcome> {
     let bullJobId = step.jobId;
 
@@ -393,7 +417,7 @@ export class RoutineExecutorService {
       } else {
         let job: Job;
         try {
-          job = await this.enqueueForStep(run, step, actor, context, runContext);
+          job = await this.enqueueForStep(run, step, actor, context, runContext, liveExportRunStoreKey);
         } catch (error) {
           return { kind: 'failed', error: error instanceof Error ? error.message : 'Failed to enqueue step job' };
         }
@@ -434,6 +458,7 @@ export class RoutineExecutorService {
     actor: Actor,
     context: RoutineValidationContext,
     runContext: RunContext,
+    liveExportRunStoreKey: string | undefined,
   ): Promise<Job> {
     const workbookId = run.workbookId as WorkbookId;
     const action = step.action as RoutineAction;
@@ -442,7 +467,7 @@ export class RoutineExecutorService {
       case RoutineAction.DISCARD_PENDING_CHANGES: {
         // Pre-flight cleanup is always workbook-wide (no folder/connection target) — it clears every
         // connection's leftover working-set edits before the run pulls anything.
-        return this.bullEnqueuer.enqueueDiscardPendingChangesJob(workbookId, actor, runContext);
+        return this.bullEnqueuer.enqueueDiscardPendingChangesJob(workbookId, actor, runContext, liveExportRunStoreKey);
       }
       case RoutineAction.PULL: {
         const dataFolderIds = this.resolvePullFolderIds(step, context);
@@ -465,6 +490,7 @@ export class RoutineExecutorService {
           undefined,
           runContext,
           pullMode,
+          liveExportRunStoreKey,
         );
       }
       case RoutineAction.PUBLISH_PLAN:
@@ -477,6 +503,7 @@ export class RoutineExecutorService {
           action === RoutineAction.PUBLISH,
           folderPath,
           runContext,
+          liveExportRunStoreKey,
         );
       }
       case RoutineAction.SYNC: {
@@ -484,7 +511,14 @@ export class RoutineExecutorService {
         if (!sync) {
           throw new Error(`sync step references sync "${step.sync}" which no longer exists in this workbook`);
         }
-        return this.bullEnqueuer.enqueueSyncDataFoldersJob(workbookId, sync.id as SyncId, actor, undefined, runContext);
+        return this.bullEnqueuer.enqueueSyncDataFoldersJob(
+          workbookId,
+          sync.id as SyncId,
+          actor,
+          undefined,
+          runContext,
+          liveExportRunStoreKey,
+        );
       }
       default:
         throw new Error(`Unsupported routine action "${step.action}"`);

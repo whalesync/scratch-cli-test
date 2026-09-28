@@ -4,6 +4,7 @@ pub mod index;
 pub mod maintenance;
 pub mod manage;
 pub mod read;
+pub mod run_store;
 pub mod smart_http;
 pub mod staging;
 pub mod system;

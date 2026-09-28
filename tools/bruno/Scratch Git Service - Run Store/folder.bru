@@ -1,0 +1,27 @@
+meta {
+  name: Scratch Git Service - Run Store
+  seq: 21
+}
+
+headers {
+  Authorization: Bearer {{scratchGitAuthToken}}
+}
+
+docs {
+  The Live Export run store on the scratch-git service itself (`:3100`), NOT the Scratch
+  server. Internal server-to-scratch-git endpoints: one SQLite file per routine run at
+  `{staging_dir}/le-<routineRunId>/run.db`, holding named collections of `{ key, meta, body }`
+  entries — see scratch-git-2/docs/RUN_STORE.md.
+
+  Requests target `{{scratchGitApiUrl}}` (Local: http://localhost:3100; Test/Production:
+  http://127.0.0.1:3100 through `terraform/tools/connect_to_git_service.sh <env>`).
+  This folder overrides the collection's `API-Token` header with
+  `Authorization: Bearer {{scratchGitAuthToken}}` — set the secret `scratchGitAuthToken`
+  variable to scratch-git's `SCRATCH_GIT_AUTH_TOKEN` (leave it empty locally, where the
+  service is unauthenticated).
+
+  Set `runStoreKey` to `le-<routineRunId>` (e.g. `le-rrn_AdVkcKA70W`). Collection names are
+  URL path segments of `[A-Za-z0-9_.:-]` — percent-encode `:` (`source%3AProducts`). Run stores
+  are disposable: Create/Clear wipes an existing store, Delete removes it. Every endpoint
+  except create, delete and summary is a 404 when the store doesn't exist.
+}

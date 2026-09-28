@@ -3,6 +3,7 @@ import {
   DataFolderId,
   DataFolderOptions,
   JobType,
+  LIVE_EXPORT_ENGINE_WORKBOOK_SETTING_KEY,
   PullAssetsResponseDto,
   PullFilesResponseDto,
   UpdateWorkbookDto,
@@ -110,7 +111,12 @@ export class WorkbookService {
   ) {}
 
   async create(createWorkbookDto: ValidatedCreateWorkbookDto, actor: Actor): Promise<WorkbookCluster.Workbook> {
-    const { name, managedBy } = createWorkbookDto;
+    const { name, managedBy, liveExportEngine } = createWorkbookDto;
+    if (liveExportEngine && managedBy !== WorkbookManager.WS_EXPORT) {
+      throw new BadRequestException(
+        'liveExportEngine can only be set on a Live Export workbook (managedBy: ws_export)',
+      );
+    }
 
     // Delegate the DB-row + config-repo creation to the shared provisioning service so the manual
     // "create workspace" path and the signup default-workspace path can never diverge (see
@@ -120,6 +126,7 @@ export class WorkbookService {
       ownerUserId: actor.userId,
       organizationId: actor.organizationId,
       managedByApp: managedBy ?? null,
+      ...(liveExportEngine ? { settings: { [LIVE_EXPORT_ENGINE_WORKBOOK_SETTING_KEY]: liveExportEngine } } : {}),
     });
 
     WSLogger.info({

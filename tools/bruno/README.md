@@ -78,6 +78,14 @@ Authorization: API-Token {{apiToken}}
   (added by the folder's `folder.bru`). Set the secret `adminToken` variable to
   the server's `SCRATCH_ADMIN_API_KEY`. These endpoints act on the user named in
   the request body, not on a session.
+- **`Scratch Git Service - Run Store` folder** — not the Scratch server at all: the
+  Live Export run store endpoints on the **scratch-git service** (`:3100`,
+  `{{scratchGitApiUrl}}`), which only the server calls in production. The folder
+  overrides the collection header with `Authorization: Bearer {{scratchGitAuthToken}}`
+  — set the secret `scratchGitAuthToken` to scratch-git's `SCRATCH_GIT_AUTH_TOKEN`
+  (empty locally). For Test/Production, open the tunnel first
+  (`terraform/tools/connect_to_git_service.sh <env>`, which forwards `127.0.0.1:3100`).
+  Set `runStoreKey` to `le-<routineRunId>`. See `scratch-git-2/docs/RUN_STORE.md`.
 
 ## Path variables
 
@@ -95,6 +103,8 @@ them:
 | `scheduleId`           | schedules                                          |
 | `draftId`              | sync drafts                                        |
 | `pipelineId` / `planId`| publish pipeline                                   |
+| `scratchGitApiUrl`     | scratch-git service base URL (run store folder)    |
+| `runStoreKey`          | `le-<routineRunId>` run store key (run store folder) |
 
 Other one-off IDs (`permissionId`, `inviteId`, `folderId`, `runId`, `service`,
 `installId`, `tableId`, ...) appear as `{{...}}` in the specific requests that
@@ -105,8 +115,9 @@ need them — either add them to the environment or replace them inline in the U
 **Covered:** every REST endpoint reachable with an API token — System/health,
 Users, Workbooks, Data Folders, Files, Connections, Connectors, Syncs,
 Transformers, Sync Drafts, Publish, Schema Builder, Schedules, Routines, Jobs,
-Scratch Git, OAuth, Payments — plus the `CLI` (`/cli/v1/*`) operations and the
-`Internal - Whalesync` admin channel.
+Scratch Git, OAuth, Payments — plus the `CLI` (`/cli/v1/*`) operations, the
+`Internal - Whalesync` admin channel, and the scratch-git service's Live Export run
+store endpoints (`Scratch Git Service - Run Store`).
 
 **Intentionally excluded** (not plain token-authenticated REST):
 

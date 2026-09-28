@@ -1,0 +1,16 @@
+meta {
+  name: Delete Run Store
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{scratchGitApiUrl}}/api/run-store/{{runStoreKey}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Removes the run store's directory (run.db and its WAL) after dropping its cached connections.
+  Returns { deleted } (false when there was nothing to delete); idempotent.
+}

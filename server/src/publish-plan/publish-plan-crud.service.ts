@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { PublishFailedOperationsResponse, PublishSucceededOperationsResponse } from '@spinner/shared-types';
+import { parseRunStorePublishPipelineId } from 'src/live-export-run-store/run-store-collections';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { DbService } from '../db/db.service';
 import { collapseFailedOperationsByPath } from './failed-operations.util';
@@ -164,6 +165,10 @@ export class PublishPlanCrudService {
     const pageSize = Math.min(options?.pageSize ?? 50, 200);
     const skip = (page - 1) * pageSize;
 
+    if (parseRunStorePublishPipelineId(pipelineId)) {
+      return this.listLiveExportRunStoreFailuresAsOperations(pipelineId, { ...options, page, pageSize });
+    }
+
     const where: Record<string, unknown> = { planId: pipelineId };
     if (options?.phase) {
       where.phase = options.phase;
@@ -186,6 +191,48 @@ export class PublishPlanCrudService {
     ]);
 
     return { data, total, page, pageSize };
+  }
+
+  /**
+   * The operations list of a Live Export run-store publish. Only its FAILED operations outlive the run
+   * (in LiveExportRunFailure — the rest of the plan lived in the run's disposable run store), so this
+   * returns those, shaped like `failed-batch` PublishPlanOperation rows.
+   */
+  private async listLiveExportRunStoreFailuresAsOperations(
+    pipelineId: string,
+    options: { page: number; pageSize: number; phase?: string; filePath?: string },
+  ) {
+    const where = {
+      pipelineId,
+      ...(options.phase ? { phase: options.phase } : {}),
+      ...(options.filePath ? { filePath: options.filePath } : {}),
+    };
+    const [failures, total] = await Promise.all([
+      this.db.client.liveExportRunFailure.findMany({
+        where,
+        orderBy: [{ phase: 'asc' }, { filePath: 'asc' }],
+        skip: (options.page - 1) * options.pageSize,
+        take: options.pageSize,
+      }),
+      this.db.client.liveExportRunFailure.count({ where }),
+    ]);
+    const data = failures.map((failure) => ({
+      id: failure.id,
+      planId: failure.pipelineId,
+      filePath: failure.filePath,
+      phase: failure.phase,
+      status: 'failed-batch',
+      error: failure.error,
+      errorCode: failure.errorCode,
+      content: {},
+      changedFields: null,
+      remoteRecordId: null,
+      dataFolderId: null,
+      isRecreate: false,
+      createdAt: failure.createdAt,
+      updatedAt: failure.createdAt,
+    }));
+    return { data, total, page: options.page, pageSize: options.pageSize };
   }
 
   /**
@@ -212,11 +259,19 @@ export class PublishPlanCrudService {
     const pageSize = Math.min(options?.pageSize ?? 50, 200);
     const skip = (page - 1) * pageSize;
 
-    const rows = await this.db.client.publishPlanOperation.findMany({
-      where: { planId: pipelineId, status: 'failed-batch' },
-      select: { filePath: true, phase: true, error: true, errorCode: true },
-      orderBy: { filePath: 'asc' },
-    });
+    // A Live Export run on the run-store engine keeps its failures in LiveExportRunFailure (its plan lived
+    // in the run's disposable run store).
+    const rows = parseRunStorePublishPipelineId(pipelineId)
+      ? await this.db.client.liveExportRunFailure.findMany({
+          where: { pipelineId },
+          select: { filePath: true, phase: true, error: true, errorCode: true },
+          orderBy: { filePath: 'asc' },
+        })
+      : await this.db.client.publishPlanOperation.findMany({
+          where: { planId: pipelineId, status: 'failed-batch' },
+          select: { filePath: true, phase: true, error: true, errorCode: true },
+          orderBy: { filePath: 'asc' },
+        });
 
     const collapsed = collapseFailedOperationsByPath(rows);
     return {

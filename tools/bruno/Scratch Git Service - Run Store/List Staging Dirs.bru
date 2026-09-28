@@ -1,0 +1,17 @@
+meta {
+  name: List Staging Dirs
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{scratchGitApiUrl}}/api/staging
+  body: none
+  auth: inherit
+}
+
+docs {
+  Every `{staging_dir}/<key>` dir (pull/sync staging and `le-` run stores) with
+  { jobId, mtimeMs, sizeBytes }, plus `runStoreMaxBytes` (GIT_LE_RUN_STORE_MAX_BYTES).
+  Used by the server's hourly staging-dir reaper.
+}

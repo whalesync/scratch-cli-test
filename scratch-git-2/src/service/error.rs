@@ -13,6 +13,11 @@ pub enum AppError {
     #[error("GC already in progress")]
     Conflict(String),
 
+    /// 507: the request needs disk the service has budgeted away (e.g. the Live Export run store
+    /// byte budget, `GIT_LE_RUN_STORE_MAX_BYTES`). The message says which budget and by how much.
+    #[error("{0}")]
+    InsufficientStorage(String),
+
     #[error("{0}")]
     Internal(String),
 
@@ -37,11 +42,16 @@ impl AppError {
         AppError::Conflict(msg.into())
     }
 
+    pub fn insufficient_storage(msg: impl Into<String>) -> Self {
+        AppError::InsufficientStorage(msg.into())
+    }
+
     pub fn status_code(&self) -> StatusCode {
         match self {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::InsufficientStorage(_) => StatusCode::INSUFFICIENT_STORAGE,
             AppError::Internal(_) | AppError::Git(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

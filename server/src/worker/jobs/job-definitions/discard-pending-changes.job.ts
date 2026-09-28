@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { DiscardPendingChangesPublicProgress, WorkbookId } from '@spinner/shared-types';
 import { type JobTrigger, JobType } from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
+import type { RunStoreClient, RunStoreKey } from 'src/live-export-run-store/run-store-client';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { WSLogger } from '../../../logger';
@@ -21,6 +22,12 @@ export type DiscardPendingChangesJobDefinition = JobDefinitionBuilder<
     organizationId: string;
     trigger?: JobTrigger;
     initialPublicProgress?: DiscardPendingChangesPublicProgress;
+    /**
+     * Set when this job is a step of a Live Export routine run that uses the run-store engine: the key
+     * (`le-<routineRunId>`) of the run's disposable run store on scratch-git. Absent → the classic
+     * engine (git + Postgres). See docs/plans/2026-09-25-live-export-git-free-run-store.
+     */
+    liveExportRunStoreKey?: string;
   },
   DiscardPendingChangesPublicProgress,
   Record<string, never>, // jobProgress — no internal checkpoint state
@@ -40,6 +47,8 @@ export class DiscardPendingChangesJobHandler implements JobHandlerBuilder<Discar
     private readonly prisma: PrismaClient,
     private readonly workbookService: WorkbookService,
     private readonly workbookEventService: WorkbookEventService,
+    /** Required for Live Export runs on the run-store engine (`data.liveExportRunStoreKey`). */
+    private readonly runStoreClient?: RunStoreClient,
   ) {}
 
   async run(params: {
@@ -98,7 +107,9 @@ export class DiscardPendingChangesJobHandler implements JobHandlerBuilder<Discar
     const actor: Actor = userToActor(user);
 
     try {
-      const result = await this.workbookService.discardAllPendingChangesWithStats(data.workbookId, actor);
+      const result = data.liveExportRunStoreKey
+        ? await this.prepareFreshLiveExportRunStore(data.liveExportRunStoreKey as RunStoreKey)
+        : await this.workbookService.discardAllPendingChangesWithStats(data.workbookId, actor);
 
       const connections: DiscardPendingChangesPublicProgress['connections'] = result.connections.map((connection) => ({
         connectorAccountId: connection.connectorAccountId,
@@ -147,5 +158,20 @@ export class DiscardPendingChangesJobHandler implements JobHandlerBuilder<Discar
       });
       throw err;
     }
+  }
+
+  /**
+   * A Live Export run on the run-store engine starts from a completely fresh, empty store instead of
+   * resetting git (it keeps no git state). Creating the store is also where the git service's byte
+   * budget is enforced, so a full disk fails this first step with a clear message.
+   */
+  private async prepareFreshLiveExportRunStore(
+    runStoreKey: RunStoreKey,
+  ): Promise<{ totalDiscarded: number; connections: [] }> {
+    if (!this.runStoreClient) {
+      throw new Error('DiscardPendingChangesJobHandler was built without a run store client');
+    }
+    await this.runStoreClient.createOrClearRunStore(runStoreKey);
+    return { totalDiscarded: 0, connections: [] };
   }
 }

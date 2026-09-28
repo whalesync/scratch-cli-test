@@ -36,6 +36,13 @@ export enum SystemFeatureFlag {
    * it on with a 100%-rollout release condition when ready to enforce.
    */
   SUBSCRIPTION_ENFORCEMENT_ENABLED = 'SUBSCRIPTION_ENFORCEMENT_ENABLED',
+  /**
+   * Kill switch for the Live Export run-store engine (`server/src/live-export-run-store`). When enabled,
+   * every new Live Export run uses the classic engine, whatever its workbook's `live_export_engine`
+   * setting says; runs already started keep the engine they started with. Default false (an absent flag
+   * or a PostHog outage leaves the per-workbook setting in charge). Evaluated with no user.
+   */
+  LIVE_EXPORT_RUN_STORE_ENGINE_DISABLED = 'LIVE_EXPORT_RUN_STORE_ENGINE_DISABLED',
 }
 
 /**
