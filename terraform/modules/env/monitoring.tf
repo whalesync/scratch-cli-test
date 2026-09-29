@@ -25,6 +25,7 @@ locals {
   runbook_config_change_alerts     = "${local.runbook_base}/runbook-gcp-config-change-spike.md"
   runbook_secret_access_alerts     = "${local.runbook_base}/runbook-gcp-secret-access-alerts.md"
   runbook_log_ingestion            = "${local.runbook_base}/runbook-gcp-log-ingestion-high.md"
+  runbook_cloud_nat                = "${local.runbook_base}/runbook-gcp-cloud-nat-port-exhaustion.md"
 
   # --- Secret Manager access allowlist (DEV-10989 follow-up, unexpected-principal signal) ---
   # Legitimate AccessSecretVersion callers are the shared Cloud Run app SA (all four services run as it and read
@@ -694,6 +695,107 @@ resource "google_monitoring_alert_policy" "worker_high_error_log_count" {
 
   notification_channels = local.warning_notification_channels
   severity              = "WARNING"
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Cloud NAT Alerts (DEV-12034)
+## ---------------------------------------------------------------------------------------------------------------------
+## All Cloud Run egress leaves through one NAT gateway with a single allowlisted IP. Each endpoint gets
+## module.cloudnat.min_ports_per_vm ports, which caps its concurrent connections to any one destination ip:port;
+## a closed connection keeps its port for the NAT TIME_WAIT. Past that, new connections to that destination are
+## dropped and the app sees EHOSTUNREACH, for every job on that instance, not just the one causing it.
+
+resource "google_monitoring_alert_policy" "cloud_nat_port_pressure" {
+  count        = var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Cloud NAT - Port pressure to a single destination"
+  documentation {
+    subject = "Scratch ${local.display_env} Cloud NAT - Ports to a single destination near or at the per-instance limit"
+    content = <<-EOF
+    An instance is using more than 80% of its ${module.cloudnat.min_ports_per_vm} NAT ports to a single destination ip:port, or the NAT is dropping new connections because it ran out. Dropped connections surface as EHOSTUNREACH for every job on that instance talking to that destination. Find the source and destination in the NAT logs and the job opening the connections.
+    Runbook: ${local.runbook_cloud_nat}
+    EOF
+  }
+  combiner = "OR"
+  conditions {
+    display_name = "TCP connections to a single destination > 80% of per-instance ports"
+    condition_threshold {
+      filter          = "resource.type = \"nat_gateway\" AND resource.labels.gateway_name = \"${module.cloudnat.nat_gateway_name}\" AND metric.type = \"router.googleapis.com/nat/port_usage\" AND metric.labels.ip_protocol = \"6\""
+      duration        = "0s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = module.cloudnat.min_ports_per_vm * 0.8
+      trigger {
+        count = 1
+      }
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MAX"
+      }
+    }
+  }
+  conditions {
+    display_name = "Packets dropped for lack of NAT ports (OUT_OF_RESOURCES)"
+    condition_threshold {
+      filter          = "resource.type = \"nat_gateway\" AND resource.labels.gateway_name = \"${module.cloudnat.nat_gateway_name}\" AND metric.type = \"router.googleapis.com/nat/dropped_sent_packets_count\" AND metric.labels.reason = \"OUT_OF_RESOURCES\""
+      duration        = "0s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      trigger {
+        count = 1
+      }
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+    }
+  }
+
+  alert_strategy {
+    notification_channel_strategy {
+      renotify_interval = local.extended_renotify_interval
+    }
+  }
+
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
+}
+
+resource "google_monitoring_alert_policy" "cloud_nat_allocation_failed" {
+  count        = var.enable_alerts ? 1 : 0
+  display_name = "Scratch ${local.display_env} Cloud NAT - Port allocation failed"
+  documentation {
+    subject = "Scratch ${local.display_env} Cloud NAT - An instance could not be allocated NAT ports"
+    content = <<-EOF
+    The NAT gateway could not reserve ${module.cloudnat.min_ports_per_vm} ports for at least one endpoint, because the single allowlisted NAT IP (64,512 ports) is fully reserved. Affected instances have no internet egress at all.
+    Runbook: ${local.runbook_cloud_nat}
+    EOF
+  }
+  combiner = "OR"
+  conditions {
+    display_name = "NAT allocation failed for an endpoint"
+    condition_threshold {
+      filter          = "resource.type = \"nat_gateway\" AND resource.labels.gateway_name = \"${module.cloudnat.nat_gateway_name}\" AND metric.type = \"router.googleapis.com/nat/nat_allocation_failed\""
+      duration        = "300s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      trigger {
+        count = 1
+      }
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_FRACTION_TRUE"
+      }
+    }
+  }
+
+  alert_strategy {
+    notification_channel_strategy {
+      renotify_interval = local.renotify_interval
+    }
+  }
+
+  notification_channels = local.notification_channels
+  severity              = "CRITICAL"
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------

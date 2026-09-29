@@ -23,6 +23,14 @@ resource "google_compute_router_nat" "nat" {
   nat_ips                            = [google_compute_address.nat_egress.self_link]
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 
+  # Ports cap concurrent connections per instance to one destination ip:port, and a closed
+  # connection holds its port for TIME_WAIT. The default 64 ports / 120s ran out (DEV-12034).
+  # Every endpoint reserves min_ports_per_vm from the single allowlisted IP's 64,512 ports.
+  min_ports_per_vm                    = 2048
+  enable_dynamic_port_allocation      = false
+  enable_endpoint_independent_mapping = false
+  tcp_time_wait_timeout_sec           = 60
+
   log_config {
     enable = true
     filter = "ERRORS_ONLY"
