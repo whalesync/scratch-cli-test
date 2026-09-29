@@ -60,7 +60,7 @@ gcloud compute snapshots list \
   --format="table(name,creationTimestamp,diskSizeGb,status)"
 ```
 
-Pick a snapshot from before the repo was corrupted or deleted.
+Pick a snapshot from before the repo was corrupted or deleted. Note its `diskSizeGb`. The temporary disk in step 3 must be at least that large: 200 for current prod snapshots, 2000 for snapshots of the pre-DEV-11823 disk.
 
 ### 3. Deploy the temporary test VM via Terraform
 
@@ -103,7 +103,7 @@ resource "google_compute_disk" "snapshot_test_data" {
   name     = "${local.snapshot_test_name}-data"
   type     = "pd-ssd"
   zone     = local.snapshot_test_zone
-  size     = 50
+  size     = 200 # must be >= the snapshot's diskSizeGb (step 2)
   snapshot = "projects/${local.snapshot_test_project}/global/snapshots/${local.snapshot_name}"
   project  = local.snapshot_test_project
   labels   = local.snapshot_test_labels
@@ -395,4 +395,4 @@ terraform apply \
 - The snapshot test VM reuses the `scratch-git` network tag, so existing firewall rules allow VPC traffic on ports 3100 and 3101 automatically.
 - The startup script does **not** format the disk (`mkfs.ext4`) — the snapshot already contains a valid filesystem.
 - The VM takes 2-5 minutes after creation before the scratch-git container is running.
-- Snapshots are retained for 14 days. For older data, you would need to restore from another backup source.
+- Automated snapshots of the live disk are retained for `scratch_git_snapshot_retention_days` (prod: 7 days). Snapshots of a deleted disk are kept permanently (`KEEP_AUTO_SNAPSHOTS`), as are manual ones. For anything older, you would need to restore from another backup source.

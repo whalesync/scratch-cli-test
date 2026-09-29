@@ -34,6 +34,7 @@ resource "google_secret_manager_secret_iam_member" "scratch_git_auth_token" {
 ## Persistent Data Disk
 ## ---------------------------------------------------------------------------------------------------------------------
 
+# `snapshot` is ForceNew: changing it (even back to null) recreates the disk, EMPTY if null. See var.disk_source_snapshot.
 resource "google_compute_disk" "data" {
   name     = "${var.instance_name}-data"
   type     = var.disk_type

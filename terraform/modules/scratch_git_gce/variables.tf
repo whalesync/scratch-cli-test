@@ -115,7 +115,7 @@ variable "labels" {
 }
 
 variable "disk_source_snapshot" {
-  description = "Full snapshot self_link to restore the data disk from. When set, Terraform will destroy and recreate the disk and VM. Remove after restore is complete."
+  description = "Full snapshot self_link the data disk is created from. ForceNew: any change, including back to null, destroys and recreates the disk and VM (null = EMPTY disk). After a restore, leave it set and retain the snapshot."
   type        = string
   default     = null
 }

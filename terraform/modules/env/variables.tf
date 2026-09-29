@@ -519,7 +519,7 @@ variable "scratch_git_snapshot_retention_days" {
 variable "scratch_git_disk_source_snapshot" {
   type        = string
   default     = null
-  description = "Full snapshot self_link to restore the scratch-git data disk from. When set, Terraform will destroy and recreate the disk and VM. Remove after restore is complete."
+  description = "Full snapshot self_link the scratch-git data disk is created from. ForceNew: any change, including back to null, destroys and recreates the disk and VM (null = EMPTY disk). After a restore, leave it set and retain the snapshot."
 }
 
 variable "scratch_git_initialize_filesystem" {
