@@ -56,8 +56,15 @@ switch is on. The badge makes that visible.
   returns only the failed operations for these runs.
 - `GET /workbook/:workbookId/publish-v2/:pipelineId` returns null for a run-store pipeline (there is no
   PublishPlan row) — don't treat that as an error; use the routine step's result instead.
-- The pull steps report records pulled but no created/updated counts (a run store has no previous state to
-  compare against); the sync and publish steps report changes as before.
+- The pull steps report only how many records they fetched — a run store has no previous state to compare
+  against. Their `result.summary` reads e.g. "Pulled 1 folder — 100,000 records fetched" and `result.stats` is
+  a single `{ "label": "Fetched", "value": 100000 }` instead of New / Updated / Deleted / Unchanged. The
+  per-folder table needs a small change: `derivePullResult` / `deriveJobResult` (from `@spinner/shared-types`,
+  so bump dusky's installed version first) now return `reportsOnlyFetchedRecordCount: true` on the result and
+  a `fetched` count on each folder row, with that row's `created` / `updated` / `deleted` left at a meaningless
+  0. When the flag is set, show a single "Fetched" column (`folder.fetched`) in place of the Created / Updated /
+  Deleted columns. Scratch's own web client does exactly this in `FolderBreakdownTable`
+  (`client/src/app/components/jobs/JobProgressDetail.tsx`). The sync and publish steps report changes as before.
 
 **Acceptance:** a Live Export created with the box ticked shows `settings.live_export_engine = "run_store"` in
 `GET /workbook/:id`, and one created without it shows `"classic"`; toggling the settings-page checkbox round-trips through `GET /workbook/:id` (refresh the page and it stays);

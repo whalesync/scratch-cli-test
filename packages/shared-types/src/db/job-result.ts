@@ -45,9 +45,15 @@ export interface JobResultFolder {
   name: string;
   /** Connector service (e.g. "AIRTABLE"), or null when unknown. */
   connector: string | null;
+  /**
+   * Created / updated / deleted counts. Zero and meaningless when the result's
+   * `reportsOnlyFetchedRecordCount` is true (a pull with nothing to compare against) — show `fetched` instead.
+   */
   created: number;
   updated: number;
   deleted: number;
+  /** Records fetched from the service. Pull only; set when the result's `reportsOnlyFetchedRecordCount` is true. */
+  fetched?: number;
   skipped: number;
   errorCount: number;
   warningCount: number;
@@ -101,6 +107,13 @@ export interface JobResult {
    * fetched count is not the folder's full record total, so the 'Unchanged' stat is omitted.
    */
   mode?: 'full' | 'incremental';
+  /**
+   * Pull only. True when the pull had no previous state to compare against (a Live Export run on the
+   * run-store engine), so it can't tell new, updated, deleted and unchanged records apart: `stats` is a single
+   * 'Fetched' counter, and each folder carries `fetched` while its created/updated/deleted are meaningless.
+   * A breakdown table should show a Fetched column instead of Created / Updated / Deleted.
+   */
+  reportsOnlyFetchedRecordCount?: boolean;
 }
 
 /**
@@ -175,16 +188,21 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
   const isIncrementalPull =
     progress.mode === 'incremental' || (progress.folders ?? []).some((folder) => folder.mode === 'incremental');
   const modeSuffix = isIncrementalPull ? ' (incremental)' : '';
-  const completedPullSummary =
-    changedRecordCount === 0
+  const fetchedRecordCount = progress.totalFiles ?? 0;
+  const completedPullSummary = progress.reportsOnlyFetchedRecordCount
+    ? `Pulled ${pluralize(folderCount, 'folder')} — ${pluralize(fetchedRecordCount, 'record')} fetched`
+    : changedRecordCount === 0
       ? `Pulled ${pluralize(folderCount, 'folder')} — no changes${modeSuffix}`
       : `Pulled ${pluralize(changedRecordCount, 'record')} across ${pluralize(folderCount, 'folder')}${modeSuffix}`;
 
-  const stats: JobResultStat[] = [
-    { label: 'New', value: createdCount },
-    { label: 'Updated', value: updatedCount },
-    { label: 'Deleted', value: deletedCount },
-  ];
+  // A pull with no previous state to compare against (Live Export run store) knows only what it fetched.
+  const stats: JobResultStat[] = progress.reportsOnlyFetchedRecordCount
+    ? [{ label: 'Fetched', value: fetchedRecordCount }]
+    : [
+        { label: 'New', value: createdCount },
+        { label: 'Updated', value: updatedCount },
+        { label: 'Deleted', value: deletedCount },
+      ];
   // `totalFiles` is the set fetched from the service, which is exactly what ends up created, updated, or
   // left untouched on disk (deletes are records that were NOT fetched, so they are not part of this
   // total). So New + Updated + Unchanged = fetched record count. We only surface 'Unchanged' for full
@@ -192,8 +210,8 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
   // misleadingly imply the rest of the folder doesn't exist. It is also meaningless MID-RUN: records
   // are fetched (Phase 1) long before they are written to disk (Phase 2), so a running pull would
   // report every record fetched so far as "Unchanged".
-  if (!isIncrementalPull && !isRunning) {
-    const unchangedCount = Math.max(0, (progress.totalFiles ?? 0) - createdCount - updatedCount);
+  if (!isIncrementalPull && !isRunning && !progress.reportsOnlyFetchedRecordCount) {
+    const unchangedCount = Math.max(0, fetchedRecordCount - createdCount - updatedCount);
     stats.push({ label: 'Unchanged', value: unchangedCount });
   }
 
@@ -233,6 +251,7 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
     createdPaths: folder.createdPaths ?? [],
     updatedPaths: folder.updatedPaths ?? [],
     deletedPaths: folder.deletedPaths ?? [],
+    ...(progress.reportsOnlyFetchedRecordCount ? { fetched: folder.totalFiles ?? 0 } : {}),
     status: folder.status,
     mode: folder.mode,
   }));
@@ -244,7 +263,16 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
     ? summarizePullInProgress(folders, hasPerFolderBreakdown, folderCount, progress.totalFiles ?? 0)
     : completedPullSummary;
 
-  return { summary, stats, folders, files, errors, warnings: [], mode: isIncrementalPull ? 'incremental' : 'full' };
+  return {
+    summary,
+    stats,
+    folders,
+    files,
+    errors,
+    warnings: [],
+    mode: isIncrementalPull ? 'incremental' : 'full',
+    ...(progress.reportsOnlyFetchedRecordCount ? { reportsOnlyFetchedRecordCount: true } : {}),
+  };
 }
 
 /**

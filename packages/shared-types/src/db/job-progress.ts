@@ -83,6 +83,12 @@ export type PullLinkedFolderFilesPublicProgress = {
   folderErrors?: Record<string, FolderError>;
   /** Display-only hint surfaced by some client progress widgets; never produced by the server today. */
   hasDirtyDiscoveredDeletes?: boolean;
+  /**
+   * True when the pull wrote into storage with no previous state to compare against (a Live Export run on
+   * the run-store engine), so it cannot tell new, updated, deleted and unchanged records apart: the
+   * created/updated/deleted counts are meaningless and only `totalFiles` (records fetched) is reported.
+   */
+  reportsOnlyFetchedRecordCount?: boolean;
 };
 
 // ── Sync (sync-data-folders) ─────────────────────────────────────────────────

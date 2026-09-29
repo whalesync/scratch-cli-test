@@ -77,6 +77,9 @@ export class ClassicGitPullSink implements PullSink {
   /** The classic store is the baseline an incremental pull extends: watermarks describe what git holds. */
   readonly persistsIncrementalPullBaseline = true;
 
+  /** Git holds the previous pull, so every fetched record is classified as new, updated or unchanged. */
+  readonly reportsRecordChangeCounts = true;
+
   /**
    * The connection repo every folder of this job lives in (single-connection invariant), resolved
    * and initialized by `prepareStorageBeforeLoadingFolders`.

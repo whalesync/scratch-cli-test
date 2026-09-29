@@ -25,6 +25,9 @@ export class RunStorePullSink implements PullSink {
   /** The run store starts empty every run: there is no baseline for an incremental pull to extend. */
   readonly persistsIncrementalPullBaseline = false;
 
+  /** Nothing to compare against, so the pull reports only the records it fetched. */
+  readonly reportsRecordChangeCounts = false;
+
   private readonly tableSpecStore: RunStoreTableSpecStore;
   private recordsWithoutIdCounter = 0;
 

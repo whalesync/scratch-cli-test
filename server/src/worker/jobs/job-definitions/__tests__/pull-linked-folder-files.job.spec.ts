@@ -1275,6 +1275,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         const pagesWritten: ConnectorFile[][] = [];
         const pullSink: PullSink = {
           persistsIncrementalPullBaseline,
+          reportsRecordChangeCounts: persistsIncrementalPullBaseline,
           prepareStorageBeforeLoadingFolders: jest.fn().mockResolvedValue(undefined),
           storeFolderTableSpec: jest.fn().mockResolvedValue(undefined),
           storeFolderDefaultView: jest.fn().mockResolvedValue(undefined),
@@ -1346,6 +1347,24 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         }
         expect(mockFileIndexService.readRecordIdToFilenameMapForFolder).not.toHaveBeenCalled();
         expect(mockFileIndexService.upsertBatch).not.toHaveBeenCalled();
+      });
+
+      it('reports only the fetched record count when the sink cannot tell new records from unchanged ones', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        mockConnector.buildDefaultView.mockReturnValue({ columns: [] });
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({ files: [{ id: 'rec1' }, { id: 'rec2' }], connectorProgress: {} });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        const checkpointCalls = params.checkpoint.mock.calls as Array<
+          [{ publicProgress: { reportsOnlyFetchedRecordCount?: boolean; totalFiles: number } }]
+        >;
+        const finalPublicProgress = checkpointCalls[checkpointCalls.length - 1][0].publicProgress;
+        expect(finalPublicProgress).toMatchObject({ reportsOnlyFetchedRecordCount: true, totalFiles: 2 });
       });
 
       it('pulls fully and leaves the watermarks untouched when the sink is not the incremental baseline', async () => {

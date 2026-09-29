@@ -85,6 +85,13 @@ export interface PullSink {
    */
   readonly persistsIncrementalPullBaseline: boolean;
 
+  /**
+   * True when the sink compares each fetched record with what it already holds, so the job can report
+   * new / updated / deleted / unchanged counts (classic). False for a sink that starts empty every run
+   * (the Live Export run store): the job then reports only how many records it fetched.
+   */
+  readonly reportsRecordChangeCounts: boolean;
+
   /** Called once per job attempt, before any folder is loaded (classic: resolve and init the repo). */
   prepareStorageBeforeLoadingFolders(): Promise<void>;
 

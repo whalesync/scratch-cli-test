@@ -71,5 +71,6 @@ describe('RunStorePullSink', () => {
       }),
     ).toEqual(TABLE_SPEC);
     expect(sink.persistsIncrementalPullBaseline).toBe(false);
+    expect(sink.reportsRecordChangeCounts).toBe(false);
   });
 });

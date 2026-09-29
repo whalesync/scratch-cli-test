@@ -373,6 +373,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       updatedCount: 0,
       deletedCount: 0,
       folders: [],
+      ...(pullSink.reportsRecordChangeCounts ? {} : { reportsOnlyFetchedRecordCount: true }),
     };
 
     // Per-folder breakdown — one entry per target folder, parallel to the sync job's `tables`. Seeded

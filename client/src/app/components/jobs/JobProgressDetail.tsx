@@ -100,7 +100,12 @@ export function JobResultView({ result }: { result: JobResult }) {
     <Stack gap="xs">
       {result.summary && <Text13Regular c="var(--fg-primary)">{result.summary}</Text13Regular>}
       <JobStatLine stats={result.stats} />
-      {result.folders.length > 0 && <FolderBreakdownTable folders={result.folders} />}
+      {result.folders.length > 0 && (
+        <FolderBreakdownTable
+          folders={result.folders}
+          reportsOnlyFetchedRecordCount={result.reportsOnlyFetchedRecordCount ?? false}
+        />
+      )}
       {result.errors.length > 0 && (
         <MessageList title="Errors" messages={result.errors} color="var(--mantine-color-red-6)" />
       )}
@@ -129,9 +134,16 @@ export function JobStatLine({ stats }: { stats: JobResult['stats'] }) {
 
 /**
  * Uniform per-folder/table breakdown — the SAME table for pull (folders) and sync (tables), since both
- * derive into {@link JobResult.folders}. Columns adapt to whichever optional dimensions are present.
+ * derive into {@link JobResult.folders}. Columns adapt to whichever optional dimensions are present; a pull
+ * that knows only how many records it fetched gets a Fetched column instead of Created / Updated / Deleted.
  */
-function FolderBreakdownTable({ folders }: { folders: JobResult['folders'] }) {
+function FolderBreakdownTable({
+  folders,
+  reportsOnlyFetchedRecordCount,
+}: {
+  folders: JobResult['folders'];
+  reportsOnlyFetchedRecordCount: boolean;
+}) {
   const hasSkipped = folders.some((folder) => folder.skipped > 0);
   const hasErrors = folders.some((folder) => folder.errorCount > 0);
   const hasWarnings = folders.some((folder) => folder.warningCount > 0);
@@ -142,9 +154,15 @@ function FolderBreakdownTable({ folders }: { folders: JobResult['folders'] }) {
         <Table.Tr>
           <Table.Th>Folder</Table.Th>
           <Table.Th>Source</Table.Th>
-          <Table.Th>Created</Table.Th>
-          <Table.Th>Updated</Table.Th>
-          <Table.Th>Deleted</Table.Th>
+          {reportsOnlyFetchedRecordCount ? (
+            <Table.Th>Fetched</Table.Th>
+          ) : (
+            <>
+              <Table.Th>Created</Table.Th>
+              <Table.Th>Updated</Table.Th>
+              <Table.Th>Deleted</Table.Th>
+            </>
+          )}
           {hasSkipped && <Table.Th>Skipped</Table.Th>}
           {hasErrors && <Table.Th>Errors</Table.Th>}
           {hasWarnings && <Table.Th>Warnings</Table.Th>}
@@ -156,9 +174,15 @@ function FolderBreakdownTable({ folders }: { folders: JobResult['folders'] }) {
           <Table.Tr key={folder.id ?? index}>
             <Table.Td>{folder.name || `Folder ${index + 1}`}</Table.Td>
             <Table.Td>{folder.connector ?? '-'}</Table.Td>
-            <Table.Td>{formatNumber(folder.created)}</Table.Td>
-            <Table.Td>{formatNumber(folder.updated)}</Table.Td>
-            <Table.Td>{formatNumber(folder.deleted)}</Table.Td>
+            {reportsOnlyFetchedRecordCount ? (
+              <Table.Td>{formatNumber(folder.fetched ?? 0)}</Table.Td>
+            ) : (
+              <>
+                <Table.Td>{formatNumber(folder.created)}</Table.Td>
+                <Table.Td>{formatNumber(folder.updated)}</Table.Td>
+                <Table.Td>{formatNumber(folder.deleted)}</Table.Td>
+              </>
+            )}
             {hasSkipped && (
               <Table.Td>
                 <Text13Regular c="dimmed">{formatNumber(folder.skipped)}</Text13Regular>

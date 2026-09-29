@@ -179,6 +179,76 @@ describe('deriveJobResult', () => {
 
       expect(result.summary).toBe('Pulled 7 records across 3 folders');
     });
+
+    it('reports only what it fetched when it has no previous state to compare against (Live Export run store)', () => {
+      const result = deriveJobResult({
+        type: JobType.PullLinkedFolderFiles,
+        publicProgress: pullProgress({
+          folderCount: 1,
+          totalFiles: 100000,
+          status: 'completed',
+          reportsOnlyFetchedRecordCount: true,
+        }),
+      });
+
+      expect(result.summary).toBe('Pulled 1 folder — 100,000 records fetched');
+      expect(result.stats).toEqual([{ label: 'Fetched', value: 100000 }]);
+    });
+
+    it('gives each folder row its fetched count and flags the result, so tables show Fetched', () => {
+      const result = deriveJobResult({
+        type: JobType.PullLinkedFolderFiles,
+        publicProgress: pullProgress({
+          folderCount: 2,
+          totalFiles: 30,
+          status: 'completed',
+          reportsOnlyFetchedRecordCount: true,
+          folders: [
+            pullFolderProgress({ id: 'dfd_1', name: 'Companies', totalFiles: 10, status: 'completed' }),
+            pullFolderProgress({ id: 'dfd_2', name: 'Contacts', totalFiles: 20, status: 'completed' }),
+          ],
+        }),
+      });
+
+      expect(result.reportsOnlyFetchedRecordCount).toBe(true);
+      expect(result.folders.map((folder) => [folder.name, folder.fetched])).toEqual([
+        ['Companies', 10],
+        ['Contacts', 20],
+      ]);
+    });
+
+    it('leaves a classic pull without fetched counts or the flag', () => {
+      const result = deriveJobResult({
+        type: JobType.PullLinkedFolderFiles,
+        publicProgress: pullProgress({
+          totalFiles: 10,
+          status: 'completed',
+          folders: [pullFolderProgress({ totalFiles: 10, status: 'completed' })],
+        }),
+      });
+
+      expect(result.reportsOnlyFetchedRecordCount).toBeUndefined();
+      expect(result.folders[0]).not.toHaveProperty('fetched');
+    });
+
+    it('uses the singular for one fetched record, and the plural for several folders', () => {
+      const oneRecord = deriveJobResult({
+        type: JobType.PullLinkedFolderFiles,
+        publicProgress: pullProgress({ totalFiles: 1, status: 'completed', reportsOnlyFetchedRecordCount: true }),
+      });
+      const severalFolders = deriveJobResult({
+        type: JobType.PullLinkedFolderFiles,
+        publicProgress: pullProgress({
+          folderCount: 3,
+          totalFiles: 0,
+          status: 'completed',
+          reportsOnlyFetchedRecordCount: true,
+        }),
+      });
+
+      expect(oneRecord.summary).toBe('Pulled 1 folder — 1 record fetched');
+      expect(severalFolders.summary).toBe('Pulled 3 folders — 0 records fetched');
+    });
   });
 
   describe('a sync that is still running', () => {
