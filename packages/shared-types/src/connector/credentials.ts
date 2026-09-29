@@ -52,6 +52,11 @@ export interface DecryptedCredentials {
   gongBaseUrl?: string;
 }
 
+/**
+ * A Supabase project this connection holds a provisioned database role in.
+ * Since DEV-11875 a project only appears here once it has actually been used —
+ * the full project list is read live from the Management API instead.
+ */
 export interface SupabaseProjectCredentials {
   projectRef: string;
   projectName: string;

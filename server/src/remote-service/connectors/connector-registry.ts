@@ -14,6 +14,8 @@ import { ConnectorAuthTokenProvider } from './connector-auth-token';
 import type { FieldValueCanonicalizer, FieldValueCanonicalizerContext } from './field-value-canonicalization';
 import type { BaseJsonTableSpec } from './types';
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface ConnectorAccountRef {
   id: string;
   authType: string;
@@ -44,6 +46,30 @@ export interface ConnectorFactoryContext {
    * fail fast when a connection can no longer produce a token at all.
    */
   createOAuthAccessTokenProvider: (connectorAccountId: string) => ConnectorAuthTokenProvider;
+  /**
+   * Persist a change to this connection's stored credentials, serialized against
+   * every other writer (notably OAuth token refresh) by the host.
+   *
+   * For the rare connector whose *operations* produce a credential the connection
+   * has to remember. SUPABASE is today's only caller: its OAuth token authorizes
+   * the Management API, not Postgres, so reaching a project's rows needs a
+   * database role — and since DEV-11875 that role is created lazily, the first
+   * time a project is actually used, which means the resulting connection string
+   * appears mid-operation and must be stored.
+   *
+   * `mutate` receives the credentials as re-read under the host's lock and
+   * returns the version to store, or `null` to write nothing (how a caller that
+   * lost a race adopts the winner's value). It must be cheap: do the external
+   * work before calling. Resolves to the credentials now in storage.
+   *
+   * Optional because a host that has no credential store (tests, one-off
+   * scripts) can still build most connectors; a connector that needs it should
+   * fail its instantiation when it is absent.
+   */
+  updateStoredCredentials?: (
+    connectorAccountId: string,
+    mutate: (currentCredentials: DecryptedCredentials) => MaybePromise<DecryptedCredentials | null>,
+  ) => Promise<DecryptedCredentials>;
   createRateLimiter: (connectorAccountId: string) => RateLimiter | undefined;
   /**
    * Look up `DataFolder.options` for a given (connectorAccountId, tableId)

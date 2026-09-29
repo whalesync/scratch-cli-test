@@ -13,12 +13,11 @@ import {
   isGoogleSheetsConnectorExtras,
   parseYouTubeAdditionalChannels,
   QuickBooksConnectorExtras,
-  SupabaseProjectCredentials,
   ValidatedOAuthInitiateOptionsDto,
   WorkbookId,
   YouTubeConnectorExtras,
 } from '@spinner/shared-types';
-import { createHash, randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { capitalize } from 'lodash';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
@@ -26,12 +25,6 @@ import { WSLogger } from 'src/logger';
 import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
 import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
 import { splitGoogleSheetsSpreadsheetUrlInput } from 'src/remote-service/connectors/library/google-sheets/google-sheets-url-parsing';
-import { KnexPGClient } from 'src/remote-service/connectors/library/pg-common';
-import {
-  buildConnectionString,
-  buildCreateUserSQL,
-  SupabaseApiClient,
-} from 'src/remote-service/connectors/library/supabase';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
@@ -149,6 +142,18 @@ function isAccessTokenExpired(decryptedCredentials: DecryptedCredentials): boole
     return false; // No expiration set, assume valid
   }
   return Date.now() >= new Date(decryptedCredentials.oauthExpiresAt).getTime() - ACCESS_TOKEN_EXPIRY_BUFFER_MS;
+}
+
+/**
+ * Advisory-lock key guarding every read-modify-write of one connection's
+ * `encryptedCredentials`. Token refresh is the original (and busiest) writer, so
+ * the key keeps its name; any other credential mutation — e.g. the Supabase
+ * connector persisting a freshly provisioned per-project role (DEV-11875) — MUST
+ * take this same key, or its write can clobber a concurrent refresh's rotated
+ * token (and vice versa).
+ */
+function buildConnectionCredentialsLockKey(connectorAccountId: string): string {
+  return `oauth-token-refresh:${connectorAccountId}`;
 }
 
 /** Resolve after `durationMs`, used to back off between refresh-lock attempts. */
@@ -423,11 +428,6 @@ export class OAuthService {
         googleSheetsSpreadsheetUrls: statePayload.googleSheetsSpreadsheetUrls,
       });
 
-      // Re-run Supabase project setup on re-auth to refresh credentials
-      if (service.toLowerCase() === 'supabase') {
-        await this.setupSupabaseProjects(existingConnectorAccount.id, tokenResponse.access_token);
-      }
-
       return { connectorAccountId: existingConnectorAccount.id };
     } else {
       // Create new connector account (include connection method and custom client creds for storage)
@@ -447,11 +447,6 @@ export class OAuthService {
           googleSheetsSpreadsheetUrls: statePayload.googleSheetsSpreadsheetUrls,
         },
       );
-
-      // Auto-setup all Supabase projects inline so the connection is immediately usable
-      if (service.toLowerCase() === 'supabase') {
-        await this.setupSupabaseProjects(connectorAccount.id, tokenResponse.access_token);
-      }
 
       return { connectorAccountId: connectorAccount.id };
     }
@@ -609,7 +604,7 @@ export class OAuthService {
       async (tx) => {
         // Transaction-scoped lock (auto-released on commit/rollback), keyed by the
         // connection. Non-blocking: see the caller for why we must not queue here.
-        const lockKey = `oauth-token-refresh:${connectorAccountId}`;
+        const lockKey = buildConnectionCredentialsLockKey(connectorAccountId);
         const [lockAttempt] = await tx.$queryRaw<
           { acquired: boolean }[]
         >`SELECT pg_try_advisory_xact_lock(hashtext(${lockKey})::bigint) AS acquired`;
@@ -704,6 +699,96 @@ export class OAuthService {
         maxWait: OAUTH_TOKEN_REFRESH_TRANSACTION_MAX_WAIT_MS,
       },
     );
+  }
+
+  /**
+   * Apply a read-modify-write to a connection's stored credentials, serialized
+   * against every other writer by the same advisory lock the token refresh takes
+   * ({@link buildConnectionCredentialsLockKey}).
+   *
+   * This is the host side of `ConnectorFactoryContext.updateStoredCredentials` —
+   * the seam a connector uses when an operation produces a credential the
+   * connection must remember. Today's only caller is Supabase, which provisions
+   * a per-project database role the first time a project is actually used and has
+   * to persist that role's connection string (DEV-11875).
+   *
+   * `mutateCredentials` runs INSIDE the transaction, against credentials re-read
+   * under the lock, and must be cheap and side-effect-free: do the external work
+   * (creating the role, fetching the pooler config) BEFORE calling this, then use
+   * the mutator only to decide what to store. It returns `null` to write nothing
+   * — the way a caller that loses a race adopts the winner's value instead of
+   * overwriting it.
+   *
+   * Resolves to the credentials now in storage: the mutated ones, or the
+   * re-read current ones when the mutator declined to write.
+   */
+  async updateStoredCredentialsUnderConnectionLock(
+    connectorAccountId: string,
+    mutateCredentials: (
+      currentCredentials: DecryptedCredentials,
+    ) => DecryptedCredentials | null | Promise<DecryptedCredentials | null>,
+  ): Promise<DecryptedCredentials> {
+    const waitDeadlineMs = Date.now() + OAUTH_REFRESH_LOCK_WAIT_TIMEOUT_MS;
+
+    for (;;) {
+      const outcome = await this.attemptCredentialsUpdateWhileHoldingConnectionLock(
+        connectorAccountId,
+        mutateCredentials,
+      );
+      if (outcome.acquiredLock) {
+        return outcome.storedCredentials;
+      }
+
+      if (Date.now() >= waitDeadlineMs) {
+        throw new ServiceUnavailableException(
+          `Timed out waiting for another in-progress credential update for connection ${connectorAccountId}`,
+        );
+      }
+      await delayMs(OAUTH_REFRESH_LOCK_RETRY_INTERVAL_MS);
+    }
+  }
+
+  /**
+   * One attempt at the guarded credential update. Returns `{ acquiredLock: false }`
+   * — having done nothing and released the transaction immediately — when another
+   * writer holds the lock, for the same reason the refresh path does not queue
+   * inside its transaction (see {@link refreshOAuthTokensUnderConnectionLock}).
+   */
+  private async attemptCredentialsUpdateWhileHoldingConnectionLock(
+    connectorAccountId: string,
+    mutateCredentials: (
+      currentCredentials: DecryptedCredentials,
+    ) => DecryptedCredentials | null | Promise<DecryptedCredentials | null>,
+  ): Promise<{ acquiredLock: true; storedCredentials: DecryptedCredentials } | { acquiredLock: false }> {
+    return this.db.client.$transaction(async (tx) => {
+      const lockKey = buildConnectionCredentialsLockKey(connectorAccountId);
+      const [lockAttempt] = await tx.$queryRaw<
+        { acquired: boolean }[]
+      >`SELECT pg_try_advisory_xact_lock(hashtext(${lockKey})::bigint) AS acquired`;
+      if (!lockAttempt?.acquired) {
+        return { acquiredLock: false };
+      }
+
+      const account = await tx.connectorAccount.findUnique({ where: { id: connectorAccountId } });
+      if (!account) {
+        throw new BadRequestException(`Connection ${connectorAccountId} not found`);
+      }
+
+      const currentCredentials = await this.credentialEncryptionService.decryptCredentials(
+        account.encryptedCredentials as unknown as EncryptedData,
+      );
+      const updatedCredentials = await mutateCredentials(currentCredentials);
+      if (!updatedCredentials) {
+        return { acquiredLock: true, storedCredentials: currentCredentials };
+      }
+
+      const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(updatedCredentials);
+      await tx.connectorAccount.update({
+        where: { id: connectorAccountId },
+        data: { encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue },
+      });
+      return { acquiredLock: true, storedCredentials: updatedCredentials };
+    });
   }
 
   /**
@@ -1040,111 +1125,6 @@ export class OAuthService {
       account.service,
       asOAuthAppVersion(account.oauthAppVersion),
     );
-  }
-
-  /**
-   * Auto-setup all active Supabase projects for a connector account.
-   * Creates a dedicated DB role per project, retrieves pooler configs,
-   * tests each connection, and stores the results in encrypted credentials.
-   */
-  private async setupSupabaseProjects(connectorAccountId: string, accessToken: string): Promise<void> {
-    try {
-      const apiClient = new SupabaseApiClient(accessToken);
-      const allProjects = await apiClient.getProjects();
-      const activeProjects = allProjects.filter((p) => p.status === 'ACTIVE_HEALTHY');
-
-      if (activeProjects.length === 0) {
-        WSLogger.warn({
-          source: 'OAuthService',
-          message: 'No active Supabase projects found during auto-setup',
-          connectorAccountId,
-        });
-        return;
-      }
-
-      const configuredProjects: SupabaseProjectCredentials[] = [];
-
-      for (const project of activeProjects) {
-        try {
-          const dbUsername = `scratch_svc_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-          const dbPassword = randomUUID() + randomUUID().replace(/-/g, '');
-
-          const createUserSQL = buildCreateUserSQL(dbUsername, dbPassword);
-          await apiClient.executeQuery(project.id, createUserSQL);
-
-          const poolerConfigs = await apiClient.getPoolerConfig(project.id);
-          if (!poolerConfigs || poolerConfigs.length === 0) {
-            WSLogger.warn({
-              source: 'OAuthService',
-              message: `No pooler config for Supabase project ${project.name} (${project.id}), skipping`,
-              connectorAccountId,
-            });
-            continue;
-          }
-
-          const connectionString = buildConnectionString(
-            poolerConfigs[0].connection_string,
-            dbUsername,
-            dbPassword,
-            project.id,
-          );
-
-          // Verify the connection works
-          const pgClient = new KnexPGClient(connectionString, { sslNoVerify: true });
-          try {
-            await pgClient.testQuery();
-          } finally {
-            await pgClient.dispose().catch(() => {});
-          }
-
-          configuredProjects.push({
-            projectRef: project.id,
-            projectName: project.name,
-            connectionString,
-            dbUsername,
-            dbPassword,
-          });
-        } catch (error) {
-          WSLogger.warn({
-            source: 'OAuthService',
-            message: `Failed to setup Supabase project ${project.name} (${project.id}): ${error instanceof Error ? error.message : String(error)}`,
-            connectorAccountId,
-          });
-          // Continue with remaining projects
-        }
-      }
-
-      // Update credentials with the configured projects
-      const account = await this.db.client.connectorAccount.findUnique({
-        where: { id: connectorAccountId },
-      });
-      if (!account) return;
-
-      const decryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
-        account.encryptedCredentials as unknown as EncryptedData,
-      );
-      decryptedCredentials.supabaseProjects = configuredProjects;
-
-      const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(decryptedCredentials);
-      await this.db.client.connectorAccount.update({
-        where: { id: connectorAccountId },
-        data: { encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue },
-      });
-
-      WSLogger.info({
-        source: 'OAuthService',
-        message: `Supabase auto-setup complete: ${configuredProjects.length}/${activeProjects.length} projects configured`,
-        connectorAccountId,
-      });
-    } catch (error) {
-      WSLogger.error({
-        source: 'OAuthService',
-        message: `Supabase auto-setup failed: ${error instanceof Error ? error.message : String(error)}`,
-        connectorAccountId,
-        error,
-      });
-      // Don't throw — the account is created, health check will fail and user can retry
-    }
   }
 
   private expiresInToOAuthExpiresAt(tokenExpiresIn?: number): string | undefined {

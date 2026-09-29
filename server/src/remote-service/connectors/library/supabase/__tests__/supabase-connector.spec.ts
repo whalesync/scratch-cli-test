@@ -6,6 +6,7 @@ import {
   X_SCRATCH_NATIVE_COLUMN_TYPE,
   X_SCRATCH_READONLY,
   type CreateFieldSpec,
+  type SupabaseProjectCredentials,
 } from '@spinner/shared-types';
 import { type NormalizedCreateFieldsPlan, type NormalizedCreateTablePlan } from '../../../schema-creation.types';
 import { BaseJsonTableSpec, EntityId, PullRecordFilesOptions, dotPath } from '../../../types';
@@ -33,6 +34,7 @@ const mockCreateSchemaIfNotExists = jest.fn();
 const mockCreateTable = jest.fn();
 const mockAddColumns = jest.fn();
 const mockFindTableUniquelyAddressableColumn = jest.fn();
+const mockTestQuery = jest.fn();
 const mockDispose = jest.fn();
 
 jest.mock('../../pg-common/knex-pg-client', () => {
@@ -55,12 +57,37 @@ jest.mock('../../pg-common/knex-pg-client', () => {
       createTable: mockCreateTable,
       addColumns: mockAddColumns,
       findTableUniquelyAddressableColumn: mockFindTableUniquelyAddressableColumn,
+      testQuery: mockTestQuery,
       dispose: mockDispose,
     })),
     KnexPGClientError: class KnexPGClientError extends Error {
       constructor(
         message: string,
         public readonly code?: string,
+      ) {
+        super(message);
+      }
+    },
+  };
+});
+
+const mockGetProjects = jest.fn();
+const mockRunSqlQuery = jest.fn();
+const mockExecuteQuery = jest.fn<Promise<unknown>, [projectRef: string, query: string]>();
+const mockGetPoolerConfig = jest.fn();
+
+jest.mock('../supabase-api-client', () => {
+  return {
+    SupabaseApiClient: jest.fn().mockImplementation(() => ({
+      getProjects: mockGetProjects,
+      runSqlQuery: mockRunSqlQuery,
+      executeQuery: mockExecuteQuery,
+      getPoolerConfig: mockGetPoolerConfig,
+    })),
+    SupabaseApiError: class SupabaseApiError extends Error {
+      constructor(
+        message: string,
+        public readonly statusCode?: number,
       ) {
         super(message);
       }
@@ -788,6 +815,32 @@ describe('SupabaseConnector incremental pulls', () => {
 const OTHER_PROJECT_REF = 'zyxwvutsrqponmlkjihg';
 const OTHER_CONNECTION_STRING = `postgresql://postgres:pw@db.${OTHER_PROJECT_REF}.supabase.co:5432/postgres`;
 
+/**
+ * An OAuth connector whose listed projects are all already provisioned — the
+ * steady state a connection reaches once its projects have been used. Lazy
+ * provisioning of an unprovisioned project is exercised separately, in
+ * "lazy per-project role provisioning".
+ */
+function buildOAuthConnectorWithProvisionedProjects(
+  provisionedProjects: { projectRef: string; projectName: string; connectionString: string }[],
+): SupabaseConnector {
+  const storedProjects = provisionedProjects.map((project) => ({
+    ...project,
+    dbUsername: `whalesync_svc_${project.projectRef}`,
+    dbPassword: 'pw',
+  }));
+  mockGetProjects.mockResolvedValue(
+    storedProjects.map((project) => ({ id: project.projectRef, name: project.projectName, status: 'ACTIVE_HEALTHY' })),
+  );
+  return new SupabaseConnector({
+    oauth: {
+      resolveAccessToken: () => Promise.resolve('supabase-management-token'),
+      provisionedProjects: storedProjects,
+      persistProvisionedProject: (provisioned) => Promise.resolve([...storedProjects, provisioned]),
+    },
+  });
+}
+
 function textField(name: string, extra: Partial<CreateFieldSpec> = {}): CreateFieldSpec {
   return { name, fieldType: { kind: 'text' }, ...extra };
 }
@@ -848,12 +901,10 @@ describe('SupabaseConnector.listCreateDestinations', () => {
         { catalog_name: 'postgres', schema_name: 'auth' },
       ])
       .mockResolvedValueOnce([{ catalog_name: 'postgres', schema_name: 'public' }]);
-    const connector = new SupabaseConnector({
-      projects: [
-        { projectRef: PROJECT_REF, projectName: 'Prod', connectionString: CONNECTION_STRING },
-        { projectRef: OTHER_PROJECT_REF, projectName: 'Staging', connectionString: OTHER_CONNECTION_STRING },
-      ],
-    });
+    const connector = buildOAuthConnectorWithProvisionedProjects([
+      { projectRef: PROJECT_REF, projectName: 'Prod', connectionString: CONNECTION_STRING },
+      { projectRef: OTHER_PROJECT_REF, projectName: 'Staging', connectionString: OTHER_CONNECTION_STRING },
+    ]);
 
     const destinations = await connector.listCreateDestinations();
 
@@ -1020,9 +1071,9 @@ describe('SupabaseConnector schema creation', () => {
 
     it('resolves an OAuth project from an unsplit destination id (regression: "Unknown Supabase project: <ref>/<schema>")', async () => {
       mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
-      const oauthConnector = new SupabaseConnector({
-        projects: [{ projectRef: PROJECT_REF, projectName: 'Prod', connectionString: CONNECTION_STRING }],
-      });
+      const oauthConnector = buildOAuthConnectorWithProvisionedProjects([
+        { projectRef: PROJECT_REF, projectName: 'Prod', connectionString: CONNECTION_STRING },
+      ]);
       const plan: NormalizedCreateTablePlan = {
         remoteParentId: [`${PROJECT_REF}/public`],
         ref: 't1',
@@ -1120,9 +1171,9 @@ describe('SupabaseConnector schema creation', () => {
     it('tells an OAuth connection to reconnect rather than to edit a connection string it has no field for', async () => {
       const permissionDenied = Object.assign(new Error('permission denied for database postgres'), { code: '42501' });
       mockCreateSchemaIfNotExists.mockRejectedValue(permissionDenied);
-      const oauthConnector = new SupabaseConnector({
-        projects: [{ projectRef: PROJECT_REF, projectName: 'Prod', connectionString: CONNECTION_STRING }],
-      });
+      const oauthConnector = buildOAuthConnectorWithProvisionedProjects([
+        { projectRef: PROJECT_REF, projectName: 'Prod', connectionString: CONNECTION_STRING },
+      ]);
 
       const result = await oauthConnector.createTable({
         remoteParentId: [`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`],
@@ -1283,5 +1334,178 @@ describe('SupabaseConnector schema creation', () => {
       expect(results[1].status).toBe('failed');
       expect(results[1].error).toBeDefined();
     });
+  });
+});
+
+type PersistProvisionedProject = (provisioned: SupabaseProjectCredentials) => Promise<SupabaseProjectCredentials[]>;
+
+describe('SupabaseConnector lazy per-project role provisioning (DEV-11875)', () => {
+  const POOLER_CONNECTION_STRING = `postgresql://postgres.${PROJECT_REF}:pw@aws-0-us-east-1.pooler.supabase.com:6543/postgres`;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockDispose.mockResolvedValue(undefined);
+    mockGetProjects.mockResolvedValue([
+      { id: PROJECT_REF, name: 'Prod', status: 'ACTIVE_HEALTHY' },
+      { id: OTHER_PROJECT_REF, name: 'Paused', status: 'INACTIVE' },
+    ]);
+    mockExecuteQuery.mockResolvedValue([]);
+    mockTestQuery.mockResolvedValue('postgres');
+    mockGetPoolerConfig.mockResolvedValue([{ connection_string: POOLER_CONNECTION_STRING }]);
+  });
+
+  /** An OAuth connector with NO project provisioned — a freshly connected account. */
+  function buildUnprovisionedOAuthConnector(
+    overrides: { persistProvisionedProject?: PersistProvisionedProject } = {},
+  ): SupabaseConnector {
+    return new SupabaseConnector({
+      oauth: {
+        resolveAccessToken: () => Promise.resolve('supabase-management-token'),
+        provisionedProjects: [],
+        persistProvisionedProject:
+          overrides.persistProvisionedProject ?? ((provisioned) => Promise.resolve([provisioned])),
+      },
+    });
+  }
+
+  it('creates no role when the account is connected and its destinations are browsed', async () => {
+    mockRunSqlQuery.mockResolvedValue([
+      { catalog_name: 'postgres', schema_name: 'public' },
+      { catalog_name: 'postgres', schema_name: 'auth' },
+    ]);
+    const connector = buildUnprovisionedOAuthConnector();
+
+    const destinations = await connector.listCreateDestinations();
+
+    // Only the healthy project is offered, and nothing was created inside it.
+    expect(destinations).toEqual([
+      { id: `${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`, name: 'New schema in Prod', created: false },
+      { id: `${PROJECT_REF}/public`, name: 'Prod / public', created: true },
+    ]);
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+    expect(mockGetPoolerConfig).not.toHaveBeenCalled();
+  });
+
+  it('lists an unprovisioned project’s tables over the Management API, without creating a role', async () => {
+    mockRunSqlQuery
+      .mockResolvedValueOnce([
+        { table_schema: 'public', table_name: 'authors', table_type: 'BASE TABLE' },
+        { table_schema: 'public', table_name: 'authors_view', table_type: 'VIEW' },
+      ])
+      .mockResolvedValueOnce([{ table_schema: 'public', table_name: 'authors' }])
+      .mockResolvedValueOnce([{ table_schema: 'public', table_name: 'authors' }]);
+    const connector = buildUnprovisionedOAuthConnector();
+
+    const previews = new Map((await connector.listTables()).map((preview) => [preview.displayName, preview]));
+
+    expect(previews.get('authors')?.disabled).toBeUndefined();
+    expect(previews.get('authors')?.disabledCreates).toBeUndefined();
+    // The view-provenance probe needs the wire protocol's row descriptor, which
+    // the HTTP endpoint cannot carry — so the user is asked for the ID column
+    // rather than the view being guessed at or hidden.
+    expect(previews.get('authors_view')?.requiresIdFieldSelection).toBe(true);
+    expect(previews.get('authors_view')?.disabled).toBeUndefined();
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  it('provisions and persists a role the first time a project is actually written to', async () => {
+    mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+    const persistProvisionedProject = jest.fn<Promise<SupabaseProjectCredentials[]>, [SupabaseProjectCredentials]>(
+      (provisioned) => Promise.resolve([provisioned]),
+    );
+    const connector = buildUnprovisionedOAuthConnector({ persistProvisionedProject });
+
+    const result = await connector.createTable({
+      remoteParentId: [`${PROJECT_REF}/public`],
+      ref: 't1',
+      name: 'users',
+      fields: [textField('name')],
+      deferredFkFields: [],
+    });
+
+    expect(result.status).toBe('created');
+    const createRoleSQL = mockExecuteQuery.mock.calls[0][1];
+    expect(createRoleSQL).toContain('CREATE ROLE');
+    expect(persistProvisionedProject).toHaveBeenCalledTimes(1);
+    expect(persistProvisionedProject.mock.calls[0][0]).toMatchObject({ projectRef: PROJECT_REF, projectName: 'Prod' });
+    // The role lives in the customer's own database, so it carries the company
+    // name they recognize on the connection they authorized.
+    expect(persistProvisionedProject.mock.calls[0][0].dbUsername).toMatch(/^whalesync_svc_/);
+  });
+
+  it('provisions a project once per connector instance, however many operations touch it', async () => {
+    mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+    mockAddColumns.mockResolvedValue({ skippedFields: new Map() });
+    const connector = buildUnprovisionedOAuthConnector();
+
+    await connector.createTable({
+      remoteParentId: [PROJECT_REF, 'public'],
+      ref: 't1',
+      name: 'users',
+      fields: [textField('name')],
+      deferredFkFields: [],
+    });
+    await connector.createFields({
+      remoteTableId: [PROJECT_REF, 'public', 'users'],
+      fields: [textField('extra')],
+    });
+
+    expect(mockGetPoolerConfig).toHaveBeenCalledTimes(1);
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('adopts the winner of a concurrent provision and drops the role it lost the race with', async () => {
+    mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+    const winningProject = {
+      projectRef: PROJECT_REF,
+      projectName: 'Prod',
+      connectionString: CONNECTION_STRING,
+      dbUsername: 'whalesync_svc_winner',
+      dbPassword: 'pw',
+    };
+    const connector = buildUnprovisionedOAuthConnector({
+      // The credential store already holds another provisioner's entry, so ours
+      // is not written.
+      persistProvisionedProject: () => Promise.resolve([winningProject]),
+    });
+
+    await connector.createTable({
+      remoteParentId: [PROJECT_REF, 'public'],
+      ref: 't1',
+      name: 'users',
+      fields: [textField('name')],
+      deferredFkFields: [],
+    });
+
+    const executedStatements = mockExecuteQuery.mock.calls.map((call) => call[1]);
+    expect(executedStatements).toHaveLength(2);
+    expect(executedStatements[1]).toContain('DROP ROLE');
+    expect(executedStatements[1]).not.toContain('whalesync_svc_winner');
+  });
+
+  it('refuses to provision a role in a project the account cannot currently reach', async () => {
+    const connector = buildUnprovisionedOAuthConnector();
+
+    // OTHER_PROJECT_REF is listed but paused, so it never reaches ACTIVE_HEALTHY.
+    const result = await connector.createTable({
+      remoteParentId: [OTHER_PROJECT_REF, 'public'],
+      ref: 't1',
+      name: 'users',
+      fields: [textField('name')],
+      deferredFkFields: [],
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('Unknown Supabase project');
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  it('reports a connection with no project in use as healthy on the Management API alone', async () => {
+    const connector = buildUnprovisionedOAuthConnector();
+
+    await expect(connector.testConnection()).resolves.toBeUndefined();
+
+    expect(mockGetProjects).toHaveBeenCalled();
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
   });
 });

@@ -50,8 +50,25 @@ export class SupabaseApiClient {
    * grant permissions, and execute DDL that the service account cannot.
    */
   async executeQuery(projectRef: string, query: string): Promise<unknown> {
-    const response = await this.client.post(`/projects/${projectRef}/database/query`, { query }, { timeout: 30_000 });
-    return response.data;
+    try {
+      const response = await this.client.post(`/projects/${projectRef}/database/query`, { query }, { timeout: 30_000 });
+      return response.data;
+    } catch (error) {
+      throw this.wrapError(error, `/projects/${projectRef}/database/query`);
+    }
+  }
+
+  /**
+   * Run a read-only SQL statement through {@link executeQuery} and return its
+   * result rows. This is how a project that has no Scratch database role yet is
+   * browsed — see {@link SupabaseManagementApiCatalogReader}.
+   *
+   * The endpoint answers with the statement's rows as a JSON array; anything
+   * else (an empty body from a statement that returns nothing) yields [].
+   */
+  async runSqlQuery<TRow>(projectRef: string, query: string): Promise<TRow[]> {
+    const result = await this.executeQuery(projectRef, query);
+    return Array.isArray(result) ? (result as TRow[]) : [];
   }
 
   private async get<T>(path: string): Promise<T> {

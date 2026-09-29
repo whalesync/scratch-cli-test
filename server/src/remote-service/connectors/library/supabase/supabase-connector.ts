@@ -5,8 +5,12 @@
  * - SupabaseApiClient (REST) for Management API operations (project listing, DDL, pooler config)
  * - KnexPGClient (Knex/pg) for all DML operations (schema discovery, CRUD)
  *
- * Authenticates via OAuth 2.0 with the Supabase Management API.
- * Data access uses a dedicated PostgreSQL role created during setup.
+ * Authenticates via OAuth 2.0 with the Supabase Management API. Data access uses
+ * a dedicated PostgreSQL role, provisioned **per project, on first real use**
+ * (DEV-11875) — see {@link SupabaseConnector.ensureProjectRoleProvisioned}.
+ * Everything that is only *browsing* (listing projects, schemas and tables)
+ * therefore has to work without one, and runs over the Management API instead
+ * ({@link SupabaseManagementApiCatalogReader}).
  */
 import { Type, type TSchema } from '@sinclair/typebox';
 import {
@@ -22,6 +26,7 @@ import {
   type CreateTableResult,
   type ForeignKeyOptionSchema,
   type SchemaCreationCapabilities,
+  type SupabaseProjectCredentials,
   type TableView,
 } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -76,15 +81,17 @@ import {
   type SingleColumnUniqueIndexColumn,
 } from '../pg-common';
 import { buildPgDefaultView } from '../pg-common/pg-default-view';
-import { SupabaseApiError } from './supabase-api-client';
+import { SupabaseApiClient, SupabaseApiError } from './supabase-api-client';
 import { SupabaseAuthParser } from './supabase-auth-parser';
+import { SupabaseManagementApiCatalogReader } from './supabase-management-api-catalog-reader';
+import { dropOrphanedServiceRole, provisionServiceRoleForSupabaseProject } from './supabase-project-provisioning';
 import {
   buildSupabaseSchemaEditorUrl,
   buildSupabaseTableEditorUrl,
   extractProjectRef,
   isSupabaseCloudHostedConnectionString,
 } from './supabase-setup-utils';
-import { SupabaseCredentials, SupabaseProjectConfig } from './supabase-types';
+import { SupabaseCredentials, SupabaseOAuthCredentials, SupabaseProjectConfig } from './supabase-types';
 
 const READ_BATCH_SIZE = 500;
 
@@ -166,15 +173,36 @@ export class SupabaseConnector extends Connector {
   ];
 
   private readonly connectionString: string | undefined;
-  private readonly projects: SupabaseProjectConfig[];
+  private readonly oauthCredentials: SupabaseOAuthCredentials | undefined;
   private readonly isOAuth: boolean;
   private readonly connectionStringProjectRef: string | undefined;
   private readonly connectionStringIsSupabaseCloudHosted: boolean;
 
+  /**
+   * The projects this connection already holds a database role in, by ref. Seeded
+   * from the stored credentials and extended as {@link ensureProjectRoleProvisioned}
+   * provisions more, so a single job provisions a given project at most once.
+   */
+  private readonly provisionedProjectCredentialsByRef = new Map<string, SupabaseProjectCredentials>();
+
+  /**
+   * In-flight provisioning per project, so two operations on the same connector
+   * instance (a create-tables batch, say) don't each create their own role. This
+   * is an efficiency guard only — correctness across processes comes from the
+   * persist step, which serializes on the connection's credential lock.
+   */
+  private readonly inFlightProvisioningByProjectRef = new Map<string, Promise<SupabaseProjectCredentials>>();
+
+  /** Memoized live project listing, so one operation costs at most one Management API call. */
+  private allProjectsListing: Promise<SupabaseProjectConfig[]> | undefined;
+
   constructor(credentials: SupabaseCredentials) {
     super();
-    this.projects = credentials.projects ?? [];
-    this.isOAuth = this.projects.length > 0;
+    this.oauthCredentials = credentials.oauth;
+    this.isOAuth = credentials.oauth !== undefined;
+    for (const project of credentials.oauth?.provisionedProjects ?? []) {
+      this.provisionedProjectCredentialsByRef.set(project.projectRef, project);
+    }
     this.connectionString = credentials.connectionString;
     this.connectionStringProjectRef = credentials.connectionString
       ? extractProjectRef(credentials.connectionString)
@@ -195,41 +223,138 @@ export class SupabaseConnector extends Connector {
     return this.isOAuth || this.connectionStringIsSupabaseCloudHosted;
   }
 
-  /**
-   * Resolve the connection string, schema, and table name for a given remoteId.
-   * remoteId is always [projectRef, schema, tableName].
-   */
-  private resolveConnection(remoteId: string[]): { connectionString: string; schema: string; tableName: string } {
-    const [projectRef, schema, tableName] = remoteId;
+  // -------------------------------------------------------------------------
+  // OAuth projects: listing and lazy role provisioning
+  // -------------------------------------------------------------------------
 
-    if (this.isOAuth) {
-      const project = this.projects.find((p) => p.projectRef === projectRef);
-      if (!project) {
-        throw new KnexPGClientError(`Unknown Supabase project: ${projectRef}`, 'CONNECTION_ERROR');
-      }
-      return { connectionString: project.connectionString, schema, tableName };
+  private requireOAuthCredentials(): SupabaseOAuthCredentials {
+    if (!this.oauthCredentials) {
+      throw new KnexPGClientError('This Supabase connection is not an OAuth connection', 'CONNECTION_ERROR');
     }
+    return this.oauthCredentials;
+  }
 
-    if (!this.connectionString) {
-      throw new KnexPGClientError('No connection string configured', 'CONNECTION_ERROR');
-    }
-    return { connectionString: this.connectionString, schema, tableName };
+  /** A Management API client bound to a currently-valid access token. */
+  private async createManagementApiClient(): Promise<SupabaseApiClient> {
+    return new SupabaseApiClient(await this.requireOAuthCredentials().resolveAccessToken());
   }
 
   /**
-   * Resolve the connection string for a project by its ref. The
-   * create-schema flow (create table / add fields) knows the project + schema
-   * but not yet a table, so it can't use {@link resolveConnection}. In OAuth
-   * mode we look the project up by ref; in connection-string mode there is a
-   * single project and the ref is ignored.
+   * Every project this connection can see, read live from the Management API
+   * rather than from a snapshot taken at connect time — a project created (or
+   * renamed) after connecting shows up without a reconnect. Only ACTIVE_HEALTHY
+   * projects are listed: a paused or provisioning project can answer neither a
+   * SQL query nor a connection.
    */
-  private resolveConnectionStringForProject(projectRef: string): string {
+  private async listAllProjects(): Promise<SupabaseProjectConfig[]> {
+    this.allProjectsListing ??= (async () => {
+      const apiClient = await this.createManagementApiClient();
+      const allProjects = await apiClient.getProjects();
+      return allProjects
+        .filter((project) => project.status === 'ACTIVE_HEALTHY')
+        .map((project) => ({ projectRef: project.id, projectName: project.name }));
+    })();
+    return this.allProjectsListing;
+  }
+
+  /**
+   * The human name of a project. Prefers the name captured when its role was
+   * provisioned so the common path costs no API call, and falls back to the ref
+   * for a project that is neither provisioned nor currently listable.
+   */
+  private async resolveProjectName(projectRef: string): Promise<string> {
+    const provisioned = this.provisionedProjectCredentialsByRef.get(projectRef);
+    if (provisioned?.projectName) {
+      return provisioned.projectName;
+    }
+    const listed = (await this.listAllProjects()).find((project) => project.projectRef === projectRef);
+    return listed?.projectName || projectRef;
+  }
+
+  /**
+   * The database role for one project, creating it if this is the project's
+   * first real use (DEV-11875: a role is never created just because a user
+   * connected their Supabase account or browsed their projects).
+   *
+   * Two provisioners can race — two workers publishing into the same project at
+   * once — and each will have created its own role by the time either persists.
+   * The persist step resolves that: it runs under the connection's credential
+   * lock and returns the list as stored, so the loser sees the winner's entry for
+   * its project, adopts it, and drops the now-unreferenced role it created.
+   */
+  private async ensureProjectRoleProvisioned(projectRef: string): Promise<SupabaseProjectCredentials> {
+    const alreadyProvisioned = this.provisionedProjectCredentialsByRef.get(projectRef);
+    if (alreadyProvisioned) {
+      return alreadyProvisioned;
+    }
+    const alreadyInFlight = this.inFlightProvisioningByProjectRef.get(projectRef);
+    if (alreadyInFlight) {
+      return alreadyInFlight;
+    }
+
+    const provisioning = this.provisionProjectRoleAndPersist(projectRef).finally(() => {
+      this.inFlightProvisioningByProjectRef.delete(projectRef);
+    });
+    this.inFlightProvisioningByProjectRef.set(projectRef, provisioning);
+    return provisioning;
+  }
+
+  private async provisionProjectRoleAndPersist(projectRef: string): Promise<SupabaseProjectCredentials> {
+    const oauthCredentials = this.requireOAuthCredentials();
+    const apiClient = await this.createManagementApiClient();
+
+    // Confirm the project is one this account can actually reach before creating
+    // anything in it. Previously an unknown ref failed against the in-credentials
+    // project list; the live list is the equivalent check now, and it also catches
+    // a project that has since been deleted or paused — which would otherwise
+    // surface as a bare Management API error from the role creation itself.
+    const listedProject = (await this.listAllProjects()).find((project) => project.projectRef === projectRef);
+    if (!listedProject) {
+      throw new KnexPGClientError(
+        `Unknown Supabase project: ${projectRef}. It may have been deleted, or it is not currently active.`,
+        'CONNECTION_ERROR',
+      );
+    }
+
+    const provisioned = await provisionServiceRoleForSupabaseProject(apiClient, projectRef, listedProject.projectName);
+    const storedProjects = await oauthCredentials.persistProvisionedProject(provisioned);
+
+    const storedForThisProject = storedProjects.find((project) => project.projectRef === projectRef) ?? provisioned;
+    if (storedForThisProject.dbUsername !== provisioned.dbUsername) {
+      // Another provisioner won; our role is unreferenced litter.
+      await dropOrphanedServiceRole(apiClient, projectRef, provisioned.dbUsername);
+    }
+    for (const project of storedProjects) {
+      this.provisionedProjectCredentialsByRef.set(project.projectRef, project);
+    }
+    return storedForThisProject;
+  }
+
+  /**
+   * Resolve the connection string, schema, and table name for a given remoteId.
+   * remoteId is always [projectRef, schema, tableName]. Reaching a project's rows
+   * is a real use of it, so this provisions the project's role if it has none yet.
+   */
+  private async resolveConnection(
+    remoteId: string[],
+  ): Promise<{ connectionString: string; schema: string; tableName: string }> {
+    const [projectRef, schema, tableName] = remoteId;
+    return { connectionString: await this.resolveConnectionStringForProject(projectRef), schema, tableName };
+  }
+
+  /**
+   * Resolve the connection string for a project by its ref, provisioning the
+   * project's role on first use. The create-schema flow (create table / add
+   * fields) knows the project + schema but not yet a table, so it can't use
+   * {@link resolveConnection}. In connection-string mode there is a single
+   * project and the ref is ignored.
+   */
+  private async resolveConnectionStringForProject(projectRef: string): Promise<string> {
     if (this.isOAuth) {
-      const project = this.projects.find((p) => p.projectRef === projectRef);
-      if (!project) {
-        throw new KnexPGClientError(`Unknown Supabase project: ${projectRef}`, 'CONNECTION_ERROR');
+      if (!projectRef) {
+        throw new KnexPGClientError('No Supabase project specified', 'CONNECTION_ERROR');
       }
-      return project.connectionString;
+      return (await this.ensureProjectRoleProvisioned(projectRef)).connectionString;
     }
     if (!this.connectionString) {
       throw new KnexPGClientError('No connection string configured', 'CONNECTION_ERROR');
@@ -262,17 +387,31 @@ export class SupabaseConnector extends Connector {
   // Connection
   // -------------------------------------------------------------------------
 
+  /**
+   * A healthy OAuth connection is one whose token still reaches the Management
+   * API — that alone is what makes the account browsable, and a connection with
+   * no project in use yet has nothing else to test. Projects already in use are
+   * additionally checked over their own role, since a role revoked inside
+   * Supabase is exactly the breakage a health check should surface; that check
+   * stays tolerant of one bad project among several, as it always has.
+   */
   async testConnection(): Promise<void> {
     if (this.isOAuth) {
+      await this.listAllProjects();
+
+      const provisionedProjects = [...this.provisionedProjectCredentialsByRef.values()];
+      if (provisionedProjects.length === 0) {
+        return;
+      }
       const errors: string[] = [];
-      for (const project of this.projects) {
+      for (const project of provisionedProjects) {
         try {
           await this.withPgClient((client) => client.testQuery(), project.connectionString);
         } catch (error) {
           errors.push(`${project.projectName}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      if (errors.length === this.projects.length) {
+      if (errors.length === provisionedProjects.length) {
         throw new KnexPGClientError(
           `All Supabase projects failed connectivity test: ${errors.join('; ')}`,
           'CONNECTION_ERROR',
@@ -397,32 +536,67 @@ export class SupabaseConnector extends Connector {
     };
   }
 
+  /**
+   * List one project's tables over the Management API — the path for a project
+   * Scratch holds no database role in, which must stay true of every project the
+   * user has not actually used yet (DEV-11875).
+   *
+   * The view-addressability analysis is skipped here because it can't be
+   * expressed over an HTTP JSON endpoint (see
+   * {@link SupabaseManagementApiCatalogReader}); views in such a project are
+   * listed with `requiresIdFieldSelection`, so adding one asks the user to name
+   * its ID column. Once the project has been used once, the branch below takes
+   * over and the analysis returns.
+   */
+  private async listTablesForUnprovisionedProject(project: SupabaseProjectConfig): Promise<TablePreview[]> {
+    const apiClient = await this.createManagementApiClient();
+    const catalogReader = new SupabaseManagementApiCatalogReader(apiClient, project.projectRef);
+    const [tables, tablesWithUnique, tablesWithAutoGenPK] = await Promise.all([
+      catalogReader.findAllTablesExcludingSchemas(SUPABASE_SYSTEM_SCHEMAS, SUPABASE_SYSTEM_SCHEMA_PATTERNS),
+      catalogReader.findTablesWithUniqueColumns(SUPABASE_SYSTEM_SCHEMAS),
+      catalogReader.findTablesWithAutoGeneratedPK(SUPABASE_SYSTEM_SCHEMAS),
+    ]);
+    return tables.map((t) =>
+      this.parseTables(t, project.projectRef, project.projectName, tablesWithUnique, tablesWithAutoGenPK, undefined),
+    );
+  }
+
+  /** List one project's tables over its own database role, with full analysis. */
+  private async listTablesForProvisionedProject(
+    project: SupabaseProjectConfig,
+    connectionString: string,
+  ): Promise<TablePreview[]> {
+    return this.withPgClient(async (client) => {
+      const [tables, tablesWithUnique, tablesWithAutoGenPK, viewsWithUniquelyAddressableColumns] = await Promise.all([
+        client.findAllTablesExcludingSchemas(SUPABASE_SYSTEM_SCHEMAS, SUPABASE_SYSTEM_SCHEMA_PATTERNS),
+        client.findTablesWithUniqueColumns(SUPABASE_SYSTEM_SCHEMAS),
+        client.findTablesWithAutoGeneratedPK(SUPABASE_SYSTEM_SCHEMAS),
+        client.findViewsWithUniquelyAddressableColumns(SUPABASE_SYSTEM_SCHEMAS, SUPABASE_SYSTEM_SCHEMA_PATTERNS),
+      ]);
+      return tables.map((t) =>
+        this.parseTables(
+          t,
+          project.projectRef,
+          project.projectName,
+          tablesWithUnique,
+          tablesWithAutoGenPK,
+          viewsWithUniquelyAddressableColumns,
+        ),
+      );
+    }, connectionString);
+  }
+
   private async listTablesOAuth(): Promise<TablePreview[]> {
     const allTables: TablePreview[] = [];
 
-    for (const project of this.projects) {
-      const [tables, tablesWithUnique, tablesWithAutoGenPK, viewsWithUniquelyAddressableColumns] =
-        await this.withPgClient(async (client) => {
-          const [rows, uniqueSet, autoGenSet, viewUniqueSet] = await Promise.all([
-            client.findAllTablesExcludingSchemas(SUPABASE_SYSTEM_SCHEMAS, SUPABASE_SYSTEM_SCHEMA_PATTERNS),
-            client.findTablesWithUniqueColumns(SUPABASE_SYSTEM_SCHEMAS),
-            client.findTablesWithAutoGeneratedPK(SUPABASE_SYSTEM_SCHEMAS),
-            client.findViewsWithUniquelyAddressableColumns(SUPABASE_SYSTEM_SCHEMAS, SUPABASE_SYSTEM_SCHEMA_PATTERNS),
-          ]);
-          return [rows, uniqueSet, autoGenSet, viewUniqueSet] as const;
-        }, project.connectionString);
-
+    for (const project of await this.listAllProjects()) {
+      const provisionedConnectionString = this.provisionedProjectCredentialsByRef.get(
+        project.projectRef,
+      )?.connectionString;
       allTables.push(
-        ...tables.map((t) =>
-          this.parseTables(
-            t,
-            project.projectRef,
-            project.projectName,
-            tablesWithUnique,
-            tablesWithAutoGenPK,
-            viewsWithUniquelyAddressableColumns,
-          ),
-        ),
+        ...(provisionedConnectionString
+          ? await this.listTablesForProvisionedProject(project, provisionedConnectionString)
+          : await this.listTablesForUnprovisionedProject(project)),
       );
     }
 
@@ -447,11 +621,10 @@ export class SupabaseConnector extends Connector {
   override async listCreateDestinations(): Promise<CreateDestination[]> {
     if (this.isOAuth) {
       const destinations: CreateDestination[] = [];
-      for (const project of this.projects) {
+      for (const project of await this.listAllProjects()) {
         const projectLabel = project.projectName || project.projectRef;
         destinations.push(this.buildNewSchemaCreateDestination(project.projectRef, projectLabel));
-        const schemas = await this.listUserSchemas(project.connectionString);
-        for (const schema of schemas) {
+        for (const schema of await this.listUserSchemasForOAuthProject(project.projectRef)) {
           destinations.push({
             id: `${project.projectRef}/${schema}`,
             name: `${projectLabel} / ${schema}`,
@@ -539,9 +712,8 @@ export class SupabaseConnector extends Connector {
    * project name is on hand, and the bare schema in connection-string mode,
    * where the only "name" available is the opaque project ref.
    */
-  private buildContainerDisplayName(projectRef: string, schema: string): string {
-    const project = this.projects.find((candidate) => candidate.projectRef === projectRef);
-    return project ? `${project.projectName || project.projectRef} / ${schema}` : schema;
+  private async buildContainerDisplayName(projectRef: string, schema: string): Promise<string> {
+    return this.isOAuth ? `${await this.resolveProjectName(projectRef)} / ${schema}` : schema;
   }
 
   /**
@@ -552,16 +724,34 @@ export class SupabaseConnector extends Connector {
    */
   private async listUserSchemas(connectionString?: string): Promise<string[]> {
     return this.withPgClient(async (client) => {
-      const schemas = await client.findAllSchemas();
-      return schemas
-        .map((schema) => schema.schema_name)
-        .filter(
-          (schemaName) =>
-            !SUPABASE_SYSTEM_SCHEMAS.includes(schemaName) &&
-            !schemaName.startsWith('pg_') &&
-            !schemaName.startsWith('supabase_'),
-        );
+      return this.keepUserSchemas((await client.findAllSchemas()).map((schema) => schema.schema_name));
     }, connectionString);
+  }
+
+  /**
+   * The user schemas of one OAuth project. Listing a project's schemas is
+   * browsing, not using it, so an unprovisioned project is read over the
+   * Management API rather than having a role created for it (DEV-11875). A
+   * project already in use keeps using its own role — one fewer Management API
+   * call, and the same answer.
+   */
+  private async listUserSchemasForOAuthProject(projectRef: string): Promise<string[]> {
+    const provisionedConnectionString = this.provisionedProjectCredentialsByRef.get(projectRef)?.connectionString;
+    if (provisionedConnectionString) {
+      return this.listUserSchemas(provisionedConnectionString);
+    }
+    const catalogReader = new SupabaseManagementApiCatalogReader(await this.createManagementApiClient(), projectRef);
+    return this.keepUserSchemas((await catalogReader.findAllSchemas()).map((schema) => schema.schema_name));
+  }
+
+  /** Drop Supabase's own schemas from a raw schema listing, leaving the user's. */
+  private keepUserSchemas(schemaNames: string[]): string[] {
+    return schemaNames.filter(
+      (schemaName) =>
+        !SUPABASE_SYSTEM_SCHEMAS.includes(schemaName) &&
+        !schemaName.startsWith('pg_') &&
+        !schemaName.startsWith('supabase_'),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -577,7 +767,7 @@ export class SupabaseConnector extends Connector {
   }
 
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
-    const resolved = this.resolveConnection(id.remoteId);
+    const resolved = await this.resolveConnection(id.remoteId);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
 
@@ -716,7 +906,7 @@ export class SupabaseConnector extends Connector {
         // OAuth project name is the friendlier label when we have one.
         remoteContainer: {
           id: `${projectRef}/${schema}`,
-          name: this.buildContainerDisplayName(projectRef, schema),
+          name: await this.buildContainerDisplayName(projectRef, schema),
           remoteWebUrl: this.supabaseDashboardDeepLinksAreAvailable
             ? buildSupabaseSchemaEditorUrl(projectRef, schema)
             : null,
@@ -822,7 +1012,7 @@ export class SupabaseConnector extends Connector {
       modifiedSinceDatetime = applyPgClockSkew(options.since);
     }
 
-    const resolved = this.resolveConnection(tableSpec.id.remoteId);
+    const resolved = await this.resolveConnection(tableSpec.id.remoteId);
     await this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
       const pk = tableSpec.idPath;
@@ -881,7 +1071,7 @@ export class SupabaseConnector extends Connector {
     ids: string[],
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   ): Promise<void> {
-    const resolved = this.resolveConnection(tableSpec.id.remoteId);
+    const resolved = await this.resolveConnection(tableSpec.id.remoteId);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
       const pk = tableSpec.idPath;
@@ -918,7 +1108,7 @@ export class SupabaseConnector extends Connector {
   // -------------------------------------------------------------------------
 
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
-    const resolved = this.resolveConnection(tableSpec.id.remoteId);
+    const resolved = await this.resolveConnection(tableSpec.id.remoteId);
     const recordsReadyForInsert = prepareRecordsForPgInsert(tableSpec, files);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
@@ -936,7 +1126,7 @@ export class SupabaseConnector extends Connector {
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
-    const resolved = this.resolveConnection(tableSpec.id.remoteId);
+    const resolved = await this.resolveConnection(tableSpec.id.remoteId);
     const columnNamesRejectingEmptyString = collectPgColumnNamesRejectingEmptyString(tableSpec);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
@@ -960,7 +1150,7 @@ export class SupabaseConnector extends Connector {
   // -------------------------------------------------------------------------
 
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
-    const resolved = this.resolveConnection(tableSpec.id.remoteId);
+    const resolved = await this.resolveConnection(tableSpec.id.remoteId);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
       const pk = tableSpec.idPath;
@@ -1051,7 +1241,7 @@ export class SupabaseConnector extends Connector {
       );
     }
     try {
-      const connectionString = this.resolveConnectionStringForProject(projectRef);
+      const connectionString = await this.resolveConnectionStringForProject(projectRef);
       return await this.withPgClient(async (client) => {
         if (targetsNewSchema) await this.provisionNewExportSchema(client, schema);
         const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields, projectRef);
@@ -1120,7 +1310,7 @@ export class SupabaseConnector extends Connector {
    */
   override async createFields(plan: NormalizedCreateFieldsPlan): Promise<CreateFieldResult[]> {
     const [projectRef, schema, tableName] = this.splitRemoteTableId(plan.remoteTableId);
-    const connectionString = this.resolveConnectionStringForProject(projectRef);
+    const connectionString = await this.resolveConnectionStringForProject(projectRef);
     return this.withPgClient(async (client) => {
       const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields, projectRef);
       const results: CreateFieldResult[] = [];
@@ -1361,25 +1551,39 @@ connectorRegistry.register({
       throw new ConnectorInstantiationError('Connector account is required for Supabase', Service.SUPABASE);
     }
     if (ctx.connectorAccount.authType === 'OAUTH') {
-      const supabaseProjects = ctx.decryptedCredentials?.supabaseProjects;
-      if (!supabaseProjects || supabaseProjects.length === 0) {
+      const connectorAccountId = ctx.connectorAccount.id;
+      if (!ctx.updateStoredCredentials) {
         throw new ConnectorInstantiationError(
-          'Supabase projects not configured. Please reconnect your Supabase account.',
+          'Supabase requires a host that can persist per-project credentials',
           Service.SUPABASE,
         );
       }
-      // Unlike the bearer-token connectors, Supabase's data plane authenticates
-      // with per-project Postgres connection strings, so no request in a running
-      // job carries this token — resolving it once is enough (and still fails
-      // fast when the connection can no longer mint one).
-      const supabaseAccessToken = await ctx.createOAuthAccessTokenProvider(ctx.connectorAccount.id)();
+      const updateStoredCredentials = ctx.updateStoredCredentials;
+      // The Management API token is re-resolved per call rather than pinned at
+      // instantiation: a long job can outlive one token, and this connection mints
+      // a project role from the Management API at arbitrary points in a run
+      // (DEV-11270, DEV-11875).
+      const resolveAccessToken = ctx.createOAuthAccessTokenProvider(connectorAccountId);
+      // Fail fast if the connection can no longer produce a token at all.
+      await resolveAccessToken();
+
       return new SupabaseConnector({
-        projects: supabaseProjects.map((p) => ({
-          projectRef: p.projectRef,
-          projectName: p.projectName,
-          connectionString: p.connectionString,
-        })),
-        oauthAccessToken: supabaseAccessToken,
+        oauth: {
+          resolveAccessToken,
+          provisionedProjects: ctx.decryptedCredentials?.supabaseProjects ?? [],
+          persistProvisionedProject: async (provisioned) => {
+            const storedCredentials = await updateStoredCredentials(connectorAccountId, (current) => {
+              const existingProjects = current.supabaseProjects ?? [];
+              // Another provisioner may have won while we were creating our role;
+              // its entry stays, and ours is dropped by the caller.
+              if (existingProjects.some((project) => project.projectRef === provisioned.projectRef)) {
+                return null;
+              }
+              return { ...current, supabaseProjects: [...existingProjects, provisioned] };
+            });
+            return storedCredentials.supabaseProjects ?? [];
+          },
+        },
       });
     } else {
       if (!ctx.decryptedCredentials?.connectionString) {

@@ -73,6 +73,7 @@ export class ConnectorsService {
       decryptedCredentials,
       userId,
       createOAuthAccessTokenProvider: (id) => this.createOAuthAccessTokenProvider(id),
+      updateStoredCredentials: (id, mutate) => this.oauthService.updateStoredCredentialsUnderConnectionLock(id, mutate),
       createRateLimiter: (id) => this.rateLimiterFactory.createLimiter({ service, connectorAccountId: id }),
       getFolderOptionsByTableId: (id, tableId) => this.lookupFolderOptions(id, tableId),
       listFolderTableIds: (id) => this.listFolderTableIds(id),

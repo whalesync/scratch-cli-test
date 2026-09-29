@@ -1,10 +1,10 @@
 import { buildConnectionString, buildCreateUserSQL, extractProjectRef } from '../supabase-setup-utils';
 
 describe('buildCreateUserSQL', () => {
-  const sql = buildCreateUserSQL('scratch_svc_abc123', 'pw-with-dashes');
+  const sql = buildCreateUserSQL('whalesync_svc_abc123', 'pw-with-dashes');
 
   it('creates the login role', () => {
-    expect(sql).toContain(`CREATE ROLE "scratch_svc_abc123" LOGIN PASSWORD 'pw-with-dashes' BYPASSRLS`);
+    expect(sql).toContain(`CREATE ROLE "whalesync_svc_abc123" LOGIN PASSWORD 'pw-with-dashes' BYPASSRLS`);
   });
 
   /**
@@ -15,7 +15,7 @@ describe('buildCreateUserSQL', () => {
    * operation keeps working.
    */
   it('grants CREATE on the database, so the role can create a schema', () => {
-    expect(sql).toContain('GRANT CREATE ON DATABASE %I TO "scratch_svc_abc123"');
+    expect(sql).toContain('GRANT CREATE ON DATABASE %I TO "whalesync_svc_abc123"');
     expect(sql).toContain('current_database()');
   });
 
@@ -24,7 +24,7 @@ describe('buildCreateUserSQL', () => {
   });
 
   it('still grants the per-schema privileges on every non-system schema', () => {
-    expect(sql).toContain('GRANT ALL ON SCHEMA %I TO "scratch_svc_abc123"');
+    expect(sql).toContain('GRANT ALL ON SCHEMA %I TO "whalesync_svc_abc123"');
     expect(sql).toContain("AND schema_name NOT LIKE 'pg\\_%'");
   });
 });
@@ -47,11 +47,11 @@ describe('buildConnectionString', () => {
   it('keeps the Supavisor `user.projectRef` username shape', () => {
     const built = buildConnectionString(
       'postgresql://postgres.myref:old@aws-1-us-east-2.pooler.supabase.com:6543/postgres',
-      'scratch_svc_abc123',
+      'whalesync_svc_abc123',
       'new-pw',
       'myref',
     );
 
-    expect(new URL(built).username).toBe('scratch_svc_abc123.myref');
+    expect(new URL(built).username).toBe('whalesync_svc_abc123.myref');
   });
 });
