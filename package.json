@@ -32,6 +32,6 @@
     "turbo": "^2.8.3"
   },
   "resolutions": {
-    "axios": "1.14.0"
+    "axios": "1.20.0"
   }
 }
