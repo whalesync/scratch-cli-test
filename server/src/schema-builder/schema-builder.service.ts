@@ -398,9 +398,9 @@ export class SchemaBuilderService {
     // the generator regardless, since the create request rejects same-named tables.
     const destinationRequiresUniqueTableNames = destinationCapabilities?.requiresUniqueTableNames ?? true;
     const sourcesCreatingNewTables = sources.filter((source) => !source.existingDestination);
-    // A "new container" parent can resolve to one that already exists (Supabase's
-    // "New schema" lands in the schema named after this), so name it exactly as
-    // materialize will: the user's answer, else the source-derived suggestion.
+    // A "new container" parent is named at create time (Supabase's "New schema"
+    // provisions the first unused schema name derived from this), so name it
+    // exactly as materialize will: the user's answer, else the source suggestion.
     const newParentNameTheCreateWillUse =
       dto.newParentName ??
       buildNewDestinationParentName(
@@ -410,7 +410,8 @@ export class SchemaBuilderService {
       sourcesCreatingNewTables.length > 0 && destinationRequiresUniqueTableNames
         ? await this.existingDestinationTableNamesForParent(
             connector,
-            resolveRemoteParentIdTheCreateWillLandIn(connector, dto.remoteParentId, newParentNameTheCreateWillUse),
+            dto.remoteParentId,
+            newParentNameTheCreateWillUse,
           )
         : [];
 
@@ -511,23 +512,31 @@ export class SchemaBuilderService {
    * (`[base]` / `[schema]` / Supabase's `[projectRef, schema]`) or when both
    * fold to the same create-destination id, which is how Live Export addresses
    * the parent (`["<projectRef>/<schema>"]`); see
-   * {@link isRemoteTableUnderCreateParent}. A "new container" parent arrives
-   * already resolved to the container the create will land in (see
-   * {@link resolveRemoteParentIdTheCreateWillLandIn}). When no parent is given,
+   * {@link isRemoteTableUnderCreateParent}. A "new container" parent is first
+   * resolved to the container the create will land in (see
+   * {@link resolveRemoteParentIdTheCreateWillLandIn}) — for Supabase's "New
+   * schema" an unused schema, so nothing conflicts. When no parent is given,
    * every table is considered — for a connection that spans several containers (a Supabase
    * OAuth connection lists every project and schema) that over-reports, so
    * callers should always pass the parent.
    *
-   * Degrades gracefully: if listing fails we log and return `[]` so plan
+   * Degrades gracefully: if resolving the parent or listing fails we log and return `[]` so plan
    * generation still succeeds (in-plan duplicates are still resolved) — we simply
    * can't check the new name against the remote service.
    */
   private async existingDestinationTableNamesForParent(
     connector: Connector,
     remoteParentId: string[] | undefined,
+    newParentName: string | undefined,
   ): Promise<string[]> {
     let tables: Awaited<ReturnType<Connector['listTables']>>;
+    let remoteParentIdTheCreateWillLandIn: string[] | undefined;
     try {
+      remoteParentIdTheCreateWillLandIn = await resolveRemoteParentIdTheCreateWillLandIn(
+        connector,
+        remoteParentId,
+        newParentName,
+      );
       tables = await connector.listTables();
     } catch (error) {
       WSLogger.warn({
@@ -538,7 +547,9 @@ export class SchemaBuilderService {
       return [];
     }
     return tables
-      .filter((table) => isRemoteTableUnderCreateParent(connector, table.id.remoteId, remoteParentId))
+      .filter((table) =>
+        isRemoteTableUnderCreateParent(connector, table.id.remoteId, remoteParentIdTheCreateWillLandIn),
+      )
       .map((table) => table.displayName);
   }
 

@@ -1093,8 +1093,20 @@ export class SyncDraftService {
           ),
           materializeLocally: false,
         };
+        let provisionedRemoteParentIdPersisted = false;
         const response = await this.schemaBuilderService.createTables(workbookId, dto, actor, {
           onTableResult: async (tableResult) => {
+            // A connector that provisions the parent picks its name at create time (Supabase's "New schema"
+            // takes the first unused schema name), so a retry would pick a DIFFERENT one. Persist the pin the
+            // moment the first table reports it, not after the whole batch, so a crash mid-batch retries
+            // into the schema already made instead of splitting the export across two.
+            if (tableResult.remoteParentId && !provisionedRemoteParentIdPersisted) {
+              provisionedRemoteParentIdPersisted = true;
+              for (const placeholder of group.placeholders) {
+                placeholder.remoteParentId = tableResult.remoteParentId;
+              }
+              await this.persistTableMappings(draftId, tableMappings);
+            }
             if (tableResult.status === 'failed' || !tableResult.remoteTableId) return;
             const placeholderRef = placeholderRefByCreateSpecRef.get(tableResult.ref);
             if (placeholderRef) await onPlaceholderCreatedInBatch?.(placeholderRef);

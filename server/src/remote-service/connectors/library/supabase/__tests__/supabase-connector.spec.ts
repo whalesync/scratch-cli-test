@@ -32,6 +32,7 @@ const mockFindViewRelationOid = jest.fn();
 const mockFindRelationOidAndKind = jest.fn();
 const mockSelectAll = jest.fn();
 const mockFindAllSchemas = jest.fn();
+const mockFindEverySchemaNameIncludingInaccessible = jest.fn().mockResolvedValue([]);
 const mockCreateSchemaIfNotExists = jest.fn();
 const mockCreateTable = jest.fn();
 const mockAddColumns = jest.fn();
@@ -55,6 +56,7 @@ jest.mock('../../pg-common/knex-pg-client', () => {
       findRelationOidAndKind: mockFindRelationOidAndKind,
       selectAll: mockSelectAll,
       findAllSchemas: mockFindAllSchemas,
+      findEverySchemaNameIncludingInaccessible: mockFindEverySchemaNameIncludingInaccessible,
       createSchemaIfNotExists: mockCreateSchemaIfNotExists,
       createTable: mockCreateTable,
       addColumns: mockAddColumns,
@@ -987,25 +989,51 @@ describe('SupabaseConnector.createDestinationIdForParent', () => {
   });
 });
 
-// "New schema" provisions `CREATE SCHEMA IF NOT EXISTS <fold(newParentName)>`, so a create plan has to check
-// table names against that schema — it may already exist from an earlier export under the same name.
+// "New schema" provisions a schema nothing uses yet — `fold(newParentName)`, suffixed when that is taken — so a
+// create plan resolves the sentinel to that same (empty) schema and checks no names against an earlier export's.
 describe('SupabaseConnector.resolveRemoteParentIdTheCreateWillLandIn', () => {
-  const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
-
-  it('resolves the "New schema" sentinel to the schema createTable provisions', () => {
-    expect(
-      connector.resolveRemoteParentIdTheCreateWillLandIn([`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`], 'Airtable export'),
-    ).toEqual([PROJECT_REF, 'airtable_export']);
-    expect(connector.resolveRemoteParentIdTheCreateWillLandIn([PROJECT_REF, NEW_SCHEMA_SEGMENT], undefined)).toEqual([
-      PROJECT_REF,
-      'scratch_export',
-    ]);
+  beforeEach(() => {
+    mockFindEverySchemaNameIncludingInaccessible.mockReset();
+    mockFindEverySchemaNameIncludingInaccessible.mockResolvedValue(['public', 'auth']);
   });
 
-  it('returns an existing schema parent unchanged', () => {
-    expect(connector.resolveRemoteParentIdTheCreateWillLandIn([`${PROJECT_REF}/public`], 'Airtable export')).toEqual([
-      `${PROJECT_REF}/public`,
-    ]);
+  afterEach(() => {
+    // Leave the shared mock as the other describes expect it: no schema taken.
+    mockFindEverySchemaNameIncludingInaccessible.mockReset();
+    mockFindEverySchemaNameIncludingInaccessible.mockResolvedValue([]);
+  });
+
+  it('resolves the "New schema" sentinel to the schema createTable provisions', async () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+    await expect(
+      connector.resolveRemoteParentIdTheCreateWillLandIn([`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`], 'Airtable export'),
+    ).resolves.toEqual([PROJECT_REF, 'airtable_export']);
+    await expect(
+      connector.resolveRemoteParentIdTheCreateWillLandIn([PROJECT_REF, NEW_SCHEMA_SEGMENT], undefined),
+    ).resolves.toEqual([PROJECT_REF, 'scratch_export']);
+  });
+
+  it('suffixes the schema when an earlier export already made one under the same name', async () => {
+    mockFindEverySchemaNameIncludingInaccessible.mockResolvedValue(['public', 'postgresql_export']);
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+    await expect(
+      connector.resolveRemoteParentIdTheCreateWillLandIn([`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`], 'PostgreSQL export'),
+    ).resolves.toEqual([PROJECT_REF, 'postgresql_export_2']);
+  });
+
+  it('avoids system schemas too (a name that folds to "auth" never lands in Supabase\'s auth schema)', async () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+    await expect(
+      connector.resolveRemoteParentIdTheCreateWillLandIn([`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`], 'Auth'),
+    ).resolves.toEqual([PROJECT_REF, 'auth_2']);
+  });
+
+  it('returns an existing schema parent unchanged, without listing schemas', async () => {
+    const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+    await expect(
+      connector.resolveRemoteParentIdTheCreateWillLandIn([`${PROJECT_REF}/public`], 'Airtable export'),
+    ).resolves.toEqual([`${PROJECT_REF}/public`]);
+    expect(mockFindEverySchemaNameIncludingInaccessible).not.toHaveBeenCalled();
   });
 });
 
@@ -1144,6 +1172,35 @@ describe('SupabaseConnector schema creation', () => {
       expect(result.remoteTableId).toEqual([PROJECT_REF, 'airtable_export', 'users']);
       // Reported back so the caller pins the rest of the batch to this schema.
       expect(result.remoteParentId).toEqual([PROJECT_REF, 'airtable_export']);
+    });
+
+    it('provisions a suffixed schema when the folded name is already taken, and keeps the batch in it', async () => {
+      mockCreateSchemaIfNotExists.mockResolvedValue(undefined);
+      mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+      mockFindEverySchemaNameIncludingInaccessible.mockResolvedValueOnce(['public', 'postgresql_export']);
+      const newSchemaPlan = (ref: string, name: string): NormalizedCreateTablePlan => ({
+        remoteParentId: [`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`],
+        newParentName: 'PostgreSQL export',
+        ref,
+        name,
+        fields: [textField('name')],
+        deferredFkFields: [],
+      });
+
+      const firstTableResult = await connector.createTable(newSchemaPlan('t1', 'contact'));
+      // The second table in the batch sees the schema the first one made — it must land there, not in _3.
+      mockFindEverySchemaNameIncludingInaccessible.mockResolvedValueOnce([
+        'public',
+        'postgresql_export',
+        'postgresql_export_2',
+      ]);
+      const secondTableResult = await connector.createTable(newSchemaPlan('t2', 'account'));
+
+      expect(mockCreateSchemaIfNotExists).toHaveBeenNthCalledWith(1, 'postgresql_export_2');
+      expect(mockCreateSchemaIfNotExists).toHaveBeenNthCalledWith(2, 'postgresql_export_2');
+      expect(firstTableResult.remoteTableId).toEqual([PROJECT_REF, 'postgresql_export_2', 'contact']);
+      expect(firstTableResult.remoteParentId).toEqual([PROJECT_REF, 'postgresql_export_2']);
+      expect(secondTableResult.remoteTableId).toEqual([PROJECT_REF, 'postgresql_export_2', 'account']);
     });
 
     it('falls back to a default schema name when the "New schema" request carries no newParentName', async () => {

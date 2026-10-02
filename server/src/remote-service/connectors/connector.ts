@@ -224,24 +224,28 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * (with this `newParentName`) will actually land in, so a create plan can
    * check its new table names against the tables already there.
    *
-   * Override only when a "new container" destination can land in a container
-   * that already exists. Supabase's "New schema" sentinel folds `newParentName`
-   * into a schema name and runs `CREATE SCHEMA IF NOT EXISTS`, so a second export
-   * under the same name lands beside the first one's tables; it returns
-   * `[projectRef, <that schema>]`. A destination that always provisions a
-   * brand-new container (Google Sheets' "New spreadsheet") needs no override:
-   * its sentinel parent already matches no existing table.
+   * Override when a "new container" destination provisions a container whose
+   * name `createTable` decides, so the plan addresses that container exactly as
+   * the create will. Supabase's "New schema" sentinel resolves to
+   * `[projectRef, <the unused schema name createTable will provision>]` — a
+   * schema that does not exist yet, so nothing conflicts. A destination whose
+   * sentinel already matches no existing table (Google Sheets' "New
+   * spreadsheet") needs no override.
    *
    * The base behaviour (applied by the caller when a connector does not
    * override): `remoteParentId` unchanged.
    *
-   * Must be **synchronous and pure** — no network calls.
+   * May read the service (Supabase lists the project's schemas), but must not
+   * create anything.
    *
    * @param remoteParentId The parent the create request targets.
    * @param newParentName The name the create will give a container it provisions,
    *   or `undefined` for the connector's own default.
    */
-  resolveRemoteParentIdTheCreateWillLandIn?(remoteParentId: string[], newParentName: string | undefined): string[];
+  resolveRemoteParentIdTheCreateWillLandIn?(
+    remoteParentId: string[],
+    newParentName: string | undefined,
+  ): Promise<string[]>;
 
   /**
    * Search for tables by name. Only used when tableDiscoveryMode is SEARCH.

@@ -13,25 +13,30 @@ const supabaseLike = {
   },
   resolveRemoteParentIdTheCreateWillLandIn: (remoteParentId: string[], newParentName: string | undefined) => {
     const [projectRef, schema] = splitSupabaseParent(remoteParentId);
-    if (!projectRef || schema !== NEW_SCHEMA_SENTINEL) return remoteParentId;
-    return [projectRef, newParentName ?? 'scratch_export'];
+    if (!projectRef || schema !== NEW_SCHEMA_SENTINEL) return Promise.resolve(remoteParentId);
+    return Promise.resolve([projectRef, newParentName ?? 'scratch_export']);
   },
 } as Pick<Connector, 'createDestinationIdForParent' | 'resolveRemoteParentIdTheCreateWillLandIn'>;
 
 const singleSegment = {} as Pick<Connector, 'createDestinationIdForParent'>;
 
 describe('resolveRemoteParentIdTheCreateWillLandIn', () => {
-  it('returns the parent unchanged when the connector has no rule', () => {
-    expect(resolveRemoteParentIdTheCreateWillLandIn(singleSegment, ['baseX'], 'Airtable export')).toEqual(['baseX']);
-    expect(resolveRemoteParentIdTheCreateWillLandIn(singleSegment, undefined, 'Airtable export')).toBeUndefined();
+  it('returns the parent unchanged when the connector has no rule', async () => {
+    await expect(
+      resolveRemoteParentIdTheCreateWillLandIn(singleSegment, ['baseX'], 'Airtable export'),
+    ).resolves.toEqual(['baseX']);
+    await expect(
+      resolveRemoteParentIdTheCreateWillLandIn(singleSegment, undefined, 'Airtable export'),
+    ).resolves.toBeUndefined();
   });
 
-  it('defers to the connector rule when present', () => {
-    expect(resolveRemoteParentIdTheCreateWillLandIn(supabaseLike, [`ref/${NEW_SCHEMA_SENTINEL}`], 'mkt')).toEqual([
-      'ref',
-      'mkt',
+  it('defers to the connector rule when present', async () => {
+    await expect(
+      resolveRemoteParentIdTheCreateWillLandIn(supabaseLike, [`ref/${NEW_SCHEMA_SENTINEL}`], 'mkt'),
+    ).resolves.toEqual(['ref', 'mkt']);
+    await expect(resolveRemoteParentIdTheCreateWillLandIn(supabaseLike, ['ref/public'], 'mkt')).resolves.toEqual([
+      'ref/public',
     ]);
-    expect(resolveRemoteParentIdTheCreateWillLandIn(supabaseLike, ['ref/public'], 'mkt')).toEqual(['ref/public']);
   });
 });
 

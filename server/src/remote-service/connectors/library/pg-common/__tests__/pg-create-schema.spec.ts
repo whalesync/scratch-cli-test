@@ -10,6 +10,7 @@ import {
   buildCreateTableQuery,
   foldNameToPostgresSchemaIdentifier,
   isInsufficientPrivilegeError,
+  pickUnusedPostgresSchemaName,
   POSTGRES_MAX_IDENTIFIER_LENGTH,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   type ForeignKeyResolutions,
@@ -572,6 +573,28 @@ describe('column names containing a question mark', () => {
 
     expect(sql).toContain('"Sold out?" boolean');
     expect(sql).not.toContain('Sold out$');
+  });
+});
+
+describe('pickUnusedPostgresSchemaName', () => {
+  it('keeps the base name when no schema uses it', () => {
+    expect(pickUnusedPostgresSchemaName('postgresql_export', new Set(['public']))).toBe('postgresql_export');
+  });
+
+  it('suffixes the first free number when the base name is taken', () => {
+    expect(pickUnusedPostgresSchemaName('postgresql_export', new Set(['postgresql_export']))).toBe(
+      'postgresql_export_2',
+    );
+    expect(
+      pickUnusedPostgresSchemaName('postgresql_export', new Set(['postgresql_export', 'postgresql_export_2'])),
+    ).toBe('postgresql_export_3');
+  });
+
+  it('truncates the base so the suffix survives the 63-byte identifier limit', () => {
+    const maxLengthBase = 'a'.repeat(63);
+    const unusedSchemaName = pickUnusedPostgresSchemaName(maxLengthBase, new Set([maxLengthBase]));
+    expect(unusedSchemaName).toBe(`${'a'.repeat(61)}_2`);
+    expect(unusedSchemaName.length).toBe(63);
   });
 });
 

@@ -478,13 +478,20 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
     describe('a parent given as the whole create-destination id (how Live Export addresses it)', () => {
       /**
        * Supabase-shaped ids: tables are `[projectRef, schema, table]`, destinations fold to `"<ref>/<schema>"`,
-       * and the "New schema" sentinel lands in a schema named after `newParentName` (default `scratch_export`).
+       * and the "New schema" sentinel lands in an UNUSED schema named after `newParentName` (default
+       * `scratch_export`), suffixed `_2` when an existing table's schema already has that name.
        */
       const NEW_SCHEMA_SENTINEL = 'scratch-new-schema-sentinel';
       const splitSupabaseParent = (remoteParentId: string[]) =>
         remoteParentId.flatMap((segment) => segment.split('/')).filter((segment) => segment !== '');
-      const supabaseShaped = (tables: { remoteId: string[]; displayName: string }[]) =>
-        connectorStub({
+      /** Records every `resolveRemoteParentIdTheCreateWillLandIn` call the plan makes, as `[remoteParentId, newParentName]`. */
+      let parentResolutionCalls: [string[], string | undefined][];
+      beforeEach(() => {
+        parentResolutionCalls = [];
+      });
+      const supabaseShaped = (tables: { remoteId: string[]; displayName: string }[]) => {
+        const existingSchemaNames = new Set(tables.map((table) => table.remoteId[1]));
+        return connectorStub({
           service: 'SUPABASE',
           listTables: jest
             .fn()
@@ -493,12 +500,20 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
             const segments = splitSupabaseParent(remoteParentId);
             return segments[0] ? `${segments[0]}/${segments[1] ?? 'public'}` : undefined;
           },
-          resolveRemoteParentIdTheCreateWillLandIn: (remoteParentId: string[], newParentName: string | undefined) => {
-            const [projectRef, schema] = splitSupabaseParent(remoteParentId);
-            if (!projectRef || schema !== NEW_SCHEMA_SENTINEL) return remoteParentId;
-            return [projectRef, (newParentName ?? 'scratch_export').toLowerCase().replace(/[^a-z0-9]+/g, '_')];
-          },
+          resolveRemoteParentIdTheCreateWillLandIn: jest.fn(
+            (remoteParentId: string[], newParentName: string | undefined) => {
+              parentResolutionCalls.push([remoteParentId, newParentName]);
+              const [projectRef, schema] = splitSupabaseParent(remoteParentId);
+              if (!projectRef || schema !== NEW_SCHEMA_SENTINEL) return Promise.resolve(remoteParentId);
+              const foldedSchemaName = (newParentName ?? 'scratch_export').toLowerCase().replace(/[^a-z0-9]+/g, '_');
+              const unusedSchemaName = existingSchemaNames.has(foldedSchemaName)
+                ? `${foldedSchemaName}_2`
+                : foldedSchemaName;
+              return Promise.resolve([projectRef, unusedSchemaName]);
+            },
+          ),
         });
+      };
       const planAuthorsInto = (remoteParentId: string[], extraBody: { newParentName?: string } = {}) =>
         request(app.getHttpServer())
           .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
@@ -554,34 +569,23 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
         expect(res.body.tableNotes).toEqual([]);
       });
 
-      it('renames against the schema "New schema" lands in when an earlier export already made it', async () => {
+      it('keeps the name when "New schema" will provision a fresh schema beside an earlier export of the same name', async () => {
         dbService.client.dataFolder.findUnique.mockResolvedValue({ ...sourceFolder, connectorService: 'AIRTABLE' });
         connectorsService.getConnector.mockResolvedValue(
           supabaseShaped([{ remoteId: ['ref', 'airtable_export', 'authors'], displayName: 'Authors' }]),
         );
         const res = await planAuthorsInto([`ref/${NEW_SCHEMA_SENTINEL}`]);
-        expect(res.body.plan.tables[0].name).toBe('Authors 2');
-        expect(res.body.tableNotes[0]).toMatchObject({ reason: 'conflicts_with_existing_table' });
+        expect(res.body.plan.tables[0].name).toBe('Authors');
+        expect(res.body.tableNotes).toEqual([]);
+        // Named exactly as materialize will name it: the source-derived suggestion.
+        expect(parentResolutionCalls).toEqual([[[`ref/${NEW_SCHEMA_SENTINEL}`], 'Airtable export']]);
       });
 
       it('resolves "New schema" from the newParentName the user chose', async () => {
         dbService.client.dataFolder.findUnique.mockResolvedValue({ ...sourceFolder, connectorService: 'AIRTABLE' });
-        connectorsService.getConnector.mockResolvedValue(
-          supabaseShaped([
-            { remoteId: ['ref', 'airtable_export', 'authors'], displayName: 'Authors' },
-            { remoteId: ['ref', 'marketing', 'authors'], displayName: 'Authors' },
-          ]),
-        );
-        const res = await planAuthorsInto([`ref/${NEW_SCHEMA_SENTINEL}`], { newParentName: 'Marketing' });
-        expect(res.body.plan.tables[0].name).toBe('Authors 2');
-
-        connectorsService.getConnector.mockResolvedValue(
-          supabaseShaped([{ remoteId: ['ref', 'airtable_export', 'authors'], displayName: 'Authors' }]),
-        );
-        const resIntoFreshSchema = await planAuthorsInto([`ref/${NEW_SCHEMA_SENTINEL}`], {
-          newParentName: 'Marketing',
-        });
-        expect(resIntoFreshSchema.body.plan.tables[0].name).toBe('Authors');
+        connectorsService.getConnector.mockResolvedValue(supabaseShaped([]));
+        await planAuthorsInto([`ref/${NEW_SCHEMA_SENTINEL}`], { newParentName: 'Marketing' });
+        expect(parentResolutionCalls).toEqual([[[`ref/${NEW_SCHEMA_SENTINEL}`], 'Marketing']]);
       });
     });
 

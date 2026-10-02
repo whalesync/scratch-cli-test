@@ -114,6 +114,22 @@ export function foldNameToPostgresSchemaIdentifier(
   return prefixedName.slice(0, POSTGRES_MAX_IDENTIFIER_LENGTH).replace(/_+$/, '') || fallbackSchemaName;
 }
 
+/**
+ * The first of `baseSchemaName`, `baseSchemaName_2`, `baseSchemaName_3`, … that
+ * no existing schema uses — so a "new schema" destination really is new rather
+ * than landing beside another export's tables. The base is truncated (and
+ * re-trimmed) before the suffix so the result stays within Postgres' identifier
+ * limit, which would otherwise silently cut the suffix off.
+ */
+export function pickUnusedPostgresSchemaName(baseSchemaName: string, existingSchemaNames: ReadonlySet<string>): string {
+  if (!existingSchemaNames.has(baseSchemaName)) return baseSchemaName;
+  for (let suffixNumber = 2; ; suffixNumber++) {
+    const suffix = `_${suffixNumber}`;
+    const candidateSchemaName = `${baseSchemaName.slice(0, POSTGRES_MAX_IDENTIFIER_LENGTH - suffix.length).replace(/_+$/, '')}${suffix}`;
+    if (!existingSchemaNames.has(candidateSchemaName)) return candidateSchemaName;
+  }
+}
+
 /** Generous integer headroom added to a requested decimal scale to form `numeric(scale + headroom, scale)`. */
 const NUMERIC_PRECISION_HEADROOM = 8;
 

@@ -70,6 +70,7 @@ import {
   mapPgType,
   pgIncrementalPullSupport,
   pickTitleColumnPath,
+  pickUnusedPostgresSchemaName,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   postgresNativeColumnTypeAnnotation,
   prepareRecordsForPgInsert,
@@ -189,6 +190,14 @@ export class SupabaseConnector extends Connector {
    * provisions more, so a single job provisions a given project at most once.
    */
   private readonly provisionedProjectCredentialsByRef = new Map<string, SupabaseProjectCredentials>();
+
+  /**
+   * Memo for the "New schema" sentinel, keyed by `<projectRef>/<folded name>`: the
+   * first lookup picks a schema name nothing in the project uses yet, and every
+   * later one on this instance — the sibling tables of one create batch — gets
+   * the same name, so the batch lands in one schema instead of one per table.
+   */
+  private readonly unusedSchemaNameChosenForNewSchemaDestinationByProjectAndFoldedName = new Map<string, string>();
 
   /**
    * In-flight provisioning per project, so two operations on the same connector
@@ -712,23 +721,68 @@ export class SupabaseConnector extends Connector {
   }
 
   /**
-   * The "New schema" sentinel lands in `[projectRef, <schema createTable
-   * provisions>]`: the schema name is folded from `newParentName` and created
-   * `IF NOT EXISTS`, so a second export under the same name lands in the schema
-   * the first one made. Any other parent is returned unchanged.
+   * The "New schema" sentinel lands in `[projectRef, <the unused schema name
+   * createTable will provision>]` — the same name createTable picks, so a plan
+   * sees the brand-new (empty) schema the export will really get. Any other
+   * parent is returned unchanged.
    */
-  override resolveRemoteParentIdTheCreateWillLandIn(
+  override async resolveRemoteParentIdTheCreateWillLandIn(
     remoteParentId: string[],
     newParentName: string | undefined,
-  ): string[] {
+  ): Promise<string[]> {
     const { projectRef, targetsNewSchema } = this.resolveCreateParent(remoteParentId);
     if (!projectRef || !targetsNewSchema) return remoteParentId;
-    return [projectRef, this.schemaProvisionedForNewSchemaDestination(newParentName)];
+    const unusedSchemaName = await this.chooseUnusedSchemaNameForNewSchemaDestination(projectRef, newParentName, () =>
+      this.listEverySchemaNameInProject(projectRef),
+    );
+    return [projectRef, unusedSchemaName];
   }
 
-  /** The schema `createTable` provisions for the "New schema" sentinel, named from `newParentName`. */
-  private schemaProvisionedForNewSchemaDestination(newParentName: string | undefined): string {
-    return foldNameToPostgresSchemaIdentifier(newParentName, NEW_SCHEMA_DEFAULT_NAME);
+  /**
+   * The schema a "New schema" destination provisions: `newParentName` folded into
+   * an identifier, suffixed `_2`, `_3`, … when a schema of that name already exists
+   * (`postgresql_export` → `postgresql_export_2`). "New" means new — reusing the
+   * existing schema would drop this export beside another export's tables.
+   * Memoized per instance so every table in a batch lands in the one schema the
+   * first table made; materialize then pins that schema for any retry.
+   */
+  private async chooseUnusedSchemaNameForNewSchemaDestination(
+    projectRef: string,
+    newParentName: string | undefined,
+    listEverySchemaNameInProject: () => Promise<string[]>,
+  ): Promise<string> {
+    const foldedSchemaName = foldNameToPostgresSchemaIdentifier(newParentName, NEW_SCHEMA_DEFAULT_NAME);
+    const memoKey = `${projectRef}/${foldedSchemaName}`;
+    const alreadyChosenSchemaName =
+      this.unusedSchemaNameChosenForNewSchemaDestinationByProjectAndFoldedName.get(memoKey);
+    if (alreadyChosenSchemaName) return alreadyChosenSchemaName;
+    const unusedSchemaName = pickUnusedPostgresSchemaName(
+      foldedSchemaName,
+      new Set(await listEverySchemaNameInProject()),
+    );
+    this.unusedSchemaNameChosenForNewSchemaDestinationByProjectAndFoldedName.set(memoKey, unusedSchemaName);
+    return unusedSchemaName;
+  }
+
+  /**
+   * Every schema name in a project, including system schemas and ones our role
+   * can't access — the set a new schema's name must avoid. Read like
+   * {@link listUserSchemasForOAuthProject}: over the project's own role when one is
+   * provisioned, else over the Management API (browsing a project provisions nothing).
+   */
+  private async listEverySchemaNameInProject(projectRef: string): Promise<string[]> {
+    if (!this.isOAuth) {
+      return this.withPgClient((client) => client.findEverySchemaNameIncludingInaccessible());
+    }
+    const provisionedConnectionString = this.provisionedProjectCredentialsByRef.get(projectRef)?.connectionString;
+    if (provisionedConnectionString) {
+      return this.withPgClient(
+        (client) => client.findEverySchemaNameIncludingInaccessible(),
+        provisionedConnectionString,
+      );
+    }
+    const catalogReader = new SupabaseManagementApiCatalogReader(await this.createManagementApiClient(), projectRef);
+    return catalogReader.findEverySchemaNameIncludingInaccessible();
   }
 
   /**
@@ -1256,19 +1310,16 @@ export class SupabaseConnector extends Connector {
    * here we introspect each target's primary-key column (over the data role) so
    * the FK references it with a matching type. Creates are NOT idempotent.
    *
-   * When the parent is the "New schema" sentinel, the schema is PROVISIONED here
-   * first, named from `plan.newParentName` (see
-   * {@link foldNameToPostgresSchemaIdentifier}), and reported back as
-   * `remoteParentId` so the caller pins the rest of the batch — and any retry — to
-   * the schema this table actually landed in. `CREATE SCHEMA IF NOT EXISTS` plus a
-   * deterministic name makes that path safe to re-run: the second table in a batch
-   * finds the schema the first one made instead of provisioning another.
+   * When the parent is the "New schema" sentinel, a schema is PROVISIONED here
+   * first, named from `plan.newParentName` and suffixed when that name is taken
+   * (see {@link chooseUnusedSchemaNameForNewSchemaDestination}), and reported back
+   * as `remoteParentId` so the caller pins the rest of the batch — and any retry —
+   * to the schema this table actually landed in. The chosen name is memoized per
+   * instance, so the second table in a batch reuses it, and
+   * `CREATE SCHEMA IF NOT EXISTS` then finds the schema the first one made.
    */
   override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
     const { projectRef, schema: resolvedSchema, targetsNewSchema } = this.resolveCreateParent(plan.remoteParentId);
-    const schema = targetsNewSchema
-      ? this.schemaProvisionedForNewSchemaDestination(plan.newParentName)
-      : resolvedSchema;
     const tableName = plan.name;
     if (!projectRef) {
       return this.failedTableResult(
@@ -1282,6 +1333,11 @@ export class SupabaseConnector extends Connector {
         ? await this.createManagementApiDdlExecutorForProject(projectRef)
         : undefined;
       return await this.withPgClient(async (client) => {
+        const schema = targetsNewSchema
+          ? await this.chooseUnusedSchemaNameForNewSchemaDestination(projectRef, plan.newParentName, () =>
+              client.findEverySchemaNameIncludingInaccessible(),
+            )
+          : resolvedSchema;
         const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields, projectRef);
         const runCreateTableAsDataRole = () =>
           this.createTableAsDataRole(client, schema, tableName, plan.fields, foreignKeyResolutions, targetsNewSchema);
@@ -1398,8 +1454,8 @@ export class SupabaseConnector extends Connector {
   /**
    * Create the schema behind a "New schema" destination, if it isn't there
    * already. `IF NOT EXISTS` is what makes the batch converge: every table in a
-   * create-tables run resolves the same deterministic name, so the first table
-   * makes the schema and the rest find it.
+   * create-tables run reuses the name the first one chose (memoized on this
+   * instance), so the first table makes the schema and the rest find it.
    *
    * Creating a schema needs CREATE on the *database*, a broader grant than the
    * per-schema ones (`GRANT ALL ON SCHEMA`) — a role without it gets a bare

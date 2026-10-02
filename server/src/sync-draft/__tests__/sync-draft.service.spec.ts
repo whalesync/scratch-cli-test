@@ -5,7 +5,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import type { SyncDraftId, SyncId, WorkbookId } from '@spinner/shared-types';
+import type { DraftTableMapping, SyncDraftId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { load as loadYaml } from 'js-yaml';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
@@ -946,6 +946,57 @@ describe('SyncDraftService', () => {
           return destination.kind === 'placeholderTable' ? destination.remoteParentId : undefined;
         });
         expect(remoteParentIds).toEqual([['ss_new'], ['ss_new']]);
+      });
+
+      /**
+       * Supabase's "New schema" takes the first UNUSED schema name, so a retry after a crash would pick a
+       * different one. The pin must be on disk as soon as the first table reports it, not after the batch.
+       */
+      it('persists the pin the moment the first table reports it, before the batch finishes', async () => {
+        const row = makeDraftRow({ tableMappings: twoPlaceholdersOneFailing() });
+        (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+        const syncDraftUpdate = dbService.client.syncDraft.update as jest.Mock;
+        let persistedTableMappingsWhenSecondTableStarts: unknown;
+        (schemaBuilderService.createTables as jest.Mock).mockImplementation(
+          async (
+            _workbookId,
+            _dto,
+            _actor,
+            progressOptions: { onTableResult?: (result: unknown) => Promise<void> },
+          ) => {
+            const firstTableResult = {
+              ref: 'spec_contacts',
+              name: 'Contacts',
+              status: 'created',
+              remoteTableId: ['ref', 'postgresql_export_2', 'contacts'],
+              remoteParentId: ['ref', 'postgresql_export_2'],
+              fields: [],
+            };
+            await progressOptions?.onTableResult?.(firstTableResult);
+            const lastSyncDraftUpdateArgs = syncDraftUpdate.mock.calls.at(-1) as
+              | [{ data: { tableMappings: unknown } }]
+              | undefined;
+            persistedTableMappingsWhenSecondTableStarts = lastSyncDraftUpdateArgs?.[0].data.tableMappings;
+            return {
+              status: 'partial',
+              tables: [
+                firstTableResult,
+                { ref: 'spec_orders', name: 'Orders', status: 'failed', error: 'boom', fields: [] },
+              ],
+            };
+          },
+        );
+
+        await service.materialize(DRAFT_ID, ACTOR);
+
+        const persistedRemoteParentIds = (persistedTableMappingsWhenSecondTableStarts as DraftTableMapping[]).map(
+          (mapping) =>
+            mapping.destination.kind === 'placeholderTable' ? mapping.destination.remoteParentId : undefined,
+        );
+        expect(persistedRemoteParentIds).toEqual([
+          ['ref', 'postgresql_export_2'],
+          ['ref', 'postgresql_export_2'],
+        ]);
       });
 
       it('leaves remoteParentId alone when no connector reports a provisioned parent', async () => {

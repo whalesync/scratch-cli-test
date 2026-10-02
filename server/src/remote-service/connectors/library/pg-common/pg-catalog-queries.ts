@@ -49,6 +49,16 @@ export function renderBoundSqlStatementAsStandaloneSql(statement: BoundSqlStatem
   return getSqlFormattingKnexInstance().raw(statement.sql, statement.bindings).toQuery();
 }
 
+/**
+ * Every schema name in the database, including schemas the current role holds no
+ * privilege on. `pg_namespace` is readable by every role, whereas
+ * `information_schema.schemata` hides schemas the role cannot access — so this,
+ * not {@link buildFindAllSchemasQuery}, is what tells whether a name is free.
+ */
+export function buildFindEverySchemaNameQuery(): BoundSqlStatement {
+  return { sql: 'SELECT nspname AS schema_name FROM pg_catalog.pg_namespace', bindings: [] };
+}
+
 /** Every schema in the database (`information_schema.schemata`). */
 export function buildFindAllSchemasQuery(): BoundSqlStatement {
   return { sql: 'SELECT catalog_name, schema_name FROM information_schema.schemata', bindings: [] };

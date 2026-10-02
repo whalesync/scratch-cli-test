@@ -7,16 +7,15 @@ type ParentAddressingConnector = Pick<
 
 /**
  * The parent a create into `remoteParentId` will actually land in. Usually the
- * parent itself; a connector whose "new container" destination can resolve to
- * one that already exists (Supabase's "New schema" folds `newParentName` into a
- * schema name and `CREATE SCHEMA IF NOT EXISTS`) names that container instead,
- * so a conflict check sees the tables a second export would land beside.
+ * parent itself; a connector whose "new container" destination names the
+ * container at create time (Supabase's "New schema" provisions the first unused
+ * schema name) resolves it here, so the plan checks conflicts in that container.
  */
-export function resolveRemoteParentIdTheCreateWillLandIn(
+export async function resolveRemoteParentIdTheCreateWillLandIn(
   connector: ParentAddressingConnector,
   remoteParentId: string[] | undefined,
   newParentName: string | undefined,
-): string[] | undefined {
+): Promise<string[] | undefined> {
   if (remoteParentId === undefined || !connector.resolveRemoteParentIdTheCreateWillLandIn) {
     return remoteParentId;
   }
