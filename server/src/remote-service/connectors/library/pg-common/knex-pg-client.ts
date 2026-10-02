@@ -9,7 +9,7 @@
 import knex, { type Knex } from 'knex';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
 import {
-  decodeColumnIdentifierForKnex,
+  applyVerbatimIdentifierQuoting,
   escapeKnexColumnIdentifierSpecialCharacters,
 } from './knex-column-identifier-dot-encoding';
 import {
@@ -55,62 +55,6 @@ import { buildAddColumnsQuery, buildCreateTableQuery, type ForeignKeyResolutions
  */
 function escapeKnexSpecialCharacters(column: string): string {
   return escapeKnexColumnIdentifierSpecialCharacters(column);
-}
-
-/**
- * Undo knex's identifier alias-splitting for a column whose real name contains `" as "`.
- *
- * Knex's identifier formatter treats a bare `" as "` inside any identifier as SQL aliasing and
- * rewrites e.g. `"Marked as done time"` into `"Marked" as "done time"` — silently corrupting the
- * column name in CREATE / INSERT / SELECT / UPDATE for any Postgres/Supabase column whose name
- * contains " as " (a legitimate name we must preserve verbatim — Connector Prime Directive). There
- * is no config hook to disable the split: it happens in knex's module-level `wrapString` BEFORE the
- * `wrapIdentifier` hook runs. But knex funnels every such split through `client.alias(first, second)`
- * with both halves already quoted, and this client never emits an intentional SQL alias through the
- * query builder (the only `... AS ...` it uses lives inside `knex.raw` strings, which bypass this
- * path). So overriding `alias` to rejoin the halves into one correctly-quoted identifier is a safe,
- * global fix. Each half is a `wrapIdentifierImpl` result (`"…"` with any inner `"` doubled); we
- * unwrap both, rejoin with " as ", and re-quote.
- *
- * As of DEV-11170 this is the belt-and-suspenders FALLBACK: column identifiers routed through {@link
- * escapeKnexColumnIdentifierSpecialCharacters} / `encodeColumnIdentifierForKnex` are sentinel-encoded
- * so knex never splits them and their exact casing is preserved. This override only fires for an
- * identifier path that bypassed that encoding, where it still yields ONE valid identifier but — since
- * knex has already discarded the separator's casing before `alias` runs — lowercases the " as ".
- * (DEV-11051, DEV-11170)
- */
-function rejoinKnexAliasSplitIdentifier(quotedFirstHalf: string, quotedSecondHalf: string): string {
-  const unwrapQuotedIdentifier = (quoted: string): string =>
-    quoted.replace(/^"/, '').replace(/"$/, '').replace(/""/g, '"');
-  const rejoinedIdentifier = `${unwrapQuotedIdentifier(quotedFirstHalf)} as ${unwrapQuotedIdentifier(quotedSecondHalf)}`;
-  return `"${rejoinedIdentifier.replace(/"/g, '""')}"`;
-}
-
-/**
- * Install the identifier-preserving hooks on a knex instance so a Postgres column name survives
- * verbatim through knex's formatter even when it contains a substring knex would otherwise treat as
- * structure (Connector Prime Directive):
- *
- *  - `.` (DEV-11063) and `" as "` (DEV-11170) — install a `wrapIdentifier` hook that decodes the
- *    sentinels a column name's dots and `" as "` separator-spaces were encoded to ({@link
- *    decodeColumnIdentifierForKnex}) back to their literals before the default quoting, so the
- *    encoded name is emitted as one verbatim, correctly-cased identifier (`"Dealroom.co URL"`,
- *    `"Certified AS Organic"`).
- *  - `" as "` fallback — also override `client.alias` to rejoin any mis-split halves for an
- *    identifier path that bypassed the sentinel encoding ({@link rejoinKnexAliasSplitIdentifier},
- *    DEV-11051); it yields one valid identifier but lowercases the separator.
- *
- * Exported so tests can build SQL strings through a connection-less knex with the same behavior the
- * {@link KnexPGClient} constructor applies. `knex.client` is typed `any`; narrow it to just the two
- * hooks we replace.
- */
-export function applyVerbatimIdentifierQuoting(knexInstance: Knex): void {
-  const knexClientHooks = knexInstance.client as {
-    alias: (first: string, second: string) => string;
-    config: { wrapIdentifier?: (value: string, origImpl: (value: string) => string) => string };
-  };
-  knexClientHooks.alias = rejoinKnexAliasSplitIdentifier;
-  knexClientHooks.config.wrapIdentifier = (value, origImpl) => origImpl(decodeColumnIdentifierForKnex(value));
 }
 
 /** Escape an array of column names for use in Knex select(). */

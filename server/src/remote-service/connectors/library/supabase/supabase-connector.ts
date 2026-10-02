@@ -2,8 +2,11 @@
  * Supabase connector.
  *
  * Hybrid architecture:
- * - SupabaseApiClient (REST) for Management API operations (project listing, DDL, pooler config)
- * - KnexPGClient (Knex/pg) for all DML operations (schema discovery, CRUD)
+ * - SupabaseApiClient (REST) for Management API operations (project listing, role provisioning,
+ *   pooler config, and OAuth-mode Live Export DDL, which runs as the project's `postgres` role —
+ *   see {@link SupabaseManagementApiDdlExecutor})
+ * - KnexPGClient (Knex/pg) for all DML operations (schema discovery, CRUD), plus Live Export DDL in
+ *   connection-string mode and as the OAuth fallback
  *
  * Authenticates via OAuth 2.0 with the Supabase Management API. Data access uses
  * a dedicated PostgreSQL role, provisioned **per project, on first real use**
@@ -29,6 +32,7 @@ import {
   type SupabaseProjectCredentials,
   type TableView,
 } from '@spinner/shared-types';
+import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -84,6 +88,7 @@ import { buildPgDefaultView } from '../pg-common/pg-default-view';
 import { SupabaseApiClient, SupabaseApiError } from './supabase-api-client';
 import { SupabaseAuthParser } from './supabase-auth-parser';
 import { SupabaseManagementApiCatalogReader } from './supabase-management-api-catalog-reader';
+import { SupabaseManagementApiDdlExecutor } from './supabase-management-api-ddl-executor';
 import { dropOrphanedServiceRole, provisionServiceRoleForSupabaseProject } from './supabase-project-provisioning';
 import {
   buildSupabaseSchemaEditorUrl,
@@ -1212,13 +1217,24 @@ export class SupabaseConnector extends Connector {
 
   /**
    * Create one table (with an auto-generated `id` primary key) and its
-   * non-deferred fields inside `[projectRef, schema]`. DDL runs over the same
-   * Knex data role that does DML — its setup grants CREATE on every user schema
-   * (`GRANT ALL ON SCHEMA`), so no Management-API superuser call is needed and
-   * both connection-string and OAuth modes work identically.
+   * non-deferred fields inside `[projectRef, schema]`.
+   *
+   * Which Postgres role runs the DDL — and so owns what it creates — depends on
+   * the auth mode:
+   *
+   * - **Connection string**: the role in the connection string, the customer's
+   *   own, over Knex.
+   * - **OAuth**: the project's `postgres` role, through the Management API
+   *   ({@link SupabaseManagementApiDdlExecutor}, DEV-12084), so a Live Export's
+   *   schemas and tables belong to the owner the customer's dashboard and
+   *   migration tooling use, and our data role is granted only row access. When
+   *   `postgres` is refused — expected for exports created before that change,
+   *   whose objects our data role owns — the same DDL runs over the data role
+   *   instead ({@link runDdlAsProjectPostgresRoleWithDataRoleFallback}).
+   *
    * ForeignKey targets are already resolved to existing tables by the server;
-   * here we introspect each target's primary-key column so the FK references it
-   * with a matching type. Creates are NOT idempotent.
+   * here we introspect each target's primary-key column (over the data role) so
+   * the FK references it with a matching type. Creates are NOT idempotent.
    *
    * When the parent is the "New schema" sentinel, the schema is PROVISIONED here
    * first, named from `plan.newParentName` (see
@@ -1242,10 +1258,23 @@ export class SupabaseConnector extends Connector {
     }
     try {
       const connectionString = await this.resolveConnectionStringForProject(projectRef);
+      const managementApiDdlExecutor = this.isOAuth
+        ? await this.createManagementApiDdlExecutorForProject(projectRef)
+        : undefined;
       return await this.withPgClient(async (client) => {
-        if (targetsNewSchema) await this.provisionNewExportSchema(client, schema);
         const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields, projectRef);
-        const { skippedFields } = await client.createTable(schema, tableName, plan.fields, foreignKeyResolutions);
+        const runCreateTableAsDataRole = () =>
+          this.createTableAsDataRole(client, schema, tableName, plan.fields, foreignKeyResolutions, targetsNewSchema);
+        const { skippedFields } = managementApiDdlExecutor
+          ? await this.runDdlAsProjectPostgresRoleWithDataRoleFallback({
+              runAsProjectPostgresRole: () =>
+                managementApiDdlExecutor.createTable(schema, tableName, plan.fields, foreignKeyResolutions, {
+                  createSchemaIfMissing: targetsNewSchema,
+                }),
+              runAsDataRole: runCreateTableAsDataRole,
+              logContext: { operation: 'createTable', projectRef, schema, tableName },
+            })
+          : await runCreateTableAsDataRole();
         const fields = this.buildFieldResults(plan.fields, skippedFields);
         return {
           ref: plan.ref,
@@ -1268,6 +1297,85 @@ export class SupabaseConnector extends Connector {
   }
 
   /**
+   * Create the table over this connection's own role: connection-string mode's
+   * only path, and OAuth mode's fallback. Provisions the "New schema" first when
+   * that is the destination.
+   */
+  private async createTableAsDataRole(
+    client: KnexPGClient,
+    schema: string,
+    tableName: string,
+    fields: ResolvedCreateFieldSpec[],
+    foreignKeyResolutions: ForeignKeyResolutions,
+    targetsNewSchema: boolean,
+  ): Promise<{ skippedFields: Map<string, string> }> {
+    if (targetsNewSchema) await this.provisionNewExportSchema(client, schema);
+    return client.createTable(schema, tableName, fields, foreignKeyResolutions);
+  }
+
+  /**
+   * A Management API DDL executor for one OAuth project (DEV-12084). Its grants
+   * go to the role this connection reads and writes the project through: the
+   * stored entry, which after a provisioning race is the winner's role — the same
+   * one the project's connection string logs in as.
+   */
+  private async createManagementApiDdlExecutorForProject(
+    projectRef: string,
+  ): Promise<SupabaseManagementApiDdlExecutor> {
+    const { dbUsername } = await this.ensureProjectRoleProvisioned(projectRef);
+    return new SupabaseManagementApiDdlExecutor(await this.createManagementApiClient(), projectRef, dbUsername);
+  }
+
+  /**
+   * Run one piece of OAuth Live Export DDL as the project's `postgres` role,
+   * falling back to this connection's own data role when `postgres` is refused
+   * (DEV-12084).
+   *
+   * The fallback exists for exports created before DDL moved to `postgres`: their
+   * schemas and tables are owned by the data role, and `postgres` is no superuser
+   * on Supabase, so it can be refused (`42501`) adding a table to such a schema, a
+   * column to such a table, or a foreign key onto one. The Management API itself
+   * answering 403 falls back too. Anything else — a duplicate table (`42P07`), a
+   * bad statement, an expired token, a timeout, an exhausted rate limit —
+   * propagates unchanged: running the same DDL as another role cures none of
+   * those, and a statement that timed out may already have committed.
+   */
+  private async runDdlAsProjectPostgresRoleWithDataRoleFallback<TResult>(params: {
+    runAsProjectPostgresRole: () => Promise<TResult>;
+    runAsDataRole: () => Promise<TResult>;
+    logContext: {
+      operation: 'createTable' | 'createFields';
+      projectRef: string;
+      schema: string;
+      tableName: string;
+      fieldName?: string;
+    };
+  }): Promise<TResult> {
+    try {
+      return await params.runAsProjectPostgresRole();
+    } catch (error) {
+      if (!this.isManagementApiDdlRefusedForPermissions(error)) {
+        throw error;
+      }
+      WSLogger.warn({
+        source: 'SupabaseConnector',
+        message:
+          "Live Export DDL as the project's postgres role was refused; running it as the connection's own data role instead (expected for exports created before DEV-12084, whose objects that role owns)",
+        ...params.logContext,
+        managementApiStatusCode: error instanceof SupabaseApiError ? error.statusCode : undefined,
+        postgresSqlState: error instanceof SupabaseApiError ? error.code : undefined,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return params.runAsDataRole();
+    }
+  }
+
+  /** `postgres` lacks a privilege the DDL needs (`42501`), or the Management API refused the call (403). */
+  private isManagementApiDdlRefusedForPermissions(error: unknown): boolean {
+    return isInsufficientPrivilegeError(error) || (error instanceof SupabaseApiError && error.statusCode === 403);
+  }
+
+  /**
    * Create the schema behind a "New schema" destination, if it isn't there
    * already. `IF NOT EXISTS` is what makes the batch converge: every table in a
    * create-tables run resolves the same deterministic name, so the first table
@@ -1280,9 +1388,12 @@ export class SupabaseConnector extends Connector {
    * giving an OAuth user the connection-string advice would send them looking for
    * a field they don't have:
    *
-   * - **OAuth**: we provision the role ourselves, and `buildCreateUserSQL` now
-   *   grants this. Only connections authorized BEFORE that fix landed can hit
-   *   this, and reconnecting re-runs setup with the grant.
+   * - **OAuth**: only the fallback reaches this. The schema is normally created
+   *   by the project's `postgres` role through the Management API (DEV-12084);
+   *   this runs over our own role only when `postgres` was refused. That role
+   *   gets the grant from `buildCreateUserSQL`, so only connections authorized
+   *   before that grant landed can hit this, and reconnecting re-runs setup with
+   *   it.
    * - **Connection string**: the role is the user's own, so only they can widen
    *   it — or pick an existing schema instead.
    */
@@ -1307,16 +1418,33 @@ export class SupabaseConnector extends Connector {
    * field so a single bad field fails in isolation rather than rolling back the
    * rest. Also used by the server to add deferred cyclic/self foreignKey fields
    * after every table in a multi-table create exists.
+   *
+   * Like {@link createTable}, OAuth mode runs the DDL as the project's `postgres`
+   * role, falling back to the data role per field. The fallback is deliberately
+   * per field rather than sticky: a refusal can come from a foreign key's target
+   * (no REFERENCES on a table our data role owns) rather than from who owns this
+   * table, and the plain columns after it should still go through `postgres`.
    */
   override async createFields(plan: NormalizedCreateFieldsPlan): Promise<CreateFieldResult[]> {
     const [projectRef, schema, tableName] = this.splitRemoteTableId(plan.remoteTableId);
     const connectionString = await this.resolveConnectionStringForProject(projectRef);
+    const managementApiDdlExecutor = this.isOAuth
+      ? await this.createManagementApiDdlExecutorForProject(projectRef)
+      : undefined;
     return this.withPgClient(async (client) => {
       const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields, projectRef);
       const results: CreateFieldResult[] = [];
       for (const field of plan.fields) {
         try {
-          const { skippedFields } = await client.addColumns(schema, tableName, [field], foreignKeyResolutions);
+          const runAddColumnAsDataRole = () => client.addColumns(schema, tableName, [field], foreignKeyResolutions);
+          const { skippedFields } = managementApiDdlExecutor
+            ? await this.runDdlAsProjectPostgresRoleWithDataRoleFallback({
+                runAsProjectPostgresRole: () =>
+                  managementApiDdlExecutor.addColumns(schema, tableName, [field], foreignKeyResolutions),
+                runAsDataRole: runAddColumnAsDataRole,
+                logContext: { operation: 'createFields', projectRef, schema, tableName, fieldName: field.name },
+              })
+            : await runAddColumnAsDataRole();
           const skipReason = skippedFields.get(field.name);
           results.push(
             skipReason !== undefined
@@ -1448,7 +1576,7 @@ export class SupabaseConnector extends Connector {
       return {
         userFriendlyMessage: error.message,
         description: error.message,
-        additionalContext: { statusCode: error.statusCode },
+        additionalContext: { statusCode: error.statusCode, code: error.code },
       };
     }
 

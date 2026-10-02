@@ -38,6 +38,16 @@ export {
   type ForeignKeyResolutions,
 } from './pg-create-schema';
 export {
+  renderAddColumnsAsStandaloneSqlStatements,
+  renderCompiledDdlStatementsAsStandaloneSql,
+  renderCreateSchemaIfNotExistsAsStandaloneSqlStatements,
+  renderCreateTableAsStandaloneSqlStatements,
+  renderGrantDefaultTableDataManipulationPrivilegesInSchemaToRoleAsStandaloneSql,
+  renderGrantSchemaUsageToRoleAsStandaloneSql,
+  renderGrantTableDataManipulationPrivilegesToRoleAsStandaloneSql,
+  type StandaloneDdlStatements,
+} from './pg-create-schema-standalone-sql';
+export {
   collectPgColumnNamesRejectingEmptyString,
   replaceEmptyStringsWithNullForPgTypedColumns,
 } from './pg-empty-string-coercion';

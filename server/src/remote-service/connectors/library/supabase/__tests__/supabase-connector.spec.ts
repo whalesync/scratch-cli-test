@@ -8,9 +8,11 @@ import {
   type CreateFieldSpec,
   type SupabaseProjectCredentials,
 } from '@spinner/shared-types';
+import { WSLogger } from 'src/logger';
 import { type NormalizedCreateFieldsPlan, type NormalizedCreateTablePlan } from '../../../schema-creation.types';
 import { BaseJsonTableSpec, EntityId, PullRecordFilesOptions, dotPath } from '../../../types';
 import { PG_INCREMENTAL_CLOCK_SKEW_MS, type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
+import { SupabaseApiError } from '../supabase-api-client';
 import { SupabaseConnector } from '../supabase-connector';
 
 jest.mock('../../../display-names', () => ({
@@ -88,6 +90,7 @@ jest.mock('../supabase-api-client', () => {
       constructor(
         message: string,
         public readonly statusCode?: number,
+        public readonly code?: string,
       ) {
         super(message);
       }
@@ -990,6 +993,10 @@ describe('SupabaseConnector schema creation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockDispose.mockResolvedValue(undefined);
+    // OAuth DDL goes through the Management API (DEV-12084); clearAllMocks keeps implementations, so
+    // reset this one explicitly rather than inherit another describe's.
+    mockExecuteQuery.mockReset();
+    mockExecuteQuery.mockResolvedValue([]);
     connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
   });
 
@@ -1032,6 +1039,8 @@ describe('SupabaseConnector schema creation', () => {
         { name: 'email', status: 'created', remoteFieldId: 'email' },
       ]);
       expect(mockDispose).toHaveBeenCalledTimes(1);
+      // Connection-string DDL runs as the customer's own role; the Management API is OAuth-only.
+      expect(mockExecuteQuery).not.toHaveBeenCalled();
     });
 
     it('defaults the schema to public when the parent names only a project', async () => {
@@ -1086,6 +1095,10 @@ describe('SupabaseConnector schema creation', () => {
 
       expect(result.status).toBe('created');
       expect(result.remoteTableId).toEqual([PROJECT_REF, 'public', 'users']);
+      expect(mockExecuteQuery).toHaveBeenCalledWith(
+        PROJECT_REF,
+        expect.stringContaining('create table "public"."users"'),
+      );
     });
 
     it('provisions the schema named after newParentName when the parent is the "New schema" sentinel', async () => {
@@ -1169,6 +1182,11 @@ describe('SupabaseConnector schema creation', () => {
     });
 
     it('tells an OAuth connection to reconnect rather than to edit a connection string it has no field for', async () => {
+      // OAuth reaches the data-role schema create only as the fallback, after postgres was refused.
+      const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+      mockExecuteQuery.mockRejectedValueOnce(
+        new SupabaseApiError('Supabase API error (400): ERROR:  42501: permission denied for schema', 400, '42501'),
+      );
       const permissionDenied = Object.assign(new Error('permission denied for database postgres'), { code: '42501' });
       mockCreateSchemaIfNotExists.mockRejectedValue(permissionDenied);
       const oauthConnector = buildOAuthConnectorWithProvisionedProjects([
@@ -1187,6 +1205,8 @@ describe('SupabaseConnector schema creation', () => {
       expect(result.status).toBe('failed');
       expect(result.error).toContain('Reconnect');
       expect(result.error).not.toContain('connection string');
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      warnSpy.mockRestore();
     });
 
     it('fails (no throw) when no project is given in the parent', async () => {
@@ -1317,6 +1337,7 @@ describe('SupabaseConnector schema creation', () => {
         { name: 'bio', status: 'created', remoteFieldId: 'bio' },
         { name: 'nickname', status: 'created', remoteFieldId: 'nickname' },
       ]);
+      expect(mockExecuteQuery).not.toHaveBeenCalled();
     });
 
     it('isolates a per-field failure from the rest', async () => {
@@ -1451,7 +1472,11 @@ describe('SupabaseConnector lazy per-project role provisioning (DEV-11875)', () 
     });
 
     expect(mockGetPoolerConfig).toHaveBeenCalledTimes(1);
-    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+    // The Management API also runs each piece of DDL now (DEV-12084); only one of those calls makes a role.
+    const createRoleStatements = mockExecuteQuery.mock.calls
+      .map((call) => call[1])
+      .filter((statement) => statement.includes('CREATE ROLE'));
+    expect(createRoleStatements).toHaveLength(1);
   });
 
   it('adopts the winner of a concurrent provision and drops the role it lost the race with', async () => {
@@ -1478,9 +1503,13 @@ describe('SupabaseConnector lazy per-project role provisioning (DEV-11875)', () 
     });
 
     const executedStatements = mockExecuteQuery.mock.calls.map((call) => call[1]);
-    expect(executedStatements).toHaveLength(2);
+    expect(executedStatements).toHaveLength(3);
+    expect(executedStatements[0]).toContain('CREATE ROLE');
     expect(executedStatements[1]).toContain('DROP ROLE');
     expect(executedStatements[1]).not.toContain('whalesync_svc_winner');
+    // The table is granted to the role the connection actually uses: the winner's, not the dropped one.
+    expect(executedStatements[2]).toContain('create table "public"."users"');
+    expect(executedStatements[2]).toContain('to "whalesync_svc_winner"');
   });
 
   it('refuses to provision a role in a project the account cannot currently reach', async () => {
@@ -1507,5 +1536,325 @@ describe('SupabaseConnector lazy per-project role provisioning (DEV-11875)', () 
 
     expect(mockGetProjects).toHaveBeenCalled();
     expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe("SupabaseConnector OAuth Live Export DDL as the project's postgres role (DEV-12084)", () => {
+  /** The data role `buildOAuthConnectorWithProvisionedProjects` stores for PROJECT_REF. */
+  const DATA_ROLE = `whalesync_svc_${PROJECT_REF}`;
+  const DUPLICATE_USERS_TABLE_MESSAGE =
+    'A table named "users" already exists in the target schema. Rename the new table, or map to the existing table instead.';
+
+  let oauthConnector: SupabaseConnector;
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockDispose.mockResolvedValue(undefined);
+    // clearAllMocks keeps implementations (and unused *Once queues), so reset the DDL mocks explicitly.
+    for (const ddlMock of [mockExecuteQuery, mockCreateTable, mockAddColumns, mockCreateSchemaIfNotExists]) {
+      ddlMock.mockReset();
+    }
+    mockExecuteQuery.mockResolvedValue([]);
+    mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+    mockAddColumns.mockResolvedValue({ skippedFields: new Map() });
+    mockCreateSchemaIfNotExists.mockResolvedValue(undefined);
+    warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+    oauthConnector = buildOAuthConnectorWithProvisionedProjects([
+      { projectRef: PROJECT_REF, projectName: 'Prod', connectionString: CONNECTION_STRING },
+    ]);
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  function executedSql(index = 0): string {
+    return mockExecuteQuery.mock.calls[index][1];
+  }
+
+  /** What the real API client throws when `postgres` may not run the DDL (e.g. a table our data role owns). */
+  function postgresRefusedError(): SupabaseApiError {
+    return new SupabaseApiError('Supabase API error (400): ERROR:  42501: must be owner of table users', 400, '42501');
+  }
+
+  function usersTablePlan(overrides: Partial<NormalizedCreateTablePlan> = {}): NormalizedCreateTablePlan {
+    return {
+      remoteParentId: [`${PROJECT_REF}/public`],
+      ref: 't1',
+      name: 'users',
+      fields: [textField('name')],
+      deferredFkFields: [],
+      ...overrides,
+    };
+  }
+
+  function newSchemaUsersTablePlan(): NormalizedCreateTablePlan {
+    return usersTablePlan({
+      remoteParentId: [`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`],
+      newParentName: 'Airtable export',
+    });
+  }
+
+  describe('createTable', () => {
+    it('creates the table as postgres in one transaction and grants the data role row access only', async () => {
+      const result = await oauthConnector.createTable(usersTablePlan());
+
+      expect(result).toMatchObject({ status: 'created', remoteTableId: [PROJECT_REF, 'public', 'users'] });
+      expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+      expect(mockExecuteQuery.mock.calls[0][0]).toBe(PROJECT_REF);
+      expect(executedSql()).toBe(
+        [
+          'begin',
+          'create table "public"."users" ("id" uuid not null default gen_random_uuid(), "name" text, constraint "users_pkey" primary key ("id"))',
+          `grant select, insert, update, delete on table "public"."users" to "${DATA_ROLE}"`,
+          'commit;',
+        ].join(';\n'),
+      );
+      expect(mockCreateTable).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(mockDispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('provisions a "New schema" in the same request, granting the data role usage and default row access', async () => {
+      const result = await oauthConnector.createTable(newSchemaUsersTablePlan());
+
+      expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+      const statements = executedSql().split(';\n');
+      expect(statements.slice(0, 4)).toEqual([
+        'begin',
+        'create schema if not exists "airtable_export"',
+        `grant usage on schema "airtable_export" to "${DATA_ROLE}"`,
+        `alter default privileges in schema "airtable_export" grant select, insert, update, delete on tables to "${DATA_ROLE}"`,
+      ]);
+      expect(statements[4]).toMatch(/^create table "airtable_export"\."users" \(/);
+      expect(statements[5]).toBe(
+        `grant select, insert, update, delete on table "airtable_export"."users" to "${DATA_ROLE}"`,
+      );
+      expect(statements[6]).toBe('commit;');
+      expect(mockCreateSchemaIfNotExists).not.toHaveBeenCalled();
+      expect(result.remoteTableId).toEqual([PROJECT_REF, 'airtable_export', 'users']);
+      expect(result.remoteParentId).toEqual([PROJECT_REF, 'airtable_export']);
+    });
+
+    it('sends dotted and question-marked column names verbatim', async () => {
+      await oauthConnector.createTable(
+        usersTablePlan({
+          fields: [textField('Dealroom.co URL'), { name: 'Featured?', fieldType: { kind: 'boolean' } }],
+        }),
+      );
+
+      expect(executedSql()).toContain('"Dealroom.co URL" text');
+      expect(executedSql()).toContain('"Featured?" boolean');
+      expect(executedSql()).not.toContain('\\');
+    });
+
+    it('resolves a foreign key over the data role and references it in the DDL', async () => {
+      mockFindTableUniquelyAddressableColumn.mockResolvedValue({ column: 'id', nativeType: 'uuid' });
+
+      await oauthConnector.createTable(
+        usersTablePlan({
+          name: 'posts',
+          fields: [
+            {
+              name: 'author_id',
+              fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: [PROJECT_REF, 'public', 'users'] } },
+            },
+          ],
+        }),
+      );
+
+      expect(mockFindTableUniquelyAddressableColumn).toHaveBeenCalledWith('public', 'users');
+      expect(executedSql()).toContain(
+        'alter table "public"."posts" add constraint "posts_author_id_foreign" foreign key ("author_id") references "public"."users" ("id") on delete SET NULL',
+      );
+    });
+
+    it('reports a field that could not become a column as skipped', async () => {
+      const result = await oauthConnector.createTable(
+        usersTablePlan({
+          fields: [
+            textField('name'),
+            {
+              name: 'tags',
+              fieldType: {
+                kind: 'foreignKey',
+                target: { existingRemoteTableId: [PROJECT_REF, 'public', 'tags'] },
+                allowMultiple: true,
+              },
+            },
+          ],
+        }),
+      );
+
+      expect(result.status).toBe('partial');
+      expect(result.fields).toContainEqual({ name: 'name', status: 'created', remoteFieldId: 'name' });
+      expect(result.fields).toContainEqual({
+        name: 'tags',
+        status: 'skipped',
+        error: expect.stringMatching(/allowMultiple/) as string,
+      });
+      expect(executedSql()).not.toContain('"tags"');
+    });
+
+    it('falls back to the data role, and warns, when postgres is refused (42501)', async () => {
+      mockExecuteQuery.mockRejectedValueOnce(postgresRefusedError());
+
+      const result = await oauthConnector.createTable(usersTablePlan());
+
+      expect(result).toMatchObject({ status: 'created', remoteTableId: [PROJECT_REF, 'public', 'users'] });
+      expect(mockCreateTable).toHaveBeenCalledTimes(1);
+      const [schema, tableName, fields] = createTableCall();
+      expect([schema, tableName]).toEqual(['public', 'users']);
+      expect(fields).toEqual([textField('name')]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'SupabaseConnector',
+          operation: 'createTable',
+          projectRef: PROJECT_REF,
+          schema: 'public',
+          tableName: 'users',
+          managementApiStatusCode: 400,
+          postgresSqlState: '42501',
+        }),
+      );
+    });
+
+    it('falls back to the data role when the Management API refuses the call (403)', async () => {
+      mockExecuteQuery.mockRejectedValueOnce(
+        new SupabaseApiError(
+          `Insufficient permissions for Supabase API (/projects/${PROJECT_REF}/database/query).`,
+          403,
+        ),
+      );
+
+      const result = await oauthConnector.createTable(usersTablePlan());
+
+      expect(result.status).toBe('created');
+      expect(mockCreateTable).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back for a "New schema" by creating the schema, then the table, over the data role', async () => {
+      mockExecuteQuery.mockRejectedValueOnce(postgresRefusedError());
+
+      const result = await oauthConnector.createTable(newSchemaUsersTablePlan());
+
+      expect(mockCreateSchemaIfNotExists).toHaveBeenCalledWith('airtable_export');
+      expect(createTableCall()[0]).toBe('airtable_export');
+      expect(mockCreateSchemaIfNotExists.mock.invocationCallOrder[0]).toBeLessThan(
+        mockCreateTable.mock.invocationCallOrder[0],
+      );
+      expect(result.remoteParentId).toEqual([PROJECT_REF, 'airtable_export']);
+    });
+
+    it('reports a duplicate table by name without falling back (42P07)', async () => {
+      mockExecuteQuery.mockRejectedValueOnce(
+        new SupabaseApiError('Supabase API error (400): ERROR:  42P07: relation "users" already exists', 400, '42P07'),
+      );
+
+      const result = await oauthConnector.createTable(usersTablePlan());
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe(DUPLICATE_USERS_TABLE_MESSAGE);
+      expect(result.fields).toEqual([{ name: 'name', status: 'failed' }]);
+      expect(mockCreateTable).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails without falling back on any other Management API error', async () => {
+      mockExecuteQuery.mockRejectedValueOnce(new SupabaseApiError('Supabase API error (500): upstream timeout', 500));
+
+      const result = await oauthConnector.createTable(usersTablePlan());
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('upstream timeout');
+      expect(mockCreateTable).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createFields', () => {
+    const USERS_TABLE_ID = [PROJECT_REF, 'public', 'users'];
+
+    it('adds each field as postgres, one request per field', async () => {
+      const results = await oauthConnector.createFields({
+        remoteTableId: USERS_TABLE_ID,
+        fields: [textField('bio'), textField('nickname')],
+      });
+
+      expect(results).toEqual([
+        { name: 'bio', status: 'created', remoteFieldId: 'bio' },
+        { name: 'nickname', status: 'created', remoteFieldId: 'nickname' },
+      ]);
+      expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+      expect(executedSql(0)).toBe('begin;\nalter table "public"."users" add column "bio" text;\ncommit;');
+      expect(executedSql(1)).toBe('begin;\nalter table "public"."users" add column "nickname" text;\ncommit;');
+      expect(mockAddColumns).not.toHaveBeenCalled();
+    });
+
+    it('makes no request at all for a field that is skipped', async () => {
+      const results = await oauthConnector.createFields({
+        remoteTableId: USERS_TABLE_ID,
+        fields: [
+          {
+            name: 'tags',
+            fieldType: {
+              kind: 'foreignKey',
+              target: { existingRemoteTableId: [PROJECT_REF, 'public', 'tags'] },
+              allowMultiple: true,
+            },
+          },
+        ],
+      });
+
+      expect(results).toEqual([
+        { name: 'tags', status: 'skipped', error: expect.stringMatching(/allowMultiple/) as string },
+      ]);
+      expect(mockExecuteQuery).not.toHaveBeenCalled();
+      expect(mockAddColumns).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the data role for just the refused field, and warns', async () => {
+      mockExecuteQuery.mockRejectedValueOnce(postgresRefusedError());
+
+      const results = await oauthConnector.createFields({
+        remoteTableId: USERS_TABLE_ID,
+        fields: [textField('bio'), textField('nickname')],
+      });
+
+      expect(results).toEqual([
+        { name: 'bio', status: 'created', remoteFieldId: 'bio' },
+        { name: 'nickname', status: 'created', remoteFieldId: 'nickname' },
+      ]);
+      expect(mockAddColumns).toHaveBeenCalledTimes(1);
+      expect(addColumnsCall()[2]).toEqual([textField('bio')]);
+      // The next field still goes through postgres: a refusal is per statement, not per table.
+      expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({ operation: 'createFields', fieldName: 'bio' }));
+    });
+
+    it('isolates a field that fails as postgres for any other reason', async () => {
+      mockExecuteQuery.mockRejectedValueOnce(
+        new SupabaseApiError(
+          'Supabase API error (400): ERROR:  42701: column "bio" of relation "users" already exists',
+          400,
+          '42701',
+        ),
+      );
+
+      const results = await oauthConnector.createFields({
+        remoteTableId: USERS_TABLE_ID,
+        fields: [textField('bio'), textField('nickname')],
+      });
+
+      expect(results[0]).toMatchObject({ name: 'bio', status: 'failed' });
+      expect(results[0].error).toContain('already exists');
+      expect(results[1]).toEqual({ name: 'nickname', status: 'created', remoteFieldId: 'nickname' });
+      expect(mockAddColumns).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
   });
 });

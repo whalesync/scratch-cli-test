@@ -1,10 +1,10 @@
 import { type CreateFieldSpec, type CreateFieldType } from '@spinner/shared-types';
 import knex, { type Knex } from 'knex';
 import {
+  applyVerbatimIdentifierQuoting,
   encodeColumnIdentifierDotsForKnex,
   escapeKnexColumnIdentifierSpecialCharacters,
 } from '../knex-column-identifier-dot-encoding';
-import { applyVerbatimIdentifierQuoting } from '../knex-pg-client';
 import {
   buildAddColumnsQuery,
   buildCreateTableQuery,

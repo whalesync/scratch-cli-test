@@ -78,6 +78,13 @@ export function buildSupabaseTableEditorUrl(projectRef: string, schema: string, 
  * `42501 permission denied for database`. Granting it here also means the role
  * OWNS any schema it creates, so no follow-up grant dance is needed for the
  * tables that go into it.
+ *
+ * Since DEV-12084 an OAuth connection's Live Export DDL runs as the project's
+ * `postgres` role through the Management API instead, and this role is granted
+ * row access to what that creates. The database-level CREATE, and the DDL half
+ * of the `ALL` grants below, now serve only the fallback for exports created
+ * before that, whose objects this role owns. Narrowing the grants to what
+ * reading and writing rows needs is a planned follow-up.
  */
 export function buildCreateUserSQL(username: string, password: string): string {
   const excludedSchemas = [...SUPABASE_SYSTEM_SCHEMAS].map((s) => `'${s}'`).join(', ');
