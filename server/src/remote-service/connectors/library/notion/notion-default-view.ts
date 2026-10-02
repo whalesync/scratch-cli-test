@@ -4,6 +4,7 @@ import {
   TableView,
   TableViewCol,
   TableViewSubfield,
+  TIME_BEARING_DATE_FORMATS,
   TransformerTypes,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
@@ -243,6 +244,13 @@ function buildPropertyCol(propName: string, propSchema: TSchema | undefined): Ta
     readonly: isReadonly || undefined,
   };
 
+  // A `created_time` / `last_edited_time` property's inner value is a full timestamp (`format: 'date-time'`),
+  // but that format sits INSIDE the property envelope, which the export layer keeps whole as one opaque field —
+  // so a Live Export plan never sees it and would create a date-only destination column that drops the time
+  // of day. Declare it on the column instead (DEV-12085). The fixed top-level `created_time` /
+  // `last_edited_time` columns need no hint: their format reaches the plan directly.
+  if (innerValueFormatCarriesTimeOfDay(innerValueSchema)) col.logicalType = 'datetime';
+
   // Rich-text inner value is a Notion span array. Attach a declarative display
   // transformer so the renderer flattens it to plain_text without any
   // Notion-specific knowledge of its own. The column path is already drilled to
@@ -320,4 +328,18 @@ function resolveInnerValueTablePropertyType(schema: TSchema | undefined): TableP
     return nonNull ? resolveInnerValueTablePropertyType(nonNull) : 'object';
   }
   return 'object';
+}
+
+/**
+ * Whether a property's inner value is a string whose JSON-Schema `format` says it carries a wall-clock time
+ * (`date-time` / `date-time-local`, see {@link TIME_BEARING_DATE_FORMATS}) — e.g. a `created_time` value.
+ * Resolves a nullable union to its non-null member, like {@link resolveInnerValueTablePropertyType}.
+ */
+function innerValueFormatCarriesTimeOfDay(innerValueSchema: TSchema | undefined): boolean {
+  if (!innerValueSchema) return false;
+  const innerValueFormat = (innerValueSchema as TSchema & { format?: string }).format;
+  if (innerValueFormat !== undefined) return TIME_BEARING_DATE_FORMATS.has(innerValueFormat);
+  if (innerValueSchema[Kind] !== 'Union') return false;
+  const unionMembers = (innerValueSchema as TSchema & { anyOf?: TSchema[] }).anyOf;
+  return innerValueFormatCarriesTimeOfDay(unionMembers?.find((unionMember) => unionMember[Kind] !== 'Null'));
 }

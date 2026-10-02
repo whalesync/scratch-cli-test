@@ -6,13 +6,16 @@ import {
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
+import { selectPlanFieldsFromTableView } from 'src/schema-builder/schema-builder-field-selection';
+import { inferLogicalFieldType } from 'src/schema-builder/schema-builder-plan-generator';
 import { buildAffinityDefaultView } from '../affinity-default-view';
 import {
   buildAffinityFieldsArrayKeyedByOptions,
   buildAffinityFieldSchemasById,
   X_SCRATCH_AFFINITY_FIELDS_BY_ID,
 } from '../affinity-fields';
-import { AffinityFieldMetadata, AffinityValueType } from '../affinity-types';
+import { buildAffinityJsonTableSpec } from '../affinity-json-schema';
+import { AffinityFieldMetadata, AffinityList, AffinityValueType } from '../affinity-types';
 
 // ── Schema helpers ──
 
@@ -278,6 +281,14 @@ describe('buildAffinityDefaultView — company list entry', () => {
       expect(col.type).toBe('date');
     });
 
+    it('should declare a date-time field time-bearing for Live Export (DEV-12085)', () => {
+      const createdAtCol = view.cols.find((c) => (c as TableViewCol).path === 'createdAt') as TableViewCol;
+      expect(createdAtCol.logicalType).toBe('datetime');
+
+      const idCol = view.cols.find((c) => (c as TableViewCol).path === 'id') as TableViewCol;
+      expect(idCol.logicalType).toBeUndefined();
+    });
+
     it('should map Array fields to object type', () => {
       const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.domains') as TableViewCol;
       expect(col.type).toBe('object');
@@ -530,6 +541,11 @@ describe('buildAffinityDefaultView — notes', () => {
     const updatedCol = view.cols.find((c) => (c as TableViewCol).path === 'updatedAt') as TableViewCol;
     expect(updatedCol.readonly).toBe(true);
   });
+
+  it('should declare a nullable date-time field time-bearing for Live Export (DEV-12085)', () => {
+    const updatedCol = view.cols.find((c) => (c as TableViewCol).path === 'updatedAt') as TableViewCol;
+    expect(updatedCol.logicalType).toBe('datetime');
+  });
 });
 
 describe('buildAffinityDefaultView — entity files', () => {
@@ -741,5 +757,43 @@ describe('buildAffinityDefaultView — multi-value flattening (DEV-11064 / DEV-1
     expect(numberCol.codec?.toCore).toMatchObject({ options: { expression: '$.value.data[*]' } });
     // number-multi carries a numeric logicalType so the destination column is a number.
     expect(numberCol.logicalType).toBe('number');
+  });
+});
+
+describe('buildAffinityDefaultView — list-entry dates in a Live Export (DEV-12085)', () => {
+  // The real list-entry schema ROOT carries the field legend (`x-scratch-agent-instructions`), so the export
+  // layer's schema flattener yields no fields for the table and `createdAt`'s `format: 'date-time'` never reaches
+  // the plan — the view column has to carry the time-bearing hint. The hand-built schemas above have no root
+  // annotation, so this goes through the real spec builder.
+  const affinityClientReturningNoListFields = { listListFields: () => Promise.resolve([]) } as never;
+  const companyList: AffinityList = {
+    id: 500,
+    name: 'Deal Pipeline',
+    type: 'company',
+    isPublic: false,
+    ownerId: 1,
+    creatorId: 1,
+  };
+
+  it('plans the entry createdAt as a time-bearing destination field', async () => {
+    const spec = await buildAffinityJsonTableSpec(
+      { wsId: 'list_500', remoteId: ['500'] },
+      companyList,
+      affinityClientReturningNoListFields,
+    );
+    const view = buildAffinityDefaultView(spec.schema, spec.titlePath);
+    const { schemaFields, viewTypeByPath } = selectPlanFieldsFromTableView({
+      schema: spec.schema,
+      view,
+      titlePath: spec.titlePath,
+      idPath: spec.idPath,
+    });
+    const createdAtPlanField = schemaFields.find((planField) => planField.path === 'createdAt');
+    if (!createdAtPlanField) throw new Error('createdAt is not offered for export');
+
+    expect(inferLogicalFieldType(createdAtPlanField, viewTypeByPath['createdAt'], 'Affinity')).toEqual({
+      status: 'mapped',
+      fieldType: { kind: 'date', includesTime: true },
+    });
   });
 });

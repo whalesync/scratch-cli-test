@@ -103,7 +103,7 @@ Every Attio attribute `type`, with its on-disk read key, write key, and the disp
 | checkbox | ✅ | ✅ | ➖ | `$[0].value` (boolean) → `value` (set true) |
 | currency | ✅ | ✅ | ➖ | `$[0]` → `currency_value` (set 123.45) |
 | date | ✅ | ✅ | ➖ | `$[0].value` → `value`; **no tz shift** — `2026-07-04` round-tripped exactly (date is day-only) |
-| timestamp | ✅ | ➖ | ✅ | `$[0].value` → `value`; same value-key path as date (covered via task `deadline_at`) |
+| timestamp | ✅ | ➖ | ✅ | `$[0].value` → `value`; same value-key path as date (covered via task `deadline_at`). Live Export creates a time-bearing column (`logicalType: 'datetime'` → Airtable `dateTime` / Postgres `timestamptz`; **DEV-12085**, was date-only) |
 | rating | ✅ | ✅ | ➖ | `$[0].value` → `value` (set 4) |
 | status | ✅ | ✅ | ➖ | read `$[0].status.title`, **write terse string title** (`convertStatus`) — wrote `"Status 2"`, read back full object ✓ |
 | select | ✅ | ✅ | ➖ | read `$[0].option.title` (multiselect: `$[*].option.title` — every value, DEV-11377), **write terse string** (`convertSelect`) — wrote `"Option 2"`; multiselect = array (`Option 1`+`Option 3`) ✓ |
@@ -114,7 +114,7 @@ Every Attio attribute `type`, with its on-disk read key, write key, and the disp
 | email-address | ✅ | ➖ | ✅ | `$[0].email_address` → `email_address`; derived keys stripped by allowlist; set on person create |
 | phone-number | ✅ | ✅ | ➖ | read `$[0].phone_number` → write `original_phone_number`+`country_code` (set +1415…) |
 | personal-name | ✅ | ➖ | ✅ | `$[*].first_name` → first_name/last_name/full_name (set on person create) |
-| interaction | ✅ | ➖ | ➖ | **DEV-11052:** `$[0].interacted_at` (timestamp) → grid shows the interaction date, Live Export creates a `date` column (was raw JSON / downgraded text). System-managed read-only, no write key |
+| interaction | ✅ | ➖ | ➖ | **DEV-11052:** `$[0].interacted_at` (timestamp) → grid shows the interaction date, Live Export creates a time-bearing date column (**DEV-12085**; was date-only, and raw JSON / downgraded text before DEV-11052). System-managed read-only, no write key |
 | record-id | ➖ | ➖ | ➖ | system id — read-only |
 
 ## Bulk operation limits / pagination

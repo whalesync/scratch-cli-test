@@ -1,16 +1,15 @@
 import { type DataSourceObjectResponse } from '@notionhq/client';
 import { Type } from '@sinclair/typebox';
 import { TableViewCol } from '@spinner/shared-types';
+import { selectPlanFieldsFromTableView } from 'src/schema-builder/schema-builder-field-selection';
+import { inferLogicalFieldType, type InferredFieldType } from 'src/schema-builder/schema-builder-plan-generator';
 import { buildNotionDefaultView } from '../notion-default-view';
 import { buildNotionJsonTableSpec } from '../notion-json-schema';
 
-/**
- * Build the real generated table schema for a set of property types, then derive
- * the default view from it. Exercises buildPropertyCol against the actual on-disk
- * envelope schema (not a hand-rolled stand-in), so the path-drilling and subfield
- * re-anchoring are validated end-to-end with the generator.
- */
-function buildView(properties: Record<string, { id: string; type: string; relation?: { database_id: string } }>) {
+type NotionPropertyDefinitions = Record<string, { id: string; type: string; relation?: { database_id: string } }>;
+
+/** Build the real generated table spec for a set of property types. */
+function buildSpec(properties: NotionPropertyDefinitions) {
   const dataSource = {
     object: 'data_source',
     id: 'ds_123',
@@ -18,8 +17,17 @@ function buildView(properties: Record<string, { id: string; type: string; relati
     properties: Object.fromEntries(Object.entries(properties).map(([name, def]) => [name, { name, ...def }])),
   } as unknown as DataSourceObjectResponse;
 
-  const spec = buildNotionJsonTableSpec({ wsId: 'db', remoteId: ['db_123', 'ds_123'] }, dataSource);
-  return buildNotionDefaultView(spec.schema);
+  return buildNotionJsonTableSpec({ wsId: 'db', remoteId: ['db_123', 'ds_123'] }, dataSource);
+}
+
+/**
+ * Build the real generated table schema for a set of property types, then derive
+ * the default view from it. Exercises buildPropertyCol against the actual on-disk
+ * envelope schema (not a hand-rolled stand-in), so the path-drilling and subfield
+ * re-anchoring are validated end-to-end with the generator.
+ */
+function buildView(properties: NotionPropertyDefinitions) {
+  return buildNotionDefaultView(buildSpec(properties).schema);
 }
 
 const ALL_TYPES = {
@@ -270,5 +278,48 @@ describe('buildNotionDefaultView — missing connector data type guard (T2)', ()
 
     expect(weird).toBeDefined();
     expect(weird.path).toBe('properties.Weird');
+  });
+});
+
+describe('buildNotionDefaultView — time-bearing property columns in a Live Export (DEV-12085)', () => {
+  // A created_time / last_edited_time property's `format: 'date-time'` sits INSIDE the property envelope,
+  // which the export layer keeps whole as one opaque field. Without a hint on the column, the plan would
+  // create a date-only destination column and drop the time of day.
+  const spec = buildSpec({
+    Name: { id: 'title', type: 'title' },
+    Created: { id: 'p_ct', type: 'created_time' },
+    Edited: { id: 'p_let', type: 'last_edited_time' },
+    'Due Date': { id: 'p_date', type: 'date' },
+  });
+  const view = buildNotionDefaultView(spec.schema);
+  const timestampPropertyColumnPaths = ['properties.Created.created_time', 'properties.Edited.last_edited_time'];
+
+  function inferredFieldTypeFor(path: string): InferredFieldType {
+    const { schemaFields, viewTypeByPath } = selectPlanFieldsFromTableView({
+      schema: spec.schema,
+      view,
+      titlePath: spec.titlePath,
+      idPath: spec.idPath,
+    });
+    const planField = schemaFields.find((candidate) => candidate.path === path);
+    if (!planField) throw new Error(`No plan field at ${path} — it is not offered for export`);
+    return inferLogicalFieldType(planField, viewTypeByPath[path], 'Notion');
+  }
+
+  it.each(timestampPropertyColumnPaths)('declares %s time-bearing', (path) => {
+    expect(findCol(view, path)).toMatchObject({ type: 'date', logicalType: 'datetime' });
+  });
+
+  it.each(timestampPropertyColumnPaths)('plans %s as a time-bearing destination field', (path) => {
+    expect(inferredFieldTypeFor(path)).toEqual({ status: 'mapped', fieldType: { kind: 'date', includesTime: true } });
+  });
+
+  it('gives no hint to the date property, whose values may or may not carry a time', () => {
+    expect(findCol(view, 'properties.Due Date.date')?.logicalType).toBeUndefined();
+  });
+
+  it('control: the fixed created_time column needs no hint — its format reaches the plan directly', () => {
+    expect(findCol(view, 'created_time')?.logicalType).toBeUndefined();
+    expect(inferredFieldTypeFor('created_time').fieldType).toEqual({ kind: 'date', includesTime: true });
   });
 });

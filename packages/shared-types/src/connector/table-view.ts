@@ -190,9 +190,14 @@ export type TablePropertyType =
   // A calendar date with NO time-of-day. Most connectors emit `'date'` for both kinds and let
   // the JSON-Schema `format` on the value (`date-time` / `date-time-local`) say which it is —
   // that stays the primary signal. Use `'datetime'` only as a `logicalType`, for a column whose
-  // RAW value carries a wall-clock time but whose schema `format` can't say so because the raw
-  // value isn't an ISO string at all (a Unix epoch number, flattened to a date by a codec). It
-  // is export-only — no renderer consults `logicalType` — and it exists so such a column creates
+  // RAW value carries a wall-clock time but whose `format` can't reach the export layer:
+  //  - the raw value isn't an ISO string at all (a Unix epoch number, flattened to a date by a
+  //    codec — Stripe, Intercom), or the schema deliberately omits `format` (Sanity); or
+  //  - the format sits on a node the export layer never descends into: inside an opaque connector
+  //    envelope (a Notion `created_time` property), or below a table root / container carrying a
+  //    non-container `x-scratch-*` annotation (Gong's Calls root and `metaData`, Affinity's
+  //    list-entry root), which `extractSchemaFields` keeps whole (DEV-12085).
+  // It is export-only — no renderer consults `logicalType` — and it exists so such a column creates
   // a real datetime destination field instead of silently dropping the time-of-day.
   | 'date'
   | 'datetime'

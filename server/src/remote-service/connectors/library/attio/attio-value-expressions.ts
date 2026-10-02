@@ -94,8 +94,11 @@ const ATTIO_EXPORT_LOGICAL_TYPE: Partial<Record<AttioAttributeType, TablePropert
   number: 'number',
   checkbox: 'checkbox',
   currency: 'number',
+  // A `date` is a calendar day and stays date-only. A `timestamp` is a wall-clock instant, and only this hint
+  // can say so: the export's plan field is the whole value array, which carries no JSON-Schema `format`, so
+  // `'date'` here created date-only destination columns that dropped the time of day (DEV-12085).
   date: 'date',
-  timestamp: 'date',
+  timestamp: 'datetime',
   rating: 'number',
   domain: 'url',
   'email-address': 'string',
@@ -106,9 +109,9 @@ const ATTIO_EXPORT_LOGICAL_TYPE: Partial<Record<AttioAttributeType, TablePropert
   'actor-reference': 'string',
   location: 'string',
   'personal-name': 'string',
-  // `interacted_at` is a wall-clock timestamp — export as a real `date` column so a
-  // strict destination gets a date field, not text (mirrors `timestamp`). See DEV-11052.
-  interaction: 'date',
+  // `interacted_at` is a wall-clock timestamp — export it as a time-bearing date column so a strict
+  // destination gets a datetime field: not text (DEV-11052), and not date-only (DEV-12085). Mirrors `timestamp`.
+  interaction: 'datetime',
 };
 
 /**

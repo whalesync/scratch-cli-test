@@ -148,12 +148,14 @@ Write direction is `➖` everywhere (read-only). `linkedTableRemoteId` emitted o
 - **List/count consistency lag:** `records.totalRecords` can count a call the same response's page (and get-by-id) doesn't yet return, while it's in a re-analysis flap.
 - **Gong invents parties from audio channels** — "Phone Caller #1/#2" party entries appear alongside the declared parties; stored verbatim.
 - **Numeric ids exceed 2^53** (e.g. `6434845837860324905`) but arrive as **strings** — safe; never parse them to numbers.
+- **`duration` can differ by 1 s between endpoints for the same call.** On 2026-10-01, `GET /v2/calls` said 299 / 358 where `POST /v2/calls/extensive` said 300 / 359 (2 of 7 calls), presumably rounding. The connector stores the `extensive` value verbatim, so verify durations against `extensive`, not the list endpoint.
 
 ## Gotchas
 
 - **FK `linkedTableId` must be the bare remoteId segment, never the sanitized wsId** — the create-plan generator matches candidate tokens of the target's `DataFolder.tableId` (DEV-11214, same class as Attio's DEV-11052). `gongForeignKeyLinkedTableId()` owns the token; the exact workspace-scoped target rides in `linkedTableRemoteId`. With multiple Gong workspaces in one plan the bare token alone is ambiguous — the remote-id array disambiguates for consumers that bind by array equality.
 - The CLI's `--table-id` flag is **repeatable, one flag per remoteId segment**: `--table-id calls --table-id <workspaceId>`. A single comma-joined value reaches the connector as one segment and fails parsing.
 - Without the shared rate limiter, back-to-back `fetchJsonTableSpec` calls (each resolving workspace names) tripped Gong's 3/s limit during `linked add`. The per-account limiter + `resolveWorkspace`'s single listWorkspaces call per spec keep it under; if table-spec fetches ever batch heavily, memoize `listWorkspaces`.
+- **The Calls schema is opaque to Live Export, so a Calls date column must declare `logicalType: 'datetime'` (DEV-12085).** `extractSchemaFields` keeps any object carrying a non-container `x-scratch-*` key whole, as one opaque leaf. That includes the Calls ROOT (agent instructions) and `metaData` (read-only), so no Calls schema field reaches the create plan, which works off the view alone. A schema `format: 'date-time'` can't make a Calls date time-bearing: `Started`/`Scheduled` carry `logicalType: 'datetime'` instead, or destinations get date-only columns. Any new Calls date column needs the same. `__tests__/gong-live-export.spec.ts` asserts that every Gong date column exports with its time of day.
 
 ## UI quick-links
 

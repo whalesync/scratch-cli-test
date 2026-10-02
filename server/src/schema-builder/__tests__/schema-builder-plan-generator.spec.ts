@@ -165,6 +165,19 @@ describe('inferLogicalFieldType', () => {
     expect(inferLogicalFieldType(field({ path: 'd1', type: 'string' }), 'date').fieldType).toEqual({ kind: 'date' });
   });
 
+  it("keeps time-of-day for a 'datetime' view hint even when the field carries no format", () => {
+    // DEV-12085: a view column whose time-bearing `format` sits below an opaque connector envelope or an
+    // annotated table root (Gong's `metaData.started`) reaches the generator as a bare `{ path, type:
+    // 'unknown' }` — the view's 'datetime' hint is the only time-bearing signal left.
+    const fieldWithNoBackingSchemaField = field({ path: 'metaData.started', type: 'unknown' });
+    expect(inferLogicalFieldType(fieldWithNoBackingSchemaField, 'datetime', 'Gong')).toEqual({
+      status: 'mapped',
+      fieldType: { kind: 'date', includesTime: true },
+    });
+    // The coarse 'date' hint on the same format-less field stays date-only — the downgrade the hint prevents.
+    expect(inferLogicalFieldType(fieldWithNoBackingSchemaField, 'date', 'Gong').fieldType).toEqual({ kind: 'date' });
+  });
+
   it('prefers a TablePropertyType view hint when present', () => {
     expect(inferLogicalFieldType(field({ path: 'd', type: 'string' }), 'date').fieldType).toEqual({ kind: 'date' });
     expect(inferLogicalFieldType(field({ path: 'u', type: 'string' }), 'url').fieldType).toEqual({ kind: 'url' });

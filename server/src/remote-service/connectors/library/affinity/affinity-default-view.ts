@@ -10,6 +10,7 @@ import {
   TableViewBannerGroup,
   TableViewCol,
   TableViewSubfield,
+  TIME_BEARING_DATE_FORMATS,
   TransformerTypes,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
@@ -248,6 +249,13 @@ function buildTopLevelCol(
     readonly: isReadonly || undefined,
     hidden,
   };
+
+  // A top-level date-TIME (a list entry's `createdAt`) has to declare itself time-bearing on the column: the
+  // list-entry schema ROOT carries the field legend (`x-scratch-agent-instructions`), so the export layer's
+  // schema flattener keeps the whole root as one opaque leaf and no top-level `format: 'date-time'` reaches a
+  // Live Export plan — the destination would get a date-only column that drops the time of day (DEV-12085).
+  // Redundant but harmless where the root is clean (Notes, Entity Files).
+  if (fieldValueFormatCarriesTimeOfDay(fieldSchema)) col.logicalType = 'datetime';
 
   // Mirror a schema-declared foreign key onto the view column so the grid renders
   // it as a link and a sync/export links the record (Entity Files' parent-entity
@@ -505,6 +513,20 @@ function mapType(fieldSchema: TSchema | undefined): TablePropertyType | undefine
     default:
       return undefined;
   }
+}
+
+/**
+ * Whether a field's value is a date string whose JSON-Schema `format` says it carries a wall-clock time
+ * (`date-time` / `date-time-local`, see {@link TIME_BEARING_DATE_FORMATS}), resolving a nullable union to its
+ * non-null member the same way {@link mapType} does.
+ */
+function fieldValueFormatCarriesTimeOfDay(fieldSchema: TSchema | undefined): boolean {
+  if (!fieldSchema) return false;
+  const fieldValueFormat = (fieldSchema as TSchema & { format?: string }).format;
+  if (fieldValueFormat !== undefined) return TIME_BEARING_DATE_FORMATS.has(fieldValueFormat);
+  if (fieldSchema[Kind] !== 'Union') return false;
+  const unionMembers = (fieldSchema as TSchema & { anyOf?: TSchema[] }).anyOf;
+  return fieldValueFormatCarriesTimeOfDay(unionMembers?.find((unionMember) => unionMember[Kind] !== 'Null'));
 }
 
 /** Format a camelCase field ID as Title Case (e.g. `firstName` → `First Name`). */

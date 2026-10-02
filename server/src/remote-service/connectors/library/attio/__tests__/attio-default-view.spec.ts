@@ -7,6 +7,8 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
+import { selectPlanFieldsFromTableView } from 'src/schema-builder/schema-builder-field-selection';
+import { inferLogicalFieldType, type InferredFieldType } from 'src/schema-builder/schema-builder-plan-generator';
 import {
   AttioObjectViewConfig,
   buildAttioDefaultView,
@@ -257,6 +259,13 @@ describe('buildAttioDefaultView (object)', () => {
         const col = view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol;
         expect(col.logicalType).toBeUndefined();
       }
+    });
+
+    it('declares a timestamp attribute time-bearing, unlike a calendar date (DEV-12085)', () => {
+      const createdAtAttributeCol = colAt(view, 'values.created_at');
+      expect(createdAtAttributeCol?.type).toBe('string');
+      expect(createdAtAttributeCol?.logicalType).toBe('datetime');
+      expect(colAt(view, 'values.founded_date')?.logicalType).toBe('date');
     });
   });
 
@@ -736,5 +745,48 @@ describe('buildAttioFlatView (members) — DEV-11052', () => {
   it('shows the id triple as its member-id subfield', () => {
     const idCol = colAt(view, 'id');
     expect(idCol?.subfields?.[idCol.selectedSubfield ?? -1]?.relativePath).toBe('workspace_member_id');
+  });
+});
+
+describe('buildAttioDefaultView — wall-clock timestamps in a Live Export (DEV-12085)', () => {
+  // An Attio value column's plan field is the whole value ARRAY, which carries no JSON-Schema `format`, so the
+  // column's logicalType is the only time signal the export layer gets. A `'date'` hint created date-only
+  // destination columns that dropped the time of a `timestamp` attribute and of an interaction's `interacted_at`.
+  const schema = Type.Object({
+    id: Type.Object(
+      { workspace_id: Type.String(), object_id: Type.String(), record_id: Type.String() },
+      { [X_SCRATCH_READONLY]: true },
+    ),
+    values: Type.Object({
+      name: attr('text'),
+      next_follow_up_at: attr('timestamp'),
+      last_email_interaction: attr('interaction', { readonly: true }),
+      founded_date: attr('date'),
+    }),
+  });
+  const view = buildAttioDefaultView(schema, OBJECT_VIEW_CONFIG['companies']);
+
+  function inferredFieldTypeFor(path: string): InferredFieldType {
+    const { schemaFields, viewTypeByPath } = selectPlanFieldsFromTableView({
+      schema,
+      view,
+      titlePath: 'values.name',
+      idPath: 'id.record_id',
+    });
+    const planField = schemaFields.find((candidate) => candidate.path === path);
+    if (!planField) throw new Error(`No plan field at ${path} — it is not offered for export`);
+    return inferLogicalFieldType(planField, viewTypeByPath[path], 'Attio');
+  }
+
+  it.each(['values.next_follow_up_at', 'values.last_email_interaction'])(
+    'plans %s as a time-bearing destination field',
+    (path) => {
+      expect(colAt(view, path)?.logicalType).toBe('datetime');
+      expect(inferredFieldTypeFor(path)).toEqual({ status: 'mapped', fieldType: { kind: 'date', includesTime: true } });
+    },
+  );
+
+  it('keeps a calendar date attribute date-only', () => {
+    expect(inferredFieldTypeFor('values.founded_date')).toEqual({ status: 'mapped', fieldType: { kind: 'date' } });
   });
 });

@@ -978,10 +978,12 @@ export function inferLogicalFieldType(
       case 'date':
         return { status: 'mapped', fieldType: dateCreateFieldType(field) };
       // An explicitly time-bearing column. `dateCreateFieldType` normally learns that from the
-      // value's JSON-Schema `format`, but a column whose raw value is a Unix epoch NUMBER has no
-      // string format to carry it (Stripe's `created`, flattened to a date by an `epoch_to_iso`
-      // codec), so the view declares it directly. Without this it would land as a date-only
-      // column and drop the time-of-day for the life of the export.
+      // value's JSON-Schema `format`, but some columns can't hand it one, so the view declares it
+      // directly: a raw Unix epoch NUMBER has no string format (Stripe's `created`, flattened to a
+      // date by an `epoch_to_iso` codec), and a format below an opaque envelope or an annotated
+      // table root never reaches `field` at all — `field` is then a bare `{ path, type: 'unknown' }`
+      // (Gong's `metaData.started`, Notion `created_time` properties; DEV-12085). Without this it
+      // would land as a date-only column and drop the time-of-day for the life of the export.
       case 'datetime':
         return { status: 'mapped', fieldType: { kind: 'date', includesTime: true } };
       // A column whose value set is CLOSED and declared by the schema (Intercom's article `state`

@@ -121,7 +121,12 @@ function buildCallsView(): TableView {
     name: 'Default',
     cols: [
       col('metaData.title', 'Title', 'string'),
-      col('metaData.started', 'Started', 'date'),
+      // A call's times are ISO-8601 date-TIMES, but their `format: 'date-time'` never reaches a Live Export
+      // plan: the Calls root (agent instructions) and `metaData` (read-only) carry `x-scratch-*` annotations,
+      // so the export layer's schema flattener keeps each whole as one opaque leaf and finds no `metaData.*`
+      // field. The column has to declare itself time-bearing, or the destination gets a date-only column that
+      // drops every call's start time (DEV-12085).
+      col('metaData.started', 'Started', 'date', { logicalType: 'datetime' }),
       col('metaData.duration', 'Duration (s)', 'number', { logicalType: 'number' }),
       col('metaData.direction', 'Direction', 'string'),
       col('metaData.primaryUserId', 'Host', 'string', {
@@ -142,7 +147,8 @@ function buildCallsView(): TableView {
       col('metaData.sdrDisposition', 'SDR Disposition', 'string', { hidden: true }),
       col('metaData.meetingUrl', 'Meeting URL', 'url', { hidden: true }),
       col('metaData.isPrivate', 'Private', 'checkbox', { hidden: true }),
-      col('metaData.scheduled', 'Scheduled', 'date', { hidden: true }),
+      // Time-bearing for the same reason as Started (DEV-12085).
+      col('metaData.scheduled', 'Scheduled', 'date', { hidden: true, logicalType: 'datetime' }),
       interactionGroup,
       col('collaboration.publicComments', 'Public Comments', 'object', { hidden: true }),
       col('context', 'CRM Context', 'object', { hidden: true }),

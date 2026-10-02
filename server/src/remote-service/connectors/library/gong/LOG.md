@@ -91,3 +91,33 @@ Transcript → SRT transformer (Ryder's ask: industry-standard script format):
 [12:08:00] [Manual Edits] Verified against the REAL haunted-CRM transcript via the built shared module: 107 cues, both speakers labeled, ms-accurate timestamps — end-to-end pull+export verification pending a server restart (running dist is stale)
 [12:35:00] [Manual Edits] Added the transcript_to_srt arm to the save-sync zod union (sync-mapping.schema.ts) — the draft save rejected the new type until then ("No matching discriminator")
 [12:38:00] [Service API] E2E verified: GONG→SUPABASE export (Call Transcripts 5) landed speaker-labeled SubRip — numbered cues, HH:MM:SS,mmm timestamps, "Speaker N:" prefixes on real transcribed content
+
+## 2026-10-01 — DEV-12085: Calls `Started` exported date-only
+
+[13:10:00] [Research] Customer report (VITL, Gong→Supabase): `Calls.Started` created as Postgres `date`. Traced it: the Calls root's x-scratch-agent-instructions + metaData's x-scratch-readonly trip extractSchemaFields' leaf guard → zero Calls schema fields → plan field `{ path, type: 'unknown' }` with no format → the view's 'date' hint → `{ kind: 'date' }` → `table.date`
+[13:40:00] [Manual Edits] Wrote __tests__/gong-live-export.spec.ts first — reproduced `"started" date` in the generated Postgres DDL, then added `logicalType: 'datetime'` to Calls Started + Scheduled (gong-default-view.ts). Same trap fixed for Notion created_time/last_edited_time properties, Affinity list-entry createdAt, Attio timestamp/interaction
+[14:00:00] [Scratch CLI] cd server && yarn jest src/remote-service/connectors/library/gong --runInBand → 26/26 incl. the new spec (Started → timestamptz / Airtable dateTime; every Gong date column time-bearing)
+
+## 2026-10-01 — DEV-12085 live re-check (/test-live-export GONG SUPABASE)
+
+[15:01:47] [Scratch CLI] Harness preflight OK against the local server built from the fix branch (Gong + Supabase connections health ok)
+[15:02:42] [Scratch CLI] audit.mjs --tables "Users,Library Folders,Calls" --second-run-check → wkb_ANzlLQXjlv / syn_1CfDWsBnMB; first run rrn_diGKz90yYY 14/14 published, 0 failedOperations; second run rrn_yUJMSKfG5V no-op; tables created in new schema gong_export
+[15:04:00] [Service API] Supabase information_schema: Calls."Started" = timestamp with time zone (control Library Folders."Updated" = timestamptz); Host = FK → Users.id
+[15:04:30] [Service API] Gong GET /v2/calls vs Supabase rows: 7/7 start instants exact (09:00-07:00 → 16:00Z), 7/7 Host links = primaryUserId
+[15:05:05] [Service API] Drift: deleted one Calls row out-of-band → rerun rrn_pz31eyzB3s re-created it (1 create, 0 failures) with the real start time
+
+## 2026-10-01 — /test-live-export GONG AIRTABLE,NOTION (DEV-12085 follow-through)
+
+[15:19:58] [Scratch CLI] Preflight OK for both destinations (Airtable base + Notion integration tokens valid)
+[15:20:28] [Scratch CLI] GONG→AIRTABLE audit.mjs (Users, Workspaces, Library Folders, Calls, Call Transcripts) → wkb_zZC75jkRSh / syn_zrXcbU4gNG; rrn_xpvk8Vca4N 22/22 published, 0 failedOperations; second run rrn_uviEoAdq89 no-op
+[15:21:50] [Service API] Airtable meta API: Calls.Started = dateTime (utc); 7/7 start instants = Gong, 7/7 Host links = primaryUserId; 7/7 transcripts SRT-shaped
+[15:22:10] [Service API] Duration 1 s off on 2 calls → traced to Gong itself: /v2/calls (299/358) vs /v2/calls/extensive (300/359); destination matches what the connector pulled (extensive)
+[15:22:49] [Service API] Airtable drift: deleted "Probe: long audio" record → rerun rrn_N2oqGvzcpN restored it with the real start time + Host
+[15:23:21] [Scratch CLI] GONG→NOTION (wkb_faCDBhDxFr) failed at save: object_not_found — the "Live export testing" integration can see 0 pages; the DEST_PARENT_ID page isn't shared with it (human step)
+
+## 2026-10-01 — /test-live-export GONG NOTION (after sharing the QA page)
+
+[15:41:53] [Scratch CLI] Preflight OK; confirmed via the Notion API that the integration can now open the DEST_PARENT_ID page ("Live Export Testing")
+[15:42:01] [Scratch CLI] GONG→NOTION audit.mjs (5 tables) → wkb_2buKZv8Fcd / syn_w9JHD9k9M8; rrn_oQQCn9frM0 22/22 published, 0 failedOperations; second run rrn_rh73sdsRbW no-op
+[15:43:40] [Service API] Notion API: Calls.Started = date; 7/7 values keep time + offset (09:00:00.000-07:00) and match Gong; 7/7 Host relations + titles exact; 7/7 transcripts complete (longest 20,275 chars)
+[15:44:05] [Service API] Drift: trashed one Calls page → normal run rrn_NgBiCrHlTS "No changes" (incremental destination pull can't see it — by design, DEV-11407) → forceFullPull run rrn_FKK9QlqSZW restored it (new page, correct Started + Host)
