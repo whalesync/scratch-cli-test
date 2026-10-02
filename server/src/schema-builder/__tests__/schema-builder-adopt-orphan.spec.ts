@@ -1,5 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { WorkbookId } from '@spinner/shared-types';
+import { Connector } from 'src/remote-service/connectors/connector';
 import { Actor } from 'src/users/types';
 import { SchemaBuilderService } from '../schema-builder.service';
 
@@ -25,6 +26,8 @@ describe('SchemaBuilderService.findAdoptableOrphanFolder', () => {
     columnNamesByFolderId: Record<string, string[] | null>;
     /** A stored view per folder whose column display names differ from the column names (Postgres). */
     displayNamesByColumnNameByFolderId?: Record<string, Record<string, string>>;
+    /** The destination connector; defaults to one with no parent fold (parents prefix-match tableIds). */
+    destinationConnector?: Partial<Connector>;
   }): SchemaBuilderService {
     const mappedDestinationFolderIds = new Set(opts.mappedDestinationFolderIds ?? []);
     const db = {
@@ -57,10 +60,14 @@ describe('SchemaBuilderService.findAdoptableOrphanFolder', () => {
         return Promise.resolve({ schema: Type.Object(properties) });
       }),
     };
+    const connectorAccountService = {
+      findOneByIdUnscoped: jest.fn().mockResolvedValue({ id: DESTINATION_CONNECTOR, workbookId: WORKBOOK_ID }),
+    };
+    const connectorService = { getConnector: jest.fn().mockResolvedValue(opts.destinationConnector ?? {}) };
     const constructorArgs = [
       undefined,
-      undefined,
-      undefined,
+      connectorAccountService,
+      connectorService,
       dataFolderService,
       db,
       undefined,
@@ -189,6 +196,58 @@ describe('SchemaBuilderService.findAdoptableOrphanFolder', () => {
       columnNamesByFolderId: { dfd_otherbase: ['Slug', 'Country'] },
     });
     expect(await findOrphan(service)).toBeNull();
+  });
+
+  // Live Export addresses a Supabase parent as the create-destination id whole (`["ref/public"]`), which no
+  // tableId prefix-matches; the connector's fold is what places the orphan under it.
+  describe('a parent given as the whole create-destination id', () => {
+    const supabaseLikeDestination: Partial<Connector> = {
+      createDestinationIdForParent: (remoteParentId: string[]) => {
+        const segments = remoteParentId.flatMap((segment) => segment.split('/'));
+        return segments[0] ? `${segments[0]}/${segments[1] ?? 'public'}` : undefined;
+      },
+    };
+    const findOrphanUnder = (service: SchemaBuilderService, remoteParentId: string[]) =>
+      service.findAdoptableOrphanFolder(
+        WORKBOOK_ID,
+        DESTINATION_CONNECTOR,
+        remoteParentId,
+        INTENDED_TABLE_NAME,
+        INTENDED_FIELD_NAMES,
+        ACTOR,
+      );
+
+    it('adopts an orphan in the same project and schema', async () => {
+      const service = buildService({
+        folders: [
+          {
+            id: 'dfd_orphan',
+            name: 'Countries',
+            connectorAccountId: DESTINATION_CONNECTOR,
+            tableId: ['ref', 'public', 'countries'],
+          },
+        ],
+        columnNamesByFolderId: { dfd_orphan: ['Slug', 'Country'] },
+        destinationConnector: supabaseLikeDestination,
+      });
+      expect((await findOrphanUnder(service, ['ref/public']))?.dataFolderId).toBe('dfd_orphan');
+    });
+
+    it('declines an orphan in another schema', async () => {
+      const service = buildService({
+        folders: [
+          {
+            id: 'dfd_orphan',
+            name: 'Countries',
+            connectorAccountId: DESTINATION_CONNECTOR,
+            tableId: ['ref', 'staging', 'countries'],
+          },
+        ],
+        columnNamesByFolderId: { dfd_orphan: ['Slug', 'Country'] },
+        destinationConnector: supabaseLikeDestination,
+      });
+      expect(await findOrphanUnder(service, ['ref/public'])).toBeNull();
+    });
   });
 
   it('declines when no folder name matches the table to create', async () => {

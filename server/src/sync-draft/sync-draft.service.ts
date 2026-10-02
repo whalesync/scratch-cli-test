@@ -56,6 +56,7 @@ import {
   linkedTableIdIndexKeysForRemoteTableId,
   linkedTableIdLookupKeysForPendingForeignKeyTarget,
 } from 'src/schema-builder/foreign-key-linked-table-id';
+import { buildNewDestinationParentName } from 'src/schema-builder/new-destination-parent-name';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
 import {
   columnTransformInputFromSchemaField,
@@ -298,20 +299,6 @@ function collectConnectorAccountIds(
   return folderIds
     .map((folderId) => connectorAccountIdByFolderId.get(folderId) ?? null)
     .filter((connectorAccountId): connectorAccountId is string => connectorAccountId !== null);
-}
-
-/**
- * Build the display name for a brand-new destination parent container (a Google
- * Sheets spreadsheet, an Airtable base) that a connector spins up for a Live
- * Export batch, from the distinct source services feeding it — e.g. "Airtable
- * export", or "Airtable & HubSpot export" when a batch mixes sources. Returns
- * `undefined` when no source service could be resolved, letting the connector
- * fall back to its own generic default.
- */
-function buildNewDestinationParentName(sourceServiceDisplayNames: string[]): string | undefined {
-  const distinctDisplayNames = [...new Set(sourceServiceDisplayNames)];
-  if (distinctDisplayNames.length === 0) return undefined;
-  return `${distinctDisplayNames.join(' & ')} export`;
 }
 
 @Injectable()

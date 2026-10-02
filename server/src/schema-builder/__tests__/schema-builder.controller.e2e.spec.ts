@@ -475,6 +475,116 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
       expect(res.body.tableNotes).toEqual([]);
     });
 
+    describe('a parent given as the whole create-destination id (how Live Export addresses it)', () => {
+      /**
+       * Supabase-shaped ids: tables are `[projectRef, schema, table]`, destinations fold to `"<ref>/<schema>"`,
+       * and the "New schema" sentinel lands in a schema named after `newParentName` (default `scratch_export`).
+       */
+      const NEW_SCHEMA_SENTINEL = 'scratch-new-schema-sentinel';
+      const splitSupabaseParent = (remoteParentId: string[]) =>
+        remoteParentId.flatMap((segment) => segment.split('/')).filter((segment) => segment !== '');
+      const supabaseShaped = (tables: { remoteId: string[]; displayName: string }[]) =>
+        connectorStub({
+          service: 'SUPABASE',
+          listTables: jest
+            .fn()
+            .mockResolvedValue(tables.map((table) => ({ id: { wsId: 'w', remoteId: table.remoteId }, ...table }))),
+          createDestinationIdForParent: (remoteParentId: string[]) => {
+            const segments = splitSupabaseParent(remoteParentId);
+            return segments[0] ? `${segments[0]}/${segments[1] ?? 'public'}` : undefined;
+          },
+          resolveRemoteParentIdTheCreateWillLandIn: (remoteParentId: string[], newParentName: string | undefined) => {
+            const [projectRef, schema] = splitSupabaseParent(remoteParentId);
+            if (!projectRef || schema !== NEW_SCHEMA_SENTINEL) return remoteParentId;
+            return [projectRef, (newParentName ?? 'scratch_export').toLowerCase().replace(/[^a-z0-9]+/g, '_')];
+          },
+        });
+      const planAuthorsInto = (remoteParentId: string[], extraBody: { newParentName?: string } = {}) =>
+        request(app.getHttpServer())
+          .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+          .send({
+            sources: [{ dataFolderId: 'src_authors' }],
+            destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID,
+            remoteParentId,
+            ...extraBody,
+          })
+          .expect(201);
+
+      beforeEach(() => {
+        dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+        dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+      });
+
+      it('renames against a same-named table in the same project and schema', async () => {
+        connectorsService.getConnector.mockResolvedValue(
+          supabaseShaped([{ remoteId: ['ref', 'public', 'authors'], displayName: 'Authors' }]),
+        );
+        const res = await planAuthorsInto(['ref/public']);
+        expect(res.body.plan.tables[0].name).toBe('Authors 2');
+        expect(res.body.tableNotes[0]).toMatchObject({ reason: 'conflicts_with_existing_table' });
+      });
+
+      it('ignores a same-named table in another schema or another project', async () => {
+        connectorsService.getConnector.mockResolvedValue(
+          supabaseShaped([
+            { remoteId: ['ref', 'staging', 'authors'], displayName: 'Authors' },
+            { remoteId: ['otherRef', 'public', 'authors'], displayName: 'Authors' },
+          ]),
+        );
+        const res = await planAuthorsInto(['ref/public']);
+        expect(res.body.plan.tables[0].name).toBe('Authors');
+        expect(res.body.tableNotes).toEqual([]);
+      });
+
+      it('treats a project-only parent as its default schema', async () => {
+        connectorsService.getConnector.mockResolvedValue(
+          supabaseShaped([{ remoteId: ['ref', 'staging', 'authors'], displayName: 'Authors' }]),
+        );
+        const res = await planAuthorsInto(['ref']);
+        expect(res.body.plan.tables[0].name).toBe('Authors');
+        expect(res.body.tableNotes).toEqual([]);
+      });
+
+      it('ignores existing tables elsewhere when "New schema" provisions a schema that does not exist yet', async () => {
+        connectorsService.getConnector.mockResolvedValue(
+          supabaseShaped([{ remoteId: ['ref', 'public', 'authors'], displayName: 'Authors' }]),
+        );
+        const res = await planAuthorsInto([`ref/${NEW_SCHEMA_SENTINEL}`]);
+        expect(res.body.plan.tables[0].name).toBe('Authors');
+        expect(res.body.tableNotes).toEqual([]);
+      });
+
+      it('renames against the schema "New schema" lands in when an earlier export already made it', async () => {
+        dbService.client.dataFolder.findUnique.mockResolvedValue({ ...sourceFolder, connectorService: 'AIRTABLE' });
+        connectorsService.getConnector.mockResolvedValue(
+          supabaseShaped([{ remoteId: ['ref', 'airtable_export', 'authors'], displayName: 'Authors' }]),
+        );
+        const res = await planAuthorsInto([`ref/${NEW_SCHEMA_SENTINEL}`]);
+        expect(res.body.plan.tables[0].name).toBe('Authors 2');
+        expect(res.body.tableNotes[0]).toMatchObject({ reason: 'conflicts_with_existing_table' });
+      });
+
+      it('resolves "New schema" from the newParentName the user chose', async () => {
+        dbService.client.dataFolder.findUnique.mockResolvedValue({ ...sourceFolder, connectorService: 'AIRTABLE' });
+        connectorsService.getConnector.mockResolvedValue(
+          supabaseShaped([
+            { remoteId: ['ref', 'airtable_export', 'authors'], displayName: 'Authors' },
+            { remoteId: ['ref', 'marketing', 'authors'], displayName: 'Authors' },
+          ]),
+        );
+        const res = await planAuthorsInto([`ref/${NEW_SCHEMA_SENTINEL}`], { newParentName: 'Marketing' });
+        expect(res.body.plan.tables[0].name).toBe('Authors 2');
+
+        connectorsService.getConnector.mockResolvedValue(
+          supabaseShaped([{ remoteId: ['ref', 'airtable_export', 'authors'], displayName: 'Authors' }]),
+        );
+        const resIntoFreshSchema = await planAuthorsInto([`ref/${NEW_SCHEMA_SENTINEL}`], {
+          newParentName: 'Marketing',
+        });
+        expect(resIntoFreshSchema.body.plan.tables[0].name).toBe('Authors');
+      });
+    });
+
     it('does not rename a new table against existing destination tables when the destination allows duplicate table names (Notion — DEV-10943)', async () => {
       dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
       dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);

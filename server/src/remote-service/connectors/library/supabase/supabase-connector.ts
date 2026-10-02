@@ -712,6 +712,26 @@ export class SupabaseConnector extends Connector {
   }
 
   /**
+   * The "New schema" sentinel lands in `[projectRef, <schema createTable
+   * provisions>]`: the schema name is folded from `newParentName` and created
+   * `IF NOT EXISTS`, so a second export under the same name lands in the schema
+   * the first one made. Any other parent is returned unchanged.
+   */
+  override resolveRemoteParentIdTheCreateWillLandIn(
+    remoteParentId: string[],
+    newParentName: string | undefined,
+  ): string[] {
+    const { projectRef, targetsNewSchema } = this.resolveCreateParent(remoteParentId);
+    if (!projectRef || !targetsNewSchema) return remoteParentId;
+    return [projectRef, this.schemaProvisionedForNewSchemaDestination(newParentName)];
+  }
+
+  /** The schema `createTable` provisions for the "New schema" sentinel, named from `newParentName`. */
+  private schemaProvisionedForNewSchemaDestination(newParentName: string | undefined): string {
+    return foldNameToPostgresSchemaIdentifier(newParentName, NEW_SCHEMA_DEFAULT_NAME);
+  }
+
+  /**
    * Label for a (project, schema) container. Matches the create-destination
    * labels: `"<project> / <schema>"` in OAuth mode, where a human-readable
    * project name is on hand, and the bare schema in connection-string mode,
@@ -1247,7 +1267,7 @@ export class SupabaseConnector extends Connector {
   override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
     const { projectRef, schema: resolvedSchema, targetsNewSchema } = this.resolveCreateParent(plan.remoteParentId);
     const schema = targetsNewSchema
-      ? foldNameToPostgresSchemaIdentifier(plan.newParentName, NEW_SCHEMA_DEFAULT_NAME)
+      ? this.schemaProvisionedForNewSchemaDestination(plan.newParentName)
       : resolvedSchema;
     const tableName = plan.name;
     if (!projectRef) {

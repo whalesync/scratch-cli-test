@@ -383,6 +383,15 @@ export const generateCreatePlanSchema = z
     destinationConnectorAccountId: z.string().min(1),
     remoteParentId: z.array(z.string()).optional(),
     /**
+     * The name the create will give a brand-new parent container (the user's
+     * answer to the "name it" box), when `remoteParentId` is a "new container"
+     * destination. Some connectors resolve that name to a container that may
+     * already exist (Supabase's "New schema" → `CREATE SCHEMA IF NOT EXISTS`),
+     * so the plan checks table-name conflicts against it. Defaults to the same
+     * "<Source service> export" suggestion materialize falls back to.
+     */
+    newParentName: z.string().min(1).optional(),
+    /**
      * Optional: map a source `linkedTableId` to an already-existing destination
      * table so a foreign key pointing outside the source set can still resolve.
      */

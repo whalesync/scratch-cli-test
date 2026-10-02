@@ -34,7 +34,9 @@ import { SchemaField, extractSchemaFields } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
+import { isRemoteTableUnderCreateParent, resolveRemoteParentIdTheCreateWillLandIn } from './create-parent-scope';
 import { linkedTableIdIndexKeysForRemoteTableId } from './foreign-key-linked-table-id';
+import { buildNewDestinationParentName } from './new-destination-parent-name';
 import { selectPlanFieldsFromTableView } from './schema-builder-field-selection';
 import { normalizeCreateSchema } from './schema-builder-normalizer';
 import {
@@ -395,10 +397,21 @@ export class SchemaBuilderService {
     // though the name is free (DEV-10943). In-plan duplicates are still deduped by
     // the generator regardless, since the create request rejects same-named tables.
     const destinationRequiresUniqueTableNames = destinationCapabilities?.requiresUniqueTableNames ?? true;
-    const createsNewTable = sources.some((source) => !source.existingDestination);
+    const sourcesCreatingNewTables = sources.filter((source) => !source.existingDestination);
+    // A "new container" parent can resolve to one that already exists (Supabase's
+    // "New schema" lands in the schema named after this), so name it exactly as
+    // materialize will: the user's answer, else the source-derived suggestion.
+    const newParentNameTheCreateWillUse =
+      dto.newParentName ??
+      buildNewDestinationParentName(
+        sourcesCreatingNewTables.flatMap((source) => (source.serviceDisplayName ? [source.serviceDisplayName] : [])),
+      );
     const existingDestinationTableNames =
-      createsNewTable && destinationRequiresUniqueTableNames
-        ? await this.existingDestinationTableNamesForParent(connector, dto.remoteParentId)
+      sourcesCreatingNewTables.length > 0 && destinationRequiresUniqueTableNames
+        ? await this.existingDestinationTableNamesForParent(
+            connector,
+            resolveRemoteParentIdTheCreateWillLandIn(connector, dto.remoteParentId, newParentNameTheCreateWillUse),
+          )
         : [];
 
     const { tables, fieldPlans, notes, tableNotes } = generateCreatePlanFromSources({
@@ -494,12 +507,16 @@ export class SchemaBuilderService {
    * scoped to the create parent (`remoteParentId`) so we only flag genuine
    * collisions — e.g. tables in the SAME Airtable base / Postgres schema /
    * Supabase (project, schema) / Webflow site, not every table the account can
-   * see. The parent is a prefix of `TablePreview.id.remoteId`: single-segment for
-   * connectors whose parent is one container (`[base]` / `[schema]`, matching
-   * `remoteId[0]`), multi-segment for connectors whose parent nests (Supabase's
-   * `[projectRef, schema]`, matching `remoteId[0..1]`). Every segment of the
-   * parent must equal the table's remoteId at that position; when no parent is
-   * given, every table is considered.
+   * see. A table is under the parent when the parent prefixes its remoteId
+   * (`[base]` / `[schema]` / Supabase's `[projectRef, schema]`) or when both
+   * fold to the same create-destination id, which is how Live Export addresses
+   * the parent (`["<projectRef>/<schema>"]`); see
+   * {@link isRemoteTableUnderCreateParent}. A "new container" parent arrives
+   * already resolved to the container the create will land in (see
+   * {@link resolveRemoteParentIdTheCreateWillLandIn}). When no parent is given,
+   * every table is considered — for a connection that spans several containers (a Supabase
+   * OAuth connection lists every project and schema) that over-reports, so
+   * callers should always pass the parent.
    *
    * Degrades gracefully: if listing fails we log and return `[]` so plan
    * generation still succeeds (in-plan duplicates are still resolved) — we simply
@@ -520,11 +537,9 @@ export class SchemaBuilderService {
       });
       return [];
     }
-    const scopedTables =
-      remoteParentId === undefined || remoteParentId.length === 0
-        ? tables
-        : tables.filter((table) => remoteParentId.every((segment, index) => table.id.remoteId[index] === segment));
-    return scopedTables.map((table) => table.displayName);
+    return tables
+      .filter((table) => isRemoteTableUnderCreateParent(connector, table.id.remoteId, remoteParentId))
+      .map((table) => table.displayName);
   }
 
   /**
@@ -606,12 +621,15 @@ export class SchemaBuilderService {
     const sameConnectorFolders = await this.db.client.dataFolder.findMany({
       where: { workbookId, connectorAccountId: destinationConnectorAccountId },
     });
-    const nameAndParentMatchingFolders = sameConnectorFolders.filter(
-      (folder) =>
-        normalizeNameForUniqueness(folder.name) === normalizedIntendedTableName &&
-        (remoteParentId === undefined ||
-          remoteParentId.length === 0 ||
-          remoteParentId.every((segment, index) => folder.tableId[index] === segment)),
+    const nameMatchingFolders = sameConnectorFolders.filter(
+      (folder) => normalizeNameForUniqueness(folder.name) === normalizedIntendedTableName,
+    );
+    if (nameMatchingFolders.length === 0) return null;
+    // The parent may be the create-destination id whole (Live Export's `["ref/public"]`), which only the
+    // connector's own fold can match against a folder's tableId — see isRemoteTableUnderCreateParent.
+    const { connector } = await this.resolveConnectorForWorkbook(destinationConnectorAccountId, workbookId, actor);
+    const nameAndParentMatchingFolders = nameMatchingFolders.filter((folder) =>
+      isRemoteTableUnderCreateParent(connector, folder.tableId, remoteParentId),
     );
 
     const adoptableFolders: { dataFolderId: string; remoteTableId: string[]; actualName: string }[] = [];

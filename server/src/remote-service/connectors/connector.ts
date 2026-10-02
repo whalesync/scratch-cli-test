@@ -220,6 +220,30 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   createDestinationIdForParent?(remoteParentId: string[]): string | undefined;
 
   /**
+   * The connector-native parent segments a `createTable` into `remoteParentId`
+   * (with this `newParentName`) will actually land in, so a create plan can
+   * check its new table names against the tables already there.
+   *
+   * Override only when a "new container" destination can land in a container
+   * that already exists. Supabase's "New schema" sentinel folds `newParentName`
+   * into a schema name and runs `CREATE SCHEMA IF NOT EXISTS`, so a second export
+   * under the same name lands beside the first one's tables; it returns
+   * `[projectRef, <that schema>]`. A destination that always provisions a
+   * brand-new container (Google Sheets' "New spreadsheet") needs no override:
+   * its sentinel parent already matches no existing table.
+   *
+   * The base behaviour (applied by the caller when a connector does not
+   * override): `remoteParentId` unchanged.
+   *
+   * Must be **synchronous and pure** — no network calls.
+   *
+   * @param remoteParentId The parent the create request targets.
+   * @param newParentName The name the create will give a container it provisions,
+   *   or `undefined` for the connector's own default.
+   */
+  resolveRemoteParentIdTheCreateWillLandIn?(remoteParentId: string[], newParentName: string | undefined): string[];
+
+  /**
    * Search for tables by name. Only used when tableDiscoveryMode is SEARCH.
    * Connectors opting into SEARCH mode must override this method.
    * @param searchTerm The search term to filter tables by.

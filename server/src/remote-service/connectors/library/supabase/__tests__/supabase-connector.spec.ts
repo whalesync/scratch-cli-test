@@ -987,6 +987,28 @@ describe('SupabaseConnector.createDestinationIdForParent', () => {
   });
 });
 
+// "New schema" provisions `CREATE SCHEMA IF NOT EXISTS <fold(newParentName)>`, so a create plan has to check
+// table names against that schema — it may already exist from an earlier export under the same name.
+describe('SupabaseConnector.resolveRemoteParentIdTheCreateWillLandIn', () => {
+  const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+  it('resolves the "New schema" sentinel to the schema createTable provisions', () => {
+    expect(
+      connector.resolveRemoteParentIdTheCreateWillLandIn([`${PROJECT_REF}/${NEW_SCHEMA_SEGMENT}`], 'Airtable export'),
+    ).toEqual([PROJECT_REF, 'airtable_export']);
+    expect(connector.resolveRemoteParentIdTheCreateWillLandIn([PROJECT_REF, NEW_SCHEMA_SEGMENT], undefined)).toEqual([
+      PROJECT_REF,
+      'scratch_export',
+    ]);
+  });
+
+  it('returns an existing schema parent unchanged', () => {
+    expect(connector.resolveRemoteParentIdTheCreateWillLandIn([`${PROJECT_REF}/public`], 'Airtable export')).toEqual([
+      `${PROJECT_REF}/public`,
+    ]);
+  });
+});
+
 describe('SupabaseConnector schema creation', () => {
   let connector: SupabaseConnector;
 
