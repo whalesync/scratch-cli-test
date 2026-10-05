@@ -1,6 +1,12 @@
 import { type DataSourceObjectResponse } from '@notionhq/client';
 import { Type } from '@sinclair/typebox';
 import { TableView, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { buildGongDefaultView } from 'src/remote-service/connectors/library/gong/gong-default-view';
+import {
+  buildGongCallsJsonTableSpec,
+  gongTableWsId,
+} from 'src/remote-service/connectors/library/gong/gong-json-schema';
+import { GongEntityType } from 'src/remote-service/connectors/library/gong/gong-types';
 import { HubspotApiClient } from 'src/remote-service/connectors/library/hubspot/hubspot-api-client';
 import { buildHubspotDefaultView } from 'src/remote-service/connectors/library/hubspot/hubspot-default-view';
 import { buildHubspotJsonTableSpec } from 'src/remote-service/connectors/library/hubspot/hubspot-json-schema';
@@ -196,8 +202,41 @@ describe('selectPlanFieldsFromTableView', () => {
       expect(associationFields.length).toBeGreaterThanOrEqual(6);
       for (const field of associationFields) {
         const associationType = field.path.split('.')[1];
-        expect(field.foreignKey).toEqual({ linkedTableId: associationType });
+        expect(field.foreignKey).toEqual({ linkedTableId: associationType, linkedTableRemoteId: [associationType] });
       }
+    });
+  });
+
+  describe('Gong Calls (real builders)', () => {
+    const WORKSPACE_ID = '5823483836160249283';
+
+    it("carries Host's full remote id from the view, though the opaque Calls root hides its schema FK (DEV-12144)", () => {
+      // The Calls root carries agent instructions and `metaData` is read-only, so the
+      // flattener keeps each whole and no schema field backs `metaData.primaryUserId`. The
+      // FK comes from the view column alone; dropping its remote id left the plan naming
+      // Users by token only, and the Live Export wizard then left Host out of the table.
+      const spec = buildGongCallsJsonTableSpec(
+        { wsId: gongTableWsId(GongEntityType.CALLS, WORKSPACE_ID), remoteId: ['calls', WORKSPACE_ID] },
+        WORKSPACE_ID,
+        'Initial workspace',
+      );
+      const view = buildGongDefaultView(spec, { entityType: GongEntityType.CALLS, workspaceId: WORKSPACE_ID });
+      if (!view) throw new Error('expected a Gong Calls default view');
+
+      const { schemaFields } = selectPlanFieldsFromTableView({
+        schema: spec.schema,
+        view,
+        titlePath: spec.titlePath,
+        idPath: spec.idPath,
+      });
+      const hostField = schemaFields.find((field) => field.displayLabel === 'Host');
+
+      expect(hostField?.path).toBe('metaData.primaryUserId');
+      expect(hostField?.foreignKey).toEqual({
+        linkedTableId: GongEntityType.USERS,
+        linkedTableRemoteId: [GongEntityType.USERS],
+        isSingleValued: true,
+      });
     });
   });
 
@@ -307,6 +346,39 @@ describe('selectPlanFieldsFromTableView', () => {
       expect(schemaFields).toHaveLength(1);
       expect(schemaFields[0].path).toBe('associations.contacts.results');
       expect(schemaFields[0].foreignKey).toEqual({ linkedTableId: 'contacts' });
+    });
+
+    it("carries the view FK declaration's remote id, cardinality and target key path whole", () => {
+      // Every part of the declared target reaches the plan: the remote id is what exact-identity
+      // consumers bind by, and a token-only target can't be bound by them (DEV-12144).
+      const schema = Type.Object({
+        owner: Type.Object({ email: Type.String() }, { [X_SCRATCH_READONLY]: true }),
+      });
+      const view: TableView = {
+        name: 'Default',
+        cols: [
+          {
+            kind: 'col',
+            name: 'Owner',
+            path: 'owner.email',
+            foreignKey: {
+              linkedTableId: 'users',
+              linkedTableRemoteId: ['org', 'users'],
+              isSingleValued: true,
+              targetKeyPath: 'email',
+            },
+          },
+        ],
+      };
+
+      const { schemaFields } = selectPlanFieldsFromTableView({ schema, view });
+      expect(schemaFields).toHaveLength(1);
+      expect(schemaFields[0].foreignKey).toEqual({
+        linkedTableId: 'users',
+        linkedTableRemoteId: ['org', 'users'],
+        isSingleValued: true,
+        targetKeyPath: 'email',
+      });
     });
 
     it('re-anchors a drilled title column onto the title path so primary matching lines up', () => {

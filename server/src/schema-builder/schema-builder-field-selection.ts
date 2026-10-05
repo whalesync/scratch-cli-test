@@ -127,13 +127,20 @@ export function selectPlanFieldsFromTableView(args: {
 
     // The view may declare a column's FK target directly — connectors set this for
     // SYNTHESIZED link columns whose FK annotation sits BELOW the column's own path
-    // (HubSpot's "Associated X", flattened from `results[].id`), where the join above
-    // can't reach it. Prefer the declaration; otherwise the FK (if any) came from the
-    // joined backing schema field.
+    // (HubSpot's "Associated X", flattened from `results[].id`), and for columns under
+    // an opaque `x-scratch-*` root (Gong Calls' `metaData.primaryUserId`), where the
+    // join above can't reach it. Prefer the declaration; otherwise the FK (if any) came
+    // from the joined backing schema field. Carry the target's full remote id too: a
+    // plan that names the linked table only by its `linkedTableId` token can't be bound
+    // by exact remote-id clients, which drop the field from the created table (DEV-12144).
     if (col.foreignKey && !derivedField.foreignKey) {
       derivedField.foreignKey = {
         linkedTableId: col.foreignKey.linkedTableId,
+        ...(col.foreignKey.linkedTableRemoteId !== undefined
+          ? { linkedTableRemoteId: col.foreignKey.linkedTableRemoteId }
+          : {}),
         ...(col.foreignKey.isSingleValued !== undefined ? { isSingleValued: col.foreignKey.isSingleValued } : {}),
+        ...(col.foreignKey.targetKeyPath !== undefined ? { targetKeyPath: col.foreignKey.targetKeyPath } : {}),
       };
     }
 

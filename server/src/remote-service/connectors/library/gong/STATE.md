@@ -98,7 +98,7 @@ Write direction is `➖` everywhere (read-only). `linkedTableRemoteId` emitted o
 
 | FK (field → target) | Read | Write via CLI |
 | --- | --- | --- |
-| calls `metaData.primaryUserId` → users | ✅ (resolved on Supabase uuid FK, Airtable link, Notion relation) | ➖ |
+| calls `metaData.primaryUserId` → users | ✅ (resolved on Supabase uuid FK, Airtable link, Notion relation). The create plan names Users by remote id `['users']` too, after DEV-12144; before that the Whalesync create wizard dropped Host from the table (DEV-12145) | ➖ |
 | calls `metaData.workspaceId` → workspaces | ✅ pulls verbatim (hidden col; not exported by default) | ➖ |
 | transcripts `callId` → calls (same workspace) | ✅ value pulls verbatim; ❌ Live Export relation column blocked by **DEV-11215** (idPath+FK collision — generic plan-generator gap; linkage survives via `gong_record_id`) |  ➖ |
 | users `managerId` → users (self) | ✅ null values pull clean; non-null pending a manager assignment in the instance | ➖ |
@@ -156,6 +156,7 @@ Write direction is `➖` everywhere (read-only). `linkedTableRemoteId` emitted o
 - The CLI's `--table-id` flag is **repeatable, one flag per remoteId segment**: `--table-id calls --table-id <workspaceId>`. A single comma-joined value reaches the connector as one segment and fails parsing.
 - Without the shared rate limiter, back-to-back `fetchJsonTableSpec` calls (each resolving workspace names) tripped Gong's 3/s limit during `linked add`. The per-account limiter + `resolveWorkspace`'s single listWorkspaces call per spec keep it under; if table-spec fetches ever batch heavily, memoize `listWorkspaces`.
 - **The Calls schema is opaque to Live Export, so a Calls date column must declare `logicalType: 'datetime'` (DEV-12085).** `extractSchemaFields` keeps any object carrying a non-container `x-scratch-*` key whole, as one opaque leaf. That includes the Calls ROOT (agent instructions) and `metaData` (read-only), so no Calls schema field reaches the create plan, which works off the view alone. A schema `format: 'date-time'` can't make a Calls date time-bearing: `Started`/`Scheduled` carry `logicalType: 'datetime'` instead, or destinations get date-only columns. Any new Calls date column needs the same. `__tests__/gong-live-export.spec.ts` asserts that every Gong date column exports with its time of day.
+- **The same opacity means a Calls FK reaches the plan only through its view column's `foreignKey` (DEV-12144).** Host's schema `x-scratch-foreign-key` is unreachable, so the view declaration is the whole FK. Keep its `linkedTableRemoteId` correct (`[GongEntityType.USERS]`): plan field selection carries it to the plan's `unresolvedLinkedTableRemoteId`. Whalesync binds a reference by that remote id, and a token-only target was silently left out of the created table there (DEV-12145, VITL `wkb_XtxNs3l3JA`).
 
 ## UI quick-links
 
