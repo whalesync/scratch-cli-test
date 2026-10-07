@@ -25,7 +25,7 @@ Shopify requires three mandatory compliance webhook endpoints for app store subm
 
 - `customers/data_request` — Shopify asks if we store customer data
 - `customers/redact` — Shopify asks us to delete customer data
-- `shop/redact` — Shopify asks us to delete all shop data (48h after uninstall)
+- `shop/redact` — Shopify asks us to delete all shop data (48h after uninstall). We delete only `OAUTH` connections for the shop (the ones created through this public app). Connections using a merchant's own custom-app token (`/shopify-custom-app`) are kept, and their IDs are logged.
 
 All three are handled by a single endpoint: `POST /connectors/shopify/webhooks`, which dispatches based on the `X-Shopify-Topic` header.
 

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AuthType } from '@prisma/client';
 import { WorkbookId } from '@spinner/shared-types';
 import * as crypto from 'crypto';
 import { DbService } from 'src/db/db.service';
@@ -38,18 +39,24 @@ export class ShopifyWebhooksService {
   }
 
   /**
-   * Handle shop/redact webhook: fully delete all Shopify connections for the given shop domain,
-   * including schedules, publish plans, DataFolders, and git data.
+   * Handle shop/redact webhook, which Shopify sends 48h after our public app is uninstalled from a shop.
+   *
+   * Only connections created through the public app's OAuth flow are deleted (schedules, publish plans,
+   * DataFolders, and git data). Connections using a merchant's own custom-app token never received data
+   * through our public app, so they are kept — deleting them would wipe live connections (e.g. Live
+   * Export sources) because of an unrelated uninstall. Public-app OAuth was removed, so today this
+   * deletes nothing and only logs the kept connections.
    */
   async handleShopRedact(shopDomain: string): Promise<void> {
-    const accounts = await this.dbService.client.connectorAccount.findMany({
+    const connectorAccountsForShopDomain = await this.dbService.client.connectorAccount.findMany({
       where: {
         service: Service.SHOPIFY,
         extras: { path: ['shopDomain'], equals: shopDomain },
       },
+      select: { id: true, workbookId: true, authType: true },
     });
 
-    if (accounts.length === 0) {
+    if (connectorAccountsForShopDomain.length === 0) {
       WSLogger.info({
         source: ShopifyWebhooksService.name,
         message: `No ConnectorAccount records found for shop domain: ${shopDomain}`,
@@ -57,13 +64,29 @@ export class ShopifyWebhooksService {
       return;
     }
 
-    for (const account of accounts) {
+    const connectorAccountsCreatedThroughPublicAppOAuth = connectorAccountsForShopDomain.filter(
+      (account) => account.authType === AuthType.OAUTH,
+    );
+    const connectorAccountsKeptBecauseNotCreatedThroughPublicApp = connectorAccountsForShopDomain.filter(
+      (account) => account.authType !== AuthType.OAUTH,
+    );
+
+    if (connectorAccountsKeptBecauseNotCreatedThroughPublicApp.length > 0) {
+      WSLogger.warn({
+        source: ShopifyWebhooksService.name,
+        message: `Kept ${connectorAccountsKeptBecauseNotCreatedThroughPublicApp.length} non-OAuth ConnectorAccount(s) for shop/redact on shop domain: ${shopDomain}`,
+        shopDomain,
+        keptConnectorAccountIds: connectorAccountsKeptBecauseNotCreatedThroughPublicApp.map((account) => account.id),
+      });
+    }
+
+    for (const account of connectorAccountsCreatedThroughPublicAppOAuth) {
       await this.connectorAccountService.removeBySystem(account.workbookId as WorkbookId, account.id);
     }
 
     WSLogger.info({
       source: ShopifyWebhooksService.name,
-      message: `Deleted ${accounts.length} ConnectorAccount(s) and associated data for shop domain: ${shopDomain}`,
+      message: `Deleted ${connectorAccountsCreatedThroughPublicAppOAuth.length} OAuth ConnectorAccount(s) and associated data for shop domain: ${shopDomain}`,
     });
   }
 }
