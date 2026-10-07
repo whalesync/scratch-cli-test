@@ -9,6 +9,7 @@ import {
   buildAddColumnsQuery,
   buildCreateTableQuery,
   foldNameToPostgresSchemaIdentifier,
+  foreignKeyConstraintNameWithinPostgresIdentifierLimit,
   isInsufficientPrivilegeError,
   pickUnusedPostgresSchemaName,
   POSTGRES_MAX_IDENTIFIER_LENGTH,
@@ -44,6 +45,14 @@ describe('buildCreateTableQuery', () => {
     expect(sql).toContain('"id" uuid');
     expect(sql).toContain('gen_random_uuid()');
     expect(sql).toContain('primary key');
+  });
+
+  // Knex's `.primary()` named the constraint "<table>_pkey"; for a table name at the 63-byte limit Postgres
+  // truncated that to the table's own name, colliding with the table (42P07). Postgres now names it.
+  it('declares the primary key on the id column, leaving its constraint name to Postgres', () => {
+    const sql = createTableSql([field('name', { kind: 'text' })]);
+    expect(sql).toContain('"id" uuid primary key not null default gen_random_uuid()');
+    expect(sql).not.toContain('_pkey');
   });
 
   describe('logical field type → PG column', () => {
@@ -185,6 +194,38 @@ describe('buildCreateTableQuery', () => {
       expect(sql).not.toContain('"author_id" uuid not null');
     });
 
+    // Knex names each FK "<table>_<column>_foreign"; Postgres truncated those past 63 bytes, so two FKs on a
+    // table named at the limit truncated to the same name and the second ADD CONSTRAINT failed (42710).
+    it('gives each FK on a table named at the 63-byte limit a distinct constraint name that fits', () => {
+      const tableNameAtIdentifierLimit = 'This is a long table name that…5 characters to break postgres';
+      const ownerAndReviewerFks: ForeignKeyResolutions = new Map(
+        ['Owner', 'Reviewer'].map((columnName) => [
+          columnName,
+          { kind: 'resolved', targetTableQualified: 'public.users', targetPkColumn: 'id', targetPkType: 'uuid' },
+        ]),
+      );
+      const statements = buildCreateTableQuery(
+        queryBuilder,
+        'public',
+        tableNameAtIdentifierLimit,
+        ['Owner', 'Reviewer'].map((columnName) =>
+          field(columnName, { kind: 'foreignKey', target: { existingRemoteTableId: ['public', 'users'] } }),
+        ),
+        ownerAndReviewerFks,
+      )
+        .toSQL()
+        .map((statement) => statement.sql);
+
+      const constraintNames = statements.flatMap((sql) =>
+        [...sql.matchAll(/add constraint "([^"]+)"/g)].map((m) => m[1]),
+      );
+      expect(constraintNames).toHaveLength(2);
+      expect(new Set(constraintNames).size).toBe(2);
+      for (const constraintName of constraintNames) {
+        expect(Buffer.byteLength(constraintName, 'utf8')).toBeLessThanOrEqual(POSTGRES_MAX_IDENTIFIER_LENGTH);
+      }
+    });
+
     it('emits the exact native type for exotic target PKs (enum / citext / array — DEV-10821)', () => {
       // The resolutions carry `format_type` output, never information_schema's
       // USER-DEFINED/ARRAY placeholders — the column type must land verbatim.
@@ -321,6 +362,8 @@ describe('POSTGRES_SCHEMA_CREATION_CAPABILITIES', () => {
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.primaryField).toBeNull();
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxTableNameLength).toBe(63);
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxFieldNameLength).toBe(63);
+    // Postgres's 63 is a byte limit: a character-counted elided name (its `…` is 3 bytes) would overflow it.
+    expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.nameLengthUnit).toBe('utf8Bytes');
   });
 
   it('declares the postgres native type system and list columns of text/number/boolean (DEV-11903)', () => {
@@ -573,6 +616,34 @@ describe('column names containing a question mark', () => {
 
     expect(sql).toContain('"Sold out?" boolean');
     expect(sql).not.toContain('Sold out$');
+  });
+});
+
+describe('foreignKeyConstraintNameWithinPostgresIdentifierLimit', () => {
+  it("keeps knex's default name when it fits the 63-byte limit", () => {
+    expect(foreignKeyConstraintNameWithinPostgresIdentifierLimit('posts', 'author_id')).toBeUndefined();
+  });
+
+  it('replaces an over-long default with a deterministic ASCII name that fits', () => {
+    const constraintName = foreignKeyConstraintNameWithinPostgresIdentifierLimit(
+      'This is a long table name that…5 characters to break postgres',
+      'Owner',
+    );
+    expect(constraintName).toMatch(/^[a-z0-9_]+_[0-9a-f]{10}_foreign$/);
+    expect(constraintName?.length).toBeLessThanOrEqual(POSTGRES_MAX_IDENTIFIER_LENGTH);
+    expect(
+      foreignKeyConstraintNameWithinPostgresIdentifierLimit(
+        'This is a long table name that…5 characters to break postgres',
+        'Owner',
+      ),
+    ).toBe(constraintName);
+  });
+
+  it('keeps two long columns that share a prefix distinct', () => {
+    const sharedPrefix = 'a_long_foreign_key_column_name_shared_by_two_columns_';
+    expect(foreignKeyConstraintNameWithinPostgresIdentifierLimit('posts', `${sharedPrefix}first`)).not.toBe(
+      foreignKeyConstraintNameWithinPostgresIdentifierLimit('posts', `${sharedPrefix}second`),
+    );
   });
 });
 

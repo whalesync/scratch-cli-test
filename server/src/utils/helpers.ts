@@ -13,10 +13,20 @@
  * `text` is returned unchanged when it already fits. For a `maxLength` too small to
  * hold the ellipsis plus any kept characters, the text is hard-cut from the front to
  * `maxLength` (a degenerate case that doesn't arise for real identifier limits).
+ *
+ * `lengthUnit: 'utf8Bytes'` measures `maxLength` in UTF-8 bytes instead of characters,
+ * for a limit that counts encoded bytes (Postgres identifiers): the default `…` alone is
+ * 3 bytes, so a character-measured result can overflow a byte limit. Bytes are kept in
+ * whole characters — a multi-byte character or emoji is never split.
  */
-export function elideToMaxLength(text: string, maxLength: number, options?: { ellipsis?: string }): string {
+export function elideToMaxLength(
+  text: string,
+  maxLength: number,
+  options?: { ellipsis?: string; lengthUnit?: TextLengthUnit },
+): string {
   const ellipsis = options?.ellipsis ?? '…';
   const effectiveMaxLength = Math.max(0, Math.floor(maxLength));
+  if (options?.lengthUnit === 'utf8Bytes') return elideToMaxUtf8ByteLength(text, effectiveMaxLength, ellipsis);
   if (text.length <= effectiveMaxLength) return text;
   // Not even room for the ellipsis and one kept character on each side — hard-cut.
   if (effectiveMaxLength <= ellipsis.length) return text.slice(0, effectiveMaxLength);
@@ -39,6 +49,56 @@ export function elideToMaxLength(text: string, maxLength: number, options?: { el
   // extension — we only had to size it above so the ellipsis clears the extension.
   const tail = tailLength > 0 ? text.slice(text.length - tailLength) : '';
   return `${head}${ellipsis}${tail}`;
+}
+
+/** The unit a text length limit is measured in: UTF-16 characters (`string.length`) or UTF-8 bytes. */
+export type TextLengthUnit = 'characters' | 'utf8Bytes';
+
+/** `text`'s length in `lengthUnit` — `string.length` for characters, its UTF-8 encoded size for bytes. */
+export function measureTextLength(text: string, lengthUnit: TextLengthUnit): number {
+  return lengthUnit === 'utf8Bytes' ? Buffer.byteLength(text, 'utf8') : text.length;
+}
+
+/**
+ * {@link elideToMaxLength} with `maxUtf8ByteLength` counted in UTF-8 bytes: the same head-favouring
+ * middle elision and extension rule, but the head and tail are built from whole code points whose
+ * encoded size fits the byte budget left after the ellipsis.
+ */
+function elideToMaxUtf8ByteLength(text: string, maxUtf8ByteLength: number, ellipsis: string): string {
+  if (measureTextLength(text, 'utf8Bytes') <= maxUtf8ByteLength) return text;
+  const codePoints = Array.from(text);
+  const ellipsisByteLength = measureTextLength(ellipsis, 'utf8Bytes');
+  // Not even room for the ellipsis and one kept character on each side — hard-cut.
+  if (maxUtf8ByteLength <= ellipsisByteLength) {
+    return leadingCodePointsWithinUtf8ByteBudget(codePoints, maxUtf8ByteLength).join('');
+  }
+
+  const keptByteBudget = maxUtf8ByteLength - ellipsisByteLength;
+  // An extension is ASCII-only (see fileExtensionOf), so its character count is its byte count.
+  const extensionByteLength = fileExtensionOf(text).length;
+  let headByteBudget = Math.ceil(keptByteBudget / 2);
+  if (extensionByteLength > keptByteBudget - headByteBudget) {
+    headByteBudget = keptByteBudget - Math.min(keptByteBudget, extensionByteLength);
+  }
+
+  const headCodePoints = leadingCodePointsWithinUtf8ByteBudget(codePoints, headByteBudget);
+  // Bytes the head couldn't use (its next character didn't fit whole) go to the tail.
+  const tailByteBudget = keptByteBudget - measureTextLength(headCodePoints.join(''), 'utf8Bytes');
+  const tailCodePoints = leadingCodePointsWithinUtf8ByteBudget([...codePoints].reverse(), tailByteBudget).reverse();
+  return `${headCodePoints.join('')}${ellipsis}${tailCodePoints.join('')}`;
+}
+
+/** The longest leading run of `codePoints` whose UTF-8 encoding fits within `utf8ByteBudget`. */
+function leadingCodePointsWithinUtf8ByteBudget(codePoints: string[], utf8ByteBudget: number): string[] {
+  const keptCodePoints: string[] = [];
+  let usedUtf8Bytes = 0;
+  for (const codePoint of codePoints) {
+    const codePointUtf8ByteLength = measureTextLength(codePoint, 'utf8Bytes');
+    if (usedUtf8Bytes + codePointUtf8ByteLength > utf8ByteBudget) break;
+    keptCodePoints.push(codePoint);
+    usedUtf8Bytes += codePointUtf8ByteLength;
+  }
+  return keptCodePoints;
 }
 
 /**

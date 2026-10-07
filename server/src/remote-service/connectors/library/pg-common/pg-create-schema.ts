@@ -14,6 +14,7 @@
  * reason rather than silently dropping a column.
  */
 import { CREATE_FIELD_KINDS, type SchemaCreationCapabilities } from '@spinner/shared-types';
+import { createHash } from 'crypto';
 import { type Knex } from 'knex';
 import { assertUnreachable } from 'src/utils/asserts';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
@@ -29,7 +30,11 @@ import { isRecreatablePostgresNativeColumnType, POSTGRES_NATIVE_TYPE_SYSTEM } fr
  */
 export const AUTO_PK_COLUMN = 'id';
 
-/** Postgres identifier length limit (NAMEDATALEN - 1). Over-long names are truncated silently by PG, so we fail fast. */
+/**
+ * Postgres identifier length limit in UTF-8 BYTES (NAMEDATALEN - 1), not characters. Over-long names are
+ * truncated silently by PG, so we fail fast — measuring in bytes (`nameLengthUnit: 'utf8Bytes'`), since a
+ * 63-character name holding a multi-byte character (an elided name's `…`) is already over the limit.
+ */
 export const POSTGRES_MAX_IDENTIFIER_LENGTH = 63;
 
 /**
@@ -148,6 +153,7 @@ export const POSTGRES_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities =
   primaryField: null,
   maxTableNameLength: POSTGRES_MAX_IDENTIFIER_LENGTH,
   maxFieldNameLength: POSTGRES_MAX_IDENTIFIER_LENGTH,
+  nameLengthUnit: 'utf8Bytes',
   // The auto-injected primary key (`addAutoPrimaryKey`) owns this name; a source field that folds to it
   // is renamed by the plan generator so it isn't silently dropped at create (see `validateCreateField`).
   reservedFieldNames: [AUTO_PK_COLUMN],
@@ -182,9 +188,41 @@ export type ForeignKeyResolutions = Map<string, ForeignKeyResolution>;
  * and `uuid` round-trips cleanly as a string (the read side maps it through
  * `PG_TEXT_TYPES`). `gen_random_uuid()` is built into Postgres 13+ (older servers
  * need the `pgcrypto` extension). Needs the Knex instance for `knex.raw`.
+ *
+ * The PRIMARY KEY is declared on the column itself so Postgres names its constraint.
+ * Knex's `.primary()` names it `"<table>_pkey"` explicitly, and for a table name at the
+ * 63-byte identifier limit — every over-long name the plan elides to fit — Postgres
+ * truncates that to the table's OWN name: the key's index then collides with the table
+ * it belongs to, and CREATE TABLE fails with 42P07 "relation already exists". Postgres's
+ * own choice shortens the table part so `_pkey` fits, and picks a free name.
  */
 function addAutoPrimaryKey(knexInstance: Knex, table: Knex.CreateTableBuilder): void {
-  table.uuid(AUTO_PK_COLUMN).notNullable().defaultTo(knexInstance.raw('gen_random_uuid()')).primary();
+  table.specificType(AUTO_PK_COLUMN, 'uuid primary key').notNullable().defaultTo(knexInstance.raw('gen_random_uuid()'));
+}
+
+/**
+ * The constraint name for a foreign key on `columnName` of `tableName`, or undefined to keep
+ * knex's default (`<table>_<column>_foreign`, lowercased) when that fits Postgres's 63-byte
+ * identifier limit. Postgres silently truncates a longer name, so two foreign keys on a long
+ * table — or two long columns sharing a prefix — would truncate to one name and the second
+ * ADD CONSTRAINT would fail with 42710 "constraint already exists". The replacement keeps a
+ * readable ASCII prefix (no identifier-quoting edge cases) and a hash of the full table and
+ * column names, so it fits the limit and stays distinct.
+ */
+export function foreignKeyConstraintNameWithinPostgresIdentifierLimit(
+  tableName: string,
+  columnName: string,
+): string | undefined {
+  // Mirrors knex's `_indexCommand` naming, measured on the real (unescaped) column name.
+  const knexDefaultConstraintName = `${tableName.replace(/\.|-/g, '_')}_${columnName}_foreign`.toLowerCase();
+  if (Buffer.byteLength(knexDefaultConstraintName, 'utf8') <= POSTGRES_MAX_IDENTIFIER_LENGTH) return undefined;
+  const tableAndColumnHash = createHash('sha256').update(`${tableName}\u0000${columnName}`).digest('hex').slice(0, 10);
+  const constraintNameSuffix = `_${tableAndColumnHash}_foreign`;
+  const readableAsciiPrefix = `${tableName}_${columnName}`
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .slice(0, POSTGRES_MAX_IDENTIFIER_LENGTH - constraintNameSuffix.length);
+  return `${readableAsciiPrefix}${constraintNameSuffix}`;
 }
 
 /** Apply `NOT NULL` when the field requested it. Columns are nullable by default otherwise. */
@@ -256,6 +294,7 @@ function applyNumberColumn(
  */
 function applyForeignKeyColumn(
   table: Knex.CreateTableBuilder,
+  tableName: string,
   field: ResolvedCreateFieldSpec,
   fieldType: Extract<ResolvedCreateFieldSpec['fieldType'], { kind: 'foreignKey' }>,
   fkResolutions: ForeignKeyResolutions,
@@ -278,7 +317,7 @@ function applyForeignKeyColumn(
   const knexColumnName = escapeKnexColumnIdentifierSpecialCharacters(field.name);
   table.specificType(knexColumnName, resolution.targetPkType).nullable();
   table
-    .foreign(knexColumnName)
+    .foreign(knexColumnName, foreignKeyConstraintNameWithinPostgresIdentifierLimit(tableName, field.name))
     .references(escapeKnexColumnIdentifierSpecialCharacters(resolution.targetPkColumn))
     .inTable(resolution.targetTableQualified)
     .onDelete('SET NULL');
@@ -292,6 +331,7 @@ function applyForeignKeyColumn(
  */
 function applyCreateFieldColumn(
   table: Knex.CreateTableBuilder,
+  tableName: string,
   field: ResolvedCreateFieldSpec,
   fkResolutions: ForeignKeyResolutions,
 ): string | undefined {
@@ -363,7 +403,7 @@ function applyCreateFieldColumn(
       );
       return undefined;
     case 'foreignKey':
-      return applyForeignKeyColumn(table, field, fieldType, fkResolutions);
+      return applyForeignKeyColumn(table, tableName, field, fieldType, fkResolutions);
     default:
       return assertUnreachable(fieldType);
   }
@@ -386,7 +426,7 @@ export function buildCreateTableQuery(
   return knexInstance.schema.withSchema(schema).createTable(tableName, (table) => {
     addAutoPrimaryKey(knexInstance, table);
     for (const field of fields) {
-      const skipReason = applyCreateFieldColumn(table, field, fkResolutions);
+      const skipReason = applyCreateFieldColumn(table, tableName, field, fkResolutions);
       if (skipReason !== undefined) {
         skippedFieldReasons?.set(field.name, skipReason);
       }
@@ -409,7 +449,7 @@ export function buildAddColumnsQuery(
 ): Knex.SchemaBuilder {
   return knexInstance.schema.withSchema(schema).alterTable(tableName, (table) => {
     for (const field of fields) {
-      const skipReason = applyCreateFieldColumn(table, field, fkResolutions);
+      const skipReason = applyCreateFieldColumn(table, tableName, field, fkResolutions);
       if (skipReason !== undefined) {
         skippedFieldReasons?.set(field.name, skipReason);
       }

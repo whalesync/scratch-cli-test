@@ -429,6 +429,10 @@ export class SchemaBuilderService {
       ...(destinationCapabilities?.maxFieldNameLength !== undefined
         ? { destinationMaxFieldNameLength: destinationCapabilities.maxFieldNameLength }
         : {}),
+      // Postgres measures both limits in UTF-8 bytes, so a character-counted `…` doesn't overflow them.
+      ...(destinationCapabilities?.nameLengthUnit !== undefined
+        ? { destinationNameLengthUnit: destinationCapabilities.nameLengthUnit }
+        : {}),
       destinationRequiresPrimaryField: destinationCapabilities?.primaryField != null,
       ...(destinationCapabilities?.primaryField
         ? { destinationPrimaryFieldKinds: destinationCapabilities.primaryField.kinds }

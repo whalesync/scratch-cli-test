@@ -19,6 +19,8 @@
  *   4. createRecords inserts a row and gets back the auto-generated id.
  *   5. createFields adds a plain column and a self-referential FK.
  *   6. An allowMultiple FK is skipped with a reason; the rest of the table lands.
+ *   7. A table named at the 63-byte identifier limit, with two FKs, is created —
+ *      its constraint names don't truncate into collisions.
  *
  * Everything is created in a throwaway schema dropped before and after the run.
  *
@@ -114,6 +116,41 @@ describe('Postgres create-schema — real DDL round-trip', () => {
     );
     expect(foreignKey.rows).toHaveLength(1);
     expect(foreignKey.rows[0].confdeltype).toBe('n'); // 'n' = ON DELETE SET NULL
+  });
+
+  // A table name at the 63-byte identifier limit — what Live Export elides every over-long name to. Knex
+  // once named the primary key "<table>_pkey" and each foreign key "<table>_<column>_foreign"; Postgres
+  // truncated both to the table's own name, so the key's index collided with the table (42P07) and two
+  // foreign keys collided with each other (42710).
+  it('creates a table whose name is at the 63-byte limit, with two foreign keys', async () => {
+    const tableNameAtIdentifierLimit = 'This is a long table name that…5 characters to break postgres';
+    expect(Buffer.byteLength(tableNameAtIdentifierLimit, 'utf8')).toBe(63);
+
+    const result = await connector.createTable({
+      remoteParentId: [SCHEMA],
+      ref: 'long',
+      name: tableNameAtIdentifierLimit,
+      fields: [
+        { name: 'Name', fieldType: { kind: 'text' } },
+        { name: 'Owner', fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: [SCHEMA, 'users'] } } },
+        { name: 'Reviewer', fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: [SCHEMA, 'users'] } } },
+      ],
+      deferredFkFields: [],
+    });
+
+    expect(result.status).toBe('created');
+    expect(result.remoteTableId).toEqual([SCHEMA, tableNameAtIdentifierLimit]);
+
+    const constraints = await pool.query<{ conname: string; contype: string }>(
+      `SELECT con.conname, con.contype
+       FROM pg_constraint con
+       JOIN pg_class rel ON rel.oid = con.conrelid
+       JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+       WHERE nsp.nspname = $1 AND rel.relname = $2`,
+      [SCHEMA, tableNameAtIdentifierLimit],
+    );
+    expect(constraints.rows.filter((constraint) => constraint.contype === 'p')).toHaveLength(1);
+    expect(constraints.rows.filter((constraint) => constraint.contype === 'f')).toHaveLength(2);
   });
 
   it('round-trips the created tables through the connector read side', async () => {

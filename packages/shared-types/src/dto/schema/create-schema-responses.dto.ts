@@ -34,6 +34,9 @@ export interface PrimaryFieldRequirement {
   docsLink?: SchemaDocsLink;
 }
 
+/** How a connector's table/field name-length limit is measured (`SchemaCreationCapabilities.nameLengthUnit`). */
+export type NameLengthUnit = 'characters' | 'utf8Bytes';
+
 /**
  * Declarative, connector-agnostic description of what a connector can create.
  * The generic validator consumes this to fail fast (without hardcoding connector
@@ -46,6 +49,13 @@ export interface SchemaCreationCapabilities {
   primaryField: PrimaryFieldRequirement | null;
   maxTableNameLength?: number;
   maxFieldNameLength?: number;
+  /**
+   * The unit `maxTableNameLength` / `maxFieldNameLength` are measured in. `'utf8Bytes'` for a connector
+   * whose identifier limit counts encoded bytes — Postgres caps identifiers at 63 BYTES and silently
+   * truncates longer ones, so a 63-character name holding a multi-byte character (the `…` of an elided
+   * name, or any non-ASCII letter) would land under a different name than requested. Absent ⇒ `'characters'`.
+   */
+  nameLengthUnit?: NameLengthUnit;
   /**
    * The maximum number of fields a single table may contain, when the connector enforces one — e.g.
    * Airtable rejects a table with more than 500 fields. Counts the plan's FINAL field list (including

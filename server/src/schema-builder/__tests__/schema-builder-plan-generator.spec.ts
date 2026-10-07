@@ -6,7 +6,9 @@ import {
   inferLogicalFieldType,
   PlanGeneratorSource,
   type DestinationFieldTypeSupport,
+  type ExistingDestinationField,
 } from '../schema-builder-plan-generator';
+import { elideNameToMaxLength } from '../schema-builder-unique-names';
 
 const field = (overrides: Partial<SchemaField> & { path: string }): SchemaField => ({
   type: 'string',
@@ -916,6 +918,37 @@ describe('generateCreatePlanFromSources — name-length limits (DEV-10816)', () 
     expect(note?.message).toContain('63-character field-name limit');
   });
 
+  it("keeps generated field and table names within a limit measured in 'utf8Bytes' (Postgres)", () => {
+    // Postgres caps identifiers at 63 BYTES and silently truncates longer ones; the `…` is 3 bytes.
+    const source: PlanGeneratorSource = {
+      ref: 'contacts',
+      dataFolderId: 'contacts',
+      tableName: LONG_TABLE_NAME,
+      remoteTableIds: ['tblContacts'],
+      idFieldPath: 'id',
+      connectorService: 'AIRTABLE',
+      schemaFields: [
+        field({ path: 'a', type: 'string', displayLabel: LONG_FIELD_NAME }),
+        field({ path: 'b', type: 'string', displayLabel: LONG_FIELD_NAME }),
+      ],
+    };
+    const { tables, notes, tableNotes } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      destinationMaxTableNameLength: 63,
+      destinationMaxFieldNameLength: 63,
+      destinationNameLengthUnit: 'utf8Bytes',
+    });
+
+    expect(Buffer.byteLength(tables[0].name, 'utf8')).toBeLessThanOrEqual(63);
+    for (const createdField of tables[0].fields) {
+      expect(Buffer.byteLength(createdField.name, 'utf8')).toBeLessThanOrEqual(63);
+    }
+    expect(tables[0].fields.map((createdField) => createdField.name)).toContain('airtable_record_id');
+    expect(notes.find((note) => note.sourceFieldPath === 'a')?.message).toContain('63-byte field-name limit');
+    expect(tableNotes[0].message).toContain('63-byte table-name limit');
+  });
+
   it('elides a table name over the destination limit and notes the truncation', () => {
     const source: PlanGeneratorSource = {
       ref: 't',
@@ -984,6 +1017,148 @@ describe('generateCreatePlanFromSources — name-length limits (DEV-10816)', () 
     expect(tables[0].fields[0].name).toBe('Title');
     expect(tableNotes).toEqual([]);
     expect(notes.find((n) => n.sourceFieldPath === 'a')?.renamedFromName).toBeUndefined();
+  });
+
+  // DEV-10906: a long field is created under its ELIDED name, so re-planning into that table must find the
+  // column by the elided name — not only the full one — or it proposes a second, suffixed column beside it.
+  describe('re-planning into a table whose long field was created under its elided name (DEV-10906)', () => {
+    const ELIDED_LONG_FIELD_NAME = elideNameToMaxLength(LONG_FIELD_NAME, 63);
+
+    const contactsIntoExisting = (
+      schemaFields: SchemaField[],
+      existingFields: ExistingDestinationField[],
+    ): PlanGeneratorSource => ({
+      ref: 'contacts',
+      dataFolderId: 'contacts',
+      tableName: 'Contacts',
+      remoteTableIds: ['tblContacts'],
+      schemaFields,
+      existingDestination: { dataFolderId: 'destContacts', remoteTableId: ['tblDestContacts'], existingFields },
+    });
+
+    it('adopts the existing elided column by the display label instead of proposing a duplicate', () => {
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          contactsIntoExisting(
+            [field({ path: 'a', type: 'string', displayLabel: LONG_FIELD_NAME })],
+            [{ name: ELIDED_LONG_FIELD_NAME, columnPath: 'fields.elided', kind: 'text' }],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        destinationMaxFieldNameLength: 63,
+      });
+
+      expect(fieldPlans[0].fields).toEqual([]);
+      expect(notes).toEqual([
+        expect.objectContaining({
+          sourceFieldPath: 'a',
+          fieldName: ELIDED_LONG_FIELD_NAME,
+          status: 'adopted',
+          existingDestinationColumnId: 'fields.elided',
+          renamedFromName: LONG_FIELD_NAME,
+        }),
+      ]);
+    });
+
+    it('adopts the existing elided column by the field path when that is the created name', () => {
+      // A same-type-system column (Supabase → Postgres) is created under its own path, not a display label.
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          contactsIntoExisting(
+            [
+              field({
+                path: LONG_FIELD_NAME,
+                type: 'string',
+                nativeColumnType: { typeSystem: 'postgres', type: 'text', isRecreatableVerbatim: true },
+              }),
+            ],
+            [{ name: ELIDED_LONG_FIELD_NAME, columnPath: ELIDED_LONG_FIELD_NAME, kind: 'text' }],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        destinationMaxFieldNameLength: 63,
+        destinationFieldTypeSupport: { nativeTypeSystem: 'postgres' },
+      });
+
+      expect(fieldPlans[0].fields).toEqual([]);
+      expect(notes[0]).toMatchObject({ status: 'adopted', existingDestinationColumnId: ELIDED_LONG_FIELD_NAME });
+    });
+
+    it('skips (never duplicates) an elided-name match of an incompatible kind', () => {
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          contactsIntoExisting(
+            [field({ path: 'a', type: 'integer', displayLabel: LONG_FIELD_NAME })],
+            [{ name: ELIDED_LONG_FIELD_NAME, columnPath: 'fields.elided', kind: 'text' }],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        destinationMaxFieldNameLength: 63,
+      });
+
+      expect(fieldPlans[0].fields).toEqual([]);
+      expect(notes[0]).toMatchObject({ status: 'exists', renamedFromName: LONG_FIELD_NAME });
+    });
+
+    it('adopts the elided column for only the first of two long names that elide to it', () => {
+      // Same head and tail, different middles: both elide to the same name, and only the first field was
+      // created under it, so the second must not be silently merged into the first one's column.
+      const firstLongName = `${LONG_FIELD_NAME.slice(0, 31)}_first_${LONG_FIELD_NAME.slice(-31)}`;
+      const secondLongName = `${LONG_FIELD_NAME.slice(0, 31)}_second_${LONG_FIELD_NAME.slice(-31)}`;
+      const sharedElidedName = elideNameToMaxLength(firstLongName, 63);
+      expect(elideNameToMaxLength(secondLongName, 63)).toBe(sharedElidedName);
+
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          contactsIntoExisting(
+            [
+              field({ path: 'a', type: 'string', displayLabel: firstLongName }),
+              field({ path: 'b', type: 'string', displayLabel: secondLongName }),
+            ],
+            [{ name: sharedElidedName, columnPath: 'fields.shared', kind: 'text' }],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        destinationMaxFieldNameLength: 63,
+      });
+
+      expect(notes.filter((note) => note.status === 'adopted').map((note) => note.sourceFieldPath)).toEqual(['a']);
+      expect(fieldPlans[0].fields).toHaveLength(1);
+      expect(fieldPlans[0].fields[0].name).not.toBe(sharedElidedName);
+    });
+
+    it("adopts the column created under the byte-elided name on a 'utf8Bytes' (Postgres) destination", () => {
+      const byteElidedLongFieldName = elideNameToMaxLength(LONG_FIELD_NAME, 63, 'utf8Bytes');
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          contactsIntoExisting(
+            [field({ path: 'a', type: 'string', displayLabel: LONG_FIELD_NAME })],
+            [{ name: byteElidedLongFieldName, columnPath: byteElidedLongFieldName, kind: 'text' }],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+        destinationMaxFieldNameLength: 63,
+        destinationNameLengthUnit: 'utf8Bytes',
+      });
+
+      expect(fieldPlans[0].fields).toEqual([]);
+      expect(notes[0]).toMatchObject({ status: 'adopted', existingDestinationColumnId: byteElidedLongFieldName });
+    });
+
+    it('does not match by elided name when the destination has no field-name limit', () => {
+      const { fieldPlans, notes } = generateCreatePlanFromSources({
+        sources: [
+          contactsIntoExisting(
+            [field({ path: 'a', type: 'string', displayLabel: LONG_FIELD_NAME })],
+            [{ name: ELIDED_LONG_FIELD_NAME, columnPath: 'fields.elided', kind: 'text' }],
+          ),
+        ],
+        destinationConnectorAccountId: 'destConn',
+      });
+
+      expect(fieldPlans[0].fields.map((createdField) => createdField.name)).toEqual([LONG_FIELD_NAME]);
+      expect(notes[0]).toMatchObject({ status: 'mapped' });
+    });
   });
 });
 

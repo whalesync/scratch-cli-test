@@ -1685,7 +1685,7 @@ describe("SupabaseConnector OAuth Live Export DDL as the project's postgres role
       expect(executedSql()).toBe(
         [
           'begin',
-          'create table "public"."users" ("id" uuid not null default gen_random_uuid(), "name" text, constraint "users_pkey" primary key ("id"))',
+          'create table "public"."users" ("id" uuid primary key not null default gen_random_uuid(), "name" text)',
           `grant select, insert, update, delete on table "public"."users" to "${DATA_ROLE}"`,
           'commit;',
         ].join(';\n'),

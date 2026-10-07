@@ -64,6 +64,16 @@ describe('allocateUniqueName', () => {
       const taken = new Set<string>();
       expect(allocateUniqueName('Short', taken, 63)).toBe('Short');
     });
+
+    it("keeps the bare and the suffixed name within a limit measured in 'utf8Bytes'", () => {
+      const taken = new Set<string>();
+      const longName = 'Customer Lifetime Value Projection Including Discounts And Refunds Q3';
+      const first = allocateUniqueName(longName, taken, 63, 'utf8Bytes');
+      const second = allocateUniqueName(longName, taken, 63, 'utf8Bytes');
+      expect(Buffer.byteLength(first, 'utf8')).toBeLessThanOrEqual(63);
+      expect(Buffer.byteLength(second, 'utf8')).toBeLessThanOrEqual(63);
+      expect(second.endsWith(' 2')).toBe(true);
+    });
   });
 });
 

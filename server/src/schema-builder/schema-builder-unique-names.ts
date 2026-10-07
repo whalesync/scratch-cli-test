@@ -1,4 +1,5 @@
-import { elideToMaxLength } from 'src/utils/helpers';
+import type { NameLengthUnit } from '@spinner/shared-types';
+import { elideToMaxLength, measureTextLength } from 'src/utils/helpers';
 
 /**
  * Unique-name allocation for create-schema plan generation (DEV-10441).
@@ -15,7 +16,8 @@ import { elideToMaxLength } from 'src/utils/helpers';
  * When the destination connector caps identifier length (`maxLength`), names are
  * additionally elided to fit — reserving room for the numeric suffix — so the plan
  * never trips the connector's `FIELD_NAME_TOO_LONG` / `TABLE_NAME_TOO_LONG` check
- * (DEV-10816).
+ * (DEV-10816). `maxLength` is measured in the connector's `NameLengthUnit` — UTF-8
+ * bytes for Postgres, whose 63-byte limit a character-measured `…` would overflow.
  */
 
 /**
@@ -35,47 +37,60 @@ export function normalizeNameForUniqueness(name: string): string {
  * set so the next call sees it. Cascading-collision safe: a candidate suffix that
  * is itself already taken is skipped.
  *
- * When `maxLength` is given, every returned name is guaranteed to fit within it:
- * the bare name is elided to `maxLength`, and a suffixed candidate elides the base
- * to leave room for its ` N` suffix, so `base + " N"` still fits.
+ * When `maxLength` is given, every returned name is guaranteed to fit within it
+ * (measured in `lengthUnit`, characters by default): the bare name is elided to
+ * `maxLength`, and a suffixed candidate elides the base to leave room for its ` N`
+ * suffix, so `base + " N"` still fits.
  *
  * The caller compares the returned name to `elideNameToMaxLength(requestedName,
- * maxLength)` to detect a dedup rename, and to `requestedName` to detect elision.
- * The first duplicate gets suffix `2` (the original keeps its bare, elided name).
+ * maxLength, lengthUnit)` to detect a dedup rename, and to `requestedName` to detect
+ * elision. The first duplicate gets suffix `2` (the original keeps its bare, elided name).
  */
 export function allocateUniqueName(
   requestedName: string,
   takenNormalizedNames: Set<string>,
   maxLength?: number,
+  lengthUnit: NameLengthUnit = 'characters',
 ): string {
-  const elidedName = elideNameToMaxLength(requestedName, maxLength);
+  const elidedName = elideNameToMaxLength(requestedName, maxLength, lengthUnit);
   if (!takenNormalizedNames.has(normalizeNameForUniqueness(elidedName))) {
     takenNormalizedNames.add(normalizeNameForUniqueness(elidedName));
     return elidedName;
   }
   let suffix = 2;
-  let candidate = buildSuffixedCandidate(requestedName, suffix, maxLength);
+  let candidate = buildSuffixedCandidate(requestedName, suffix, maxLength, lengthUnit);
   while (takenNormalizedNames.has(normalizeNameForUniqueness(candidate))) {
     suffix += 1;
-    candidate = buildSuffixedCandidate(requestedName, suffix, maxLength);
+    candidate = buildSuffixedCandidate(requestedName, suffix, maxLength, lengthUnit);
   }
   takenNormalizedNames.add(normalizeNameForUniqueness(candidate));
   return candidate;
 }
 
-/** `requestedName` middle-elided to `maxLength`, or unchanged when no limit is given. */
-export function elideNameToMaxLength(requestedName: string, maxLength?: number): string {
-  return maxLength === undefined ? requestedName : elideToMaxLength(requestedName, maxLength);
+/** `requestedName` middle-elided to `maxLength` (in `lengthUnit`), or unchanged when no limit is given. */
+export function elideNameToMaxLength(
+  requestedName: string,
+  maxLength?: number,
+  lengthUnit: NameLengthUnit = 'characters',
+): string {
+  return maxLength === undefined ? requestedName : elideToMaxLength(requestedName, maxLength, { lengthUnit });
 }
 
 /**
  * `"<base> <suffix>"` where the base is elided so the whole candidate fits within
- * `maxLength` (the ` <suffix>` is reserved first). With no limit the base is used
- * verbatim.
+ * `maxLength` (the ` <suffix>` is reserved first, measured in `lengthUnit`). With no
+ * limit the base is used verbatim.
  */
-function buildSuffixedCandidate(requestedName: string, suffix: number, maxLength?: number): string {
+function buildSuffixedCandidate(
+  requestedName: string,
+  suffix: number,
+  maxLength: number | undefined,
+  lengthUnit: NameLengthUnit,
+): string {
   const suffixString = ` ${suffix}`;
   if (maxLength === undefined) return `${requestedName}${suffixString}`;
-  const base = elideToMaxLength(requestedName, Math.max(0, maxLength - suffixString.length));
+  const base = elideToMaxLength(requestedName, Math.max(0, maxLength - measureTextLength(suffixString, lengthUnit)), {
+    lengthUnit,
+  });
   return `${base}${suffixString}`;
 }

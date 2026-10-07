@@ -4,6 +4,7 @@ import type {
   SchemaCreationCapabilities,
   ValidateSchemaIssue,
 } from '@spinner/shared-types';
+import { measureTextLength } from 'src/utils/helpers';
 import { z } from 'zod';
 
 /**
@@ -60,11 +61,11 @@ export function validateTablesAgainstCapabilities(
   const issues: ValidateSchemaIssue[] = [];
   request.tables.forEach((table, tableIndex) => {
     const tablePath = `tables[${tableIndex}]`;
-    if (capabilities.maxTableNameLength !== undefined && table.name.length > capabilities.maxTableNameLength) {
+    if (isNameOverConnectorLengthLimit(table.name, capabilities.maxTableNameLength, capabilities)) {
       issues.push({
         path: `${tablePath}.name`,
         code: 'TABLE_NAME_TOO_LONG',
-        message: `table name exceeds the connector's maximum of ${capabilities.maxTableNameLength} characters`,
+        message: `table name exceeds the connector's maximum of ${capabilities.maxTableNameLength} ${nameLengthUnitPlural(capabilities)}`,
       });
     }
 
@@ -135,15 +136,33 @@ export function validateFieldsAgainstCapabilities(
         message: `this connector can't create a list of "${fieldType.kind}" values`,
       });
     }
-    if (capabilities.maxFieldNameLength !== undefined && field.name.length > capabilities.maxFieldNameLength) {
+    if (isNameOverConnectorLengthLimit(field.name, capabilities.maxFieldNameLength, capabilities)) {
       issues.push({
         path: `${fieldPath}.name`,
         code: 'FIELD_NAME_TOO_LONG',
-        message: `field name exceeds the connector's maximum of ${capabilities.maxFieldNameLength} characters`,
+        message: `field name exceeds the connector's maximum of ${capabilities.maxFieldNameLength} ${nameLengthUnitPlural(capabilities)}`,
       });
     }
   });
   return issues;
+}
+
+/**
+ * Whether `name` is over a connector name limit, measured in the connector's `nameLengthUnit` — UTF-8
+ * bytes for Postgres, which silently truncates a 63-character name holding a multi-byte character.
+ */
+function isNameOverConnectorLengthLimit(
+  name: string,
+  maxNameLength: number | undefined,
+  capabilities: SchemaCreationCapabilities,
+): boolean {
+  if (maxNameLength === undefined) return false;
+  return measureTextLength(name, capabilities.nameLengthUnit ?? 'characters') > maxNameLength;
+}
+
+/** The unit a connector's name limits are stated in, for an issue message ("63 characters" / "63 bytes"). */
+function nameLengthUnitPlural(capabilities: SchemaCreationCapabilities): string {
+  return capabilities.nameLengthUnit === 'utf8Bytes' ? 'bytes' : 'characters';
 }
 
 /**

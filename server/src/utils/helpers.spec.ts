@@ -172,6 +172,54 @@ describe('Utility Helpers', () => {
     it('treats a negative maxLength as zero', () => {
       expect(elideToMaxLength('anything', -5)).toBe('');
     });
+
+    describe("lengthUnit: 'utf8Bytes'", () => {
+      const utf8ByteLength = (text: string): number => Buffer.byteLength(text, 'utf8');
+      const LONG_ASCII_NAME = 'Customer Lifetime Value Projection Including Discounts And Refunds Q3';
+
+      it('counts the 3-byte ellipsis, so the result fits a 63-byte (Postgres) limit', () => {
+        // Character mode yields 63 characters but 65 bytes, which Postgres would silently truncate.
+        expect(utf8ByteLength(elideToMaxLength(LONG_ASCII_NAME, 63))).toBe(65);
+
+        const result = elideToMaxLength(LONG_ASCII_NAME, 63, { lengthUnit: 'utf8Bytes' });
+        expect(utf8ByteLength(result)).toBe(63);
+        expect(result).toBe('Customer Lifetime Value Projec…uding Discounts And Refunds Q3');
+      });
+
+      it('returns text that already fits unchanged', () => {
+        expect(elideToMaxLength('short name', 63, { lengthUnit: 'utf8Bytes' })).toBe('short name');
+      });
+
+      it('elides text that fits in characters but not in bytes', () => {
+        const thirtyCjkCharacters = '顧客生涯価値予測割引返金込第三四半期顧客生涯価値予測割引返金込第三';
+        expect(thirtyCjkCharacters.length).toBeLessThanOrEqual(63);
+
+        const result = elideToMaxLength(thirtyCjkCharacters, 63, { lengthUnit: 'utf8Bytes' });
+        expect(utf8ByteLength(result)).toBeLessThanOrEqual(63);
+        expect(result).toContain('…');
+      });
+
+      it('never splits a multi-byte character or an emoji surrogate pair', () => {
+        for (const maxLength of [4, 5, 10, 20, 63]) {
+          const result = elideToMaxLength('é🎉'.repeat(40), maxLength, { lengthUnit: 'utf8Bytes' });
+          expect(utf8ByteLength(result)).toBeLessThanOrEqual(maxLength);
+          // A split character would encode as U+FFFD and fail the round trip.
+          expect(Buffer.from(result, 'utf8').toString('utf8')).toBe(result);
+          expect(result.replace('…', '')).toMatch(/^(é|🎉)*$/u);
+        }
+      });
+
+      it('keeps the whole file extension intact', () => {
+        const result = elideToMaxLength('Ünïcödé Dokument mit sehr langem Namen.pdf', 24, { lengthUnit: 'utf8Bytes' });
+        expect(utf8ByteLength(result)).toBeLessThanOrEqual(24);
+        expect(result.endsWith('.pdf')).toBe(true);
+      });
+
+      it('hard-cuts on whole characters when there is no room for the ellipsis', () => {
+        expect(elideToMaxLength('éclair', 3, { lengthUnit: 'utf8Bytes' })).toBe('éc');
+        expect(elideToMaxLength('éclair', 1, { lengthUnit: 'utf8Bytes' })).toBe('');
+      });
+    });
   });
 
   describe('safeJsonParse', () => {

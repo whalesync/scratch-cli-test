@@ -367,6 +367,38 @@ describe('validateTablesAgainstCapabilities', () => {
     expect(codes).toContain('FIELD_NAME_TOO_LONG');
   });
 
+  // Postgres caps identifiers at 63 BYTES and silently truncates longer ones, so its limit is measured in
+  // UTF-8 bytes: a name short in characters but long in bytes must still fail fast.
+  describe("a limit measured in 'utf8Bytes'", () => {
+    const tableWithFieldNamed = (fieldName: string) =>
+      parse({
+        connectorAccountId: 'c',
+        tables: [{ ref: 't1', name: 'T', fields: [{ name: fieldName, fieldType: { kind: 'text' }, isPrimary: true }] }],
+      });
+    // 4 characters, 12 bytes.
+    const fourCjkCharacters = '顧客価値';
+
+    it('flags a name within the limit in characters but over it in bytes', () => {
+      const issues = validateTablesAgainstCapabilities(tableWithFieldNamed(fourCjkCharacters), {
+        ...capabilities,
+        nameLengthUnit: 'utf8Bytes',
+      });
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'FIELD_NAME_TOO_LONG',
+          message: "field name exceeds the connector's maximum of 10 bytes",
+        }),
+      );
+    });
+
+    it('accepts the same name when the limit is measured in characters (the default)', () => {
+      const codes = validateTablesAgainstCapabilities(tableWithFieldNamed(fourCjkCharacters), capabilities).map(
+        (issue) => issue.code,
+      );
+      expect(codes).not.toContain('FIELD_NAME_TOO_LONG');
+    });
+  });
+
   it('flags a table with more fields than the connector allows', () => {
     const capabilitiesWithFieldCap: SchemaCreationCapabilities = { ...capabilities, maxFieldsPerTable: 2 };
     const data = parse({
