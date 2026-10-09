@@ -1,9 +1,20 @@
 #!/bin/bash
 set -e
 
-if [ $# -ne 1 ]
+# Prints a database URL for the tunnel connect_to_gcp_db.sh opened.
+# arg1: environment: 'test'|'production'
+# arg2 (optional): the local port connect_to_gcp_db.sh printed. Defaults to the first port
+#                  in Scratch's tunnel range, 5533.
+
+# Sets LOCAL_HOSTNAME and FIRST_SCRATCH_GCP_DB_TUNNEL_LOCAL_PORT (DEV-11794).
+# shellcheck source-path=SCRIPTDIR source=lib/gcp_db_tunnel.sh
+source "$(dirname "$0")/lib/gcp_db_tunnel.sh"
+
+if [ $# -lt 1 ] || [ $# -gt 2 ]
 then
+  echo "usage: $0 <environment> [local_port]"
   echo "You must provide the name of the environment as the first argument: 'test' or 'production'."
+  echo "Optionally provide the local port connect_to_gcp_db.sh printed (default $FIRST_SCRATCH_GCP_DB_TUNNEL_LOCAL_PORT)."
   exit 1
 fi
 
@@ -34,28 +45,16 @@ if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "production" ]]; then
     exit 1
 fi
 
+LOCAL_PORT=${2:-$FIRST_SCRATCH_GCP_DB_TUNNEL_LOCAL_PORT}
+if ! [[ "$LOCAL_PORT" =~ ^[0-9]+$ ]]; then
+  echo "Error: the local port must be a number, got: '$LOCAL_PORT'"
+  exit 1
+fi
+
 PROJECT="spv1eu-${ENVIRONMENT}"
 MIGRATIONS_DB_USER=$(gcloud secrets versions access latest --project="${PROJECT}" --secret=MIGRATIONS_DB_USER)
 MIGRATIONS_DB_PASSWORD=$(gcloud secrets versions access latest --project="${PROJECT}" --secret=MIGRATIONS_DB_PASSWORD)
 DB_NAME=postgres
-
-# Override the DB_HOST if provided as a second argument
-if [ $# -ge 2 ]; then
-    DB_HOST=$2
-else
-  DB_HOST=$(gcloud sql instances list \
-      --project="${PROJECT}" \
-      --filter="labels.primary=true" \
-      --format="value(ipAddresses[0].ipAddress)" \
-      --limit=1)
-  if [ -z "$DB_HOST" ]; then
-    echo "Error: failed to find IP for database instance"
-    exit 1
-  fi
-fi
-
-LOCAL_HOSTNAME="127.0.0.1"
-LOCAL_PORT=5433
 
 # URL-encode the password to handle special characters
 ENCODED_PASSWORD=$(printf '%s' "$MIGRATIONS_DB_PASSWORD" | jq -sRr @uri)

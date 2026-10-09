@@ -7,6 +7,12 @@ then
   exit 1
 fi
 
+# Sets LOCAL_HOSTNAME/LOCAL_PORT and provides open_gcp_db_tunnel, so this run's tunnel never
+# shares a port with a Whalesync tunnel (DEV-11794). Sourced before the cd below, while $0
+# still resolves from the caller's directory.
+# shellcheck source-path=SCRIPTDIR source=../../terraform/tools/lib/gcp_db_tunnel.sh
+source "$(dirname "$0")/../../terraform/tools/lib/gcp_db_tunnel.sh"
+
 # Change to server directory
 cd "$(dirname "$0")/../"
 
@@ -68,12 +74,33 @@ else
   fi
 fi
 
-echo "Starting SSH tunnel to GCP VM for $ENVIRONMENT: $DB_HOST"
+# Set once this run has swapped its own .env in, so cleanup only removes a .env it wrote.
+replaced_dotenv_with_migrations_database_url=false
 
-LOCAL_HOSTNAME="127.0.0.1"
-LOCAL_PORT=5433
-REMOTE_PORT=5432
+# signal SSH tunnel when process exits
+function cleanup {
+  echo "Shutting down the SSH tunnel..."
+  kill "$ssh_tunnel_to_proxy_pid" 2>/dev/null || true
 
+  if [ "$replaced_dotenv_with_migrations_database_url" = true ]; then
+    echo "Cleaning up env file..."
+    rm -f .env
+
+    # Put things back the way they were.
+    if [[ -f ".temp_running_a_script_env" ]]; then
+      mv .temp_running_a_script_env .env
+    fi
+  fi
+
+  exit
+}
+trap cleanup EXIT
+
+# Start the SSH tunnel.
+open_gcp_db_tunnel "${PROJECT}" "${ZONE}" "$DB_HOST"
+echo "SSH tunnel to GCP VM started on local port $LOCAL_PORT"
+
+# The URL needs the tunnel's local port, so .env is written only once the tunnel is up.
 # URL-encode the password to handle special characters
 ENCODED_PASSWORD=$(printf '%s' "$MIGRATIONS_DB_PASSWORD" | jq -sRr @uri)
 DATABASE_URL="postgresql://${MIGRATIONS_DB_USER}:${ENCODED_PASSWORD}@${LOCAL_HOSTNAME}:${LOCAL_PORT}/${DB_NAME}"
@@ -82,48 +109,8 @@ CUSTOM_DOTENV_FILE="DATABASE_URL=\"${DATABASE_URL}\""
 if [[ -f ".env" ]]; then
   mv .env .temp_running_a_script_env
 fi
+replaced_dotenv_with_migrations_database_url=true
 cat <<< "$CUSTOM_DOTENV_FILE" > .env
-
-
-# Start the SSH tunnel.
-echo "Starting SSH tunnel to gcp VM"
-gcloud compute ssh cloudsql-proxy --project "${PROJECT}" --zone "${ZONE}" --tunnel-through-iap -- -N -L "$LOCAL_PORT:$DB_HOST:$REMOTE_PORT" &
-# Remember the PID of the background process so we can kill it later.
-ssh_tunnel_to_proxy_pid=$!
-
-echo "SSH tunnel to GCP VM started"
-
-# signal SSH tunnel when process exits
-function cleanup {
-  echo "Shutting down the SSH tunnel..."
-  kill "$ssh_tunnel_to_proxy_pid"
-
-  echo "Cleaning up env file..."
-  rm .env
-
-  # Put things back the way they were.
-  if [[ -f ".temp_running_a_script_env" ]]; then
-    mv .temp_running_a_script_env .env
-  fi
-
-  exit
-}
-trap cleanup EXIT
-
-# Wait for port to be open
-counter=0
-sleep=5
-timeout=600
-while ! lsof -nP -iTCP:$LOCAL_PORT -s tcp:listen >/dev/null; do
-  echo "Waiting for port $LOCAL_PORT to be open..."
-  sleep $sleep
-  counter=$((counter + sleep))
-  if [ $counter -ge $timeout ]; then
-    echo "Timeout after $timeout seconds. Port $LOCAL_PORT is still not open."
-    echo "Failed to set up SSH tunnel to GCP VM!"
-    exit 1
-  fi
-done
 
 # Run the migration.
 ./node_modules/.bin/prisma migrate deploy

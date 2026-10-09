@@ -98,15 +98,10 @@ if [ -z "$DB_HOST" ]; then
   exit 1
 fi
 
-LOCAL_HOSTNAME="127.0.0.1"
-LOCAL_PORT=5433
-REMOTE_PORT=5432
-
-# Start the SSH tunnel through the cloudsql-proxy VM via IAP.
-echo "Starting SSH tunnel to gcp VM for $ENVIRONMENT: $DB_HOST"
-gcloud compute ssh cloudsql-proxy --project "${GCP_PROJECT}" --zone europe-west1-b --tunnel-through-iap -- -N -L "$LOCAL_PORT:$DB_HOST:$REMOTE_PORT" &
-# Remember the PID of the background process so we can kill it later.
-ssh_tunnel_to_proxy_pid=$!
+# Sets LOCAL_HOSTNAME/LOCAL_PORT and provides open_gcp_db_tunnel. Each run gets its own
+# tunnel on a port no Whalesync tunnel uses (DEV-11794), so parallel runs don't share one.
+# shellcheck source-path=SCRIPTDIR source=lib/gcp_db_tunnel.sh
+source "$(dirname "$0")/lib/gcp_db_tunnel.sh"
 
 # Tear down the SSH tunnel when this process exits.
 function cleanup {
@@ -116,22 +111,10 @@ function cleanup {
 }
 trap cleanup EXIT
 
-# Wait for the local forwarded port to start listening.
-counter=0
-sleep=5
-timeout=600
-while ! lsof -iTCP:$LOCAL_PORT -s tcp:listen >/dev/null; do
-  echo "Waiting for port $LOCAL_PORT to be open..."
-  sleep $sleep
-  counter=$((counter + sleep))
-  if [ $counter -ge $timeout ]; then
-    echo "Timeout after $timeout seconds. Port $LOCAL_PORT is still not open."
-    echo "Failed to set up SSH tunnel to GCP VM!"
-    exit 1
-  fi
-done
+# Start the SSH tunnel through the cloudsql-proxy VM via IAP.
+open_gcp_db_tunnel "${GCP_PROJECT}" europe-west1-b "$DB_HOST"
 
-echo "SSH tunnel to GCP VM started. Connecting as read-only user '$READONLY_DB_USER'."
+echo "SSH tunnel to GCP VM started on local port $LOCAL_PORT. Connecting as read-only user '$READONLY_DB_USER'."
 
 # Build a libpq conninfo string. The password is passed via PGPASSWORD (below) so
 # it never appears in the connection string or the process argument list.
