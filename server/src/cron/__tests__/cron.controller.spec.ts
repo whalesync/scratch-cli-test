@@ -41,6 +41,7 @@ describe('CronController', () => {
       'expired-api-token-cleanup',
       'old-job-cleanup',
       'record-count-refresh',
+      'rehosted-asset-reaper',
       'routine-run-reaper',
       'scratch-git-disk-observability',
       'staging-dir-reaper',

@@ -5,6 +5,7 @@ import { createHash } from 'crypto';
 import { extname } from 'path';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
+import { REHOSTED_ASSET_OBJECT_KEY_ROOT_PREFIX } from './asset.types';
 import { ObjectStorageService } from './object-storage.service';
 
 const MAX_CONTENT_LENGTH = 100 * 1024 * 1024; // 100 MB
@@ -67,7 +68,7 @@ export class AssetDownloadService {
       if (shouldRehost) {
         const filename = this.resolveFilename(asset, parsedUrl);
         const hashedRemoteId = createHash('sha256').update(asset.remoteAssetId).digest('hex');
-        const key = `v1/${asset.workbookId}/${asset.service}/${hashedRemoteId}/${filename}`;
+        const key = `${REHOSTED_ASSET_OBJECT_KEY_ROOT_PREFIX}${asset.workbookId}/${asset.service}/${hashedRemoteId}/${filename}`;
         const responseContentType =
           typeof response.headers['content-type'] === 'string' ? response.headers['content-type'] : undefined;
         const contentType = asset.mimeType ?? responseContentType ?? 'application/octet-stream';

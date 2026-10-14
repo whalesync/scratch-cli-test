@@ -56,6 +56,12 @@ export const CRON_JOB_DEFINITIONS: CronJobSummaryDto[] = [
     description: 'Disable scheduled actions for orgs whose subscription lapsed (expired/past_due/canceled).',
     schedule: 'EVERY_15_MINUTES',
   },
+  {
+    slug: 'rehosted-asset-reaper',
+    description:
+      'Delete rehosted asset files no Asset row references (older than 7 days) from the GCS assets bucket; a dry run unless REHOSTED_ASSET_REAPER_DELETES_ENABLED is on.',
+    schedule: 'EVERY_DAY_AT_4AM',
+  },
 ];
 
 /**

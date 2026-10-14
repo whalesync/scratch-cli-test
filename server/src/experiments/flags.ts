@@ -43,6 +43,15 @@ export enum SystemFeatureFlag {
    * or a PostHog outage leaves the per-workbook setting in charge). Evaluated with no user.
    */
   LIVE_EXPORT_RUN_STORE_ENGINE_DISABLED = 'LIVE_EXPORT_RUN_STORE_ENGINE_DISABLED',
+  /**
+   * DEV-12324 opt-in gate + kill switch for the rehosted-asset reaper cron
+   * (`RehostedAssetReaperService`, daily at 4AM). When enabled, the reaper deletes objects in the GCS
+   * assets bucket that no `Asset` row references and that are older than 7 days. When OFF it runs as a dry
+   * run: the same sweep, logging exactly which objects it would delete, without deleting any. Fail-closed:
+   * evaluated with no user via `getBooleanFlag(..., false)`, so an absent flag or a PostHog outage means a
+   * dry run. Flip it off to stop the deletes without a redeploy (e.g. during a bucket relocation).
+   */
+  REHOSTED_ASSET_REAPER_DELETES_ENABLED = 'REHOSTED_ASSET_REAPER_DELETES_ENABLED',
 }
 
 /**

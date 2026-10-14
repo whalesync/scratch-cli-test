@@ -22,7 +22,7 @@ The `Asset` model (`server/prisma/schema.prisma`) is the central record for ever
 | ------------------ | --------- | ------------------------------------------------------------------------------------------- |
 | `id`               | String    | Primary key (cuid)                                                                          |
 | `workbookId`       | String    | FK to Workbook (cascade delete)                                                             |
-| `dataFolderId`     | String?   | FK to DataFolder (set null on delete)                                                       |
+| `dataFolderId`     | String?   | FK to DataFolder (cascade delete)                                                           |
 | `service`          | String    | Connector type: AIRTABLE, NOTION, WEBFLOW, etc.                                             |
 | `remoteAssetId`    | String    | Stable ID from the connector (e.g. Airtable attachment `id`, URL hash)                      |
 | `url`              | String?   | Current URL from the connector (may be expired)                                             |
@@ -160,7 +160,7 @@ For each pulled record:
 
 - **`findUnuploadedDestinationAssets(workbookId, dataFolderIds)`** — Finds sync-created assets (`sourceAssetId != null`) that are rehosted but not yet uploaded to the destination connector (`uploadedAt == null`).
 
-- **`deleteForWorkbook(workbookId)`** — Cleanup on workbook deletion.
+- **`deleteForWorkbook(workbookId)`** — Not called: workbook hard delete removes `Asset` rows through the `Workbook` cascade.
 
 ## Re-hosting
 
@@ -200,7 +200,32 @@ Re-hosting downloads assets from their original (possibly expiring) URLs and upl
 - Uses Google Cloud Storage. Configured via `GCS_ASSET_BUCKET` and `GCS_PROJECT_ID` env vars.
 - **`saveObject({ key, buffer, contentType, contentHash })`** — Uploads with cache headers: `public, max-age=31536000, immutable`. Returns public URL: `https://storage.googleapis.com/{bucket}/{key}`.
 - **`objectExists(key)`** — Checks if an object already exists (for deduplication).
+- **`buildPublicUrlPrefixForAssetBucket()`** — `https://storage.googleapis.com/{bucket}/`, the single source for building `rehostedUrl`s and for matching them back to object keys.
+- **`listWorkbookKeyPrefixesInAssetBucket()`** / **`listLiveObjectsInAssetBucketWithKeyPrefix(prefix)`** — Paginated listings of the `v1/{workbookId}/` prefixes and of the live objects (key, `timeCreated`, generation) under one prefix. Noncurrent versions are never listed.
+- **`deleteLiveObjectFromAssetBucketIfGenerationMatches(key, generation)`** — Deletes the live object only while it is still the listed generation; returns `deleted`, `already-gone` (404) or `changed-since-listed` (412).
 - If `GCS_ASSET_BUCKET` is not configured, logs a warning and disables rehosting.
+
+## Cleanup of Rehosted Files
+
+Rehosted files are never deleted inline. Deleting a workbook or a data folder deletes its `Asset` rows (both FKs cascade), and the nightly `RehostedAssetReaperService` cron (`server/src/cron/rehosted-asset-reaper.service.ts`, 4AM, slug `rehosted-asset-reaper`) reconciles the bucket against the database:
+
+- It walks each `v1/{workbookId}/` prefix and deletes live objects that are **older than 7 days** and **referenced by no `Asset` row**. A reference is any row's `rehostedUrl` or `url` equal to the object's public URL, in any workbook; `url` counts because Notion pulls index hot-linked bucket URLs into it. A hot-link in an external service with no Scratch row behind it does not keep a file.
+- Each delete is guarded by the listed generation (`ifGenerationMatch`) and deletes only the live object, which bucket versioning keeps as a noncurrent version for 30 days (plus 7 days of soft delete).
+- **Dry run unless enabled:** objects are deleted only while the `REHOSTED_ASSET_REAPER_DELETES_ENABLED` PostHog system flag is on; otherwise each sweep logs exactly what it would delete. Turn the flag off to stop deletes without a redeploy (e.g. during a bucket relocation).
+- It runs only in Cloud Run, or locally with `REHOSTED_ASSET_REAPER_ALLOW_LOCAL=true` — and only enable that against a bucket your local database owns.
+- It aborts without deleting anything when any `rehostedUrl` is not under `<bucket URL>/v1/<its own workbookId>/` (the bucket was renamed or the URL format changed, so every object would look unreferenced), or when a database query or bucket listing fails. It selects at most 25,000 objects per sweep and aborts after 50 failed deletes in a row.
+- Logs: `Reaped N …` (or `Dry run: would reap N …`) lines carry each `{ key, generation }`, plus a summary per prefix and per sweep. Metrics: `rehosted_asset_object_reaped`, `rehosted_asset_object_reap_failed`, `rehosted_asset_reaper_sweep_aborted`.
+- Objects a developer rehosts locally into the shared `spv1eu-test-assets` bucket are deleted by the test environment's reaper once they are 7 days old, because the test database doesn't reference them.
+- `Asset` rows that still point at a reaped object don't self-heal: Pull Assets only rehosts rows with no `rehostedUrl`.
+
+### Restoring a reaped file
+
+Within 30 days of the delete (plus 7 days of soft delete), using the key and generation from the reaper's log line:
+
+```bash
+gcloud storage ls -a gs://<bucket>/<key>   # lists the noncurrent version(s) as <key>#<generation>
+gcloud storage cp gs://<bucket>/<key>#<generation> gs://<bucket>/<key>
+```
 
 ## Syncing Assets Between Connectors
 
@@ -349,6 +374,7 @@ A modal that displays all extracted assets for a data folder. Shows:
 | Index service         | `server/src/asset/asset-index.service.ts`                                                |
 | Download service      | `server/src/asset/asset-download.service.ts`                                             |
 | Object storage        | `server/src/asset/object-storage.service.ts`                                             |
+| Rehosted-file reaper  | `server/src/cron/rehosted-asset-reaper.service.ts`                                       |
 | Rehost job            | `server/src/worker/jobs/job-definitions/rehost-assets.job.ts`                            |
 | Pull job (extraction) | `server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts`                 |
 | Sync transformer      | `server/src/sync/transformers/implementations/source-asset-to-dest-asset.transformer.ts` |

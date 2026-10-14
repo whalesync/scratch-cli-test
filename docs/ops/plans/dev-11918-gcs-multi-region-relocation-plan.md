@@ -32,7 +32,7 @@ A regional outage or loss in `europe-west1` would take these out with no second 
 
 ### Why a new bucket name is off the table
 
-- **assets.** The server builds the public URL `https://storage.googleapis.com/spv1eu-production-assets/<key>` (`server/src/asset/object-storage.service.ts:104`). That URL is stored in several places:
+- **assets.** The server builds the public URL `https://storage.googleapis.com/spv1eu-production-assets/<key>` (`ObjectStorageService.buildPublicUrlPrefixForAssetBucket` in `server/src/asset/object-storage.service.ts`). That URL is stored in several places:
   - Postgres `Asset.rehostedUrl` (`server/prisma/schema.prisma:1216`).
   - Pending asset-upload operations in `PublishPlanOperation.content`.
   - **Customers' own systems.** Notion stores it as an `external` hot-link (`server/src/remote-service/connectors/library/notion/notion-connector.ts:1597-1605`), and the next pull writes it back into users' git records. We can't rewrite those copies, so the name must survive. See also DEV-10982 / WSG-001 for why this bucket is intentionally public.
@@ -148,6 +148,7 @@ Before touching prod, prove the relocation preserves what we rely on. Do this on
 - Announce a **prod Terraform freeze** for the five buckets, from the first relocate until the step 5 MR is merged and planned clean.
 - Draft the step 5 Terraform MR in advance.
 - Record the baseline `total_bytes` and `total_count` per bucket (query below).
+- Turn the `REHOSTED_ASSET_REAPER_DELETES_ENABLED` PostHog flag off before relocating assets, and back on after step 4 passes (DEV-12324). The nightly rehosted-asset reaper deletes unreferenced objects from that bucket, and its deletes would fail under the finalize write lock.
 
 ### 3. Relocate each bucket, lowest risk first
 

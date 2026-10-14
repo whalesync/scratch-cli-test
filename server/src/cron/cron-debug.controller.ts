@@ -17,6 +17,7 @@ import { CRON_TRIGGERING_DISABLED_MESSAGE, isManualCronTriggeringAllowed } from 
 import { ExpiredApiTokenCleanupService } from './expired-api-token-cleanup.service';
 import { OldJobCleanupService } from './old-job-cleanup.service';
 import { RecordCountRefreshService } from './record-count-refresh.service';
+import { RehostedAssetReaperService } from './rehosted-asset-reaper.service';
 import { RoutineRunReaperService } from './routine-run-reaper.service';
 import { ScratchGitDiskObservabilityService } from './scratch-git-disk-observability.service';
 import { StagingDirReaperService } from './staging-dir-reaper.service';
@@ -44,6 +45,7 @@ export class CronDebugController {
     private readonly scratchGitDiskObservability: ScratchGitDiskObservabilityService,
     private readonly stagingDirReaper: StagingDirReaperService,
     private readonly subscriptionEnforcement: SubscriptionEnforcementService,
+    private readonly rehostedAssetReaper: RehostedAssetReaperService,
   ) {}
 
   /**
@@ -62,6 +64,7 @@ export class CronDebugController {
       'scratch-git-disk-observability': () => this.scratchGitDiskObservability.emitDiskObservabilityMetrics(),
       'staging-dir-reaper': () => this.stagingDirReaper.reapStagingDirs(),
       'subscription-enforcement': () => this.subscriptionEnforcement.enforceLapsedSubscriptions(),
+      'rehosted-asset-reaper': () => this.rehostedAssetReaper.reapUnreferencedRehostedAssetObjects(),
     };
   }
 

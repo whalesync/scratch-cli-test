@@ -1197,7 +1197,9 @@ model Asset {
   workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
   workbookId String
 
-  dataFolder   DataFolder? @relation(fields: [dataFolderId], references: [id], onDelete: SetNull)
+  /// Asset rows follow their data folder: deleting a DataFolder deletes its Asset rows, which lets the
+  /// rehosted-asset reaper cron delete their now-unreferenced files from the GCS assets bucket (DEV-12324).
+  dataFolder   DataFolder? @relation(fields: [dataFolderId], references: [id], onDelete: Cascade)
   dataFolderId String?
 
   service       String // AIRTABLE, NOTION, WEBFLOW, etc.

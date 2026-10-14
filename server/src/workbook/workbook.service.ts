@@ -308,7 +308,9 @@ export class WorkbookService {
       where: { workbookId: id, type: { not: JobType.DeleteWorkbook } },
     });
 
-    // workbook.delete cascades through Prisma to dataFolders, syncs, etc.
+    // workbook.delete cascades through Prisma to dataFolders, syncs, etc. Rehosted asset files in the GCS
+    // assets bucket are left for RehostedAssetReaperService, which deletes them once the cascade drops the
+    // Asset rows that reference them.
     await emit({ phase: 'deleting_workbook_row' });
     await this.db.client.workbook.delete({
       where: { id },

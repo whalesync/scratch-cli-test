@@ -4,6 +4,28 @@ import { CredentialBody, GoogleAuth, Impersonated } from 'google-auth-library';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
 import { Readable } from 'stream';
+import { REHOSTED_ASSET_OBJECT_KEY_ROOT_PREFIX } from './asset.types';
+
+/** Page size for listing the assets bucket (the GCS JSON API maximum). */
+const ASSET_BUCKET_LIST_PAGE_SIZE = 1000;
+
+/** One live object listed from the assets bucket. */
+export interface AssetBucketLiveObjectListing {
+  key: string;
+  /** When this generation of the object was written, or null when GCS reported no parseable time. */
+  timeCreatedOrNull: Date | null;
+  /** The listed generation as GCS's decimal string (kept a string so it round-trips exactly), or null if absent. */
+  generationOrNull: string | null;
+}
+
+/** What one generation-guarded delete of a live object in the assets bucket did. */
+export type AssetBucketLiveObjectDeleteOutcome =
+  /** The live object was deleted; bucket versioning keeps it as a recoverable noncurrent version. */
+  | 'deleted'
+  /** There was no live object at the key any more (HTTP 404). */
+  | 'already-gone'
+  /** The key now holds a different generation than the one listed (HTTP 412): it was re-uploaded since. */
+  | 'changed-since-listed';
 
 export interface SaveObjectInput {
   key: string;
@@ -86,10 +108,17 @@ export class ObjectStorageService {
     return this.patchUploadBucket.length > 0;
   }
 
+  /**
+   * Every rehosted object is publicly served at this prefix + its key. `saveObject` builds `rehostedUrl`s from
+   * it and the rehosted-asset reaper matches `Asset` rows against it, so building and matching can't drift.
+   */
+  buildPublicUrlPrefixForAssetBucket(): string {
+    this.assertAssetBucketConfigured();
+    return `https://storage.googleapis.com/${this.bucket}/`;
+  }
+
   async saveObject(input: SaveObjectInput): Promise<SaveObjectResult> {
-    if (!this.isConfigured()) {
-      throw new Error('ObjectStorageService: GCS_ASSET_BUCKET is not configured');
-    }
+    this.assertAssetBucketConfigured();
 
     const file = this.storage.bucket(this.bucket).file(input.key);
 
@@ -101,7 +130,7 @@ export class ObjectStorageService {
       },
     });
 
-    const publicUrl = `https://storage.googleapis.com/${this.bucket}/${input.key}`;
+    const publicUrl = `${this.buildPublicUrlPrefixForAssetBucket()}${input.key}`;
 
     WSLogger.info({
       source: 'ObjectStorageService',
@@ -115,12 +144,96 @@ export class ObjectStorageService {
   }
 
   async objectExists(key: string): Promise<boolean> {
-    if (!this.isConfigured()) {
-      throw new Error('ObjectStorageService: GCS_ASSET_BUCKET is not configured');
-    }
+    this.assertAssetBucketConfigured();
 
     const [exists] = await this.storage.bucket(this.bucket).file(key).exists();
     return exists;
+  }
+
+  /**
+   * The workbook-level key prefixes (`v1/{segment}/`) directly under the rehosted-asset key root, in GCS's
+   * lexicographic order. A delimiter listing, so it reads one entry per prefix rather than every object.
+   */
+  async listWorkbookKeyPrefixesInAssetBucket(): Promise<string[]> {
+    this.assertAssetBucketConfigured();
+
+    const workbookKeyPrefixes: string[] = [];
+    let pageToken: string | undefined;
+    do {
+      const [, , apiResponse] = await this.storage.bucket(this.bucket).getFiles({
+        prefix: REHOSTED_ASSET_OBJECT_KEY_ROOT_PREFIX,
+        delimiter: '/',
+        autoPaginate: false,
+        maxResults: ASSET_BUCKET_LIST_PAGE_SIZE,
+        ...(pageToken ? { pageToken } : {}),
+      });
+      const objectsListPage = readGcsObjectsListApiResponsePage(apiResponse);
+      workbookKeyPrefixes.push(...objectsListPage.prefixes);
+      pageToken = objectsListPage.nextPageToken;
+    } while (pageToken);
+    return workbookKeyPrefixes;
+  }
+
+  /**
+   * Yields every LIVE object whose key starts with `keyPrefix`, one listing page at a time. Noncurrent versions
+   * are never listed (`versions` stays unset), so nothing read here can point a delete at an old version.
+   */
+  async *listLiveObjectsInAssetBucketWithKeyPrefix(keyPrefix: string): AsyncGenerator<AssetBucketLiveObjectListing> {
+    this.assertAssetBucketConfigured();
+
+    let pageToken: string | undefined;
+    do {
+      const [files, , apiResponse] = await this.storage.bucket(this.bucket).getFiles({
+        prefix: keyPrefix,
+        autoPaginate: false,
+        maxResults: ASSET_BUCKET_LIST_PAGE_SIZE,
+        ...(pageToken ? { pageToken } : {}),
+      });
+      for (const file of files) {
+        yield {
+          key: file.name,
+          timeCreatedOrNull: parseGcsTimestampOrNull(file.metadata.timeCreated),
+          generationOrNull: file.metadata.generation === undefined ? null : String(file.metadata.generation),
+        };
+      }
+      pageToken = readGcsObjectsListApiResponsePage(apiResponse).nextPageToken;
+    } while (pageToken);
+  }
+
+  /**
+   * Delete the LIVE object at `key`, but only while it is still the generation the caller listed
+   * (`ifGenerationMatch`), so an object re-uploaded since the listing is left alone. In the versioned assets
+   * bucket the delete turns the object into a noncurrent version that stays recoverable until the bucket's
+   * lifecycle rule (plus soft delete) removes it.
+   *
+   * The object is deliberately addressed by key alone: passing a `generation` to `file()` would target that exact
+   * version and delete it permanently, skipping the recovery window. Throws on any error other than 404 / 412.
+   */
+  async deleteLiveObjectFromAssetBucketIfGenerationMatches(
+    key: string,
+    listedGeneration: string,
+  ): Promise<AssetBucketLiveObjectDeleteOutcome> {
+    this.assertAssetBucketConfigured();
+
+    try {
+      await this.storage.bucket(this.bucket).file(key).delete({ ifGenerationMatch: listedGeneration });
+      return 'deleted';
+    } catch (error) {
+      const httpStatusCode = readGcsApiErrorHttpStatusCode(error);
+      if (httpStatusCode === 404) {
+        return 'already-gone';
+      }
+      if (httpStatusCode === 412) {
+        return 'changed-since-listed';
+      }
+      throw error;
+    }
+  }
+
+  private assertAssetBucketConfigured(): void {
+    if (!this.isConfigured()) {
+      throw new Error('ObjectStorageService: GCS_ASSET_BUCKET is not configured');
+    }
   }
 
   /**
@@ -228,4 +341,46 @@ function makeImpersonatedGoogleAuth(targetPrincipal: string, projectId: string |
     return { ...underlying, client_email: targetPrincipal };
   };
   return base;
+}
+
+/** The fields read from one page of a raw GCS `objects.list` JSON response. */
+interface GcsObjectsListApiResponsePage {
+  /** The "directory" prefixes, present when the listing used a delimiter. */
+  prefixes: string[];
+  nextPageToken: string | undefined;
+}
+
+/** `getFiles` types its raw API response as `unknown`; read the two fields we need without trusting its shape. */
+function readGcsObjectsListApiResponsePage(apiResponse: unknown): GcsObjectsListApiResponsePage {
+  if (typeof apiResponse !== 'object' || apiResponse === null) {
+    return { prefixes: [], nextPageToken: undefined };
+  }
+  const prefixes =
+    'prefixes' in apiResponse && Array.isArray(apiResponse.prefixes)
+      ? apiResponse.prefixes.filter((prefix: unknown): prefix is string => typeof prefix === 'string')
+      : [];
+  const nextPageToken =
+    'nextPageToken' in apiResponse &&
+    typeof apiResponse.nextPageToken === 'string' &&
+    apiResponse.nextPageToken.length > 0
+      ? apiResponse.nextPageToken
+      : undefined;
+  return { prefixes, nextPageToken };
+}
+
+/** The HTTP status code a GCS `ApiError` carries as `code`, or undefined for any other error. */
+function readGcsApiErrorHttpStatusCode(error: unknown): number | undefined {
+  if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'number') {
+    return error.code;
+  }
+  return undefined;
+}
+
+/** A GCS RFC 3339 timestamp as a Date, or null when it's absent or unparseable. */
+function parseGcsTimestampOrNull(timestamp: string | undefined): Date | null {
+  if (!timestamp) {
+    return null;
+  }
+  const parsedTimestamp = new Date(timestamp);
+  return Number.isNaN(parsedTimestamp.getTime()) ? null : parsedTimestamp;
 }

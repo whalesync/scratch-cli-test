@@ -5,6 +5,7 @@ import { CronDebugController } from '../cron-debug.controller';
 import { ExpiredApiTokenCleanupService } from '../expired-api-token-cleanup.service';
 import { OldJobCleanupService } from '../old-job-cleanup.service';
 import { RecordCountRefreshService } from '../record-count-refresh.service';
+import { RehostedAssetReaperService } from '../rehosted-asset-reaper.service';
 import { RoutineRunReaperService } from '../routine-run-reaper.service';
 import { ScratchGitDiskObservabilityService } from '../scratch-git-disk-observability.service';
 import { StagingDirReaperService } from '../staging-dir-reaper.service';
@@ -23,6 +24,7 @@ describe('CronDebugController', () => {
   let scratchGitDiskObservability: { emitDiskObservabilityMetrics: jest.Mock };
   let stagingDirReaper: { reapStagingDirs: jest.Mock };
   let subscriptionEnforcement: { enforceLapsedSubscriptions: jest.Mock };
+  let rehostedAssetReaper: { reapUnreferencedRehostedAssetObjects: jest.Mock };
   let controller: CronDebugController;
 
   const originalRunningInCloud = process.env.RUNNING_IN_CLOUD;
@@ -48,6 +50,7 @@ describe('CronDebugController', () => {
     scratchGitDiskObservability = { emitDiskObservabilityMetrics: jest.fn().mockResolvedValue(undefined) };
     stagingDirReaper = { reapStagingDirs: jest.fn().mockResolvedValue(undefined) };
     subscriptionEnforcement = { enforceLapsedSubscriptions: jest.fn().mockResolvedValue(undefined) };
+    rehostedAssetReaper = { reapUnreferencedRehostedAssetObjects: jest.fn().mockResolvedValue(undefined) };
     controller = new CronDebugController(
       recordCountRefresh as unknown as RecordCountRefreshService,
       oldJobCleanup as unknown as OldJobCleanupService,
@@ -57,6 +60,7 @@ describe('CronDebugController', () => {
       scratchGitDiskObservability as unknown as ScratchGitDiskObservabilityService,
       stagingDirReaper as unknown as StagingDirReaperService,
       subscriptionEnforcement as unknown as SubscriptionEnforcementService,
+      rehostedAssetReaper as unknown as RehostedAssetReaperService,
     );
   });
 
@@ -87,6 +91,13 @@ describe('CronDebugController', () => {
     const result = await controller.triggerCronJob('staging-dir-reaper', ADMIN_REQ);
     expect(stagingDirReaper.reapStagingDirs).toHaveBeenCalledTimes(1);
     expect(result.slug).toBe('staging-dir-reaper');
+    expect(result.ran).toBe(true);
+  });
+
+  it('triggers the rehosted-asset reaper by slug', async () => {
+    const result = await controller.triggerCronJob('rehosted-asset-reaper', ADMIN_REQ);
+    expect(rehostedAssetReaper.reapUnreferencedRehostedAssetObjects).toHaveBeenCalledTimes(1);
+    expect(result.slug).toBe('rehosted-asset-reaper');
     expect(result.ran).toBe(true);
   });
 

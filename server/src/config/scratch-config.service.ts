@@ -273,6 +273,16 @@ export class ScratchConfigService {
   }
 
   /**
+   * Local-dev opt-in (`REHOSTED_ASSET_REAPER_ALLOW_LOCAL=true`) that lets the rehosted-asset reaper cron run
+   * outside Cloud Run. Off by default because the reaper deletes every bucket object the CONNECTED database
+   * doesn't reference: a local DB pointed at a shared bucket (e.g. `spv1eu-test-assets`) knows none of the
+   * test env's rows. Only enable it against a bucket your local DB owns.
+   */
+  isRehostedAssetReaperAllowedToRunOutsideCloudRun(): boolean {
+    return this.getOptionalFlagVariable('REHOSTED_ASSET_REAPER_ALLOW_LOCAL', false);
+  }
+
+  /**
    * Bucket for short-lived publish-patch payloads uploaded via `/upload-patch`.
    * Intentionally separate from the asset bucket: patches contain user record
    * data and must NOT live in the publicly-readable asset bucket. Deliberately
