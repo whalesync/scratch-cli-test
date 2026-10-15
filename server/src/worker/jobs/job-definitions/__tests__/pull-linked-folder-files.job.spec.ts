@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-assignment */
 import { PrismaClient } from '@prisma/client';
 import { Type } from '@sinclair/typebox';
-import { DataFolderId, WorkbookId } from '@spinner/shared-types';
+import { DataFolderId, type PullFolderProgress, WorkbookId } from '@spinner/shared-types';
 import { AssetExtractorService } from '../../../../asset/asset-extractor.service';
 import { AssetIndexService } from '../../../../asset/asset-index.service';
 import { ExperimentsService } from '../../../../experiments/experiments.service';
@@ -358,6 +358,50 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
       return { dataFolder, connectorAccount, mockConnector, params };
     };
+
+    const createRecordingPullSink = (persistsIncrementalPullBaseline: boolean) => {
+      const pagesWritten: ConnectorFile[][] = [];
+      const pullSink: PullSink = {
+        persistsIncrementalPullBaseline,
+        reportsRecordChangeCounts: persistsIncrementalPullBaseline,
+        prepareStorageBeforeLoadingFolders: jest.fn().mockResolvedValue(undefined),
+        storeFolderTableSpec: jest.fn().mockResolvedValue(undefined),
+        storeFolderDefaultView: jest.fn().mockResolvedValue(undefined),
+        prepareFolderForIncomingRecordPages: jest.fn().mockResolvedValue(undefined),
+        writeConnectorRecordPage: jest.fn((_folder, connectorRecordsInPage: ConnectorFile[]) => {
+          pagesWritten.push(connectorRecordsInPage);
+          return Promise.resolve();
+        }),
+        releaseRecordPageWritingStateForFolder: jest.fn(),
+        finishFolderAfterAllRecordPagesWritten: jest.fn().mockResolvedValue({
+          created: 0,
+          updated: 0,
+          deleted: 0,
+          createdPaths: [],
+          updatedPaths: [],
+          deletedPaths: [],
+        }),
+        cleanUpTemporaryStorageAfterPullAttempt: jest.fn().mockResolvedValue(undefined),
+        finalizeStorageAfterAllFoldersFinished: jest.fn().mockResolvedValue(undefined),
+      };
+      return { pullSink, pagesWritten };
+    };
+
+    const createHandlerWritingTo = (pullSink: PullSink) =>
+      new PullLinkedFolderFilesJobHandler(
+        mockPrisma,
+        mockConnectorService,
+        mockConnectorAccountService,
+        mockWorkbookEventService,
+        mockScratchGitService,
+        mockFileIndexService,
+        mockFileReferenceService,
+        mockAssetExtractorService,
+        mockAssetIndexService,
+        mockPostHogService,
+        mockExperimentsService,
+        () => pullSink,
+      );
 
     afterEach(() => {
       jest.restoreAllMocks();
@@ -1271,50 +1315,6 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     // every write to the sink — no git, no index rows — and a sink that isn't the incremental baseline
     // gets a full pull that leaves the folder's watermarks untouched.
     describe('with a caller-supplied PullSink', () => {
-      const createRecordingPullSink = (persistsIncrementalPullBaseline: boolean) => {
-        const pagesWritten: ConnectorFile[][] = [];
-        const pullSink: PullSink = {
-          persistsIncrementalPullBaseline,
-          reportsRecordChangeCounts: persistsIncrementalPullBaseline,
-          prepareStorageBeforeLoadingFolders: jest.fn().mockResolvedValue(undefined),
-          storeFolderTableSpec: jest.fn().mockResolvedValue(undefined),
-          storeFolderDefaultView: jest.fn().mockResolvedValue(undefined),
-          prepareFolderForIncomingRecordPages: jest.fn().mockResolvedValue(undefined),
-          writeConnectorRecordPage: jest.fn((_folder, connectorRecordsInPage: ConnectorFile[]) => {
-            pagesWritten.push(connectorRecordsInPage);
-            return Promise.resolve();
-          }),
-          releaseRecordPageWritingStateForFolder: jest.fn(),
-          finishFolderAfterAllRecordPagesWritten: jest.fn().mockResolvedValue({
-            created: 0,
-            updated: 0,
-            deleted: 0,
-            createdPaths: [],
-            updatedPaths: [],
-            deletedPaths: [],
-          }),
-          cleanUpTemporaryStorageAfterPullAttempt: jest.fn().mockResolvedValue(undefined),
-          finalizeStorageAfterAllFoldersFinished: jest.fn().mockResolvedValue(undefined),
-        };
-        return { pullSink, pagesWritten };
-      };
-
-      const createHandlerWritingTo = (pullSink: PullSink) =>
-        new PullLinkedFolderFilesJobHandler(
-          mockPrisma,
-          mockConnectorService,
-          mockConnectorAccountService,
-          mockWorkbookEventService,
-          mockScratchGitService,
-          mockFileIndexService,
-          mockFileReferenceService,
-          mockAssetExtractorService,
-          mockAssetIndexService,
-          mockPostHogService,
-          mockExperimentsService,
-          () => pullSink,
-        );
-
       it('writes the schema and every page through the sink and never touches git or the file index', async () => {
         const { mockConnector, params } = setupStandardMocks();
         mockConnector.buildDefaultView.mockReturnValue({ columns: [] });
@@ -1394,6 +1394,279 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           expect(update.data).not.toHaveProperty('lastIncrementalPullAt');
           expect(update.data).not.toHaveProperty('incrementalCursor');
         }
+      });
+    });
+
+    describe('resuming after a worker restart', () => {
+      type CheckpointedPublicProgress = {
+        totalFiles: number;
+        createdCount: number;
+        updatedCount: number;
+        deletedCount: number;
+        folders: PullFolderProgress[];
+      };
+
+      const checkpointedPublicProgressList = (checkpoint: jest.Mock): CheckpointedPublicProgress[] =>
+        (checkpoint.mock.calls as Array<[{ publicProgress: CheckpointedPublicProgress }]>).map(
+          ([checkpointedProgress]) => checkpointedProgress.publicProgress,
+        );
+
+      const previousAttemptFolderEntry = (
+        folderEntryOverrides: Partial<PullFolderProgress> & { id: string; name: string },
+      ): PullFolderProgress => ({
+        connector: 'airtable',
+        creates: 0,
+        updates: 0,
+        deletes: 0,
+        totalFiles: 0,
+        createdPaths: [],
+        updatedPaths: [],
+        deletedPaths: [],
+        status: 'active',
+        ...folderEntryOverrides,
+      });
+
+      /** The `progress` BullMQ hands a resumed attempt: the previous attempt's last (path-less) checkpoint. */
+      const progressCheckpointedByPreviousAttempt = (previousAttempt: {
+        folders: PullFolderProgress[];
+        jobProgress: Record<string, unknown>;
+      }) => {
+        const completedFolderIds = (previousAttempt.jobProgress.completedFolderIds as string[] | undefined) ?? [];
+        const completedFolders = previousAttempt.folders.filter((folder) => completedFolderIds.includes(folder.id));
+        const freshProgress = createMockParams().progress;
+        return {
+          ...freshProgress,
+          publicProgress: {
+            ...freshProgress.publicProgress,
+            status: 'active' as const,
+            totalFiles: previousAttempt.folders.reduce((sum, folder) => sum + folder.totalFiles, 0),
+            createdCount: completedFolders.reduce((sum, folder) => sum + folder.creates, 0),
+            updatedCount: completedFolders.reduce((sum, folder) => sum + folder.updates, 0),
+            deletedCount: completedFolders.reduce((sum, folder) => sum + folder.deletes, 0),
+            folders: previousAttempt.folders,
+          },
+          jobProgress: previousAttempt.jobProgress,
+        };
+      };
+
+      it('continues the fetched count from the previous attempt when the fetch resumes from its saved cursor', async () => {
+        const { mockConnector } = setupStandardMocks();
+        const params = createMockParams({
+          progress: progressCheckpointedByPreviousAttempt({
+            folders: [previousAttemptFolderEntry({ id: 'dfld_123', name: 'Products', totalFiles: 50 })],
+            jobProgress: {
+              folderFetchStatus: { dfld_123: 'fetching' },
+              folderCursors: { dfld_123: { page: 'p3' } },
+            },
+          }),
+        });
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({ files: [{ id: 'rec51' }, { id: 'rec52' }], connectorProgress: { page: 'p4' } });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        const connectorCalls = mockConnector.pullRecordFiles.mock.calls as Array<unknown[]>;
+        expect(connectorCalls[0][2]).toEqual({ page: 'p3' });
+        const checkpointedPublicProgress = checkpointedPublicProgressList(params.checkpoint);
+        const firstCheckpoint = checkpointedPublicProgress[0];
+        expect(firstCheckpoint.totalFiles).toBe(50);
+        expect(firstCheckpoint.folders[0].totalFiles).toBe(50);
+        const finalCheckpoint = checkpointedPublicProgress[checkpointedPublicProgress.length - 1];
+        expect(finalCheckpoint.totalFiles).toBe(52);
+        expect(finalCheckpoint.folders[0].totalFiles).toBe(52);
+        expect(mockPostHogService.trackPullCompleted).toHaveBeenCalledWith(
+          'usr_123',
+          expect.objectContaining({ totalFilesPulled: 52 }),
+        );
+      });
+
+      it('starts the count over when the folder has no resumable cursor, since its fetch restarts from the first page', async () => {
+        const { mockConnector } = setupStandardMocks();
+        const params = createMockParams({
+          progress: progressCheckpointedByPreviousAttempt({
+            folders: [previousAttemptFolderEntry({ id: 'dfld_123', name: 'Products', totalFiles: 50 })],
+            jobProgress: {
+              folderFetchStatus: { dfld_123: 'fetching' },
+              // A connector that reports no position checkpoints `{}`, which resumes nothing.
+              folderCursors: { dfld_123: {} },
+            },
+          }),
+        });
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({ files: [{ id: 'rec1' }, { id: 'rec2' }], connectorProgress: {} });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        const checkpointedPublicProgress = checkpointedPublicProgressList(params.checkpoint);
+        expect(checkpointedPublicProgress[0].totalFiles).toBe(0);
+        const finalCheckpoint = checkpointedPublicProgress[checkpointedPublicProgress.length - 1];
+        expect(finalCheckpoint.totalFiles).toBe(2);
+        expect(finalCheckpoint.folders[0].totalFiles).toBe(2);
+      });
+
+      it('keeps the count of a folder the previous attempt fully fetched, which Phase 1 skips', async () => {
+        const { mockConnector } = setupStandardMocks();
+        const params = createMockParams({
+          progress: progressCheckpointedByPreviousAttempt({
+            folders: [previousAttemptFolderEntry({ id: 'dfld_123', name: 'Products', totalFiles: 40 })],
+            jobProgress: {
+              folderFetchStatus: { dfld_123: 'fetched' },
+              folderCursors: { dfld_123: { page: 'last' } },
+            },
+          }),
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        expect(mockConnector.pullRecordFiles).not.toHaveBeenCalled();
+        expect(pullSink.finishFolderAfterAllRecordPagesWritten).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ isResumingFromEarlierAttempt: true }),
+        );
+        const checkpointedPublicProgress = checkpointedPublicProgressList(params.checkpoint);
+        const finalCheckpoint = checkpointedPublicProgress[checkpointedPublicProgress.length - 1];
+        expect(finalCheckpoint.totalFiles).toBe(40);
+        expect(finalCheckpoint.folders[0]).toMatchObject({ totalFiles: 40, status: 'completed' });
+      });
+
+      it('restores a folder Phase 2 already completed and adds the resumed folder on top of it', async () => {
+        const productsFolder = createMockDataFolder({
+          id: 'dfld_1' as DataFolderId,
+          name: 'Products',
+          path: '/Products',
+        });
+        const ordersFolder = createMockDataFolder({ id: 'dfld_2' as DataFolderId, name: 'Orders', path: '/Orders' });
+        const { mockConnector } = setupStandardMocks();
+        (mockPrisma.dataFolder.findMany as jest.Mock).mockResolvedValue([
+          { ...productsFolder, connectorAccount: { displayName: 'Test Connection' } },
+          { ...ordersFolder, connectorAccount: { displayName: 'Test Connection' } },
+        ]);
+        (mockPrisma.dataFolder.findUnique as jest.Mock)
+          .mockResolvedValueOnce(productsFolder)
+          .mockResolvedValueOnce(ordersFolder);
+        const params = createMockParams({
+          data: {
+            type: 'pull-linked-folder-files' as const,
+            workbookId: 'wkb_123' as WorkbookId,
+            dataFolderIds: ['dfld_1' as DataFolderId, 'dfld_2' as DataFolderId],
+            userId: 'usr_123',
+            organizationId: 'org_123',
+          },
+          progress: progressCheckpointedByPreviousAttempt({
+            folders: [
+              previousAttemptFolderEntry({
+                id: 'dfld_1',
+                name: 'Products',
+                totalFiles: 10,
+                creates: 3,
+                updates: 1,
+                status: 'completed',
+                mode: 'full',
+              }),
+              previousAttemptFolderEntry({ id: 'dfld_2', name: 'Orders', totalFiles: 5 }),
+            ],
+            jobProgress: {
+              completedFolderIds: ['dfld_1'],
+              folderFetchStatus: { dfld_1: 'fetched', dfld_2: 'fetching' },
+              folderCursors: { dfld_1: { page: 'last' }, dfld_2: { page: 'p2' } },
+            },
+          }),
+        });
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'ord6' }, { id: 'ord7' }, { id: 'ord8' }, { id: 'ord9' }],
+            connectorProgress: { page: 'p3' },
+          });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(true);
+        (pullSink.finishFolderAfterAllRecordPagesWritten as jest.Mock).mockResolvedValue({
+          created: 2,
+          updated: 0,
+          deleted: 0,
+          createdPaths: ['Orders/ord8.json', 'Orders/ord9.json'],
+          updatedPaths: [],
+          deletedPaths: [],
+        });
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(1);
+        expect(pullSink.finishFolderAfterAllRecordPagesWritten).toHaveBeenCalledTimes(1);
+        const checkpointedPublicProgress = checkpointedPublicProgressList(params.checkpoint);
+        expect(checkpointedPublicProgress[0]).toMatchObject({ totalFiles: 15, createdCount: 3, updatedCount: 1 });
+        const finalCheckpoint = checkpointedPublicProgress[checkpointedPublicProgress.length - 1];
+        expect(finalCheckpoint).toMatchObject({ totalFiles: 19, createdCount: 5, updatedCount: 1, deletedCount: 0 });
+        expect(finalCheckpoint.folders[0]).toMatchObject({
+          id: 'dfld_1',
+          totalFiles: 10,
+          creates: 3,
+          updates: 1,
+          mode: 'full',
+          status: 'completed',
+        });
+        expect(finalCheckpoint.folders[1]).toMatchObject({
+          id: 'dfld_2',
+          totalFiles: 9,
+          creates: 2,
+          status: 'completed',
+        });
+        expect(mockPostHogService.trackPullCompleted).toHaveBeenCalledWith(
+          'usr_123',
+          expect.objectContaining({ totalFilesPulled: 19, filesCreated: 5, filesUpdated: 1, filesDeleted: 0 }),
+        );
+      });
+
+      it('starts every count at zero on a first attempt, where BullMQ hands the job 0 instead of a progress object', async () => {
+        const { mockConnector } = setupStandardMocks();
+        const params = createMockParams({ progress: 0 });
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'rec1' }, { id: 'rec2' }, { id: 'rec3' }],
+            connectorProgress: { page: 'p2' },
+          });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        const checkpointedPublicProgress = checkpointedPublicProgressList(params.checkpoint);
+        expect(checkpointedPublicProgress[0].totalFiles).toBe(0);
+        const finalCheckpoint = checkpointedPublicProgress[checkpointedPublicProgress.length - 1];
+        expect(finalCheckpoint.totalFiles).toBe(3);
+        expect(finalCheckpoint.folders[0].totalFiles).toBe(3);
+      });
+
+      it("counts each folder's fetched records page by page, so a checkpoint mid-fetch carries them", async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        let folderFetchedCountCheckpointedAfterFirstPage: number | undefined;
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({ files: [{ id: 'rec1' }, { id: 'rec2' }], connectorProgress: { page: 'p2' } });
+          const checkpointedSoFar = checkpointedPublicProgressList(params.checkpoint);
+          folderFetchedCountCheckpointedAfterFirstPage =
+            checkpointedSoFar[checkpointedSoFar.length - 1].folders[0].totalFiles;
+          await callback({ files: [{ id: 'rec3' }], connectorProgress: { page: 'p3' } });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        expect(folderFetchedCountCheckpointedAfterFirstPage).toBe(2);
+        const checkpointedPublicProgress = checkpointedPublicProgressList(params.checkpoint);
+        for (const checkpointed of checkpointedPublicProgress) {
+          const folderFetchedCountSum = checkpointed.folders.reduce((sum, folder) => sum + folder.totalFiles, 0);
+          expect(checkpointed.totalFiles).toBe(folderFetchedCountSum);
+        }
+        expect(checkpointedPublicProgress[checkpointedPublicProgress.length - 1].folders[0].totalFiles).toBe(3);
       });
     });
   });

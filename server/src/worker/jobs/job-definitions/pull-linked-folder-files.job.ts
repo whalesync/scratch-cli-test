@@ -157,10 +157,12 @@ type FolderContext = {
   resumeCursor: JsonSafeObject | null;
 };
 
-/** Result from Phase 1 fetch for a single folder. */
+/**
+ * Result from Phase 1 fetch for a single folder. The folder's fetched-record count isn't carried here: it
+ * lives on the folder's `publicProgress.folders[]` entry, counted page by page across every attempt.
+ */
 type FolderFetchResult = {
   folderId: DataFolderId;
-  fileCount: number;
   isResuming: boolean;
   /** New watermark returned by the connector (or `pullStartedAt` as fallback) for incremental runs. */
   newWatermark?: Date;
@@ -401,6 +403,16 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     }
 
     const pullStats = { created: 0, updated: 0, deleted: 0, failed: pullFailed };
+
+    // A stalled job handed to a new worker resumes from its last checkpoint's cursors and completed
+    // folders, so its counts must resume from that same checkpoint too — not drop back to zero.
+    restoreCountersFromPreviousAttemptCheckpoint({
+      progressHandedToThisAttempt: progress,
+      publicProgress,
+      pullStats,
+      jobProgress,
+      folderIdsThatFailedToLoadThisAttempt: failedFolderIds,
+    });
 
     // Both phases checkpoint through this wrapper, which strips the accumulated path lists from
     // every intermediate write. The full `publicProgress` (with paths) is checkpointed exactly
@@ -763,9 +775,10 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           dataFolderId: folderId,
         });
         // We don't have pulledPaths from the previous run — mark as resuming
-        results.set(folderId, { folderId, fileCount: 0, isResuming: true });
-        // `publicProgress` is rebuilt from scratch on a resumed attempt, so this folder's entry is back
-        // to 'pending' even though a previous attempt already worked on it. Restore what it really is:
+        results.set(folderId, { folderId, isResuming: true });
+        // `publicProgress` is rebuilt on a resumed attempt (only its counts are carried over, by
+        // restoreCountersFromPreviousAttemptCheckpoint), so this folder's entry is back to 'pending'
+        // even though a previous attempt already worked on it. Restore what it really is:
         // done if Phase 2 already processed it (Phase 2 will skip it below), otherwise still in flight.
         const resumedFolderEntry = findFolderProgress(publicProgress, folderId);
         if (resumedFolderEntry) {
@@ -793,7 +806,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           pullSink,
           resumeProgress,
           onBatchCheckpoint: async (update) => {
+            // The run-wide count, this folder's count, and its cursor all advance in one synchronous step,
+            // so every checkpoint pairs a cursor with exactly the records fetched up to it. That pairing is
+            // what lets a resumed attempt restore the counts (see restoreCountersFromPreviousAttemptCheckpoint).
             publicProgress.totalFiles += update.fileCount;
+            if (fetchingFolderEntry) {
+              fetchingFolderEntry.totalFiles += update.fileCount;
+            }
             if (update.cursor) {
               jobProgress.folderCursors = jobProgress.folderCursors ?? {};
               jobProgress.folderCursors[folderId] = update.cursor;
@@ -946,7 +965,6 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           folderEntry.creates = result.created;
           folderEntry.updates = result.updated;
           folderEntry.deletes = result.deleted;
-          folderEntry.totalFiles = fetchResult.fileCount;
           folderEntry.createdPaths = result.createdPaths.slice(0, MAX_PROGRESS_PATHS);
           folderEntry.updatedPaths = result.updatedPaths.slice(0, MAX_PROGRESS_PATHS);
           folderEntry.deletedPaths = result.deletedPaths.slice(0, MAX_PROGRESS_PATHS);
@@ -1022,7 +1040,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const folderId = dataFolder.id;
 
     const resumeProgress = params.resumeProgress;
-    const isResuming = Object.keys(resumeProgress).length > 0;
+    const isResuming = isResumableConnectorCursor(resumeProgress);
 
     // Let the sink set up per-folder state before the first page arrives (classic: the FileIndex
     // filename snapshot that seeds collision-free file naming).
@@ -1047,9 +1065,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       cursor: folderCtx.effectiveMode === 'incremental' ? folderCtx.resumeCursor : null,
     };
 
-    let fetchedFolderRecords: Awaited<ReturnType<typeof fetchFolderRecords>>;
+    let pullResult: PullRecordFilesResult;
     try {
-      fetchedFolderRecords = await fetchFolderRecords({
+      pullResult = await fetchFolderRecords({
         connector,
         tableSpec,
         callOptions,
@@ -1063,7 +1081,6 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     } finally {
       pullSink.releaseRecordPageWritingStateForFolder(folderCtx);
     }
-    const { fileCount, pullResult } = fetchedFolderRecords;
 
     // For incremental: prefer the connector's reported watermark (e.g. server
     // time on the change-feed response) over the job-captured pullStartedAt,
@@ -1072,7 +1089,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       folderCtx.effectiveMode === 'incremental' ? (pullResult.newWatermark ?? folderCtx.pullStartedAt) : undefined;
     const newCursor = folderCtx.effectiveMode === 'incremental' ? (pullResult.newCursor ?? null) : undefined;
 
-    return { folderId, fileCount, isResuming, newWatermark, newCursor };
+    return { folderId, isResuming, newWatermark, newCursor };
   }
 
   // ---------------------------------------------------------------------------
@@ -1226,10 +1243,9 @@ async function fetchFolderRecords(params: {
   onBatchCheckpoint: (update: { fileCount: number; cursor?: JsonSafeObject }) => Promise<void>;
   abortSignal: AbortSignal;
   jobId: string;
-}): Promise<{ fileCount: number; pullResult: PullRecordFilesResult }> {
+}): Promise<PullRecordFilesResult> {
   const { connector, tableSpec, callOptions, resumeProgress, writeRecordPage, onBatchCheckpoint, abortSignal, jobId } =
     params;
-  let fileCount = 0;
 
   const onBatch = async (callbackParams: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => {
     if (abortSignal.aborted) throw new JobCanceledError(jobId);
@@ -1238,14 +1254,10 @@ async function fetchFolderRecords(params: {
 
     await writeRecordPage(files);
 
-    fileCount += files.length;
-
     await onBatchCheckpoint({ fileCount: files.length, cursor: connectorProgress });
   };
 
-  const pullResult = await connector.pullRecordFiles(tableSpec, onBatch, resumeProgress, callOptions);
-
-  return { fileCount, pullResult };
+  return connector.pullRecordFiles(tableSpec, onBatch, resumeProgress, callOptions);
 }
 
 /** Finds the seeded per-folder progress entry for a folder id (always present — seeded in `run()`). */
@@ -1254,6 +1266,112 @@ function findFolderProgress(
   folderId: string,
 ): PullFolderProgress | undefined {
   return publicProgress.folders.find((folder) => folder.id === folderId);
+}
+
+/**
+ * Whether a folder's saved connector cursor lets its fetch continue where an earlier attempt stopped. A
+ * missing or empty cursor means the connector starts again from its first page.
+ */
+function isResumableConnectorCursor(connectorCursor: JsonSafeObject | undefined): boolean {
+  return connectorCursor !== undefined && Object.keys(connectorCursor).length > 0;
+}
+
+/**
+ * The `publicProgress` the previous attempt of this job last checkpointed, when this attempt is a resume.
+ * BullMQ hands a first attempt `0` rather than a progress object, so the value is checked before it is trusted.
+ */
+function readPublicProgressCheckpointedByPreviousAttempt(
+  progressHandedToThisAttempt: unknown,
+): PullLinkedFolderFilesPublicProgress | undefined {
+  if (typeof progressHandedToThisAttempt !== 'object' || progressHandedToThisAttempt === null) {
+    return undefined;
+  }
+  const previousPublicProgress = (progressHandedToThisAttempt as { publicProgress?: unknown }).publicProgress;
+  if (typeof previousPublicProgress !== 'object' || previousPublicProgress === null) {
+    return undefined;
+  }
+  if (!Array.isArray((previousPublicProgress as { folders?: unknown }).folders)) {
+    return undefined;
+  }
+  return previousPublicProgress as PullLinkedFolderFilesPublicProgress;
+}
+
+/**
+ * Carries the counts of a stalled attempt over into the freshly built `publicProgress` and `pullStats` of the
+ * attempt that resumes it, so a worker restart doesn't reset the pull's counters to zero.
+ *
+ * The previous attempt's last `publicProgress` was written by the same checkpoint call as the `jobProgress`
+ * (cursors, fetch statuses, completed folders) this attempt resumes from, so its counts match that resume
+ * point exactly. A folder's counts are restored only for work this attempt will NOT redo:
+ *  - completed in Phase 2 → its fetched count, change counts and mode (Phase 2 skips it);
+ *  - fully fetched but not yet processed → its fetched count (Phase 1 skips it; Phase 2 recounts its changes);
+ *  - mid-fetch with a resumable cursor → its fetched count (the fetch continues from that cursor);
+ *  - otherwise (no usable cursor, or it failed to load this attempt) → nothing. Its fetch starts again from the
+ *    first page, so carrying the old count over would count those records twice.
+ *
+ * The run-wide totals are then summed from the restored folder entries rather than copied from the previous
+ * totals, so they always equal the sum of the folders even when one folder's count was deliberately dropped.
+ * Path lists can't be restored: intermediate checkpoints strip them (see
+ * `withEmptyPathListsForIntermediateCheckpoint`).
+ */
+function restoreCountersFromPreviousAttemptCheckpoint(params: {
+  /** The raw `progress` BullMQ handed to `run()`: `0` on a first attempt, the last checkpoint on a resume. */
+  progressHandedToThisAttempt: unknown;
+  publicProgress: PullLinkedFolderFilesPublicProgress;
+  pullStats: { created: number; updated: number; deleted: number };
+  jobProgress: PullLinkedFolderFilesJobProgress;
+  folderIdsThatFailedToLoadThisAttempt: DataFolderId[];
+}): void {
+  const { progressHandedToThisAttempt, publicProgress, pullStats, jobProgress, folderIdsThatFailedToLoadThisAttempt } =
+    params;
+  const publicProgressCheckpointedByPreviousAttempt =
+    readPublicProgressCheckpointedByPreviousAttempt(progressHandedToThisAttempt);
+  if (!publicProgressCheckpointedByPreviousAttempt) {
+    return;
+  }
+
+  const folderIdsCompletedByPreviousAttempts = new Set<string>(jobProgress.completedFolderIds ?? []);
+  const folderIdsThatFailedToLoad = new Set<string>(folderIdsThatFailedToLoadThisAttempt);
+
+  for (const folderEntry of publicProgress.folders) {
+    const previousAttemptFolderEntry = findFolderProgress(publicProgressCheckpointedByPreviousAttempt, folderEntry.id);
+    if (!previousAttemptFolderEntry) {
+      continue;
+    }
+
+    if (folderIdsCompletedByPreviousAttempts.has(folderEntry.id)) {
+      folderEntry.totalFiles = previousAttemptFolderEntry.totalFiles;
+      folderEntry.creates = previousAttemptFolderEntry.creates;
+      folderEntry.updates = previousAttemptFolderEntry.updates;
+      folderEntry.deletes = previousAttemptFolderEntry.deletes;
+      if (previousAttemptFolderEntry.mode) {
+        folderEntry.mode = previousAttemptFolderEntry.mode;
+      }
+      publicProgress.createdCount += previousAttemptFolderEntry.creates;
+      publicProgress.updatedCount += previousAttemptFolderEntry.updates;
+      publicProgress.deletedCount += previousAttemptFolderEntry.deletes;
+      pullStats.created += previousAttemptFolderEntry.creates;
+      pullStats.updated += previousAttemptFolderEntry.updates;
+      pullStats.deleted += previousAttemptFolderEntry.deletes;
+      continue;
+    }
+
+    if (folderIdsThatFailedToLoad.has(folderEntry.id)) {
+      continue;
+    }
+
+    const fetchContinuesWherePreviousAttemptStopped =
+      jobProgress.folderFetchStatus?.[folderEntry.id] === 'fetched' ||
+      isResumableConnectorCursor(jobProgress.folderCursors?.[folderEntry.id]);
+    if (fetchContinuesWherePreviousAttemptStopped) {
+      folderEntry.totalFiles = previousAttemptFolderEntry.totalFiles;
+    }
+  }
+
+  publicProgress.totalFiles = publicProgress.folders.reduce(
+    (fetchedRecordCountSoFar, folderEntry) => fetchedRecordCountSoFar + folderEntry.totalFiles,
+    0,
+  );
 }
 
 /**
