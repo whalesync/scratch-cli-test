@@ -50,6 +50,9 @@ module "eu_production" {
   # Whalesync (Dusky) origins allowed to call the Scratch API directly from the browser as a shadow user.
   whalesync_app_origins = ["https://app.whalesync.com"]
 
+  # Whalesync backend (bottlenose) internal API that Scratch calls server-to-server.
+  whalesync_internal_api_url = "https://production-bottlenose-frontend-service.whalesync.com"
+
   # Monitoring
   enable_alerts                  = true
   enable_email_notifications     = true

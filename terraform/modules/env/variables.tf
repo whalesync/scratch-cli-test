@@ -379,6 +379,11 @@ variable "whalesync_app_origins" {
   description = "Origins for the Whalesync product (Dusky) that call the Scratch API directly from the browser as a shadow user. Allowed by CORS in addition to the Scratch client origin. e.g. ['https://test.whalesync.com', 'https://staging.whalesync.com']."
 }
 
+variable "whalesync_internal_api_url" {
+  type        = string
+  description = "Base URL (no path) of the Whalesync backend (bottlenose) internal API that Scratch calls server-to-server, e.g. to report finished Live Export runs. Authenticated with the WHALESYNC_SERVICE_TOKEN secret. e.g. 'https://production-bottlenose-frontend-service.whalesync.com'."
+}
+
 variable "api_service_min_instance_count" {
   type        = number
   default     = 1

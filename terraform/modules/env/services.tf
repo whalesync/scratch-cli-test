@@ -237,6 +237,8 @@ resource "google_cloud_run_v2_service" "api_service" {
             "LANGSMITH_PROJECT" : var.langsmith_project,
             "SERVICE_TYPE" : "api",
             "SLACK_NOTIFICATION_ENABLED" : "true",
+            # Whalesync backend (bottlenose) internal API base URL; authenticated with WHALESYNC_SERVICE_TOKEN.
+            "WHALESYNC_INTERNAL_API_URL" : var.whalesync_internal_api_url,
             "WORKER_CONCURRENCY" : tostring(var.worker_concurrency),
           },
           var.enable_scratch_git ? {
@@ -310,6 +312,7 @@ resource "google_cloud_run_v2_service" "api_service" {
           "STRIPE_WEBHOOK_SECRET",
           "WEBFLOW_CLIENT_ID",
           "WEBFLOW_CLIENT_SECRET",
+          "WHALESYNC_SERVICE_TOKEN",
           "WIX_CLIENT_ID",
           "WIX_CLIENT_SECRET",
           "WIX_SHARE_URL_ID",
@@ -537,6 +540,8 @@ resource "google_cloud_run_v2_service" "cron_service" {
             "LANGSMITH_PROJECT" : var.langsmith_project,
             "SERVICE_TYPE" : "cron",
             "SLACK_NOTIFICATION_ENABLED" : "true",
+            # Whalesync backend (bottlenose) internal API base URL; authenticated with WHALESYNC_SERVICE_TOKEN.
+            "WHALESYNC_INTERNAL_API_URL" : var.whalesync_internal_api_url,
             "WORKER_CONCURRENCY" : tostring(var.worker_concurrency),
           },
           var.enable_scratch_git ? {
@@ -601,6 +606,7 @@ resource "google_cloud_run_v2_service" "cron_service" {
           "STRIPE_WEBHOOK_SECRET",
           "WEBFLOW_CLIENT_ID",
           "WEBFLOW_CLIENT_SECRET",
+          "WHALESYNC_SERVICE_TOKEN",
           "WIX_CLIENT_ID",
           "WIX_CLIENT_SECRET",
           "WIX_SHARE_URL_ID",
@@ -801,6 +807,8 @@ resource "google_cloud_run_v2_service" "worker_service" {
             "LANGSMITH_PROJECT" : var.langsmith_project,
             "SERVICE_TYPE" : "worker",
             "SLACK_NOTIFICATION_ENABLED" : "true",
+            # Whalesync backend (bottlenose) internal API base URL; authenticated with WHALESYNC_SERVICE_TOKEN.
+            "WHALESYNC_INTERNAL_API_URL" : var.whalesync_internal_api_url,
             "WORKER_CONCURRENCY" : tostring(var.worker_concurrency),
           },
           var.enable_scratch_git ? {
@@ -864,6 +872,7 @@ resource "google_cloud_run_v2_service" "worker_service" {
           "STRIPE_WEBHOOK_SECRET",
           "WEBFLOW_CLIENT_ID",
           "WEBFLOW_CLIENT_SECRET",
+          "WHALESYNC_SERVICE_TOKEN",
           "WIX_CLIENT_ID",
           "WIX_CLIENT_SECRET",
           "WIX_SHARE_URL_ID",

@@ -41,6 +41,9 @@ module "eu_test" {
   # Whalesync (Dusky) origins allowed to call the Scratch API directly from the browser as a shadow user.
   whalesync_app_origins = ["https://test.whalesync.com", "https://staging.whalesync.com"]
 
+  # Whalesync backend (bottlenose) internal API that Scratch calls server-to-server.
+  whalesync_internal_api_url = "https://test-bottlenose-frontend-service.whalesync.com"
+
   # Database
   # DEV-11819: test idles at ~8% CPU / ~40% mem — drop below the prod-inherited db-custom-2-8192 default.
   db_tier              = "db-custom-1-4096"
