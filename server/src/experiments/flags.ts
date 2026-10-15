@@ -52,6 +52,15 @@ export enum SystemFeatureFlag {
    * dry run. Flip it off to stop the deletes without a redeploy (e.g. during a bucket relocation).
    */
   REHOSTED_ASSET_REAPER_DELETES_ENABLED = 'REHOSTED_ASSET_REAPER_DELETES_ENABLED',
+  /**
+   * DEV-12330 opt-in gate + kill switch for telling Whalesync about failed Live Export runs, so it can email the
+   * export's owner. Gates both the routine executor's hook (which queues a `WhalesyncRunNotification` row when a
+   * `ws_export` run fails) and the `WhalesyncRunNotificationSweeperService` cron that delivers and retries those
+   * rows; flip it off to stop the pushes without a redeploy. Fail-closed: evaluated with no user via
+   * `getBooleanFlag(..., false)`, so an absent flag or a PostHog outage sends nothing. Turn it on with a
+   * 100%-rollout release condition, and only after Whalesync's `LIVE_EXPORT_RUN_FAILED_EMAILS` flag is on.
+   */
+  LIVE_EXPORT_RUN_NOTIFY_WHALESYNC_ENABLED = 'LIVE_EXPORT_RUN_NOTIFY_WHALESYNC_ENABLED',
 }
 
 /**

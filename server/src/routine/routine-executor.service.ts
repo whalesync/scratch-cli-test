@@ -46,6 +46,7 @@ import {
   RoutineValidationContext,
   TERMINAL_ROUTINE_RUN_STATUSES,
 } from './routine.types';
+import { WhalesyncRunNotifierService } from './whalesync-run-notifier.service';
 
 /** Terminal DbJob statuses — once a step's job reaches one of these the step is done. */
 const TERMINAL_JOB_STATUSES = ['completed', 'failed', 'canceled'];
@@ -117,6 +118,7 @@ export class RoutineExecutorService {
     private readonly auditLogService: AuditLogService,
     private readonly runCountService: RunCountService,
     private readonly liveExportRunLifecycle: LiveExportRunLifecycleService,
+    private readonly whalesyncRunNotifier: WhalesyncRunNotifierService,
   ) {}
 
   /**
@@ -346,6 +348,9 @@ export class RoutineExecutorService {
         // double-count. Non-fatal — never breaks the run.
         if (failed) {
           await this.runCountService.recordRoutineRun({ workbookId });
+          // Queue a failure email for Whalesync when this is a Live Export run (DEV-12330). Fire-and-forget: it
+          // never throws, only writes an outbox row, and skips every run that isn't a Whalesync Live Export.
+          void this.whalesyncRunNotifier.enqueueForRun(runId);
         }
         await this.skipStepsFrom(runId, index + 1);
         this.liveExportRunLifecycle.releaseRunStoreOfFinishedRun(runId);

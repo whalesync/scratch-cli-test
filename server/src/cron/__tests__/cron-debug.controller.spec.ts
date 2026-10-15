@@ -11,6 +11,7 @@ import { ScratchGitDiskObservabilityService } from '../scratch-git-disk-observab
 import { StagingDirReaperService } from '../staging-dir-reaper.service';
 import { StaleJobReaperService } from '../stale-job-reaper.service';
 import { SubscriptionEnforcementService } from '../subscription-enforcement.service';
+import { WhalesyncRunNotificationSweeperService } from '../whalesync-run-notification-sweeper.service';
 
 const ADMIN_REQ = { user: { id: 'usr_admin', role: UserRole.ADMIN, authType: 'jwt' } } as unknown as RequestWithUser;
 const NON_ADMIN_REQ = { user: { id: 'usr_user', role: UserRole.USER, authType: 'jwt' } } as unknown as RequestWithUser;
@@ -25,6 +26,7 @@ describe('CronDebugController', () => {
   let stagingDirReaper: { reapStagingDirs: jest.Mock };
   let subscriptionEnforcement: { enforceLapsedSubscriptions: jest.Mock };
   let rehostedAssetReaper: { reapUnreferencedRehostedAssetObjects: jest.Mock };
+  let whalesyncRunNotificationSweeper: { sweepWhalesyncRunNotifications: jest.Mock };
   let controller: CronDebugController;
 
   const originalRunningInCloud = process.env.RUNNING_IN_CLOUD;
@@ -51,6 +53,7 @@ describe('CronDebugController', () => {
     stagingDirReaper = { reapStagingDirs: jest.fn().mockResolvedValue(undefined) };
     subscriptionEnforcement = { enforceLapsedSubscriptions: jest.fn().mockResolvedValue(undefined) };
     rehostedAssetReaper = { reapUnreferencedRehostedAssetObjects: jest.fn().mockResolvedValue(undefined) };
+    whalesyncRunNotificationSweeper = { sweepWhalesyncRunNotifications: jest.fn().mockResolvedValue(undefined) };
     controller = new CronDebugController(
       recordCountRefresh as unknown as RecordCountRefreshService,
       oldJobCleanup as unknown as OldJobCleanupService,
@@ -61,6 +64,7 @@ describe('CronDebugController', () => {
       stagingDirReaper as unknown as StagingDirReaperService,
       subscriptionEnforcement as unknown as SubscriptionEnforcementService,
       rehostedAssetReaper as unknown as RehostedAssetReaperService,
+      whalesyncRunNotificationSweeper as unknown as WhalesyncRunNotificationSweeperService,
     );
   });
 
@@ -98,6 +102,13 @@ describe('CronDebugController', () => {
     const result = await controller.triggerCronJob('rehosted-asset-reaper', ADMIN_REQ);
     expect(rehostedAssetReaper.reapUnreferencedRehostedAssetObjects).toHaveBeenCalledTimes(1);
     expect(result.slug).toBe('rehosted-asset-reaper');
+    expect(result.ran).toBe(true);
+  });
+
+  it('triggers the Whalesync run notification sweeper by slug', async () => {
+    const result = await controller.triggerCronJob('whalesync-run-notification-sweeper', ADMIN_REQ);
+    expect(whalesyncRunNotificationSweeper.sweepWhalesyncRunNotifications).toHaveBeenCalledTimes(1);
+    expect(result.slug).toBe('whalesync-run-notification-sweeper');
     expect(result.ran).toBe(true);
   });
 

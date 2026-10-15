@@ -62,6 +62,12 @@ export const CRON_JOB_DEFINITIONS: CronJobSummaryDto[] = [
       'Delete rehosted asset files no Asset row references (older than 7 days) from the GCS assets bucket; a dry run unless REHOSTED_ASSET_REAPER_DELETES_ENABLED is on.',
     schedule: 'EVERY_DAY_AT_4AM',
   },
+  {
+    slug: 'whalesync-run-notification-sweeper',
+    description:
+      'Send queued failed-Live-Export-run notifications to Whalesync (retrying with backoff) and queue any failed runs from the last hour the executor missed; off unless LIVE_EXPORT_RUN_NOTIFY_WHALESYNC_ENABLED is on.',
+    schedule: 'EVERY_MINUTE',
+  },
 ];
 
 /**

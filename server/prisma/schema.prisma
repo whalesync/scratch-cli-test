@@ -1079,6 +1079,9 @@ model RoutineRun {
   /// Per-record publish failures of a run that used the run-store engine.
   liveExportRunFailures LiveExportRunFailure[]
 
+  /// The Whalesync failure-email notification queued for this run, when it is a failed Live Export run.
+  whalesyncRunNotification WhalesyncRunNotification?
+
   // NOTE: a PARTIAL UNIQUE INDEX enforces "one active run per routine file" —
   //   UNIQUE (workbookId, routineFilePath) WHERE status IN ('pending','running')
   // Prisma cannot express a partial (WHERE) index declaratively, so it is created by
@@ -1114,6 +1117,30 @@ model LiveExportRunFailure {
 
   @@index([routineRunId])
   @@index([pipelineId])
+}
+
+/// DEV-12330 outbox: one row per failed Live Export (`ws_export`) routine run, queued when the run fails and
+/// delivered to Whalesync (bottlenose), which emails the export's owner. WhalesyncRunNotificationSweeperService
+/// sends each row and retries with backoff. Deleted with its routine run.
+model WhalesyncRunNotification {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  routineRun   RoutineRun @relation(fields: [routineRunId], references: [id], onDelete: Cascade)
+  routineRunId String     @unique
+  workbookId   String
+
+  /// The exact request body (a zod-validated LiveExportRunFinishedNotificationDto); every attempt sends it verbatim.
+  payload       Json
+  /// Failed delivery attempts. Set straight to the maximum on a terminal failure, so a row that is undelivered
+  /// with `attempts` at the maximum has been given up on.
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  /// Set only when Whalesync answered 2xx with an outcome.
+  deliveredAt   DateTime?
+  lastError     String?
+
+  @@index([deliveredAt, nextAttemptAt])
 }
 
 model RoutineRunStep {

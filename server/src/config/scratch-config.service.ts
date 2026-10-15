@@ -264,6 +264,27 @@ export class ScratchConfigService {
     );
   }
 
+  /**
+   * Base URL (no path, no trailing slash) of Whalesync's internal API, which the server pushes failed Live Export
+   * runs to so Whalesync can email the export's owner (DEV-12330). Returns `undefined` when unset, which turns the
+   * pushes off. Deliberately has no default: unlike {@link getWhalesyncApiUrl}, which falls back to production, an
+   * unconfigured environment must never push to another environment's Whalesync.
+   */
+  getWhalesyncInternalApiUrl(): string | undefined {
+    const url = this.getOptionalEnvVariable<string>('WHALESYNC_INTERNAL_API_URL')?.trim().replace(/\/+$/, '');
+    return url ? url : undefined;
+  }
+
+  /**
+   * Shared secret the server presents to Whalesync as the `X-Scratch-Service-Token` header (DEV-12330); Whalesync
+   * holds the same value as its `scratch_service_token` secret. Returns `undefined` when unset/empty, which turns the
+   * pushes off. Trimmed for the same reason as {@link getScratchGitAuthToken}.
+   */
+  getWhalesyncServiceToken(): string | undefined {
+    const token = this.getOptionalEnvVariable<string>('WHALESYNC_SERVICE_TOKEN')?.trim();
+    return token ? token : undefined;
+  }
+
   getScratchGitBackendUrl(): string {
     return this.getOptionalEnvVariable('SCRATCH_GIT_BACKEND_URL') ?? 'http://localhost:3101';
   }

@@ -20,10 +20,12 @@ import { ScratchGitDiskObservabilityService } from './scratch-git-disk-observabi
 import { StagingDirReaperService } from './staging-dir-reaper.service';
 import { StaleJobReaperService } from './stale-job-reaper.service';
 import { SubscriptionEnforcementService } from './subscription-enforcement.service';
+import { WhalesyncRunNotificationSweeperService } from './whalesync-run-notification-sweeper.service';
 
 @Module({
-  // RoutineExecutionModule gives the reaper RoutineExecutorService to resume stuck runs; AssetModule gives the
-  // rehosted-asset reaper ObjectStorageService.
+  // RoutineExecutionModule gives the reaper RoutineExecutorService to resume stuck runs and the Whalesync run
+  // notification sweeper its WhalesyncRunNotifierService; AssetModule gives the rehosted-asset reaper
+  // ObjectStorageService.
   imports: [
     ScheduleModule.forRoot(),
     ScratchConfigModule,
@@ -48,6 +50,7 @@ import { SubscriptionEnforcementService } from './subscription-enforcement.servi
     StagingDirReaperService,
     SubscriptionEnforcementService,
     RehostedAssetReaperService,
+    WhalesyncRunNotificationSweeperService,
   ],
   exports: [
     StaleJobReaperService,
@@ -59,6 +62,7 @@ import { SubscriptionEnforcementService } from './subscription-enforcement.servi
     StagingDirReaperService,
     SubscriptionEnforcementService,
     RehostedAssetReaperService,
+    WhalesyncRunNotificationSweeperService,
   ],
 })
 export class CronModule {}

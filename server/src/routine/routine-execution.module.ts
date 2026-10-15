@@ -1,14 +1,18 @@
 import { Module } from '@nestjs/common';
 import { AuditLogModule } from 'src/audit/audit-log.module';
+import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
+import { ExperimentsModule } from 'src/experiments/experiments.module';
 import { JobModule } from 'src/job/job.module';
 import { LiveExportRunStoreModule } from 'src/live-export-run-store/live-export-run-store.module';
+import { MetricsModule } from 'src/metrics/metrics.module';
 import { RunCountModule } from 'src/run-count/run-count.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
 import { RoutineExecutorService } from './routine-executor.service';
 import { RoutineParserService } from './routine-parser.service';
 import { RoutineReferenceValidatorService } from './routine-reference-validator.service';
+import { WhalesyncRunNotifierService } from './whalesync-run-notifier.service';
 
 /**
  * Routine *execution* — parse, reference-validate, trigger, and run routines. Deliberately depends
@@ -26,8 +30,21 @@ import { RoutineReferenceValidatorService } from './routine-reference-validator.
     AuditLogModule,
     RunCountModule,
     LiveExportRunStoreModule,
+    ScratchConfigModule,
+    ExperimentsModule,
+    MetricsModule,
   ],
-  providers: [RoutineParserService, RoutineReferenceValidatorService, RoutineExecutorService],
-  exports: [RoutineParserService, RoutineReferenceValidatorService, RoutineExecutorService],
+  providers: [
+    RoutineParserService,
+    RoutineReferenceValidatorService,
+    RoutineExecutorService,
+    WhalesyncRunNotifierService,
+  ],
+  exports: [
+    RoutineParserService,
+    RoutineReferenceValidatorService,
+    RoutineExecutorService,
+    WhalesyncRunNotifierService,
+  ],
 })
 export class RoutineExecutionModule {}

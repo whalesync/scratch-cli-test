@@ -132,6 +132,16 @@ export enum CustomMetric {
   REHOSTED_ASSET_OBJECT_REAPED = 'rehosted_asset_object_reaped',
   REHOSTED_ASSET_OBJECT_REAP_FAILED = 'rehosted_asset_object_reap_failed',
   REHOSTED_ASSET_REAPER_SWEEP_ABORTED = 'rehosted_asset_reaper_sweep_aborted',
+
+  // Whalesync run notifications (DEV-12330). Failed Live Export runs are queued as `WhalesyncRunNotification`
+  // rows and pushed to Whalesync, which emails the export's owner. `SENT` counts rows Whalesync accepted,
+  // `FAILED` failed delivery attempts (each retry counts), and `GAVE_UP` rows that will never be delivered (out of
+  // attempts, a terminal 4xx, or an invalid payload), i.e. an owner who won't get the email. `BACKFILLED` counts
+  // failed runs the sweep had to queue because the executor's hook never did (e.g. the process died first).
+  WHALESYNC_RUN_NOTIFY_SENT = 'whalesync_run_notify_sent',
+  WHALESYNC_RUN_NOTIFY_FAILED = 'whalesync_run_notify_failed',
+  WHALESYNC_RUN_NOTIFY_GAVE_UP = 'whalesync_run_notify_gave_up',
+  WHALESYNC_RUN_NOTIFY_BACKFILLED = 'whalesync_run_notify_backfilled',
 }
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
@@ -203,6 +213,10 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.REHOSTED_ASSET_OBJECT_REAPED:
     case CustomMetric.REHOSTED_ASSET_OBJECT_REAP_FAILED:
     case CustomMetric.REHOSTED_ASSET_REAPER_SWEEP_ABORTED:
+    case CustomMetric.WHALESYNC_RUN_NOTIFY_SENT:
+    case CustomMetric.WHALESYNC_RUN_NOTIFY_FAILED:
+    case CustomMetric.WHALESYNC_RUN_NOTIFY_GAVE_UP:
+    case CustomMetric.WHALESYNC_RUN_NOTIFY_BACKFILLED:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -278,6 +292,10 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.REHOSTED_ASSET_OBJECT_REAPED:
     case CustomMetric.REHOSTED_ASSET_OBJECT_REAP_FAILED:
     case CustomMetric.REHOSTED_ASSET_REAPER_SWEEP_ABORTED:
+    case CustomMetric.WHALESYNC_RUN_NOTIFY_SENT:
+    case CustomMetric.WHALESYNC_RUN_NOTIFY_FAILED:
+    case CustomMetric.WHALESYNC_RUN_NOTIFY_GAVE_UP:
+    case CustomMetric.WHALESYNC_RUN_NOTIFY_BACKFILLED:
       return CustomMetricUnit.EVENT_COUNT;
     case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
       // A gauge: how many syncs remain on the frozen v1 column right now, not a

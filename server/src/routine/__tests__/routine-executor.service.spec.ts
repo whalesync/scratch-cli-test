@@ -13,6 +13,7 @@ import { RoutineExecutorService } from '../routine-executor.service';
 import { RoutineParserService } from '../routine-parser.service';
 import { RoutineReferenceValidatorService } from '../routine-reference-validator.service';
 import { RoutineValidationContext } from '../routine.types';
+import { WhalesyncRunNotifierService } from '../whalesync-run-notifier.service';
 
 const WORKBOOK_ID = 'wkb_test1234' as WorkbookId;
 const RUN_ID = 'rrn_test1234' as RoutineRunId;
@@ -186,6 +187,8 @@ function makeService(deps: {
   bullEnqueuer: Partial<BullEnqueuerService>;
   jobService: Partial<JobService>;
   context?: RoutineValidationContext;
+  /** Pass `{ enqueueForRun: jest.fn() }` to assert on the Whalesync failure-notification hook. */
+  whalesyncRunNotifier?: { enqueueForRun: jest.Mock };
 }): RoutineExecutorService {
   const referenceValidator = {
     loadContext: jest.fn().mockResolvedValue(deps.context ?? singleFolderContext()),
@@ -202,6 +205,7 @@ function makeService(deps: {
     { logEvent: jest.fn() } as unknown as AuditLogService,
     { recordRoutineRun: jest.fn() } as unknown as RunCountService,
     classicLiveExportRunLifecycle(),
+    (deps.whalesyncRunNotifier ?? { enqueueForRun: jest.fn() }) as unknown as WhalesyncRunNotifierService,
   );
 }
 
@@ -280,10 +284,13 @@ describe('RoutineExecutorService.execute', () => {
       cancelJob: jest.fn(),
     };
 
-    const service = makeService({ db, bullEnqueuer, jobService });
+    const enqueueForRun = jest.fn();
+    const service = makeService({ db, bullEnqueuer, jobService, whalesyncRunNotifier: { enqueueForRun } });
     await service.execute(RUN_ID);
 
     expect(run.status).toBe('completed');
+    // Only failed runs are pushed to Whalesync for now (DEV-12330).
+    expect(enqueueForRun).not.toHaveBeenCalled();
     expect(run.currentStepIndex).toBe(2);
     expect(steps[0].status).toBe('completed');
     expect(steps[1].status).toBe('completed');
@@ -418,7 +425,8 @@ describe('RoutineExecutorService.execute', () => {
       cancelJob: jest.fn(),
     };
 
-    const service = makeService({ db, bullEnqueuer, jobService });
+    const enqueueForRun = jest.fn();
+    const service = makeService({ db, bullEnqueuer, jobService, whalesyncRunNotifier: { enqueueForRun } });
     await service.execute(RUN_ID);
 
     expect(steps[0].status).toBe('completed');
@@ -430,6 +438,61 @@ describe('RoutineExecutorService.execute', () => {
     expect(run.error).toBe('Step 1 (sync) failed: sync blew up');
     expect(run.resultSummary).toBe('sync blew up');
     expect(bullEnqueuer.enqueueSelfPlanningPublishJob).not.toHaveBeenCalled();
+    // The failure is queued for Whalesync exactly once (DEV-12330).
+    expect(enqueueForRun).toHaveBeenCalledTimes(1);
+    expect(enqueueForRun).toHaveBeenCalledWith(RUN_ID);
+  });
+
+  it('does not queue a Whalesync notification when a cancel wins the race to finalize a failing run', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PULL), makeStep(1, RoutineAction.PUBLISH)];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueuePullLinkedFolderFilesJob: jest.fn().mockResolvedValue({ id: 'pull-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      // The user cancels while the step is failing, so failRun's running → failed transition matches nothing.
+      getJobByBullJobId: jest.fn(async () => {
+        run.status = 'cancelled';
+        return dbJobResult({ status: 'failed', error: 'pull blew up', progress: null });
+      }),
+      cancelJob: jest.fn(),
+    };
+
+    const enqueueForRun = jest.fn();
+    const service = makeService({ db, bullEnqueuer, jobService, whalesyncRunNotifier: { enqueueForRun } });
+    await service.execute(RUN_ID);
+
+    expect(steps[0].status).toBe('failed');
+    expect(run.status).toBe('cancelled');
+    expect(enqueueForRun).not.toHaveBeenCalled();
+  });
+
+  it('does not queue a Whalesync notification when the step job is canceled', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PULL), makeStep(1, RoutineAction.PUBLISH)];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueuePullLinkedFolderFilesJob: jest.fn().mockResolvedValue({ id: 'pull-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(dbJobResult({ status: 'canceled', error: null, progress: null })),
+      cancelJob: jest.fn(),
+    };
+
+    const enqueueForRun = jest.fn();
+    const service = makeService({ db, bullEnqueuer, jobService, whalesyncRunNotifier: { enqueueForRun } });
+    await service.execute(RUN_ID);
+
+    expect(run.status).toBe('cancelled');
+    expect(steps[1].status).toBe('skipped');
+    expect(enqueueForRun).not.toHaveBeenCalled();
   });
 
   it('cancels the in-flight job and fails the run on a step timeout', async () => {
@@ -450,7 +513,8 @@ describe('RoutineExecutorService.execute', () => {
       cancelJob: jest.fn().mockResolvedValue({ success: true, message: 'ok' }),
     };
 
-    const service = makeService({ db, bullEnqueuer, jobService });
+    const enqueueForRun = jest.fn();
+    const service = makeService({ db, bullEnqueuer, jobService, whalesyncRunNotifier: { enqueueForRun } });
     await service.execute(RUN_ID);
 
     expect(jobService.cancelJob).toHaveBeenCalledWith('pull-job', expect.anything());
@@ -459,6 +523,8 @@ describe('RoutineExecutorService.execute', () => {
     expect(run.status).toBe('failed');
     // A timeout flows through the same failure path, so resultSummary gets the clean timeout message.
     expect(run.resultSummary).toMatch(/timed out/i);
+    // ...and is queued for Whalesync like any other failure.
+    expect(enqueueForRun).toHaveBeenCalledWith(RUN_ID);
   });
 
   it('completes a publish step WITH a warning (not a failure) when records were rejected', async () => {
@@ -1119,6 +1185,7 @@ describe('RoutineExecutorService.triggerRun', () => {
       auditLog,
       { recordRoutineRun: jest.fn() } as unknown as RunCountService,
       classicLiveExportRunLifecycle(),
+      { enqueueForRun: jest.fn() } as unknown as WhalesyncRunNotifierService,
     );
   }
 

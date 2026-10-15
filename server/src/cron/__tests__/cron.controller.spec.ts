@@ -48,6 +48,7 @@ describe('CronController', () => {
       'stale-active-job-reaper',
       'stale-job-reaper',
       'subscription-enforcement',
+      'whalesync-run-notification-sweeper',
     ]);
     for (const job of jobs) {
       expect(job.description.length).toBeGreaterThan(0);

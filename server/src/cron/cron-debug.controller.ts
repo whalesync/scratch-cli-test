@@ -23,6 +23,7 @@ import { ScratchGitDiskObservabilityService } from './scratch-git-disk-observabi
 import { StagingDirReaperService } from './staging-dir-reaper.service';
 import { StaleJobReaperService } from './stale-job-reaper.service';
 import { SubscriptionEnforcementService } from './subscription-enforcement.service';
+import { WhalesyncRunNotificationSweeperService } from './whalesync-run-notification-sweeper.service';
 
 const LOG_SOURCE = 'CronDebugController';
 
@@ -46,6 +47,7 @@ export class CronDebugController {
     private readonly stagingDirReaper: StagingDirReaperService,
     private readonly subscriptionEnforcement: SubscriptionEnforcementService,
     private readonly rehostedAssetReaper: RehostedAssetReaperService,
+    private readonly whalesyncRunNotificationSweeper: WhalesyncRunNotificationSweeperService,
   ) {}
 
   /**
@@ -65,6 +67,7 @@ export class CronDebugController {
       'staging-dir-reaper': () => this.stagingDirReaper.reapStagingDirs(),
       'subscription-enforcement': () => this.subscriptionEnforcement.enforceLapsedSubscriptions(),
       'rehosted-asset-reaper': () => this.rehostedAssetReaper.reapUnreferencedRehostedAssetObjects(),
+      'whalesync-run-notification-sweeper': () => this.whalesyncRunNotificationSweeper.sweepWhalesyncRunNotifications(),
     };
   }
 
