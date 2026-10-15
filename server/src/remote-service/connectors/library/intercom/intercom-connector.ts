@@ -24,7 +24,13 @@ import {
   PullRecordFilesResult,
   TablePreview,
 } from '../../types';
-import { INTERCOM_MAX_PAGE_SIZE, IntercomApiClient, IntercomError } from './intercom-api-client';
+import {
+  INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION,
+  INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE,
+  INTERCOM_MAX_PAGE_SIZE,
+  IntercomApiClient,
+  IntercomError,
+} from './intercom-api-client';
 import { buildIntercomDefaultView } from './intercom-default-view';
 import { buildIntercomUpdatedSinceQuery, IntercomUpdatedSinceQuery } from './intercom-incremental';
 import {
@@ -233,6 +239,11 @@ export class IntercomConnector extends Connector {
 
       case 'conversations': {
         const hydrate = !options.excludeConversationParts;
+        // Without hydration the list call is the whole cost of a page, so list at Intercom's max;
+        // with it, small pages keep the per-page cursor checkpoint (and crash-resume re-work) tight.
+        const conversationsPerListPage = hydrate
+          ? INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION
+          : INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE;
 
         // Incremental: only conversations supports a server-side updated_at
         // search. Capture the watermark BEFORE the first API call so changes
@@ -250,8 +261,13 @@ export class IntercomConnector extends Connector {
         }
 
         const conversationPages = updatedSinceQuery
-          ? this.client.searchConversationsUpdatedSince(updatedSinceQuery, 20, hydrate, resumeProgress?.startingAfter)
-          : this.client.listConversations(20, hydrate, resumeProgress?.startingAfter);
+          ? this.client.searchConversationsUpdatedSince(
+              updatedSinceQuery,
+              conversationsPerListPage,
+              hydrate,
+              resumeProgress?.startingAfter,
+            )
+          : this.client.listConversations(conversationsPerListPage, hydrate, resumeProgress?.startingAfter);
 
         // Persist the Intercom-provided cursor (`pages.next.starting_after`),
         // never a conversation id — Intercom rejects ids with "Invalid

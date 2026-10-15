@@ -1,7 +1,11 @@
 import { AxiosError } from 'axios';
 import { withRetry } from 'src/rate-limiter/rate-limiter';
 import { BREVO_RETRY_OPTS, isBrevoRateLimitError } from '../brevo/brevo-api-client';
-import { INTERCOM_RETRY_OPTS, isIntercomRateLimitError } from '../intercom/intercom-api-client';
+import {
+  INTERCOM_RETRY_OPTS,
+  isIntercomRateLimitError,
+  isTransientIntercomServerError,
+} from '../intercom/intercom-api-client';
 import { isMemberstackRateLimitError, MEMBERSTACK_RETRY_OPTS } from '../memberstack/memberstack-api-client';
 import { isStripeRateLimitError, STRIPE_RETRY_OPTS } from '../stripe/stripe-api-client';
 
@@ -131,5 +135,61 @@ describe('Intercom rate-limit specifics', () => {
     expect(isIntercomRateLimitError(rateLimited)).toBe(true);
     expect(isIntercomRateLimitError(retryAfter)).toBe(true);
     expect(isIntercomRateLimitError(unrelated)).toBe(false);
+  });
+});
+
+describe('Intercom transient server errors', () => {
+  // Small delay so the retry backoff doesn't slow the unit test.
+  const FAST_INTERCOM_RETRY_OPTS = { ...INTERCOM_RETRY_OPTS, initialRetryDelayMs: 1, maxRetries: 3 };
+
+  it('matches the gateway/availability 5xx set (502/503/504)', () => {
+    expect(isTransientIntercomServerError(axiosError(502))).toBe(true);
+    expect(isTransientIntercomServerError(axiosError(503))).toBe(true);
+    expect(isTransientIntercomServerError(axiosError(504))).toBe(true);
+  });
+
+  it('does not match a 500 — an article/collection create may have landed, so a retry could duplicate it', () => {
+    expect(isTransientIntercomServerError(axiosError(500))).toBe(false);
+  });
+
+  it('does not match 4xx or non-Axios inputs', () => {
+    expect(isTransientIntercomServerError(axiosError(429))).toBe(false);
+    expect(isTransientIntercomServerError(axiosError(404))).toBe(false);
+    expect(isTransientIntercomServerError(new Error('502'))).toBe(false);
+    expect(isTransientIntercomServerError(null)).toBe(false);
+  });
+
+  it('retries a 502 and recovers when the gateway clears', async () => {
+    const fn = jest.fn().mockRejectedValueOnce(axiosError(502)).mockResolvedValueOnce('ok');
+
+    await expect(withRetry(fn, FAST_INTERCOM_RETRY_OPTS)).resolves.toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('still retries a 429 and recovers (throttle behavior intact)', async () => {
+    const fn = jest.fn().mockRejectedValueOnce(axiosError(429)).mockResolvedValueOnce('ok');
+
+    await expect(withRetry(fn, FAST_INTERCOM_RETRY_OPTS)).resolves.toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces a 500 immediately, without retrying', async () => {
+    const internalServerError = axiosError(500);
+    const fn = jest.fn().mockRejectedValue(internalServerError);
+
+    await expect(withRetry(fn, FAST_INTERCOM_RETRY_OPTS)).rejects.toBe(internalServerError);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores X-RateLimit-Reset on a 5xx — that header paces the rate-limit bucket, not gateway recovery', () => {
+    const badGatewayWithResetHeader = axiosError(502, {
+      headers: { 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 8) },
+    });
+    expect(INTERCOM_RETRY_OPTS.getRetryAfterS?.(badGatewayWithResetHeader)).toBeUndefined();
+  });
+
+  it('honors Retry-After when a 5xx sends one', () => {
+    const serviceUnavailableWithRetryAfter = axiosError(503, { headers: { 'retry-after': '4' } });
+    expect(INTERCOM_RETRY_OPTS.getRetryAfterS?.(serviceUnavailableWithRetryAfter)).toBe(4);
   });
 });

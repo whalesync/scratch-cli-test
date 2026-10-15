@@ -57,19 +57,51 @@ export function isIntercomRateLimitError(error: unknown): boolean {
 }
 
 /**
- * Retry policy for every Intercom API call.
+ * HTTP 5xx codes we treat as transient, retryable Intercom gateway/availability
+ * failures: 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout.
+ *
+ * A full conversations pull is one long sequential walk (one list call per page
+ * plus one GET per conversation when hydrating), so without a retry a single
+ * gateway blip fails the whole folder hours in and the next run starts over.
+ *
+ * We deliberately EXCLUDE 500 Internal Server Error. 502/503/504 mean the request
+ * did not reach, or was not completed by, a healthy backend, so retrying is safe
+ * even for the article/collection creates (POST). A 500 is ambiguous — the backend
+ * may have persisted the write before erroring — so retrying a create risks a
+ * DUPLICATE record. Same policy as Attio's `ATTIO_RETRYABLE_SERVER_ERROR_STATUSES`.
+ */
+const INTERCOM_RETRYABLE_SERVER_ERROR_STATUSES = new Set([502, 503, 504]);
+
+/**
+ * True when an error is a transient Intercom server-side failure worth retrying
+ * (see {@link INTERCOM_RETRYABLE_SERVER_ERROR_STATUSES}). The retry predicate sees
+ * the RAW AxiosError — callers wrap into `IntercomError` only OUTSIDE the retry —
+ * so this checks `error.response.status` directly.
+ */
+export function isTransientIntercomServerError(error: unknown): boolean {
+  return axios.isAxiosError(error) && INTERCOM_RETRYABLE_SERVER_ERROR_STATUSES.has(error.response?.status ?? 0);
+}
+
+/**
+ * Retry policy for every Intercom API call. Retries two DISTINCT failures:
+ *  - Throttling ({@link isIntercomRateLimitError}): a 429 or a documented
+ *    throttle code in the error body.
+ *  - Transient gateway/availability errors ({@link isTransientIntercomServerError}):
+ *    502/503/504 only — a 500 or any other 4xx still surfaces immediately.
  *
  * Intercom does not document a `Retry-After`, but it does return
  * `X-RateLimit-Reset` on every response. Note the unit trap: unlike Brevo's
  * relative `x-sib-ratelimit-reset`, Intercom's is an **absolute Unix timestamp
  * in seconds**, so the wait is `reset - now` — reading it as a duration would
  * sleep for decades. `Retry-After` is still read first if present, since Intercom
- * documents neither its presence nor its absence.
+ * documents neither its presence nor its absence. The reset header describes the
+ * rate-limit bucket, not gateway health, so it is only honored for throttling; a
+ * transient 5xx without a `Retry-After` falls back to the exponential backoff.
  *
  * https://developers.intercom.com/docs/references/rest-api/errors/rate-limiting
  */
 export const INTERCOM_RETRY_OPTS: WithRetryOpts = {
-  isRateLimited: isIntercomRateLimitError,
+  isRateLimited: (error) => isIntercomRateLimitError(error) || isTransientIntercomServerError(error),
   getRetryAfterS: (error) => {
     if (!axios.isAxiosError(error)) return undefined;
     const headers = error.response?.headers;
@@ -79,6 +111,8 @@ export const INTERCOM_RETRY_OPTS: WithRetryOpts = {
     if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0) {
       return Math.min(retryAfterSeconds, INTERCOM_MAX_TRUSTED_RATE_LIMIT_RESET_S);
     }
+
+    if (!isIntercomRateLimitError(error)) return undefined;
 
     const resetHeader = headers?.['x-ratelimit-reset'] as string | number | undefined;
     const resetAtUnixSeconds = parseInt(String(resetHeader ?? ''), 10);
@@ -102,6 +136,24 @@ export const INTERCOM_RETRY_OPTS: WithRetryOpts = {
  * boundaries, and any dataset that fits in one page has no boundaries at all.
  */
 export const INTERCOM_MAX_PAGE_SIZE = 250;
+
+/**
+ * Documented ceiling on `per_page` for the cursor-paginated conversation
+ * endpoints (`GET /conversations` and `POST /conversations/search`).
+ * Used when conversations are listed without per-conversation hydration, where
+ * the list call IS the whole cost of a page — 150 per page is 7.5× fewer calls
+ * than Intercom's default of 20.
+ */
+export const INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE = 150;
+
+/**
+ * Conversations `per_page` when each listed conversation is then hydrated with
+ * its own `GET /conversations/{id}`. The list call is a rounding error next to
+ * those GETs, so a bigger page buys no speed — and the pull job checkpoints its
+ * cursor once per page, so a small page keeps crash-resume re-work small (at most
+ * 20 re-fetched conversations rather than 150).
+ */
+export const INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION = 20;
 
 /**
  * How many complete page walks {@link IntercomApiClient.listArticles} /

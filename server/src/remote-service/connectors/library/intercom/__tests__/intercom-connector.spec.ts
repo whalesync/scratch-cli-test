@@ -30,6 +30,8 @@ const mockGetConversation = jest.fn();
 jest.mock('../intercom-api-client', () => {
   return {
     INTERCOM_MAX_PAGE_SIZE: 250,
+    INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE: 150,
+    INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION: 20,
     IntercomApiClient: jest.fn().mockImplementation(() => ({
       validateCredentials: mockValidateCredentials,
       listArticles: mockListArticles,
@@ -379,8 +381,21 @@ describe('IntercomConnector', () => {
         { forceFull: false, excludeConversationParts: true },
       );
 
-      // hydrate = false when excludeConversationParts is true
-      expect(mockListConversations).toHaveBeenCalledWith(20, false, undefined);
+      // hydrate = false when excludeConversationParts is true, and the list runs at Intercom's 150 max
+      expect(mockListConversations).toHaveBeenCalledWith(150, false, undefined);
+    });
+
+    it('resumes an unhydrated conversations pull from the persisted cursor at the 150 max page size', async () => {
+      mockListConversations.mockReturnValue(convoPagesGen([[makeConversation({ id: '1' })]]));
+
+      await connector.pullRecordFiles(
+        buildTableSpec('conversations'),
+        jest.fn(() => Promise.resolve()),
+        { startingAfter: 'cur_7' },
+        { forceFull: false, excludeConversationParts: true },
+      );
+
+      expect(mockListConversations).toHaveBeenCalledWith(150, false, 'cur_7');
     });
 
     it('throws for unknown table type', async () => {
@@ -460,7 +475,7 @@ describe('IntercomConnector', () => {
 
       expect(mockSearchConversationsUpdatedSince).toHaveBeenCalledWith(
         buildIntercomUpdatedSinceQuery(since),
-        20,
+        150,
         false,
         undefined,
       );
