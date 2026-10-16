@@ -67,7 +67,6 @@ POST   /payment/webhook                           # Stripe webhook (signature au
 ```
 POST   /oauth/:service/initiate                   # Get OAuth auth URL
 POST   /oauth/:service/callback                   # Handle OAuth callback
-POST   /oauth/refresh                             # Refresh OAuth tokens
 ```
 
 ### Git Operations (scratch-git)
@@ -693,30 +692,6 @@ Handles the OAuth callback after user authorization.
 ```json
 {
   "connectorAccountId": "conn_abc123"
-}
-```
-
-### Refresh OAuth Tokens
-
-```
-POST /oauth/refresh
-```
-
-Refreshes OAuth tokens for a connection.
-
-**Request Body:**
-
-```json
-{
-  "connectorAccountId": "conn_123"
-}
-```
-
-**Response:**
-
-```json
-{
-  "success": true
 }
 ```
 

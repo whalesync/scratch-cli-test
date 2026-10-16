@@ -7,6 +7,7 @@ import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { UserModule } from 'src/users/users.module';
 import { DbModule } from '../db/db.module';
 import { OAuthAppCredentialResolver } from './oauth-app-credential-resolver.service';
+import { OAuthPendingAuthorizationStore } from './oauth-pending-authorization-store.service';
 import { OAuthController } from './oauth.controller';
 import { OAuthService } from './oauth.service';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
@@ -36,6 +37,7 @@ import { ZohoOAuthProvider } from './providers/zoho-oauth.provider';
   providers: [
     OAuthService,
     OAuthAppCredentialResolver,
+    OAuthPendingAuthorizationStore,
     AirtableOAuthProvider,
     GoHighLevelOAuthProvider,
     GoogleSheetsOAuthProvider,

@@ -12,14 +12,13 @@ import type {
 import type { Http } from '../http';
 
 /**
- * OAuth-flow operations: initiate a service's authorization, exchange the callback code for
- * tokens, and (web only) refresh a connector account's tokens. Reached as `client.oauth.*`.
+ * OAuth-flow operations: initiate a service's authorization and exchange the callback code for
+ * tokens. Reached as `client.oauth.*`.
  *
  * Web (`client/src/lib/api/oauth.ts`) and desktop (`scratch-desktop/.../oauth-api.ts`) share the
- * `initiate` and `callback` routes/bodies/returns; the only divergences are:
- *   - `initiate`'s `options` arg is OPTIONAL on web, REQUIRED on desktop — kept optional here (a
- *     superset that satisfies both call sites).
- *   - `refresh` exists ONLY on web (desktop has no token-refresh endpoint).
+ * `initiate` and `callback` routes/bodies/returns; the only divergence is that `initiate`'s
+ * `options` arg is OPTIONAL on web, REQUIRED on desktop — kept optional here (a superset that
+ * satisfies both call sites).
  */
 export function createOauthApi(http: Http) {
   return {
@@ -36,16 +35,6 @@ export function createOauthApi(http: Http) {
       const res = await http.post<OAuthCallbackResponse>(`/oauth/${service}/callback`, callbackData, {
         fallbackMessage: `Failed to handle OAuth callback for ${service}`,
       });
-      return res.data;
-    },
-
-    /** POST `/oauth/refresh` — refresh a connector account's OAuth tokens. (WEB-ONLY) */
-    refresh: async (connectorAccountId: string): Promise<{ success: boolean }> => {
-      const res = await http.post<{ success: boolean }>(
-        '/oauth/refresh',
-        { connectorAccountId },
-        { fallbackMessage: 'Failed to refresh OAuth tokens' },
-      );
       return res.data;
     },
 

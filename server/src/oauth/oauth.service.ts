@@ -11,6 +11,7 @@ import {
   createConnectorAccountId,
   GoogleSheetsConnectorExtras,
   isGoogleSheetsConnectorExtras,
+  OAuthStatePayload,
   parseYouTubeAdditionalChannels,
   QuickBooksConnectorExtras,
   ValidatedOAuthInitiateOptionsDto,
@@ -18,7 +19,7 @@ import {
   YouTubeConnectorExtras,
 } from '@spinner/shared-types';
 import { createHash, randomBytes } from 'crypto';
-import { capitalize } from 'lodash';
+import { capitalize, isEqual, omit } from 'lodash';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { WSLogger } from 'src/logger';
@@ -35,6 +36,7 @@ import { DecryptedCredentials } from '../remote-service/connector-account/types/
 import { EncryptedData } from '../utils/encryption';
 import { OAuthAppCredentialResolver } from './oauth-app-credential-resolver.service';
 import { asOAuthAppVersion, OAuthAppCredentials, OAuthAppVersion } from './oauth-app-version';
+import { OAuthPendingAuthorizationStore } from './oauth-pending-authorization-store.service';
 import { OAuthProvider, OAuthTokenResponse } from './oauth-provider.interface';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
 import { GoHighLevelOAuthProvider } from './providers/gohighlevel-oauth.provider';
@@ -48,7 +50,7 @@ import { WebflowOAuthProvider } from './providers/webflow-oauth.provider';
 import { WixOAuthProvider } from './providers/wix-oauth.provider';
 import { YouTubeOAuthProvider } from './providers/youtube-oauth.provider';
 import { ZohoOAuthProvider } from './providers/zoho-oauth.provider';
-import { OAuthStatePayload } from './types';
+import { PendingOAuthAuthorization } from './types';
 
 /**
  * Response from the request to get the OAuth authorization redirect URL for a connector.
@@ -216,6 +218,7 @@ export class OAuthService {
     private readonly scratchGitService: ScratchGitService,
     private readonly config: ScratchConfigService,
     private readonly credentialResolver: OAuthAppCredentialResolver,
+    private readonly pendingAuthorizationStore: OAuthPendingAuthorizationStore,
   ) {
     // Register OAuth providers
     this.providers.set('AIRTABLE', this.airtableProvider);
@@ -234,11 +237,13 @@ export class OAuthService {
 
   /**
    * Initiates an OAuth authorization flow for a supported external service.
-   * Builds a state payload containing user info, connection preferences, and security data,
-   * then generates the authorization URL that the client should redirect the user to.
+   * Stores everything the callback will act on — user info, the target workbook and
+   * (on re-auth) connection, connection preferences, the PKCE verifier — server-side
+   * (OAuthPendingAuthorizationStore), then generates the authorization URL that the
+   * client should redirect the user to. The `state` on that URL carries only the
+   * record's nonce plus the public routing fields in {@link OAuthStatePayload}.
    * Supports both system-managed OAuth apps and custom OAuth client credentials.
    */
-  // eslint-disable-next-line @typescript-eslint/require-await
   async initiateOAuth(
     service: string,
     actor: Actor,
@@ -258,7 +263,26 @@ export class OAuthService {
       throw new BadRequestException(`Unsupported OAuth service: ${service}`);
     }
 
-    // Embed connection method and optional custom client info into state (base64 JSON)
+    checkWorkspacePermissions(actor, options.workbookId as WorkbookId);
+
+    // A re-auth may only target an OAuth connection of this service inside the workbook
+    // the caller was just permission-checked for (DEV-12155). Checked here so a bad id
+    // fails before the user is sent to the provider; the callback checks it again.
+    if (options.connectorAccountId) {
+      const connectorAccountToReauthorize = await this.findConnectorAccountEligibleForReauthorization(
+        options.connectorAccountId,
+        options.workbookId,
+        service,
+      );
+      if (!connectorAccountToReauthorize) {
+        this.logRejectedReauthorizationTarget('OAuthService.initiateOAuth', actor, service, {
+          connectorAccountId: options.connectorAccountId,
+          workbookId: options.workbookId,
+        });
+        throw new BadRequestException('Invalid connection for re-authorization');
+      }
+    }
+
     // Generate PKCE values for providers that require it (e.g. Airtable)
     let codeVerifier: string | undefined;
     let codeChallenge: string | undefined;
@@ -278,8 +302,17 @@ export class OAuthService {
       customClientSecret: options.customClientSecret,
     });
 
-    const statePayload: OAuthStatePayload = {
+    // Standard base64 of JSON, NOT base64url or a `payload.signature` pair: dusky's redirect
+    // page, the web callback pages and desktop all read these routing fields with
+    // `JSON.parse(atob(state))`, and `atob` rejects `-`, `_` and `.`.
+    const publicRoutingFields: Omit<OAuthStatePayload, 'pendingAuthorizationNonce'> = {
       resultForwardUrl: options.resultForwardUrl,
+      service,
+      workbookId: options.workbookId,
+      returnPage: options.returnPage,
+    };
+
+    const pendingAuthorization: PendingOAuthAuthorization = {
       userId: actor.userId,
       organizationId: actor.organizationId,
       workbookId: options.workbookId,
@@ -288,7 +321,6 @@ export class OAuthService {
       customClientId: options.customClientId,
       customClientSecret: options.customClientSecret,
       connectionName: options.connectionName,
-      returnPage: options.returnPage,
       connectorAccountId: options.connectorAccountId,
       quickbooksSandbox: options.quickbooksSandbox,
       zohoDataCenter: options.zohoDataCenter,
@@ -296,9 +328,13 @@ export class OAuthService {
       googleSheetsSpreadsheetUrls: options.googleSheetsSpreadsheetUrls,
       codeVerifier,
       oauthAppVersion,
-      ts: Date.now(),
+      publicRoutingFieldsAsMinted: publicRoutingFields,
     };
-    const state = Buffer.from(JSON.stringify(statePayload)).toString('base64');
+    const pendingAuthorizationNonce =
+      await this.pendingAuthorizationStore.savePendingAuthorizationAndReturnNonce(pendingAuthorization);
+
+    const publicStatePayload: OAuthStatePayload = { ...publicRoutingFields, pendingAuthorizationNonce };
+    const state = Buffer.from(JSON.stringify(publicStatePayload)).toString('base64');
 
     const authUrl = provider.generateAuthUrl(state, credentials, {
       codeChallenge,
@@ -310,9 +346,12 @@ export class OAuthService {
 
   /**
    * Handles the OAuth callback after the user authorizes the application.
-   * Decodes and validates the state parameter to ensure the request matches the original user,
+   * Consumes the server-side record `initiateOAuth` stored for this connect (the `state`
+   * only names it), checks it was started by this caller for this service and workbook,
    * exchanges the authorization code for access/refresh tokens via the provider,
-   * and creates a new ConnectorAccount record with the encrypted credentials.
+   * and creates — or, on re-auth, updates — the ConnectorAccount with the encrypted credentials.
+   *
+   * Nothing is exchanged or written until every check has passed.
    */
   async handleOAuthCallback(
     service: string,
@@ -324,43 +363,86 @@ export class OAuthService {
       throw new BadRequestException(`Unsupported OAuth service: ${service}`);
     }
 
-    // Decode state and validate
-    let statePayload: OAuthStatePayload;
+    // The public state is untrusted: its nonce locates the record this server stored at
+    // initiate, and its routing fields must match the record's copy. Every field the
+    // callback acts on comes from the record.
+    let publicStatePayload: Partial<OAuthStatePayload>;
     try {
-      const decoded = Buffer.from(callbackData.state, 'base64').toString();
-      const parsed = JSON.parse(decoded) as OAuthStatePayload;
-      statePayload = parsed;
+      publicStatePayload = JSON.parse(
+        Buffer.from(callbackData.state, 'base64').toString(),
+      ) as Partial<OAuthStatePayload>;
     } catch {
       throw new BadRequestException('Invalid state parameter');
     }
 
-    if (statePayload.userId !== actor.userId) {
-      throw new BadRequestException('Invalid state parameter: invalid user Id ${statePayload.userId}');
+    // Consumed up front, so a state works at most once even if a later check rejects it.
+    // A state minted before DEV-12155 has no nonce and lands here too.
+    const pendingAuthorization =
+      typeof publicStatePayload?.pendingAuthorizationNonce === 'string' &&
+      publicStatePayload.pendingAuthorizationNonce.length > 0
+        ? await this.pendingAuthorizationStore.consumePendingAuthorizationForUser(
+            actor.userId,
+            publicStatePayload.pendingAuthorizationNonce,
+          )
+        : null;
+    if (!pendingAuthorization) {
+      throw new BadRequestException(
+        'This connection request has expired or was already used. Please try connecting again.',
+      );
     }
 
-    if (statePayload.organizationId !== actor.organizationId) {
-      throw new BadRequestException('Invalid state parameter: invalid organization Id ${statePayload.organizationId}');
+    // The state must come back exactly as initiate minted it. `JSON` drops undefined fields
+    // on both sides — the stored copy went through Redis — so the comparison is like for like.
+    const receivedPublicRoutingFields = omit(publicStatePayload, 'pendingAuthorizationNonce');
+    if (!isEqual(receivedPublicRoutingFields, pendingAuthorization.publicRoutingFieldsAsMinted)) {
+      WSLogger.warn({
+        source: 'OAuthService.handleOAuthCallback',
+        message: 'Rejected an OAuth callback whose state was edited after initiate',
+        userId: actor.userId,
+        organizationId: actor.organizationId,
+        service,
+      });
+      throw new BadRequestException('Invalid state parameter');
+    }
+
+    if (pendingAuthorization.service.toUpperCase() !== service.toUpperCase()) {
+      throw new BadRequestException('Invalid state parameter');
+    }
+
+    // The store keys records by userId, so this holds by construction; kept as a guard.
+    if (pendingAuthorization.userId !== actor.userId) {
+      throw new BadRequestException('Invalid state parameter');
+    }
+
+    if (pendingAuthorization.organizationId !== actor.organizationId) {
+      throw new BadRequestException('Invalid state parameter');
     }
 
     // Validate workbookId
     const workbook = await this.db.client.workbook.findFirst({
-      where: { id: statePayload.workbookId },
+      where: { id: pendingAuthorization.workbookId },
     });
     if (!workbook) {
       throw new NotFoundException('Workbook not found');
     }
 
-    checkWorkspacePermissions(actor, statePayload.workbookId as WorkbookId);
+    checkWorkspacePermissions(actor, pendingAuthorization.workbookId as WorkbookId);
 
+    // Re-checked even though initiate verified it, so the write below can only ever land
+    // on an OAuth connection of this service in the permission-checked workbook.
     let existingConnectorAccount: ConnectorAccount | null = null;
-    if (statePayload.connectorAccountId) {
-      existingConnectorAccount = await this.db.client.connectorAccount.findUnique({
-        where: { id: statePayload.connectorAccountId },
-      });
+    if (pendingAuthorization.connectorAccountId) {
+      existingConnectorAccount = await this.findConnectorAccountEligibleForReauthorization(
+        pendingAuthorization.connectorAccountId,
+        pendingAuthorization.workbookId,
+        service,
+      );
       if (!existingConnectorAccount) {
-        throw new BadRequestException(
-          'Invalid state parameter: invalid connector account Id ${statePayload.connectorAccountId}',
-        );
+        this.logRejectedReauthorizationTarget('OAuthService.handleOAuthCallback', actor, service, {
+          connectorAccountId: pendingAuthorization.connectorAccountId,
+          workbookId: pendingAuthorization.workbookId,
+        });
+        throw new BadRequestException('Invalid state parameter');
       }
     }
 
@@ -370,12 +452,17 @@ export class OAuthService {
     // sees the reason instead of a generic 500.
     //
     // Resolve the credentials for the SAME OAuth app generation the authorize URL / install
-    // link used (carried in state). Missing/older states default to the legacy apps.
-    const oauthAppVersion = asOAuthAppVersion(statePayload.oauthAppVersion);
-    const credentials = this.resolveOAuthAppCredentials(service, oauthAppVersion, statePayload.connectionMethod, {
-      customClientId: statePayload.customClientId,
-      customClientSecret: statePayload.customClientSecret,
-    });
+    // link used (recorded at initiate).
+    const oauthAppVersion = asOAuthAppVersion(pendingAuthorization.oauthAppVersion);
+    const credentials = this.resolveOAuthAppCredentials(
+      service,
+      oauthAppVersion,
+      pendingAuthorization.connectionMethod,
+      {
+        customClientId: pendingAuthorization.customClientId,
+        customClientSecret: pendingAuthorization.customClientSecret,
+      },
+    );
 
     let tokenResponse: OAuthTokenResponse;
     try {
@@ -391,8 +478,8 @@ export class OAuthService {
         tokenResponse = await this.mintClientCredentialsToken(service, provider, callbackData.instanceId, credentials);
       } else {
         tokenResponse = await provider.exchangeCodeForTokens(callbackData.code, credentials, {
-          codeVerifier: statePayload.codeVerifier,
-          dataCenter: statePayload.zohoDataCenter,
+          codeVerifier: pendingAuthorization.codeVerifier,
+          dataCenter: pendingAuthorization.zohoDataCenter,
         });
       }
     } catch (error) {
@@ -413,19 +500,19 @@ export class OAuthService {
     // Zoho is multi-datacenter: persist the user-selected DC (in workspace_id →
     // oauthWorkspaceId) so token refreshes route to the right accounts host and
     // the connector can derive the regional API domain.
-    if (service.toUpperCase() === Service.ZOHO && statePayload.zohoDataCenter) {
-      tokenResponse.workspace_id = statePayload.zohoDataCenter;
+    if (service.toUpperCase() === Service.ZOHO && pendingAuthorization.zohoDataCenter) {
+      tokenResponse.workspace_id = pendingAuthorization.zohoDataCenter;
     }
 
     if (existingConnectorAccount) {
-      // Re-auth upgrades the connection to whatever app generation state carried, so an
+      // Re-auth upgrades the connection to the app generation chosen at initiate, so an
       // explicit reconnect after a cutover moves the user onto the Whalesync app.
       await this.updateOAuthAccount(existingConnectorAccount, actor, tokenResponse, oauthAppVersion, {
-        connectionMethod: statePayload.connectionMethod,
-        customClientId: statePayload.customClientId,
-        customClientSecret: statePayload.customClientSecret,
-        connectionName: statePayload.connectionName,
-        googleSheetsSpreadsheetUrls: statePayload.googleSheetsSpreadsheetUrls,
+        connectionMethod: pendingAuthorization.connectionMethod,
+        customClientId: pendingAuthorization.customClientId,
+        customClientSecret: pendingAuthorization.customClientSecret,
+        connectionName: pendingAuthorization.connectionName,
+        googleSheetsSpreadsheetUrls: pendingAuthorization.googleSheetsSpreadsheetUrls,
       });
 
       return { connectorAccountId: existingConnectorAccount.id };
@@ -433,18 +520,18 @@ export class OAuthService {
       // Create new connector account (include connection method and custom client creds for storage)
       const connectorAccount = await this.createOAuthAccount(
         service,
-        statePayload.workbookId as WorkbookId,
+        pendingAuthorization.workbookId as WorkbookId,
         actor,
         tokenResponse,
         oauthAppVersion,
         {
-          connectionMethod: statePayload.connectionMethod,
-          customClientId: statePayload.customClientId,
-          customClientSecret: statePayload.customClientSecret,
-          connectionName: statePayload.connectionName,
-          quickbooksSandbox: statePayload.quickbooksSandbox,
-          youtubeAdditionalChannels: statePayload.youtubeAdditionalChannels,
-          googleSheetsSpreadsheetUrls: statePayload.googleSheetsSpreadsheetUrls,
+          connectionMethod: pendingAuthorization.connectionMethod,
+          customClientId: pendingAuthorization.customClientId,
+          customClientSecret: pendingAuthorization.customClientSecret,
+          connectionName: pendingAuthorization.connectionName,
+          quickbooksSandbox: pendingAuthorization.quickbooksSandbox,
+          youtubeAdditionalChannels: pendingAuthorization.youtubeAdditionalChannels,
+          googleSheetsSpreadsheetUrls: pendingAuthorization.googleSheetsSpreadsheetUrls,
         },
       );
 
@@ -728,47 +815,7 @@ export class OAuthService {
       currentCredentials: DecryptedCredentials,
     ) => DecryptedCredentials | null | Promise<DecryptedCredentials | null>,
   ): Promise<DecryptedCredentials> {
-    const waitDeadlineMs = Date.now() + OAUTH_REFRESH_LOCK_WAIT_TIMEOUT_MS;
-
-    for (;;) {
-      const outcome = await this.attemptCredentialsUpdateWhileHoldingConnectionLock(
-        connectorAccountId,
-        mutateCredentials,
-      );
-      if (outcome.acquiredLock) {
-        return outcome.storedCredentials;
-      }
-
-      if (Date.now() >= waitDeadlineMs) {
-        throw new ServiceUnavailableException(
-          `Timed out waiting for another in-progress credential update for connection ${connectorAccountId}`,
-        );
-      }
-      await delayMs(OAUTH_REFRESH_LOCK_RETRY_INTERVAL_MS);
-    }
-  }
-
-  /**
-   * One attempt at the guarded credential update. Returns `{ acquiredLock: false }`
-   * — having done nothing and released the transaction immediately — when another
-   * writer holds the lock, for the same reason the refresh path does not queue
-   * inside its transaction (see {@link refreshOAuthTokensUnderConnectionLock}).
-   */
-  private async attemptCredentialsUpdateWhileHoldingConnectionLock(
-    connectorAccountId: string,
-    mutateCredentials: (
-      currentCredentials: DecryptedCredentials,
-    ) => DecryptedCredentials | null | Promise<DecryptedCredentials | null>,
-  ): Promise<{ acquiredLock: true; storedCredentials: DecryptedCredentials } | { acquiredLock: false }> {
-    return this.db.client.$transaction(async (tx) => {
-      const lockKey = buildConnectionCredentialsLockKey(connectorAccountId);
-      const [lockAttempt] = await tx.$queryRaw<
-        { acquired: boolean }[]
-      >`SELECT pg_try_advisory_xact_lock(hashtext(${lockKey})::bigint) AS acquired`;
-      if (!lockAttempt?.acquired) {
-        return { acquiredLock: false };
-      }
-
+    return this.runWhileHoldingConnectionCredentialsLock(connectorAccountId, async (tx) => {
       const account = await tx.connectorAccount.findUnique({ where: { id: connectorAccountId } });
       if (!account) {
         throw new BadRequestException(`Connection ${connectorAccountId} not found`);
@@ -779,7 +826,7 @@ export class OAuthService {
       );
       const updatedCredentials = await mutateCredentials(currentCredentials);
       if (!updatedCredentials) {
-        return { acquiredLock: true, storedCredentials: currentCredentials };
+        return currentCredentials;
       }
 
       const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(updatedCredentials);
@@ -787,8 +834,48 @@ export class OAuthService {
         where: { id: connectorAccountId },
         data: { encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue },
       });
-      return { acquiredLock: true, storedCredentials: updatedCredentials };
+      return updatedCredentials;
     });
+  }
+
+  /**
+   * Run `workWhileHoldingLock` inside a transaction holding this connection's credentials
+   * lock ({@link buildConnectionCredentialsLockKey}), retrying from outside the transaction
+   * while another writer holds it — for the same reason the refresh path does not queue
+   * inside its transaction (see {@link refreshOAuthTokensUnderConnectionLock}). Every
+   * writer of `encryptedCredentials` other than the refresh itself goes through here.
+   */
+  private async runWhileHoldingConnectionCredentialsLock<ResultOfWorkWhileHoldingLock>(
+    connectorAccountId: string,
+    workWhileHoldingLock: (tx: Prisma.TransactionClient) => Promise<ResultOfWorkWhileHoldingLock>,
+  ): Promise<ResultOfWorkWhileHoldingLock> {
+    const waitDeadlineMs = Date.now() + OAUTH_REFRESH_LOCK_WAIT_TIMEOUT_MS;
+
+    for (;;) {
+      const outcome = await this.db.client.$transaction(
+        async (tx): Promise<{ acquiredLock: true; result: ResultOfWorkWhileHoldingLock } | { acquiredLock: false }> => {
+          const lockKey = buildConnectionCredentialsLockKey(connectorAccountId);
+          const [lockAttempt] = await tx.$queryRaw<
+            { acquired: boolean }[]
+          >`SELECT pg_try_advisory_xact_lock(hashtext(${lockKey})::bigint) AS acquired`;
+          if (!lockAttempt?.acquired) {
+            // Done nothing; the transaction is released immediately.
+            return { acquiredLock: false };
+          }
+          return { acquiredLock: true, result: await workWhileHoldingLock(tx) };
+        },
+      );
+      if (outcome.acquiredLock) {
+        return outcome.result;
+      }
+
+      if (Date.now() >= waitDeadlineMs) {
+        throw new ServiceUnavailableException(
+          `Timed out waiting for another in-progress credential update for connection ${connectorAccountId}`,
+        );
+      }
+      await delayMs(OAUTH_REFRESH_LOCK_RETRY_INTERVAL_MS);
+    }
   }
 
   /**
@@ -812,6 +899,52 @@ export class OAuthService {
       throw new BadRequestException(`${service} does not use client-credentials authentication`);
     }
     return provider.mintTokenFromInstall(installIdentifier, credentials);
+  }
+
+  /**
+   * The connection a re-auth may overwrite: an OAuth connection of `service` that lives in
+   * `workbookId`. The lookup is scoped by workbook so a connection anywhere else — another
+   * workbook, another org — is never loaded at all. Resolves to null when the id is unknown,
+   * belongs elsewhere, is for another service, or isn't an OAuth connection; callers answer
+   * all of those with the same error so the response doesn't reveal which.
+   */
+  private async findConnectorAccountEligibleForReauthorization(
+    connectorAccountId: string,
+    workbookId: string,
+    service: string,
+  ): Promise<ConnectorAccount | null> {
+    const connectorAccountInWorkbook = await this.db.client.connectorAccount.findFirst({
+      where: { id: connectorAccountId, workbookId },
+    });
+    if (
+      !connectorAccountInWorkbook ||
+      connectorAccountInWorkbook.service !== service.toUpperCase() ||
+      connectorAccountInWorkbook.authType !== AuthType.OAUTH
+    ) {
+      return null;
+    }
+    return connectorAccountInWorkbook;
+  }
+
+  /**
+   * A re-auth naming a connection the caller may not overwrite is either a stale client or
+   * an attempt to take over someone else's connection (DEV-12155) — keep a record of it.
+   */
+  private logRejectedReauthorizationTarget(
+    source: string,
+    actor: Actor,
+    service: string,
+    target: { connectorAccountId: string; workbookId: string },
+  ): void {
+    WSLogger.warn({
+      source,
+      message: 'Rejected OAuth re-authorization of a connection outside the workbook, or of another service',
+      userId: actor.userId,
+      organizationId: actor.organizationId,
+      service,
+      connectorAccountId: target.connectorAccountId,
+      workbookId: target.workbookId,
+    });
   }
 
   /**
@@ -988,18 +1121,24 @@ export class OAuthService {
       }
     }
 
-    await this.db.client.connectorAccount.update({
-      where: { id: connectorAccount.id },
-      data: {
-        encryptedCredentials: encryptedCredentials as Prisma.InputJsonValue,
-        // Re-auth re-mints against the current app generation — record it so future
-        // refreshes use that app (this is how an explicit reconnect upgrades a
-        // legacy connection onto the unified Whalesync app).
-        oauthAppVersion,
-        ...(extras ? { extras: { ...extras } } : {}),
-        healthStatus: 'OK', // assume healthy because this connection is created via a successful oauth flow
-        healthStatusLastCheckedAt: new Date(),
-      },
+    // Under the connection's credentials lock, so a re-auth can't interleave with a token
+    // refresh (or a Supabase role write) and have one overwrite the other. The new blob
+    // replaces the old one outright, so the old one is deliberately never read: re-auth is
+    // how a user repairs a connection, and must not depend on its current credentials.
+    await this.runWhileHoldingConnectionCredentialsLock(connectorAccount.id, async (tx) => {
+      await tx.connectorAccount.update({
+        where: { id: connectorAccount.id },
+        data: {
+          encryptedCredentials: encryptedCredentials as Prisma.InputJsonValue,
+          // Re-auth re-mints against the current app generation — record it so future
+          // refreshes use that app (this is how an explicit reconnect upgrades a
+          // legacy connection onto the unified Whalesync app).
+          oauthAppVersion,
+          ...(extras ? { extras: { ...extras } } : {}),
+          healthStatus: 'OK', // assume healthy because this connection is created via a successful oauth flow
+          healthStatusLastCheckedAt: new Date(),
+        },
+      });
     });
 
     this.posthogService.captureEvent(PostHogEventName.CONNECTOR_ACCOUNT_REAUTHORIZED, actor, {

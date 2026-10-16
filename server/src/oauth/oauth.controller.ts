@@ -43,10 +43,4 @@ export class OAuthController {
   ): Promise<{ connectorAccountId: string }> {
     return this.oauthService.handleOAuthCallback(service, userToActor(req.user), callbackData);
   }
-
-  @Post('refresh')
-  async refreshOAuthTokens(@Body() body: { connectorAccountId: string }): Promise<{ success: boolean }> {
-    await this.oauthService.refreshOAuthTokens(body.connectorAccountId);
-    return { success: true };
-  }
 }

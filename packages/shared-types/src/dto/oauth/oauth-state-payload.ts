@@ -1,3 +1,13 @@
+/**
+ * What the OAuth `state` decodes to: base64-encoded JSON, readable with `JSON.parse(atob(state))`.
+ *
+ * It is PUBLIC and UNTRUSTED. The state round-trips through the browser, the provider and
+ * Whalesync's redirect page, so it only carries what those hops need to route the result
+ * (`resultForwardUrl`, `service`, `workbookId`, `returnPage`) plus the nonce of the server-side
+ * record of the connect. Who started the flow, which connection it re-authorizes, and the PKCE
+ * verifier all stay in that record (DEV-12155). The server accepts a state at most once, and only
+ * exactly as it minted it — clients read it but must never edit it.
+ */
 export type OAuthStatePayload = {
   /**
    * Absolute URL the OAuth callback forwards the result to once the provider redirects back — the
@@ -10,29 +20,14 @@ export type OAuthStatePayload = {
    * and the callback must guard rather than trust the type.
    */
   resultForwardUrl?: string;
-  userId: string;
-  organizationId: string;
-  workbookId: string;
   service: string;
-  connectionMethod: 'OAUTH_SYSTEM' | 'OAUTH_CUSTOM';
-  customClientId?: string;
-  customClientSecret?: string;
-  connectionName?: string;
+  /** The workspace the connect happens in. Read by desktop to navigate after connecting. */
+  workbookId: string;
   /**
    * Web-only: in-app path to land on after the connection completes (read at
    * `/oauth/callback-step-2`). Never a forward target — that is `resultForwardUrl`.
    */
   returnPage?: string;
-  connectorAccountId?: string; // used to identify the connector account to reauthorize
-  quickbooksSandbox?: boolean;
-  zohoDataCenter?: string; // Zoho multi-DC: US | EU | IN | AU | JP | CA | CN | SA
-  youtubeAdditionalChannels?: string; // YouTube: raw extra channel-id list (parsed into extras.additionalChannels)
-  googleSheetsSpreadsheetUrls?: string; // Google Sheets: raw spreadsheet URL/id list (parsed into extras.spreadsheetIds)
-  codeVerifier?: string;
-  // Which OAuth *app* generation this flow is authorizing against. Chosen at initiate and
-  // echoed back so the code exchange uses the same app's credentials and the connection is
-  // stamped with it. Optional for back-compat with states minted before this field existed.
-  // The frontend forwards it opaquely and never reads it.
-  oauthAppVersion?: number;
-  ts: number;
+  /** Identifies the server-side record of this connect. Opaque to every client. */
+  pendingAuthorizationNonce: string;
 };
