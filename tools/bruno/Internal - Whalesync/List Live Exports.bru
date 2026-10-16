@@ -1,0 +1,17 @@
+meta {
+  name: List Live Exports
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/internal/whalesync/users/{{whalesyncUserId}}/live-exports
+  body: none
+  auth: inherit
+}
+
+docs {
+  List a shadow user's Live Export workbooks, newest first, skipping those pending
+  deletion. Returns { liveExports: [{ id, name, createdAt, updatedAt }] }. Returns an
+  empty list if the user does not exist (never creates one).
+}

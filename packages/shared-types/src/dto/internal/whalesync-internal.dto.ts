@@ -102,6 +102,23 @@ export interface WhalesyncUpdateSubscriptionResponse {
   planType: string | null;
 }
 
+/** One of a shadow user's Live Exports (a `ws_export` workbook), as listed for Whalesync's admin dev tools. */
+export interface WhalesyncLiveExportSummary {
+  /** The workbook id (`wkb_…`), which is also the id in Whalesync's `/exports/<id>` URL. */
+  id: string;
+  /** Null until the user names it. */
+  name: string | null;
+  /** UTC ISO-8601 timestamp. */
+  createdAt: string;
+  /** UTC ISO-8601 timestamp. */
+  updatedAt: string;
+}
+
+export interface WhalesyncListLiveExportsResponse {
+  /** Newest first. Empty when no shadow user exists. Excludes workbooks pending deletion. */
+  liveExports: WhalesyncLiveExportSummary[];
+}
+
 /**
  * The typed shape stored in `Subscription.metadata` for Whalesync-plan subscriptions. All fields optional
  * — Whalesync may send a partial payload. Persisted as JSON; read back to drive Live Export gating (future).

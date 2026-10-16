@@ -5,6 +5,7 @@ import { createZodDto } from 'nestjs-zod';
 // import everything for these endpoints from one place.
 export type {
   WhalesyncClearSubscriptionResponse,
+  WhalesyncListLiveExportsResponse,
   WhalesyncRevokeSessionsResponse,
   WhalesyncSessionResponse,
   WhalesyncUpdateSubscriptionResponse,

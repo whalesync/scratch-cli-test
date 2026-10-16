@@ -204,6 +204,12 @@ POST /internal/whalesync/users
 DELETE /internal/whalesync/users/:whalesyncUserId
   Deprovision a shadow user. Must route through WorkbookService.delete so the
   user's repos/jobs/tables are cleaned up (per the deletion rule in CLAUDE.md).
+
+GET /internal/whalesync/users/:whalesyncUserId/live-exports
+  200:    { liveExports: [{ id, name, createdAt, updatedAt }] }   // newest first
+  Behavior: lists the user's Live Export workbooks, skipping those pending deletion, for
+            Whalesync's admin Users dev tool. Read-only: an unknown user gets an empty
+            list and is not created.
 ```
 
 Minting reuses `generateUserApiToken` (`spinner/server/src/users/users.service.ts`).

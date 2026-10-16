@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ScratchAdminGuard } from 'src/auth/scratch-admin.guard';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
 import {
   WhalesyncClearSubscriptionResponse,
+  WhalesyncListLiveExportsResponse,
   WhalesyncRevokeSessionsResponse,
   WhalesyncSessionResponse,
   WhalesyncShadowUserDto,
@@ -79,6 +80,15 @@ export class WhalesyncController {
   @Delete('users/:whalesyncUserId/sessions')
   async revokeSessions(@Param('whalesyncUserId') whalesyncUserId: string): Promise<WhalesyncRevokeSessionsResponse> {
     return this.whalesyncInternalService.revokeSessionsForWhalesyncUser(whalesyncUserId);
+  }
+
+  /**
+   * List a shadow user's Live Exports, newest first, for Whalesync's admin dev tools. Returns an empty list if
+   * the user does not exist (never creates one).
+   */
+  @Get('users/:whalesyncUserId/live-exports')
+  async listLiveExports(@Param('whalesyncUserId') whalesyncUserId: string): Promise<WhalesyncListLiveExportsResponse> {
+    return this.whalesyncInternalService.listLiveExportsForWhalesyncUser(whalesyncUserId);
   }
 
   /**

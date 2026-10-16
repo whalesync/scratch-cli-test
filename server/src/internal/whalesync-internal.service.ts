@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { WhalesyncSubscriptionPayload, WhalesyncUpdateSubscriptionResponse, WorkbookId } from '@spinner/shared-types';
+import {
+  WhalesyncListLiveExportsResponse,
+  WhalesyncSubscriptionPayload,
+  WhalesyncUpdateSubscriptionResponse,
+  WorkbookId,
+  WorkbookManager,
+} from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { userToActor } from 'src/users/types';
@@ -10,7 +16,8 @@ const LOG_SOURCE = 'WhalesyncInternalService';
 
 /**
  * Orchestrates the server-to-server operations Bottlenose drives over the admin channel: provisioning
- * shadow users, minting/revoking their short-lived browser session tokens, and deprovisioning them.
+ * shadow users, minting/revoking their short-lived browser session tokens, listing their Live Exports, and
+ * deprovisioning them.
  *
  * This service (rather than {@link UsersService}) owns deprovisioning because tearing a shadow user down
  * must route through {@link WorkbookService.delete} (the CLAUDE.md cleanup rule), and `WorkbookModule`
@@ -112,6 +119,34 @@ export class WhalesyncInternalService {
     }
     const { cleared } = await this.stripePaymentService.clearWhalesyncPlanSubscription(shadowUser);
     return { scratchUserId: shadowUser.id, cleared };
+  }
+
+  /**
+   * A shadow user's Live Exports (`ws_export` workbooks), newest first, for Whalesync's admin dev tools. Skips
+   * workbooks pending deletion. Read-only: a user that doesn't exist gets an empty list and is not created.
+   */
+  public async listLiveExportsForWhalesyncUser(whalesyncUserId: string): Promise<WhalesyncListLiveExportsResponse> {
+    const shadowUser = await this.usersService.findByWhalesyncUserId(whalesyncUserId);
+    if (!shadowUser) {
+      return { liveExports: [] };
+    }
+
+    const workbooks = await this.workbookService.findAllForUser(
+      userToActor(shadowUser),
+      'createdAt',
+      'desc',
+      WorkbookManager.WS_EXPORT,
+    );
+    return {
+      liveExports: workbooks
+        .filter((workbook) => !workbook.isPendingDelete)
+        .map((workbook) => ({
+          id: workbook.id,
+          name: workbook.name,
+          createdAt: workbook.createdAt.toISOString(),
+          updatedAt: workbook.updatedAt.toISOString(),
+        })),
+    };
   }
 
   /**
