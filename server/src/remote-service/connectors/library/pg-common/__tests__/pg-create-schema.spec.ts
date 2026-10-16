@@ -723,3 +723,82 @@ describe('isInsufficientPrivilegeError', () => {
     expect(isInsufficientPrivilegeError(null)).toBe(false);
   });
 });
+
+/**
+ * HubSpot property labels become Live Export column names verbatim, and two shapes broke knex's
+ * Postgres identifier formatter: a `[<digits>]` was read as an array subscript (`"Tier "[1]`, a
+ * syntax error that failed the whole CREATE TABLE), and leading/trailing whitespace was trimmed
+ * (the column was created as `"Lead Source"`, so the verbatim bulk UPDATE couldn't find it).
+ */
+describe('column names containing [digits] or leading/trailing whitespace', () => {
+  const quotingKnex: Knex = knex({ client: 'pg' });
+  applyVerbatimIdentifierQuoting(quotingKnex);
+
+  afterAll(async () => {
+    await quotingKnex.destroy();
+  });
+
+  it('quotes a CREATE TABLE column containing [digits] verbatim instead of as an array subscript', () => {
+    const sql = buildCreateTableQuery(
+      quotingKnex,
+      'public',
+      'contacts',
+      [field('Tier [1] score', { kind: 'text' })],
+      new Map(),
+    ).toString();
+
+    expect(sql).toContain('"Tier [1] score" text');
+    expect(sql).not.toContain('"Tier "[1]');
+  });
+
+  it('keeps leading, trailing and non-breaking edge whitespace in CREATE TABLE and ALTER TABLE columns', () => {
+    const createSql = buildCreateTableQuery(
+      quotingKnex,
+      'public',
+      'contacts',
+      [field('Lead Source ', { kind: 'text' }), field(' Owner', { kind: 'text' })],
+      new Map(),
+    ).toString();
+    const alterSql = buildAddColumnsQuery(
+      quotingKnex,
+      'public',
+      'contacts',
+      [field('Region ', { kind: 'text' })],
+      new Map(),
+    ).toString();
+
+    expect(createSql).toContain('"Lead Source " text');
+    expect(createSql).toContain('" Owner" text');
+    expect(alterSql).toContain('"Region " text');
+  });
+
+  it('leaves interior whitespace and names without edge whitespace unchanged by the encoding', () => {
+    expect(escapeKnexColumnIdentifierSpecialCharacters('Lead  Source')).toBe('Lead  Source');
+    expect(escapeKnexColumnIdentifierSpecialCharacters('Tier [1] score')).toBe('Tier [1] score');
+  });
+
+  it('quotes both shapes verbatim in INSERT / SELECT / UPDATE', () => {
+    for (const columnName of ['Tier [1] score', 'Lead Source ', ' Owner', ' Is this a customer? ']) {
+      const encodedColumnName = escapeKnexColumnIdentifierSpecialCharacters(columnName);
+      const quotedColumnName = `"${columnName}"`;
+      expect(
+        quotingKnex('public.contacts')
+          .insert({ [encodedColumnName]: 'x' })
+          .toQuery(),
+      ).toContain(`(${quotedColumnName})`);
+      expect(quotingKnex('public.contacts').select(encodedColumnName).toQuery()).toContain(
+        `select ${quotedColumnName}`,
+      );
+      expect(
+        quotingKnex('public.contacts')
+          .update({ [encodedColumnName]: 'x' })
+          .toQuery(),
+      ).toContain(`set ${quotedColumnName} =`);
+    }
+  });
+
+  it('still emits select-all and returning-all unquoted', () => {
+    expect(quotingKnex('public.contacts').select('*').toQuery()).toBe('select * from "public"."contacts"');
+    expect(quotingKnex('public.contacts').insert({ name: 'x' }).returning('*').toQuery()).toContain('returning *');
+  });
+});

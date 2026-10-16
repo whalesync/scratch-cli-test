@@ -66,6 +66,7 @@ export {
 } from './pg-incremental';
 export { prepareRecordsForPgInsert } from './pg-insert-record-preparation';
 export { collectPgJsonColumnNames, serializeJsonColumnArraysForInsert } from './pg-json-column-insert-serialization';
+export { isKnexQueryCompilationError, knexQueryCompilationErrorDetails } from './pg-knex-query-compilation-error';
 export {
   POSTGRES_NATIVE_TYPE_SYSTEM,
   isRecreatablePostgresNativeColumnType,

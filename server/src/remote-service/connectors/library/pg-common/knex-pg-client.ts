@@ -31,6 +31,7 @@ import {
   type BoundSqlStatement,
 } from './pg-catalog-queries';
 import { buildAddColumnsQuery, buildCreateTableQuery, type ForeignKeyResolutions } from './pg-create-schema';
+import { runKnexRawStatementTaggingCompilationErrorWithSqlText } from './pg-knex-query-compilation-error';
 
 // NUMERIC / DECIMAL fidelity (DEV-10777): we intentionally do NOT register a global
 // `pg.types.setTypeParser(1700, parseFloat)`. The `pg` driver returns `numeric`/`decimal` as a
@@ -70,6 +71,27 @@ function escapeObjectKeys(obj: Record<string, unknown>): Record<string, unknown>
     result[escapeKnexSpecialCharacters(key)] = value;
   }
   return result;
+}
+
+/**
+ * Double-quote a Postgres identifier (schema, table or column) for direct
+ * interpolation into a `knex.raw(sql, bindings)` string.
+ *
+ * `knex.raw` treats every bare `?` in its SQL text as a positional binding
+ * placeholder, so an identifier like `"Decisionmaker?"` inlined as-is adds
+ * phantom placeholders and knex refuses the statement ("Expected 1 bindings,
+ * saw 3" — a HubSpot → Supabase Live Export whose columns are HubSpot labels
+ * ending in `?`). Each `?` is escaped as `\?`, knex's documented literal
+ * escape, which the pg client turns back into `?` before sending — the same
+ * escape {@link escapeKnexColumnIdentifierSpecialCharacters} applies on the
+ * query-builder path. The `.` / `" as "` sentinel encoding is NOT applied:
+ * raw SQL never passes through knex's identifier splitter.
+ *
+ * Known limitation (shared with the query-builder escape): a literal backslash
+ * immediately before a `?` in the identifier is consumed by knex's un-escape.
+ */
+function quotePostgresIdentifierForKnexRawSql(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""').replace(/\?/g, '\\?')}"`;
 }
 
 /**
@@ -1004,9 +1026,8 @@ export class KnexPGClient {
   ): Promise<(Record<string, unknown> | 'not_found')[]> {
     if (records.length === 0) return [];
 
-    const quoteId = (name: string) => `"${name.replace(/"/g, '""')}"`;
-    const quotedTable = `${quoteId(schema)}.${quoteId(tableName)}`;
-    const quotedPk = quoteId(primaryId);
+    const quotedTable = `${quotePostgresIdentifierForKnexRawSql(schema)}.${quotePostgresIdentifierForKnexRawSql(tableName)}`;
+    const quotedPk = quotePostgresIdentifierForKnexRawSql(primaryId);
 
     // Group records that change the exact same set of columns. The map key is
     // the sorted changed-column list so that `{name, price}` and `{price, name}`
@@ -1036,7 +1057,10 @@ export class KnexPGClient {
     const updatedRowByPrimaryId = await this.knex.transaction(async (transaction) => {
       const updatedRowByPrimaryIdInTransaction = new Map<string, Record<string, unknown>>();
       for (const { changedColumns, records: recordsInGroup } of recordsGroupedByChangedColumnSet.values()) {
-        const setClauses = changedColumns.map((column) => `${quoteId(column)} = v.${quoteId(column)}`);
+        const setClauses = changedColumns.map((column) => {
+          const quotedColumn = quotePostgresIdentifierForKnexRawSql(column);
+          return `${quotedColumn} = v.${quotedColumn}`;
+        });
         const payload = recordsInGroup.map((r) => ({ ...r.data, [primaryId]: r.id }));
         const jsonParam = JSON.stringify(payload);
 
@@ -1048,7 +1072,9 @@ export class KnexPGClient {
           RETURNING t.*
         `;
 
-        const result = await transaction.raw<{ rows: Record<string, unknown>[] }>(query, [jsonParam]);
+        const result = await runKnexRawStatementTaggingCompilationErrorWithSqlText(query, () =>
+          transaction.raw<{ rows: Record<string, unknown>[] }>(query, [jsonParam]),
+        );
         // Guard against a non-unique match column (e.g. one column of a composite
         // primary key, DEV-10802): each id may update AT MOST one row, so the same
         // primary-id value appearing on two returned rows proves the WHERE clause
@@ -1090,14 +1116,13 @@ export class KnexPGClient {
     primaryId: string,
   ): Promise<number> {
     if (recordIds.length === 0) return 0;
-    const quoteId = (name: string) => `"${name.replace(/"/g, '""')}"`;
-    const quotedTable = `${quoteId(schema)}.${quoteId(tableName)}`;
-    const quotedPk = quoteId(primaryId);
+    const quotedTable = `${quotePostgresIdentifierForKnexRawSql(schema)}.${quotePostgresIdentifierForKnexRawSql(tableName)}`;
+    const quotedPk = quotePostgresIdentifierForKnexRawSql(primaryId);
     return this.knex.transaction(async (transaction) => {
       const bindingPlaceholders = recordIds.map(() => '?').join(', ');
-      const result = await transaction.raw<{ rows: Record<string, unknown>[] }>(
-        `DELETE FROM ${quotedTable} WHERE ${quotedPk} IN (${bindingPlaceholders}) RETURNING ${quotedPk}`,
-        recordIds,
+      const deleteSqlText = `DELETE FROM ${quotedTable} WHERE ${quotedPk} IN (${bindingPlaceholders}) RETURNING ${quotedPk}`;
+      const result = await runKnexRawStatementTaggingCompilationErrorWithSqlText(deleteSqlText, () =>
+        transaction.raw<{ rows: Record<string, unknown>[] }>(deleteSqlText, recordIds),
       );
       // Each id may delete AT MOST one row; a repeated returned value proves the
       // match column is not unique and siblings were caught. Roll back.

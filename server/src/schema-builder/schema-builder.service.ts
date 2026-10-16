@@ -30,7 +30,7 @@ import { ConnectorsService } from 'src/remote-service/connectors/connectors.serv
 import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
 import { NormalizedCreateTablePlan } from 'src/remote-service/connectors/schema-creation.types';
 import { Actor } from 'src/users/types';
-import { SchemaField, extractSchemaFields } from 'src/utils/schema-helpers';
+import { SchemaField, extractSchemaFields, schemaFieldPropertyKey } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
@@ -561,7 +561,7 @@ export class SchemaBuilderService {
    * Resolve an existing, materialized destination folder for an add-fields plan:
    * assert it belongs to this workbook and the destination connector, then read
    * its stored schema and derive its current fields — name (on the SAME basis the
-   * plan generator names fields, `displayLabel ?? lastPathSegment`, so the diff
+   * plan generator names fields, `displayLabel ?? schemaFieldPropertyKey`, so the diff
    * matches), column path, and inferred kind (so a same-named, same-kind field can
    * be adopted rather than recreated). Fails fast rather than silently treating a
    * bad target as "no existing fields" (which would re-create every field and
@@ -594,7 +594,7 @@ export class SchemaBuilderService {
       );
     }
     const existingFields = extractSchemaFields(stored.schema as TSchema).map((field) => ({
-      name: field.displayLabel ?? lastPathSegment(field.path),
+      name: field.displayLabel ?? schemaFieldPropertyKey(field),
       columnPath: field.path,
       kind: inferLogicalFieldType(field).fieldType.kind,
     }));
@@ -727,7 +727,7 @@ export class SchemaBuilderService {
         }).schemaFields
       : extractSchemaFields(stored.schema as TSchema);
     return {
-      displayNames: schemaFields.map((field) => field.displayLabel ?? lastPathSegment(field.path)),
+      displayNames: schemaFields.map((field) => field.displayLabel ?? schemaFieldPropertyKey(field)),
       columnNames: schemaFields.map((field) => field.path),
     };
   }
@@ -913,7 +913,7 @@ export class SchemaBuilderService {
     if (!folder) return null;
     const stored = await this.dataFolderService.getStoredSchema(folder.id as DataFolderId, actor);
     if (!stored) return null;
-    return extractSchemaFields(stored.schema as TSchema).map((field) => lastPathSegment(field.path));
+    return extractSchemaFields(stored.schema as TSchema).map((field) => schemaFieldPropertyKey(field));
   }
 
   private unsupported(connector: Connector): { service: string; message: string } {
@@ -936,11 +936,6 @@ function toDotPath(value: unknown): string | undefined {
   if (Array.isArray(value)) return value.filter((segment) => typeof segment === 'string').join('.');
   if (typeof value === 'string') return value;
   return undefined;
-}
-
-function lastPathSegment(path: string): string {
-  const segments = path.split('.');
-  return segments[segments.length - 1] || path;
 }
 
 function errorMessage(error: unknown): string {

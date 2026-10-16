@@ -67,7 +67,9 @@ jest.mock('knex', () => ({
   default: jest.fn(() => knexInstance),
 }));
 
+import type { Knex } from 'knex';
 import { KnexPGClient } from '../knex-pg-client';
+import { KnexQueryCompilationErrorWithSqlText } from '../pg-knex-query-compilation-error';
 
 describe('KnexPGClient.selectAll modified-since predicate', () => {
   let client: KnexPGClient;
@@ -317,5 +319,106 @@ describe('KnexPGClient.deleteMany over-delete guard', () => {
       code: 'DELETE_MULTIPLE_ROWS',
     });
     expect(knexInstance.transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Regression tests for a `?` inside an identifier on the bulk raw-SQL paths. A
+ * HubSpot → Supabase Live Export failed every edit to a column like
+ * "Decisionmaker?" with "Expected 1 bindings, saw 3": updateMany inlined the
+ * identifier into `knex.raw`, which reads each bare `?` as a binding
+ * placeholder. The mocked `raw` above can't see that, so each captured
+ * statement is compiled through a real connection-less pg knex — the same
+ * formatter that threw in production.
+ */
+describe('KnexPGClient bulk UPDATE/DELETE with `?` in identifiers', () => {
+  const realConnectionlessPgKnex = jest.requireActual<(config: Knex.Config) => Knex>('knex')({ client: 'pg' });
+  let client: KnexPGClient;
+
+  function compileCapturedRawCallWithRealPgKnex(callIndex: number): { sql: string; bindings: readonly unknown[] } {
+    const [capturedQuery, capturedBindings] = mockRaw.mock.calls[callIndex] as [string, Knex.RawBinding[]];
+    return realConnectionlessPgKnex.raw(capturedQuery, capturedBindings).toSQL().toNative();
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    client = new KnexPGClient('postgres://u:p@localhost:5432/db');
+    mockRaw.mockImplementation((_query: string, bindings: unknown[]) => {
+      const payload = JSON.parse((bindings as string[])[0]) as Record<string, unknown>[];
+      return Promise.resolve({ rows: payload });
+    });
+  });
+
+  it('keeps a `?` column verbatim in the UPDATE SET clause, binding only the JSON payload', async () => {
+    await client.updateMany('public', 'contacts', 'id', [{ id: 1, data: { 'Decisionmaker?': 'Yes' } }]);
+
+    const compiledUpdate = compileCapturedRawCallWithRealPgKnex(0);
+    expect(compiledUpdate.sql).toContain('SET "Decisionmaker?" = v."Decisionmaker?"');
+    expect(compiledUpdate.sql.match(/\$\d+/g)).toEqual(['$1']);
+    expect(compiledUpdate.bindings).toEqual([JSON.stringify([{ 'Decisionmaker?': 'Yes', id: 1 }])]);
+  });
+
+  it('keeps `?` and `??` verbatim in the schema, table, primary-key and column names of the UPDATE', async () => {
+    await client.updateMany('crm?', 'Who?', 'id?', [{ id: 1, data: { 'Really??': true } }]);
+
+    const compiledUpdate = compileCapturedRawCallWithRealPgKnex(0);
+    expect(compiledUpdate.sql).toContain('UPDATE "crm?"."Who?" AS t');
+    expect(compiledUpdate.sql).toContain('SET "Really??" = v."Really??"');
+    expect(compiledUpdate.sql).toContain('json_populate_recordset(null::"crm?"."Who?", $1::json)');
+    expect(compiledUpdate.sql).toContain('WHERE t."id?" = v."id?"');
+    expect(compiledUpdate.sql.match(/\$\d+/g)).toEqual(['$1']);
+  });
+
+  it('keeps `?` table and primary-key names verbatim in the bulk DELETE, binding only the ids', async () => {
+    mockRaw.mockResolvedValue({ rows: [{ 'id?': 1 }, { 'id?': 2 }] });
+
+    await client.deleteMany('public', 'Who?', [1, 2], 'id?');
+
+    const compiledDelete = compileCapturedRawCallWithRealPgKnex(0);
+    expect(compiledDelete.sql).toBe('DELETE FROM "public"."Who?" WHERE "id?" IN ($1, $2) RETURNING "id?"');
+    expect(compiledDelete.bindings).toEqual([1, 2]);
+  });
+});
+
+/**
+ * A knex compilation failure on the bulk raw statements carries the SQL text it was compiling, so the
+ * connector's error details can show the user which statement failed (knex's own "Expected 1
+ * bindings, saw 3" names none).
+ */
+describe('KnexPGClient bulk UPDATE/DELETE compilation failures carry their SQL text', () => {
+  let client: KnexPGClient;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    client = new KnexPGClient('postgres://u:p@localhost:5432/db');
+    mockRaw.mockRejectedValue(new Error('Expected 1 bindings, saw 3'));
+  });
+
+  it('tags an UPDATE compilation failure with the UPDATE statement', async () => {
+    const updateFailure: unknown = await client
+      .updateMany('public', 'contacts', 'id', [{ id: 1, data: { name: 'a' } }])
+      .catch((error: unknown) => error);
+
+    expect(updateFailure).toBeInstanceOf(KnexQueryCompilationErrorWithSqlText);
+    expect((updateFailure as KnexQueryCompilationErrorWithSqlText).message).toBe('Expected 1 bindings, saw 3');
+    expect((updateFailure as KnexQueryCompilationErrorWithSqlText).sqlText).toContain(
+      'UPDATE "public"."contacts" AS t',
+    );
+  });
+
+  it('tags a DELETE compilation failure with the DELETE statement', async () => {
+    await expect(client.deleteMany('public', 'contacts', [1, 2], 'id')).rejects.toMatchObject({
+      name: 'KnexQueryCompilationErrorWithSqlText',
+      sqlText: 'DELETE FROM "public"."contacts" WHERE "id" IN (?, ?) RETURNING "id"',
+    });
+  });
+
+  it('leaves a Postgres error from the executed statement untouched', async () => {
+    const postgresError = Object.assign(new Error('column "Lead Source " does not exist'), { code: '42703' });
+    mockRaw.mockRejectedValue(postgresError);
+
+    await expect(client.updateMany('public', 'contacts', 'id', [{ id: 1, data: { name: 'a' } }])).rejects.toBe(
+      postgresError,
+    );
   });
 });

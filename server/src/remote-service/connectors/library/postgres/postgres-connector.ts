@@ -50,8 +50,10 @@ import {
   duplicateTableCreateErrorMessage,
   isDuplicateTableError,
   isGeneratedColumn,
+  isKnexQueryCompilationError,
   KnexPGClient,
   KnexPGClientError,
+  knexQueryCompilationErrorDetails,
   mapPgType,
   pgIncrementalPullSupport,
   pickTitleColumnPath,
@@ -767,6 +769,10 @@ export class PostgresConnector extends Connector {
           description: msg,
         };
       }
+    }
+
+    if (isKnexQueryCompilationError(error)) {
+      return knexQueryCompilationErrorDetails(error);
     }
 
     return this.fallbackErrorDetails(error);

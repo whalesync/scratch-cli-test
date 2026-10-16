@@ -21,6 +21,10 @@
  *   6. An allowMultiple FK is skipped with a reason; the rest of the table lands.
  *   7. A table named at the 63-byte identifier limit, with two FKs, is created —
  *      its constraint names don't truncate into collisions.
+ *   8. HubSpot-label column names survive create, bulk update and delete verbatim:
+ *      a `?` ("Decisionmaker?") isn't read as a knex binding placeholder
+ *      ("Expected 1 bindings, saw 3"), a `[1]` isn't read as an array subscript,
+ *      and a trailing space isn't trimmed off the column name.
  *
  * Everything is created in a throwaway schema dropped before and after the run.
  *
@@ -239,5 +243,57 @@ describe('Postgres create-schema — real DDL round-trip', () => {
     const names = columns.rows.map((row) => row.column_name);
     expect(names).toEqual(expect.arrayContaining(['id', 'label']));
     expect(names).not.toContain('user_ids');
+  });
+
+  it('round-trips HubSpot-label column names (`?`, `[digits]`, edge whitespace) through create, update and delete', async () => {
+    const createResult = await connector.createTable({
+      remoteParentId: [SCHEMA],
+      ref: 'survey_answers',
+      name: 'survey_answers',
+      fields: [
+        { name: 'Decisionmaker?', fieldType: { kind: 'text' } },
+        { name: 'Really??', fieldType: { kind: 'boolean' } },
+        { name: 'Tier [1] score', fieldType: { kind: 'text' } },
+        { name: 'Lead Source ', fieldType: { kind: 'text' } },
+      ],
+      deferredFkFields: [],
+    });
+    expect(createResult.status).toBe('created');
+
+    const columns = await pool.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'survey_answers'`,
+      [SCHEMA],
+    );
+    expect(columns.rows.map((row) => row.column_name)).toEqual(
+      expect.arrayContaining(['Decisionmaker?', 'Really??', 'Tier [1] score', 'Lead Source ']),
+    );
+
+    const spec = await connector.fetchJsonTableSpec({ wsId: 'survey_answers', remoteId: [SCHEMA, 'survey_answers'] });
+    const [createdRecord] = await connector.createRecords(spec, [
+      { 'Decisionmaker?': 'No', 'Really??': false, 'Tier [1] score': 'low', 'Lead Source ': 'web' },
+    ]);
+
+    const changedValues = {
+      'Decisionmaker?': 'Yes',
+      'Really??': true,
+      'Tier [1] score': 'high',
+      'Lead Source ': 'ads',
+    };
+    const [updatedRecord] = await connector.updateRecords(
+      spec,
+      [{ ...createdRecord, ...changedValues }],
+      [{ id: createdRecord.id, ...changedValues }],
+    );
+    expect(updatedRecord).toMatchObject(changedValues);
+
+    const rowsAfterUpdate = await pool.query<Record<string, unknown>>(
+      `SELECT "Decisionmaker?", "Really??", "Tier [1] score", "Lead Source " FROM ${SCHEMA}.survey_answers WHERE id = $1`,
+      [createdRecord.id],
+    );
+    expect(rowsAfterUpdate.rows).toEqual([changedValues]);
+
+    await connector.deleteRecords(spec, [updatedRecord]);
+    const rowsAfterDelete = await pool.query(`SELECT id FROM ${SCHEMA}.survey_answers`);
+    expect(rowsAfterDelete.rows).toHaveLength(0);
   });
 });

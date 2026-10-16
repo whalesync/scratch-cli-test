@@ -10,7 +10,13 @@ import {
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
 } from '@spinner/shared-types';
-import { extractSchemaFields, extractSchemaPaths, findCreatedDestinationField, SchemaField } from './schema-helpers';
+import {
+  extractSchemaFields,
+  extractSchemaPaths,
+  findCreatedDestinationField,
+  SchemaField,
+  schemaFieldPropertyKey,
+} from './schema-helpers';
 
 /** Set an x-scratch annotation on a TypeBox schema node (mirrors the connector generators). */
 function annotate(schema: TSchema, key: string, value: unknown): TSchema {
@@ -246,6 +252,7 @@ describe('schema-helpers', () => {
 
         expect(field).toEqual({
           path: 'field',
+          propertyKey: 'field',
           type: 'string',
           description: 'A field',
           remoteFieldId: 'remote_1',
@@ -718,5 +725,49 @@ describe('schema-helpers', () => {
 
       expect(match?.path).toBe('Est. Close Date');
     });
+
+    it('picks the exact column over one whose dotted name merely ends in the created name', () => {
+      // Flat schema: "Company.URL" is listed first and its path ends in ".URL".
+      const fields = extractSchemaFields(Type.Object({ 'Company.URL': Type.String(), URL: Type.String() }));
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'URL' });
+
+      expect(match?.path).toBe('URL');
+    });
+
+    it('still falls back to a path-suffix match for a hand-built field with no property key', () => {
+      const fields: SchemaField[] = [{ path: 'fieldData.No. of Employees', type: 'string' }];
+
+      const match = findCreatedDestinationField(fields, { fieldName: 'No. of Employees' });
+
+      expect(match?.path).toBe('fieldData.No. of Employees');
+    });
+  });
+});
+
+describe('schemaFieldPropertyKey', () => {
+  it('is the verbatim key for a flat column whose name contains dots', () => {
+    const [field] = extractSchemaFields(Type.Object({ 'No. of employees': Type.String() }));
+
+    expect(field.propertyKey).toBe('No. of employees');
+    expect(schemaFieldPropertyKey(field)).toBe('No. of employees');
+  });
+
+  it('is the key under its wrapper for a nested column, dots included', () => {
+    const fields = extractSchemaFields(
+      Type.Object({
+        fields: Type.Object({ 'Est. close date': Type.Optional(Type.Union([Type.String(), Type.Null()])) }),
+      }),
+    );
+    const nestedField = fields.find((field) => field.path === 'fields.Est. close date');
+
+    expect(nestedField?.propertyKey).toBe('Est. close date');
+    expect(schemaFieldPropertyKey({ path: 'fields.Est. close date', propertyKey: 'Est. close date' })).toBe(
+      'Est. close date',
+    );
+  });
+
+  it('falls back to the last path segment for a hand-built field', () => {
+    expect(schemaFieldPropertyKey({ path: 'fields.Name' })).toBe('Name');
   });
 });

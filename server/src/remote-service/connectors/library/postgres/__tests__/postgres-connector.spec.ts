@@ -935,3 +935,20 @@ describe('PostgresConnector schema creation', () => {
     });
   });
 });
+
+describe('PostgresConnector.extractConnectorErrorDetails', () => {
+  const connector = new PostgresConnector({ connectionString: 'postgres://test' });
+
+  it('reports a knex query-compilation error as an uncompilable SQL query instead of a PostgreSQL error', () => {
+    const errorDetails = connector.extractConnectorErrorDetails(new Error('Expected 1 bindings, saw 3'));
+
+    expect(errorDetails.userFriendlyMessage).toBe('The SQL query for this change could not be compiled.');
+    expect(errorDetails.description).toBe('Expected 1 bindings, saw 3');
+  });
+
+  it('keeps the generic fallback for an unrecognized error', () => {
+    expect(connector.extractConnectorErrorDetails(new Error('something unexpected')).userFriendlyMessage).toBe(
+      'PostgreSQL error: something unexpected',
+    );
+  });
+});

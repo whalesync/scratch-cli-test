@@ -124,24 +124,93 @@ export function decodeColumnIdentifierAsSeparatorSentinel(identifier: string): s
 }
 
 /**
- * Neutralize BOTH of knex's identifier structural-split hazards in a column name
- * at once — a literal `.` (qualification chain, DEV-11063) and a `" as "` alias
- * split (DEV-11170) — so the name is emitted as one verbatim, correctly-cased
- * quoted identifier. Use at every column-identifier site handed to the knex
- * query/schema builder (never on a `schema.table` reference). Reversed by
- * {@link decodeColumnIdentifierForKnex} in the `wrapIdentifier` hook.
+ * Delimiter around the hex code point of one leading/trailing whitespace character
+ * in a column identifier while it passes through knex's identifier formatter.
+ * U+0002 (STX) is a C0 control character that, like the `" as "` sentinel, does
+ * not occur in the human-authored field names these connectors handle, and it is
+ * not whitespace — so `String.prototype.trim` keeps it.
  */
-export function encodeColumnIdentifierForKnex(columnIdentifier: string): string {
-  return encodeColumnIdentifierAsSeparatorForKnex(encodeColumnIdentifierDotsForKnex(columnIdentifier));
+const COLUMN_IDENTIFIER_EDGE_WHITESPACE_SENTINEL = String.fromCharCode(2);
+
+const COLUMN_IDENTIFIER_ENCODED_EDGE_WHITESPACE_PATTERN = new RegExp(
+  `${COLUMN_IDENTIFIER_EDGE_WHITESPACE_SENTINEL}([0-9a-f]+)${COLUMN_IDENTIFIER_EDGE_WHITESPACE_SENTINEL}`,
+  'g',
+);
+
+/**
+ * Preserve leading/trailing whitespace in a column identifier across knex's
+ * identifier formatter, which `trim()`s every identifier before quoting it — a
+ * HubSpot label "Lead Source " was created as the column `"Lead Source"`, so the
+ * bulk UPDATE (raw SQL, quoted verbatim) failed with "column does not exist" and
+ * pulls returned a key that matched no schema field. Each edge whitespace
+ * character (JS `\s`, the same set `trim()` removes, including a non-breaking
+ * space) becomes `<sentinel><hex code point><sentinel>`, which `trim()` keeps.
+ * Interior whitespace is untouched. Reversed by
+ * {@link decodeColumnIdentifierEdgeWhitespaceSentinels} inside the
+ * `wrapIdentifier` hook.
+ */
+export function encodeColumnIdentifierEdgeWhitespaceForKnex(columnIdentifier: string): string {
+  return columnIdentifier.replace(/^\s+|\s+$/g, (edgeWhitespaceRun) =>
+    Array.from(edgeWhitespaceRun)
+      .map(
+        (whitespaceCharacter) =>
+          `${COLUMN_IDENTIFIER_EDGE_WHITESPACE_SENTINEL}${(whitespaceCharacter.codePointAt(0) ?? 0).toString(16)}${COLUMN_IDENTIFIER_EDGE_WHITESPACE_SENTINEL}`,
+      )
+      .join(''),
+  );
+}
+
+/** Restore each encoded edge whitespace character; a no-op for any identifier that was never encoded. */
+export function decodeColumnIdentifierEdgeWhitespaceSentinels(identifier: string): string {
+  return identifier.replace(COLUMN_IDENTIFIER_ENCODED_EDGE_WHITESPACE_PATTERN, (_encoded, hexCodePoint: string) =>
+    String.fromCodePoint(parseInt(hexCodePoint, 16)),
+  );
 }
 
 /**
- * Reverse {@link encodeColumnIdentifierForKnex}: restore both the literal `.`
- * and the spaces around a `" as "` separator. Installed as knex's
- * `wrapIdentifier` hook by `applyVerbatimIdentifierQuoting`.
+ * Neutralize every knex identifier hazard a column NAME can trip in one call — a
+ * literal `.` (qualification chain, DEV-11063), a `" as "` alias split
+ * (DEV-11170), and leading/trailing whitespace (`trim()`) — so the name is
+ * emitted as one verbatim, correctly-cased quoted identifier. Use at every
+ * column-identifier site handed to the knex query/schema builder (never on a
+ * `schema.table` reference). Reversed by {@link decodeColumnIdentifierForKnex} in
+ * the `wrapIdentifier` hook.
+ */
+export function encodeColumnIdentifierForKnex(columnIdentifier: string): string {
+  return encodeColumnIdentifierEdgeWhitespaceForKnex(
+    encodeColumnIdentifierAsSeparatorForKnex(encodeColumnIdentifierDotsForKnex(columnIdentifier)),
+  );
+}
+
+/**
+ * Reverse {@link encodeColumnIdentifierForKnex}: restore the literal `.`, the
+ * spaces around a `" as "` separator, and leading/trailing whitespace. Installed
+ * as knex's `wrapIdentifier` hook by `applyVerbatimIdentifierQuoting`.
  */
 export function decodeColumnIdentifierForKnex(identifier: string): string {
-  return decodeColumnIdentifierAsSeparatorSentinel(decodeColumnIdentifierSentinelDots(identifier));
+  return decodeColumnIdentifierEdgeWhitespaceSentinels(
+    decodeColumnIdentifierAsSeparatorSentinel(decodeColumnIdentifierSentinelDots(identifier)),
+  );
+}
+
+/**
+ * Double-quote a Postgres identifier verbatim (inner `"` doubled). Replaces knex's
+ * Postgres `wrapIdentifierImpl`, which reads the first `[<digits>]` in an
+ * identifier as an array subscript and drops everything after it: a HubSpot label
+ * "Tier [1] score" compiled to `"Tier "[1]`, a syntax error that failed the WHOLE
+ * `CREATE TABLE`. No knex instance these hooks are installed on addresses an array
+ * element through an identifier, so the subscript parsing is never wanted. The
+ * bare `*` (select-all / `returning('*')`) still goes through knex's own
+ * implementation, which leaves it unquoted.
+ */
+function quotePostgresIdentifierVerbatim(
+  identifier: string,
+  knexWrapIdentifierImpl: (value: string) => string,
+): string {
+  if (identifier === '*') {
+    return knexWrapIdentifierImpl(identifier);
+  }
+  return `"${identifier.replace(/"/g, '""')}"`;
 }
 
 /**
@@ -156,10 +225,10 @@ export function decodeColumnIdentifierForKnex(identifier: string): string {
  *    the SANITY Live Export audit 2026-08-01 — the deployed Studio schema's
  *    authored title "Featured?"). `\?` is knex's documented literal escape,
  *    un-escaped by the formatter after binding interpolation.
- *  - `.` (knex's qualification separator, DEV-11063) and a `" as "` alias split
- *    (DEV-11170) are both sentinel-encoded by
- *    {@link encodeColumnIdentifierForKnex} so the column survives as one
- *    verbatim, correctly-cased identifier.
+ *  - `.` (knex's qualification separator, DEV-11063), a `" as "` alias split
+ *    (DEV-11170) and leading/trailing whitespace (knex `trim()`s identifiers)
+ *    are all sentinel-encoded by {@link encodeColumnIdentifierForKnex} so the
+ *    column survives as one verbatim, correctly-cased identifier.
  *
  * Apply to COLUMN identifiers only, never to a `schema.table` reference.
  */
@@ -209,6 +278,11 @@ function rejoinKnexAliasSplitIdentifier(quotedFirstHalf: string, quotedSecondHal
  *  - `" as "` fallback — also override `client.alias` to rejoin any mis-split halves for an
  *    identifier path that bypassed the sentinel encoding ({@link rejoinKnexAliasSplitIdentifier},
  *    DEV-11051); it yields one valid identifier but lowercases the separator.
+ *  - leading/trailing whitespace — the same hook decodes the edge-whitespace sentinels knex's
+ *    `trim()` would otherwise have stripped ({@link encodeColumnIdentifierEdgeWhitespaceForKnex}).
+ *  - `[<digits>]` — the hook quotes the identifier itself ({@link quotePostgresIdentifierVerbatim})
+ *    instead of calling knex's Postgres implementation, which reads `[1]` as an array subscript.
+ *    This applies to every identifier, table names included.
  *
  * Applied by the `KnexPGClient` constructor, and by the connection-less knex that renders DDL as
  * standalone SQL (`pg-create-schema-standalone-sql.ts`), so both emit identical identifiers. It
@@ -221,5 +295,6 @@ export function applyVerbatimIdentifierQuoting(knexInstance: Knex): void {
     config: { wrapIdentifier?: (value: string, origImpl: (value: string) => string) => string };
   };
   knexClientHooks.alias = rejoinKnexAliasSplitIdentifier;
-  knexClientHooks.config.wrapIdentifier = (value, origImpl) => origImpl(decodeColumnIdentifierForKnex(value));
+  knexClientHooks.config.wrapIdentifier = (value, origImpl) =>
+    quotePostgresIdentifierVerbatim(decodeColumnIdentifierForKnex(value), origImpl);
 }

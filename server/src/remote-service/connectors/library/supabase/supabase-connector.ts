@@ -65,8 +65,10 @@ import {
   isDuplicateTableError,
   isGeneratedColumn,
   isInsufficientPrivilegeError,
+  isKnexQueryCompilationError,
   KnexPGClient,
   KnexPGClientError,
+  knexQueryCompilationErrorDetails,
   mapPgType,
   pgIncrementalPullSupport,
   pickTitleColumnPath,
@@ -1702,6 +1704,10 @@ export class SupabaseConnector extends Connector {
           description: msg,
         };
       }
+    }
+
+    if (isKnexQueryCompilationError(error)) {
+      return knexQueryCompilationErrorDetails(error);
     }
 
     return this.fallbackErrorDetails(error);

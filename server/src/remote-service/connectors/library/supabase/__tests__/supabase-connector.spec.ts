@@ -12,6 +12,7 @@ import { WSLogger } from 'src/logger';
 import { type NormalizedCreateFieldsPlan, type NormalizedCreateTablePlan } from '../../../schema-creation.types';
 import { BaseJsonTableSpec, EntityId, PullRecordFilesOptions, dotPath } from '../../../types';
 import { PG_INCREMENTAL_CLOCK_SKEW_MS, type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
+import { KnexQueryCompilationErrorWithSqlText } from '../../pg-common/pg-knex-query-compilation-error';
 import { SupabaseApiError } from '../supabase-api-client';
 import { SupabaseConnector } from '../supabase-connector';
 
@@ -1935,5 +1936,35 @@ describe("SupabaseConnector OAuth Live Export DDL as the project's postgres role
       expect(mockAddColumns).not.toHaveBeenCalled();
       expect(warnSpy).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('SupabaseConnector.extractConnectorErrorDetails', () => {
+  const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
+
+  it('reports a knex query-compilation error as an uncompilable SQL query instead of a Supabase error', () => {
+    const errorDetails = connector.extractConnectorErrorDetails(new Error('Expected 1 bindings, saw 3'));
+
+    expect(errorDetails.userFriendlyMessage).toBe('The SQL query for this change could not be compiled.');
+    expect(errorDetails.description).toBe('Expected 1 bindings, saw 3');
+  });
+
+  it('shows the SQL statement that failed to compile when the client tagged it', () => {
+    const errorDetails = connector.extractConnectorErrorDetails(
+      new KnexQueryCompilationErrorWithSqlText(
+        new Error('Expected 1 bindings, saw 3'),
+        'DELETE FROM "public"."contacts" WHERE "id" IN (?) RETURNING "id"',
+      ),
+    );
+
+    expect(errorDetails.userFriendlyMessage).toBe(
+      'The SQL query for this change could not be compiled: DELETE FROM "public"."contacts" WHERE "id" IN (?) RETURNING "id"',
+    );
+  });
+
+  it('keeps the generic fallback for an unrecognized error', () => {
+    expect(connector.extractConnectorErrorDetails(new Error('something unexpected')).userFriendlyMessage).toBe(
+      'Supabase error: something unexpected',
+    );
   });
 });

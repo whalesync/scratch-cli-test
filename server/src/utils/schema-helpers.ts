@@ -93,6 +93,14 @@ export function extractSchemaPaths(schema: TSchema, parentPath = ''): string[] {
 
 export interface SchemaField {
   path: string;
+  /**
+   * The field's own key in its parent object — the last segment of `path`, kept verbatim because a
+   * key may itself contain `.` (a flat Postgres/Supabase column "No. of employees", an Airtable
+   * `fields.Est. close date`), which `path.split('.')` would cut apart. Set by
+   * {@link extractSchemaFields}; absent on a hand-built field. Read it through
+   * {@link schemaFieldPropertyKey}.
+   */
+  propertyKey?: string;
   type: string;
   /**
    * The JSON-Schema `format` annotation on this field's (non-null) value, when the
@@ -318,12 +326,24 @@ export function resolveSchemaTypeAtPath(schema: TSchema, dotPath: string): strin
 /**
  * Extracts all possible dot-notation paths from a JSON Schema with their types.
  */
-export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaField[] {
+/**
+ * A schema field's own name: its verbatim property key when known, else the last `.`-segment of its
+ * path (a hand-built field). Use this instead of splitting `path` — a key may itself contain `.`, so
+ * "No. of employees" would otherwise be named " of employees".
+ */
+export function schemaFieldPropertyKey(field: Pick<SchemaField, 'path' | 'propertyKey'>): string {
+  if (field.propertyKey !== undefined) return field.propertyKey;
+  const pathSegments = field.path.split('.');
+  return pathSegments[pathSegments.length - 1] || field.path;
+}
+
+export function extractSchemaFields(schema: TSchema, parentPath = '', propertyKeyAtParentPath?: string): SchemaField[] {
   const fields = new Map<string, SchemaField>();
 
   // Base Path (if meaningful)
   if (parentPath) {
     const field: SchemaField = { path: parentPath, type: resolveSchemaType(schema) };
+    if (propertyKeyAtParentPath !== undefined) field.propertyKey = propertyKeyAtParentPath;
     const format = resolveSchemaFormat(schema);
     if (format) field.format = format;
     const enumValues = resolveSchemaStringEnumValues(schema);
@@ -374,7 +394,7 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     const variants = (schema.anyOf || schema.oneOf) as TSchema[];
     for (const variant of variants) {
       if (variant.type === 'null') continue;
-      const subFields = extractSchemaFields(variant, parentPath);
+      const subFields = extractSchemaFields(variant, parentPath, propertyKeyAtParentPath);
       subFields.forEach((f) => {
         if (!fields.has(f.path)) {
           fields.set(f.path, f);
@@ -391,7 +411,7 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
   if (schema.type === 'object' && schema.properties && !isOpaqueConnectorEnvelope(schema)) {
     for (const [key, propSchema] of Object.entries(schema.properties as Record<string, TSchema>)) {
       const currentPath = parentPath ? `${parentPath}.${key}` : key;
-      const subFields = extractSchemaFields(propSchema, currentPath);
+      const subFields = extractSchemaFields(propSchema, currentPath, key);
       subFields.forEach((f) => {
         if (!fields.has(f.path)) {
           fields.set(f.path, f);
@@ -431,6 +451,11 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
  * dot-segment; taking only the last segment mangles the leaf and the created placeholder
  * field — which carries no `remoteFieldId` to fall back on — never resolves, hard-failing
  * apply with SYNC_DRAFT_FIELD_RESOLUTION_FAILED.
+ *
+ * Fields whose own key ({@link schemaFieldPropertyKey}) equals the name win over a bare
+ * path-suffix match: in a flat schema with columns "URL" and "Company.URL", a created
+ * "URL" is the "URL" column, never "Company.URL" (whose path merely ends in `.URL`). The
+ * suffix match is only a fallback for a field with no exact-key match.
  */
 export function findCreatedDestinationField(
   destinationFields: SchemaField[],
@@ -440,12 +465,16 @@ export function findCreatedDestinationField(
     const exactRemoteFieldIdMatch = destinationFields.find((field) => field.remoteFieldId === target.remoteFieldId);
     if (exactRemoteFieldIdMatch) return exactRemoteFieldIdMatch;
   }
-  const fieldsMatchingByNameOrLabel = destinationFields.filter(
+  const fieldsMatchingByExactNameOrLabel = destinationFields.filter(
     (field) =>
       field.path === target.fieldName ||
-      field.path.endsWith(`.${target.fieldName}`) ||
+      schemaFieldPropertyKey(field) === target.fieldName ||
       field.displayLabel === target.fieldName,
   );
+  const fieldsMatchingByNameOrLabel =
+    fieldsMatchingByExactNameOrLabel.length > 0
+      ? fieldsMatchingByExactNameOrLabel
+      : destinationFields.filter((field) => field.path.endsWith(`.${target.fieldName}`));
   if (fieldsMatchingByNameOrLabel.length === 0) {
     // Last resort: a destination whose columns are ADDRESSED BY the created
     // field's name itself. Grid destinations (Google Sheets) key their schema

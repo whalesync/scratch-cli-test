@@ -16,7 +16,7 @@ import type {
 import { TIME_BEARING_DATE_FORMATS } from '@spinner/shared-types';
 import { transformerOutputCardinality } from 'src/sync/resolve-column-transform-input';
 import { assertUnreachable } from 'src/utils/asserts';
-import type { SchemaField } from 'src/utils/schema-helpers';
+import { schemaFieldPropertyKey, type SchemaField } from 'src/utils/schema-helpers';
 import {
   firstIndexedValueForLookupKeys,
   linkedTableIdLookupKeysForConnectorForeignKey,
@@ -93,7 +93,7 @@ export interface PlanGeneratorSource {
 export interface ExistingDestinationField {
   /**
    * Name on the SAME basis the generator names fields (`displayLabel ??
-   * lastPathSegment`), so a source field's requested name matches it.
+   * schemaFieldPropertyKey`), so a source field's requested name matches it.
    */
   name: string;
   /** Column path id in the destination schema — the mapping target when adopted. */
@@ -519,7 +519,7 @@ function foreignKeyNamesSourceTable(
 
 /** Note message for a reciprocal side omitted because the OTHER side is being suggested instead. */
 function reciprocalOtherSideKeptMessage(keptSide: ReciprocalForeignKeyFieldEntry): string {
-  const keptFieldName = keptSide.field.displayLabel ?? lastPathSegment(keptSide.field.path);
+  const keptFieldName = keptSide.field.displayLabel ?? schemaFieldPropertyKey(keptSide.field);
   return `reciprocal link — the other side of this relationship is suggested on table "${keptSide.source.tableName}" as "${keptFieldName}", so this side is omitted to avoid creating the two-way link twice`;
 }
 
@@ -703,7 +703,7 @@ function mapSchemaFieldToCreateFieldSpec(
   // (`pharmacies_desired`, not the view's display label "Pharmacies Desired") — the destination is the same
   // kind of database, so its columns should read exactly like the source's (DEV-11903). The column name is
   // the field's full path: a native-typed column is a top-level column, and its name may itself contain dots.
-  const displayFieldName = schemaField.displayLabel ?? lastPathSegment(schemaField.path);
+  const displayFieldName = schemaField.displayLabel ?? schemaFieldPropertyKey(schemaField);
   const nativeColumnTypeInDestinationTypeSystem = nativeColumnTypeSharedWithDestination(
     schemaField,
     options.destinationFieldTypeSupport,
@@ -1490,9 +1490,4 @@ function buildFieldSpec(
     ...(isPrimary ? { isPrimary: true } : {}),
     ...(description ? { description } : {}),
   };
-}
-
-function lastPathSegment(path: string): string {
-  const segments = path.split('.');
-  return segments[segments.length - 1] || path;
 }
