@@ -1,6 +1,6 @@
 ---
 name: fix-server-integration-tests
-description: Investigate and fix failed server integration tests from a GitLab pipeline. Accepts either a failed job URL or a pipeline URL (resolving the failed server integration job within it — "integration test server", "environment tests for test env post-deploy", or "sync_v1_compat"). Pulls the failed job's log, identifies which server/test/integration suites/tests failed, correlates against recent master commits, decides whether each failure is a test bug or a real system bug, and presents a fix plan. Use when the user reports a failed server integration / environment-tests job or pastes a GitLab job or pipeline URL for one.
+description: Investigate and fix failed server integration tests from a GitLab pipeline. Accepts either a failed job URL or a pipeline URL (resolving the failed server integration job within it — "integration test server", "environment tests for test env post-deploy", "sync_v1_compat", or "integration test server mysql"). Pulls the failed job's log, identifies which server/test/integration suites/tests failed, correlates against recent master commits, decides whether each failure is a test bug or a real system bug, and presents a fix plan. Use when the user reports a failed server integration / environment-tests job or pastes a GitLab job or pipeline URL for one.
 user-invocable: true
 argument-hint: "[gitlab-job-or-pipeline-url]"
 allowed-tools:
@@ -36,7 +36,7 @@ pull/sync/publish pipeline, and schema generation against a Postgres service
 container — and, in the post-deploy variant, against **live external connector
 APIs**.
 
-Three CI jobs run this suite (all `yarn run test:integration --verbose
+Four CI jobs run this suite (all `yarn run test:integration [path filter] --verbose
 --reporters=default --reporters=jest-junit`, emitting `server/junit.xml`):
 
 | Job name | Stage | When | Connector keys |
@@ -44,9 +44,10 @@ Three CI jobs run this suite (all `yarn run test:integration --verbose
 | `integration test server` | `build and test` | MR touching `server/**` + merge-to-master | none — connector suites self-skip; uses in-process fakes |
 | `environment tests for test env post-deploy` | `post-deploy environment tests` | merge-to-master, after deploy | **live** — real API keys from CI/CD vars (Notion, Affinity, Attio, Airtable, Webflow, GoHighLevel, …) |
 | `sync_v1_compat` | `build and test` | MR touching `server/**` + merge-to-master | runs ONLY `sync-mapping-v1-compat.spec.ts` |
+| `integration test server mysql` | `build and test` | MR touching `server/**` + merge-to-master | runs ONLY `mysql-*.spec.ts`, against its own `mysql:8.4` + `mariadb:11.4` sidecars (no API keys) |
 
 CI config: [`gitlab-ci/stages/01-build-and-test.yml`](/gitlab-ci/stages/01-build-and-test.yml)
-(`integration test server`, `sync_v1_compat`) and
+(`integration test server`, `sync_v1_compat`, `integration test server mysql`) and
 [`gitlab-ci/stages/06-environment-tests.yml`](/gitlab-ci/stages/06-environment-tests.yml)
 (`environment tests for test env post-deploy`).
 
@@ -55,7 +56,11 @@ CI config: [`gitlab-ci/stages/01-build-and-test.yml`](/gitlab-ci/stages/01-build
 describe.skip`), so live-connector suites run ONLY in the post-deploy job and
 self-skip everywhere else. A failure there can be a real connector regression OR
 a change on the external service's side / live test data drift — distinguish
-those in step 6.
+those in step 6. The `mysql-*.spec.ts` suites gate on `MYSQL_TEST_URL` /
+`MARIADB_TEST_URL` instead (set only by `integration test server mysql`, which
+also sets `MYSQL_INTEGRATION_FAIL_IF_UNCONFIGURED=true`), so they skip in the
+other jobs; locally they need `server/localdev/docker-compose.mysql.yml` and the
+four `*_TEST_URL` / `*_TEST_ROOT_URL` variables (see `.env.integration.example`).
 
 ## Inputs
 
@@ -89,7 +94,8 @@ The project is `whalesync/spinner` (URL-encoded `whalesync%2Fspinner`).
   ```
 
   From the JSON, pick the failed job whose `name` is one of `integration test
-  server`, `environment tests for test env post-deploy`, or `sync_v1_compat`.
+  server`, `environment tests for test env post-deploy`, `sync_v1_compat`, or
+  `integration test server mysql`.
   Use its `id` as the job ID. Notes:
   - Prefer a job with `status` of `failed`. If more than one of these jobs
     failed, list them and ask the user which to investigate (or take the one
@@ -102,7 +108,7 @@ The project is `whalesync/spinner` (URL-encoded `whalesync%2Fspinner`).
     didn't run the server integration tests (they run on MRs touching
     `server/**` and on merge-to-master) and ask for the correct URL.
 
-Record which of the three jobs you resolved — it determines whether live
+Record which of the four jobs you resolved — it determines whether live
 connector keys were in play (step 6).
 
 ### 2. Pull the failed job's log

@@ -22,7 +22,8 @@ import {
   planEditOperationsForRecord,
   PlanOperation,
 } from './plan-operations-for-record';
-import { RefCleanerService } from './ref-cleaner.service';
+import { type ForeignKeyPathInSchema, RefCleanerService } from './ref-cleaner.service';
+import { listReferenceTargetTableIdsForTable } from './reference-target-table-ids';
 import { SchemaHelperService } from './schema-helper.service';
 import { PublishPlanInfo, PublishPlanStatus } from './types';
 import { parsePath } from './utils';
@@ -147,6 +148,32 @@ export class PublishPlanBuildService {
       for (const row of rows) revertFlaggedPaths.add(row.filePath);
     }
     return revertFlaggedPaths;
+  }
+
+  /**
+   * Every foreign-key annotation in the schemas of the workbook's folders — only the given connection's
+   * folders when one is set. These are the records that can reference a file the plan deletes.
+   */
+  private async collectForeignKeyPathsInFolderSchemas(
+    workbookId: WorkbookId,
+    connectorAccountId: string | undefined,
+    readDataFolderInfo: (folderPath: string) => Promise<{ spec: BaseJsonTableSpec } | null>,
+  ): Promise<ForeignKeyPathInSchema[]> {
+    const dataFolders = await this.db.client.dataFolder.findMany({
+      where: { workbookId, ...(connectorAccountId ? { connectorAccountId } : {}) },
+      select: { path: true },
+    });
+    const foreignKeyPathsInFolderSchemas: ForeignKeyPathInSchema[] = [];
+    for (const { path: dataFolderPath } of dataFolders) {
+      if (!dataFolderPath) continue;
+      const dataFolderInfo = await readDataFolderInfo(dataFolderPath.replace(/^\//, ''));
+      if (dataFolderInfo?.spec.schema) {
+        foreignKeyPathsInFolderSchemas.push(
+          ...this.refCleanerService.extractForeignKeyPaths(dataFolderInfo.spec.schema),
+        );
+      }
+    }
+    return foreignKeyPathsInFolderSchemas;
   }
 
   /** Returns all relevant repo IDs for a workbook. When connectorAccountId is provided, returns just that one. */
@@ -530,19 +557,29 @@ export class PublishPlanBuildService {
     const deletedRecordIds = new Set<string>();
     const deletedFileRecordIds = new Map<string, string | null>();
     const targetsForRefCheck: Array<{ remoteTableId?: string; recordId?: string }> = [];
+    // Inbound refs are stored under the FK annotation's `linkedTableId`, so the annotations in this
+    // connection's schemas say which string(s) name each deleted file's table (see
+    // `listReferenceTargetTableIdsForTable`).
+    const foreignKeyPathsInConnectionSchemas =
+      deletedFiles.length > 0
+        ? await this.collectForeignKeyPathsInFolderSchemas(wkbId, connectorAccountId, getDataFolderInfo)
+        : [];
 
     for (const del of deletedFiles) {
       const { folderPath, filename: fileName } = parsePath(del.path);
       const recordId =
         recordIdMap.get(fileIndexLookupKey({ folderPath, filename: fileName, connectorAccountId })) ?? null;
       const folderInfo = await getDataFolderInfo(folderPath);
-      // Use the last segment of the remote tableId path as the remote table identifier
-      const tableIdArr: string[] = folderInfo?.tableId ?? [];
-      const remoteTableId: string | undefined = tableIdArr.length ? tableIdArr[tableIdArr.length - 1] : undefined;
+      const referenceTargetTableIds = listReferenceTargetTableIdsForTable(
+        folderInfo?.tableId ?? [],
+        foreignKeyPathsInConnectionSchemas,
+      );
 
       if (recordId) deletedRecordIds.add(recordId);
       deletedFileRecordIds.set(del.path, recordId);
-      targetsForRefCheck.push({ remoteTableId, recordId: recordId ?? undefined });
+      for (const referenceTargetTableId of referenceTargetTableIds) {
+        targetsForRefCheck.push({ remoteTableId: referenceTargetTableId, recordId: recordId ?? undefined });
+      }
     }
 
     // 2. Identify Inbound Refs to Deleted Files

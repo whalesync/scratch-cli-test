@@ -252,6 +252,59 @@ sync_v1_compat:
       changes: !reference [.changes, server]
     - !reference [.rules, on_merge_to_master]
 
+# MySQL connector (DEV-12035): runs ONLY server/test/integration/mysql-*.spec.ts against real MySQL 8.4 and
+# MariaDB 11.4 sidecars. A dedicated job (precedent: sync_v1_compat) instead of sidecars on .integration-test-server:
+# the MySQL specs skip themselves when MYSQL_TEST_URL / MARIADB_TEST_URL are unset, so the main job and the post-deploy
+# environment tests never need these containers. `extends` REPLACES arrays, so `services` restates the app Postgres;
+# `variables` deep-merge with the template's POSTGRES_* / DATABASE_URL. Per-service variables keep MYSQL_* off the
+# MariaDB container (it also honours the MYSQL_* aliases).
+.integration-test-server-mysql:
+  extends: .integration-test-server
+  services:
+    - name: postgres:16
+      alias: postgres
+    - name: mysql:8.4
+      alias: mysql
+      variables:
+        MYSQL_ROOT_PASSWORD: root
+        MYSQL_DATABASE: test_db
+        MYSQL_USER: test
+        MYSQL_PASSWORD: test
+      command:
+        # 8.4 ships mysql_native_password disabled; the specs exercise both auth plugins.
+        - "--mysql-native-password=ON"
+        # Lets root LOAD_FILE() the auto-generated /var/lib/mysql/ca.pem for the VERIFY_CA test
+        # (GitLab services can't bind-mount repo files).
+        - "--secure-file-priv="
+    - name: mariadb:11.4
+      alias: mariadb
+      variables:
+        MARIADB_ROOT_PASSWORD: root
+        MARIADB_DATABASE: test_db
+        MARIADB_USER: test
+        MARIADB_PASSWORD: test
+  variables:
+    MYSQL_TEST_URL: "mysql://test:test@mysql:3306/test_db"
+    MYSQL_TEST_ROOT_URL: "mysql://root:root@mysql:3306/test_db"
+    MARIADB_TEST_URL: "mysql://test:test@mariadb:3306/test_db"
+    MARIADB_TEST_ROOT_URL: "mysql://root:root@mariadb:3306/test_db"
+    # Fail instead of self-skipping if either flavor is unconfigured, so a broken job can't pass green.
+    MYSQL_INTEGRATION_FAIL_IF_UNCONFIGURED: "true"
+  script:
+    - !reference [.build_shared_types, script]
+    - cd server
+    - !reference [.use_nvm, script]
+    - yarn run migrate
+    - yarn run test:integration test/integration/mysql- --verbose --reporters=default --reporters=jest-junit
+
+integration test server mysql:
+  extends: .integration-test-server-mysql
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: !reference [.changes, server]
+    - !reference [.rules, on_merge_to_master]
+
 .build-server-docker-image:
   stage: build and test
   tags: !reference [.runner_tags, high_memory]

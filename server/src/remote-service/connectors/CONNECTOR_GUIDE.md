@@ -833,7 +833,7 @@ When adding a new connector, touch all of these:
 - [ ] Add connector class in `server/src/remote-service/connectors/library/<service-name>/`
 - [ ] Add `static readonly metadata` using `connectorMetadata()` — this defines display name, terminology, logo, visibility, auth methods, credential fields, and OAuth labels (see example below)
 - [ ] Register via `connectorRegistry.register()` at the bottom of your connector file (see example below)
-- [ ] Add credential fields to `DecryptedCredentials` interface if needed (`packages/shared-types/src/connector-account-types.ts`)
+- [ ] Add credential fields to `DecryptedCredentials` interface if needed (`packages/shared-types/src/connector/credentials.ts`)
 - [ ] Add `AuthParser` and register via `createAuthParser` in your registration if auth pre-processing is needed
 - [ ] Add barrel import in `server/src/remote-service/connectors/library/index.ts`
 
@@ -1165,17 +1165,18 @@ Connectors fall into two camps based on what their source system models:
 
 #### Per-connector reference
 
-| Connector  | Style           | `wsId`                               | `remoteId`               |
-| ---------- | --------------- | ------------------------------------ | ------------------------ |
-| Airtable   | User-defined    | `sanitizeForTableWsId(tableId)`      | `[baseId, tableId]`      |
-| Webflow    | User-defined    | `sanitizeForTableWsId(collectionId)` | `[siteId, collectionId]` |
-| Notion     | User-defined    | `sanitizeForTableWsId(databaseId)`   | `[databaseId]`           |
-| PostgreSQL | User-defined    | `sanitizeForTableWsId(tableName)`    | `['public', tableName]`  |
-| HubSpot    | Fixed (+custom) | `objectType` (e.g., `'contacts'`)    | `[objectType]`           |
-| Brevo      | Fixed           | `tableType` (e.g., `'contacts'`)     | `[tableType]`            |
-| Shopify    | Fixed           | `entityType` (e.g., `'products'`)    | `[entityType]`           |
-| WordPress  | Fixed           | `tableId` (e.g., `'posts'`)          | `[tableId]`              |
-| Intercom   | Fixed           | `tableType` (e.g., `'articles'`)     | `[tableType]`            |
+| Connector  | Style           | `wsId`                                        | `remoteId`                  |
+| ---------- | --------------- | --------------------------------------------- | --------------------------- |
+| Airtable   | User-defined    | `sanitizeForTableWsId(tableId)`               | `[baseId, tableId]`         |
+| Webflow    | User-defined    | `sanitizeForTableWsId(collectionId)`          | `[siteId, collectionId]`    |
+| Notion     | User-defined    | `sanitizeForTableWsId(databaseId)`            | `[databaseId]`              |
+| PostgreSQL | User-defined    | `sanitizeForTableWsId(tableName)`             | `['public', tableName]`     |
+| MySQL      | User-defined    | `sanitizeForTableWsId('<database>__<table>')` | `['<database>', '<table>']` |
+| HubSpot    | Fixed (+custom) | `objectType` (e.g., `'contacts'`)             | `[objectType]`              |
+| Brevo      | Fixed           | `tableType` (e.g., `'contacts'`)              | `[tableType]`               |
+| Shopify    | Fixed           | `entityType` (e.g., `'products'`)             | `[entityType]`              |
+| WordPress  | Fixed           | `tableId` (e.g., `'posts'`)                   | `[tableId]`                 |
+| Intercom   | Fixed           | `tableType` (e.g., `'articles'`)              | `[tableType]`               |
 
 HubSpot is "fixed + custom" because standard CRM object types use the fixed-string convention (`'contacts'`, `'companies'`, …) while custom objects use HubSpot's own `fullyQualifiedName` (e.g., `'p12345_MyObject'`) — both still strings in `remoteId[0]`, just sourced differently.
 
@@ -1274,7 +1275,7 @@ Rules of thumb:
 - **Declare nothing for read-only / computed fields** (they are never written) and for values that rotate on their own (expiring file URLs).
 - **Test it against real shapes**: a pulled value vs the packed write shape → equal; a content change → different; a clear → different. See `notion-field-value-canonicalizer.spec.ts`, `airtable-field-value-canonicalizer.spec.ts`, `pg-field-value-canonicalizer.spec.ts`.
 
-**Rollout status:** fully launched — the comparison path runs for every sync (the per-user rollout flag it sat behind was removed once it reached 100%). Canonicalizers are resolved once per sync table mapping; a field without one keeps the purely structural compare. **Registered hooks today:** Notion (envelopes, dates, options, relations), Airtable (omitted-empty fields, date precision, numbers) and Postgres/Supabase (`pg-common`: timestamps, floats, numeric strings, json) — the last three were switched on by DEV-11420.
+**Rollout status:** fully launched — the comparison path runs for every sync (the per-user rollout flag it sat behind was removed once it reached 100%). Canonicalizers are resolved once per sync table mapping; a field without one keeps the purely structural compare. **Registered hooks today:** Notion (envelopes, dates, options, relations), Airtable (omitted-empty fields, date precision, numbers) and Postgres/Supabase (`pg-common`: timestamps, floats, numeric strings, json) — the last three were switched on by DEV-11420. MySQL (`mysql/mysql-field-value-canonicalizer.ts`, DEV-12035) is registered too, keyed on the exact native column type: temporals through the write path's own literal converter, DECIMAL rounded to its scale, FLOAT/DOUBLE significant digits, ENUM/SET/CHAR/TINYINT(1) normalisation and parsed json.
 
 ### Read-Only Fields on Publish
 

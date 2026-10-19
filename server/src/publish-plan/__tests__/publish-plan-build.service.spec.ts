@@ -94,6 +94,8 @@ describe('PublishPlanService', () => {
       // mockReturnValueOnce to simulate the FK-strip on a revert path.
       // eslint-disable-next-line @typescript-eslint/no-unsafe-return
       nullifyAllForeignKeyFields: jest.fn().mockImplementation((content) => content),
+      // No FK annotations by default; the delete pass reads them to key its inbound-ref lookup.
+      extractForeignKeyPaths: jest.fn().mockReturnValue([]),
     } as unknown as jest.Mocked<RefCleanerService>;
 
     schemaService = {
@@ -376,6 +378,46 @@ describe('PublishPlanService', () => {
       const deleteEntry = saved.find((e) => e.phase === 'delete');
       expect(deleteEntry).toBeDefined();
       expect(deleteEntry?.remoteRecordId).toBe('rec_old');
+    });
+
+    it("looks up inbound refs under every FK linkedTableId that names the deleted file's table (MySQL `db.table`)", async () => {
+      // FileReference rows store the FK annotation's linkedTableId. MySQL writes `test_db.authors` for the
+      // `['test_db', 'authors']` table, so a lookup by the last tableId segment alone never finds Post 3's ref.
+      const postsSchema = { type: 'object', properties: {} };
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: 'authors/cleo.json', status: 'deleted' }]);
+      fileIndexService.getRecordIds.mockResolvedValue(new Map([[':authors:cleo.json', '9007199254740995']]));
+      db.client.dataFolder.findMany.mockResolvedValue([{ path: '/authors' }, { path: '/posts' }]);
+      type DataFolderInfo = Awaited<ReturnType<SchemaHelperService['getDataFolderInfo']>>;
+      schemaService.getDataFolderInfo.mockImplementation((_workbookId: string, folderPath: string) =>
+        Promise.resolve(
+          (folderPath === 'posts'
+            ? { id: 'df_posts', tableId: ['test_db', 'posts'], spec: { schema: postsSchema } }
+            : { id: 'df_authors', tableId: ['test_db', 'authors'], spec: { schema: {} } }) as unknown as DataFolderInfo,
+        ),
+      );
+      refCleanerService.extractForeignKeyPaths.mockImplementation((schema: unknown) =>
+        schema === postsSchema
+          ? [
+              {
+                path: ['author_id'],
+                targetRemoteTableId: 'test_db.authors',
+                linkedTableRemoteId: ['test_db', 'authors'],
+              },
+            ]
+          : [],
+      );
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      expect(fileReferenceService.findRefsToFiles).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        [
+          { remoteTableId: 'authors', recordId: '9007199254740995' },
+          { remoteTableId: 'test_db.authors', recordId: '9007199254740995' },
+        ],
+        expect.any(Array),
+        expect.any(Function),
+      );
     });
   });
 

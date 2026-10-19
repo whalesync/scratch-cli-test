@@ -1,4 +1,5 @@
 import { CREATE_FIELD_KINDS, TransformerTypes, type CreateFieldType } from '@spinner/shared-types';
+import { MYSQL_SCHEMA_CREATION_CAPABILITIES } from 'src/remote-service/connectors/library/mysql/mysql-create-schema';
 import type { SchemaField } from 'src/utils/schema-helpers';
 import { linkedTableIdIndexKeysForRemoteTableId } from '../foreign-key-linked-table-id';
 import {
@@ -1840,5 +1841,147 @@ describe('generateCreatePlanFromSources — native column types (DEV-11903)', ()
         ]);
       },
     );
+  });
+});
+
+describe('generateCreatePlanFromSources — MySQL native column types (DEV-12035)', () => {
+  const mySqlNativeColumnType = (type: string, isRecreatableVerbatim = true) => ({
+    typeSystem: 'mysql',
+    type,
+    isRecreatableVerbatim,
+  });
+
+  // A MySQL `orders` table, annotated the way the MySQL read side annotates it (`mysql-native-column-type.ts`).
+  const mySqlOrdersSource: PlanGeneratorSource = {
+    ref: 'orders',
+    dataFolderId: 'orders',
+    tableName: 'orders',
+    remoteTableIds: ['shop.orders'],
+    idFieldPath: 'id',
+    connectorService: 'MYSQL',
+    serviceDisplayName: 'MySQL',
+    schemaFields: [
+      field({ path: 'id', type: 'number', nativeColumnType: mySqlNativeColumnType('int unsigned') }),
+      field({
+        path: 'order_total',
+        type: 'string',
+        displayLabel: 'Order Total',
+        nativeColumnType: mySqlNativeColumnType('decimal(12,3)'),
+      }),
+      field({
+        path: 'receipt_scan',
+        type: 'string',
+        displayLabel: 'Receipt Scan',
+        nativeColumnType: mySqlNativeColumnType('blob', false),
+      }),
+    ],
+  };
+
+  // Exactly what a MySQL destination connector declares.
+  const mySqlDestinationSupport: DestinationFieldTypeSupport = {
+    supportedFieldKinds: MYSQL_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds,
+    supportedArrayElementKinds: MYSQL_SCHEMA_CREATION_CAPABILITIES.supportedArrayElementKinds,
+    nativeTypeSystem: MYSQL_SCHEMA_CREATION_CAPABILITIES.nativeTypeSystem,
+  };
+
+  const postgresDestinationSupport: DestinationFieldTypeSupport = {
+    supportedFieldKinds: [...CREATE_FIELD_KINDS],
+    supportedArrayElementKinds: ['text', 'number', 'boolean'],
+    nativeTypeSystem: 'postgres',
+  };
+
+  it("declares the 'mysql' native type system on the MySQL destination capabilities", () => {
+    expect(MYSQL_SCHEMA_CREATION_CAPABILITIES.nativeTypeSystem).toBe('mysql');
+  });
+
+  it('carries a recreatable MySQL column type into a MySQL destination under the verbatim source column name', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [mySqlOrdersSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationConnectorService: 'MYSQL',
+      destinationFieldTypeSupport: mySqlDestinationSupport,
+    });
+    const createdFieldsByName = new Map(tables[0].fields.map((createdField) => [createdField.name, createdField]));
+
+    // The logical type stays on the spec as the fallback for a consumer that doesn't use native types.
+    expect(createdFieldsByName.get('order_total')).toEqual({
+      name: 'order_total',
+      fieldType: { kind: 'text' },
+      nativeFieldType: { typeSystem: 'mysql', type: 'decimal(12,3)' },
+    });
+    // Same type system → the source's own column name, not the view's display label.
+    expect(createdFieldsByName.has('Order Total')).toBe(false);
+    expect(notes.find((note) => note.sourceFieldPath === 'order_total')).toMatchObject({
+      fieldName: 'order_total',
+      status: 'mapped',
+    });
+    // The destination creates its own AUTO_INCREMENT id.
+    expect(createdFieldsByName.has('id')).toBe(false);
+    expect(createdFieldsByName.get('mysql_source_record_id')?.isSourceRecordId).toBe(true);
+  });
+
+  it('keeps the source column name but falls back to the logical type for a MySQL type that is not recreatable', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [mySqlOrdersSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationFieldTypeSupport: mySqlDestinationSupport,
+    });
+    const receiptScanField = tables[0].fields.find((createdField) => createdField.name === 'receipt_scan');
+
+    expect(receiptScanField).toEqual({ name: 'receipt_scan', fieldType: { kind: 'text' } });
+  });
+
+  it('adds no native type and uses display-label names when a MySQL source targets a Postgres destination', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [mySqlOrdersSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationConnectorService: 'POSTGRES',
+      destinationFieldTypeSupport: postgresDestinationSupport,
+    });
+    const createdFieldNames = tables[0].fields.map((createdField) => createdField.name);
+
+    expect(tables[0].fields.some((createdField) => createdField.nativeFieldType !== undefined)).toBe(false);
+    expect(createdFieldNames).toContain('Order Total');
+    expect(createdFieldNames).not.toContain('order_total');
+    expect(createdFieldNames).toContain('mysql_record_id');
+  });
+
+  it('adds no native type when a Postgres-annotated source targets a MySQL destination', () => {
+    const postgresSource: PlanGeneratorSource = {
+      ...mySqlOrdersSource,
+      connectorService: 'POSTGRES',
+      schemaFields: [
+        field({
+          path: 'order_total',
+          type: 'string',
+          displayLabel: 'Order Total',
+          nativeColumnType: { typeSystem: 'postgres', type: 'numeric(12,3)', isRecreatableVerbatim: true },
+        }),
+      ],
+    };
+
+    const { tables } = generateCreatePlanFromSources({
+      sources: [postgresSource],
+      destinationConnectorAccountId: 'destConn',
+      destinationFieldTypeSupport: mySqlDestinationSupport,
+    });
+
+    expect(tables[0].fields.some((createdField) => createdField.nativeFieldType !== undefined)).toBe(false);
+    expect(tables[0].fields.map((createdField) => createdField.name)).toContain('Order Total');
+  });
+
+  it('flattens a list to text (MySQL has no list columns) but keeps an object as json', () => {
+    expect(
+      inferLogicalFieldType(
+        field({ path: 'tags', type: 'array', arrayItemType: 'string' }),
+        undefined,
+        'HubSpot',
+        mySqlDestinationSupport,
+      ),
+    ).toMatchObject({ status: 'downgraded', fieldType: { kind: 'text' } });
+    expect(
+      inferLogicalFieldType(field({ path: 'address', type: 'object' }), undefined, 'HubSpot', mySqlDestinationSupport),
+    ).toEqual({ status: 'mapped', fieldType: { kind: 'json' } });
+    expect(mySqlDestinationSupport.supportedFieldKinds).not.toContain('multiSelect');
   });
 });

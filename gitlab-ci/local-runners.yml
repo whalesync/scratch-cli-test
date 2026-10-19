@@ -187,6 +187,15 @@ local integration test server:
     - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, server]
 
+# Inherits the template's postgres + mysql + mariadb services (all multi-arch images).
+local integration test server mysql:
+  extends:
+    - .integration-test-server-mysql
+    - .local-runner-defaults
+  rules:
+    - if: !reference [.rules, local_runner_users_mr]
+      changes: !reference [.changes, server]
+
 local build server docker image:
   extends:
     - .build-server-docker-image

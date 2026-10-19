@@ -3,6 +3,15 @@ import { X_SCRATCH_FOREIGN_KEY_OPTIONS } from '@spinner/shared-types';
 
 import { ParsedContent, Schema } from 'src/utils/objects';
 
+/** One `x-scratch-foreign-key` annotation found in a schema, and the record-content path it sits at. */
+export interface ForeignKeyPathInSchema {
+  path: string[];
+  /** The annotation's `linkedTableId` — also what FileReference rows store as `targetRemoteTableId`. */
+  targetRemoteTableId: string;
+  /** The annotation's `linkedTableRemoteId` (the target folder's full `tableId`), when the connector emits it. */
+  linkedTableRemoteId?: string[];
+}
+
 @Injectable()
 export class RefCleanerService {
   /**
@@ -172,23 +181,25 @@ export class RefCleanerService {
   // per plan build (SchemaHelperService per-build caches), so identity keying
   // keeps the walk O(folders) per build while a fresh git read of an updated
   // schema always recomputes.
-  private fkPathsCacheBySchemaObject = new WeakMap<Schema, Array<{ path: string[]; targetRemoteTableId: string }>>();
+  private fkPathsCacheBySchemaObject = new WeakMap<Schema, ForeignKeyPathInSchema[]>();
 
   /**
    * Traverses the schema to find all paths that are marked as foreign keys.
    *
-   * Reads `linkedTableId` and nothing else, matching every other consumer of the annotation
+   * `linkedTableId` identifies the target, matching every other consumer of the annotation
    * (`schema-helpers.ts`'s whitelist copy into `SchemaField`, `scratch-git-2`'s Rust indexer).
-   * A schema stored before 2026-07-22 may still carry the retired Notion-only `map` key; it is
-   * ignored here, which is exactly the state a re-pull converges to.
+   * `linkedTableRemoteId` is carried along when the connector emits it, so a caller can tell which
+   * table a `linkedTableId` string names. A schema stored before 2026-07-22 may still carry the
+   * retired Notion-only `map` key; it is ignored here, which is exactly the state a re-pull
+   * converges to.
    */
-  extractForeignKeyPaths(schema: Schema): Array<{ path: string[]; targetRemoteTableId: string }> {
+  extractForeignKeyPaths(schema: Schema): ForeignKeyPathInSchema[] {
     const cached = this.fkPathsCacheBySchemaObject.get(schema);
     if (cached) {
       return cached;
     }
 
-    const results: Array<{ path: string[]; targetRemoteTableId: string }> = [];
+    const results: ForeignKeyPathInSchema[] = [];
 
     const walk = (schemaNode: Record<string, unknown>, currentPath: string[]) => {
       if (!schemaNode || typeof schemaNode !== 'object') return;
@@ -197,9 +208,18 @@ export class RefCleanerService {
       const foreignKey = schemaNode[X_SCRATCH_FOREIGN_KEY_OPTIONS];
 
       if (foreignKey && typeof foreignKey === 'object' && !Array.isArray(foreignKey)) {
-        const linkedTableId = (foreignKey as Record<string, unknown>).linkedTableId;
+        const { linkedTableId, linkedTableRemoteId } = foreignKey as Record<string, unknown>;
         if (typeof linkedTableId === 'string') {
-          results.push({ path: currentPath, targetRemoteTableId: linkedTableId });
+          const linkedTableRemoteIdIfValid =
+            Array.isArray(linkedTableRemoteId) &&
+            linkedTableRemoteId.every((remoteIdSegment) => typeof remoteIdSegment === 'string')
+              ? linkedTableRemoteId
+              : undefined;
+          results.push({
+            path: currentPath,
+            targetRemoteTableId: linkedTableId,
+            ...(linkedTableRemoteIdIfValid ? { linkedTableRemoteId: linkedTableRemoteIdIfValid } : {}),
+          });
         }
       }
 

@@ -24,6 +24,7 @@ The recurring **sub-patterns**:
 | **Airtable** | ✅ Landed | `filterByFormula: IS_AFTER(LAST_MODIFIED_TIME(), since)` → annotated field | resolver + override | — | First connector; proves the contract |
 | **PostgreSQL** | ✅ Landed | `WHERE <col> > $since` → user-declared `modifiedAtField` | resolver + override | — | No fixed field; column is user-configured |
 | **Supabase** | ✅ Landed | `WHERE <col> > $since` (shares `pg-common`) | resolver + override | — | Same engine as PostgreSQL |
+| **MySQL / MariaDB** | ✅ Landed (hidden) | `WHERE (<filter>) AND <col> > '<since − skew, UTC literal>'` → user-declared `modifiedAtField` (TIMESTAMP or DATETIME only) | resolver + override | — | DEV-12035. Reuses the `pg-common` support/skew helpers; no auto-detect. Session `time_zone='+00:00'`: TIMESTAMP compares as a UTC instant, DATETIME as UTC wall clock (assumes UTC writers). 60s skew |
 | **Notion** | ✅ Landed | `dataSources.query` JSON filter `last_edited_time` on-or-after | fixed system field | — | Single-level compound-filter nesting limit |
 | **WordPress** | ✅ Landed | REST `?modified_after=<iso>` → `modified` | capability-gated (annotation) | — | Taxonomy demotes to full; site-timezone conversion |
 | **Linear** | ✅ Landed | GraphQL `filter: { updatedAt: { gt } }` | fixed system field | — | Per-entity `FILTER_TYPE_MAP` |

@@ -12,8 +12,16 @@ export interface DecryptedCredentials {
   domain?: string;
   // Copper specific (the account email the API key was generated under, sent as X-PW-UserEmail)
   email?: string;
-  // PostgreSQL specific
+  // PostgreSQL / Supabase: the stored connection string.
+  // MySQL: accepted as INPUT only (create / edit); decomposed by the MySQL AuthParser and never stored.
   connectionString?: string;
+  // MySQL / MariaDB discrete connection settings (also reuses `username` / `password` above). Always strings:
+  // the AuthParser contract is Record<string, string>, so the port is stored as decimal text (e.g. "3306").
+  databaseHost?: string; // hostname or IP literal (IPv6 without brackets); never a URL
+  databasePort?: string;
+  databaseName?: string; // optional; absent = every non-system database the user can see
+  sslMode?: string; // 'DISABLED' | 'REQUIRED' | 'VERIFY_CA' | 'VERIFY_IDENTITY' (validated server-side)
+  sslCaCertificate?: string; // PEM bundle, re-wrapped to 64-character lines
   // Supabase multi-project (OAuth)
   supabaseProjects?: SupabaseProjectCredentials[];
 

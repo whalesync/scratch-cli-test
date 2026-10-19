@@ -213,6 +213,31 @@ describe('RefCleanerService.extractForeignKeyPaths caching', () => {
   });
 });
 
+describe('RefCleanerService.extractForeignKeyPaths linkedTableRemoteId', () => {
+  const svc = new RefCleanerService();
+
+  it("carries the annotation's linkedTableRemoteId when it is an array of strings, and drops a malformed one", () => {
+    // MySQL names the target `db.table` in linkedTableId; linkedTableRemoteId is the target folder's tableId.
+    const schema = Type.Object({
+      id: Type.Number(),
+      author_id: Type.String({
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: {
+          linkedTableId: 'test_db.authors',
+          linkedTableRemoteId: ['test_db', 'authors'],
+        },
+      }),
+      editor_id: Type.String({
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'test_db.editors', linkedTableRemoteId: ['test_db', 7] },
+      }),
+    }) as unknown as Schema;
+
+    expect(svc.extractForeignKeyPaths(schema)).toEqual([
+      { path: ['author_id'], targetRemoteTableId: 'test_db.authors', linkedTableRemoteId: ['test_db', 'authors'] },
+      { path: ['editor_id'], targetRemoteTableId: 'test_db.editors' },
+    ]);
+  });
+});
+
 /**
  * The Notion-relation shape (DEV-10942): the FK value is not a flat id array but ids nested
  * inside an envelope — `properties.X = { type: 'relation', relation: [{ id }], has_more }` —

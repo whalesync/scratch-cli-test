@@ -34,7 +34,7 @@ The backlog of services **not yet provisioned** — research + scoring to pick w
 | **Bubble** |  | — | No-code app builder | — | — | Whalesync-supported; research pending | — | — | ✓ |
 | **Basedash** |  | — | DB admin / dashboards | — | — | Whalesync-supported; research pending | — | — | ✓ |
 | **Greenhouse** |  | — | ATS / recruiting | — | — | Whalesync-supported; research pending | — | — | ✓ |
-| **MySQL** |  | — | Database | — | — | Whalesync-supported; research pending | — | — | ✓ |
+| **MySQL** | ✓ | — | Database | — | — | Built hidden (DEV-12035): MySQL 8.x / MariaDB via discrete fields; self-host test DBs in `server/localdev/docker-compose.mysql.yml` | — | — | ✓ |
 | **Snowflake** |  | — | Data warehouse | — | — | Whalesync-supported; research pending | — | — | ✓ |
 | **Jira** | | ~300k+ companies | Task/Issue | Free (≤10 users); Standard ~$7.91, Premium ~$14.54 /user/mo; Ent custom | Free-forever (≤10 users, 2GB); no card | Medium — rich REST, heavy custom-field/schema model, API-token auth | **8** | — | ✓ |
 | **Asana** | | ~3.2M paid / ~150k cos | Task/Work | Personal Free; Starter ~$10.99, Advanced ~$24.99 /user/mo; Ent custom | Free-forever (Personal ~2-10 seats); no card | Medium — REST+JSON; custom-field types limited (text/enum/number) | **8** | — | ✓ |

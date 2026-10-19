@@ -18,6 +18,7 @@ import './intercom/intercom-connector';
 import './linear/linear-connector';
 import './memberstack/memberstack-connector';
 import './moco/moco-connector';
+import './mysql/mysql-connector';
 import './notion/notion-connector';
 import './pipedrive/pipedrive-connector';
 import './postgres/postgres-connector';

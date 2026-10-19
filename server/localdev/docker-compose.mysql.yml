@@ -1,0 +1,58 @@
+# Opt-in MySQL 8.4 + MariaDB 11.4 for the MySQL connector (DEV-12035). Not started by the default `docker compose up -d`.
+#   docker compose -f docker-compose.mysql.yml up -d --wait   # from server/localdev; returns once both accept logins
+#   docker compose -f docker-compose.mysql.yml down           # stop, keep data
+#   docker compose -f docker-compose.mysql.yml down -v        # stop and wipe (next `up` re-seeds from ./mysql/init)
+# MySQL 8.4:    mysql://test:test@127.0.0.1:3306/test_db   (root password: root)
+# MariaDB 11.4: mysql://test:test@127.0.0.1:3307/test_db   (root password: root)
+# Ports bind 127.0.0.1 only so the weak test passwords aren't reachable from the LAN.
+# Explicit project name: this file shares server/localdev with docker-compose.yml, whose default project name would
+# otherwise collide (orphan warnings, and `down --remove-orphans` could remove the app Postgres).
+name: scratch-localdev-mysql
+
+services:
+  mysql:
+    image: mysql:8.4
+    command:
+      # 8.4 ships mysql_native_password disabled; the integration specs exercise both auth plugins.
+      - --mysql-native-password=ON
+      # Lets root LOAD_FILE() the auto-generated /var/lib/mysql/ca.pem for the VERIFY_CA integration test.
+      - --secure-file-priv=
+    ports: ['127.0.0.1:3306:3306']
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: test_db
+      MYSQL_USER: test
+      MYSQL_PASSWORD: test
+      # Makes the in-container `mysql` client use utf8mb4; with no locale it falls back to latin1 and mangles non-ASCII.
+      LANG: C.UTF-8
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # Runs ./mysql/init/*.sql only on a first start with an empty volume (or after `down -v`).
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # TCP login as the app user: fails during the entrypoint's socket-only init server, so healthy = really ready.
+      test: ['CMD-SHELL', 'mysql -h 127.0.0.1 -u"$$MYSQL_USER" -p"$$MYSQL_PASSWORD" -e "SELECT 1" "$$MYSQL_DATABASE"']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  mariadb:
+    image: mariadb:11.4
+    ports: ['127.0.0.1:3307:3306']
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: test_db
+      MARIADB_USER: test
+      MARIADB_PASSWORD: test
+      LANG: C.UTF-8
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  mysql_data:
+  mariadb_data:
