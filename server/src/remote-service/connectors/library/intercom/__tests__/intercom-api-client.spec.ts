@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { WSLogger } from 'src/logger';
+import type { WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import {
   buildStaggeredPageSizeLadder,
   IntercomApiClient,
@@ -13,6 +14,18 @@ const mockGet = jest.fn();
 const mockPost = jest.fn();
 const mockPut = jest.fn();
 const mockDelete = jest.fn();
+
+// Real retry logic, near-zero backoff: reads now retry a 500 and network errors, and these tests exhaust retries.
+jest.mock('src/rate-limiter/rate-limiter', () => {
+  const actualRateLimiterModule = jest.requireActual<typeof import('src/rate-limiter/rate-limiter')>(
+    'src/rate-limiter/rate-limiter',
+  );
+  return {
+    ...actualRateLimiterModule,
+    withRetry: <T>(fn: () => Promise<T>, opts: WithRetryOpts) =>
+      actualRateLimiterModule.withRetry(fn, { ...opts, initialRetryDelayMs: 1, maxRetryDelayMs: 1 }),
+  };
+});
 
 jest.mock('../../../create-api-client', () => ({
   createApiClient: jest.fn(() => ({
@@ -575,6 +588,211 @@ describe('IntercomApiClient', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // listConversations — a conversation Intercom refuses to hydrate (403)
+  // ---------------------------------------------------------------------------
+
+  describe('listConversations when Intercom cannot return one conversation in full', () => {
+    const intercomErrorResponse = (status: number, body: unknown, statusText: string) =>
+      new axios.AxiosError(statusText, String(status), undefined, undefined, {
+        status,
+        data: body,
+        statusText,
+        headers: {},
+        config: {} as never,
+      });
+
+    const onePageListing = (conversations: { type: string; id: string }[]) => ({
+      data: {
+        type: 'conversation.list',
+        conversations,
+        total_count: conversations.length,
+        pages: { type: 'pages', page: 1, per_page: 20, total_pages: 1 },
+      },
+    });
+
+    const withConversationParts = (listed: { type: string; id: string }) => ({
+      ...listed,
+      conversation_parts: { type: 'conversation_part.list', conversation_parts: [], total_count: 0 },
+    });
+
+    it('keeps the listed copy and names it, while the rest of the page still hydrates', async () => {
+      const listedOne = { type: 'conversation', id: '1' };
+      const listedForbidden = { type: 'conversation', id: '215475561785523' };
+      const listedThree = { type: 'conversation', id: '3' };
+      mockGet
+        .mockResolvedValueOnce(onePageListing([listedOne, listedForbidden, listedThree]))
+        .mockResolvedValueOnce({ data: withConversationParts(listedOne) })
+        .mockRejectedValueOnce(
+          intercomErrorResponse(
+            403,
+            {
+              type: 'error.list',
+              errors: [{ code: 'forbidden', message: 'Access to this conversation is restricted' }],
+            },
+            'Forbidden',
+          ),
+        )
+        .mockResolvedValueOnce({ data: withConversationParts(listedThree) });
+
+      const pages: IntercomConversationPage[] = [];
+      for await (const page of client.listConversations()) {
+        pages.push(page);
+      }
+
+      expect(pages).toEqual([
+        {
+          items: [withConversationParts(listedOne), listedForbidden, withConversationParts(listedThree)],
+          nextCursor: undefined,
+          conversationsIntercomCouldNotReturnInFull: [
+            {
+              conversationId: '215475561785523',
+              httpStatus: 403,
+              intercomErrorMessage: 'Access to this conversation is restricted',
+            },
+          ],
+        },
+      ]);
+    });
+
+    it("falls back to Intercom's error code, then to no reason, when the 403 body has no message", async () => {
+      mockGet
+        .mockResolvedValueOnce(
+          onePageListing([
+            { type: 'conversation', id: '1' },
+            { type: 'conversation', id: '2' },
+          ]),
+        )
+        .mockRejectedValueOnce(
+          intercomErrorResponse(403, { type: 'error.list', errors: [{ code: 'forbidden' }] }, 'Forbidden'),
+        )
+        .mockRejectedValueOnce(intercomErrorResponse(403, '<html>Forbidden</html>', 'Forbidden'));
+
+      const pages: IntercomConversationPage[] = [];
+      for await (const page of client.listConversations()) {
+        pages.push(page);
+      }
+
+      expect(pages[0].conversationsIntercomCouldNotReturnInFull).toEqual([
+        { conversationId: '1', httpStatus: 403, intercomErrorMessage: 'forbidden' },
+        { conversationId: '2', httpStatus: 403, intercomErrorMessage: null },
+      ]);
+    });
+
+    it('still drops a conversation deleted between the listing and its hydration (404)', async () => {
+      const listedDeleted = { type: 'conversation', id: '1' };
+      const listedTwo = { type: 'conversation', id: '2' };
+      mockGet
+        .mockResolvedValueOnce(onePageListing([listedDeleted, listedTwo]))
+        .mockRejectedValueOnce(intercomErrorResponse(404, {}, 'Not Found'))
+        .mockResolvedValueOnce({ data: withConversationParts(listedTwo) });
+
+      const pages: IntercomConversationPage[] = [];
+      for await (const page of client.listConversations()) {
+        pages.push(page);
+      }
+
+      expect(pages).toEqual([
+        {
+          items: [withConversationParts(listedTwo)],
+          nextCursor: undefined,
+          conversationsIntercomCouldNotReturnInFull: [],
+        },
+      ]);
+    });
+
+    it('retries a 500 on the hydration and keeps the hydrated conversation once Intercom recovers', async () => {
+      const listedOne = { type: 'conversation', id: '1' };
+      mockGet
+        .mockResolvedValueOnce(onePageListing([listedOne]))
+        .mockRejectedValueOnce(intercomErrorResponse(500, { type: 'error.list', errors: [] }, 'Internal Server Error'))
+        .mockResolvedValueOnce({ data: withConversationParts(listedOne) });
+
+      const pages: IntercomConversationPage[] = [];
+      for await (const page of client.listConversations()) {
+        pages.push(page);
+      }
+
+      expect(pages).toEqual([
+        {
+          items: [withConversationParts(listedOne)],
+          nextCursor: undefined,
+          conversationsIntercomCouldNotReturnInFull: [],
+        },
+      ]);
+    });
+
+    it('keeps the listed copy of a conversation Intercom keeps failing with a 5xx after every retry', async () => {
+      const listedBroken = { type: 'conversation', id: '7' };
+      const listedTwo = { type: 'conversation', id: '2' };
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/conversations') return Promise.resolve(onePageListing([listedBroken, listedTwo]));
+        if (url === '/conversations/7') {
+          return Promise.reject(
+            intercomErrorResponse(
+              500,
+              { type: 'error.list', errors: [{ code: 'server_error', message: 'Server Error' }] },
+              'Internal Server Error',
+            ),
+          );
+        }
+        return Promise.resolve({ data: withConversationParts(listedTwo) });
+      });
+
+      const pages: IntercomConversationPage[] = [];
+      for await (const page of client.listConversations()) {
+        pages.push(page);
+      }
+
+      expect(pages).toEqual([
+        {
+          items: [listedBroken, withConversationParts(listedTwo)],
+          nextCursor: undefined,
+          conversationsIntercomCouldNotReturnInFull: [
+            { conversationId: '7', httpStatus: 500, intercomErrorMessage: 'Server Error' },
+          ],
+        },
+      ]);
+      // The first attempt plus every retry.
+      expect(mockGet.mock.calls.filter(([url]) => url === '/conversations/7')).toHaveLength(6);
+    });
+
+    it('retries a network error on the hydration, and fails the walk when it outlasts the retries', async () => {
+      const connectionReset = Object.assign(new axios.AxiosError('socket hang up', 'ECONNRESET'), {
+        response: undefined,
+      });
+      mockGet.mockImplementation((url: string) =>
+        url === '/conversations'
+          ? Promise.resolve(onePageListing([{ type: 'conversation', id: '1' }]))
+          : Promise.reject(connectionReset),
+      );
+
+      const walkAllPages = async () => {
+        for await (const page of client.listConversations()) {
+          expect(page).toBeDefined();
+        }
+      };
+
+      await expect(walkAllPages()).rejects.toThrow('socket hang up');
+      expect(mockGet.mock.calls.filter(([url]) => url === '/conversations/1')).toHaveLength(6);
+    });
+
+    it('still fails the walk on a 401, without retrying', async () => {
+      mockGet
+        .mockResolvedValueOnce(onePageListing([{ type: 'conversation', id: '1' }]))
+        .mockRejectedValueOnce(intercomErrorResponse(401, { type: 'error.list', errors: [] }, 'Unauthorized'));
+
+      const walkAllPages = async () => {
+        for await (const page of client.listConversations()) {
+          expect(page).toBeDefined();
+        }
+      };
+
+      await expect(walkAllPages()).rejects.toThrow('Unauthorized');
+      expect(mockGet).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // getConversation
   // ---------------------------------------------------------------------------
 
@@ -704,7 +922,9 @@ describe('IntercomApiClient', () => {
         pages.push(page);
       }
 
-      expect(pages).toEqual([{ items: [listItem], nextCursor: undefined }]);
+      expect(pages).toEqual([
+        { items: [listItem], nextCursor: undefined, conversationsIntercomCouldNotReturnInFull: [] },
+      ]);
       // No hydration GET /conversations/1
       expect(mockGet).not.toHaveBeenCalled();
     });

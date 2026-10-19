@@ -5,6 +5,7 @@ import {
   isGenericApiConnectorExtras,
   type JobTrigger,
   JobType,
+  type PulledRecordWarning,
   type PullFolderProgress,
   type PullLinkedFolderFilesPublicProgress,
   type WorkbookId,
@@ -81,6 +82,17 @@ export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
 
 /** Maximum number of file paths to track per category in progress (for UI display). */
 const MAX_PROGRESS_PATHS = 100;
+
+/**
+ * Most records one folder's pull may keep in a degraded form. Every one is listed on the folder's progress (a
+ * routine's sync leaves each listed record out), so past this many the folder fails instead: the list stays small
+ * enough to checkpoint after every page, and that many degraded records points at a broken connection (e.g. an
+ * access change on the service), not a few odd records.
+ */
+const MAX_DEGRADED_RECORDS_PER_FOLDER = 100;
+
+/** A folder's pull kept more than {@link MAX_DEGRADED_RECORDS_PER_FOLDER} records in a degraded form. */
+class TooManyDegradedRecordsInFolderError extends Error {}
 
 const LOG_SOURCE = 'PullLinkedFolderFilesJob';
 
@@ -806,12 +818,25 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           pullSink,
           resumeProgress,
           onBatchCheckpoint: async (update) => {
-            // The run-wide count, this folder's count, and its cursor all advance in one synchronous step,
-            // so every checkpoint pairs a cursor with exactly the records fetched up to it. That pairing is
-            // what lets a resumed attempt restore the counts (see restoreCountersFromPreviousAttemptCheckpoint).
+            // The run-wide count, this folder's count, its warnings, and its cursor all advance in one
+            // synchronous step, so every checkpoint pairs a cursor with exactly the records (and warnings)
+            // fetched up to it. That pairing is what lets a resumed attempt restore them
+            // (see restoreCountersFromPreviousAttemptCheckpoint).
             publicProgress.totalFiles += update.fileCount;
             if (fetchingFolderEntry) {
               fetchingFolderEntry.totalFiles += update.fileCount;
+            }
+            if (update.recordWarnings.length > 0) {
+              WSLogger.warn({
+                source: LOG_SOURCE,
+                message: 'Connector pulled records in a degraded form',
+                workbookId: folderCtx.dataFolder.workbookId,
+                dataFolderId: folderId,
+                recordWarnings: update.recordWarnings,
+              });
+              if (fetchingFolderEntry) {
+                addPulledRecordWarningsToFolderProgress(fetchingFolderEntry, update.recordWarnings);
+              }
             }
             if (update.cursor) {
               jobProgress.folderCursors = jobProgress.folderCursors ?? {};
@@ -830,7 +855,11 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         jobProgress.folderFetchStatus[folderId] = 'failed';
         pullStats.failed = true;
 
-        const phase1ErrorDetails = folderCtx.connector.extractConnectorErrorDetails(error);
+        // Too many degraded records is the job's own verdict, already worded for the user — not a connector error.
+        const phase1ErrorDetails =
+          error instanceof TooManyDegradedRecordsInFolderError
+            ? { userFriendlyMessage: error.message, description: error.message }
+            : folderCtx.connector.extractConnectorErrorDetails(error);
 
         WSLogger.error({
           source: LOG_SOURCE,
@@ -1032,7 +1061,11 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     jobId: string;
     pullSink: PullSink;
     resumeProgress: JsonSafeObject;
-    onBatchCheckpoint: (update: { fileCount: number; cursor?: JsonSafeObject }) => Promise<void>;
+    onBatchCheckpoint: (update: {
+      fileCount: number;
+      cursor?: JsonSafeObject;
+      recordWarnings: PulledRecordWarning[];
+    }) => Promise<void>;
     abortSignal: AbortSignal;
   }): Promise<FolderFetchResult> {
     const { folderCtx, jobId, pullSink, onBatchCheckpoint, abortSignal } = params;
@@ -1109,6 +1142,18 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const { folderCtx, fetchResult, jobId, pullSink, checkpoint, publicProgress, jobProgress } = params;
     const { dataFolder } = folderCtx;
 
+    // Clear the incremental watermark BEFORE the degraded copies are committed (see finalizeFolder for why):
+    // were it only cleared at finalize, a failure or cancel mid-commit would leave them on disk with the old
+    // watermark, and no later incremental pull would fetch them again. Clearing early costs at most one extra
+    // full pull.
+    const folderKeptRecordsInDegradedForm = (findFolderProgress(publicProgress, dataFolder.id)?.warningCount ?? 0) > 0;
+    if (folderKeptRecordsInDegradedForm && pullSink.persistsIncrementalPullBaseline) {
+      await this.prisma.dataFolder.update({
+        where: { id: dataFolder.id },
+        data: { lastIncrementalPullAt: null, incrementalCursor: Prisma.DbNull },
+      });
+    }
+
     const folderChangeSummary = await pullSink.finishFolderAfterAllRecordPagesWritten(folderCtx, {
       isResumingFromEarlierAttempt: fetchResult.isResuming,
       // Incremental pulls don't delete: the connector only returned records changed since the
@@ -1118,7 +1163,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     });
 
     // --- Finalize (clear lock, persist watermark/cursor, send events) ---
-    await this.finalizeFolder({ folderCtx, fetchResult, jobId, pullSink });
+    await this.finalizeFolder({ folderCtx, fetchResult, jobId, pullSink, folderKeptRecordsInDegradedForm });
 
     this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
       type: 'folder-contents-changed',
@@ -1142,8 +1187,10 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     fetchResult: FolderFetchResult;
     jobId: string;
     pullSink: PullSink;
+    /** This pull kept some of the folder's records in a degraded form (`PullFolderProgress.warnings`). */
+    folderKeptRecordsInDegradedForm: boolean;
   }): Promise<void> {
-    const { folderCtx, fetchResult, jobId, pullSink } = params;
+    const { folderCtx, fetchResult, jobId, pullSink, folderKeptRecordsInDegradedForm } = params;
     const { dataFolder, effectiveMode, pullStartedAt, tableSpec } = folderCtx;
 
     // Compose the watermark update atomically with clearing the lock so a
@@ -1161,6 +1208,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // `pullStartedAt`). Persist `incrementalCursor` if the connector returned
     // one — otherwise leave it unchanged.
     //
+    // A pull that kept records in a degraded form instead clears the incremental watermark (and
+    // cursor), so the folder's next pull is full: the degraded copies stay on disk, and only the
+    // pull that wrote them names them — so a routine's sync leaves them out of that run only. An
+    // incremental pull would not fetch them again (unchanged since the watermark, or older than it),
+    // and a later run would sync the partial copies. A full pull fetches them again: they are either
+    // read in full this time or named again.
+    //
     // A sink that isn't the incremental baseline (see `PullSink.persistsIncrementalPullBaseline`)
     // leaves every watermark field as it was.
     const finalizeData: Prisma.DataFolderUpdateInput = {
@@ -1176,7 +1230,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       remoteContainerWebUrl: tableSpec.remoteContainer?.remoteWebUrl ?? null,
     };
     if (pullSink.persistsIncrementalPullBaseline) {
-      if (effectiveMode === 'full') {
+      if (folderKeptRecordsInDegradedForm) {
+        if (effectiveMode === 'full') {
+          finalizeData.lastFullPullAt = pullStartedAt;
+        }
+        finalizeData.lastIncrementalPullAt = null;
+        finalizeData.incrementalCursor = Prisma.DbNull;
+      } else if (effectiveMode === 'full') {
         finalizeData.lastFullPullAt = pullStartedAt;
         finalizeData.lastIncrementalPullAt = pullStartedAt;
         finalizeData.incrementalCursor = Prisma.DbNull;
@@ -1240,24 +1300,57 @@ async function fetchFolderRecords(params: {
   /** Mid-run pagination progress from a previous attempt of this job; `{}` on a fresh fetch. */
   resumeProgress: JsonSafeObject;
   writeRecordPage: (connectorRecordsInPage: ConnectorFile[]) => Promise<void>;
-  onBatchCheckpoint: (update: { fileCount: number; cursor?: JsonSafeObject }) => Promise<void>;
+  onBatchCheckpoint: (update: {
+    fileCount: number;
+    cursor?: JsonSafeObject;
+    recordWarnings: PulledRecordWarning[];
+  }) => Promise<void>;
   abortSignal: AbortSignal;
   jobId: string;
 }): Promise<PullRecordFilesResult> {
   const { connector, tableSpec, callOptions, resumeProgress, writeRecordPage, onBatchCheckpoint, abortSignal, jobId } =
     params;
 
-  const onBatch = async (callbackParams: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => {
+  const onBatch = async (callbackParams: {
+    files: ConnectorFile[];
+    connectorProgress?: JsonSafeObject;
+    recordWarnings?: PulledRecordWarning[];
+  }) => {
     if (abortSignal.aborted) throw new JobCanceledError(jobId);
 
-    const { files, connectorProgress } = callbackParams;
+    const { files, connectorProgress, recordWarnings } = callbackParams;
 
     await writeRecordPage(files);
 
-    await onBatchCheckpoint({ fileCount: files.length, cursor: connectorProgress });
+    await onBatchCheckpoint({
+      fileCount: files.length,
+      cursor: connectorProgress,
+      recordWarnings: recordWarnings ?? [],
+    });
   };
 
   return connector.pullRecordFiles(tableSpec, onBatch, resumeProgress, callOptions);
+}
+
+/**
+ * Adds a page's degraded-record warnings to a folder's progress, which lists every one (see
+ * {@link PullFolderProgress.warnings}). Throws {@link TooManyDegradedRecordsInFolderError} — failing the folder —
+ * once the folder would hold more than {@link MAX_DEGRADED_RECORDS_PER_FOLDER}.
+ */
+function addPulledRecordWarningsToFolderProgress(
+  folderProgressEntry: PullFolderProgress,
+  recordWarningsFromOnePage: PulledRecordWarning[],
+): void {
+  const degradedRecordWarningsSoFar = [...(folderProgressEntry.warnings ?? []), ...recordWarningsFromOnePage];
+  if (degradedRecordWarningsSoFar.length > MAX_DEGRADED_RECORDS_PER_FOLDER) {
+    throw new TooManyDegradedRecordsInFolderError(
+      `More than ${MAX_DEGRADED_RECORDS_PER_FOLDER} records in ${folderProgressEntry.name} could only be partly ` +
+        `pulled — too many to leave out of a sync, so this folder's pull failed. The first: ` +
+        `${degradedRecordWarningsSoFar[0].warning}`,
+    );
+  }
+  folderProgressEntry.warnings = degradedRecordWarningsSoFar;
+  folderProgressEntry.warningCount = degradedRecordWarningsSoFar.length;
 }
 
 /** Finds the seeded per-folder progress entry for a folder id (always present — seeded in `run()`). */
@@ -1308,6 +1401,8 @@ function readPublicProgressCheckpointedByPreviousAttempt(
  *  - mid-fetch with a resumable cursor → its fetched count (the fetch continues from that cursor);
  *  - otherwise (no usable cursor, or it failed to load this attempt) → nothing. Its fetch starts again from the
  *    first page, so carrying the old count over would count those records twice.
+ * A folder's degraded-record warnings follow its fetched count: they were raised by the pages already fetched, so
+ * they are kept exactly when those pages are not fetched again.
  *
  * The run-wide totals are then summed from the restored folder entries rather than copied from the previous
  * totals, so they always equal the sum of the folders even when one folder's count was deliberately dropped.
@@ -1341,6 +1436,7 @@ function restoreCountersFromPreviousAttemptCheckpoint(params: {
 
     if (folderIdsCompletedByPreviousAttempts.has(folderEntry.id)) {
       folderEntry.totalFiles = previousAttemptFolderEntry.totalFiles;
+      restorePulledRecordWarnings(folderEntry, previousAttemptFolderEntry);
       folderEntry.creates = previousAttemptFolderEntry.creates;
       folderEntry.updates = previousAttemptFolderEntry.updates;
       folderEntry.deletes = previousAttemptFolderEntry.deletes;
@@ -1365,6 +1461,7 @@ function restoreCountersFromPreviousAttemptCheckpoint(params: {
       isResumableConnectorCursor(jobProgress.folderCursors?.[folderEntry.id]);
     if (fetchContinuesWherePreviousAttemptStopped) {
       folderEntry.totalFiles = previousAttemptFolderEntry.totalFiles;
+      restorePulledRecordWarnings(folderEntry, previousAttemptFolderEntry);
     }
   }
 
@@ -1372,6 +1469,18 @@ function restoreCountersFromPreviousAttemptCheckpoint(params: {
     (fetchedRecordCountSoFar, folderEntry) => fetchedRecordCountSoFar + folderEntry.totalFiles,
     0,
   );
+}
+
+/** Carries a folder's degraded-record warnings over from the previous attempt's checkpoint, when it raised any. */
+function restorePulledRecordWarnings(
+  folderEntry: PullFolderProgress,
+  previousAttemptFolderEntry: PullFolderProgress,
+): void {
+  if (previousAttemptFolderEntry.warningCount === undefined && previousAttemptFolderEntry.warnings === undefined) {
+    return;
+  }
+  folderEntry.warningCount = previousAttemptFolderEntry.warningCount ?? previousAttemptFolderEntry.warnings?.length;
+  folderEntry.warnings = previousAttemptFolderEntry.warnings ?? [];
 }
 
 /**

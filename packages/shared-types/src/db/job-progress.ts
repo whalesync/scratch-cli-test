@@ -17,6 +17,20 @@ import { FolderError } from '../job-types';
 export type PullFolderProgressStatus = 'pending' | 'active' | 'completed' | 'failed';
 
 /**
+ * One record a pull kept in a degraded form instead of failing its whole folder over it — e.g. Intercom refused
+ * the per-conversation request that adds a conversation's message history, so the conversation was stored exactly
+ * as Intercom's list endpoint returned it. The pull reports it on the folder ({@link PullFolderProgress.warnings})
+ * so the degradation is never silent: a routine step whose pull kept one completes WITH a warning, and the run's
+ * sync step leaves the record out (its destination record is left as it was) rather than syncing the partial copy.
+ */
+export type PulledRecordWarning = {
+  /** The record's id in the external service. */
+  remoteId: string;
+  /** User-facing explanation of what was degraded and why. */
+  warning: string;
+};
+
+/**
  * Per-folder breakdown for a pull job, mirroring sync's per-table breakdown
  * ({@link SyncTableProgress}) so the two render through the same uniform contract. A pull job can
  * target many folders; this carries the counts and impacted paths for ONE of them.
@@ -46,6 +60,16 @@ export type PullFolderProgress = {
   mode?: 'full' | 'incremental';
   /** Set when this folder failed in Phase 1 (fetch) or Phase 2 (process). */
   error?: FolderError;
+  /**
+   * How many records this folder's pull kept in a degraded form. Absent until the first one (and on progress
+   * written before pull warnings existed) — read it as 0.
+   */
+  warningCount?: number;
+  /**
+   * EVERY record this folder's pull kept in a degraded form — not a sample: a pull fails the folder rather than
+   * degrade more records than it can list here, so a routine can leave each one out of its sync.
+   */
+  warnings?: PulledRecordWarning[];
 };
 
 export type PullLinkedFolderFilesPublicProgress = {

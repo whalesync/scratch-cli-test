@@ -247,7 +247,7 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
     deleted: folder.deletes ?? 0,
     skipped: 0,
     errorCount: folder.error ? 1 : 0,
-    warningCount: 0,
+    warningCount: folder.warningCount ?? folder.warnings?.length ?? 0,
     createdPaths: folder.createdPaths ?? [],
     updatedPaths: folder.updatedPaths ?? [],
     deletedPaths: folder.deletedPaths ?? [],
@@ -258,6 +258,9 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
 
   const files = folders.flatMap(filesFromFolder);
   const errors = Object.values(progress.folderErrors ?? {}).map((error) => `${error.folderName}: ${error.message}`);
+  const warnings = breakdown.flatMap((folder) =>
+    (folder.warnings ?? []).map((pulledRecordWarning) => `${folder.name}: ${pulledRecordWarning.warning}`),
+  );
 
   const summary = isRunning
     ? summarizePullInProgress(folders, hasPerFolderBreakdown, folderCount, progress.totalFiles ?? 0)
@@ -269,7 +272,7 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
     folders,
     files,
     errors,
-    warnings: [],
+    warnings,
     mode: isIncrementalPull ? 'incremental' : 'full',
     ...(progress.reportsOnlyFetchedRecordCount ? { reportsOnlyFetchedRecordCount: true } : {}),
   };

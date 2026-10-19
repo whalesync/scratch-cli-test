@@ -117,7 +117,18 @@ function makeFakeDb(run: FakeRun, steps: FakeStep[]) {
       }),
     },
     routineRunStep: {
-      findMany: jest.fn(async () => steps.map((step) => ({ ...step })).sort((a, b) => a.stepIndex - b.stepIndex)),
+      findMany: jest.fn(async (query?: { where?: { runId?: string; action?: string; status?: string } }) =>
+        steps
+          .filter((step) => {
+            const where = query?.where ?? {};
+            if (where.runId && step.runId !== where.runId) return false;
+            if (where.action && step.action !== where.action) return false;
+            if (where.status && step.status !== where.status) return false;
+            return true;
+          })
+          .map((step) => ({ ...step }))
+          .sort((a, b) => a.stepIndex - b.stepIndex),
+      ),
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
         const step = steps.find((candidate) => candidate.id === where.id);
         return step ? { ...step } : null;
@@ -916,6 +927,136 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[1].status).toBe('completed');
     expect(run.status).toBe('completed');
     expect(enqueueSync).toHaveBeenCalled();
+  });
+
+  it('completes a pull step WITH a warning, and has the sync leave the degraded records out', async () => {
+    // e.g. Intercom refused one conversation's message history (403): the conversation is pulled as listed, so
+    // the run goes on to sync — which must leave that record out rather than overwrite its destination record
+    // from the partial copy — and the run must not read as clean.
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PULL), makeStep(1, RoutineAction.SYNC)];
+    const db = makeFakeDb(run, steps);
+
+    const enqueueSync = jest.fn().mockResolvedValue({ id: 'sync-job' });
+    const bullEnqueuer = {
+      enqueuePullLinkedFolderFilesJob: jest.fn().mockResolvedValue({ id: 'pull-job' }),
+      enqueueSyncDataFoldersJob: enqueueSync,
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn(async (bullJobId: string) =>
+        bullJobId === 'pull-job'
+          ? dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: {
+                publicProgress: {
+                  folders: [
+                    { id: 'dfd_articles', name: 'Articles', status: 'completed' },
+                    {
+                      id: 'dfd_conversations',
+                      name: 'Conversations',
+                      status: 'completed',
+                      warningCount: 2,
+                      warnings: [
+                        { remoteId: '215475561785523', warning: 'Pulled conversation 215475561785523 without parts' },
+                        { remoteId: '42', warning: 'Pulled conversation 42 without parts' },
+                      ],
+                    },
+                  ],
+                },
+              },
+            })
+          : dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: { publicProgress: { totalFilesSynced: 1, tables: [] } },
+            }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(steps[0].status).toBe('completed');
+    expect(steps[0].error).toBe('Completed with 2 warning(s) — e.g. Pulled conversation 215475561785523 without parts');
+    expect(enqueueSync).toHaveBeenCalledWith(
+      WORKBOOK_ID,
+      'syn_1',
+      expect.anything(),
+      undefined,
+      expect.anything(),
+      undefined,
+      { dfd_conversations: ['215475561785523', '42'] },
+    );
+    expect(steps[1].status).toBe('completed');
+    expect(run.status).toBe('completed');
+    expect(run.resultWarning).toBe(steps[0].error);
+  });
+
+  it('passes the sync nothing to leave out when every record was pulled in full', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PULL), makeStep(1, RoutineAction.SYNC)];
+    const db = makeFakeDb(run, steps);
+
+    const enqueueSync = jest.fn().mockResolvedValue({ id: 'sync-job' });
+    const bullEnqueuer = {
+      enqueuePullLinkedFolderFilesJob: jest.fn().mockResolvedValue({ id: 'pull-job' }),
+      enqueueSyncDataFoldersJob: enqueueSync,
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn(async (bullJobId: string) =>
+        dbJobResult({
+          status: 'completed',
+          error: null,
+          progress:
+            bullJobId === 'pull-job'
+              ? { publicProgress: { folders: [{ id: 'dfd_ok', name: 'Countries', status: 'completed' }] } }
+              : { publicProgress: { totalFilesSynced: 0, tables: [] } },
+        }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    const enqueueSyncArguments = enqueueSync.mock.calls[0] as unknown[];
+    expect(enqueueSyncArguments[6]).toBeUndefined();
+    expect(run.status).toBe('completed');
+  });
+
+  it("fails the sync step rather than sync partial copies when a degraded pull's job can no longer be read", async () => {
+    const run = baseRun({ currentStepIndex: 1, status: 'running' });
+    const steps = [
+      makeStep(0, RoutineAction.PULL, {
+        status: 'completed',
+        jobId: 'pull-job-aged-out',
+        error: 'Completed with 1 warning(s) — e.g. Pulled conversation 42 without parts',
+      }),
+      makeStep(1, RoutineAction.SYNC),
+    ];
+    const db = makeFakeDb(run, steps);
+
+    const enqueueSync = jest.fn().mockResolvedValue({ id: 'sync-job' });
+    const bullEnqueuer = {
+      enqueueSyncDataFoldersJob: enqueueSync,
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = { getJobByBullJobId: jest.fn().mockResolvedValue(null), cancelJob: jest.fn() };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(enqueueSync).not.toHaveBeenCalled();
+    expect(steps[1].status).toBe('failed');
+    expect(steps[1].error).toMatch(/could only partly read, so the sync cannot leave them out/);
+    expect(run.status).toBe('failed');
   });
 
   it('records a sync resultSummary with the synced-record count across tables', async () => {

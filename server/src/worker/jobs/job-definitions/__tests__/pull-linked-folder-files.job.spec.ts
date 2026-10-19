@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-assignment */
 import { PrismaClient } from '@prisma/client';
 import { Type } from '@sinclair/typebox';
-import { DataFolderId, type PullFolderProgress, WorkbookId } from '@spinner/shared-types';
+import { DataFolderId, type PulledRecordWarning, type PullFolderProgress, WorkbookId } from '@spinner/shared-types';
 import { AssetExtractorService } from '../../../../asset/asset-extractor.service';
 import { AssetIndexService } from '../../../../asset/asset-index.service';
 import { ExperimentsService } from '../../../../experiments/experiments.service';
+import { WSLogger } from '../../../../logger';
 import { PostHogService } from '../../../../posthog/posthog.service';
 import { FileIndexService } from '../../../../publish-plan/file-index.service';
 import { FileReferenceService } from '../../../../publish-plan/file-reference.service';
@@ -23,7 +24,11 @@ import {
 } from '../pull-linked-folder-files.job';
 import type { PullSink } from '../pull-sink/pull-sink';
 
-type PullCallback = (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>;
+type PullCallback = (params: {
+  files: ConnectorFile[];
+  connectorProgress?: JsonSafeObject;
+  recordWarnings?: PulledRecordWarning[];
+}) => Promise<void>;
 
 describe('PullLinkedFolderFilesJobHandler', () => {
   let handler: PullLinkedFolderFilesJobHandler;
@@ -1214,6 +1219,90 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         expect(updateData!.incrementalCursor).toBeDefined();
       });
 
+      // (f) A pull that kept records degraded clears the incremental watermark, so the next pull is full and
+      // fetches those records again — an incremental one would not, and a later sync would use the partial copies.
+      it('clears the incremental watermark after an incremental pull that kept records degraded', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+        const previousFullPull = new Date('2026-04-15T00:00:00.000Z');
+        Object.assign(dataFolder, {
+          lastFullPullAt: previousFullPull,
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'rec1' }],
+            connectorProgress: { page: 'p2' },
+            recordWarnings: [{ remoteId: 'rec1', warning: 'Pulled rec1 without its history' }],
+          });
+          return { newWatermark: new Date('2026-05-14T12:00:00.000Z'), newCursor: { token: 't2' } };
+        });
+        stubEmptyPhase2();
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        const updateData = findUpdateMatching((d) => 'lastIncrementalPullAt' in d);
+        expect(updateData).not.toBeNull();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        expect(updateData!.lastIncrementalPullAt).toBeNull();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        expect(updateData!.incrementalCursor).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        expect(updateData!.lastFullPullAt).toBeUndefined();
+      });
+
+      it('clears the incremental watermark before committing degraded copies, so a failed commit still forces a full pull', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(WSLogger, 'error').mockImplementation(() => undefined);
+        Object.assign(dataFolder, {
+          lastFullPullAt: new Date('2026-04-15T00:00:00.000Z'),
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'rec1' }],
+            connectorProgress: {},
+            recordWarnings: [{ remoteId: 'rec1', warning: 'Pulled rec1 without its history' }],
+          });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(true);
+        (pullSink.finishFolderAfterAllRecordPagesWritten as jest.Mock).mockRejectedValue(new Error('commit failed'));
+
+        await createHandlerWritingTo(pullSink).run({ ...params, data: { ...params.data, pullMode: 'full' } });
+
+        const folderUpdates = (mockPrisma.dataFolder.update as jest.Mock).mock.calls as Array<
+          [{ data: Record<string, unknown> }]
+        >;
+        expect(folderUpdates.some(([update]) => update.data.lastIncrementalPullAt === null)).toBe(true);
+      });
+
+      it('records the full-pull baseline but clears the incremental watermark after a full pull that kept records degraded', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+        Object.assign(dataFolder, { lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z') });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'rec1' }],
+            connectorProgress: {},
+            recordWarnings: [{ remoteId: 'rec1', warning: 'Pulled rec1 without its history' }],
+          });
+          return {};
+        });
+        stubEmptyPhase2();
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'full' } });
+
+        const updateData = findUpdateMatching((d) => d.lastFullPullAt instanceof Date);
+        expect(updateData).not.toBeNull();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        expect(updateData!.lastIncrementalPullAt).toBeNull();
+      });
+
       // (g) Defense in depth (DEV-11015): the stale-file cleanup must delete only leaf FILES.
       // A directory entry (records mis-staged into a nested path) would recursively wipe every
       // file under it while reporting a single deletion — the failure mode that emptied the
@@ -1394,6 +1483,123 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           expect(update.data).not.toHaveProperty('lastIncrementalPullAt');
           expect(update.data).not.toHaveProperty('incrementalCursor');
         }
+      });
+    });
+
+    describe("a connector's degraded-record warnings", () => {
+      const finalCheckpointedFolderEntry = (checkpoint: jest.Mock): PullFolderProgress => {
+        const checkpointCalls = checkpoint.mock.calls as Array<[{ publicProgress: { folders: PullFolderProgress[] } }]>;
+        return checkpointCalls[checkpointCalls.length - 1][0].publicProgress.folders[0];
+      };
+
+      const recordWarningsFor = (remoteIds: string[]): PulledRecordWarning[] =>
+        remoteIds.map((remoteId) => ({ remoteId, warning: `Pulled ${remoteId} without its history` }));
+
+      it('records them on the folder, keeps writing the records, and logs them, without failing the folder', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'rec1' }, { id: 'rec2' }],
+            connectorProgress: { page: 'p2' },
+            recordWarnings: recordWarningsFor(['rec2']),
+          });
+          await callback({ files: [{ id: 'rec3' }], connectorProgress: { page: 'p3' } });
+          return {};
+        });
+        const { pullSink, pagesWritten } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        expect(pagesWritten).toEqual([[{ id: 'rec1' }, { id: 'rec2' }], [{ id: 'rec3' }]]);
+        expect(finalCheckpointedFolderEntry(params.checkpoint)).toMatchObject({
+          status: 'completed',
+          totalFiles: 3,
+          warningCount: 1,
+          warnings: recordWarningsFor(['rec2']),
+        });
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Connector pulled records in a degraded form',
+            dataFolderId: 'dfld_123',
+            recordWarnings: recordWarningsFor(['rec2']),
+          }),
+        );
+      });
+
+      it('lists every one, up to 100 across the pages of a folder', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+        const remoteIdsOfFirstPage = Array.from({ length: 60 }, (_unused, index) => `rec${index}`);
+        const remoteIdsOfSecondPage = Array.from({ length: 40 }, (_unused, index) => `rec${60 + index}`);
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: remoteIdsOfFirstPage.map((id) => ({ id })),
+            connectorProgress: { page: 'p2' },
+            recordWarnings: recordWarningsFor(remoteIdsOfFirstPage),
+          });
+          await callback({
+            files: remoteIdsOfSecondPage.map((id) => ({ id })),
+            connectorProgress: { page: 'p3' },
+            recordWarnings: recordWarningsFor(remoteIdsOfSecondPage),
+          });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        const folderEntry = finalCheckpointedFolderEntry(params.checkpoint);
+        expect(folderEntry.status).toBe('completed');
+        expect(folderEntry.warningCount).toBe(100);
+        expect(folderEntry.warnings).toEqual(recordWarningsFor([...remoteIdsOfFirstPage, ...remoteIdsOfSecondPage]));
+      });
+
+      it('fails the folder once more than 100 records are degraded, naming the first', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(WSLogger, 'error').mockImplementation(() => undefined);
+        const remoteIdsOfFirstPage = Array.from({ length: 100 }, (_unused, index) => `rec${index}`);
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: remoteIdsOfFirstPage.map((id) => ({ id })),
+            connectorProgress: { page: 'p2' },
+            recordWarnings: recordWarningsFor(remoteIdsOfFirstPage),
+          });
+          await callback({
+            files: [{ id: 'rec100' }],
+            connectorProgress: { page: 'p3' },
+            recordWarnings: recordWarningsFor(['rec100']),
+          });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        const folderEntry = finalCheckpointedFolderEntry(params.checkpoint);
+        expect(folderEntry.status).toBe('failed');
+        expect(folderEntry.error?.message).toBe(
+          'More than 100 records in Products could only be partly pulled — too many to leave out of a sync, so ' +
+            "this folder's pull failed. The first: Pulled rec0 without its history",
+        );
+        // The connector's error wording is not involved: this is the job's own verdict.
+        expect(mockConnector.extractConnectorErrorDetails).not.toHaveBeenCalled();
+      });
+
+      it('leaves a folder with no degraded records free of any warning fields', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({ files: [{ id: 'rec1' }], connectorProgress: { page: 'p2' }, recordWarnings: [] });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        const folderEntry = finalCheckpointedFolderEntry(params.checkpoint);
+        expect(folderEntry).not.toHaveProperty('warningCount');
+        expect(folderEntry).not.toHaveProperty('warnings');
       });
     });
 
@@ -1622,6 +1828,86 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           'usr_123',
           expect.objectContaining({ totalFilesPulled: 19, filesCreated: 5, filesUpdated: 1, filesDeleted: 0 }),
         );
+      });
+
+      it("keeps the previous attempt's degraded-record warnings when the fetch resumes from its saved cursor", async () => {
+        const { mockConnector } = setupStandardMocks();
+        const params = createMockParams({
+          progress: progressCheckpointedByPreviousAttempt({
+            folders: [
+              previousAttemptFolderEntry({
+                id: 'dfld_123',
+                name: 'Products',
+                totalFiles: 50,
+                warningCount: 1,
+                warnings: [{ remoteId: 'rec7', warning: 'Pulled rec7 without its history' }],
+              }),
+            ],
+            jobProgress: {
+              folderFetchStatus: { dfld_123: 'fetching' },
+              folderCursors: { dfld_123: { page: 'p3' } },
+            },
+          }),
+        });
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'rec51' }],
+            connectorProgress: { page: 'p4' },
+            recordWarnings: [{ remoteId: 'rec51', warning: 'Pulled rec51 without its history' }],
+          });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        const checkpointedPublicProgress = checkpointedPublicProgressList(params.checkpoint);
+        expect(checkpointedPublicProgress[0].folders[0]).toMatchObject({ warningCount: 1 });
+        const finalCheckpoint = checkpointedPublicProgress[checkpointedPublicProgress.length - 1];
+        expect(finalCheckpoint.folders[0]).toMatchObject({
+          warningCount: 2,
+          warnings: [
+            { remoteId: 'rec7', warning: 'Pulled rec7 without its history' },
+            { remoteId: 'rec51', warning: 'Pulled rec51 without its history' },
+          ],
+        });
+      });
+
+      it("drops the previous attempt's warnings when the fetch restarts from the first page, which raises them again", async () => {
+        const { mockConnector } = setupStandardMocks();
+        const params = createMockParams({
+          progress: progressCheckpointedByPreviousAttempt({
+            folders: [
+              previousAttemptFolderEntry({
+                id: 'dfld_123',
+                name: 'Products',
+                totalFiles: 50,
+                warningCount: 1,
+                warnings: [{ remoteId: 'rec7', warning: 'Pulled rec7 without its history' }],
+              }),
+            ],
+            jobProgress: { folderFetchStatus: { dfld_123: 'fetching' }, folderCursors: { dfld_123: {} } },
+          }),
+        });
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'rec7' }],
+            connectorProgress: {},
+            recordWarnings: [{ remoteId: 'rec7', warning: 'Pulled rec7 without its history' }],
+          });
+          return {};
+        });
+        const { pullSink } = createRecordingPullSink(false);
+
+        await createHandlerWritingTo(pullSink).run(params);
+
+        const checkpointedPublicProgress = checkpointedPublicProgressList(params.checkpoint);
+        expect(checkpointedPublicProgress[0].folders[0].warningCount).toBeUndefined();
+        const finalCheckpoint = checkpointedPublicProgress[checkpointedPublicProgress.length - 1];
+        expect(finalCheckpoint.folders[0]).toMatchObject({
+          warningCount: 1,
+          warnings: [{ remoteId: 'rec7', warning: 'Pulled rec7 without its history' }],
+        });
       });
 
       it('starts every count at zero on a first attempt, where BullMQ hands the job 0 instead of a progress object', async () => {

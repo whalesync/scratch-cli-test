@@ -136,6 +136,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     initialPublicProgress: SyncDataFoldersJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
     liveExportRunStoreKey?: string,
+    sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId?: Record<string, string[]>,
   ): Promise<Job> {
     const id = `sync-${workbookId}-${syncId}-${createPlainId()}`;
     const data: SyncDataFoldersJobDefinition['data'] = {
@@ -147,6 +148,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: JobType.SyncDataFolders,
       initialPublicProgress,
       ...(liveExportRunStoreKey && { liveExportRunStoreKey }),
+      ...(sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId && { sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId }),
     };
     return await this.createAndEnqueue(
       {

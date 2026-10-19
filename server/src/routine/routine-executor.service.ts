@@ -523,11 +523,50 @@ export class RoutineExecutorService {
           undefined,
           runContext,
           liveExportRunStoreKey,
+          await this.collectRecordsThisRunsPullsCouldOnlyPartlyRead(run.id),
         );
       }
       default:
         throw new Error(`Unsupported routine action "${step.action}"`);
     }
+  }
+
+  /**
+   * Per source DataFolderId, the remote ids of the records this run's pulls could only partly read — every pull
+   * step the run already completed lists them on its job's folders (`PullFolderProgress.warnings`, a complete list).
+   * The sync step leaves each one out, so a partial copy never overwrites (or creates) its destination record. Read
+   * from the persisted steps so it stays right when the run resumed on another driver. Undefined when there are none.
+   */
+  private async collectRecordsThisRunsPullsCouldOnlyPartlyRead(
+    runId: string,
+  ): Promise<Record<string, string[]> | undefined> {
+    const completedPullSteps = await this.db.client.routineRunStep.findMany({
+      where: { runId, action: RoutineAction.PULL, status: 'completed' },
+      orderBy: { stepIndex: 'asc' },
+    });
+    const remoteIdsBySourceDataFolderId: Record<string, string[]> = {};
+    for (const completedPullStep of completedPullSteps) {
+      const pullJob = completedPullStep.jobId ? await this.jobService.getJobByBullJobId(completedPullStep.jobId) : null;
+      const pullProgress = this.readPullProgress(pullJob?.progress);
+      // A pull step completes with a warning exactly when it degraded records. If its job can't be read back, the
+      // records can't be named — fail rather than let the sync overwrite destination records from partial copies.
+      if (completedPullStep.error !== null && !pullProgress) {
+        throw new Error(
+          `Could not read which records pull step "${completedPullStep.name ?? completedPullStep.stepIndex}" could ` +
+            'only partly read, so the sync cannot leave them out',
+        );
+      }
+      for (const pulledFolder of pullProgress?.folders ?? []) {
+        const remoteIdsOfPartlyReadRecords = (pulledFolder.warnings ?? []).map((warning) => warning.remoteId);
+        if (remoteIdsOfPartlyReadRecords.length > 0) {
+          remoteIdsBySourceDataFolderId[pulledFolder.id] = [
+            ...(remoteIdsBySourceDataFolderId[pulledFolder.id] ?? []),
+            ...remoteIdsOfPartlyReadRecords,
+          ];
+        }
+      }
+    }
+    return Object.keys(remoteIdsBySourceDataFolderId).length > 0 ? remoteIdsBySourceDataFolderId : undefined;
   }
 
   /**
@@ -654,8 +693,13 @@ export class RoutineExecutorService {
       if (failedFolders.length > 0) {
         return { kind: 'failed', error: this.summarizePullFailure(failedFolders) };
       }
+      // No folder failed, but the connector may have kept some records in a degraded form rather than failing
+      // their folder (e.g. an Intercom conversation it was refused the message history of, pulled as listed).
+      // The run continues — the sync step leaves those records out (collectRecordsThisRunsPullsCouldOnlyPartlyRead),
+      // so their destination records are untouched — but it completes WITH a warning, like sync's.
       const result = this.deriveStepResult(action, publicProgress);
-      return { kind: 'completed', pipelineId: null, warning: null, summary: result.summary, result };
+      const warning = this.summarizePullWarnings(publicProgress?.folders ?? []);
+      return { kind: 'completed', pipelineId: null, warning, summary: result.summary, result };
     }
 
     if (action === RoutineAction.DISCARD_PENDING_CHANGES) {
@@ -757,14 +801,35 @@ export class RoutineExecutorService {
       (total, table) => total + (table.warningCount ?? table.warnings?.length ?? 0),
       0,
     );
-    if (totalWarningCount === 0) {
-      return null;
-    }
     // Every table caps the warning samples it keeps, so a table with warnings can have no example to
     // show; take the first one that does rather than assuming the first warned table carries it.
     const firstWarning = tables.flatMap((table) => table.warnings ?? [])[0]?.warning;
-    return firstWarning
-      ? `Completed with ${totalWarningCount} warning(s) — e.g. ${firstWarning}`
+    return this.describeCompletedWithWarnings(totalWarningCount, firstWarning);
+  }
+
+  /**
+   * The run-page warning for a pull that completed but kept some records in a degraded form — the count across
+   * every folder plus the first warning as an example. Null when no record was degraded.
+   */
+  private summarizePullWarnings(folders: PullLinkedFolderFilesPublicProgress['folders']): string | null {
+    const totalWarningCount = folders.reduce(
+      (total, folder) => total + (folder.warningCount ?? folder.warnings?.length ?? 0),
+      0,
+    );
+    const firstWarning = folders.flatMap((folder) => folder.warnings ?? [])[0]?.warning;
+    return this.describeCompletedWithWarnings(totalWarningCount, firstWarning);
+  }
+
+  /** "Completed with N warning(s) — e.g. <first>", or null when there were none: the step's warning text. */
+  private describeCompletedWithWarnings(
+    totalWarningCount: number,
+    firstWarningExample: string | undefined,
+  ): string | null {
+    if (totalWarningCount === 0) {
+      return null;
+    }
+    return firstWarningExample
+      ? `Completed with ${totalWarningCount} warning(s) — e.g. ${firstWarningExample}`
       : `Completed with ${totalWarningCount} warning(s)`;
   }
 

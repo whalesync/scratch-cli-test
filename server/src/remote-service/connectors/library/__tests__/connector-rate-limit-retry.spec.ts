@@ -1,9 +1,11 @@
-import { AxiosError } from 'axios';
+import { AxiosError, CanceledError } from 'axios';
 import { withRetry } from 'src/rate-limiter/rate-limiter';
 import { BREVO_RETRY_OPTS, isBrevoRateLimitError } from '../brevo/brevo-api-client';
 import {
+  INTERCOM_READ_RETRY_OPTS,
   INTERCOM_RETRY_OPTS,
   isIntercomRateLimitError,
+  isRetryableIntercomReadFailure,
   isTransientIntercomServerError,
 } from '../intercom/intercom-api-client';
 import { isMemberstackRateLimitError, MEMBERSTACK_RETRY_OPTS } from '../memberstack/memberstack-api-client';
@@ -191,5 +193,50 @@ describe('Intercom transient server errors', () => {
   it('honors Retry-After when a 5xx sends one', () => {
     const serviceUnavailableWithRetryAfter = axiosError(503, { headers: { 'retry-after': '4' } });
     expect(INTERCOM_RETRY_OPTS.getRetryAfterS?.(serviceUnavailableWithRetryAfter)).toBe(4);
+  });
+});
+
+describe('Intercom reads also retry a 500 and network errors', () => {
+  const FAST_INTERCOM_READ_RETRY_OPTS = { ...INTERCOM_READ_RETRY_OPTS, initialRetryDelayMs: 1, maxRetries: 3 };
+  const networkError = (code: string) =>
+    Object.assign(new AxiosError('network failure', code), { response: undefined });
+
+  it('matches a 500, the transient 5xx set, and a network error with no response', () => {
+    expect(isRetryableIntercomReadFailure(axiosError(500))).toBe(true);
+    expect(isRetryableIntercomReadFailure(axiosError(502))).toBe(true);
+    expect(isRetryableIntercomReadFailure(axiosError(504))).toBe(true);
+    expect(isRetryableIntercomReadFailure(networkError('ECONNRESET'))).toBe(true);
+    expect(isRetryableIntercomReadFailure(networkError('ETIMEDOUT'))).toBe(true);
+  });
+
+  it('does not match 4xx, a cancelled request, or non-Axios inputs', () => {
+    expect(isRetryableIntercomReadFailure(axiosError(401))).toBe(false);
+    expect(isRetryableIntercomReadFailure(axiosError(403))).toBe(false);
+    expect(isRetryableIntercomReadFailure(axiosError(404))).toBe(false);
+    expect(isRetryableIntercomReadFailure(new CanceledError())).toBe(false);
+    expect(isRetryableIntercomReadFailure(new Error('500'))).toBe(false);
+  });
+
+  it('retries a read that hits a 500, then a network error, and recovers', async () => {
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(axiosError(500))
+      .mockRejectedValueOnce(networkError('ECONNRESET'))
+      .mockResolvedValueOnce('ok');
+
+    await expect(withRetry(fn, FAST_INTERCOM_READ_RETRY_OPTS)).resolves.toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it('still retries throttling on a read', async () => {
+    const fn = jest.fn().mockRejectedValueOnce(axiosError(429)).mockResolvedValueOnce('ok');
+
+    await expect(withRetry(fn, FAST_INTERCOM_READ_RETRY_OPTS)).resolves.toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves the write policy alone: a 500 on a write still surfaces without a retry', () => {
+    expect(INTERCOM_RETRY_OPTS.isRateLimited(axiosError(500))).toBe(false);
+    expect(INTERCOM_RETRY_OPTS.isRateLimited(networkError('ECONNRESET'))).toBe(false);
   });
 });

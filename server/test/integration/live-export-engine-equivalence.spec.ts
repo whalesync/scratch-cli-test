@@ -63,6 +63,14 @@ import { VirtualGitFs } from './virtual-git-fs';
 const DEST_CONNECTION_DISPLAY_NAME = 'Test Destination';
 const TAGS_REMOTE_TABLE_ID = 'wp-tags';
 
+/**
+ * Source posts the pull could only partly read in the 'mixed changes, two posts only partly pulled' scenario:
+ * each is stored without its `Title`, the way an Intercom conversation Intercom refused in full is stored without
+ * its `conversation_parts`. `rec_post_match_0` matches destination post 200; `rec_post_create_1` has no
+ * destination record yet.
+ */
+const PARTLY_PULLED_SOURCE_POST_IDS = ['rec_post_match_0', 'rec_post_create_1'];
+
 interface ConnectorCallLog {
   creates: Array<{ table: string; record: Record<string, unknown> }>;
   updates: Array<{ table: string; record: Record<string, unknown>; changedFields: unknown }>;
@@ -142,7 +150,6 @@ describe('Live Export engines: classic vs run store produce the same publish', (
   let destTagsFolderId: DataFolderId;
   let sourcePostsFolderId: DataFolderId;
   let destPostsFolderId: DataFolderId;
-  let actor: Actor;
 
   const folderPathById = new Map<string, string>();
 
@@ -177,8 +184,25 @@ describe('Live Export engines: classic vs run store produce the same publish', (
     }) as unknown as Record<string, BaseJsonTableSpec>;
 
   /** Raw records as the connectors return them (the pull's input), per folder path, per scenario. */
-  type Scenario = 'mixed changes' | 'first export into an empty destination' | 'steady state (nothing changed)';
+  type Scenario =
+    | 'mixed changes'
+    | 'first export into an empty destination'
+    | 'steady state (nothing changed)'
+    | 'mixed changes, two posts only partly pulled';
   const connectorRecordsByFolderPath = (scenario: Scenario): Record<string, Record<string, unknown>[]> => {
+    if (scenario === 'mixed changes, two posts only partly pulled') {
+      const mixedChangesRecords = connectorRecordsByFolderPath('mixed changes');
+      return {
+        ...mixedChangesRecords,
+        'src-posts': mixedChangesRecords['src-posts'].map((record) => {
+          if (!PARTLY_PULLED_SOURCE_POST_IDS.includes(String(record.id))) return record;
+          const fieldsThePullCouldRead = Object.fromEntries(
+            Object.entries(record.fields as Record<string, unknown>).filter(([fieldName]) => fieldName !== 'Title'),
+          );
+          return { ...record, fields: fieldsThePullCouldRead };
+        }),
+      };
+    }
     if (scenario === 'steady state (nothing changed)') {
       return {
         'src-tags': [
@@ -313,7 +337,6 @@ describe('Live Export engines: classic vs run store produce the same publish', (
     destTagsFolderId = createDataFolderId();
     sourcePostsFolderId = createDataFolderId();
     destPostsFolderId = createDataFolderId();
-    actor = { userId, organizationId: orgId };
 
     await prisma.organization.create({ data: { id: orgId, name: 'Equivalence Org', clerkId: `clerk_${orgId}` } });
     await prisma.user.create({
@@ -545,7 +568,10 @@ describe('Live Export engines: classic vs run store produce the same publish', (
     checkpoint: jest.fn().mockResolvedValue(undefined),
   });
 
-  async function runClassicEngine(scenario: Scenario): Promise<ConnectorCallLog> {
+  async function runClassicEngine(
+    scenario: Scenario,
+    options: { sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId?: Record<string, string[]> } = {},
+  ): Promise<ConnectorCallLog> {
     const callLog: ConnectorCallLog = { creates: [], updates: [], deletes: [] };
     const vfs = new VirtualGitFs();
     const services = buildServices(vfs, createRecordingDestinationConnector(callLog));
@@ -558,7 +584,9 @@ describe('Live Export engines: classic vs run store produce the same publish', (
     // What a classic pull leaves behind: destination on main + dirty, sources on dirty, destination indexed.
     const destinationFiles = [
       ...toFiles('dest-tags', (record) => String(record.slug)),
-      ...toFiles('dest-posts', (record) => String(record.slug ?? `manual-${String(record.id)}`)),
+      ...toFiles('dest-posts', (record) =>
+        typeof record.slug === 'string' ? record.slug : `manual-${String(record.id)}`,
+      ),
     ];
     vfs.seed(MAIN_BRANCH, destinationFiles);
     vfs.seed(DIRTY_BRANCH, destinationFiles);
@@ -590,7 +618,15 @@ describe('Live Export engines: classic vs run store produce the same publish', (
 
     await createSyncJobHandler(services).run({
       jobId: 'classic-sync',
-      data: { type: 'sync-data-folders', workbookId, syncId, organizationId: orgId, userId, trigger: 'web' },
+      data: {
+        type: 'sync-data-folders',
+        workbookId,
+        syncId,
+        organizationId: orgId,
+        userId,
+        trigger: 'web',
+        sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId: options.sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId,
+      },
       ...noopJobPlumbing(),
     });
     const plan = await services.publishPlanBuildService.buildPipeline(
@@ -606,7 +642,12 @@ describe('Live Export engines: classic vs run store produce the same publish', (
   /** Pulls + sync of a run-store run; returns what's needed to run (and re-run) its publish. */
   async function pullAndSyncWithRunStoreEngine(
     scenario: Scenario,
-    options: { rejectCreateForSlug?: string; routineRunId?: string; syncJobDeliveries?: number } = {},
+    options: {
+      rejectCreateForSlug?: string;
+      routineRunId?: string;
+      syncJobDeliveries?: number;
+      sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId?: Record<string, string[]>;
+    } = {},
   ) {
     const callLog: ConnectorCallLog = { creates: [], updates: [], deletes: [] };
     const vfs = new VirtualGitFs();
@@ -650,6 +691,8 @@ describe('Live Export engines: classic vs run store produce the same publish', (
           userId,
           trigger: 'routine',
           liveExportRunStoreKey: runStoreKey,
+          sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId:
+            options.sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId,
         },
         ...noopJobPlumbing(),
       });
@@ -686,9 +729,10 @@ describe('Live Export engines: classic vs run store produce the same publish', (
         abortSignal: new AbortController().signal,
         checkpoint: publishCheckpoint,
       });
-      const terminalCheckpoint = publishCheckpoint.mock.calls[publishCheckpoint.mock.calls.length - 1][0] as {
-        publicProgress: { status: string; failedCount: number; pipelineId: string };
-      };
+      const publishCheckpointCalls = publishCheckpoint.mock.calls as Array<
+        [{ publicProgress: { status: string; failedCount: number; pipelineId: string } }]
+      >;
+      const [terminalCheckpoint] = publishCheckpointCalls[publishCheckpointCalls.length - 1];
       return terminalCheckpoint.publicProgress;
     };
     return { callLog, services, runPublishStep };
@@ -774,14 +818,13 @@ describe('Live Export engines: classic vs run store produce the same publish', (
 
     expect(terminalProgress).toMatchObject({ status: 'completed', failedCount: 1 });
     const failures = await prisma.liveExportRunFailure.findMany({ where: { routineRunId } });
-    expect(failures).toEqual([
-      expect.objectContaining({
-        pipelineId: terminalProgress.pipelineId,
-        filePath: 'dest-tags/tag-create-1.json',
-        phase: 'create',
-        error: expect.stringContaining('The destination rejected "tag-create-1"'),
-      }),
-    ]);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      pipelineId: terminalProgress.pipelineId,
+      filePath: 'dest-tags/tag-create-1.json',
+      phase: 'create',
+    });
+    expect(failures[0].error).toContain('The destination rejected "tag-create-1"');
     // The operations list serves the failures, honouring its filters and pagination.
     const crudService = new PublishPlanCrudService(dbService, {} as BullEnqueuerService);
     const listedOperations = await crudService.listPublishPlanOperations(terminalProgress.pipelineId, {
@@ -801,6 +844,52 @@ describe('Live Export engines: classic vs run store produce the same publish', (
     await prisma.routineRun.delete({ where: { id: routineRunId } });
   }, 60_000);
 
+  describe('source records the pull could only partly read', () => {
+    const PARTLY_PULLED_SCENARIO: Scenario = 'mixed changes, two posts only partly pulled';
+    const leaveOutThePartlyPulledPosts = () => ({ [sourcePostsFolderId]: [...PARTLY_PULLED_SOURCE_POST_IDS] });
+    const writesToDestinationPost = (callLog: ConnectorCallLog, destinationPostId: string) => [
+      ...callLog.updates.filter((call) => call.table === 'dest-posts' && call.record.id === destinationPostId),
+      ...callLog.deletes.filter((call) => call.table === 'dest-posts' && call.id === destinationPostId),
+    ];
+    const createdSlugs = (callLog: ConnectorCallLog) => callLog.creates.map((call) => call.record.slug);
+
+    it('both engines leave them out of the sync and the publish, and the rest of the export still goes out', async () => {
+      const classicCallLog = await runClassicEngine(PARTLY_PULLED_SCENARIO, {
+        sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId: leaveOutThePartlyPulledPosts(),
+      });
+      const runStoreRun = await pullAndSyncWithRunStoreEngine(PARTLY_PULLED_SCENARIO, {
+        sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId: leaveOutThePartlyPulledPosts(),
+      });
+      const terminalProgress = await runStoreRun.runPublishStep();
+
+      expect(terminalProgress).toMatchObject({ status: 'completed', failedCount: 0 });
+      expect(normalizeCallLog(runStoreRun.callLog)).toEqual(normalizeCallLog(classicCallLog));
+      // Destination post 200 keeps its title: its partly-pulled source post neither updates it nor (despite the
+      // delete policy) deletes it...
+      expect(writesToDestinationPost(classicCallLog, '200')).toEqual([]);
+      // ...and the partly-pulled new post is not created.
+      expect(createdSlugs(classicCallLog)).not.toContain('post-create-1');
+      // Everything else in the export still goes out.
+      expect(createdSlugs(classicCallLog).sort()).toEqual(['post-create-0', 'tag-create-0', 'tag-create-1']);
+      expect(classicCallLog.deletes).toEqual(
+        expect.arrayContaining([
+          { table: 'dest-tags', id: '900' },
+          { table: 'dest-posts', id: '950' },
+        ]),
+      );
+    }, 60_000);
+
+    it('without the leave-out list, the partial copies would clear the matched post and create the new one', async () => {
+      const classicCallLog = await runClassicEngine(PARTLY_PULLED_SCENARIO);
+
+      const titlesSentToDestinationPost200 = classicCallLog.updates
+        .filter((call) => call.table === 'dest-posts' && call.record.id === '200')
+        .map((call) => call.record.title);
+      expect(titlesSentToDestinationPost200).toContain(null);
+      expect(createdSlugs(classicCallLog)).toContain('post-create-1');
+    }, 60_000);
+  });
+
   function assertScenarioFixtureIsExercised(scenario: Scenario, classicCallLog: ConnectorCallLog): void {
     if (scenario === 'steady state (nothing changed)') {
       expect(classicCallLog).toEqual({ creates: [], updates: [], deletes: [] });
@@ -818,25 +907,15 @@ describe('Live Export engines: classic vs run store produce the same publish', (
         { table: 'dest-posts', id: '950' },
       ]),
     );
+    const destinationPostUpdates = classicCallLog.updates.filter((call) => call.table === 'dest-posts');
     // A record the sync never touched loses its reference to the deleted tag.
-    expect(classicCallLog.updates).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          table: 'dest-posts',
-          changedFields: { tags: ['101'] },
-          record: expect.objectContaining({ id: '260' }),
-        }),
-      ]),
-    );
+    expect(
+      destinationPostUpdates.filter((call) => call.record.id === '260').map((call) => call.changedFields),
+    ).toContainEqual({ tags: ['101'] });
     // A foreign key to a tag created in the same run is backfilled with the id the create returned,
     // and a lookup_field reads the referenced source record.
-    expect(classicCallLog.updates).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          table: 'dest-posts',
-          record: expect.objectContaining({ tags: expect.arrayContaining(['created-tag-create-0']) }),
-        }),
-      ]),
+    expect(destinationPostUpdates.flatMap((call) => (call.record.tags as unknown[] | undefined) ?? [])).toContain(
+      'created-tag-create-0',
     );
     expect([...classicCallLog.creates, ...classicCallLog.updates].map((call) => call.record.primaryTagName)).toEqual(
       expect.arrayContaining(['Tag Create 0', 'Tag Unchanged']),

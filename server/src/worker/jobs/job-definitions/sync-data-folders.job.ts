@@ -64,11 +64,25 @@ export type SyncDataFoldersJobDefinition = JobDefinitionBuilder<
      * engine (git + Postgres). See docs/plans/2026-09-25-live-export-git-free-run-store.
      */
     liveExportRunStoreKey?: string;
+    /**
+     * Per source DataFolderId, the remote ids of source records this sync must leave out: a routine passes the
+     * records its pull could only partly read (`PullFolderProgress.warnings`), so their destination records are
+     * left as they were instead of being overwritten from a partial copy. See `SyncService.syncTableMapping`.
+     */
+    sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId?: Record<string, string[]>;
   },
   SyncDataFoldersPublicProgress,
   Record<string, never>, // jobProgress - empty for now
   void
 >;
+
+/** The source records of one source folder this job must leave out (see `sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId`). */
+function readSourceRecordRemoteIdsToLeaveUnsynced(
+  data: SyncDataFoldersJobDefinition['data'],
+  sourceDataFolderId: DataFolderId,
+): ReadonlySet<string> {
+  return new Set(data.sourceRecordRemoteIdsToLeaveUnsyncedByDataFolderId?.[sourceDataFolderId] ?? []);
+}
 
 export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFoldersJobDefinition> {
   constructor(
@@ -241,6 +255,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
           'DATA',
           undefined,
           runStoreSyncStoragePorts,
+          readSourceRecordRemoteIdsToLeaveUnsynced(data, tableMapping.sourceDataFolderId),
         );
 
         WSLogger.info({
@@ -328,6 +343,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
             'FOREIGN_KEY_MAPPING',
             undefined,
             runStoreSyncStoragePorts,
+            readSourceRecordRemoteIdsToLeaveUnsynced(data, tableMapping.sourceDataFolderId),
           );
 
           WSLogger.info({

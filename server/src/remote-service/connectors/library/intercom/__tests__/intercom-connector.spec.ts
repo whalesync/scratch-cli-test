@@ -2,7 +2,8 @@ import { TSchema } from '@sinclair/typebox';
 import { AxiosError } from 'axios';
 import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
-import { IntercomConnector } from '../intercom-connector';
+import type { IntercomConversationFullFetchFailure } from '../intercom-api-client';
+import { buildPullWarningForConversationIntercomCouldNotReturnInFull, IntercomConnector } from '../intercom-connector';
 import { buildIntercomUpdatedSinceQuery } from '../intercom-incremental';
 import { IntercomArticle, IntercomCollection, IntercomConversation } from '../intercom-types';
 
@@ -170,16 +171,30 @@ async function* pageBatchGen<T>(pages: T[][]): AsyncGenerator<{ records: T[]; re
 
 /**
  * Helper to create an async generator of conversation pages with the
- * `{ items, nextCursor }` shape. `cursors[i]` is the cursor that goes with
- * `pages[i]`; default is `undefined` for every page (single terminal page).
+ * `{ items, nextCursor, conversationsIntercomCouldNotReturnInFull }` shape.
+ * `cursors[i]` is the cursor that goes with `pages[i]`; default is `undefined`
+ * for every page (single terminal page). `refusalsPerPage[i]` names the
+ * conversations of `pages[i]` Intercom refused to hydrate (default none).
  */
 // eslint-disable-next-line @typescript-eslint/require-await
 async function* convoPagesGen<T>(
   pages: T[][],
   cursors: (string | undefined)[] = [],
-): AsyncGenerator<{ items: T[]; nextCursor: string | undefined }, void> {
+  refusalsPerPage: IntercomConversationFullFetchFailure[][] = [],
+): AsyncGenerator<
+  {
+    items: T[];
+    nextCursor: string | undefined;
+    conversationsIntercomCouldNotReturnInFull: IntercomConversationFullFetchFailure[];
+  },
+  void
+> {
   for (let i = 0; i < pages.length; i++) {
-    yield { items: pages[i], nextCursor: cursors[i] };
+    yield {
+      items: pages[i],
+      nextCursor: cursors[i],
+      conversationsIntercomCouldNotReturnInFull: refusalsPerPage[i] ?? [],
+    };
   }
 }
 
@@ -366,6 +381,47 @@ describe('IntercomConnector', () => {
       expect(collected[0]).toHaveLength(2);
       // Default: hydrate = true
       expect(mockListConversations).toHaveBeenCalledWith(20, true, undefined);
+    });
+
+    it('reports a conversation Intercom refused to hydrate as a record warning on its own page', async () => {
+      const hydratedConversation = makeConversation({ id: '1' });
+      const conversationKeptAsListed = makeConversation({ id: '2' });
+      mockListConversations.mockReturnValue(
+        convoPagesGen(
+          [[hydratedConversation, conversationKeptAsListed], [makeConversation({ id: '3' })]],
+          ['cur_2', undefined],
+          [
+            [
+              {
+                conversationId: '2',
+                httpStatus: 403,
+                intercomErrorMessage: 'Access to this conversation is restricted',
+              },
+            ],
+            [],
+          ],
+        ),
+      );
+
+      const callback = jest.fn(() => Promise.resolve());
+      await connector.pullRecordFiles(buildTableSpec('conversations'), callback, {}, { forceFull: false });
+
+      expect(callback).toHaveBeenNthCalledWith(1, {
+        files: [hydratedConversation, conversationKeptAsListed],
+        connectorProgress: { startingAfter: 'cur_2' },
+        recordWarnings: [
+          buildPullWarningForConversationIntercomCouldNotReturnInFull({
+            conversationId: '2',
+            httpStatus: 403,
+            intercomErrorMessage: 'Access to this conversation is restricted',
+          }),
+        ],
+      });
+      expect(callback).toHaveBeenNthCalledWith(2, {
+        files: [makeConversation({ id: '3' })],
+        connectorProgress: {},
+        recordWarnings: [],
+      });
     });
 
     it('skips hydration when excludeConversationParts is set', async () => {
@@ -814,6 +870,49 @@ describe('IntercomConnector', () => {
   // ---------------------------------------------------------------------------
   // extractConnectorErrorDetails
   // ---------------------------------------------------------------------------
+
+  describe('buildPullWarningForConversationIntercomCouldNotReturnInFull', () => {
+    it("names the conversation, what was left out, and Intercom's own reason", () => {
+      expect(
+        buildPullWarningForConversationIntercomCouldNotReturnInFull({
+          conversationId: '215475561785523',
+          httpStatus: 403,
+          intercomErrorMessage: 'Access to this conversation is restricted',
+        }),
+      ).toEqual({
+        remoteId: '215475561785523',
+        warning:
+          'Pulled conversation 215475561785523 without its conversation parts (message history): Intercom returned ' +
+          '403 Forbidden for the full conversation ("Access to this conversation is restricted"). This usually ' +
+          "means the Intercom teammate behind this connection's access token isn't allowed to see this conversation.",
+      });
+    });
+
+    it('leaves out the reason when Intercom sent none', () => {
+      const { warning } = buildPullWarningForConversationIntercomCouldNotReturnInFull({
+        conversationId: '42',
+        httpStatus: 403,
+        intercomErrorMessage: null,
+      });
+
+      expect(warning).toContain('returned 403 Forbidden for the full conversation. This usually means');
+    });
+
+    it('names the status of a 5xx that outlasted the retries, without the access hint', () => {
+      expect(
+        buildPullWarningForConversationIntercomCouldNotReturnInFull({
+          conversationId: '7',
+          httpStatus: 500,
+          intercomErrorMessage: 'Server Error',
+        }),
+      ).toEqual({
+        remoteId: '7',
+        warning:
+          'Pulled conversation 7 without its conversation parts (message history): Intercom kept failing with ' +
+          'HTTP 500 for the full conversation ("Server Error"), even after retries.',
+      });
+    });
+  });
 
   describe('extractConnectorErrorDetails', () => {
     it('handles IntercomError', () => {

@@ -231,6 +231,34 @@ describe('deriveJobResult', () => {
       expect(result.folders[0]).not.toHaveProperty('fetched');
     });
 
+    it("surfaces each folder's degraded-record warnings and counts them in its row", () => {
+      const result = deriveJobResult({
+        type: JobType.PullLinkedFolderFiles,
+        publicProgress: pullProgress({
+          folderCount: 2,
+          totalFiles: 30,
+          status: 'completed',
+          folders: [
+            pullFolderProgress({ id: 'dfd_1', name: 'Articles', totalFiles: 10, status: 'completed' }),
+            pullFolderProgress({
+              id: 'dfd_2',
+              name: 'Conversations',
+              totalFiles: 20,
+              status: 'completed',
+              warningCount: 101,
+              warnings: [{ remoteId: '42', warning: 'Pulled conversation 42 without its conversation parts' }],
+            }),
+          ],
+        }),
+      });
+
+      expect(result.warnings).toEqual(['Conversations: Pulled conversation 42 without its conversation parts']);
+      expect(result.folders.map((folder) => [folder.name, folder.warningCount])).toEqual([
+        ['Articles', 0],
+        ['Conversations', 101],
+      ]);
+    });
+
     it('uses the singular for one fetched record, and the plural for several folders', () => {
       const oneRecord = deriveJobResult({
         type: JobType.PullLinkedFolderFiles,

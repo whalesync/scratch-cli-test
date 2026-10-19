@@ -1096,6 +1096,11 @@ export class SyncService {
    * @param storagePorts - Where the run reads and writes records, match keys and lookups;
    *   defaults to the classic git + Postgres storage. A caller supplying its own must pass the same
    *   bundle to every call of the run (see {@link SyncStoragePorts})
+   * @param sourceRecordRemoteIdsToLeaveUnsynced - Source records this run must not sync, because the
+   *   pull that fetched them could only partly read them (a routine passes its pull's degraded records):
+   *   Pass 2 neither creates nor updates their destination records, and counts each as skipped with a
+   *   warning. They still take part in Pass 1, so a destination record matched to one stays matched and
+   *   Pass 3 never treats it as orphaned — it is left exactly as it was.
    * @returns Result containing counts of created/updated records and any errors
    */
   async syncTableMapping(
@@ -1111,6 +1116,7 @@ export class SyncService {
      */
     onlySourceFilePath?: string,
     storagePorts: SyncStoragePorts = this.buildDefaultClassicSyncStoragePorts(syncId, workbookId, actor),
+    sourceRecordRemoteIdsToLeaveUnsynced: ReadonlySet<string> = new Set(),
   ): Promise<SyncTableMappingResult> {
     const { recordSource, matchIndex, tableSpecStore } = storagePorts;
 
@@ -1458,6 +1464,19 @@ export class SyncService {
         const sourceRecord = batchRecordsById.get(sourceRemoteId);
         if (!sourceRecord) {
           recordError(sourceRemoteId, 'Source record not found');
+          continue;
+        }
+
+        if (sourceRecordRemoteIdsToLeaveUnsynced.has(sourceRemoteId)) {
+          // Counted once, in the DATA phase — the FK phase walks the same records again.
+          if (phase === 'DATA') {
+            result.recordsSkipped++;
+            recordWarning(
+              sourceRemoteId,
+              'Not synced: the pull could only partly read this record, so its destination record was left as it was ' +
+                '(or not created).',
+            );
+          }
           continue;
         }
 

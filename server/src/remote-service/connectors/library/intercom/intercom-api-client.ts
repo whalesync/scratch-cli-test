@@ -83,6 +83,44 @@ export function isTransientIntercomServerError(error: unknown): boolean {
 }
 
 /**
+ * True when a READ (list, search, get) failed in a way worth retrying beyond throttling: a transient 5xx
+ * ({@link isTransientIntercomServerError}), a `500`, or a network error that never got a response (connection reset,
+ * timeout, DNS). {@link INTERCOM_RETRY_OPTS} leaves a `500` alone only because a retried create could duplicate a
+ * record; a read changes nothing on Intercom, so retrying it carries no such risk. A cancelled request is not retried.
+ */
+export function isRetryableIntercomReadFailure(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || axios.isCancel(error)) return false;
+  if (error.response === undefined) return true;
+  return error.response.status === 500 || isTransientIntercomServerError(error);
+}
+
+/**
+ * True when Intercom's failure to return ONE listed conversation in full (`GET /conversations/{id}`) is about that
+ * conversation rather than the connection, so the walk keeps the conversation as listed and goes on (see
+ * `paginateConversations`):
+ *  - `403 Forbidden` (not throttle-coded): the same token just listed the conversation and hydrates the others (seen
+ *    in prod: one 403 eight hours into a ~156k-conversation pull). Intercom documents that an app token only reaches
+ *    the conversations its authorizing teammate's "Conversation access" allows, the likely cause.
+ *    https://www.intercom.com/help/en/articles/4707721-limit-teammates-access-to-conversations
+ *  - a 5xx that outlasted {@link INTERCOM_READ_RETRY_OPTS}: Intercom keeps failing on this one conversation while the
+ *    walk around it succeeds. (In an outage the next page's list call fails too, and that still fails the walk.)
+ * Anything else — a 401, throttling that outlasted the retries, a network error that outlasted them — is about the
+ * connection, and still fails the walk.
+ */
+function isIntercomFailureToReturnOneConversationInFull(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || error.response === undefined || isIntercomRateLimitError(error)) return false;
+  return error.response.status === 403 || error.response.status >= 500;
+}
+
+/** Intercom's own explanation from an `error.list` error body (`errors[0].message`, else its `code`), if any. */
+function readIntercomErrorMessage(error: unknown): string | null {
+  if (!axios.isAxiosError(error)) return null;
+  const body = error.response?.data as { errors?: { code?: string; message?: string }[] } | undefined;
+  const firstIntercomError = body?.errors?.[0];
+  return firstIntercomError?.message ?? firstIntercomError?.code ?? null;
+}
+
+/**
  * Retry policy for every Intercom API call. Retries two DISTINCT failures:
  *  - Throttling ({@link isIntercomRateLimitError}): a 429 or a documented
  *    throttle code in the error body.
@@ -121,6 +159,17 @@ export const INTERCOM_RETRY_OPTS: WithRetryOpts = {
     if (secondsUntilReset <= 0) return undefined;
     return Math.min(secondsUntilReset, INTERCOM_MAX_TRUSTED_RATE_LIMIT_RESET_S);
   },
+};
+
+/**
+ * Retry policy for every Intercom READ: {@link INTERCOM_RETRY_OPTS} plus a `500` and network errors
+ * ({@link isRetryableIntercomReadFailure}). A conversations pull is one long sequential walk — up to a day of one GET
+ * per conversation — so a single transient failure must not throw the whole walk away, and a read can safely be
+ * repeated. Writes keep {@link INTERCOM_RETRY_OPTS}.
+ */
+export const INTERCOM_READ_RETRY_OPTS: WithRetryOpts = {
+  ...INTERCOM_RETRY_OPTS,
+  isRateLimited: (error) => isIntercomRateLimitError(error) || isRetryableIntercomReadFailure(error),
 };
 
 /**
@@ -232,6 +281,25 @@ export interface IntercomPageBatch<T> {
 export interface IntercomConversationPage {
   items: (IntercomConversation | IntercomConversationListItem)[];
   nextCursor: string | undefined;
+  /**
+   * Conversations in `items` that Intercom listed but could not return in full
+   * (a 403, or a 5xx that outlasted the retries), so each is in `items` as the
+   * list endpoint returned it — without `conversation_parts` — instead of
+   * hydrated. Always empty when not hydrating.
+   */
+  conversationsIntercomCouldNotReturnInFull: IntercomConversationFullFetchFailure[];
+}
+
+/**
+ * A listed conversation whose `GET /conversations/{id}` Intercom answered with an error about that conversation
+ * (see `isIntercomFailureToReturnOneConversationInFull`).
+ */
+export interface IntercomConversationFullFetchFailure {
+  conversationId: string;
+  /** The HTTP status Intercom answered with: `403`, or a 5xx that outlasted the retries. */
+  httpStatus: number;
+  /** Intercom's own explanation from the error's `error.list` body, when it sent one. */
+  intercomErrorMessage: string | null;
 }
 
 /**
@@ -276,14 +344,25 @@ export class IntercomApiClient {
   }
 
   /**
-   * Execute a request under the connector account's rate limiter, retrying if
-   * Intercom throttles us (see {@link INTERCOM_RETRY_OPTS}).
+   * Execute a WRITE under the connector account's rate limiter, retrying if
+   * Intercom throttles us or a gateway blips (see {@link INTERCOM_RETRY_OPTS}).
    */
   private async requestWithRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
     if (this.rateLimiter) {
       return this.rateLimiter.withRetry(fn, INTERCOM_RETRY_OPTS);
     }
     return standaloneWithRetry(fn, INTERCOM_RETRY_OPTS);
+  }
+
+  /**
+   * Execute a READ under the connector account's rate limiter, also retrying a
+   * `500` and network errors (see {@link INTERCOM_READ_RETRY_OPTS}).
+   */
+  private async requestReadWithRetryOnTransientFailures<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, INTERCOM_READ_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, INTERCOM_READ_RETRY_OPTS);
   }
 
   // ---------------------------------------------------------------------------
@@ -296,7 +375,7 @@ export class IntercomApiClient {
    */
   async validateCredentials(): Promise<void> {
     try {
-      await this.requestWithRateLimitRetry(() => this.client.get('/me'));
+      await this.requestReadWithRetryOnTransientFailures(() => this.client.get('/me'));
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
         throw new IntercomError('Invalid access token', 401, error.response?.data);
@@ -368,7 +447,7 @@ export class IntercomApiClient {
       let totalPages = Infinity;
 
       while (page <= totalPages) {
-        const response = await this.requestWithRateLimitRetry(() =>
+        const response = await this.requestReadWithRetryOnTransientFailures(() =>
           this.client.get<IntercomPaginatedResponse<T>>(endpointPath, {
             params: { page, per_page: pageSizeForThisWalk },
           }),
@@ -439,7 +518,9 @@ export class IntercomApiClient {
    */
   async getArticle(id: string): Promise<IntercomArticle | null> {
     try {
-      const response = await this.requestWithRateLimitRetry(() => this.client.get<IntercomArticle>(`/articles/${id}`));
+      const response = await this.requestReadWithRetryOnTransientFailures(() =>
+        this.client.get<IntercomArticle>(`/articles/${id}`),
+      );
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -507,7 +588,7 @@ export class IntercomApiClient {
    */
   async getCollection(id: string): Promise<IntercomCollection | null> {
     try {
-      const response = await this.requestWithRateLimitRetry(() =>
+      const response = await this.requestReadWithRetryOnTransientFailures(() =>
         this.client.get<IntercomCollection>(`/help_center/collections/${id}`),
       );
       return response.data;
@@ -574,6 +655,13 @@ export class IntercomApiClient {
    * getConversation to include `conversation_parts` (one API call per
    * conversation — slow for large workspaces). When false, conversations are
    * yielded as-is from the list/search endpoint (no `conversation_parts`).
+   *
+   * A hydration that fails for that one conversation (a 403, or a 5xx that
+   * outlasted the retries — see {@link isIntercomFailureToReturnOneConversationInFull})
+   * keeps the conversation as the list endpoint returned it and names it in the
+   * page's `conversationsIntercomCouldNotReturnInFull`, rather than failing the
+   * walk: one conversation must not fail a pull that runs for hours. A 404 still
+   * drops the conversation — it was deleted between the list and the hydration.
    */
   private async *paginateConversations(
     fetchPage: (
@@ -593,18 +681,36 @@ export class IntercomApiClient {
       if (items.length > 0) {
         if (hydrate) {
           // Hydrate each conversation to get conversation_parts
-          const fullConversations: IntercomConversation[] = [];
-          for (const item of items) {
-            const full = await this.getConversation(item.id);
-            if (full) {
-              fullConversations.push(full);
+          const conversationsInPage: (IntercomConversation | IntercomConversationListItem)[] = [];
+          const conversationsIntercomCouldNotReturnInFull: IntercomConversationFullFetchFailure[] = [];
+          for (const listedConversation of items) {
+            let fullConversationOrNullIfDeleted: IntercomConversation | null;
+            try {
+              fullConversationOrNullIfDeleted = await this.getConversation(listedConversation.id);
+            } catch (error) {
+              if (!isIntercomFailureToReturnOneConversationInFull(error)) {
+                throw error;
+              }
+              // Keep the listed copy (stored as Intercom returned it, just without conversation_parts) rather
+              // than dropping it: a dropped conversation would read as deleted, and a full pull would then
+              // remove it downstream even though it still exists in Intercom.
+              conversationsInPage.push(listedConversation);
+              conversationsIntercomCouldNotReturnInFull.push({
+                conversationId: listedConversation.id,
+                httpStatus: axios.isAxiosError(error) ? (error.response?.status ?? 0) : 0,
+                intercomErrorMessage: readIntercomErrorMessage(error),
+              });
+              continue;
+            }
+            if (fullConversationOrNullIfDeleted) {
+              conversationsInPage.push(fullConversationOrNullIfDeleted);
             }
           }
-          if (fullConversations.length > 0) {
-            yield { items: fullConversations, nextCursor };
+          if (conversationsInPage.length > 0) {
+            yield { items: conversationsInPage, nextCursor, conversationsIntercomCouldNotReturnInFull };
           }
         } else {
-          yield { items, nextCursor };
+          yield { items, nextCursor, conversationsIntercomCouldNotReturnInFull: [] };
         }
       }
 
@@ -637,7 +743,7 @@ export class IntercomApiClient {
         if (startingAfter) {
           params.starting_after = startingAfter;
         }
-        const response = await this.requestWithRateLimitRetry(() =>
+        const response = await this.requestReadWithRetryOnTransientFailures(() =>
           this.client.get<IntercomCursorPaginatedResponse<IntercomConversationListItem>>('/conversations', { params }),
         );
         return response.data;
@@ -671,7 +777,7 @@ export class IntercomApiClient {
           sort: { field: 'updated_at', order: 'ascending' },
           pagination,
         };
-        const response = await this.requestWithRateLimitRetry(() =>
+        const response = await this.requestReadWithRetryOnTransientFailures(() =>
           this.client.post<IntercomCursorPaginatedResponse<IntercomConversationListItem>>(
             '/conversations/search',
             body,
@@ -690,7 +796,7 @@ export class IntercomApiClient {
    */
   async getConversation(id: string): Promise<IntercomConversation | null> {
     try {
-      const response = await this.requestWithRateLimitRetry(() =>
+      const response = await this.requestReadWithRetryOnTransientFailures(() =>
         this.client.get<IntercomConversation>(`/conversations/${id}`),
       );
       return response.data;

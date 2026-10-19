@@ -2,6 +2,7 @@ import {
   connectorMetadata,
   ConnectorSettingDefinition,
   IncrementalPullSupport,
+  PulledRecordWarning,
   TableView,
 } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
@@ -29,6 +30,7 @@ import {
   INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE,
   INTERCOM_MAX_PAGE_SIZE,
   IntercomApiClient,
+  IntercomConversationFullFetchFailure,
   IntercomError,
 } from './intercom-api-client';
 import { buildIntercomDefaultView } from './intercom-default-view';
@@ -47,6 +49,29 @@ import {
 
 interface IntercomPullOptions extends PullRecordFilesOptions {
   excludeConversationParts?: boolean | undefined;
+}
+
+/**
+ * The pull warning for a conversation Intercom listed but could not return in full (a 403, or a 5xx that outlasted
+ * the retries), so it was pulled as the list endpoint returned it — everything but its `conversation_parts`. Names
+ * the conversation, the status and Intercom's own reason; for a 403, points at the likely fix (the token's teammate
+ * can't see it) without claiming that as certain.
+ */
+export function buildPullWarningForConversationIntercomCouldNotReturnInFull(
+  failure: IntercomConversationFullFetchFailure,
+): PulledRecordWarning {
+  const intercomReasonSuffix = failure.intercomErrorMessage ? ` ("${failure.intercomErrorMessage}")` : '';
+  const pulledWithoutConversationParts = `Pulled conversation ${failure.conversationId} without its conversation parts (message history)`;
+  return {
+    remoteId: failure.conversationId,
+    warning:
+      failure.httpStatus === 403
+        ? `${pulledWithoutConversationParts}: Intercom returned 403 Forbidden for the full conversation` +
+          `${intercomReasonSuffix}. This usually means the Intercom teammate behind this connection's access token ` +
+          `isn't allowed to see this conversation.`
+        : `${pulledWithoutConversationParts}: Intercom kept failing with HTTP ${failure.httpStatus} for the full ` +
+          `conversation${intercomReasonSuffix}, even after retries.`,
+  };
 }
 
 /**
@@ -200,7 +225,11 @@ export class IntercomConnector extends Connector {
 
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
-    callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
+    callback: (params: {
+      files: ConnectorFile[];
+      connectorProgress?: JsonSafeObject;
+      recordWarnings?: PulledRecordWarning[];
+    }) => Promise<void>,
     progress: JsonSafeObject,
     options: IntercomPullOptions,
   ): Promise<PullRecordFilesResult> {
@@ -272,10 +301,19 @@ export class IntercomConnector extends Connector {
         // Persist the Intercom-provided cursor (`pages.next.starting_after`),
         // never a conversation id — Intercom rejects ids with "Invalid
         // starting_after param". `nextCursor` is undefined on the final page.
-        for await (const { items: conversations, nextCursor } of conversationPages) {
+        // A conversation Intercom could not return in full is in `conversations`
+        // as listed; report it on the same page so the pull completes with a warning.
+        for await (const {
+          items: conversations,
+          nextCursor,
+          conversationsIntercomCouldNotReturnInFull,
+        } of conversationPages) {
           await callback({
             files: conversations as unknown as ConnectorFile[],
             connectorProgress: nextCursor ? { startingAfter: nextCursor } : {},
+            recordWarnings: conversationsIntercomCouldNotReturnInFull.map(
+              buildPullWarningForConversationIntercomCouldNotReturnInFull,
+            ),
           });
         }
         return newWatermark ? { newWatermark } : {};

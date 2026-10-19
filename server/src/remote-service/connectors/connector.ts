@@ -5,6 +5,7 @@ import {
   CreateTableResult,
   DataFolderOptions,
   IncrementalPullSupport,
+  PulledRecordWarning,
   SchemaCreationCapabilities,
   TableDiscoveryMode,
   TableView,
@@ -365,6 +366,14 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * cursor for the job to persist. For full runs the connector returns an empty
    * result (`{}`).
    *
+   * A record the connector can only fetch in a degraded form — not a whole folder failing, one record the service
+   * won't fully return (e.g. Intercom refusing the per-conversation request that adds its message history) — is
+   * still passed in `files` (as the service returned it, never reshaped), and named in that same callback's
+   * `recordWarnings` with a user-facing reason. The job surfaces each as a warning on the folder, a routine step
+   * whose pull reported one completes WITH a warning rather than cleanly, and the routine's sync leaves the record
+   * out so the partial copy never overwrites its destination record. Anything else that stops the connector from
+   * producing a record should throw, failing the folder.
+   *
    * @param tableSpec The JSON table spec to pull records for.
    * @param callback The callback that will process batches of files as they are pulled.
    * @param progress The progress object to update with the pull progress.
@@ -372,7 +381,11 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    */
   abstract pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
-    callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>,
+    callback: (params: {
+      files: ConnectorFile[];
+      connectorProgress?: TConnectorProgress;
+      recordWarnings?: PulledRecordWarning[];
+    }) => Promise<void>,
     progress: TConnectorProgress,
     options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult>;
