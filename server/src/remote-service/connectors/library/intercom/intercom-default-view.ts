@@ -3,30 +3,62 @@ import {
   ForeignKeyOptionSchema,
   TablePropertyType,
   TableView,
+  TableViewBannerGroup,
   TableViewCol,
   TransformerTypes,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
-import { INTERCOM_UNIX_TIMESTAMP_DATA_TYPE } from './intercom-types';
+import { INTERCOM_UNIX_TIMESTAMP_DATA_TYPE, IntercomTableType, isIntercomTableType } from './intercom-types';
 
-// ── Priority fields per entity type ──
-// Fields listed here appear first, in this order. Anything not listed goes after alphabetically.
-const PRIORITY_FIELDS: Record<string, string[]> = {
-  articles: ['title', 'id', 'description', 'author_id', 'state', 'url', 'created_at', 'updated_at'],
-  collections: ['name', 'id', 'description', 'url', 'order', 'created_at', 'updated_at'],
-  conversations: ['title', 'id', 'state', 'open', 'read', 'priority', 'admin_assignee_id', 'created_at', 'updated_at'],
-};
+/**
+ * The editorial rules that shape one table's default view. Keyed per table because Intercom reuses
+ * field names with different shapes across objects — a conversation's `tags` carries tag names, a
+ * contact's carries name-less stubs — so a rule written for one table is wrong for another.
+ */
+interface IntercomTableViewRules {
+  /** Fields listed here appear first, in this order. Anything not listed goes after alphabetically. */
+  priorityFields: string[];
+  /**
+   * Fields hidden by default. Kept deliberately short: a hidden column is not merely collapsed in
+   * the grid, it is dropped from Live Export field selection entirely, so the user is never offered
+   * it (the DEV-11148 lesson).
+   */
+  hiddenFields: ReadonlySet<string>;
+  /**
+   * Objects expanded into one column per leaf — `source.subject` as `Source (Subject)` — plus the raw
+   * container appended hidden so nothing is lost. Mirrors the Stripe/Pipedrive composite pattern.
+   */
+  compositeObjectFields: ReadonlySet<string>;
+  /**
+   * Object fields whose useful value is one repeated inner scalar joined into a readable list. The
+   * stored record keeps the verbatim object — this is view/codec only (Prime Directive intact).
+   */
+  flattenedListFields: Readonly<Record<string, { jsonPathExpression: string }>>;
+  /**
+   * An object field whose declared leaves are user-defined (custom) attributes, gathered under a
+   * banner group named `bannerName` instead of being expanded inline.
+   */
+  customAttributesField?: { fieldId: string; bannerName: string };
+  /**
+   * Object fields shown as ONE column for one of their leaves (`plan` → its `name`), plus the raw
+   * container hidden — for objects where the other leaves (`type`, `id`) are plumbing.
+   */
+  objectFieldsShownAsOneLeaf?: Readonly<Record<string, string>>;
+  /**
+   * Stub-list fields (`{type: 'list', data: [{type, id, url}], …}`) whose item ids are foreign keys,
+   * per the schema's annotation on `data[].id`. Shown as one link column over `data`.
+   */
+  foreignKeyStubListFields?: ReadonlySet<string>;
+}
 
-// Fields that should be hidden by default — noisy or deeply nested data.
-//
-// Kept deliberately short: a hidden column is not merely collapsed in the grid, it is dropped from
-// Live Export field selection entirely, so the user is never offered it (the DEV-11148 lesson).
-// Everything here is either plumbing (`workspace_id`), an open-ended bag with no declared keys
-// (`custom_attributes`, `conversation_rating`, `translated_content`), or a nested list whose useful
-// values are surfaced as their own columns instead.
-const HIDDEN_FIELDS = new Set([
+/**
+ * Hidden fields for the Help Center tables and Conversations: plumbing (`workspace_id`), an
+ * open-ended bag with no declared keys (`custom_attributes`, `conversation_rating`,
+ * `translated_content`), or a nested list whose useful values are surfaced as their own columns.
+ */
+const HELP_CENTER_AND_CONVERSATIONS_HIDDEN_FIELDS = new Set([
   'workspace_id',
   'translated_content',
   'parent_ids',
@@ -37,27 +69,135 @@ const HIDDEN_FIELDS = new Set([
 ]);
 
 /**
- * Objects expanded into one column per leaf — `source.subject` as `Source (Subject)` — plus the raw
- * container appended hidden so nothing is lost.
- *
  * A conversation's `source` is its INITIATING MESSAGE (`{type, delivered_as, subject, body,
  * author{name,email}, url, redacted}`) — the highest-value content on the record. Left whole it
- * downgrades to one blob of JSON text, which is unusable at every destination (DEV-11287). Mirrors
- * the Stripe/Pipedrive composite pattern.
+ * downgrades to one blob of JSON text, which is unusable at every destination (DEV-11287).
  *
- * `contacts` is deliberately NOT here: its elements are `{type, id}` with no human-readable scalar
- * to pluck, so JSON text is the honest rendering. `tags` is handled separately — its useful value
- * is the list of names, which is a flatten rather than an expansion.
+ * A conversation's `contacts` is deliberately NOT a composite: its elements are `{type, id}` with no
+ * human-readable scalar to pluck, so JSON text is the honest rendering. `tags` is a flatten rather
+ * than an expansion — its useful value is the list of names (`{type: 'tag.list', tags: [{id, name}]}`).
  */
-const COMPOSITE_OBJECT_FIELDS = new Set(['source']);
+const HELP_CENTER_AND_CONVERSATIONS_COMPOSITE_OBJECT_FIELDS = new Set(['source']);
+const HELP_CENTER_AND_CONVERSATIONS_FLATTENED_LIST_FIELDS = {
+  tags: { jsonPathExpression: '$.tags[*].name' },
+};
 
 /**
- * Object fields whose useful value is one repeated inner scalar joined into a readable list.
- * `tags` is `{type: 'tag.list', tags: [{id, name}]}`; what a user wants is the names (DEV-11287).
- * The stored record keeps the verbatim object — this is view/codec only (Prime Directive intact).
+ * Contacts.
+ *  - `custom_attributes` is the most valuable data on a contact and is declared per attribute from
+ *    the workspace's own definitions, so it is gathered under a "Custom Attributes" banner (Intercom's
+ *    own term) rather than hidden.
+ *  - `tags` is `{type: 'list', data: [{id, type, url}]}` — the stubs carry NO `name` (probed live), so
+ *    the readable value available is the tag ids.
+ *  - `companies` is a link column into the Companies table (the schema annotates `companies.data[].id`
+ *    as a foreign key). Intercom inlines at most 10 of a contact's companies, so a contact in more
+ *    links only those 10. `notes`, the subscription lists, `social_profiles` and `avatar` are stub
+ *    lists or blobs with nothing readable to export.
  */
-const FLATTENED_LIST_FIELDS: Record<string, { jsonPathExpression: string }> = {
-  tags: { jsonPathExpression: '$.tags[*].name' },
+const CONTACTS_VIEW_RULES: IntercomTableViewRules = {
+  priorityFields: [
+    'email',
+    'name',
+    'role',
+    'id',
+    'external_id',
+    'phone',
+    'created_at',
+    'updated_at',
+    'last_seen_at',
+    'signed_up_at',
+  ],
+  hiddenFields: new Set([
+    'type',
+    'workspace_id',
+    'avatar',
+    'social_profiles',
+    'notes',
+    'opted_in_subscription_types',
+    'opted_out_subscription_types',
+  ]),
+  compositeObjectFields: new Set(['location']),
+  flattenedListFields: { tags: { jsonPathExpression: '$.data[*].id' } },
+  customAttributesField: { fieldId: 'custom_attributes', bannerName: 'Custom Attributes' },
+  foreignKeyStubListFields: new Set(['companies']),
+};
+
+/**
+ * Companies.
+ *  - `tags` is `{type: 'tag.list', tags: [{type, id, name}]}` — names are present, the same shape and
+ *    flatten as a conversation's (probed live).
+ *  - `plan` is `{type, id, name}` (or `{}` when unset): only the name is meaningful.
+ *  - `segments` items couldn't be observed (segments can't be created through the API) and
+ *    `app_id`/`type` are plumbing, so they are hidden.
+ *  - Custom attributes are gathered under the same "Custom Attributes" banner as on Contacts.
+ */
+const COMPANIES_VIEW_RULES: IntercomTableViewRules = {
+  priorityFields: [
+    'name',
+    'company_id',
+    'id',
+    'website',
+    'industry',
+    'plan',
+    'size',
+    'user_count',
+    'session_count',
+    'monthly_spend',
+    'created_at',
+    'updated_at',
+    'remote_created_at',
+    'last_request_at',
+  ],
+  hiddenFields: new Set(['type', 'app_id', 'segments']),
+  compositeObjectFields: new Set(),
+  flattenedListFields: { tags: { jsonPathExpression: '$.tags[*].name' } },
+  customAttributesField: { fieldId: 'custom_attributes', bannerName: 'Custom Attributes' },
+  objectFieldsShownAsOneLeaf: { plan: 'name' },
+};
+
+/**
+ * View rules per table. Typed over every {@link IntercomTableType} so adding a table forces a
+ * decision here rather than silently inheriting another table's rules.
+ */
+const VIEW_RULES_BY_TABLE_TYPE: Record<IntercomTableType, IntercomTableViewRules> = {
+  articles: {
+    priorityFields: ['title', 'id', 'description', 'author_id', 'state', 'url', 'created_at', 'updated_at'],
+    hiddenFields: HELP_CENTER_AND_CONVERSATIONS_HIDDEN_FIELDS,
+    compositeObjectFields: HELP_CENTER_AND_CONVERSATIONS_COMPOSITE_OBJECT_FIELDS,
+    flattenedListFields: HELP_CENTER_AND_CONVERSATIONS_FLATTENED_LIST_FIELDS,
+  },
+  collections: {
+    priorityFields: ['name', 'id', 'description', 'url', 'order', 'created_at', 'updated_at'],
+    hiddenFields: HELP_CENTER_AND_CONVERSATIONS_HIDDEN_FIELDS,
+    compositeObjectFields: HELP_CENTER_AND_CONVERSATIONS_COMPOSITE_OBJECT_FIELDS,
+    flattenedListFields: HELP_CENTER_AND_CONVERSATIONS_FLATTENED_LIST_FIELDS,
+  },
+  conversations: {
+    priorityFields: [
+      'title',
+      'id',
+      'state',
+      'open',
+      'read',
+      'priority',
+      'admin_assignee_id',
+      'created_at',
+      'updated_at',
+    ],
+    hiddenFields: HELP_CENTER_AND_CONVERSATIONS_HIDDEN_FIELDS,
+    compositeObjectFields: HELP_CENTER_AND_CONVERSATIONS_COMPOSITE_OBJECT_FIELDS,
+    flattenedListFields: HELP_CENTER_AND_CONVERSATIONS_FLATTENED_LIST_FIELDS,
+  },
+  contacts: CONTACTS_VIEW_RULES,
+  companies: COMPANIES_VIEW_RULES,
+};
+
+/** Rules for a table wsId this connector doesn't know: no priority, nothing hidden or reshaped. */
+const RULES_FOR_UNKNOWN_TABLE_TYPE: IntercomTableViewRules = {
+  priorityFields: [],
+  hiddenFields: new Set(),
+  compositeObjectFields: new Set(),
+  flattenedListFields: {},
 };
 
 /**
@@ -67,14 +207,18 @@ const FLATTENED_LIST_FIELDS: Record<string, { jsonPathExpression: string }> = {
 export function buildIntercomDefaultView(schema: TSchema, entityType: string): TableView {
   const properties: Record<string, TSchema> =
     (schema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
+  const viewRules = isIntercomTableType(entityType)
+    ? VIEW_RULES_BY_TABLE_TYPE[entityType]
+    : RULES_FOR_UNKNOWN_TABLE_TYPE;
 
-  const fieldIds = Object.keys(properties);
-  const priority = PRIORITY_FIELDS[entityType] ?? [];
-  const sorted = sortFields(fieldIds, priority);
-  const cols: TableViewCol[] = [];
+  const sorted = sortFields(Object.keys(properties), viewRules.priorityFields);
+  const standardColumnNames = new Set(
+    sorted.filter((fieldId) => fieldId !== viewRules.customAttributesField?.fieldId).map(formatFieldName),
+  );
+  const cols: (TableViewCol | TableViewBannerGroup)[] = [];
 
   for (const fieldId of sorted) {
-    cols.push(...buildColsForField(fieldId, properties[fieldId]));
+    cols.push(...buildColsForField(fieldId, properties[fieldId], viewRules, standardColumnNames));
   }
 
   return { name: 'Default', cols };
@@ -321,24 +465,105 @@ function expandCompositeObjectCols(
     cols.push(buildLeafCol(subfieldPath, subfieldName, subfieldSchema, isSubfieldReadonly));
   }
 
-  cols.push({
+  cols.push(buildRawContainerCol(path, name, isReadonly));
+
+  return cols;
+}
+
+/**
+ * The custom attributes as a banner group of one column per declared attribute, plus the raw
+ * container appended hidden (so the whole bag, including attributes created after the schema was
+ * built, stays available to turn on).
+ *
+ * Columns are named by the attribute's own name — Intercom shows users that name, and it is already
+ * human-readable (`Plan Tier`, `paid_subscriber` → `Paid Subscriber`). A name that collides with a
+ * standard column (`Email`) is qualified as `Custom Attributes (Email)`, because a Live Export
+ * destination can't hold two columns with one name.
+ */
+function buildCustomAttributeCols(
+  path: string,
+  name: string,
+  bannerName: string,
+  properties: Record<string, TSchema>,
+  standardColumnNames: ReadonlySet<string>,
+): (TableViewCol | TableViewBannerGroup)[] {
+  const customAttributeCols = Object.entries(properties).map(([attributeName, attributeSchema]) => {
+    const formattedAttributeName = formatFieldName(attributeName);
+    const columnName = standardColumnNames.has(formattedAttributeName)
+      ? `${name} (${formattedAttributeName})`
+      : formattedAttributeName;
+    return buildLeafCol(
+      `${path}.${attributeName}`,
+      columnName,
+      attributeSchema,
+      attributeSchema?.[X_SCRATCH_READONLY] === true,
+    );
+  });
+
+  const rawContainerCol = buildRawContainerCol(path, name, false);
+  if (customAttributeCols.length === 0) return [rawContainerCol];
+  return [{ kind: 'banner-group', name: bannerName, cols: customAttributeCols }, rawContainerCol];
+}
+
+/** A hidden column holding a container's raw value, so nothing is lost when its leaves are surfaced. */
+function buildRawContainerCol(path: string, name: string, isReadonly: boolean): TableViewCol {
+  return {
     kind: 'col',
     path,
     name: `${name} (raw)`,
     type: 'object',
     hidden: true,
     ...(isReadonly ? { readonly: true } : {}),
-  });
+  };
+}
 
-  return cols;
+/** The foreign-key annotation on a stub list's `data[].id`, if the schema declares one. */
+function stubListItemIdForeignKeyOf(fieldSchema: TSchema | undefined): TableViewCol['foreignKey'] | undefined {
+  const dataSchema = objectPropertiesOf(fieldSchema)?.data as (TSchema & { items?: TSchema }) | undefined;
+  return foreignKeyOf(objectPropertiesOf(dataSchema?.items)?.id);
+}
+
+/**
+ * A link column over a stub list's `data` array (`[{type, id, url}, …]`) — the HubSpot association
+ * pattern. The foreign key is declared on the COLUMN because its annotation lives on `data[].id`,
+ * below the column's path, where neither the schema join nor scratch-git's index looks. The ids are
+ * flattened for display; `codec.toCore` extracts them as the id list a sync resolves to linked
+ * records. Read-only, so there is no `fromCore`.
+ */
+function buildStubListForeignKeyCol(
+  path: string,
+  name: string,
+  foreignKey: NonNullable<TableViewCol['foreignKey']>,
+  isReadonly: boolean,
+): TableViewCol {
+  return {
+    kind: 'col',
+    path: `${path}.data`,
+    name,
+    type: 'string',
+    foreignKey,
+    displayTransformer: {
+      type: TransformerTypes.JSONPath,
+      options: { expression: '$[*].id', arrayHandling: 'join_comma' },
+    },
+    codec: {
+      toCore: { type: TransformerTypes.JSONPath, options: { expression: '$[*].id', arrayHandling: 'array' } },
+    },
+    ...(isReadonly ? { readonly: true } : {}),
+  };
 }
 
 /** Build the column(s) a single top-level schema field contributes to the view. */
-function buildColsForField(fieldId: string, fieldSchema: TSchema): TableViewCol[] {
+function buildColsForField(
+  fieldId: string,
+  fieldSchema: TSchema,
+  viewRules: IntercomTableViewRules,
+  standardColumnNames: ReadonlySet<string>,
+): (TableViewCol | TableViewBannerGroup)[] {
   const name = formatFieldName(fieldId);
   const isReadonly = fieldSchema?.[X_SCRATCH_READONLY] === true;
 
-  if (HIDDEN_FIELDS.has(fieldId)) {
+  if (viewRules.hiddenFields.has(fieldId)) {
     return [
       {
         kind: 'col',
@@ -351,12 +576,49 @@ function buildColsForField(fieldId: string, fieldSchema: TSchema): TableViewCol[
     ];
   }
 
-  const flattenedList = FLATTENED_LIST_FIELDS[fieldId];
+  if (viewRules.customAttributesField?.fieldId === fieldId) {
+    const properties = objectPropertiesOf(fieldSchema);
+    if (properties) {
+      return buildCustomAttributeCols(
+        fieldId,
+        name,
+        viewRules.customAttributesField.bannerName,
+        properties,
+        standardColumnNames,
+      );
+    }
+  }
+
+  if (viewRules.foreignKeyStubListFields?.has(fieldId)) {
+    const foreignKey = stubListItemIdForeignKeyOf(fieldSchema);
+    if (foreignKey) {
+      return [
+        buildStubListForeignKeyCol(fieldId, name, foreignKey, isReadonly),
+        buildRawContainerCol(fieldId, name, isReadonly),
+      ];
+    }
+  }
+
+  const shownLeafKey = viewRules.objectFieldsShownAsOneLeaf?.[fieldId];
+  const shownLeafSchema = shownLeafKey ? objectPropertiesOf(fieldSchema)?.[shownLeafKey] : undefined;
+  if (shownLeafKey && shownLeafSchema) {
+    return [
+      buildLeafCol(
+        `${fieldId}.${shownLeafKey}`,
+        name,
+        shownLeafSchema,
+        isReadonly || shownLeafSchema[X_SCRATCH_READONLY] === true,
+      ),
+      buildRawContainerCol(fieldId, name, isReadonly),
+    ];
+  }
+
+  const flattenedList = viewRules.flattenedListFields[fieldId];
   if (flattenedList && objectPropertiesOf(fieldSchema)) {
     return [buildFlattenedListCol(fieldId, name, flattenedList.jsonPathExpression, isReadonly)];
   }
 
-  if (COMPOSITE_OBJECT_FIELDS.has(fieldId)) {
+  if (viewRules.compositeObjectFields.has(fieldId)) {
     const properties = objectPropertiesOf(fieldSchema);
     if (properties) return expandCompositeObjectCols(fieldId, name, properties, isReadonly);
   }

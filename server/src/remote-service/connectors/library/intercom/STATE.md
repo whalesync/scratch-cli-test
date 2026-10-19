@@ -41,8 +41,12 @@ At-a-glance progress through the build journey, so anyone can see where this con
 ## TODOs — known pending tasks
 Living checklist of what's left: gaps found while adopting human-built code, unfinished entities/fields, deferred edge cases, and follow-up issues. Check items off as they land. Coarser than the coverage matrix; broader than **Open issues** (which is only for broken ❌ cells with Linear links).
 
-- [ ] <pending task> <(link issue if any)>
-- [ ] <…>
+- [x] Read-only **Contacts** table (DEV-12350) — search walk in creation order, discovered custom attributes, per-table view rules. Verified against the live Whalesync workspace (19,386 contacts; local pull + full-schema validation, 0 failures). Design: `docs/plans/2026-10-16-dev-12350-intercom-contacts-companies/`.
+- [x] Read-only **Companies** table (DEV-12350) — scroll walk (waits out `scroll_exists`, restarts on 404/500, never returns a partial walk), discovered custom attributes, `Plan` column, tag names. Contacts' `companies.data` is now a link column into Companies. Verified on a seeded throwaway workspace (197 companies, 0 schema failures, 201/201 contact→company links resolve).
+- [x] **Decision (2026-10-19): a contact links only its first 10 companies.** That is Intercom's inline cap (`has_more` marks the rest), and nothing extra is fetched. Revisit if complete links are needed; see design doc §8. (`GET /contacts/{id}/companies` returns full company objects, not `{type, id, url}` stubs.)
+- [ ] Contact `tags` stubs carry no names — the view flattens tag ids. Hydrating names from `GET /tags` in place is a follow-up.
+- [ ] Conversation `contacts` → Contacts FK — deferred: it makes that column unselectable in conversations-only Live Exports (see the DEV-12350 design doc §4.7/§8).
+- [ ] Conversations writes still silently skip (Contacts throws) — align Conversations with the throwing pattern.
 
 ## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
 These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
@@ -60,7 +64,11 @@ Every entity that is (or could be) fetched as a standalone top-level list. Inclu
 
 | Entity | Scratch table | Pull | Create→Push | Edit→Push | Delete | FK | Status |
 |---|---|:--:|:--:|:--:|:--:|:--:|---|
-| <Entity1> | <table name/shape> | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built / planned |
+| Articles | `articles` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built |
+| Collections | `collections` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built |
+| Conversations | `conversations` (read-only) | ⬜ | ➖ | ➖ | ➖ | ⬜ | built |
+| Contacts (users + leads) | `contacts` (read-only; custom attributes discovered from `GET /data_attributes?model=contact`) | ✅ | ➖ | ➖ | ➖ | ⬜ | built (DEV-12350) |
+| Companies (with ≥1 contact) | `companies` (read-only; custom attributes discovered from `GET /data_attributes?model=company`) | ✅ | ➖ | ➖ | ➖ | ➖ | built (DEV-12350) |
 
 ### 3. Scoped / non-top-level entities — not directly fetchable as a top-level entity
 Entities that can't be a standalone Scratch table, for either reason: **(i) scoped to a parent** — reached only through it, so embed into the parent's deep fetch; or **(ii) weird in another way** that blocks top-level treatment — no list endpoint, export/search-only, returned only as a side-effect, requires an unsupported scope. Still data we want — never drop it.
@@ -120,9 +128,9 @@ Max records (or fields) per API request, **per operation** — services often di
 **A conversation Intercom lists but cannot return in full (`403`, or a 5xx that outlasts the retries, on `GET /conversations/{id}`).** Seen in prod (2026-10-19): one `403 Forbidden` on a single conversation's hydration, ~8 h into a ~156k-conversation Live Export pull whose token was hydrating every other conversation — so not a broken token. Likely cause: Intercom documents that an app token only reaches the conversations its authorizing teammate's "Conversation access" allows (https://www.intercom.com/help/en/articles/4707721-limit-teammates-access-to-conversations). The hydration loop no longer fails the folder on it: the conversation is kept **as the list endpoint returned it** (verbatim, just without `conversation_parts`) and reported as a pull record warning naming the conversation and Intercom's own `error.list` message, so the pull — and a Live Export run — **completes with a warning** instead of failing. The run's sync then **leaves that conversation out** (no create, no update), so its destination record keeps its existing message history instead of having it cleared by the partial copy. It is not dropped from the pull: a dropped conversation would read as deleted and the sync's delete policy would remove its destination record. The pull also clears the folder's incremental watermark, so the next pull is full and re-checks the conversation. More than 100 such conversations in one pull fails the folder (likely an access change, not a few restricted conversations). A conversation whose hydration keeps failing with a 5xx after every retry is handled the same way (its warning names the status; in an Intercom outage the next page's list call fails too, which still fails the folder). A `404` on hydration still drops the conversation (deleted between list and hydration); a throttle-coded error is retried as throttling; a `401`, throttling that outlasts the retries, or a network error that outlasts them still fails the folder. `pullRecordFilesByIds` (targeted re-pull) still throws on these.
 
 ## Incremental polling
-- **Supported:** <YES / NO>. Driver field = `<last-modified field>` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns <SUPPORTED/NOT_SUPPORTED> when <condition>.
-- **Mechanism:** <how a `since` pull is expressed — e.g. `If-Modified-Since` header / `updated_since` param / cursor> and **how the new watermark is derived** (server time captured before the first page? max record timestamp?). Note idempotency (mid-run edits re-pulled next time).
-- **Deletions:** <how deletes are detected on an incremental run — tombstone/deleted endpoint, or "not supported">.
+- **Supported:** Conversations only. Driver field = `updated_at` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns SUPPORTED for `conversations`, NOT_SUPPORTED for every other table. Articles/Collections have no modified-since filter; **Contacts is full-pull only by design** (DEV-12350 — no `updated_at` last-modified annotation, no watermark).
+- **Mechanism:** `POST /conversations/search` with `updated_at > (since − 60s)`, ascending; watermark captured before the first API call.
+- **Deletions:** not detected on an incremental run; full pulls remove records absent from a complete walk.
 
 ## Endpoints (what the connector calls)
 **Super-concise** — distil only the endpoints THIS connector actually hits; do NOT paste the vendor's full API reference / OpenAPI dump. One row per (entity/area × op); add a note only where a quirk matters.
@@ -134,9 +142,13 @@ Max records (or fields) per API request, **per operation** — services often di
 
 | Entity / area | Op | Method + path | Note (only if it matters) |
 |---|---|---|---|
-| `<Entity>` | list | `<GET /…>` | `<pagination / limit cap>` |
-| `<Entity>` | get / create / update / delete | `<GET/POST/PUT/DELETE /…[/{id}]>` | `<scoping-param / value-key / required-on-create>` |
-| `<schema discovery>` | discover | `<GET /…>` | `<custom-field defs / object schema source>` |
+| Contacts | list | `POST /contacts/search` (`created_at > 0`, sort `created_at` asc) | 150/page cursor walk. NOT `GET /contacts`: that list is ordered by `last_seen_at` DESC (verified live), a moving key that can skip contacts mid-walk. Unique ids checked against the smaller of the first/last page `total_count`. |
+| Contacts | get | `GET /contacts/{id}` | Same keys as the search items (verified live); 404 → null |
+| Contacts schema | discover | `GET /data_attributes?model=contact` | Custom attributes → typed `custom_attributes.*` leaves; `relationship` type (undocumented) skipped — never present on records |
+| Companies | list | `GET /companies/scroll` (+ `scroll_param`) | 100/page; ends on the first empty page (its param 404s). Lists ONLY companies with ≥1 contact — no 2.11 endpoint lists the rest. One scroll per WORKSPACE (`400 scroll_exists`; abandoned scrolls hold it ~60 s); idle ~60 s → `404 scroll parameter not found`. Checkpoint always `{}` (no resume). |
+| Companies | count (warn only) | `POST /companies/list` `{ per_page: 1 }` | `total_count` cross-check after the walk — logs a warning, never fails (it lags/flaps while Intercom re-indexes) |
+| Companies | get | `GET /companies/{id}` | Same keys as scroll items; also returns companies with no contacts; 404 → null |
+| Companies schema | discover | `GET /data_attributes?model=company` | Includes Intercom's own `creation_source` |
 
 <Cross-cutting: base host, mandatory headers, auth model, any global write quirks — one line each.>
 
@@ -145,14 +157,21 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 
 | FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
 |---|:--:|:--:|---|
-| `<Entity>.<field>` → `<table>` | ⬜ | ⬜ | |
+| `Contacts.companies.data[].id` → `companies` (multi-valued; view column `companies.data`) | ✅ | ➖ (read-only) | Verified on the throwaway workspace: 201/201 link ids resolve. Intercom inlines at most 10 per contact. |
+| `Articles.parent_id`, `Collections.parent_id` → `collections` | ⬜ | ⬜ | DEV-11285 |
 - Association endpoint (if any): <describe> — ⬜
 
 ## Edge cases discovered
 - (none yet — see SKILL.md → Stage E for what to hunt for)
 
 ## Gotchas
-- (connector-specific operational notes)
+- **Contacts:** `GET /contacts` is sorted by `last_seen_at` DESC (verified live) — never use it for a full walk; use the creation-order search walk.
+- **Contacts:** a 401/403 on contacts/attributes means the token's Intercom app lacks **"Read and list users and companies"** — `testConnection` (`GET /me`) passes without it, so the connector rethrows naming the permission.
+- **Contacts:** custom attribute keys are sparse (absent, not null, when never set) and names may contain spaces/capitals; date attributes are Unix seconds.
+- **Contacts:** nested `tags`/`notes`/`companies` lists are stubs, at most 10 inlined (`has_more`/`url` for the rest); a contact's tag stubs carry no names.
+- **Companies:** only companies with at least one contact are listable — a company that loses its last contact drops out of the scroll (within ~1–3 min, flapping meanwhile) and the next full pull removes it. Newly linked companies take 2–4 min to appear.
+- **Companies:** the scroll lock is per WORKSPACE, so another integration scrolling the same customer's companies makes our pull wait (~90 s max) and then fail with an explanatory error; walks always run to the empty page so ours never holds the lock.
+- **Companies:** `plan` is `{}` (not null) when unset; `remote_created_at`/`size`/`website`/`industry` are absent until set; custom string values over a few hundred chars are rejected by Intercom on write (`422 length too long`).
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
@@ -160,7 +179,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Live spec:** `server/test/integration/intercom-connector.spec.ts` — 📄 ✅.
 - **Runs in CI pipeline:** ❌ — self-skips (`describeIfKey`) until its credential is wired as a GitLab CI/CD variable.
 - **Credentials / env vars:** `INTERCOM_ACCESS_TOKEN` (+ `INTERCOM_TEST_AUTHOR_ID`) — local in `server/.env.integration` (template `.env.integration.example`); CI in GitLab → Settings → CI/CD → Variables.
-- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
+- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅. Contacts and Companies blocks (DEV-12350): read-only flags, discovered schema + default view, a creation-order contacts page / a full companies scroll, by-id fetch, writes rejected — both blocks pass against the throwaway test workspace (`-t "live API (contacts|companies) "`). Never run this spec against the live Whalesync workspace — its articles/collections blocks create and delete records.
 - **State model:** Self-provisioning CRUD (`scratch-test-<ts>`).
 - **Notes:** `INTERCOM_TEST_AUTHOR_ID` is auto-discovered if unset.
 - [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP is settled (implemented).

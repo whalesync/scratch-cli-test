@@ -25,6 +25,8 @@ const ACCESS_TOKEN = process.env.INTERCOM_ACCESS_TOKEN;
 const ARTICLES_ID: EntityId = { wsId: 'articles', remoteId: ['articles'] };
 const COLLECTIONS_ID: EntityId = { wsId: 'collections', remoteId: ['collections'] };
 const CONVERSATIONS_ID: EntityId = { wsId: 'conversations', remoteId: ['conversations'] };
+const CONTACTS_ID: EntityId = { wsId: 'contacts', remoteId: ['contacts'] };
+const COMPANIES_ID: EntityId = { wsId: 'companies', remoteId: ['companies'] };
 
 // Unique suffix to avoid collisions with real data
 const TEST_SUFFIX = `scratch-test-${Date.now()}`;
@@ -441,5 +443,129 @@ describeIfToken('IntercomConnector — live API', () => {
       expect((fetched[0] as unknown as { id: string }).id).toBe(conversationId);
       expect(fetched[0]).toHaveProperty('conversation_parts');
     }, 30_000);
+  });
+
+  // -------------------------------------------------------------------------
+  // Contacts (read-only, DEV-12350)
+  // -------------------------------------------------------------------------
+
+  describe('contacts', () => {
+    let contactsSpec: BaseJsonTableSpec;
+
+    /** The first page of the creation-order walk; breaking out early skips the completeness check. */
+    async function firstPageOfContacts(pageSize: number): Promise<{ id: string; created_at: number }[]> {
+      const apiClient = (
+        connector as unknown as {
+          client: {
+            listAllContactsInCreationOrder: (
+              pageSize: number,
+            ) => AsyncGenerator<{ items: { id: string; created_at: number }[] }>;
+          };
+        }
+      ).client;
+      for await (const page of apiClient.listAllContactsInCreationOrder(pageSize)) {
+        return page.items;
+      }
+      return [];
+    }
+
+    beforeAll(async () => {
+      contactsSpec = await connector.fetchJsonTableSpec(CONTACTS_ID);
+    });
+
+    it('lists contacts as a fully read-only table', async () => {
+      const contacts = (await connector.listTables()).find((table) => table.id.wsId === 'contacts');
+      expect(contacts).toMatchObject({ disabledCreates: true, disabledUpdates: true, disabledDeletes: true });
+    });
+
+    it('builds a schema (with the workspace’s custom attributes) and a default view', () => {
+      expect(contactsSpec.name).toBe('Contacts');
+      expect(contactsSpec.schema.properties).toHaveProperty('email');
+      expect(contactsSpec.schema.properties).toHaveProperty('custom_attributes');
+      expect(connector.buildDefaultView(contactsSpec)?.cols.length).toBeGreaterThan(0);
+    });
+
+    it('pulls a page of contacts in creation order', async () => {
+      const firstPage = await firstPageOfContacts(5);
+      if (firstPage.length === 0) return; // No contacts — skip
+
+      const createdAtValues = firstPage.map((contact) => contact.created_at);
+      expect(createdAtValues).toEqual([...createdAtValues].sort((a, b) => a - b));
+    }, 30_000);
+
+    it('fetches a contact by ID', async () => {
+      const [firstContact] = await firstPageOfContacts(1);
+      if (!firstContact) return; // No contacts — skip
+
+      const fetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(contactsSpec, [firstContact.id], async ({ files: batch }) => {
+        fetched.push(...batch);
+      });
+
+      expect(fetched).toHaveLength(1);
+      expect((fetched[0] as unknown as { id: string }).id).toBe(firstContact.id);
+    }, 30_000);
+
+    it('rejects writes rather than silently skipping them', async () => {
+      const contactFile = { id: 'not-sent', email: 'not-sent@example.com' } as ConnectorFile;
+      await expect(connector.createRecords(contactsSpec, [contactFile])).rejects.toThrow(/read-only/);
+      await expect(connector.updateRecords(contactsSpec, [contactFile], [{ name: 'x' }])).rejects.toThrow(/read-only/);
+      await expect(connector.deleteRecords(contactsSpec, [contactFile])).rejects.toThrow(/read-only/);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Companies (read-only, DEV-12350)
+  // -------------------------------------------------------------------------
+
+  describe('companies', () => {
+    let companiesSpec: BaseJsonTableSpec;
+
+    beforeAll(async () => {
+      companiesSpec = await connector.fetchJsonTableSpec(COMPANIES_ID);
+    });
+
+    it('lists companies as a fully read-only table', async () => {
+      const companies = (await connector.listTables()).find((table) => table.id.wsId === 'companies');
+      expect(companies).toMatchObject({ disabledCreates: true, disabledUpdates: true, disabledDeletes: true });
+    });
+
+    it('builds a schema (with the workspace’s custom attributes) and a default view', () => {
+      expect(companiesSpec.name).toBe('Companies');
+      expect(companiesSpec.schema.properties).toHaveProperty('name');
+      expect(companiesSpec.schema.properties).toHaveProperty('custom_attributes');
+      expect(connector.buildDefaultView(companiesSpec)?.cols.length).toBeGreaterThan(0);
+    });
+
+    it('pulls every company with at least one contact via the scroll, each once', async () => {
+      const pulled = await collectPulledFiles(connector, companiesSpec);
+      const ids = pulled.map((company) => (company as unknown as { id: string }).id);
+
+      expect(new Set(ids).size).toBe(ids.length);
+      for (const company of pulled as unknown as { user_count: number }[]) {
+        expect(company.user_count).toBeGreaterThan(0);
+      }
+    }, 120_000);
+
+    it('fetches a company by ID', async () => {
+      const [firstCompany] = await collectPulledFiles(connector, companiesSpec);
+      if (!firstCompany) return; // No companies with contacts — skip
+      const companyId = (firstCompany as unknown as { id: string }).id;
+
+      const fetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(companiesSpec, [companyId], async ({ files: batch }) => {
+        fetched.push(...batch);
+      });
+
+      expect(fetched).toHaveLength(1);
+      expect((fetched[0] as unknown as { id: string }).id).toBe(companyId);
+    }, 120_000);
+
+    it('rejects writes rather than silently skipping them', async () => {
+      const companyFile = { id: 'not-sent', name: 'not-sent' } as ConnectorFile;
+      await expect(connector.createRecords(companiesSpec, [companyFile])).rejects.toThrow(/read-only/);
+      await expect(connector.updateRecords(companiesSpec, [companyFile], [{ name: 'x' }])).rejects.toThrow(/read-only/);
+      await expect(connector.deleteRecords(companiesSpec, [companyFile])).rejects.toThrow(/read-only/);
+    });
   });
 });

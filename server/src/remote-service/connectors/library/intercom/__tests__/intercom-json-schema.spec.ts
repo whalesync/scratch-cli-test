@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_CUSTOM_FIELD,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
@@ -8,9 +9,11 @@ import {
 import {
   buildIntercomArticlesJsonTableSpec,
   buildIntercomCollectionsJsonTableSpec,
+  buildIntercomCompaniesJsonTableSpec,
+  buildIntercomContactsJsonTableSpec,
   buildIntercomConversationsJsonTableSpec,
 } from '../intercom-json-schema';
-import { INTERCOM_UNIX_TIMESTAMP_DATA_TYPE } from '../intercom-types';
+import { INTERCOM_UNIX_TIMESTAMP_DATA_TYPE, IntercomDataAttribute } from '../intercom-types';
 
 describe('buildIntercomArticlesJsonTableSpec', () => {
   const entityId = { wsId: 'articles', remoteId: ['articles'] };
@@ -345,5 +348,253 @@ describe('buildIntercomConversationsJsonTableSpec', () => {
     expect(spec.generatedAt).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(() => new Date(spec.generatedAt!)).not.toThrow();
+  });
+});
+
+describe('buildIntercomContactsJsonTableSpec', () => {
+  const entityId = { wsId: 'contacts', remoteId: ['contacts'] };
+
+  function definition(overrides: Partial<IntercomDataAttribute>): IntercomDataAttribute {
+    return {
+      type: 'data_attribute',
+      model: 'contact',
+      name: 'attr',
+      full_name: 'custom_attributes.attr',
+      label: 'attr',
+      data_type: 'string',
+      custom: true,
+      archived: false,
+      ...overrides,
+    };
+  }
+
+  // Mirrors the live Whalesync workspace's mix of custom attribute types (DEV-12350), including the
+  // undocumented `relationship` type and names with spaces and capitals.
+  const liveShapedDefinitions: IntercomDataAttribute[] = [
+    definition({ name: 'plan_tier', data_type: 'string' }),
+    definition({ name: 'Seats Purchased', data_type: 'integer' }),
+    definition({ name: 'mrr', data_type: 'float' }),
+    definition({ name: 'is_paying', data_type: 'boolean' }),
+    definition({ name: 'Trial Ends At', data_type: 'date' }),
+    definition({ name: 'Workspace Owner', data_type: 'relationship' }),
+    definition({ name: 'priority', data_type: 'string', options: ['high', 'low'] }),
+    definition({ name: 'email', custom: false }),
+    definition({ name: 'old_attr', archived: true }),
+    definition({ name: 'mystery', data_type: 'geo_point' }),
+    definition({ name: 'dotted.name', data_type: 'string' }),
+  ];
+
+  const spec = buildIntercomContactsJsonTableSpec(entityId, liveShapedDefinitions);
+  const props = spec.schema.properties;
+  const customAttributes = props.custom_attributes;
+
+  it('builds spec with correct metadata (email is the title: name is often null for leads)', () => {
+    expect(spec.name).toBe('Contacts');
+    expect(spec.slug).toBe('contacts');
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toBe('email');
+    expect(spec.slugPath).toBe('email');
+    expect(spec.basePath).toEqual([]);
+  });
+
+  it('marks every top-level field read-only except the custom_attributes container', () => {
+    for (const key of Object.keys(props)) {
+      if (key === 'custom_attributes') continue;
+      expect([key, props[key][X_SCRATCH_READONLY]]).toEqual([key, true]);
+    }
+  });
+
+  it('keeps every x-scratch key off the custom_attributes container so the flattener expands it', () => {
+    expect(Object.keys(customAttributes).filter((key) => key.startsWith('x-scratch'))).toEqual([]);
+    expect(customAttributes.additionalProperties).toBe(true);
+  });
+
+  it('declares one read-only, optional, nullable custom-field leaf per supported custom attribute', () => {
+    expect(Object.keys(customAttributes.properties)).toEqual([
+      'plan_tier',
+      'Seats Purchased',
+      'mrr',
+      'is_paying',
+      'Trial Ends At',
+      'priority',
+    ]);
+    expect(customAttributes.required ?? []).toEqual([]);
+    for (const attributeName of Object.keys(customAttributes.properties)) {
+      const leaf = customAttributes.properties[attributeName];
+      expect(leaf[X_SCRATCH_READONLY]).toBe(true);
+      expect(leaf[X_SCRATCH_CUSTOM_FIELD]).toBe(true);
+      expect((leaf.anyOf as { type?: string }[]).some((arm) => arm.type === 'null')).toBe(true);
+    }
+  });
+
+  it('maps attribute data types onto value types', () => {
+    const armTypes = (name: string) =>
+      (customAttributes.properties[name].anyOf as { type?: string }[]).map((arm) => arm.type);
+    expect(armTypes('plan_tier')).toEqual(['string', 'null']);
+    expect(armTypes('Seats Purchased')).toEqual(['number', 'null']);
+    expect(armTypes('mrr')).toEqual(['number', 'null']);
+    expect(armTypes('is_paying')).toEqual(['boolean', 'null']);
+  });
+
+  it('annotates a date attribute as a Unix-seconds timestamp (verified live)', () => {
+    expect(customAttributes.properties['Trial Ends At'][X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(
+      INTERCOM_UNIX_TIMESTAMP_DATA_TYPE,
+    );
+  });
+
+  it('declares a string attribute with options as a closed set of literals', () => {
+    const optionValues = (customAttributes.properties.priority.anyOf as { const?: string }[])
+      .map((arm) => arm.const)
+      .filter((value) => value !== undefined);
+    expect(optionValues).toEqual(['high', 'low']);
+  });
+
+  it('skips relationship, unknown-type, standard, archived and dotted-name attributes', () => {
+    for (const skipped of ['Workspace Owner', 'mystery', 'email', 'old_attr', 'dotted.name']) {
+      expect(customAttributes.properties).not.toHaveProperty([skipped]);
+    }
+  });
+
+  it('builds an empty-but-open custom_attributes object when the workspace has no custom attributes', () => {
+    const emptySpec = buildIntercomContactsJsonTableSpec(entityId, []);
+    expect(emptySpec.schema.properties.custom_attributes.properties).toEqual({});
+    expect(emptySpec.schema.properties.custom_attributes.additionalProperties).toBe(true);
+  });
+
+  it.each([
+    'created_at',
+    'updated_at',
+    'signed_up_at',
+    'last_seen_at',
+    'last_replied_at',
+    'last_contacted_at',
+    'last_email_opened_at',
+    'last_email_clicked_at',
+    'android_last_seen_at',
+    'ios_last_seen_at',
+  ])('annotates %s as a Unix-seconds timestamp', (field) => {
+    expect(props[field][X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(INTERCOM_UNIX_TIMESTAMP_DATA_TYPE);
+  });
+
+  it('does not annotate a last-modified field (contacts have no incremental pull)', () => {
+    for (const key of Object.keys(props)) {
+      expect([key, props[key][X_SCRATCH_LAST_MODIFIED_FIELD]]).toEqual([key, undefined]);
+    }
+  });
+
+  it('declares role as the closed user | lead set', () => {
+    expect((props.role.anyOf as { const: string }[]).map((arm) => arm.const)).toEqual(['user', 'lead']);
+  });
+
+  it('requires the core fields and leaves the device/marketing long tail optional', () => {
+    const required = spec.schema.required as string[];
+    for (const field of ['id', 'role', 'email', 'name', 'created_at', 'updated_at', 'custom_attributes', 'tags']) {
+      expect(required).toContain(field);
+    }
+    for (const field of ['android_app_name', 'ios_device', 'utm_source', 'browser', 'sms_consent', 'avatar']) {
+      expect(required).not.toContain(field);
+    }
+  });
+
+  it('annotates a contact’s companies.data[].id as a multi-valued foreign key into Companies', () => {
+    expect(props.companies.properties.data.items.properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'companies',
+      linkedTableRemoteId: ['companies'],
+    });
+    expect(props.tags.properties.data.items.properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
+  });
+
+  it('describes the nested lists as stub references with Intercom’s truncation markers', () => {
+    expect(Object.keys(props.tags.properties)).toEqual(['type', 'data', 'url', 'total_count', 'has_more']);
+    expect(Object.keys(props.tags.properties.data.items.properties)).toEqual(['type', 'id', 'url']);
+  });
+});
+
+describe('buildIntercomCompaniesJsonTableSpec', () => {
+  const entityId = { wsId: 'companies', remoteId: ['companies'] };
+
+  function companyAttribute(overrides: Partial<IntercomDataAttribute>): IntercomDataAttribute {
+    return {
+      type: 'data_attribute',
+      model: 'company',
+      name: 'attr',
+      full_name: 'custom_attributes.attr',
+      label: 'attr',
+      data_type: 'string',
+      custom: true,
+      archived: false,
+      ...overrides,
+    };
+  }
+
+  // Mirrors the seeded test workspace (DEV-12350 §3.2), including Intercom's own `creation_source`.
+  const spec = buildIntercomCompaniesJsonTableSpec(entityId, [
+    companyAttribute({ name: 'creation_source', data_type: 'string' }),
+    companyAttribute({ name: 'fable_qa_seats', data_type: 'integer' }),
+    companyAttribute({ name: 'fable_qa_renewal_date', data_type: 'date' }),
+    companyAttribute({ name: 'Fable QA Account Notes', data_type: 'string' }),
+    companyAttribute({ name: 'monthly_spend', custom: false, data_type: 'float' }),
+  ]);
+  const props = spec.schema.properties;
+  const required = spec.schema.required as string[];
+
+  it('builds spec with correct metadata', () => {
+    expect(spec.name).toBe('Companies');
+    expect(spec.slug).toBe('companies');
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toBe('name');
+    expect(spec.slugPath).toBe('name');
+    expect(spec.basePath).toEqual([]);
+  });
+
+  it('marks every top-level field read-only except the custom_attributes container', () => {
+    for (const key of Object.keys(props)) {
+      if (key === 'custom_attributes') continue;
+      expect([key, props[key][X_SCRATCH_READONLY]]).toEqual([key, true]);
+    }
+    expect(Object.keys(props.custom_attributes).filter((key) => key.startsWith('x-scratch'))).toEqual([]);
+  });
+
+  it('declares the discovered custom attributes (standard ones excluded)', () => {
+    expect(Object.keys(props.custom_attributes.properties)).toEqual([
+      'creation_source',
+      'fable_qa_seats',
+      'fable_qa_renewal_date',
+      'Fable QA Account Notes',
+    ]);
+    expect(props.custom_attributes.properties.fable_qa_renewal_date[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(
+      INTERCOM_UNIX_TIMESTAMP_DATA_TYPE,
+    );
+  });
+
+  it('requires the keys every listed company carries and leaves set-only keys optional', () => {
+    for (const field of ['id', 'company_id', 'app_id', 'name', 'plan', 'tags', 'segments', 'custom_attributes']) {
+      expect(required).toContain(field);
+    }
+    for (const field of ['remote_created_at', 'size', 'website', 'industry', 'last_request_at']) {
+      expect(required).not.toContain(field);
+    }
+  });
+
+  it('accepts an empty plan object (Intercom sends {} when a company has no plan)', () => {
+    expect(props.plan.required ?? []).toEqual([]);
+    expect(Object.keys(props.plan.properties)).toEqual(['type', 'id', 'name']);
+  });
+
+  it.each(['created_at', 'updated_at', 'remote_created_at', 'last_request_at'])(
+    'annotates %s as a Unix-seconds timestamp',
+    (field) => {
+      expect(props[field][X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(INTERCOM_UNIX_TIMESTAMP_DATA_TYPE);
+    },
+  );
+
+  it('describes tags with names (unlike a contact’s tag stubs)', () => {
+    expect(Object.keys(props.tags.properties.tags.items.properties)).toEqual(['type', 'id', 'name']);
+  });
+
+  it('does not annotate a last-modified field (companies have no incremental pull)', () => {
+    for (const key of Object.keys(props)) {
+      expect([key, props[key][X_SCRATCH_LAST_MODIFIED_FIELD]]).toEqual([key, undefined]);
+    }
   });
 });

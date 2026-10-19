@@ -5,7 +5,13 @@ import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import type { IntercomConversationFullFetchFailure } from '../intercom-api-client';
 import { buildPullWarningForConversationIntercomCouldNotReturnInFull, IntercomConnector } from '../intercom-connector';
 import { buildIntercomUpdatedSinceQuery } from '../intercom-incremental';
-import { IntercomArticle, IntercomCollection, IntercomConversation } from '../intercom-types';
+import {
+  IntercomArticle,
+  IntercomCollection,
+  IntercomContact,
+  IntercomConversation,
+  IntercomDataAttribute,
+} from '../intercom-types';
 
 // Mock display-names to break circular import chain
 jest.mock('../../../display-names', () => ({
@@ -27,12 +33,18 @@ const mockDeleteCollection = jest.fn();
 const mockListConversations = jest.fn();
 const mockSearchConversationsUpdatedSince = jest.fn();
 const mockGetConversation = jest.fn();
+const mockListAllContactsInCreationOrder = jest.fn();
+const mockGetContact = jest.fn();
+const mockListDataAttributes = jest.fn();
+const mockListAllCompaniesViaScroll = jest.fn();
+const mockGetCompany = jest.fn();
 
 jest.mock('../intercom-api-client', () => {
   return {
     INTERCOM_MAX_PAGE_SIZE: 250,
     INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE: 150,
     INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION: 20,
+    INTERCOM_MAX_CONTACTS_PAGE_SIZE: 150,
     IntercomApiClient: jest.fn().mockImplementation(() => ({
       validateCredentials: mockValidateCredentials,
       listArticles: mockListArticles,
@@ -48,6 +60,11 @@ jest.mock('../intercom-api-client', () => {
       listConversations: mockListConversations,
       searchConversationsUpdatedSince: mockSearchConversationsUpdatedSince,
       getConversation: mockGetConversation,
+      listAllContactsInCreationOrder: mockListAllContactsInCreationOrder,
+      getContact: mockGetContact,
+      listDataAttributes: mockListDataAttributes,
+      listAllCompaniesViaScroll: mockListAllCompaniesViaScroll,
+      getCompany: mockGetCompany,
     })),
     IntercomError: class IntercomError extends Error {
       statusCode?: number;
@@ -156,6 +173,40 @@ function makeConversation(overrides: Partial<IntercomConversation> = {}): Interc
   };
 }
 
+function makeContact(overrides: Partial<IntercomContact> = {}): IntercomContact {
+  const emptyList = { type: 'list' as const, data: [], url: '/contacts/c1/x', total_count: 0, has_more: false };
+  return {
+    type: 'contact',
+    id: 'c1',
+    workspace_id: 'ws_123',
+    external_id: null,
+    role: 'user',
+    email: 'ada@example.com',
+    name: 'Ada',
+    created_at: 1700000000,
+    updated_at: 1700000100,
+    custom_attributes: {},
+    tags: emptyList,
+    notes: emptyList,
+    companies: emptyList,
+    ...overrides,
+  };
+}
+
+function makeDataAttribute(overrides: Partial<IntercomDataAttribute> = {}): IntercomDataAttribute {
+  return {
+    type: 'data_attribute',
+    model: 'contact',
+    name: 'plan_tier',
+    full_name: 'custom_attributes.plan_tier',
+    label: 'plan_tier',
+    data_type: 'string',
+    custom: true,
+    archived: false,
+    ...overrides,
+  };
+}
+
 /**
  * Helper to create an async generator of `IntercomPageBatch`es (the faithful
  * page-walk shape yielded by `listArticles`/`listCollections`): `pages[i]` is
@@ -246,14 +297,46 @@ describe('IntercomConnector', () => {
   // ---------------------------------------------------------------------------
 
   describe('listTables', () => {
-    it('returns articles, collections, and conversations tables', async () => {
+    it('returns articles, collections, conversations, contacts, and companies tables', async () => {
       const tables = await connector.listTables();
-      expect(tables).toHaveLength(3);
+      expect(tables).toHaveLength(5);
 
       const ids = tables.map((t) => t.id.wsId);
       expect(ids).toContain('articles');
       expect(ids).toContain('collections');
       expect(ids).toContain('conversations');
+      expect(ids).toContain('contacts');
+      expect(ids).toContain('companies');
+    });
+
+    it('lists companies as a fully read-only table that explains which companies it holds', async () => {
+      const tables = await connector.listTables();
+      const companies = tables.find((t) => t.id.wsId === 'companies');
+
+      expect(companies).toMatchObject({
+        id: { wsId: 'companies', remoteId: ['companies'] },
+        displayName: 'Companies',
+        disabledCreates: true,
+        disabledUpdates: true,
+        disabledDeletes: true,
+      });
+      expect(companies?.disabledReason).toMatch(/read-only/);
+      expect(companies?.infoNote).toMatch(/at least one user or lead/);
+    });
+
+    it('lists contacts as a fully read-only table with a reason and a size note', async () => {
+      const tables = await connector.listTables();
+      const contacts = tables.find((t) => t.id.wsId === 'contacts');
+
+      expect(contacts).toMatchObject({
+        id: { wsId: 'contacts', remoteId: ['contacts'] },
+        displayName: 'Contacts',
+        disabledCreates: true,
+        disabledUpdates: true,
+        disabledDeletes: true,
+      });
+      expect(contacts?.disabledReason).toMatch(/read-only/);
+      expect(contacts?.infoNote).toMatch(/every user and lead/);
     });
 
     it('includes display names', async () => {
@@ -300,6 +383,43 @@ describe('IntercomConnector', () => {
       expect(spec.name).toBe('Conversations');
       expect(spec.idPath).toBe('id');
       expect(spec.titlePath).toEqual('title');
+    });
+
+    it('builds the contacts schema from the workspace’s own contact attribute definitions', async () => {
+      mockListDataAttributes.mockResolvedValue([
+        makeDataAttribute({ name: 'plan_tier', data_type: 'string' }),
+        makeDataAttribute({ name: 'Trial Ends', data_type: 'date' }),
+        makeDataAttribute({ name: 'email', custom: false }),
+      ]);
+
+      const spec = await connector.fetchJsonTableSpec({ wsId: 'contacts', remoteId: ['contacts'] });
+
+      expect(mockListDataAttributes).toHaveBeenCalledWith('contact');
+      expect(spec.name).toBe('Contacts');
+      expect(spec.idPath).toBe('id');
+      expect(spec.titlePath).toBe('email');
+      const customAttributeProperties = (
+        spec.schema as TSchema & { properties: { custom_attributes: { properties: Record<string, unknown> } } }
+      ).properties.custom_attributes.properties;
+      expect(Object.keys(customAttributeProperties)).toEqual(['plan_tier', 'Trial Ends']);
+    });
+
+    it('builds the companies schema from the workspace’s own company attribute definitions', async () => {
+      mockListDataAttributes.mockResolvedValue([
+        makeDataAttribute({ model: 'company', name: 'creation_source', data_type: 'string' }),
+        makeDataAttribute({ model: 'company', name: 'renewal_date', data_type: 'date' }),
+      ]);
+
+      const spec = await connector.fetchJsonTableSpec({ wsId: 'companies', remoteId: ['companies'] });
+
+      expect(mockListDataAttributes).toHaveBeenCalledWith('company');
+      expect(spec.name).toBe('Companies');
+      expect(spec.idPath).toBe('id');
+      expect(spec.titlePath).toBe('name');
+      const customAttributeProperties = (
+        spec.schema as TSchema & { properties: { custom_attributes: { properties: Record<string, unknown> } } }
+      ).properties.custom_attributes.properties;
+      expect(Object.keys(customAttributeProperties)).toEqual(['creation_source', 'renewal_date']);
     });
 
     it('throws for unknown table', async () => {
@@ -454,6 +574,113 @@ describe('IntercomConnector', () => {
       expect(mockListConversations).toHaveBeenCalledWith(150, false, 'cur_7');
     });
 
+    it('pulls contacts at the 150 max, checkpointing Intercom’s cursor and clearing it on the last page', async () => {
+      mockListAllContactsInCreationOrder.mockReturnValue(
+        convoPagesGen(
+          [[makeContact({ id: 'c1' }), makeContact({ id: 'c2' })], [makeContact({ id: 'c3' })]],
+          ['cur_a', undefined],
+        ),
+      );
+      const callback = jest.fn(() => Promise.resolve());
+
+      const result = await connector.pullRecordFiles(buildTableSpec('contacts'), callback, {}, { forceFull: false });
+
+      expect(mockListAllContactsInCreationOrder).toHaveBeenCalledWith(150, undefined);
+      expect(callback).toHaveBeenNthCalledWith(1, {
+        files: [expect.objectContaining({ id: 'c1' }), expect.objectContaining({ id: 'c2' })],
+        connectorProgress: { startingAfter: 'cur_a' },
+      });
+      expect(callback).toHaveBeenNthCalledWith(2, {
+        files: [expect.objectContaining({ id: 'c3' })],
+        connectorProgress: {},
+      });
+      expect(result).toEqual({});
+    });
+
+    it('resumes a contacts pull from the persisted cursor', async () => {
+      mockListAllContactsInCreationOrder.mockReturnValue(convoPagesGen([[makeContact()]]));
+
+      await connector.pullRecordFiles(
+        buildTableSpec('contacts'),
+        jest.fn(() => Promise.resolve()),
+        { startingAfter: 'cur_9' },
+        { forceFull: false },
+      );
+
+      expect(mockListAllContactsInCreationOrder).toHaveBeenCalledWith(150, 'cur_9');
+    });
+
+    it('serves a stray incremental contacts request with the full walk and no watermark', async () => {
+      mockListAllContactsInCreationOrder.mockReturnValue(convoPagesGen([[makeContact()]]));
+
+      const result = await connector.pullRecordFiles(
+        buildTableSpec('contacts'),
+        jest.fn(() => Promise.resolve()),
+        {},
+        { forceFull: false, pullMode: 'incremental', since: new Date('2026-01-01T00:00:00Z') },
+      );
+
+      expect(mockListAllContactsInCreationOrder).toHaveBeenCalledWith(150, undefined);
+      expect(mockSearchConversationsUpdatedSince).not.toHaveBeenCalled();
+      expect(result).toEqual({});
+    });
+
+    it('propagates a contacts walk failure so the job never runs delete-detection', async () => {
+      // eslint-disable-next-line require-yield
+      mockListAllContactsInCreationOrder.mockImplementation(async function* () {
+        await Promise.resolve();
+        throw new Error('Intercom returned 9 of the 10 contacts it reports.');
+      });
+
+      await expect(
+        connector.pullRecordFiles(buildTableSpec('contacts'), jest.fn(), {}, { forceFull: false }),
+      ).rejects.toThrow('Intercom returned 9 of the 10 contacts it reports.');
+    });
+
+    it('pulls companies from the scroll walk, never checkpointing a cursor (a scroll cannot resume)', async () => {
+      // eslint-disable-next-line @typescript-eslint/require-await
+      mockListAllCompaniesViaScroll.mockImplementation(async function* () {
+        yield {
+          items: [
+            { type: 'company', id: 'co1' },
+            { type: 'company', id: 'co2' },
+          ],
+        };
+        yield { items: [{ type: 'company', id: 'co3' }] };
+      });
+      const callback = jest.fn(() => Promise.resolve());
+
+      const result = await connector.pullRecordFiles(
+        buildTableSpec('companies'),
+        callback,
+        { startingAfter: 'ignored' },
+        { forceFull: false, pullMode: 'incremental', since: new Date('2026-01-01T00:00:00Z') },
+      );
+
+      expect(mockListAllCompaniesViaScroll).toHaveBeenCalledWith();
+      expect(callback).toHaveBeenNthCalledWith(1, {
+        files: [expect.objectContaining({ id: 'co1' }), expect.objectContaining({ id: 'co2' })],
+        connectorProgress: {},
+      });
+      expect(callback).toHaveBeenNthCalledWith(2, {
+        files: [expect.objectContaining({ id: 'co3' })],
+        connectorProgress: {},
+      });
+      expect(result).toEqual({});
+    });
+
+    it('propagates a companies walk failure so the job never runs delete-detection', async () => {
+      // eslint-disable-next-line require-yield
+      mockListAllCompaniesViaScroll.mockImplementation(async function* () {
+        await Promise.resolve();
+        throw new Error('Another integration is reading companies from this Intercom workspace');
+      });
+
+      await expect(
+        connector.pullRecordFiles(buildTableSpec('companies'), jest.fn(), {}, { forceFull: false }),
+      ).rejects.toThrow('Another integration is reading companies');
+    });
+
     it('throws for unknown table type', async () => {
       const callback = jest.fn();
       await expect(
@@ -474,6 +701,11 @@ describe('IntercomConnector', () => {
     it('is false for articles and collections (no server-side updated_at filter)', () => {
       expect(connector.supportsIncrementalPull({}, buildTableSpec('articles'))).toBe(false);
       expect(connector.supportsIncrementalPull({}, buildTableSpec('collections'))).toBe(false);
+    });
+
+    it('is false for contacts and companies (full pull only, by design — DEV-12350)', () => {
+      expect(connector.supportsIncrementalPull({}, buildTableSpec('contacts'))).toBe(false);
+      expect(connector.supportsIncrementalPull({}, buildTableSpec('companies'))).toBe(false);
     });
   });
 
@@ -645,6 +877,26 @@ describe('IntercomConnector', () => {
 
       expect(mockGetConversation).toHaveBeenCalledWith('10');
       expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    it('fetches contacts by ID', async () => {
+      mockGetContact.mockResolvedValue(makeContact({ id: 'c7' }));
+      const callback = jest.fn(() => Promise.resolve());
+
+      await connector.pullRecordFilesByIds(buildTableSpec('contacts'), ['c7'], callback);
+
+      expect(mockGetContact).toHaveBeenCalledWith('c7');
+      expect(callback).toHaveBeenCalledWith({ files: [expect.objectContaining({ id: 'c7' })] });
+    });
+
+    it('fetches companies by ID', async () => {
+      mockGetCompany.mockResolvedValue({ type: 'company', id: 'co9' });
+      const callback = jest.fn(() => Promise.resolve());
+
+      await connector.pullRecordFilesByIds(buildTableSpec('companies'), ['co9'], callback);
+
+      expect(mockGetCompany).toHaveBeenCalledWith('co9');
+      expect(callback).toHaveBeenCalledWith({ files: [expect.objectContaining({ id: 'co9' })] });
     });
 
     it('skips records that return null (404)', async () => {
@@ -953,7 +1205,55 @@ describe('IntercomConnector', () => {
   // getSuggestedRecordFileNames
   // ---------------------------------------------------------------------------
 
+  describe('contacts and companies writes', () => {
+    it.each(['contacts', 'companies'])(
+      'rejects %s creates, updates and deletes instead of skipping them',
+      async (table) => {
+        const tableSpec = buildTableSpec(table);
+        const file = { id: 'x1', name: 'Name' } as ConnectorFile;
+
+        await expect(connector.createRecords(tableSpec, [file])).rejects.toThrow(/read-only/);
+        await expect(connector.updateRecords(tableSpec, [file], [{ name: 'New' }])).rejects.toThrow(/read-only/);
+        await expect(connector.deleteRecords(tableSpec, [file])).rejects.toThrow(/read-only/);
+      },
+    );
+  });
+
+  describe('advancedSettings', () => {
+    it('scopes the conversation-replies setting to the conversations table', () => {
+      const excludeConversationParts = IntercomConnector.advancedSettings.find(
+        (setting) => setting.key === 'excludeConversationParts',
+      );
+      expect(excludeConversationParts?.forTableWsIds).toEqual(['conversations']);
+    });
+  });
+
   describe('getSuggestedRecordFileNames', () => {
+    it('uses name for companies, falling back to company_id', () => {
+      const records: ConnectorFile[] = [
+        { id: '1', name: 'Acme', company_id: 'acme-1' },
+        { id: '2', name: null, company_id: 'globex-2' },
+      ];
+      const tableSpec = buildTableSpec('companies');
+      tableSpec.slugPath = dotPath('name');
+
+      expect(connector.getSuggestedRecordFileNames(records, tableSpec)).toEqual(['Acme', 'globex-2']);
+    });
+
+    it('uses email for contacts, falling back to name', () => {
+      const records: ConnectorFile[] = [
+        { id: '1', email: 'ada@example.com', name: 'Ada' },
+        { id: '2', email: null, name: 'Grace' },
+        { id: '3', email: null, name: null },
+      ];
+      const tableSpec = buildTableSpec('contacts');
+      tableSpec.slugPath = dotPath('email');
+
+      const names = connector.getSuggestedRecordFileNames(records, tableSpec);
+
+      expect(names).toEqual(['ada@example.com', 'Grace', undefined]);
+    });
+
     it('uses title for articles', () => {
       const records: ConnectorFile[] = [
         { id: '1', title: 'Getting Started' },

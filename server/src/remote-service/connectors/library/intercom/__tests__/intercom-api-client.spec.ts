@@ -2,8 +2,11 @@ import axios from 'axios';
 import { WSLogger } from 'src/logger';
 import type { WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import {
+  buildAllContactsInCreationOrderSearchBody,
   buildStaggeredPageSizeLadder,
   IntercomApiClient,
+  IntercomCompanyPage,
+  IntercomContactPage,
   IntercomConversationPage,
   IntercomError,
   IntercomPageBatch,
@@ -950,6 +953,392 @@ describe('IntercomApiClient', () => {
         sort: { field: 'updated_at', order: 'ascending' },
         pagination: { per_page: 20, starting_after: 'resume_cursor' },
       });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Contacts (read-only)
+  // ---------------------------------------------------------------------------
+
+  describe('listAllContactsInCreationOrder', () => {
+    function contactsSearchPage(
+      contactIds: string[],
+      totalCount: number,
+      nextCursor?: string,
+    ): { data: Record<string, unknown> } {
+      return {
+        data: {
+          type: 'list',
+          data: contactIds.map((id) => ({ type: 'contact', id })),
+          total_count: totalCount,
+          pages: {
+            type: 'pages',
+            page: 1,
+            per_page: 150,
+            total_pages: 1,
+            ...(nextCursor ? { next: { page: 2, starting_after: nextCursor } } : {}),
+          },
+        },
+      };
+    }
+
+    async function collectContactPages(gen: AsyncGenerator<IntercomContactPage, void>) {
+      const pages: IntercomContactPage[] = [];
+      for await (const page of gen) {
+        pages.push(page);
+      }
+      return pages;
+    }
+
+    function idsOf(pages: IntercomContactPage[]): string[][] {
+      return pages.map((page) => page.items.map((contact) => contact.id));
+    }
+
+    it('lists every contact via search, sorted by the immutable created_at, never filtering by update time', () => {
+      expect(buildAllContactsInCreationOrderSearchBody(150, undefined)).toEqual({
+        query: { field: 'created_at', operator: '>', value: 0 },
+        sort: { field: 'created_at', order: 'ascending' },
+        pagination: { per_page: 150 },
+      });
+      expect(buildAllContactsInCreationOrderSearchBody(150, 'cur_1')).toEqual({
+        query: { field: 'created_at', operator: '>', value: 0 },
+        sort: { field: 'created_at', order: 'ascending' },
+        pagination: { per_page: 150, starting_after: 'cur_1' },
+      });
+    });
+
+    it('follows the cursor across pages, yielding each page with the cursor for the next', async () => {
+      mockPost
+        .mockResolvedValueOnce(contactsSearchPage(['c1', 'c2'], 3, 'cur_a'))
+        .mockResolvedValueOnce(contactsSearchPage(['c3'], 3));
+
+      const pages = await collectContactPages(client.listAllContactsInCreationOrder());
+
+      expect(idsOf(pages)).toEqual([['c1', 'c2'], ['c3']]);
+      expect(pages.map((page) => page.nextCursor)).toEqual(['cur_a', undefined]);
+      expect(mockPost).toHaveBeenNthCalledWith(
+        1,
+        '/contacts/search',
+        buildAllContactsInCreationOrderSearchBody(150, undefined),
+      );
+      expect(mockPost).toHaveBeenNthCalledWith(
+        2,
+        '/contacts/search',
+        buildAllContactsInCreationOrderSearchBody(150, 'cur_a'),
+      );
+    });
+
+    it('yields a contact Intercom repeats across pages only once', async () => {
+      mockPost
+        .mockResolvedValueOnce(contactsSearchPage(['c1', 'c2'], 3, 'cur_a'))
+        .mockResolvedValueOnce(contactsSearchPage(['c2', 'c3'], 3));
+
+      const pages = await collectContactPages(client.listAllContactsInCreationOrder());
+
+      expect(idsOf(pages)).toEqual([['c1', 'c2'], ['c3']]);
+    });
+
+    it('fails the walk when it saw fewer contacts than Intercom reports, after yielding what it saw', async () => {
+      mockPost
+        .mockResolvedValueOnce(contactsSearchPage(['c1', 'c2'], 4, 'cur_a'))
+        .mockResolvedValueOnce(contactsSearchPage(['c3'], 4));
+      const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+
+      const yieldedIds: string[] = [];
+      const walk = async () => {
+        for await (const page of client.listAllContactsInCreationOrder()) {
+          yieldedIds.push(...page.items.map((contact) => contact.id));
+        }
+      };
+
+      await expect(walk()).rejects.toThrow('Intercom returned 3 of the 4 contacts it reports');
+      expect(yieldedIds).toEqual(['c1', 'c2', 'c3']);
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('accepts a walk that matches the smaller total when contacts are deleted mid-walk', async () => {
+      // 3 reported at the start; one deleted before the walk reached it, so the last page reports 2.
+      mockPost
+        .mockResolvedValueOnce(contactsSearchPage(['c1'], 3, 'cur_a'))
+        .mockResolvedValueOnce(contactsSearchPage(['c3'], 2));
+
+      const pages = await collectContactPages(client.listAllContactsInCreationOrder());
+
+      expect(idsOf(pages)).toEqual([['c1'], ['c3']]);
+    });
+
+    it('accepts a walk that saw more contacts than the first page reported (created mid-walk)', async () => {
+      mockPost
+        .mockResolvedValueOnce(contactsSearchPage(['c1', 'c2'], 2, 'cur_a'))
+        .mockResolvedValueOnce(contactsSearchPage(['c3'], 3));
+
+      await expect(collectContactPages(client.listAllContactsInCreationOrder())).resolves.toHaveLength(2);
+    });
+
+    it('resumes from a persisted cursor and skips the completeness check (a resumed walk sees only the tail)', async () => {
+      mockPost.mockResolvedValueOnce(contactsSearchPage(['c9'], 500));
+
+      const pages = await collectContactPages(client.listAllContactsInCreationOrder(150, 'cur_resume'));
+
+      expect(idsOf(pages)).toEqual([['c9']]);
+      expect(mockPost).toHaveBeenCalledWith(
+        '/contacts/search',
+        buildAllContactsInCreationOrderSearchBody(150, 'cur_resume'),
+      );
+    });
+
+    it('completes cleanly for a workspace with no contacts', async () => {
+      mockPost.mockResolvedValueOnce(contactsSearchPage([], 0));
+
+      await expect(collectContactPages(client.listAllContactsInCreationOrder())).resolves.toEqual([]);
+    });
+
+    it('names the missing Intercom permission when the token may not list contacts', async () => {
+      mockPost.mockRejectedValueOnce(
+        new axios.AxiosError('Forbidden', '403', undefined, undefined, {
+          status: 403,
+          data: { type: 'error.list', errors: [{ code: 'forbidden', message: 'Insufficient scopes' }] },
+          statusText: 'Forbidden',
+          headers: {},
+          config: {} as never,
+        }),
+      );
+
+      const walk = collectContactPages(client.listAllContactsInCreationOrder());
+
+      await expect(walk).rejects.toThrow(IntercomError);
+      await expect(walk).rejects.toThrow(/Insufficient scopes.*"Read and list users and companies"/);
+    });
+  });
+
+  describe('getContact', () => {
+    it('fetches a contact by id', async () => {
+      mockGet.mockResolvedValueOnce({ data: { type: 'contact', id: 'c1' } });
+
+      await expect(client.getContact('c1')).resolves.toEqual({ type: 'contact', id: 'c1' });
+      expect(mockGet).toHaveBeenCalledWith('/contacts/c1');
+    });
+
+    it('returns null for a contact that no longer exists', async () => {
+      mockGet.mockRejectedValueOnce(
+        new axios.AxiosError('Not Found', '404', undefined, undefined, {
+          status: 404,
+          data: {},
+          statusText: 'Not Found',
+          headers: {},
+          config: {} as never,
+        }),
+      );
+
+      await expect(client.getContact('gone')).resolves.toBeNull();
+    });
+  });
+
+  describe('listDataAttributes', () => {
+    it('lists the attribute definitions for a model', async () => {
+      const definitions = [{ type: 'data_attribute', name: 'plan_tier', custom: true }];
+      mockGet.mockResolvedValueOnce({ data: { type: 'list', data: definitions } });
+
+      await expect(client.listDataAttributes('contact')).resolves.toEqual(definitions);
+      expect(mockGet).toHaveBeenCalledWith('/data_attributes', { params: { model: 'contact' } });
+    });
+
+    it('names the missing Intercom permission on a 401', async () => {
+      mockGet.mockRejectedValueOnce(
+        new axios.AxiosError('Unauthorized', '401', undefined, undefined, {
+          status: 401,
+          data: { type: 'error.list', errors: [{ code: 'unauthorized' }] },
+          statusText: 'Unauthorized',
+          headers: {},
+          config: {} as never,
+        }),
+      );
+
+      await expect(client.listDataAttributes('contact')).rejects.toThrow(
+        /Intercom refused to list contact attributes\. .*"Read and list users and companies"/,
+      );
+    });
+
+    it('rethrows other errors untouched', async () => {
+      const serverError = new Error('socket hang up');
+      mockGet.mockRejectedValueOnce(serverError);
+
+      await expect(client.listDataAttributes('contact')).rejects.toBe(serverError);
+    });
+  });
+
+  describe('listAllCompaniesViaScroll', () => {
+    const NO_WAITING = { waitBetweenScrollStartAttemptsMs: 0 };
+
+    /** `scrollParam: null` builds a page that carries no `scroll_param` at all. */
+    function scrollPage(companyIds: string[], scrollParam: string | null = 'sp'): { data: Record<string, unknown> } {
+      return {
+        data: {
+          type: 'list',
+          data: companyIds.map((id) => ({ type: 'company', id })),
+          pages: null,
+          total_count: null,
+          ...(scrollParam ? { scroll_param: scrollParam } : {}),
+        },
+      };
+    }
+
+    function intercomHttpError(status: number, code: string, message = code) {
+      return new axios.AxiosError(message, String(status), undefined, undefined, {
+        status,
+        data: { type: 'error.list', errors: [{ code, message }] },
+        statusText: message,
+        headers: {},
+        config: {} as never,
+      });
+    }
+
+    function companiesListTotal(totalCount: number) {
+      return { data: { type: 'list', data: [], total_count: totalCount, pages: { type: 'pages' } } };
+    }
+
+    async function collectCompanyIds(gen: AsyncGenerator<IntercomCompanyPage, void>): Promise<string[][]> {
+      const pages: string[][] = [];
+      for await (const page of gen) {
+        pages.push(page.items.map((company) => company.id));
+      }
+      return pages;
+    }
+
+    it('walks pages until the first empty page, never following that page’s scroll_param', async () => {
+      mockGet
+        .mockResolvedValueOnce(scrollPage(['co1', 'co2'], 'sp1'))
+        .mockResolvedValueOnce(scrollPage(['co3'], 'sp2'))
+        .mockResolvedValueOnce(scrollPage([], 'sp3'));
+      mockPost.mockResolvedValueOnce(companiesListTotal(3));
+
+      await expect(collectCompanyIds(client.listAllCompaniesViaScroll(NO_WAITING))).resolves.toEqual([
+        ['co1', 'co2'],
+        ['co3'],
+      ]);
+      expect(mockGet.mock.calls).toEqual([
+        ['/companies/scroll'],
+        ['/companies/scroll', { params: { scroll_param: 'sp1' } }],
+        ['/companies/scroll', { params: { scroll_param: 'sp2' } }],
+      ]);
+      expect(mockPost).toHaveBeenCalledWith('/companies/list', { per_page: 1 });
+    });
+
+    it('waits out a scroll another integration holds (400 scroll_exists), then walks', async () => {
+      mockGet
+        .mockRejectedValueOnce(intercomHttpError(400, 'scroll_exists'))
+        .mockRejectedValueOnce(intercomHttpError(400, 'scroll_exists'))
+        .mockResolvedValueOnce(scrollPage(['co1'], 'sp1'))
+        .mockResolvedValueOnce(scrollPage([], 'sp2'));
+      mockPost.mockResolvedValueOnce(companiesListTotal(1));
+
+      await expect(collectCompanyIds(client.listAllCompaniesViaScroll(NO_WAITING))).resolves.toEqual([['co1']]);
+      expect(mockGet).toHaveBeenCalledTimes(4);
+    });
+
+    it('gives up with an explanation once the slot stays taken for every start attempt', async () => {
+      mockGet.mockRejectedValue(intercomHttpError(400, 'scroll_exists'));
+
+      await expect(
+        collectCompanyIds(client.listAllCompaniesViaScroll({ ...NO_WAITING, maxScrollStartAttempts: 3 })),
+      ).rejects.toThrow(/Another integration is reading companies from this Intercom workspace/);
+      expect(mockGet).toHaveBeenCalledTimes(3);
+    });
+
+    it.each([404, 500])(
+      'starts over when the scroll is lost mid-walk (%i), re-yielding only companies not already yielded',
+      async (status) => {
+        mockGet
+          .mockResolvedValueOnce(scrollPage(['co1', 'co2'], 'sp1'))
+          .mockRejectedValueOnce(intercomHttpError(status, 'not_found', 'scroll parameter not found'))
+          .mockResolvedValueOnce(scrollPage(['co1', 'co2'], 'sp2'))
+          .mockResolvedValueOnce(scrollPage(['co3'], 'sp3'))
+          .mockResolvedValueOnce(scrollPage([], 'sp4'));
+        mockPost.mockResolvedValueOnce(companiesListTotal(3));
+        const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+
+        await expect(collectCompanyIds(client.listAllCompaniesViaScroll(NO_WAITING))).resolves.toEqual([
+          ['co1', 'co2'],
+          ['co3'],
+        ]);
+        expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({ walkRestartsUsed: 1, status }));
+        warnSpy.mockRestore();
+      },
+    );
+
+    it('throws rather than return part of a walk once its restarts are spent', async () => {
+      mockGet
+        .mockResolvedValueOnce(scrollPage(['co1'], 'sp1'))
+        .mockRejectedValueOnce(intercomHttpError(404, 'not_found'))
+        .mockResolvedValueOnce(scrollPage(['co1'], 'sp2'))
+        .mockRejectedValueOnce(intercomHttpError(404, 'not_found'));
+      const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+
+      await expect(
+        collectCompanyIds(client.listAllCompaniesViaScroll({ ...NO_WAITING, maxWalkRestarts: 1 })),
+      ).rejects.toThrow(/company scroll expired or failed 2 times/);
+      expect(mockPost).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('throws when a non-empty page carries no scroll_param to continue from', async () => {
+      mockGet.mockResolvedValueOnce(scrollPage(['co1'], null));
+
+      await expect(collectCompanyIds(client.listAllCompaniesViaScroll(NO_WAITING))).rejects.toThrow(
+        /without a scroll_param/,
+      );
+    });
+
+    it('names the missing Intercom permission when the token may not list companies', async () => {
+      mockGet.mockRejectedValueOnce(intercomHttpError(403, 'forbidden', 'Insufficient scopes'));
+
+      await expect(collectCompanyIds(client.listAllCompaniesViaScroll(NO_WAITING))).rejects.toThrow(
+        /Intercom refused to list companies \(Insufficient scopes\)/,
+      );
+    });
+
+    it('warns — never fails — when the companies list reports more companies than the scroll returned', async () => {
+      mockGet.mockResolvedValueOnce(scrollPage(['co1'], 'sp1')).mockResolvedValueOnce(scrollPage([], 'sp2'));
+      mockPost.mockResolvedValueOnce(companiesListTotal(2));
+      const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+
+      await expect(collectCompanyIds(client.listAllCompaniesViaScroll(NO_WAITING))).resolves.toEqual([['co1']]);
+      expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({ uniqueCompaniesSeen: 1, companiesListTotal: 2 }));
+      warnSpy.mockRestore();
+    });
+
+    it('still completes when the companies list total cannot be read', async () => {
+      mockGet.mockResolvedValueOnce(scrollPage(['co1'], 'sp1')).mockResolvedValueOnce(scrollPage([], 'sp2'));
+      mockPost.mockRejectedValueOnce(intercomHttpError(400, 'parameter_invalid'));
+      const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+
+      await expect(collectCompanyIds(client.listAllCompaniesViaScroll(NO_WAITING))).resolves.toEqual([['co1']]);
+      expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({ status: 400 }));
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('getCompany', () => {
+    it('fetches a company by Intercom id', async () => {
+      mockGet.mockResolvedValueOnce({ data: { type: 'company', id: 'co1' } });
+
+      await expect(client.getCompany('co1')).resolves.toEqual({ type: 'company', id: 'co1' });
+      expect(mockGet).toHaveBeenCalledWith('/companies/co1');
+    });
+
+    it('returns null for a company that no longer exists', async () => {
+      mockGet.mockRejectedValueOnce(
+        new axios.AxiosError('Not Found', '404', undefined, undefined, {
+          status: 404,
+          data: {},
+          statusText: 'Not Found',
+          headers: {},
+          config: {} as never,
+        }),
+      );
+
+      await expect(client.getCompany('gone')).resolves.toBeNull();
     });
   });
 });

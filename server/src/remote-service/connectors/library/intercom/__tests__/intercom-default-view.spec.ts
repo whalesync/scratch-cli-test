@@ -1,11 +1,14 @@
 import { Type } from '@sinclair/typebox';
-import { TableViewCol, TransformerTypes, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { TableViewBannerGroup, TableViewCol, TransformerTypes, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { buildIntercomDefaultView } from '../intercom-default-view';
 import {
   buildIntercomArticlesJsonTableSpec,
   buildIntercomCollectionsJsonTableSpec,
+  buildIntercomCompaniesJsonTableSpec,
+  buildIntercomContactsJsonTableSpec,
   buildIntercomConversationsJsonTableSpec,
 } from '../intercom-json-schema';
+import { IntercomDataAttribute } from '../intercom-types';
 
 // The view is built from the connector's REAL schemas rather than hand-written fixtures: every
 // behaviour it encodes (epoch timestamps, foreign keys, the closed `state` option set, the
@@ -24,6 +27,40 @@ const conversationsSchema = buildIntercomConversationsJsonTableSpec({
 const articlesView = buildIntercomDefaultView(articlesSchema, 'articles');
 const collectionsView = buildIntercomDefaultView(collectionsSchema, 'collections');
 const conversationsView = buildIntercomDefaultView(conversationsSchema, 'conversations');
+
+function contactAttribute(overrides: Partial<IntercomDataAttribute>): IntercomDataAttribute {
+  return {
+    type: 'data_attribute',
+    model: 'contact',
+    name: 'attr',
+    full_name: 'custom_attributes.attr',
+    label: 'attr',
+    data_type: 'string',
+    custom: true,
+    archived: false,
+    ...overrides,
+  };
+}
+const contactsSchema = buildIntercomContactsJsonTableSpec({ wsId: 'contacts', remoteId: ['contacts'] }, [
+  contactAttribute({ name: 'plan_tier', data_type: 'string' }),
+  contactAttribute({ name: 'Trial Ends At', data_type: 'date' }),
+  contactAttribute({ name: 'priority', data_type: 'string', options: ['high', 'low'] }),
+  // Collides with the standard `email` column once formatted, so it must be qualified.
+  contactAttribute({ name: 'Email', data_type: 'string' }),
+]).schema;
+const contactsView = buildIntercomDefaultView(contactsSchema, 'contacts');
+const companiesSchema = buildIntercomCompaniesJsonTableSpec({ wsId: 'companies', remoteId: ['companies'] }, [
+  contactAttribute({ model: 'company', name: 'creation_source', data_type: 'string' }),
+  contactAttribute({ model: 'company', name: 'fable_qa_renewal_date', data_type: 'date' }),
+]).schema;
+const companiesView = buildIntercomDefaultView(companiesSchema, 'companies');
+
+/** Every column in a view, with banner groups flattened in place. */
+function allColsOf(view: { cols: unknown[] }): TableViewCol[] {
+  return (view.cols as (TableViewCol | TableViewBannerGroup)[]).flatMap((entry) =>
+    entry.kind === 'banner-group' ? entry.cols : [entry],
+  );
+}
 
 function colAt(view: { cols: unknown[] }, path: string): TableViewCol {
   const cols = view.cols as TableViewCol[];
@@ -290,6 +327,181 @@ describe('buildIntercomDefaultView', () => {
     it('should handle multi-segment names', () => {
       expect(colAt(conversationsView, 'admin_assignee_id').name).toBe('Admin Assignee Id');
     });
+  });
+
+  describe('contacts', () => {
+    function contactCol(path: string): TableViewCol {
+      const found = allColsOf(contactsView).find((col) => col.path === path);
+      if (!found) throw new Error(`No contacts column at path "${path}"`);
+      return found;
+    }
+
+    it('places priority fields first in defined order', () => {
+      const expected = [
+        'email',
+        'name',
+        'role',
+        'id',
+        'external_id',
+        'phone',
+        'created_at',
+        'updated_at',
+        'last_seen_at',
+        'signed_up_at',
+      ];
+      expect(pathsOf(contactsView).slice(0, expected.length)).toEqual(expected);
+    });
+
+    it.each([
+      'type',
+      'workspace_id',
+      'avatar',
+      'social_profiles',
+      'notes',
+      'opted_in_subscription_types',
+      'opted_out_subscription_types',
+    ])('hides %s', (path) => {
+      expect(contactCol(path).hidden).toBe(true);
+    });
+
+    it('gathers the custom attributes under a "Custom Attributes" banner, one typed column each', () => {
+      const banner = contactsView.cols.find((entry): entry is TableViewBannerGroup => entry.kind === 'banner-group');
+      expect(banner?.name).toBe('Custom Attributes');
+      expect(banner?.cols.map((col) => col.path)).toEqual([
+        'custom_attributes.plan_tier',
+        'custom_attributes.Trial Ends At',
+        'custom_attributes.priority',
+        'custom_attributes.Email',
+      ]);
+      expect(banner?.cols.every((col) => col.readonly === true)).toBe(true);
+      expect(banner?.cols.some((col) => col.hidden)).toBe(false);
+    });
+
+    it('names custom attribute columns by the attribute, qualifying one that collides with a standard column', () => {
+      expect(contactCol('custom_attributes.plan_tier').name).toBe('Plan Tier');
+      expect(contactCol('custom_attributes.Trial Ends At').name).toBe('Trial Ends At');
+      expect(contactCol('custom_attributes.Email').name).toBe('Custom Attributes (Email)');
+      expect(contactCol('email').name).toBe('Email');
+    });
+
+    it('keeps the raw custom_attributes bag as a hidden column so later-added attributes stay reachable', () => {
+      expect(contactCol('custom_attributes')).toMatchObject({ type: 'object', hidden: true });
+    });
+
+    it('renders a date custom attribute as a datetime with the epoch-seconds codec', () => {
+      expect(contactCol('custom_attributes.Trial Ends At')).toMatchObject({
+        type: 'string',
+        logicalType: 'datetime',
+        codec: { toCore: { type: TransformerTypes.EpochToIso, options: { unit: 'seconds' } } },
+      });
+    });
+
+    it('renders a custom attribute with options as a select', () => {
+      expect(contactCol('custom_attributes.priority').logicalType).toBe('select');
+    });
+
+    it.each(['created_at', 'updated_at', 'last_seen_at', 'signed_up_at', 'last_email_opened_at'])(
+      'renders %s as a datetime',
+      (path) => {
+        expect(contactCol(path).logicalType).toBe('datetime');
+      },
+    );
+
+    it('expands location into one column per leaf', () => {
+      expect(contactCol('location.country').name).toBe('Location (Country)');
+      expect(contactCol('location.city').name).toBe('Location (City)');
+      expect(contactCol('location')).toMatchObject({ name: 'Location (raw)', hidden: true });
+    });
+
+    it('flattens tags to their ids — a contact’s tag stubs carry no names', () => {
+      expect(contactCol('tags').displayTransformer).toEqual({
+        type: TransformerTypes.JSONPath,
+        options: { expression: '$.data[*].id', arrayHandling: 'join_comma' },
+      });
+    });
+
+    it('links companies.data to the Companies table, flattening the ids', () => {
+      expect(contactCol('companies.data')).toEqual({
+        kind: 'col',
+        path: 'companies.data',
+        name: 'Companies',
+        type: 'string',
+        foreignKey: { linkedTableId: 'companies', linkedTableRemoteId: ['companies'] },
+        displayTransformer: {
+          type: TransformerTypes.JSONPath,
+          options: { expression: '$[*].id', arrayHandling: 'join_comma' },
+        },
+        codec: {
+          toCore: { type: TransformerTypes.JSONPath, options: { expression: '$[*].id', arrayHandling: 'array' } },
+        },
+        readonly: true,
+      });
+      expect(contactCol('companies')).toMatchObject({ name: 'Companies (raw)', hidden: true });
+    });
+
+    it('renders role as a select of user | lead', () => {
+      expect(contactCol('role').logicalType).toBe('select');
+    });
+
+    it('leaves the conversations tags rule untouched (names, not ids)', () => {
+      expect(colAt(conversationsView, 'tags').displayTransformer).toEqual({
+        type: TransformerTypes.JSONPath,
+        options: { expression: '$.tags[*].name', arrayHandling: 'join_comma' },
+      });
+    });
+  });
+
+  describe('companies', () => {
+    function companyCol(path: string): TableViewCol {
+      const found = allColsOf(companiesView).find((col) => col.path === path);
+      if (!found) throw new Error(`No companies column at path "${path}"`);
+      return found;
+    }
+
+    it('places priority fields first in defined order', () => {
+      expect(pathsOf(companiesView).slice(0, 6)).toEqual([
+        'name',
+        'company_id',
+        'id',
+        'website',
+        'industry',
+        'plan.name',
+      ]);
+    });
+
+    it.each(['type', 'app_id', 'segments'])('hides %s', (path) => {
+      expect(companyCol(path).hidden).toBe(true);
+    });
+
+    it('shows the plan as one "Plan" column of its name, keeping the raw object hidden', () => {
+      expect(companyCol('plan.name')).toMatchObject({ name: 'Plan', type: 'string', readonly: true });
+      expect(companyCol('plan')).toMatchObject({ name: 'Plan (raw)', hidden: true });
+      expect(allColsOf(companiesView).map((col) => col.path)).not.toContain('plan.id');
+    });
+
+    it('flattens tags to their names', () => {
+      expect(companyCol('tags').displayTransformer).toEqual({
+        type: TransformerTypes.JSONPath,
+        options: { expression: '$.tags[*].name', arrayHandling: 'join_comma' },
+      });
+    });
+
+    it('gathers the custom attributes under a "Custom Attributes" banner', () => {
+      const banner = companiesView.cols.find((entry): entry is TableViewBannerGroup => entry.kind === 'banner-group');
+      expect(banner?.name).toBe('Custom Attributes');
+      expect(banner?.cols.map((col) => col.path)).toEqual([
+        'custom_attributes.creation_source',
+        'custom_attributes.fable_qa_renewal_date',
+      ]);
+      expect(companyCol('custom_attributes.fable_qa_renewal_date').logicalType).toBe('datetime');
+    });
+
+    it.each(['created_at', 'updated_at', 'remote_created_at', 'last_request_at'])(
+      'renders %s as a datetime',
+      (path) => {
+        expect(companyCol(path).logicalType).toBe('datetime');
+      },
+    );
   });
 
   describe('empty schema', () => {

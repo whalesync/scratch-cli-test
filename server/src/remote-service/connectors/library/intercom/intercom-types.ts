@@ -1,5 +1,13 @@
+/** Every Intercom table type exposed by this connector — a table's wsId is one of these. */
+export const INTERCOM_TABLE_TYPES = ['articles', 'collections', 'conversations', 'contacts', 'companies'] as const;
+
 /** String union for the Intercom table types exposed by this connector. */
-export type IntercomTableType = 'articles' | 'collections' | 'conversations';
+export type IntercomTableType = (typeof INTERCOM_TABLE_TYPES)[number];
+
+/** Narrow a table wsId to an {@link IntercomTableType}. */
+export function isIntercomTableType(tableWsId: string): tableWsId is IntercomTableType {
+  return (INTERCOM_TABLE_TYPES as readonly string[]).includes(tableWsId);
+}
 
 /**
  * `x-scratch-connector-data-type` marking a field Intercom reports as a Unix-epoch timestamp in
@@ -204,6 +212,117 @@ export interface IntercomCursorPaginatedResponse<T> {
     total_pages: number;
     next?: { page: number; starting_after: string };
   };
+}
+
+// ---------------------------------------------------------------------------
+// Contacts (read-only)
+// ---------------------------------------------------------------------------
+
+/** A stub reference inside one of a contact's nested lists (`tags`, `notes`, `companies`, subscription types). */
+export interface IntercomContactNestedListItem {
+  type: string;
+  id: string;
+  url?: string | null;
+}
+
+/**
+ * One of a contact's nested lists. Intercom inlines at most 10 items and points at `url` for the
+ * rest (`has_more`/`total_count` say whether the inlined page is complete).
+ */
+export interface IntercomContactNestedList {
+  type: 'list';
+  data: IntercomContactNestedListItem[];
+  url: string;
+  total_count: number;
+  has_more: boolean;
+}
+
+/**
+ * A contact (a `user` or a `lead`) as returned by `POST /contacts/search` and `GET /contacts/{id}`
+ * — the two return the same keys (probed live). Only the fields the connector reads are typed
+ * here; the record is stored verbatim with everything else Intercom sends.
+ */
+export interface IntercomContact {
+  type: 'contact';
+  id: string;
+  workspace_id: string;
+  external_id: string | null;
+  role: 'user' | 'lead';
+  email: string | null;
+  name: string | null;
+  created_at: number;
+  updated_at: number;
+  custom_attributes: Record<string, unknown>;
+  tags: IntercomContactNestedList;
+  notes: IntercomContactNestedList;
+  companies: IntercomContactNestedList;
+}
+
+/** One attribute definition from `GET /data_attributes?model=contact|company`. */
+export interface IntercomDataAttribute {
+  type: 'data_attribute';
+  /** Present on custom attributes only. */
+  id?: number;
+  model: 'contact' | 'company';
+  /** The key the value is stored under in a record's `custom_attributes` (for a custom attribute). */
+  name: string;
+  /** Dotted path of the attribute on the record, e.g. `custom_attributes.plan_tier`. */
+  full_name: string;
+  label: string;
+  description?: string | null;
+  /**
+   * `string`/`integer`/`float`/`boolean`/`date` are documented for 2.11 (2.17 adds `datetime`).
+   * `relationship` is undocumented but returned live, and its values never appear in a contact's
+   * `custom_attributes`. Typed as an open string so an unknown type is skipped, not a crash.
+   */
+  data_type: string;
+  /** Fixed list of allowed values, when the attribute has one. */
+  options?: string[];
+  api_writable?: boolean;
+  /** True for a user-created (custom) attribute, false for Intercom's built-in ones. */
+  custom: boolean;
+  archived: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Companies (read-only)
+// ---------------------------------------------------------------------------
+
+/**
+ * A company as returned by `GET /companies/scroll` and `GET /companies/{id}` — the two return the
+ * same keys (probed live). Only companies with at least one contact are ever listed. Only the
+ * fields the connector reads are typed here; the record is stored verbatim.
+ */
+export interface IntercomCompany {
+  type: 'company';
+  id: string;
+  company_id: string | null;
+  name: string | null;
+  created_at: number;
+  updated_at: number;
+  user_count: number;
+  /** `{}` when the company has no plan — never null (probed live). */
+  plan: { type?: string; id?: string; name?: string };
+  tags: { type: 'tag.list'; tags: Array<{ type: string; id: string; name: string }> };
+  custom_attributes: Record<string, unknown>;
+}
+
+/**
+ * One page of `GET /companies/scroll`. There is no `total_count` and no `pages`; the walk ends on
+ * the first empty page, and `scroll_param` names the next page (probed live).
+ */
+export interface IntercomCompanyScrollPage {
+  type: 'list';
+  data: IntercomCompany[];
+  pages: null;
+  total_count: null;
+  scroll_param?: string;
+}
+
+/** Response of `GET /data_attributes` (not paginated). */
+export interface IntercomDataAttributeListResponse {
+  type: 'list';
+  data: IntercomDataAttribute[];
 }
 
 // ---------------------------------------------------------------------------

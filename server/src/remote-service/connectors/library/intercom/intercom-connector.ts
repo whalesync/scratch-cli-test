@@ -27,6 +27,7 @@ import {
 } from '../../types';
 import {
   INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION,
+  INTERCOM_MAX_CONTACTS_PAGE_SIZE,
   INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE,
   INTERCOM_MAX_PAGE_SIZE,
   IntercomApiClient,
@@ -38,6 +39,8 @@ import { buildIntercomUpdatedSinceQuery, IntercomUpdatedSinceQuery } from './int
 import {
   buildIntercomArticlesJsonTableSpec,
   buildIntercomCollectionsJsonTableSpec,
+  buildIntercomCompaniesJsonTableSpec,
+  buildIntercomContactsJsonTableSpec,
   buildIntercomConversationsJsonTableSpec,
 } from './intercom-json-schema';
 import {
@@ -75,24 +78,36 @@ export function buildPullWarningForConversationIntercomCouldNotReturnInFull(
 }
 
 /**
- * Connector for the Intercom customer messaging platform.
- *
- * Syncs Help Center articles and collections via the Intercom REST API.
- * Two tables: Articles (full CRUD) and Collections (full CRUD).
- *
- * API docs: https://developers.intercom.com/docs/references/rest-api/api.intercom.io/
- */
-/**
  * Three-state incremental-pull capability for Intercom, keyed on the table.
  * Only Conversations supports a server-side incremental pull
- * (`POST /conversations/search` filters on `updated_at`); Articles and
- * Collections have no modified-since filter, and there is no per-folder config
- * that would change that — so they are `NOT_SUPPORTED` (never
+ * (`POST /conversations/search` filters on `updated_at`). Articles and
+ * Collections have no modified-since filter; Contacts and Companies deliberately
+ * have no incremental pull (DEV-12350 — the contacts search walk lists every
+ * contact in creation order and never filters by update time, and the companies
+ * scroll has no filter at all). There is no per-folder config that
+ * would change any of that — so they are `NOT_SUPPORTED` (never
  * `NEEDS_CONFIGURATION`). `tableKey` is the table's wsId (equivalently
  * `DataFolder.tableId[0]`).
  */
 export function intercomIncrementalPullSupport(tableKey: string): IncrementalPullSupport {
   return tableKey === 'conversations' ? IncrementalPullSupport.SUPPORTED : IncrementalPullSupport.NOT_SUPPORTED;
+}
+
+/**
+ * Read-only tables whose write methods REJECT a write rather than skipping it. A skipped write
+ * looks like success to the caller, so a table added as read-only belongs here. (Conversations
+ * predates this and still skips; it is listed with `disabled*` flags so publish never sends it
+ * writes in the first place.)
+ */
+const INTERCOM_TABLES_THAT_REJECT_WRITES = new Set(['contacts', 'companies']);
+
+function assertIntercomTableAcceptsWrites(tableSpec: BaseJsonTableSpec): void {
+  if (INTERCOM_TABLES_THAT_REJECT_WRITES.has(tableSpec.id.wsId)) {
+    throw new IntercomError(
+      `Intercom ${tableSpec.name} are read-only in Scratch and cannot be created, updated or deleted.`,
+      400,
+    );
+  }
 }
 
 /**
@@ -112,6 +127,14 @@ function asArticleParentId(value: unknown): number | undefined {
   return value as number;
 }
 
+/**
+ * Connector for the Intercom customer messaging platform.
+ *
+ * Syncs Help Center articles and collections (full CRUD), plus read-only
+ * Conversations, Contacts (users and leads) and Companies, via the Intercom REST API.
+ *
+ * API docs: https://developers.intercom.com/docs/references/rest-api/api.intercom.io/
+ */
 export class IntercomConnector extends Connector {
   readonly service = Service.INTERCOM;
   static readonly displayName = 'Intercom';
@@ -124,7 +147,7 @@ export class IntercomConnector extends Connector {
     logo: 'https://static.scratch.md/connector-icons/intercom.svg',
     incrementalPull: true,
     incrementalPullInstructions:
-      'Incremental pull only downloads records changed since the last pull. Only Conversations support this, because Intercom can filter conversations by their updated-at time. Articles and Collections do not support incremental pull and always re-download in full.',
+      'Incremental pull only downloads records changed since the last pull. Only Conversations support this, because Intercom can filter conversations by their updated-at time. Articles, Collections, Contacts and Companies do not support incremental pull and always re-download in full.',
     credentialFields: {
       user_provided_params: [
         {
@@ -146,6 +169,7 @@ export class IntercomConnector extends Connector {
       label: 'Exclude conversation replies',
       description:
         'Skip downloading threaded replies and notes for conversations. Significantly increases download speed for large workspaces.',
+      forTableWsIds: ['conversations'],
     },
   ];
 
@@ -181,20 +205,41 @@ export class IntercomConnector extends Connector {
         disabledDeletes: true,
         metadata: { description: 'Conversations in your Intercom workspace (read-only)' },
       },
+      {
+        id: { wsId: 'contacts', remoteId: ['contacts'] },
+        displayName: 'Contacts',
+        disabledCreates: true,
+        disabledUpdates: true,
+        disabledDeletes: true,
+        disabledReason: 'Intercom contacts are read-only in Scratch.',
+        infoNote:
+          'Includes every user and lead in your Intercom workspace. Each pull downloads all of them, so this table can be large.',
+        metadata: { description: 'Users and leads in your Intercom workspace (read-only)' },
+      },
+      {
+        id: { wsId: 'companies', remoteId: ['companies'] },
+        displayName: 'Companies',
+        disabledCreates: true,
+        disabledUpdates: true,
+        disabledDeletes: true,
+        disabledReason: 'Intercom companies are read-only in Scratch.',
+        infoNote:
+          "Includes companies that have at least one user or lead. Intercom's API doesn't list companies without any, so a company that loses its last contact is removed on the next pull.",
+        metadata: { description: 'Companies with at least one contact in your Intercom workspace (read-only)' },
+      },
     ];
   }
 
   /**
    * Reproduce, purely from the spec, the default TableView that schema
    * generation used to bake into each table spec. `spec.id.wsId` is the entity
-   * type ('articles' | 'collections' | 'conversations') — the exact string
-   * literal the old schema-gen `defaultView` setter passed to the builder.
+   * type (an `IntercomTableType`) — the exact string literal the old schema-gen
+   * `defaultView` setter passed to the builder.
    */
   override buildDefaultView(spec: BaseJsonTableSpec): TableView | undefined {
     return buildIntercomDefaultView(spec.schema, spec.id.wsId);
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     switch (id.wsId) {
       case 'articles':
@@ -203,6 +248,11 @@ export class IntercomConnector extends Connector {
         return buildIntercomCollectionsJsonTableSpec(id);
       case 'conversations':
         return buildIntercomConversationsJsonTableSpec(id);
+      case 'contacts':
+        // Custom attributes are the workspace's own — discovered, never hardcoded.
+        return buildIntercomContactsJsonTableSpec(id, await this.client.listDataAttributes('contact'));
+      case 'companies':
+        return buildIntercomCompaniesJsonTableSpec(id, await this.client.listDataAttributes('company'));
       default:
         throw new IntercomError(`Unknown table '${id.wsId}'.`, 404);
     }
@@ -319,6 +369,33 @@ export class IntercomConnector extends Connector {
         return newWatermark ? { newWatermark } : {};
       }
 
+      // Every contact, in creation order (see `listAllContactsInCreationOrder` for why the search
+      // endpoint and not `GET /contacts`). Always a full walk — Contacts has no incremental pull — so
+      // a stray incremental request is served by the same walk and returns {} (no watermark). The
+      // checkpoint is Intercom's opaque cursor, exactly like conversations.
+      case 'contacts': {
+        for await (const { items: contacts, nextCursor } of this.client.listAllContactsInCreationOrder(
+          INTERCOM_MAX_CONTACTS_PAGE_SIZE,
+          resumeProgress?.startingAfter,
+        )) {
+          await callback({
+            files: contacts as unknown as ConnectorFile[],
+            connectorProgress: nextCursor ? { startingAfter: nextCursor } : {},
+          });
+        }
+        break;
+      }
+
+      // Every company with at least one contact, via the scroll (see `listAllCompaniesViaScroll`). A
+      // scroll can't be resumed part-way, so the checkpoint is always {} — a crashed walk starts over
+      // (and the job only runs delete-detection after a walk completes). Always a full walk.
+      case 'companies': {
+        for await (const { items: companies } of this.client.listAllCompaniesViaScroll()) {
+          await callback({ files: companies as unknown as ConnectorFile[], connectorProgress: {} });
+        }
+        break;
+      }
+
       default:
         throw new IntercomError(`Unknown table '${tableSpec.id.wsId}'`, 404);
     }
@@ -341,6 +418,10 @@ export class IntercomConnector extends Connector {
         record = await this.client.getCollection(id);
       } else if (tableSpec.id.wsId === 'conversations') {
         record = await this.client.getConversation(id);
+      } else if (tableSpec.id.wsId === 'contacts') {
+        record = await this.client.getContact(id);
+      } else if (tableSpec.id.wsId === 'companies') {
+        record = await this.client.getCompany(id);
       }
 
       if (record) {
@@ -362,6 +443,7 @@ export class IntercomConnector extends Connector {
   }
 
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
+    assertIntercomTableAcceptsWrites(tableSpec);
     const results: ConnectorFile[] = [];
 
     for (const file of files) {
@@ -400,6 +482,7 @@ export class IntercomConnector extends Connector {
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
+    assertIntercomTableAcceptsWrites(tableSpec);
     const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -438,6 +521,7 @@ export class IntercomConnector extends Connector {
   }
 
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+    assertIntercomTableAcceptsWrites(tableSpec);
     for (const file of files) {
       const recordId = file.id as string;
       if (!recordId) continue;
@@ -456,6 +540,13 @@ export class IntercomConnector extends Connector {
     }
     if (tableSpec.id.wsId === 'conversations') {
       return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'source.subject', 'title');
+    }
+    if (tableSpec.id.wsId === 'contacts') {
+      // `email` is set on all but a handful of contacts; `name` is the fallback, then the id.
+      return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'email', 'name');
+    }
+    if (tableSpec.id.wsId === 'companies') {
+      return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'name', 'company_id');
     }
     return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'name');
   }

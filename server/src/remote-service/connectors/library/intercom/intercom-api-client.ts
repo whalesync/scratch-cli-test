@@ -1,16 +1,22 @@
-import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
+import axios, { AxiosError, AxiosInstance, RawAxiosRequestHeaders } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { sleep } from 'src/util';
 import { createApiClient } from '../../create-api-client';
 import { IntercomUpdatedSinceQuery } from './intercom-incremental';
 import {
   IntercomArticle,
   IntercomCollection,
+  IntercomCompany,
+  IntercomCompanyScrollPage,
+  IntercomContact,
   IntercomConversation,
   IntercomConversationListItem,
   IntercomCreateArticleRequest,
   IntercomCreateCollectionRequest,
   IntercomCursorPaginatedResponse,
+  IntercomDataAttribute,
+  IntercomDataAttributeListResponse,
   IntercomPaginatedResponse,
   IntercomUpdateArticleRequest,
   IntercomUpdateCollectionRequest,
@@ -205,6 +211,107 @@ export const INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE = 150;
 export const INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION = 20;
 
 /**
+ * Ceiling on `per_page` for `GET /contacts` and `POST /contacts/search`. Larger values are not
+ * rejected — Intercom silently caps them at 150 (probed live) — so asking for more buys nothing.
+ */
+export const INTERCOM_MAX_CONTACTS_PAGE_SIZE = 150;
+
+/**
+ * The `POST /contacts/search` body that lists EVERY contact in creation order — not an
+ * updated-since filter (the Contacts table has no incremental pull). `created_at > 0` matches every
+ * contact, so Intercom's pre-2.17 rule that timestamp filters match by calendar day is irrelevant;
+ * the ascending `created_at` sort is what makes the walk stable (see
+ * {@link IntercomApiClient.listAllContactsInCreationOrder}).
+ */
+export function buildAllContactsInCreationOrderSearchBody(
+  pageSize: number,
+  startingAfter: string | undefined,
+): Record<string, unknown> {
+  return {
+    query: { field: 'created_at', operator: '>', value: 0 },
+    sort: { field: 'created_at', order: 'ascending' },
+    pagination: { per_page: pageSize, ...(startingAfter ? { starting_after: startingAfter } : {}) },
+  };
+}
+
+/**
+ * Timing and limits for {@link IntercomApiClient.listAllCompaniesViaScroll}. Every field is optional;
+ * the defaults are the production values (tests pass zero waits).
+ */
+export interface IntercomCompaniesScrollWalkOptions {
+  /** Pause between attempts to start a scroll while another scroll holds the workspace's only slot. */
+  waitBetweenScrollStartAttemptsMs?: number;
+  /** Attempts to start a scroll before giving up on a slot another integration holds. */
+  maxScrollStartAttempts?: number;
+  /** Times a walk may start over after its scroll expires or fails mid-walk. */
+  maxWalkRestarts?: number;
+}
+
+/**
+ * Production scroll-walk limits. Intercom allows ONE open company scroll per WORKSPACE (any app,
+ * any token): a finished scroll frees the slot at once, an abandoned one holds it for ~60 s after
+ * its last use (probed live). 7 attempts 15 s apart wait out ~90 s — past one abandoned scroll —
+ * before giving up.
+ */
+const DEFAULT_COMPANIES_SCROLL_WALK_OPTIONS: Required<IntercomCompaniesScrollWalkOptions> = {
+  waitBetweenScrollStartAttemptsMs: 15_000,
+  maxScrollStartAttempts: 7,
+  maxWalkRestarts: 3,
+};
+
+/** Intercom's error codes from an `error.list` body, or [] when the error isn't an Intercom HTTP error. */
+function intercomErrorCodesOf(error: unknown): string[] {
+  if (!axios.isAxiosError(error)) return [];
+  const body = error.response?.data as { errors?: { code?: string }[] } | undefined;
+  return (body?.errors ?? []).flatMap((e) => (e.code ? [e.code] : []));
+}
+
+/** `400 scroll_exists` — another scroll already holds the workspace's only company-scroll slot. */
+function isCompaniesScrollSlotTaken(error: unknown): error is AxiosError {
+  return (
+    axios.isAxiosError(error) && error.response?.status === 400 && intercomErrorCodesOf(error).includes('scroll_exists')
+  );
+}
+
+/**
+ * The open scroll is gone and the walk must start over: `404 scroll parameter not found` once a
+ * scroll has been idle ~60 s (probed live), or the `500` Intercom's docs describe for a timed-out
+ * scroll. A scroll cannot be resumed part-way.
+ */
+function isCompaniesScrollLost(error: unknown): boolean {
+  return axios.isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 500);
+}
+
+/**
+ * The permission an Intercom app needs to list contacts, companies and their attribute definitions.
+ * "Read one user and one company" is not enough for a listing.
+ * https://developers.intercom.com/docs/build-an-integration/learn-more/authentication/oauth-scopes
+ */
+const INTERCOM_READ_AND_LIST_USERS_AND_COMPANIES_PERMISSION = 'Read and list users and companies';
+
+/**
+ * The error to throw for a failed contacts/attributes read. A 401/403 there almost always means the
+ * token's Intercom app lacks {@link INTERCOM_READ_AND_LIST_USERS_AND_COMPANIES_PERMISSION}: the
+ * connection test only calls `GET /me`, which any valid token passes, so without this the first
+ * contacts pull fails with a bare "unauthorized" that doesn't say what to fix. Intercom's own message
+ * is kept in the text so an invalid token still reads as one. Anything else is returned untouched.
+ */
+function intercomReadPermissionErrorOrOriginal(error: unknown, whatWasBeingRead: string): unknown {
+  if (!axios.isAxiosError(error)) return error;
+  const status = error.response?.status;
+  if (status !== 401 && status !== 403) return error;
+  const body = error.response?.data as { errors?: { message?: string }[] } | undefined;
+  const intercomMessage = body?.errors?.find((e) => e.message)?.message;
+  return new IntercomError(
+    `Intercom refused to list ${whatWasBeingRead}${intercomMessage ? ` (${intercomMessage})` : ''}. ` +
+      `Give the Intercom app behind this access token the "${INTERCOM_READ_AND_LIST_USERS_AND_COMPANIES_PERMISSION}" ` +
+      `permission in the Intercom Developer Hub, then reconnect.`,
+    status,
+    error.response?.data,
+  );
+}
+
+/**
  * How many complete page walks {@link IntercomApiClient.listArticles} /
  * `listCollections` will attempt before accepting an unverified (short) walk
  * and logging a warning. See `listWithFaithfulPageWalk` for why re-walking
@@ -300,6 +407,23 @@ export interface IntercomConversationFullFetchFailure {
   httpStatus: number;
   /** Intercom's own explanation from the error's `error.list` body, when it sent one. */
   intercomErrorMessage: string | null;
+}
+
+/**
+ * A page of contacts plus Intercom's opaque cursor for the next page (undefined on the last page).
+ * Callers persist `nextCursor` for crash-resume, exactly like {@link IntercomConversationPage}.
+ */
+export interface IntercomContactPage {
+  items: IntercomContact[];
+  nextCursor: string | undefined;
+}
+
+/**
+ * A page of companies from the scroll walk. There is no resume cursor: a scroll can't be resumed
+ * part-way, so a crashed walk starts over.
+ */
+export interface IntercomCompanyPage {
+  items: IntercomCompany[];
 }
 
 /**
@@ -805,6 +929,289 @@ export class IntercomApiClient {
         return null;
       }
       throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Contacts (read-only)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Every contact in the workspace, walked in creation order, deduplicated by id, and checked
+   * against Intercom's own count before the walk is allowed to finish.
+   *
+   * Why `POST /contacts/search` and not `GET /contacts`: the list endpoint is ordered by
+   * `last_seen_at` DESC (probed live: zero ordering inversions across 19k contacts), a key that
+   * changes every time a contact is active. A not-yet-reached contact that becomes active mid-walk
+   * jumps to the front of the list — behind Intercom's stateless cursor — and is never returned; a
+   * full pull would then delete it from Scratch and any Live Export destination until the next run.
+   * `created_at` never changes, so an existing contact cannot move, and a contact created mid-walk
+   * lands at the tail where the walk still reaches it. Live, both walks returned the identical id
+   * set at the same cost (DEV-12350). Search's few-minute indexing lag only delays NEW contacts,
+   * which aren't in Scratch yet, so it cannot cause a delete.
+   *
+   * Completeness: a fresh walk (no `resumeAfter`) must see at least the smaller of the `total_count`
+   * reported on its first and last pages. Contacts created mid-walk raise both the seen count and
+   * the later total, and contacts deleted before the walk reaches them lower both, so the smaller
+   * total needs no tolerance. A shortfall throws an {@link IntercomError}; the pull job runs
+   * delete-detection only after the walk returns, so a short walk can never become a wrongful
+   * delete. A resumed walk sees only the tail and can't be checked — and the job skips
+   * delete-detection on resumed runs anyway.
+   *
+   * The seen-id set holds one id string per contact for the length of the walk (tens of MB for a
+   * million contacts) — the price of the dedupe the completeness check depends on.
+   */
+  async *listAllContactsInCreationOrder(
+    pageSize = INTERCOM_MAX_CONTACTS_PAGE_SIZE,
+    resumeAfter?: string,
+  ): AsyncGenerator<IntercomContactPage, void> {
+    const contactIdsSeenThisWalk = new Set<string>();
+    let totalCountReportedOnFirstPage: number | undefined;
+    let totalCountReportedOnLatestPage = 0;
+    let startingAfter = resumeAfter;
+
+    do {
+      const searchBody = buildAllContactsInCreationOrderSearchBody(pageSize, startingAfter);
+      let page: IntercomPaginatedResponse<IntercomContact>;
+      try {
+        const response = await this.requestWithRateLimitRetry(() =>
+          this.client.post<IntercomPaginatedResponse<IntercomContact>>('/contacts/search', searchBody),
+        );
+        page = response.data;
+      } catch (error) {
+        throw intercomReadPermissionErrorOrOriginal(error, 'contacts');
+      }
+
+      totalCountReportedOnFirstPage ??= page.total_count ?? 0;
+      totalCountReportedOnLatestPage = page.total_count ?? 0;
+
+      const contactsNotYetSeenThisWalk = (page.data ?? []).filter((contact) => !contactIdsSeenThisWalk.has(contact.id));
+      for (const contact of contactsNotYetSeenThisWalk) {
+        contactIdsSeenThisWalk.add(contact.id);
+      }
+
+      const nextCursor = page.pages?.next?.starting_after;
+      if (contactsNotYetSeenThisWalk.length > 0) {
+        yield { items: contactsNotYetSeenThisWalk, nextCursor };
+      }
+      startingAfter = nextCursor;
+    } while (startingAfter);
+
+    if (resumeAfter !== undefined) return;
+
+    const minimumContactsTheWalkMustHaveSeen = Math.min(
+      totalCountReportedOnFirstPage ?? 0,
+      totalCountReportedOnLatestPage,
+    );
+    if (contactIdsSeenThisWalk.size >= minimumContactsTheWalkMustHaveSeen) return;
+
+    WSLogger.warn({
+      source: 'IntercomApiClient',
+      message: 'Contacts walk saw fewer contacts than Intercom reports — failing the pull so none are wrongly deleted',
+      uniqueContactsSeen: contactIdsSeenThisWalk.size,
+      totalCountReportedOnFirstPage,
+      totalCountReportedOnLatestPage,
+    });
+    // Surfaced verbatim to the user via extractConnectorErrorDetails.
+    throw new IntercomError(
+      `Intercom returned ${contactIdsSeenThisWalk.size} of the ${minimumContactsTheWalkMustHaveSeen} contacts it ` +
+        `reports. The pull was stopped before any contacts could be wrongly deleted; the next pull will retry.`,
+    );
+  }
+
+  /**
+   * Get a single contact by ID — the same keys the search walk returns (probed live).
+   * @returns The contact, or null if not found (deleted, or merged into another contact).
+   */
+  async getContact(id: string): Promise<IntercomContact | null> {
+    try {
+      const response = await this.requestWithRateLimitRetry(() => this.client.get<IntercomContact>(`/contacts/${id}`));
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw intercomReadPermissionErrorOrOriginal(error, 'contacts');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Companies (read-only)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Every company Intercom will list, walked with `GET /companies/scroll`, deduplicated by id.
+   *
+   * What "every" means: Intercom lists only companies with at least one contact (user or lead). The
+   * scroll, `POST /companies/list` and `GET /companies` all return exactly that set, and no 2.11
+   * endpoint enumerates the rest (probed live). The scroll is used because the paged list is
+   * documented to stop at 10,000 companies.
+   *
+   * Scroll mechanics (probed live, where they differ from the docs):
+   *  - 100 companies per page; the walk ends on the FIRST EMPTY page, whose `scroll_param` is never
+   *    followed (it returns 404).
+   *  - ONE open scroll per WORKSPACE — any app, any token: starting one while another is open
+   *    returns `400 scroll_exists`. A finished scroll frees the slot at once; an abandoned one holds
+   *    it ~60 s. So a taken slot is waited out (see {@link DEFAULT_COMPANIES_SCROLL_WALK_OPTIONS}),
+   *    and the walk always runs to its empty page so it never leaves its own scroll holding the slot.
+   *  - A scroll idle ~60 s expires (`404 scroll parameter not found`; the docs say `500`). A scroll
+   *    can't be resumed, so the walk starts over — at most `maxWalkRestarts` times — re-yielding only
+   *    companies not already yielded, and throws rather than ever returning part of a walk.
+   *
+   * Completeness: the scroll has no `total_count`. `POST /companies/list`'s `total_count` matches it
+   * once Intercom's index settles, but lags, runs ahead and even moves backwards while the index
+   * churns (probed live), so it can't gate deletes. It is read after the walk only to log a warning
+   * when the scroll saw fewer companies. The scroll itself is a server-side snapshot, so concurrent
+   * changes can't make it silently skip a company; its failure modes are explicit errors.
+   */
+  async *listAllCompaniesViaScroll(
+    options: IntercomCompaniesScrollWalkOptions = {},
+  ): AsyncGenerator<IntercomCompanyPage, void> {
+    const walkOptions = { ...DEFAULT_COMPANIES_SCROLL_WALK_OPTIONS, ...options };
+    const companyIdsYieldedThisWalk = new Set<string>();
+    let walkRestartsUsed = 0;
+
+    for (;;) {
+      try {
+        let page = await this.startCompaniesScroll(walkOptions);
+        while (page.data.length > 0) {
+          const companiesNotYetYielded = page.data.filter((company) => !companyIdsYieldedThisWalk.has(company.id));
+          for (const company of companiesNotYetYielded) {
+            companyIdsYieldedThisWalk.add(company.id);
+          }
+          if (companiesNotYetYielded.length > 0) {
+            yield { items: companiesNotYetYielded };
+          }
+          const scrollParam = page.scroll_param;
+          if (!scrollParam) {
+            throw new IntercomError(
+              'Intercom returned a page of companies without a scroll_param, so the rest of the list cannot be read. ' +
+                'The pull was stopped before any companies could be wrongly deleted; the next pull will retry.',
+            );
+          }
+          page = await this.fetchCompaniesScrollPage(scrollParam);
+        }
+        break;
+      } catch (error) {
+        if (isCompaniesScrollLost(error) && walkRestartsUsed < walkOptions.maxWalkRestarts) {
+          walkRestartsUsed++;
+          WSLogger.warn({
+            source: 'IntercomApiClient',
+            message: 'Companies scroll expired or failed mid-walk — starting the walk over',
+            status: axios.isAxiosError(error) ? error.response?.status : undefined,
+            walkRestartsUsed,
+            companiesYieldedSoFar: companyIdsYieldedThisWalk.size,
+          });
+          continue;
+        }
+        if (isCompaniesScrollLost(error)) {
+          throw new IntercomError(
+            `Intercom's company scroll expired or failed ${walkRestartsUsed + 1} times in one pull. ` +
+              'The pull was stopped before any companies could be wrongly deleted; the next pull will retry.',
+            axios.isAxiosError(error) ? error.response?.status : undefined,
+          );
+        }
+        throw intercomReadPermissionErrorOrOriginal(error, 'companies');
+      }
+    }
+
+    await this.warnIfCompaniesListReportsMoreThanTheScrollSaw(companyIdsYieldedThisWalk.size);
+  }
+
+  /**
+   * Start a company scroll, waiting out a slot another scroll holds (`400 scroll_exists`). Gives up
+   * with an explanatory error once `maxScrollStartAttempts` is spent.
+   */
+  private async startCompaniesScroll(
+    walkOptions: Required<IntercomCompaniesScrollWalkOptions>,
+  ): Promise<IntercomCompanyScrollPage> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const response = await this.requestWithRateLimitRetry(() =>
+          this.client.get<IntercomCompanyScrollPage>('/companies/scroll'),
+        );
+        return response.data;
+      } catch (error) {
+        if (!isCompaniesScrollSlotTaken(error)) throw error;
+        if (attempt >= walkOptions.maxScrollStartAttempts) {
+          throw new IntercomError(
+            'Another integration is reading companies from this Intercom workspace — Intercom allows only one ' +
+              'company scroll per workspace at a time. The pull was stopped before any companies could be wrongly ' +
+              'deleted; try again in a few minutes.',
+            409,
+            error.response?.data,
+          );
+        }
+        await sleep(walkOptions.waitBetweenScrollStartAttemptsMs);
+      }
+    }
+  }
+
+  private async fetchCompaniesScrollPage(scrollParam: string): Promise<IntercomCompanyScrollPage> {
+    const response = await this.requestWithRateLimitRetry(() =>
+      this.client.get<IntercomCompanyScrollPage>('/companies/scroll', { params: { scroll_param: scrollParam } }),
+    );
+    return response.data;
+  }
+
+  /**
+   * Observability only (see {@link listAllCompaniesViaScroll}): warn when `POST /companies/list`
+   * reports more companies than the scroll returned. Never fails the pull — the list total is too
+   * noisy while Intercom's index churns — and logs only the HTTP status if the read itself fails.
+   */
+  private async warnIfCompaniesListReportsMoreThanTheScrollSaw(uniqueCompaniesSeen: number): Promise<void> {
+    try {
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.post<IntercomPaginatedResponse<IntercomCompany>>('/companies/list', { per_page: 1 }),
+      );
+      const companiesListTotal = response.data.total_count;
+      if (typeof companiesListTotal === 'number' && uniqueCompaniesSeen < companiesListTotal) {
+        WSLogger.warn({
+          source: 'IntercomApiClient',
+          message:
+            'Companies scroll returned fewer companies than POST /companies/list reports (expected briefly while Intercom re-indexes)',
+          uniqueCompaniesSeen,
+          companiesListTotal,
+        });
+      }
+    } catch (error) {
+      WSLogger.warn({
+        source: 'IntercomApiClient',
+        message: 'Could not read the companies list total to cross-check the scroll',
+        status: axios.isAxiosError(error) ? error.response?.status : undefined,
+      });
+    }
+  }
+
+  /**
+   * Get a single company by Intercom ID — the same keys the scroll returns (probed live). Unlike the
+   * scroll, this also returns a company that has no contacts.
+   * @returns The company, or null if not found.
+   */
+  async getCompany(id: string): Promise<IntercomCompany | null> {
+    try {
+      const response = await this.requestWithRateLimitRetry(() => this.client.get<IntercomCompany>(`/companies/${id}`));
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw intercomReadPermissionErrorOrOriginal(error, 'companies');
+    }
+  }
+
+  /**
+   * The attribute definitions for a model — the source of a contact's or company's
+   * `custom_attributes` schema. Not paginated; archived attributes are excluded by default.
+   */
+  async listDataAttributes(model: 'contact' | 'company'): Promise<IntercomDataAttribute[]> {
+    try {
+      const response = await this.requestWithRateLimitRetry(() =>
+        this.client.get<IntercomDataAttributeListResponse>('/data_attributes', { params: { model } }),
+      );
+      return response.data.data ?? [];
+    } catch (error) {
+      throw intercomReadPermissionErrorOrOriginal(error, `${model} attributes`);
     }
   }
 }
