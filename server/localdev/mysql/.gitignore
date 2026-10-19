@@ -1,0 +1,2 @@
+# Test-only TLS files written by generate-ssl-certs.sh (they include private keys).
+ssl-certs/

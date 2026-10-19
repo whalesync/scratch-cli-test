@@ -4,6 +4,12 @@
 #   docker compose -f docker-compose.mysql.yml down -v        # stop and wipe (next `up` re-seeds from ./mysql/init)
 # MySQL 8.4:    mysql://test:test@127.0.0.1:3306/test_db   (root password: root)
 # MariaDB 11.4: mysql://test:test@127.0.0.1:3307/test_db   (root password: root)
+# Opt-in TLS testing server (profile `ssl`, NOT started by the commands above): MySQL 8.4 with a custom test CA whose
+# server certificate names `localhost`, and require_secure_transport=ON. Generate the certificates first:
+#   ./mysql/generate-ssl-certs.sh
+#   docker compose -f docker-compose.mysql.yml --profile ssl up -d --wait mysql-ssl
+#   docker compose -f docker-compose.mysql.yml --profile ssl down             # `down` without the profile skips it
+# MySQL 8.4 + TLS: mysql://test:test@localhost:3308/test_db   (root password: root; CA: ./mysql/ssl-certs/ca.pem)
 # Ports bind 127.0.0.1 only so the weak test passwords aren't reachable from the LAN.
 # Explicit project name: this file shares server/localdev with docker-compose.yml, whose default project name would
 # otherwise collide (orphan warnings, and `down --remove-orphans` could remove the app Postgres).
@@ -52,7 +58,45 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+  # For the connector's SSL Mode / CA Certificate settings: the auto-generated certificates of `mysql` and `mariadb`
+  # name no host (so VERIFY_IDENTITY can only fail there) and neither server refuses plaintext.
+  mysql-ssl:
+    image: mysql:8.4
+    profiles: ['ssl']
+    command:
+      - --ssl-ca=/etc/mysql/certs/ca.pem
+      - --ssl-cert=/etc/mysql/certs/server-cert.pem
+      - --ssl-key=/etc/mysql/certs/server-key.pem
+      # Refuses plaintext TCP logins (errno 3159), so SSL Mode DISABLED fails and every login that works is TLS.
+      - --require-secure-transport=ON
+    ports: ['127.0.0.1:3308:3306']
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: test_db
+      MYSQL_USER: test
+      MYSQL_PASSWORD: test
+      LANG: C.UTF-8
+    volumes:
+      - mysql_ssl_data:/var/lib/mysql
+      # Long syntax so a missing ./mysql/ssl-certs fails `up` with a clear error, instead of Docker creating an empty
+      # directory that mysqld then can't start with.
+      - type: bind
+        source: ./mysql/ssl-certs
+        target: /etc/mysql/certs
+        read_only: true
+        bind:
+          create_host_path: false
+      # The shared seed plus the REQUIRE X509 user (mTLS-only, which the connector doesn't support).
+      - ./mysql/init/01-companies-and-deals.sql:/docker-entrypoint-initdb.d/01-companies-and-deals.sql:ro
+      - ./mysql/ssl-init/02-require-x509-user.sql:/docker-entrypoint-initdb.d/02-require-x509-user.sql:ro
+    healthcheck:
+      # The client's default --ssl-mode=PREFERRED negotiates TLS, so this passes require_secure_transport.
+      test: ['CMD-SHELL', 'mysql -h 127.0.0.1 -u"$$MYSQL_USER" -p"$$MYSQL_PASSWORD" -e "SELECT 1" "$$MYSQL_DATABASE"']
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
 volumes:
   mysql_data:
   mariadb_data:
+  mysql_ssl_data:
