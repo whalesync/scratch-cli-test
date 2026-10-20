@@ -4,6 +4,7 @@ import type { WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import {
   buildAllContactsInCreationOrderSearchBody,
   buildStaggeredPageSizeLadder,
+  INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE,
   IntercomApiClient,
   IntercomCompanyPage,
   IntercomContactPage,
@@ -38,6 +39,20 @@ jest.mock('../../../create-api-client', () => ({
     delete: mockDelete,
   })),
 }));
+
+const intercomErrorResponse = (status: number, body: unknown, statusText: string) =>
+  new axios.AxiosError(statusText, String(status), undefined, undefined, {
+    status,
+    data: body,
+    statusText,
+    headers: {},
+    config: {} as never,
+  });
+
+const withConversationParts = (listed: { type: string; id: string }) => ({
+  ...listed,
+  conversation_parts: { type: 'conversation_part.list', conversation_parts: [], total_count: 0 },
+});
 
 describe('IntercomApiClient', () => {
   let client: IntercomApiClient;
@@ -515,25 +530,30 @@ describe('IntercomApiClient', () => {
       const fullConv1 = { ...conv1, conversation_parts: { type: 'list', conversation_parts: [], total_count: 0 } };
       const fullConv2 = { ...conv2, conversation_parts: { type: 'list', conversation_parts: [], total_count: 0 } };
 
-      mockGet
-        .mockResolvedValueOnce({
-          data: {
-            type: 'conversation.list',
-            conversations: [conv1],
-            total_count: 2,
-            pages: { type: 'pages', page: 1, per_page: 1, total_pages: 2, next: { page: 2, starting_after: 'abc' } },
-          },
-        })
-        .mockResolvedValueOnce({ data: fullConv1 }) // hydrate conv1
-        .mockResolvedValueOnce({
-          data: {
-            type: 'conversation.list',
-            conversations: [conv2],
-            total_count: 2,
-            pages: { type: 'pages', page: 2, per_page: 1, total_pages: 2 },
-          },
-        })
-        .mockResolvedValueOnce({ data: fullConv2 }); // hydrate conv2
+      // Routed by URL, not call order: the walk lists page 2 while page 1 is still being fetched in full.
+      mockGet.mockImplementation((url: string, config?: { params?: { starting_after?: string } }) => {
+        if (url === '/conversations' && config?.params?.starting_after === undefined) {
+          return Promise.resolve({
+            data: {
+              type: 'conversation.list',
+              conversations: [conv1],
+              total_count: 2,
+              pages: { type: 'pages', page: 1, per_page: 1, total_pages: 2, next: { page: 2, starting_after: 'abc' } },
+            },
+          });
+        }
+        if (url === '/conversations') {
+          return Promise.resolve({
+            data: {
+              type: 'conversation.list',
+              conversations: [conv2],
+              total_count: 2,
+              pages: { type: 'pages', page: 2, per_page: 1, total_pages: 2 },
+            },
+          });
+        }
+        return Promise.resolve({ data: url === '/conversations/1' ? fullConv1 : fullConv2 });
+      });
 
       const pages: IntercomConversationPage[] = [];
       for await (const page of client.listConversations(1)) {
@@ -541,8 +561,16 @@ describe('IntercomApiClient', () => {
       }
 
       expect(pages).toHaveLength(2);
-      expect(pages[0].nextCursor).toBe('abc');
-      expect(pages[1].nextCursor).toBeUndefined();
+      expect(pages[0]).toEqual({
+        items: [fullConv1],
+        nextCursor: 'abc',
+        conversationsIntercomCouldNotReturnInFull: [],
+      });
+      expect(pages[1]).toEqual({
+        items: [fullConv2],
+        nextCursor: undefined,
+        conversationsIntercomCouldNotReturnInFull: [],
+      });
       expect(mockGet).toHaveBeenCalledWith('/conversations', { params: { per_page: 1, starting_after: 'abc' } });
     });
 
@@ -595,15 +623,6 @@ describe('IntercomApiClient', () => {
   // ---------------------------------------------------------------------------
 
   describe('listConversations when Intercom cannot return one conversation in full', () => {
-    const intercomErrorResponse = (status: number, body: unknown, statusText: string) =>
-      new axios.AxiosError(statusText, String(status), undefined, undefined, {
-        status,
-        data: body,
-        statusText,
-        headers: {},
-        config: {} as never,
-      });
-
     const onePageListing = (conversations: { type: string; id: string }[]) => ({
       data: {
         type: 'conversation.list',
@@ -611,11 +630,6 @@ describe('IntercomApiClient', () => {
         total_count: conversations.length,
         pages: { type: 'pages', page: 1, per_page: 20, total_pages: 1 },
       },
-    });
-
-    const withConversationParts = (listed: { type: string; id: string }) => ({
-      ...listed,
-      conversation_parts: { type: 'conversation_part.list', conversation_parts: [], total_count: 0 },
     });
 
     it('keeps the listed copy and names it, while the rest of the page still hydrates', async () => {
@@ -792,6 +806,266 @@ describe('IntercomApiClient', () => {
 
       await expect(walkAllPages()).rejects.toThrow('Unauthorized');
       expect(mockGet).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // listConversations — each page's conversations fetched in full concurrently
+  // ---------------------------------------------------------------------------
+
+  describe('listConversations fetching a page in full concurrently', () => {
+    const listedConversation = (id: string) => ({ type: 'conversation', id });
+
+    const listedConversationsNumbered = (count: number) =>
+      Array.from({ length: count }, (_unused, index) => listedConversation(String(index + 1)));
+
+    const listingPage = (conversations: { type: string; id: string }[], nextCursor?: string) => ({
+      data: {
+        type: 'conversation.list',
+        conversations,
+        total_count: conversations.length,
+        pages: {
+          type: 'pages',
+          page: 1,
+          per_page: conversations.length,
+          total_pages: 1,
+          ...(nextCursor ? { next: { page: 2, starting_after: nextCursor } } : {}),
+        },
+      },
+    });
+
+    const waitMs = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    const collectPages = async (walk: AsyncGenerator<IntercomConversationPage, void>) => {
+      const pages: IntercomConversationPage[] = [];
+      for await (const page of walk) {
+        pages.push(page);
+      }
+      return pages;
+    };
+
+    /**
+     * Routes `GET /conversations` (keyed by `starting_after`, `undefined` for the first page) to `listPage`, and
+     * `GET /conversations/{id}` to `fetchInFull`, counting the full fetches in flight.
+     */
+    function routeIntercomGets(routes: {
+      listPage: (startingAfter: string | undefined) => Promise<unknown>;
+      fetchInFull: (conversationId: string) => Promise<unknown>;
+    }) {
+      const fullFetches = { inFlight: 0, peakInFlight: 0, started: 0, settled: 0 };
+      mockGet.mockImplementation((url: string, config?: { params?: { starting_after?: string } }) => {
+        if (url === '/conversations') return routes.listPage(config?.params?.starting_after);
+        fullFetches.started += 1;
+        fullFetches.inFlight += 1;
+        fullFetches.peakInFlight = Math.max(fullFetches.peakInFlight, fullFetches.inFlight);
+        return routes.fetchInFull(url.slice('/conversations/'.length)).finally(() => {
+          fullFetches.inFlight -= 1;
+          fullFetches.settled += 1;
+        });
+      });
+      return fullFetches;
+    }
+
+    const fetchedInFullAfterMs = async (conversationId: string, ms: number) => {
+      await waitMs(ms);
+      return { data: withConversationParts(listedConversation(conversationId)) };
+    };
+
+    it(`never fetches more than ${INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE} conversations in full at once`, async () => {
+      const listed = listedConversationsNumbered(60);
+      const fullFetches = routeIntercomGets({
+        listPage: () => Promise.resolve(listingPage(listed)),
+        fetchInFull: (conversationId) => fetchedInFullAfterMs(conversationId, 5),
+      });
+
+      const pages = await collectPages(client.listConversations(150));
+
+      // Exactly the cap: never above it, and a page bigger than the cap actually reaches it.
+      expect(fullFetches.peakInFlight).toBe(INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE);
+      expect(fullFetches.started).toBe(60);
+      expect(pages).toEqual([
+        {
+          items: listed.map(withConversationParts),
+          nextCursor: undefined,
+          conversationsIntercomCouldNotReturnInFull: [],
+        },
+      ]);
+    });
+
+    it('yields the page in the order Intercom listed it, even when the fetches finish in another order', async () => {
+      const listed = listedConversationsNumbered(20);
+      const conversationIdsInFinishingOrder: string[] = [];
+      routeIntercomGets({
+        listPage: () => Promise.resolve(listingPage(listed)),
+        // Later conversations finish first.
+        fetchInFull: async (conversationId) => {
+          const fetched = await fetchedInFullAfterMs(conversationId, 2 * (20 - Number(conversationId)));
+          conversationIdsInFinishingOrder.push(conversationId);
+          return fetched;
+        },
+      });
+
+      const pages = await collectPages(client.listConversations(150));
+
+      expect(conversationIdsInFinishingOrder).not.toEqual(listed.map(({ id }) => id));
+      expect(pages[0].items).toEqual(listed.map(withConversationParts));
+    });
+
+    it('keeps a 403 as listed and drops a 404 while the rest of the page is still in flight', async () => {
+      const listed = listedConversationsNumbered(10);
+      const fullFetchesInFlightWhenIntercomRefused: number[] = [];
+      const fullFetches = routeIntercomGets({
+        listPage: () => Promise.resolve(listingPage(listed)),
+        fetchInFull: async (conversationId) => {
+          if (conversationId === '3' || conversationId === '7') {
+            await waitMs(1);
+            fullFetchesInFlightWhenIntercomRefused.push(fullFetches.inFlight);
+            throw conversationId === '3'
+              ? intercomErrorResponse(
+                  403,
+                  {
+                    type: 'error.list',
+                    errors: [{ code: 'forbidden', message: 'Access to this conversation is restricted' }],
+                  },
+                  'Forbidden',
+                )
+              : intercomErrorResponse(404, {}, 'Not Found');
+          }
+          return fetchedInFullAfterMs(conversationId, 10);
+        },
+      });
+
+      const pages = await collectPages(client.listConversations(150));
+
+      // Both refusals came back while the other eight fetches were still running.
+      expect(fullFetchesInFlightWhenIntercomRefused).toHaveLength(2);
+      for (const fullFetchesInFlight of fullFetchesInFlightWhenIntercomRefused) {
+        expect(fullFetchesInFlight).toBeGreaterThan(2);
+      }
+      expect(pages).toEqual([
+        {
+          items: listed
+            .filter(({ id }) => id !== '7')
+            .map((listedOne) => (listedOne.id === '3' ? listedOne : withConversationParts(listedOne))),
+          nextCursor: undefined,
+          conversationsIntercomCouldNotReturnInFull: [
+            { conversationId: '3', httpStatus: 403, intercomErrorMessage: 'Access to this conversation is restricted' },
+          ],
+        },
+      ]);
+    });
+
+    it('fails the walk on any other error only once the in-flight fetches settle, starting no new ones', async () => {
+      const unhandledRejections: unknown[] = [];
+      const recordUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+      process.on('unhandledRejection', recordUnhandledRejection);
+      try {
+        const listed = listedConversationsNumbered(60);
+        const fullFetches = routeIntercomGets({
+          // The next page, listed while this one is fetched, fails too — and must not surface as unhandled.
+          listPage: (startingAfter) =>
+            startingAfter === undefined
+              ? Promise.resolve(listingPage(listed, 'cursor_2'))
+              : Promise.reject(intercomErrorResponse(401, { type: 'error.list', errors: [] }, 'Unauthorized')),
+          fetchInFull: async (conversationId) => {
+            if (conversationId === '2') {
+              await waitMs(1);
+              throw intercomErrorResponse(401, { type: 'error.list', errors: [] }, 'Unauthorized');
+            }
+            return fetchedInFullAfterMs(conversationId, 10);
+          },
+        });
+
+        let fullFetchesWhenTheWalkFailed: typeof fullFetches | undefined;
+        const walkError = await collectPages(client.listConversations(150)).then(
+          () => undefined,
+          (error: unknown) => {
+            fullFetchesWhenTheWalkFailed = { ...fullFetches };
+            return error;
+          },
+        );
+
+        expect(walkError).toBeInstanceOf(axios.AxiosError);
+        expect(walkError).toMatchObject({ response: { status: 401 } });
+        // Every fetch already running had settled, and none started after the failure (only the first 25 of 60 ran).
+        expect(fullFetchesWhenTheWalkFailed).toMatchObject({
+          inFlight: 0,
+          started: INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE,
+          settled: INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE,
+        });
+        await waitMs(20);
+        expect(unhandledRejections).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', recordUnhandledRejection);
+      }
+    });
+
+    it('lists the next page while the current one is fetched, yielding the current page before a failed listing', async () => {
+      const firstPage = [listedConversation('1'), listedConversation('2')];
+      const requestLog: string[] = [];
+      routeIntercomGets({
+        listPage: (startingAfter) => {
+          requestLog.push(`list ${startingAfter ?? 'first page'}`);
+          return startingAfter === undefined
+            ? Promise.resolve(listingPage(firstPage, 'cursor_2'))
+            : Promise.reject(intercomErrorResponse(404, {}, 'Not Found'));
+        },
+        fetchInFull: async (conversationId) => {
+          const fetched = await fetchedInFullAfterMs(conversationId, 5);
+          requestLog.push(`fetched ${conversationId} in full`);
+          return fetched;
+        },
+      });
+
+      const pagesYieldedBeforeTheFailure: IntercomConversationPage[] = [];
+      const walkAllPages = async () => {
+        for await (const page of client.listConversations(150)) {
+          pagesYieldedBeforeTheFailure.push(page);
+        }
+      };
+
+      await expect(walkAllPages()).rejects.toThrow('Not Found');
+      expect(requestLog).toEqual(['list first page', 'list cursor_2', 'fetched 1 in full', 'fetched 2 in full']);
+      // Page 1 still reaches the caller (and its cursor is checkpointed) before page 2's listing fails the walk.
+      expect(pagesYieldedBeforeTheFailure).toEqual([
+        {
+          items: firstPage.map(withConversationParts),
+          nextCursor: 'cursor_2',
+          conversationsIntercomCouldNotReturnInFull: [],
+        },
+      ]);
+    });
+
+    it('resumes a walk from a persisted cursor, never listing from the start', async () => {
+      const listingsByCursor: Record<string, ReturnType<typeof listingPage>> = {
+        resume_cursor: listingPage([listedConversation('5'), listedConversation('6')], 'cursor_after_6'),
+        cursor_after_6: listingPage([listedConversation('7')]),
+      };
+      routeIntercomGets({
+        listPage: (startingAfter) =>
+          startingAfter && listingsByCursor[startingAfter]
+            ? Promise.resolve(listingsByCursor[startingAfter])
+            : Promise.reject(new Error(`unexpected listing after ${startingAfter}`)),
+        fetchInFull: (conversationId) => fetchedInFullAfterMs(conversationId, 1),
+      });
+
+      const pages = await collectPages(client.listConversations(150, true, 'resume_cursor'));
+
+      expect(pages).toEqual([
+        {
+          items: [withConversationParts(listedConversation('5')), withConversationParts(listedConversation('6'))],
+          nextCursor: 'cursor_after_6',
+          conversationsIntercomCouldNotReturnInFull: [],
+        },
+        {
+          items: [withConversationParts(listedConversation('7'))],
+          nextCursor: undefined,
+          conversationsIntercomCouldNotReturnInFull: [],
+        },
+      ]);
+      expect(mockGet).toHaveBeenCalledWith('/conversations', {
+        params: { per_page: 150, starting_after: 'resume_cursor' },
+      });
     });
   });
 

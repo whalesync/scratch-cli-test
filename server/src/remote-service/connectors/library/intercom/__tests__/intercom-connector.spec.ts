@@ -43,7 +43,6 @@ jest.mock('../intercom-api-client', () => {
   return {
     INTERCOM_MAX_PAGE_SIZE: 250,
     INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE: 150,
-    INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION: 20,
     INTERCOM_MAX_CONTACTS_PAGE_SIZE: 150,
     IntercomApiClient: jest.fn().mockImplementation(() => ({
       validateCredentials: mockValidateCredentials,
@@ -499,8 +498,8 @@ describe('IntercomConnector', () => {
 
       expect(callback).toHaveBeenCalledTimes(1);
       expect(collected[0]).toHaveLength(2);
-      // Default: hydrate = true
-      expect(mockListConversations).toHaveBeenCalledWith(20, true, undefined);
+      // Default: hydrate = true, still at Intercom's 150 max page
+      expect(mockListConversations).toHaveBeenCalledWith(150, true, undefined);
     });
 
     it('reports a conversation Intercom refused to hydrate as a record warning on its own page', async () => {
@@ -734,7 +733,7 @@ describe('IntercomConnector', () => {
 
       expect(mockSearchConversationsUpdatedSince).toHaveBeenCalledWith(
         buildIntercomUpdatedSinceQuery(since),
-        20,
+        150,
         true,
         undefined,
       );
@@ -782,7 +781,7 @@ describe('IntercomConnector', () => {
 
       expect(mockSearchConversationsUpdatedSince).toHaveBeenCalledWith(
         buildIntercomUpdatedSinceQuery(since),
-        20,
+        150,
         true,
         'cur_9',
       );
@@ -802,7 +801,7 @@ describe('IntercomConnector', () => {
 
       expect(result).toEqual({});
       expect(mockSearchConversationsUpdatedSince).not.toHaveBeenCalled();
-      expect(mockListConversations).toHaveBeenCalledWith(20, true, undefined);
+      expect(mockListConversations).toHaveBeenCalledWith(150, true, undefined);
     });
 
     it('never searches for articles even if incremental options leak through (returns {})', async () => {

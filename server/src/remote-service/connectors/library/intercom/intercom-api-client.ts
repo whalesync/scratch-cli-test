@@ -2,6 +2,7 @@ import axios, { AxiosError, AxiosInstance, RawAxiosRequestHeaders } from 'axios'
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { sleep } from 'src/util';
+import { mapWithBoundedConcurrency } from 'src/utils/map-with-bounded-concurrency';
 import { createApiClient } from '../../create-api-client';
 import { IntercomUpdatedSinceQuery } from './intercom-incremental';
 import {
@@ -66,9 +67,9 @@ export function isIntercomRateLimitError(error: unknown): boolean {
  * HTTP 5xx codes we treat as transient, retryable Intercom gateway/availability
  * failures: 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout.
  *
- * A full conversations pull is one long sequential walk (one list call per page
- * plus one GET per conversation when hydrating), so without a retry a single
- * gateway blip fails the whole folder hours in and the next run starts over.
+ * A full conversations pull is one long walk (one list call per page plus one
+ * GET per conversation when hydrating), so without a retry a single gateway
+ * blip fails the whole folder deep into the walk and the next run starts over.
  *
  * We deliberately EXCLUDE 500 Internal Server Error. 502/503/504 mean the request
  * did not reach, or was not completed by, a healthy backend, so retrying is safe
@@ -169,9 +170,9 @@ export const INTERCOM_RETRY_OPTS: WithRetryOpts = {
 
 /**
  * Retry policy for every Intercom READ: {@link INTERCOM_RETRY_OPTS} plus a `500` and network errors
- * ({@link isRetryableIntercomReadFailure}). A conversations pull is one long sequential walk — up to a day of one GET
- * per conversation — so a single transient failure must not throw the whole walk away, and a read can safely be
- * repeated. Writes keep {@link INTERCOM_RETRY_OPTS}.
+ * ({@link isRetryableIntercomReadFailure}). A conversations pull is one long walk — one GET per conversation, for
+ * over a hundred thousand conversations — so a single transient failure must not throw the whole walk away, and a read
+ * can safely be repeated. Writes keep {@link INTERCOM_RETRY_OPTS}.
  */
 export const INTERCOM_READ_RETRY_OPTS: WithRetryOpts = {
   ...INTERCOM_RETRY_OPTS,
@@ -194,21 +195,41 @@ export const INTERCOM_MAX_PAGE_SIZE = 250;
 
 /**
  * Documented ceiling on `per_page` for the cursor-paginated conversation
- * endpoints (`GET /conversations` and `POST /conversations/search`).
- * Used when conversations are listed without per-conversation hydration, where
- * the list call IS the whole cost of a page — 150 per page is 7.5× fewer calls
- * than Intercom's default of 20.
+ * endpoints (`GET /conversations` and `POST /conversations/search`), used whether
+ * or not each listed conversation is then fetched in full.
+ *
+ * The list call costs ~55-110 ms per listed conversation at any page size (measured
+ * live, October 2026: ~0.4-0.7 s for 5, ~1-1.7 s for 20, ~7-17 s for 150), and the
+ * cursor makes the walk list one page at a time — so listing, not the full fetches,
+ * sets the pace of a hydrated walk. 150 is never slower per conversation than smaller
+ * pages and is 7.5× fewer calls than Intercom's default of 20. A page's full fetches
+ * (~2-3 s for 150 at {@link INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE} at once)
+ * finish while the next page is being listed. The costs stay small: the job checkpoints
+ * its cursor once per page, so a crash-resume redoes at most one page, and a page in
+ * memory is at most 150 conversations with their parts (~8 KB of JSON each on average,
+ * measured live).
  */
 export const INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE = 150;
 
 /**
- * Conversations `per_page` when each listed conversation is then hydrated with
- * its own `GET /conversations/{id}`. The list call is a rounding error next to
- * those GETs, so a bigger page buys no speed — and the pull job checkpoints its
- * cursor once per page, so a small page keeps crash-resume re-work small (at most
- * 20 re-fetched conversations rather than 150).
+ * How many listed conversations a walk fetches in full (`GET /conversations/{id}`) at once.
+ *
+ * One at a time, a full pull is bound by request latency, not by any rate limit: a customer's
+ * nightly ~156k-conversation Live Export took ~20 h in October 2026 — 0.47 s per
+ * conversation, ~2 requests/s, about 1% of the 150/s `rateLimiterSpec` (one 429 in 3.5
+ * days of pulls). Measured live: a full fetch takes ~260 ms one at a time and ~280 ms with
+ * 25 in flight (76 requests/s), so Intercom doesn't slow down at this concurrency. 25 at
+ * once fetches a 150-conversation page in ~2-3 s, well inside the ~7-17 s it takes to list
+ * the next page, so the walk runs at the listing's pace (see
+ * {@link INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE}) with room to spare if listing gets faster.
+ * Its bursts stay around half the connection's 150/s limiter and well inside Intercom's
+ * 10,000/min per app, leaving most of the workspace's shared 25,000/min to the customer's
+ * other apps. The limiter is shared by every pull on the connection
+ * (`rl:intercom:<connectorAccountId>`), so concurrent pulls still can't exceed 150/s: this
+ * bounds in-flight work, not the rate. The walk also lists the next page while a page is
+ * fetched, so one list call can be in flight on top of these.
  */
-export const INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION = 20;
+export const INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE = 25;
 
 /**
  * Ceiling on `per_page` for `GET /contacts` and `POST /contacts/search`. Larger values are not
@@ -407,6 +428,33 @@ export interface IntercomConversationFullFetchFailure {
   httpStatus: number;
   /** Intercom's own explanation from the error's `error.list` body, when it sent one. */
   intercomErrorMessage: string | null;
+}
+
+/** What fetching one listed conversation in full left for its page. */
+interface ListedConversationFullFetchOutcome {
+  /** The full conversation; the listed copy when Intercom couldn't return it in full; null when it was deleted. */
+  conversationForPage: IntercomConversation | IntercomConversationListItem | null;
+  failureToReturnInFull: IntercomConversationFullFetchFailure | null;
+}
+
+/** One page of conversations from the list or search endpoint (not fetched in full). */
+type IntercomConversationsListResponse = IntercomCursorPaginatedResponse<IntercomConversationListItem>;
+
+/** One request for a page of listed conversations, given the cursor to start after. */
+type FetchConversationsListPage = (startingAfter: string | undefined) => Promise<IntercomConversationsListResponse>;
+
+/**
+ * Start listing a page of conversations. The walk awaits the listing only after the page before it is fetched in
+ * full and handed to the caller, so the promise is marked handled now: if the walk ends first (a fatal error, or the
+ * caller stopping), a failed listing is dropped instead of becoming an unhandled rejection.
+ */
+function startListingConversationsPage(
+  fetchPage: FetchConversationsListPage,
+  startingAfter: string | undefined,
+): Promise<IntercomConversationsListResponse> {
+  const listing = fetchPage(startingAfter);
+  listing.catch(() => undefined);
+  return listing;
 }
 
 /**
@@ -775,10 +823,13 @@ export class IntercomApiClient {
    * a record id) for crash-resume — Intercom rejects ids passed as
    * `starting_after` with "Invalid starting_after param".
    *
-   * When `hydrate` is true, each conversation is individually fetched via
-   * getConversation to include `conversation_parts` (one API call per
-   * conversation — slow for large workspaces). When false, conversations are
-   * yielded as-is from the list/search endpoint (no `conversation_parts`).
+   * When `hydrate` is true, each listed conversation is fetched in full via
+   * getConversation to include `conversation_parts` — one API call per
+   * conversation, {@link INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE} at a time, and
+   * yielded in the order the list endpoint returned them. When false,
+   * conversations are yielded as-is from the list/search endpoint (no
+   * `conversation_parts`). Either way the next page is listed while the current
+   * one is fetched and handed to the caller.
    *
    * A hydration that fails for that one conversation (a 403, or a 5xx that
    * outlasted the retries — see {@link isIntercomFailureToReturnOneConversationInFull})
@@ -786,63 +837,73 @@ export class IntercomApiClient {
    * page's `conversationsIntercomCouldNotReturnInFull`, rather than failing the
    * walk: one conversation must not fail a pull that runs for hours. A 404 still
    * drops the conversation — it was deleted between the list and the hydration.
+   * Any other hydration error fails the walk once the page's other in-flight
+   * fetches have settled.
    */
   private async *paginateConversations(
-    fetchPage: (
-      startingAfter: string | undefined,
-    ) => Promise<IntercomCursorPaginatedResponse<IntercomConversationListItem>>,
+    fetchPage: FetchConversationsListPage,
     hydrate: boolean,
     resumeAfter?: string,
   ): AsyncGenerator<IntercomConversationPage, void> {
-    let startingAfter: string | undefined = resumeAfter;
-    let hasMore = true;
+    let listingOfNextPage: Promise<IntercomConversationsListResponse> | undefined = startListingConversationsPage(
+      fetchPage,
+      resumeAfter,
+    );
 
-    while (hasMore) {
-      const data = await fetchPage(startingAfter);
-      const items = data.conversations ?? [];
-      const nextCursor = data.pages.next?.starting_after;
+    while (listingOfNextPage) {
+      const listedPage: IntercomConversationsListResponse = await listingOfNextPage;
+      const items = listedPage.conversations ?? [];
+      const nextCursor = listedPage.pages.next?.starting_after;
+      // Intercom's cursor is stateless, so listing the next page early returns the same page it would later.
+      listingOfNextPage = nextCursor ? startListingConversationsPage(fetchPage, nextCursor) : undefined;
 
-      if (items.length > 0) {
-        if (hydrate) {
-          // Hydrate each conversation to get conversation_parts
-          const conversationsInPage: (IntercomConversation | IntercomConversationListItem)[] = [];
-          const conversationsIntercomCouldNotReturnInFull: IntercomConversationFullFetchFailure[] = [];
-          for (const listedConversation of items) {
-            let fullConversationOrNullIfDeleted: IntercomConversation | null;
-            try {
-              fullConversationOrNullIfDeleted = await this.getConversation(listedConversation.id);
-            } catch (error) {
-              if (!isIntercomFailureToReturnOneConversationInFull(error)) {
-                throw error;
-              }
-              // Keep the listed copy (stored as Intercom returned it, just without conversation_parts) rather
-              // than dropping it: a dropped conversation would read as deleted, and a full pull would then
-              // remove it downstream even though it still exists in Intercom.
-              conversationsInPage.push(listedConversation);
-              conversationsIntercomCouldNotReturnInFull.push({
-                conversationId: listedConversation.id,
-                httpStatus: axios.isAxiosError(error) ? (error.response?.status ?? 0) : 0,
-                intercomErrorMessage: readIntercomErrorMessage(error),
-              });
-              continue;
-            }
-            if (fullConversationOrNullIfDeleted) {
-              conversationsInPage.push(fullConversationOrNullIfDeleted);
-            }
-          }
-          if (conversationsInPage.length > 0) {
-            yield { items: conversationsInPage, nextCursor, conversationsIntercomCouldNotReturnInFull };
-          }
-        } else {
-          yield { items, nextCursor, conversationsIntercomCouldNotReturnInFull: [] };
-        }
+      if (items.length === 0) continue;
+      if (!hydrate) {
+        yield { items, nextCursor, conversationsIntercomCouldNotReturnInFull: [] };
+        continue;
       }
 
-      if (nextCursor) {
-        startingAfter = nextCursor;
-      } else {
-        hasMore = false;
+      const outcomesInListingOrder = await mapWithBoundedConcurrency(
+        items,
+        INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE,
+        (listedConversation) => this.fetchListedConversationInFull(listedConversation),
+      );
+      const conversationsInPage: (IntercomConversation | IntercomConversationListItem)[] = [];
+      const conversationsIntercomCouldNotReturnInFull: IntercomConversationFullFetchFailure[] = [];
+      for (const { conversationForPage, failureToReturnInFull } of outcomesInListingOrder) {
+        if (conversationForPage) conversationsInPage.push(conversationForPage);
+        if (failureToReturnInFull) conversationsIntercomCouldNotReturnInFull.push(failureToReturnInFull);
       }
+      if (conversationsInPage.length > 0) {
+        yield { items: conversationsInPage, nextCursor, conversationsIntercomCouldNotReturnInFull };
+      }
+    }
+  }
+
+  /**
+   * Fetch one listed conversation in full for {@link paginateConversations}. Throws only for an error that should
+   * fail the walk; a failure about this one conversation keeps its listed copy.
+   */
+  private async fetchListedConversationInFull(
+    listedConversation: IntercomConversationListItem,
+  ): Promise<ListedConversationFullFetchOutcome> {
+    try {
+      return { conversationForPage: await this.getConversation(listedConversation.id), failureToReturnInFull: null };
+    } catch (error) {
+      if (!isIntercomFailureToReturnOneConversationInFull(error)) {
+        throw error;
+      }
+      // Keep the listed copy (stored as Intercom returned it, just without conversation_parts) rather
+      // than dropping it: a dropped conversation would read as deleted, and a full pull would then
+      // remove it downstream even though it still exists in Intercom.
+      return {
+        conversationForPage: listedConversation,
+        failureToReturnInFull: {
+          conversationId: listedConversation.id,
+          httpStatus: axios.isAxiosError(error) ? (error.response?.status ?? 0) : 0,
+          intercomErrorMessage: readIntercomErrorMessage(error),
+        },
+      };
     }
   }
 
@@ -850,8 +911,8 @@ export class IntercomApiClient {
    * List conversations with cursor-based pagination.
    *
    * When `hydrate` is true (default), each conversation is individually fetched via
-   * getConversation to include `conversation_parts`. This is slow for large workspaces
-   * (one API call per conversation).
+   * getConversation to include `conversation_parts` — one API call per conversation,
+   * {@link INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE} at a time.
    *
    * When `hydrate` is false, conversations are returned as-is from the list endpoint
    * (no `conversation_parts`). Much faster for large workspaces.

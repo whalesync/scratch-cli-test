@@ -26,7 +26,6 @@ import {
   TablePreview,
 } from '../../types';
 import {
-  INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION,
   INTERCOM_MAX_CONTACTS_PAGE_SIZE,
   INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE,
   INTERCOM_MAX_PAGE_SIZE,
@@ -318,11 +317,6 @@ export class IntercomConnector extends Connector {
 
       case 'conversations': {
         const hydrate = !options.excludeConversationParts;
-        // Without hydration the list call is the whole cost of a page, so list at Intercom's max;
-        // with it, small pages keep the per-page cursor checkpoint (and crash-resume re-work) tight.
-        const conversationsPerListPage = hydrate
-          ? INTERCOM_CONVERSATIONS_PAGE_SIZE_WHEN_FETCHING_EACH_CONVERSATION
-          : INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE;
 
         // Incremental: only conversations supports a server-side updated_at
         // search. Capture the watermark BEFORE the first API call so changes
@@ -339,14 +333,16 @@ export class IntercomConnector extends Connector {
           updatedSinceQuery = buildIntercomUpdatedSinceQuery(options.since);
         }
 
+        // Listed at Intercom's max page whether or not each conversation is then fetched in full (see
+        // INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE for why that holds for the full fetches too).
         const conversationPages = updatedSinceQuery
           ? this.client.searchConversationsUpdatedSince(
               updatedSinceQuery,
-              conversationsPerListPage,
+              INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE,
               hydrate,
               resumeProgress?.startingAfter,
             )
-          : this.client.listConversations(conversationsPerListPage, hydrate, resumeProgress?.startingAfter);
+          : this.client.listConversations(INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE, hydrate, resumeProgress?.startingAfter);
 
         // Persist the Intercom-provided cursor (`pages.next.starting_after`),
         // never a conversation id — Intercom rejects ids with "Invalid

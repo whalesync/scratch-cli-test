@@ -2,6 +2,7 @@ import { connectorMetadata, ConnectorSettingDefinition, TableView } from '@spinn
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
+import { mapWithBoundedConcurrency } from 'src/utils/map-with-bounded-concurrency';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { ConnectorAuthTokenOrProvider } from '../../connector-auth-token';
@@ -115,48 +116,6 @@ interface GoHighLevelContactPullOptions extends PullRecordFilesOptions {
   includeNotes?: boolean;
   includeTasks?: boolean;
   includeAppointments?: boolean;
-}
-
-/**
- * Map an async function over `items` with at most `maxConcurrentTasks` running at
- * once, returning the results in input order and rejecting with the first error
- * encountered. On error, workers stop pulling new items and any already-in-flight
- * tasks settle first (no unhandled rejections), then the first error is thrown —
- * mirroring the fail-fast semantics of the previous sequential `await` loop while
- * fanning the work out. Used to deep-fetch many contacts' sub-entities at once
- * instead of one contact at a time (DEV-10499).
- */
-export async function mapWithBoundedConcurrency<Item, Result>(
-  items: Item[],
-  maxConcurrentTasks: number,
-  mapItemToResult: (item: Item, index: number) => Promise<Result>,
-): Promise<Result[]> {
-  const resultsInInputOrder = new Array<Result>(items.length);
-  let nextItemIndexToProcess = 0;
-  let firstErrorEncountered: unknown;
-  let hasErrorBeenEncountered = false;
-
-  const runWorker = async (): Promise<void> => {
-    while (!hasErrorBeenEncountered) {
-      const currentItemIndex = nextItemIndexToProcess;
-      nextItemIndexToProcess += 1;
-      if (currentItemIndex >= items.length) return;
-      try {
-        resultsInInputOrder[currentItemIndex] = await mapItemToResult(items[currentItemIndex], currentItemIndex);
-      } catch (error) {
-        if (!hasErrorBeenEncountered) {
-          hasErrorBeenEncountered = true;
-          firstErrorEncountered = error;
-        }
-        return;
-      }
-    }
-  };
-
-  const workerCount = Math.min(maxConcurrentTasks, items.length);
-  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
-  if (hasErrorBeenEncountered) throw firstErrorEncountered;
-  return resultsInInputOrder;
 }
 
 /**

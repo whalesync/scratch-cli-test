@@ -1,4 +1,4 @@
-import { mapWithBoundedConcurrency } from '../gohighlevel-connector';
+import { mapWithBoundedConcurrency } from './map-with-bounded-concurrency';
 
 describe('mapWithBoundedConcurrency', () => {
   it('returns results in input order regardless of completion order', async () => {
