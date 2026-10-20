@@ -6,8 +6,6 @@ import { type UserFriendlyError } from '../../error';
  * returns). The problem code is for tests and logs; users only ever see `userFriendlyMessage`.
  */
 export enum MySqlClientProblem {
-  /** Interim tripwire until the shared database host guard lands: no customer-database connections from Cloud Run. */
-  DatabaseHostGuardUnavailable = 'DATABASE_HOST_GUARD_UNAVAILABLE',
   /** The per-connection `SET SESSION time_zone / sql_mode` failed, so the connection can't be used safely. */
   SessionSetupFailed = 'SESSION_SETUP_FAILED',
   InvalidFilter = 'INVALID_FILTER',

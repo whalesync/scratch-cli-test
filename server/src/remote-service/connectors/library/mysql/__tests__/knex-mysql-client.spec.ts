@@ -447,11 +447,11 @@ describe('KnexMySqlClient (knex mocked)', () => {
     expect(secondClientConfig.ssl).not.toBe(firstClientConfig.ssl);
   });
 
-  it('propagates a refused network route (the interim deployed-environment tripwire) from the provider', async () => {
-    const tripwireError = new MySqlClientError(MySqlClientProblem.DatabaseHostGuardUnavailable, 'unavailable');
-    resolveNetworkRoute.mockRejectedValueOnce(tripwireError);
+  it('propagates a refused network route from the provider', async () => {
+    const networkRouteRefusal = new Error('network route refused');
+    resolveNetworkRoute.mockRejectedValueOnce(networkRouteRefusal);
     const { knexConfig } = constructClient();
-    await expect(knexConfig.connection()).rejects.toBe(tripwireError);
+    await expect(knexConfig.connection()).rejects.toBe(networkRouteRefusal);
   });
 
   it('records the detected flavor after a successful session setup', async () => {

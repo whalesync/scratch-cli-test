@@ -394,11 +394,11 @@ function getMySqlRegistration(): ConnectorRegistration {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('MysqlConnector metadata', () => {
-  it('is hidden, supports schema creation and incremental pulls, and uses database/row terminology', () => {
+  it('is visible, supports schema creation and incremental pulls, and uses database/row terminology', () => {
     expect(MysqlConnector.displayName).toBe('MySQL');
     expect(MysqlConnector.metadata).toMatchObject({
       displayName: 'MySQL',
-      visible: false,
+      visible: true,
       supportsSchemaCreation: true,
       incrementalPull: true,
       record: 'row',

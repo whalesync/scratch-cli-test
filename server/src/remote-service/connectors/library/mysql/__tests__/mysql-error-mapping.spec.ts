@@ -997,17 +997,6 @@ describe('describeMySqlError', () => {
       expect(details).not.toHaveProperty('errorCode');
     });
 
-    it('passes the interim deployed-environment tripwire through', () => {
-      const tripwireError = new MySqlClientError(
-        MySqlClientProblem.DatabaseHostGuardUnavailable,
-        "MySQL connections aren't available in this environment yet.",
-      );
-
-      expect(describeMySqlError(tripwireError, BASE_CONTEXT).userFriendlyMessage).toBe(
-        "MySQL connections aren't available in this environment yet.",
-      );
-    });
-
     it('passes a NonWritableFieldEditError through', () => {
       const nonWritableFieldEditError = new NonWritableFieldEditError(
         'Field "g" is read-only and can\'t be published.',

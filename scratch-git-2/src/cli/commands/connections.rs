@@ -101,7 +101,7 @@ pub enum ConnectionsCommands {
     List,
     /// Authorize a new connection
     Add {
-        /// Service type (AIRTABLE, WEBFLOW, SHOPIFY, MOCO, AUDIENCEFUL, WORDPRESS, POSTGRES, SUPABASE, PIPEDRIVE, ATTIO)
+        /// Service type (AIRTABLE, WEBFLOW, SHOPIFY, MOCO, AUDIENCEFUL, WORDPRESS, POSTGRES, SUPABASE, MYSQL, PIPEDRIVE, ATTIO)
         #[arg(long)]
         service: String,
         /// Credential parameter as key=value (repeatable)

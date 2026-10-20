@@ -1,7 +1,6 @@
 /**
  * MySQL connector (DEV-12035): MySQL 8.x, MariaDB and MySQL-protocol managed services (RDS/Aurora, Cloud SQL,
- * Azure Flexible, DigitalOcean/Aiven, PlanetScale, TiDB). Hidden (`visible: false`) until it has been exercised
- * against a real managed database.
+ * Azure Flexible, DigitalOcean/Aiven, PlanetScale, TiDB).
  *
  * Modeled on the Postgres connector: a short-lived knex client per operation, `[database, table]` remote ids,
  * discovery from `information_schema`, full record CRUD, and schema creation (so MySQL can be a Live Export
@@ -248,7 +247,7 @@ export class MysqlConnector extends Connector {
     createDestination: 'database',
     createDestinations: 'databases',
     logo: MYSQL_LOGO_DATA_URI,
-    visible: false,
+    visible: true,
     incrementalPull: true,
     incrementalPullInstructions:
       'To enable incremental pulls, this table must contain a TIMESTAMP or DATETIME column that records when a row was last changed (e.g. updated_at).',

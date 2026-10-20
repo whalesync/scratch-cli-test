@@ -112,3 +112,10 @@ Throwaway scripts against the local `server/localdev/docker-compose.mysql.yml` s
 - VERIFY_IDENTITY with an IP-literal host: mysql2 sends no SNI name and Node checks the certificate against
   `localhost`, so a certificate for the IP fails and one for "localhost" passes. The credential parser rejects
   that combination.
+
+## 2026-10-20 — enabled for all users (DEV-12035)
+
+- `visible: true`, and the interim Cloud Run tripwire (`RUNNING_IN_CLOUD=true` → refuse every connection) is
+  removed, so deployed test / production connect. Decided without the database host guard (Postgres / Supabase
+  parity) and before a managed-database `/connector-build-execute` pass; both stay in STATE.md's TODOs.
+- Port 3306 leaves the VPC flow-log suspicious-egress-port alert in a separate terraform MR.

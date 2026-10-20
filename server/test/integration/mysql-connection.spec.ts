@@ -18,7 +18,7 @@
  *      mapper's fixed sentences, naming at most the host the user typed — never a resolved IP or SQL.
  *   5. The credential boundary: a connection string is decomposed into discrete keys and never stored; a stored blob
  *      holding a connection string is refused at connect time; VERIFY_IDENTITY with an IP host is refused.
- *   6. The interim tripwire: with RUNNING_IN_CLOUD=true nothing connects at all (no socket is opened).
+ *   6. Deployed environments connect: with RUNNING_IN_CLOUD=true the connector reaches the server as it does locally.
  *
  * This spec creates no tables (only `scratch_mysql_it_conn_*` users, dropped before and after the run). It
  * deliberately does NOT call `dropAllMySqlIntegrationTables`: that would drop other MySQL specs' tables.
@@ -41,7 +41,6 @@ import {
   MYSQL_SESSION_TIME_ZONE,
   MYSQL_STATEMENT_TIMEOUT_MS,
 } from 'src/remote-service/connectors/library/mysql/knex-mysql-client';
-import { MySqlClientError, MySqlClientProblem } from 'src/remote-service/connectors/library/mysql/mysql-client-error';
 import {
   MYSQL_CREDENTIAL_KEYS,
   parseStoredMySqlCredentials,
@@ -52,7 +51,6 @@ import {
 } from 'src/remote-service/connectors/library/mysql/mysql-credential-errors';
 import {
   buildMySqlAccessDeniedMessage,
-  buildMySqlConnectionClosedUnexpectedlyMessage,
   buildMySqlConnectionRefusedMessage,
   buildMySqlDatabaseAccessDeniedMessage,
   buildMySqlTlsCertificateHostnameMismatchMessage,
@@ -61,7 +59,6 @@ import {
   formatMySqlHostAndPortForDisplay,
   MYSQL_UNSUPPORTED_AUTHENTICATION_METHOD_MESSAGE,
 } from 'src/remote-service/connectors/library/mysql/mysql-error-mapping';
-import { MYSQL_CONNECTIONS_UNAVAILABLE_IN_DEPLOYED_ENVIRONMENTS_MESSAGE } from 'src/remote-service/connectors/library/mysql/mysql-network-route';
 import { type MySqlServerFlavor } from 'src/remote-service/connectors/library/mysql/mysql-server-flavor';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { type ConnectorErrorDetails } from 'src/remote-service/connectors/types';
@@ -264,35 +261,6 @@ async function findClosedLoopbackTcpPort(): Promise<number> {
     throw new Error('Could not determine a free loopback TCP port');
   }
   return temporaryServerAddress.port;
-}
-
-/** A TCP listener that counts (and immediately drops) every connection, to prove whether a socket was ever opened. */
-async function startConnectionCountingTcpListener(): Promise<{
-  port: number;
-  readAcceptedConnectionCount: () => number;
-  close: () => Promise<void>;
-}> {
-  let acceptedConnectionCount = 0;
-  const connectionCountingServer = net.createServer((acceptedSocket) => {
-    acceptedConnectionCount += 1;
-    acceptedSocket.destroy();
-  });
-  await new Promise<void>((resolve, reject) => {
-    connectionCountingServer.once('error', reject);
-    connectionCountingServer.listen(0, '127.0.0.1', () => resolve());
-  });
-  const listenerAddress = connectionCountingServer.address();
-  if (listenerAddress === null || typeof listenerAddress === 'string') {
-    throw new Error('Could not determine the connection-counting listener port');
-  }
-  return {
-    port: listenerAddress.port,
-    readAcceptedConnectionCount: () => acceptedConnectionCount,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
-        connectionCountingServer.close((closeError) => (closeError ? reject(closeError) : resolve())),
-      ),
-  };
 }
 
 async function readAuthenticationPluginOfUser(
@@ -817,52 +785,21 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL connector — connection,
     });
   });
 
-  describe('the interim tripwire for deployed environments', () => {
-    it('with RUNNING_IN_CLOUD=true, testConnection fails with the tripwire message and never opens a socket', async () => {
-      const connectionCountingListener = await startConnectionCountingTcpListener();
+  describe('deployed environments', () => {
+    it('with RUNNING_IN_CLOUD=true, testConnection connects exactly as it does locally', async () => {
       const runningInCloudBeforeThisTest = process.env.RUNNING_IN_CLOUD;
       try {
-        const listenerCredentials = buildMySqlConnectorCredentialsForIntegrationTest(applicationUserAddress, {
-          databaseHost: '127.0.0.1',
-          databasePort: String(connectionCountingListener.port),
-          sslMode: 'DISABLED',
-        });
-
-        // Control: outside Cloud Run the connector does dial the listener (which hangs up at once), so a zero count
-        // below really means "never connected".
-        delete process.env.RUNNING_IN_CLOUD;
-        const controlFailure = await describeTestConnectionFailureLikeTheConnectionService(listenerCredentials);
-        expect(connectionCountingListener.readAcceptedConnectionCount()).toBeGreaterThan(0);
-        expect(controlFailure.userFacingErrorDetails.userFriendlyMessage).toBe(
-          buildMySqlConnectionClosedUnexpectedlyMessage(
-            formatMySqlHostAndPortForDisplay('127.0.0.1', connectionCountingListener.port),
-          ),
-        );
-        const acceptedConnectionCountBeforeTripwire = connectionCountingListener.readAcceptedConnectionCount();
-
         process.env.RUNNING_IN_CLOUD = 'true';
-        const { rawErrorThrownByTestConnection, userFacingErrorDetails } =
-          await describeTestConnectionFailureLikeTheConnectionService(listenerCredentials);
-
-        expect(rawErrorThrownByTestConnection).toBeInstanceOf(MySqlClientError);
-        expect(rawErrorThrownByTestConnection).toMatchObject({
-          problem: MySqlClientProblem.DatabaseHostGuardUnavailable,
-          message: MYSQL_CONNECTIONS_UNAVAILABLE_IN_DEPLOYED_ENVIRONMENTS_MESSAGE,
+        const requiredSslModeCredentials = buildMySqlConnectorCredentialsForIntegrationTest(applicationUserAddress, {
+          sslMode: 'REQUIRED',
         });
-        expect(userFacingErrorDetails.userFriendlyMessage).toBe(
-          MYSQL_CONNECTIONS_UNAVAILABLE_IN_DEPLOYED_ENVIRONMENTS_MESSAGE,
-        );
-        expect(userFacingErrorDetails.additionalContext).toMatchObject({
-          mySqlClientProblem: MySqlClientProblem.DatabaseHostGuardUnavailable,
-        });
-        expect(connectionCountingListener.readAcceptedConnectionCount()).toBe(acceptedConnectionCountBeforeTripwire);
+        await expect(connectThroughConnectorBuiltByRegistry(requiredSslModeCredentials)).resolves.toBeUndefined();
       } finally {
         if (runningInCloudBeforeThisTest === undefined) {
           delete process.env.RUNNING_IN_CLOUD;
         } else {
           process.env.RUNNING_IN_CLOUD = runningInCloudBeforeThisTest;
         }
-        await connectionCountingListener.close();
       }
     });
   });

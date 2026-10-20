@@ -33,7 +33,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [Linear](../server/src/remote-service/connectors/library/linear/STATE.md) | ✅ | ✅ | ❌ | ✅ | 👁️ | Free tier | ❌ | ❌ | |
 | [Memberstack](../server/src/remote-service/connectors/library/memberstack/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
 | [Moco](../server/src/remote-service/connectors/library/moco/STATE.md) | 🟠 | ✅ | ❌ | ✅ | 👁️ | Trial → paid | ❌ | ❌ | |
-| [MySQL](../server/src/remote-service/connectors/library/mysql/STATE.md) | ❌ | ✅ | ✅ | ✅ | 🔒 | Self-host | ✅‡ | ❌ | |
+| [MySQL](../server/src/remote-service/connectors/library/mysql/STATE.md) | ❌ | ✅ | ✅ | ✅ | 👁️ | Self-host | ✅‡ | ❌ | |
 | [Notion](../server/src/remote-service/connectors/library/notion/STATE.md) | ✅ | ✅ | ✅ | ✅ | 👁️ | Free tier | ✅ | ✅ | |
 | [Pipedrive](../server/src/remote-service/connectors/library/pipedrive/STATE.md) | ✅ | ✅ | 🟠 | ✅ | 👁️ | Trial → paid | ✅ | ❌ | |
 | [Postgres](../server/src/remote-service/connectors/library/postgres/STATE.md) | ❌ | ✅ | ✅ | ✅ | 🔒 | Self-host | ✅† | ❌ | |
@@ -50,7 +50,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 
 > **`*` HubSpot — CI coverage runs via an in-process fake, not the live API.** `hubspot-connector.spec.ts` drives `test-api-fakes/hubspot` (no key needed), so it executes on every pipeline run — but it validates connector code against a fake, not the real HubSpot API. A **live** spec now also exists — `hubspot-connector-live.spec.ts` (the associations write round-trip, DEV-10847) — but it self-skips until `INTEGRATION_TEST_HUBSPOT_API_KEY` (a test-portal Private App token) is wired as a GitLab CI/CD variable. The only live connector suite actually *running* in CI today is still **Notion**; every other live suite self-skips until its `INTEGRATION_TEST_<SVC>_*` variable is set.
 >
-> **`‡` MySQL — runs in its own CI job.** `mysql-*.spec.ts` (connection/TLS/auth, discovery + pull, CRUD guards, create-schema, incremental pull) run against **real `mysql:8.4` and `mariadb:11.4` sidecars** in the dedicated `integration test server mysql` job, not the post-deploy pipeline (where they self-skip because `MYSQL_TEST_URL` / `MARIADB_TEST_URL` are unset) — hence **IT ✅ = ❌**. No third-party managed database (RDS, Cloud SQL, TiDB, ...) is exercised yet; that's the unhide gate.
+> **`‡` MySQL — runs in its own CI job.** `mysql-*.spec.ts` (connection/TLS/auth, discovery + pull, CRUD guards, create-schema, incremental pull) run against **real `mysql:8.4` and `mariadb:11.4` sidecars** in the dedicated `integration test server mysql` job, not the post-deploy pipeline (where they self-skip because `MYSQL_TEST_URL` / `MARIADB_TEST_URL` are unset) — hence **IT ✅ = ❌**. No third-party managed database (RDS, Cloud SQL, TiDB, ...) is exercised yet; that's still outstanding (the connector was made visible on 2026-10-20 without it).
 >
 > **`†` Postgres — partial.** Coverage is `postgres-create-schema.spec.ts` + `postgres-incremental-pull.spec.ts` only (schema-creation + incremental pull), and they run against the CI job's **own `postgres:16` sidecar**, not a third-party service. There is no core CRUD connector spec.
 >
