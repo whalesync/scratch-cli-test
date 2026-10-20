@@ -170,7 +170,11 @@ If the connector requires pre-processing of user-provided credentials (e.g., Wor
 ```typescript
 export abstract class AuthParser<T extends string = string> {
   abstract readonly service: T;
-  abstract parseUserProvidedParams(params: { userProvidedParams: Record<string, string | undefined> }): Promise<{
+  readonly parsesCredentialEditsAgainstStoredCredentials: boolean = false;
+  abstract parseUserProvidedParams(params: {
+    userProvidedParams: Record<string, string | undefined>;
+    existingCredentials?: DecryptedCredentials;
+  }): Promise<{
     credentials: Record<string, string>;
     extras: Record<string, string>;
   }>;
@@ -178,6 +182,8 @@ export abstract class AuthParser<T extends string = string> {
 ```
 
 Register it via `createAuthParser` in your `connectorRegistry.register()` call.
+
+By default the parser only runs when a connection is created; editing a connection (PATCH) merges the raw params into the stored credentials. Set `parsesCredentialEditsAgainstStoredCredentials = true` to run it on edits too: the service then passes the stored credentials as `existingCredentials`, and the credentials you return **replace** the stored ones, so return the complete set. MySQL does this (`applyMySqlCredentialPatch`) because its form takes a connection string that must be decomposed again on every edit.
 
 ## 4. Implementing Each Method
 

@@ -254,46 +254,24 @@ export class MysqlConnector extends Connector {
     supportsSchemaCreation: true,
     userProvidedParamsLabel: 'Database connection',
     credentialFields: {
+      // The form asks only for a connection string and a CA. The parser still accepts the discrete settings
+      // (databaseHost, ..., sslMode) from the CLI and the API, and those are what gets stored.
       user_provided_params: [
         {
-          key: 'databaseHost',
-          type: 'string',
-          label: 'Host',
-          placeholder: 'mydb.example.com',
+          key: 'connectionString',
+          type: 'password',
+          label: 'Connection string',
+          placeholder: 'mysql://user:password@host:3306/database',
+          required: true,
           description:
-            "The server's hostname or IP address, without a port or protocol. The database must be reachable from the public internet and allow connections from Scratch's IP address. Fill in Host and Username, or paste a connection string below instead.",
-        },
-        { key: 'databasePort', type: 'number', label: 'Port', placeholder: '3306' },
-        {
-          key: 'databaseName',
-          type: 'string',
-          label: 'Database',
-          description: 'Optional. Leave blank to see every database this user can access.',
-        },
-        { key: 'username', type: 'string', label: 'Username' },
-        { key: 'password', type: 'password', label: 'Password' },
-        {
-          key: 'sslMode',
-          type: 'string',
-          label: 'SSL mode',
-          placeholder: 'REQUIRED',
-          description:
-            "REQUIRED (default): encrypted, certificate not checked. VERIFY_CA: also checks the server's certificate chain. VERIFY_IDENTITY: also checks the hostname (needs a hostname, not an IP address, in Host). DISABLED: unencrypted — avoid on the public internet.",
+            "The database must be reachable from the public internet and allow connections from Scratch's IP address. Leave off /database to see every database this user can access. Connections are encrypted by default; add ?ssl-mode=VERIFY_IDENTITY to also check the certificate's hostname, or ?ssl-mode=DISABLED to turn encryption off. Scratch never stores the string itself.",
         },
         {
           key: 'sslCaCertificate',
           type: 'password',
           label: 'CA certificate (PEM)',
           description:
-            "Optional, for VERIFY_CA / VERIFY_IDENTITY: your provider's CA certificate bundle. Amazon RDS and publicly trusted certificates work without one.",
-        },
-        {
-          key: 'connectionString',
-          type: 'password',
-          label: 'Connection string',
-          placeholder: 'mysql://user:password@host:3306/database',
-          description:
-            'Optional alternative to Host, Port, Database, Username and Password. Scratch splits it into those settings and never stores the string itself.',
+            "Optional: your provider's CA certificate bundle. Adding one turns on certificate verification (VERIFY_CA). Amazon RDS and publicly trusted certificates verify without one.",
         },
       ],
     },
@@ -895,8 +873,8 @@ connectorRegistry.register({
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for MySQL', Service.MYSQL);
     }
-    // Defense in depth: re-validate the stored settings on every connect (PATCH and the dev-tools import can
-    // store params without running the AuthParser). No I/O here; connection problems surface at connect time.
+    // Defense in depth: re-validate the stored settings on every connect (the dev-tools import, and blobs written
+    // before PATCH ran the AuthParser, skip it). No I/O here; connection problems surface at connect time.
     return new MysqlConnector(parseStoredMySqlCredentials(ctx.decryptedCredentials));
   },
 });

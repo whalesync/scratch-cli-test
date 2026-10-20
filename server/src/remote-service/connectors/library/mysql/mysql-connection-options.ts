@@ -6,11 +6,11 @@
  * Three entry points, one validation path:
  * - {@link parseMySqlCredentialsFromUserInput} — creating a connection (the AuthParser). A connection string OR the
  *   discrete fields; unknown keys and non-text values are rejected by name.
- * - {@link applyMySqlCredentialPatch} — editing a connection (the AuthParser once the service passes the stored
- *   credentials on PATCH). Pure; returns the COMPLETE settings to store (the service replaces, not merges).
- * - {@link parseStoredMySqlCredentials} — every connect (`createConnector`). Defense in depth: until the service
- *   runs the AuthParser on PATCH, a stored blob can hold anything (a raw PATCH `Object.assign`s the request into it,
- *   and a dev-tools import re-encrypts exported blobs verbatim). No I/O.
+ * - {@link applyMySqlCredentialPatch} — editing a connection (the AuthParser, which the service runs on PATCH with
+ *   the stored credentials). Pure; returns the COMPLETE settings to store (the service replaces, not merges).
+ * - {@link parseStoredMySqlCredentials} — every connect (`createConnector`). Defense in depth: a stored blob can
+ *   still hold anything (a dev-tools import re-encrypts exported blobs verbatim, and blobs written before PATCH ran
+ *   the AuthParser hold whatever the request carried). No I/O.
  *
  * What is stored is ONLY the discrete {@link MYSQL_CREDENTIAL_KEYS}, as text (the port as a decimal string); a
  * pasted connection string is decomposed and never stored, so the URL can't drift from the fields and never
@@ -104,6 +104,13 @@ const MYSQL_DATABASE_NAME_MAX_LENGTH = 64;
 const MYSQL_HOSTNAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MYSQL_PORT_TEXT_PATTERN = /^\d{1,5}$/;
 
+/**
+ * The fix for a missing or unreadable stored setting: an edit with a connection string replaces the host, port,
+ * database, username and password, drops an unreadable stored SSL mode and purges a stored connection string.
+ */
+const EDIT_THE_CONNECTION_AND_PASTE_ITS_CONNECTION_STRING_AGAIN =
+  'Edit the connection and paste its connection string again.';
+
 /** A validated settings key → its text. Absent = not given; `null` = sent empty ('' / whitespace-only / null). */
 type SubmittedMySqlCredentialValues = Map<MySqlCredentialInputKey, string | null>;
 /** The settings a single parse runs on: absent or text (never empty). */
@@ -186,8 +193,8 @@ export function applyMySqlCredentialPatch(
 /**
  * CONNECT: re-validate the stored settings. `decryptedCredentials` is the whole account row spread with the
  * decrypted blob (`connector-account.service.ts#getDecryptedAccount`), so the MySQL keys are picked explicitly and
- * everything else is ignored. A stored connection string is refused, never parsed: it can only come from a raw
- * PATCH or an old blob, and preferring it would silently ignore a later password-only edit of the fields.
+ * everything else is ignored. A stored connection string is refused, never parsed: it can only come from an old
+ * blob (written before PATCH ran the AuthParser) or an import, and the next edit purges it.
  */
 export function parseStoredMySqlCredentials(
   decryptedCredentials: DecryptedCredentials | null | undefined,
@@ -203,8 +210,8 @@ export function parseStoredMySqlCredentials(
     if (typeof storedConnectionString === 'string' && storedConnectionString.trim() !== '') {
       throw new MySqlCredentialsInvalidError(
         MySqlCredentialProblem.StoredConnectionStringNotSupported,
-        "This MySQL connection's saved settings include a connection string, which Scratch only accepts while " +
-          'creating a connection. Delete this connection and create it again.',
+        "This MySQL connection's saved settings include a connection string, which Scratch doesn't store. " +
+          EDIT_THE_CONNECTION_AND_PASTE_ITS_CONNECTION_STRING_AGAIN,
       );
     }
     if (
@@ -228,7 +235,7 @@ export function parseStoredMySqlCredentials(
       const missingFieldLabel = MYSQL_CREDENTIAL_FIELD_LABELS[missingRequiredStoredKey];
       throw new MySqlCredentialsInvalidError(
         MySqlCredentialProblem.StoredCredentialsMissing,
-        `This MySQL connection has no saved ${missingFieldLabel}. Edit the connection and enter ${missingFieldLabel} again.`,
+        `This MySQL connection has no saved ${missingFieldLabel.toLowerCase()}. ${EDIT_THE_CONNECTION_AND_PASTE_ITS_CONNECTION_STRING_AGAIN}`,
       );
     }
     let inheritedSslMode: MySqlSslMode | undefined;
@@ -237,7 +244,7 @@ export function parseStoredMySqlCredentials(
       if (inheritedSslMode === undefined) {
         throw new MySqlCredentialsInvalidError(
           MySqlCredentialProblem.SslModeInvalid,
-          "This MySQL connection's saved SSL Mode isn't valid. Edit the connection and choose DISABLED, REQUIRED, VERIFY_CA or VERIFY_IDENTITY.",
+          `This MySQL connection's saved SSL mode isn't valid. ${EDIT_THE_CONNECTION_AND_PASTE_ITS_CONNECTION_STRING_AGAIN}`,
         );
       }
     }
@@ -354,7 +361,7 @@ function validateMySqlCredentialValues(
     if (valuesToValidate.databaseHost === undefined) {
       throw new MySqlCredentialsInvalidError(
         MySqlCredentialProblem.HostOrConnectionStringRequired,
-        'Enter a Host and Username, or paste a Connection String.',
+        'Paste a connection string, e.g. mysql://user:password@host:3306/database.',
       );
     }
     if (valuesToValidate.username === undefined) {
@@ -394,8 +401,8 @@ function validateMySqlCredentialValues(
   if (sslMode === 'VERIFY_IDENTITY' && net.isIP(host) !== 0) {
     throw new MySqlCredentialsInvalidError(
       MySqlCredentialProblem.SslModeVerifyIdentityRequiresHostname,
-      "SSL Mode VERIFY_IDENTITY checks the server's certificate against the hostname, so Host must be the hostname " +
-        'on the certificate, not an IP address. Use that hostname, or choose VERIFY_CA.',
+      "ssl-mode=VERIFY_IDENTITY checks the server's certificate against the hostname, so the connection string's host " +
+        'must be the hostname on the certificate, not an IP address. Use that hostname, or use ssl-mode=VERIFY_CA.',
     );
   }
 

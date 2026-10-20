@@ -1,7 +1,12 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { ConnectorAccount } from '@prisma/client';
-import { TableDiscoveryMode, type ConnectorAccountId, type WorkbookId } from '@spinner/shared-types';
+import {
+  TableDiscoveryMode,
+  type ConnectorAccountId,
+  type DecryptedCredentials,
+  type WorkbookId,
+} from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
@@ -12,7 +17,10 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import type { AuthParser } from '../../connectors/connector';
 import { ConnectorsService } from '../../connectors/connectors.service';
+import { MySqlAuthParser } from '../../connectors/library/mysql/mysql-auth-parser';
+import { MySqlCredentialsInvalidError } from '../../connectors/library/mysql/mysql-credential-errors';
 import { ConnectorAccountService } from '../connector-account.service';
 
 const WORKBOOK_ID = 'wkb_test' as WorkbookId;
@@ -62,6 +70,7 @@ describe('ConnectorAccountService', () => {
         connectorAccount: {
           findUnique: jest.fn(),
           findFirst: jest.fn(),
+          update: jest.fn(),
           delete: jest.fn().mockResolvedValue({}),
         },
         dataFolder: {
@@ -107,6 +116,7 @@ describe('ConnectorAccountService', () => {
 
     posthogService = {
       trackRemoveDataSource: jest.fn(),
+      trackUpdateDataSource: jest.fn(),
     } as unknown as jest.Mocked<PostHogService>;
 
     auditLogService = {
@@ -115,6 +125,7 @@ describe('ConnectorAccountService', () => {
 
     credentialEncryptionService = {
       decryptCredentials: jest.fn().mockResolvedValue({}),
+      encryptCredentials: jest.fn().mockResolvedValue({}),
     } as unknown as jest.Mocked<CredentialEncryptionService>;
 
     workbookEventService = {
@@ -123,6 +134,7 @@ describe('ConnectorAccountService', () => {
 
     connectorsService = {
       getConnector: jest.fn(),
+      getAuthParser: jest.fn(),
     } as unknown as jest.Mocked<ConnectorsService>;
     const oauthService = {} as jest.Mocked<OAuthService>;
 
@@ -254,6 +266,110 @@ describe('ConnectorAccountService', () => {
         eventType: 'delete',
         message: 'Deleted connection Test Connection',
         entityId: ACCOUNT_ID,
+      });
+    });
+  });
+
+  describe('update', () => {
+    const STORED_MYSQL_CREDENTIALS: DecryptedCredentials = {
+      databaseHost: 'old.example.com',
+      databasePort: '3306',
+      databaseName: 'old_db',
+      username: 'old_user',
+      password: 'old-secret',
+      sslMode: 'VERIFY_CA',
+    };
+
+    function mockStoredAccount(service: string, storedCredentials: DecryptedCredentials): void {
+      const account = createMockAccount({ service } as Partial<ConnectorAccount>);
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
+      (dbService.client.connectorAccount.update as jest.Mock).mockResolvedValue(account);
+      (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({ organizationId: 'org_test' });
+      // The first decrypt reads the stored credentials; the one after the write builds the response.
+      credentialEncryptionService.decryptCredentials.mockResolvedValueOnce({ ...storedCredentials });
+    }
+
+    function credentialsPassedToEncryption(): unknown {
+      return credentialEncryptionService.encryptCredentials.mock.calls[0][0];
+    }
+
+    beforeEach(() => {
+      connectorsService.getAuthParser.mockImplementation(({ service: requestedService }) =>
+        requestedService === 'MYSQL' ? new MySqlAuthParser() : undefined,
+      );
+    });
+
+    it('MySQL: a connection string replaces the stored host, port, database, username and password, and is never stored', async () => {
+      mockStoredAccount('MYSQL', STORED_MYSQL_CREDENTIALS);
+
+      await service.update(
+        WORKBOOK_ID,
+        ACCOUNT_ID,
+        { userProvidedParams: { connectionString: 'mysql://new_user:new-secret@new.example.com:3307/new_db' } },
+        ACTOR,
+      );
+
+      expect(credentialsPassedToEncryption()).toEqual({
+        databaseHost: 'new.example.com',
+        databasePort: '3307',
+        databaseName: 'new_db',
+        username: 'new_user',
+        password: 'new-secret',
+        // Inherited: the connection string has no SSL option.
+        sslMode: 'VERIFY_CA',
+      });
+    });
+
+    it('MySQL: a password-only edit keeps every other stored setting', async () => {
+      mockStoredAccount('MYSQL', STORED_MYSQL_CREDENTIALS);
+
+      await service.update(WORKBOOK_ID, ACCOUNT_ID, { userProvidedParams: { password: 'rotated-secret' } }, ACTOR);
+
+      expect(credentialsPassedToEncryption()).toEqual({ ...STORED_MYSQL_CREDENTIALS, password: 'rotated-secret' });
+    });
+
+    it('MySQL: an edit purges a connection string left in the stored credentials', async () => {
+      mockStoredAccount('MYSQL', {
+        ...STORED_MYSQL_CREDENTIALS,
+        connectionString: 'mysql://old_user:old-secret@old.example.com:3306/old_db',
+      });
+
+      await service.update(WORKBOOK_ID, ACCOUNT_ID, { userProvidedParams: { password: 'rotated-secret' } }, ACTOR);
+
+      expect(credentialsPassedToEncryption()).toEqual({ ...STORED_MYSQL_CREDENTIALS, password: 'rotated-secret' });
+    });
+
+    it('MySQL: a rejected edit throws before anything is written', async () => {
+      mockStoredAccount('MYSQL', STORED_MYSQL_CREDENTIALS);
+
+      await expect(
+        service.update(
+          WORKBOOK_ID,
+          ACCOUNT_ID,
+          { userProvidedParams: { connectionString: 'postgres://user:secret@db.example.com:5432/app' } },
+          ACTOR,
+        ),
+      ).rejects.toThrow(MySqlCredentialsInvalidError);
+      expect(credentialEncryptionService.encryptCredentials).not.toHaveBeenCalled();
+      expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
+    });
+
+    it('a parser that does not handle edits is skipped, and the edit is merged into the stored credentials', async () => {
+      const parserThatOnlyHandlesCreate = {
+        service: 'WORDPRESS',
+        parsesCredentialEditsAgainstStoredCredentials: false,
+        parseUserProvidedParams: jest.fn(),
+      } as unknown as AuthParser;
+      connectorsService.getAuthParser.mockReturnValue(parserThatOnlyHandlesCreate);
+      mockStoredAccount('WORDPRESS', { username: 'editor', password: 'old-app-password', endpoint: 'https://a.test' });
+
+      await service.update(WORKBOOK_ID, ACCOUNT_ID, { userProvidedParams: { password: 'new-app-password' } }, ACTOR);
+
+      expect(parserThatOnlyHandlesCreate.parseUserProvidedParams).not.toHaveBeenCalled();
+      expect(credentialsPassedToEncryption()).toEqual({
+        username: 'editor',
+        password: 'new-app-password',
+        endpoint: 'https://a.test',
       });
     });
   });

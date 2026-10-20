@@ -121,7 +121,7 @@ export function resolveEffectiveMySqlSslMode(params: ResolveEffectiveMySqlSslMod
       if (chosenSslMode === 'DISABLED') {
         throw new MySqlCredentialsInvalidError(
           MySqlCredentialProblem.CaCertificateRequiresVerifyingSslMode,
-          'The connection string turns SSL off, but a CA certificate was provided. Remove the SSL option from the connection string (or set SSL Mode to VERIFY_CA), or remove the CA certificate.',
+          'The connection string turns SSL off, but a CA certificate was provided. Remove the SSL option from the connection string (or change it to ssl-mode=VERIFY_CA), or remove the CA certificate.',
         );
       }
       return 'VERIFY_CA';

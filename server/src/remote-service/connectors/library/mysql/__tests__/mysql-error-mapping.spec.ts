@@ -232,7 +232,8 @@ const CONNECT_PHASE_SERVER_ERROR_ROWS: MappingTableRow[] = [
   {
     label: '1045 wrong password, SSL Mode REQUIRED',
     error: accessDeniedStyleServerError(1045, 'ER_ACCESS_DENIED_ERROR', ACCESS_DENIED_SQL_MESSAGE),
-    expectedUserFriendlyMessage: 'MySQL rejected the username or password. Check both fields and try again.',
+    expectedUserFriendlyMessage:
+      'MySQL rejected the username or password. Check both in the connection string and try again.',
     expectedCategory: 'credentials',
   },
   {
@@ -240,7 +241,7 @@ const CONNECT_PHASE_SERVER_ERROR_ROWS: MappingTableRow[] = [
     error: accessDeniedStyleServerError(1045, 'ER_ACCESS_DENIED_ERROR', ACCESS_DENIED_SQL_MESSAGE),
     contextOverrides: { sslMode: 'DISABLED' },
     expectedUserFriendlyMessage:
-      'MySQL rejected the username or password. Check both fields and try again. If this user must connect over TLS, set SSL Mode to REQUIRED.',
+      'MySQL rejected the username or password. Check both in the connection string and try again. If this user must connect over TLS, use ssl-mode=REQUIRED in the connection string.',
     expectedCategory: 'credentials',
   },
   {
@@ -276,7 +277,7 @@ const CONNECT_PHASE_SERVER_ERROR_ROWS: MappingTableRow[] = [
       sqlMessage: "Unknown database 'test_db'",
     }),
     expectedUserFriendlyMessage:
-      'The database "test_db" doesn\'t exist on this MySQL server. Check the Database field (names are case-sensitive on most servers).',
+      'The database "test_db" doesn\'t exist on this MySQL server. Check the database name in the connection string (names are case-sensitive on most servers).',
     expectedCategory: 'credentials',
   },
   {
@@ -384,7 +385,7 @@ const NETWORK_AND_PROTOCOL_ROWS: MappingTableRow[] = [
     error: Object.assign(makeNodeNetworkError('ENOTFOUND', 'getaddrinfo'), { hostname: 'no-such-host.invalid' }),
     contextOverrides: { host: 'no-such-host.invalid' },
     expectedUserFriendlyMessage:
-      'Couldn\'t find a server named "no-such-host.invalid". Check the Host field for typos.',
+      'Couldn\'t find a server named "no-such-host.invalid". Check the connection string\'s host for typos.',
     expectedCategory: 'network',
   },
   {
@@ -449,7 +450,7 @@ const TLS_AND_AUTH_PLUGIN_ROWS: MappingTableRow[] = [
     error: makeMySql2CodedError('HANDSHAKE_SSL_ERROR', 'self-signed certificate in certificate chain'),
     contextOverrides: { sslMode: 'VERIFY_CA' },
     expectedUserFriendlyMessage:
-      "Scratch couldn't verify the TLS certificate of the MySQL server at db.example.com:3306 (SSL Mode VERIFY_CA). Make sure the CA Certificate field holds your provider's CA certificate, or use SSL Mode REQUIRED to encrypt the connection without verifying the certificate.",
+      "Scratch couldn't verify the TLS certificate of the MySQL server at db.example.com:3306 (SSL mode VERIFY_CA). Make sure the CA certificate field holds your provider's CA certificate, or, to encrypt the connection without verifying the certificate, remove the CA certificate and add ?ssl-mode=REQUIRED to the connection string.",
     expectedCategory: 'tls',
   },
   {
@@ -467,7 +468,7 @@ const TLS_AND_AUTH_PLUGIN_ROWS: MappingTableRow[] = [
     error: makeTlsHostnameMismatchError(),
     contextOverrides: { sslMode: 'VERIFY_IDENTITY' },
     expectedUserFriendlyMessage:
-      'The MySQL server\'s TLS certificate isn\'t issued for "db.example.com" (SSL Mode VERIFY_IDENTITY). Connect with the hostname on the certificate, or use SSL Mode VERIFY_CA.',
+      'The MySQL server\'s TLS certificate isn\'t issued for "db.example.com" (SSL mode VERIFY_IDENTITY). Put the hostname on the certificate in the connection string, or use ssl-mode=VERIFY_CA.',
     expectedCategory: 'tls',
   },
   {

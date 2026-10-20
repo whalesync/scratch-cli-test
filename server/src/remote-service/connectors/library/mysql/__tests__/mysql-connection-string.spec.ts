@@ -128,7 +128,7 @@ describe('parseMySqlConnectionString', () => {
         connectionString,
         MySqlCredentialProblem.ConnectionStringGoDsnNotSupported,
       );
-      expect(credentialsInvalidError.message).toContain('Fill in Host, Port, Database, Username and Password instead');
+      expect(credentialsInvalidError.message).toContain('Use a URL-style connection string instead');
     });
 
     it.each([

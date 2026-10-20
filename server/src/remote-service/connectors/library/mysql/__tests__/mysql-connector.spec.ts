@@ -410,29 +410,26 @@ describe('MysqlConnector metadata', () => {
     });
   });
 
-  it('asks for exactly the credential keys the MySQL parser accepts, none of them required', () => {
+  it('asks for a required connection string first, then an optional CA certificate, both masked', () => {
     const credentialFields = MysqlConnector.metadata.credentialFields?.user_provided_params ?? [];
 
     expect(credentialFields.map((credentialField) => credentialField.key)).toEqual([
-      'databaseHost',
-      'databasePort',
-      'databaseName',
-      'username',
-      'password',
-      'sslMode',
-      'sslCaCertificate',
       'connectionString',
+      'sslCaCertificate',
     ]);
-    expect(new Set(credentialFields.map((credentialField) => credentialField.key))).toEqual(
-      new Set(MYSQL_CREDENTIAL_INPUT_KEYS),
-    );
-    // Host OR a connection string: no single field is mandatory.
-    expect(credentialFields.filter((credentialField) => credentialField.required)).toEqual([]);
+    // Every form key is one the parser accepts (it also accepts the discrete settings, from the CLI and the API).
+    for (const credentialField of credentialFields) {
+      expect(MYSQL_CREDENTIAL_INPUT_KEYS).toContain(credentialField.key);
+    }
+    const requiredFieldKeys = credentialFields
+      .filter((credentialField) => credentialField.required)
+      .map((credentialField) => credentialField.key);
+    expect(requiredFieldKeys).toEqual(['connectionString']);
     // Secrets are masked in the form.
     const secretFieldKeys = credentialFields
       .filter((credentialField) => credentialField.type === 'password')
       .map((credentialField) => credentialField.key);
-    expect(secretFieldKeys).toEqual(['password', 'sslCaCertificate', 'connectionString']);
+    expect(secretFieldKeys).toEqual(['connectionString', 'sslCaCertificate']);
   });
 
   it('offers a modifiedAtField picker limited to TIMESTAMP (date-time) and DATETIME (date-time-local) columns', () => {

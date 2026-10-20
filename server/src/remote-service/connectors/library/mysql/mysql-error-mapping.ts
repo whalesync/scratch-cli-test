@@ -153,11 +153,11 @@ export function buildMySqlHostUnreachableMessage(hostAndPortForDisplay: string):
 }
 
 export function buildMySqlConnectionRefusedMessage(hostAndPortForDisplay: string): string {
-  return `Nothing accepted the connection at ${hostAndPortForDisplay}. Check the Host and Port, and that the MySQL server is running and accepts connections from the internet.`;
+  return `Nothing accepted the connection at ${hostAndPortForDisplay}. Check the host and port in the connection string, and that the MySQL server is running and accepts connections from the internet.`;
 }
 
 export function buildMySqlHostNotFoundMessage(hostForDisplay: string): string {
-  return `Couldn't find a server named "${hostForDisplay}". Check the Host field for typos.`;
+  return `Couldn't find a server named "${hostForDisplay}". Check the connection string's host for typos.`;
 }
 
 export function buildMySqlHostLookupTemporarilyFailedMessage(hostForDisplay: string): string {
@@ -165,7 +165,7 @@ export function buildMySqlHostLookupTemporarilyFailedMessage(hostForDisplay: str
 }
 
 export function buildMySqlConnectionClosedUnexpectedlyMessage(hostAndPortForDisplay: string): string {
-  return `The MySQL server at ${hostAndPortForDisplay} closed the connection unexpectedly. Try again; if it keeps happening, check the SSL Mode and the server's connection limits.`;
+  return `The MySQL server at ${hostAndPortForDisplay} closed the connection unexpectedly. Try again; if it keeps happening, check the connection string's ssl-mode and the server's connection limits.`;
 }
 
 export function buildMySqlServerStoppedRespondingMessage(hostAndPortForDisplay: string): string {
@@ -173,7 +173,7 @@ export function buildMySqlServerStoppedRespondingMessage(hostAndPortForDisplay: 
 }
 
 export function buildMySqlUnexpectedProtocolResponseMessage(hostAndPortForDisplay: string): string {
-  return `The server at ${hostAndPortForDisplay} didn't respond like a MySQL server. Check the Port (MySQL usually listens on 3306) and the SSL Mode.`;
+  return `The server at ${hostAndPortForDisplay} didn't respond like a MySQL server. Check the port in the connection string (MySQL usually listens on 3306) and its ssl-mode.`;
 }
 
 // TLS.
@@ -181,32 +181,34 @@ export function buildMySqlTlsCertificateVerificationFailedMessage(
   hostAndPortForDisplay: string,
   sslMode: MySqlSslMode,
 ): string {
-  return `Scratch couldn't verify the TLS certificate of the MySQL server at ${hostAndPortForDisplay} (SSL Mode ${sslMode}). Make sure the CA Certificate field holds your provider's CA certificate, or use SSL Mode REQUIRED to encrypt the connection without verifying the certificate.`;
+  return `Scratch couldn't verify the TLS certificate of the MySQL server at ${hostAndPortForDisplay} (SSL mode ${sslMode}). Make sure the CA certificate field holds your provider's CA certificate, or, to encrypt the connection without verifying the certificate, remove the CA certificate and add ?ssl-mode=REQUIRED to the connection string.`;
 }
 
 export function buildMySqlTlsCertificateHostnameMismatchMessage(hostForDisplay: string): string {
   if (isIP(hostForDisplay) !== 0) {
-    return `The MySQL server's TLS certificate doesn't match "${hostForDisplay}" (SSL Mode VERIFY_IDENTITY). VERIFY_IDENTITY checks the certificate against a hostname, so connect with the hostname on the certificate instead of an IP address, or use SSL Mode VERIFY_CA.`;
+    return `The MySQL server's TLS certificate doesn't match "${hostForDisplay}" (SSL mode VERIFY_IDENTITY). VERIFY_IDENTITY checks the certificate against a hostname, so put the hostname on the certificate in the connection string instead of an IP address, or use ssl-mode=VERIFY_CA.`;
   }
-  return `The MySQL server's TLS certificate isn't issued for "${hostForDisplay}" (SSL Mode VERIFY_IDENTITY). Connect with the hostname on the certificate, or use SSL Mode VERIFY_CA.`;
+  return `The MySQL server's TLS certificate isn't issued for "${hostForDisplay}" (SSL mode VERIFY_IDENTITY). Put the hostname on the certificate in the connection string, or use ssl-mode=VERIFY_CA.`;
 }
 
 export function buildMySqlTlsHandshakeFailedMessage(hostAndPortForDisplay: string, sslMode: MySqlSslMode): string {
-  return `The TLS handshake with the MySQL server at ${hostAndPortForDisplay} failed (SSL Mode ${sslMode}). Make sure the server supports TLS 1.2 or newer, then try again.`;
+  return `The TLS handshake with the MySQL server at ${hostAndPortForDisplay} failed (SSL mode ${sslMode}). Make sure the server supports TLS 1.2 or newer, then try again.`;
 }
 
 export function buildMySqlServerWithoutTlsSupportMessage(hostAndPortForDisplay: string): string {
-  return `The MySQL server at ${hostAndPortForDisplay} doesn't support encrypted (TLS) connections. Enable TLS on the server, or, only if you accept sending data unencrypted, set SSL Mode to DISABLED.`;
+  return `The MySQL server at ${hostAndPortForDisplay} doesn't support encrypted (TLS) connections. Enable TLS on the server, or, only if you accept sending data unencrypted, add ?ssl-mode=DISABLED to the connection string.`;
 }
 
 export const MYSQL_ENCRYPTED_CONNECTION_REQUIRED_MESSAGE =
-  'The MySQL server only accepts encrypted connections. Set SSL Mode to REQUIRED, VERIFY_CA or VERIFY_IDENTITY.';
+  'The MySQL server only accepts encrypted connections. Remove the option that turns SSL off (such as ssl-mode=DISABLED) from the connection string; Scratch encrypts connections by default.';
 
 // Authentication and account state.
 export function buildMySqlAccessDeniedMessage(sslMode: MySqlSslMode): string {
   const encryptedConnectionHint =
-    sslMode === 'DISABLED' ? ' If this user must connect over TLS, set SSL Mode to REQUIRED.' : '';
-  return `MySQL rejected the username or password. Check both fields and try again.${encryptedConnectionHint}`;
+    sslMode === 'DISABLED'
+      ? ' If this user must connect over TLS, use ssl-mode=REQUIRED in the connection string.'
+      : '';
+  return `MySQL rejected the username or password. Check both in the connection string and try again.${encryptedConnectionHint}`;
 }
 
 export function buildMySqlHostNotPrivilegedMessage(hostAndPortForDisplay: string): string {
@@ -233,7 +235,7 @@ export function buildMySqlDatabaseAccessDeniedMessage(databaseName: string | und
   if (databaseNameForDisplay === undefined) {
     return "This MySQL user can't access that database. Grant it access, or connect with a user that has access.";
   }
-  return `This MySQL user can't access the database "${databaseNameForDisplay}". Check the Database field (names are case-sensitive on most servers) and grant the user access to that database, or leave Database blank to see the databases it can use.`;
+  return `This MySQL user can't access the database "${databaseNameForDisplay}". Check the database name in the connection string (names are case-sensitive on most servers) and grant the user access to that database, or leave the database out of the connection string to see the databases it can use.`;
 }
 
 export function buildMySqlUnknownDatabaseMessage(databaseName: string | undefined): string {
@@ -241,7 +243,7 @@ export function buildMySqlUnknownDatabaseMessage(databaseName: string | undefine
   if (databaseNameForDisplay === undefined) {
     return "That database doesn't exist on this MySQL server.";
   }
-  return `The database "${databaseNameForDisplay}" doesn't exist on this MySQL server. Check the Database field (names are case-sensitive on most servers).`;
+  return `The database "${databaseNameForDisplay}" doesn't exist on this MySQL server. Check the database name in the connection string (names are case-sensitive on most servers).`;
 }
 
 // Connection limits.

@@ -40,7 +40,7 @@ import { DbService } from '../../db/db.service';
 import { PostHogService } from '../../posthog/posthog.service';
 import { EncryptedData } from '../../utils/encryption';
 import { WorkbookEventService } from '../../workbook/workbook-event.service';
-import { Connector } from '../connectors/connector';
+import { AuthParser, Connector } from '../connectors/connector';
 import { ConnectorsService } from '../connectors/connectors.service';
 import {
   getConnectorCurrentVersion,
@@ -445,14 +445,19 @@ export class ConnectorAccountService {
 
     await this.assertGenericConnectorEnabled(currentAccount.service, actor);
 
-    const decryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
+    const storedDecryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
       currentAccount.encryptedCredentials as unknown as EncryptedData,
     );
 
-    // Update credentials if provided (userProvidedParams are always string key-value pairs)
-    if (updateDto.userProvidedParams) {
-      Object.assign(decryptedCredentials, updateDto.userProvidedParams);
-    }
+    // Update credentials if provided: parsed against the stored ones when the service's AuthParser handles edits
+    // (e.g. MySQL decomposing a pasted connection string), otherwise merged in as sent.
+    const decryptedCredentials = updateDto.userProvidedParams
+      ? await this.resolveCredentialsToStoreAfterEdit(
+          storedDecryptedCredentials,
+          updateDto.userProvidedParams,
+          currentAccount.service,
+        )
+      : storedDecryptedCredentials;
 
     // For Shopify, store the shop domain in extras (not encrypted) so it can be queried directly
     let extras = updateDto.extras;
@@ -1179,8 +1184,42 @@ export class ConnectorAccountService {
     if (!authParser) {
       return { credentials: userProvidedParams, extras: {} };
     }
+    return this.runAuthParserWithUserFriendlyErrors(authParser, { userProvidedParams }, service);
+  }
+
+  /**
+   * The credentials to store after an edit. A parser that handles edits gets the stored credentials and returns the
+   * complete set, which REPLACES them (a rejected edit throws before anything is written). Every other service
+   * merges the raw params into the stored credentials.
+   */
+  private async resolveCredentialsToStoreAfterEdit(
+    storedCredentials: DecryptedCredentials,
+    userProvidedParamsFromEdit: Partial<DecryptedCredentials>,
+    service: Service,
+  ): Promise<DecryptedCredentials> {
+    const authParser = this.connectorsService.getAuthParser({ service });
+    if (!authParser?.parsesCredentialEditsAgainstStoredCredentials) {
+      return Object.assign(storedCredentials, userProvidedParamsFromEdit);
+    }
+    const { credentials: parsedCredentialsFromEdit } = await this.runAuthParserWithUserFriendlyErrors(
+      authParser,
+      {
+        // The PATCH schema only checks for an object; a parser that handles edits re-checks every value's type.
+        userProvidedParams: userProvidedParamsFromEdit as Record<string, string | undefined>,
+        existingCredentials: storedCredentials,
+      },
+      service,
+    );
+    return parsedCredentialsFromEdit as unknown as DecryptedCredentials;
+  }
+
+  private async runAuthParserWithUserFriendlyErrors(
+    authParser: AuthParser,
+    params: Parameters<AuthParser['parseUserProvidedParams']>[0],
+    service: Service,
+  ): Promise<{ credentials: Record<string, string>; extras: Record<string, string> }> {
     try {
-      const result = await authParser.parseUserProvidedParams({ userProvidedParams });
+      const result = await authParser.parseUserProvidedParams(params);
       return { ...result };
     } catch (error) {
       // If the error is already a UserFriendlyError, re-throw it directly

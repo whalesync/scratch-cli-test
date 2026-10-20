@@ -4,6 +4,7 @@ import {
   CreateFieldResult,
   CreateTableResult,
   DataFolderOptions,
+  DecryptedCredentials,
   IncrementalPullSupport,
   PulledRecordWarning,
   SchemaCreationCapabilities,
@@ -35,12 +36,24 @@ export abstract class AuthParser<T extends string = string> {
   abstract readonly service: T;
 
   /**
+   * Whether this parser also handles EDITS to an existing connection. When true, the service runs it on PATCH with
+   * the stored credentials as `existingCredentials` and stores the returned credentials IN PLACE OF the stored ones
+   * (so the parser must return the complete set). When false, PATCH merges the raw params into the stored
+   * credentials without parsing, since most parsers treat their input as a complete create and would reject a
+   * partial edit.
+   */
+  readonly parsesCredentialEditsAgainstStoredCredentials: boolean = false;
+
+  /**
    * Parse the authentication credentials (apiKey, username, password, endpoint, etc.) for the service.
    * @param userProvidedParams The user provided parameters to parse.
+   * @param existingCredentials The stored credentials, passed only on an edit and only to a parser that sets
+   *   {@link parsesCredentialEditsAgainstStoredCredentials}.
    * @returns The parsed user provided parameters into a set of credentials and extras.
    */
   abstract parseUserProvidedParams(params: {
     userProvidedParams: Record<string, string | undefined>;
+    existingCredentials?: DecryptedCredentials;
   }): Promise<{ credentials: Record<string, string>; extras: Record<string, string> }>;
 }
 

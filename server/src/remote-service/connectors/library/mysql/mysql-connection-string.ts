@@ -47,11 +47,12 @@ export interface ParsedMySqlConnectionString {
   readonly sslModeFromConnectionString: MySqlSslMode | undefined;
 }
 
-const PASTE_THE_FIELDS_INSTEAD = 'Fill in Host, Port, Database, Username and Password instead.';
+const USE_A_URL_CONNECTION_STRING_INSTEAD =
+  'Use a URL-style connection string instead, e.g. mysql://user:password@host:3306/database.';
 const SUPPORTED_CONNECTION_STRING_SCHEMES_DESCRIPTION = 'mysql://, mariadb:// or jdbc:mysql://';
 const UNPARSEABLE_CONNECTION_STRING_MESSAGE =
   "Scratch couldn't read this connection string. If your password has special characters (@ / ? # %), " +
-  'percent-encode them (e.g. @ as %40), or use the Host, Username and Password fields instead.';
+  'percent-encode them (e.g. @ as %40).';
 /** Added when a rejected query parameter may really be a piece of the password that an unencoded `&` split off. */
 const PERCENT_ENCODE_PASSWORD_SPECIAL_CHARACTERS_HINT =
   'If your password contains special characters (& = # % ? / @), percent-encode them (e.g. & as %26).';
@@ -206,13 +207,13 @@ function describeConnectionStringWithoutScheme(trimmedConnectionString: string):
   if (GO_SQL_DRIVER_DSN_PATTERN.test(trimmedConnectionString)) {
     return new MySqlCredentialsInvalidError(
       MySqlCredentialProblem.ConnectionStringGoDsnNotSupported,
-      `Go-style connection strings (user:password@tcp(host:3306)/database) aren't supported. ${PASTE_THE_FIELDS_INSTEAD}`,
+      `Go-style connection strings (user:password@tcp(host:3306)/database) aren't supported. ${USE_A_URL_CONNECTION_STRING_INSTEAD}`,
     );
   }
   if (KEY_VALUE_CONNECTION_STRING_PATTERN.test(trimmedConnectionString)) {
     return new MySqlCredentialsInvalidError(
       MySqlCredentialProblem.ConnectionStringAdoNetNotSupported,
-      `Key=value connection strings (Server=...;Uid=...;) aren't supported. ${PASTE_THE_FIELDS_INSTEAD}`,
+      `Key=value connection strings (Server=...;Uid=...;) aren't supported. ${USE_A_URL_CONNECTION_STRING_INSTEAD}`,
     );
   }
   return new MySqlCredentialsInvalidError(
@@ -360,7 +361,7 @@ function parseHostPortPathAndQuery(text: string): HostPortPathAndQueryParseOutco
   if (/^(tcp6?|unix|udp)\(/i.test(authority)) {
     return failHostPortPathAndQueryParse(
       MySqlCredentialProblem.ConnectionStringGoDsnNotSupported,
-      `Go-style connection strings (user:password@tcp(host:3306)/database) aren't supported. ${PASTE_THE_FIELDS_INSTEAD}`,
+      `Go-style connection strings (user:password@tcp(host:3306)/database) aren't supported. ${USE_A_URL_CONNECTION_STRING_INSTEAD}`,
     );
   }
   if (authority.includes(',')) {
@@ -610,7 +611,7 @@ function parseMySqlConnectionStringQueryParameters(
     throw new MySqlCredentialsInvalidError(
       MySqlCredentialProblem.SslAliasesConflict,
       `The connection string's SSL options (${joinQuotedParameterNamesForMessage(sslModeHints.flatMap((sslModeHint) => sslModeHint.quotedParameterNamesForMessages))}) ` +
-        'ask for different SSL modes. Keep one of them, or remove them and set SSL Mode instead.',
+        'ask for different SSL modes. Keep one of them, or replace them with a single ssl-mode option.',
     );
   }
 
@@ -689,7 +690,7 @@ function throwInvalidSslOptionValue(quotedParameterName: string, guidance?: stri
   throw new MySqlCredentialsInvalidError(
     MySqlCredentialProblem.SslAliasValueInvalid,
     `The connection string's ${quotedParameterName} option has a value Scratch doesn't recognize. ` +
-      (guidance ?? 'Use DISABLED, REQUIRED, VERIFY_CA or VERIFY_IDENTITY, or remove it and set SSL Mode instead.'),
+      (guidance ?? 'Use DISABLED, REQUIRED, VERIFY_CA or VERIFY_IDENTITY, or remove it to use the default.'),
   );
 }
 
@@ -712,7 +713,7 @@ function mapPrismaSslAcceptValue(quotedParameterName: string, parameterValue: st
  * option name from {@link NAMEABLE_REJECTED_SSL_JSON_OPTION_KEYS}, since the JSON is a parameter value).
  */
 function mapMySqlSslOptionValue(quotedParameterName: string, parameterValue: string): MySqlSslMode {
-  const sslOptionGuidance = 'Use ssl=true, or remove it and set SSL Mode instead.';
+  const sslOptionGuidance = 'Use ssl=true, or replace it with an ssl-mode option, e.g. ssl-mode=VERIFY_CA.';
   const trimmedSslOptionValue = parameterValue.trim();
   const lowerCaseSslOptionValue = trimmedSslOptionValue.toLowerCase();
   if (['true', '1', 'required'].includes(lowerCaseSslOptionValue)) return 'REQUIRED';
@@ -807,7 +808,7 @@ function combineConnectorJBooleanSslOptions(
     if (requireSsl === true || verifyServerCertificate === true) {
       throw new MySqlCredentialsInvalidError(
         MySqlCredentialProblem.SslAliasesConflict,
-        'The connection string sets useSSL=false together with requireSSL=true or verifyServerCertificate=true. Keep one, or remove them and set SSL Mode instead.',
+        'The connection string sets useSSL=false together with requireSSL=true or verifyServerCertificate=true. Keep one, or replace them with a single ssl-mode option.',
       );
     }
     return { quotedParameterNamesForMessages, sslMode: 'DISABLED' };
@@ -853,7 +854,7 @@ function resolveMySqlConnectionStringCredentials(
   if (username === '') {
     throw new MySqlCredentialsInvalidError(
       MySqlCredentialProblem.UsernameRequired,
-      'The connection string has no username. Add user:password@ before the host, or fill in the fields instead.',
+      'The connection string has no username. Add user:password@ before the host.',
     );
   }
   const password = passwordFromUserinfo !== '' ? passwordFromUserinfo : passwordFromQuery;

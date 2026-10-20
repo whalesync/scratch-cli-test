@@ -19,17 +19,12 @@ import { runMySqlCredentialParsingWithSafeErrors } from './mysql-credential-erro
  */
 export class MySqlAuthParser extends AuthParser {
   readonly service = Service.MYSQL;
+  /** Edits go through `applyMySqlCredentialPatch`, which returns the complete settings the service then stores. */
+  override readonly parsesCredentialEditsAgainstStoredCredentials = true;
 
   /**
    * Create when `existingCredentials` is undefined; edit (PATCH semantics, see `applyMySqlCredentialPatch`) when
    * the service passes the stored credentials.
-   *
-   * Signature compatibility with `AuthParser.parseUserProvidedParams` (`connector.ts`), whose parameter today is
-   * `{ userProvidedParams: Record<string, string | undefined> }`: this parameter type only ADDS an optional
-   * `existingCredentials`, so it is a supertype of the abstract one — every call the service makes today
-   * (`{ userProvidedParams }`, create only) is valid here, and the override type-checks under both method
-   * bivariance and strict contravariance. The follow-up that runs the parser on PATCH only has to widen the
-   * abstract type with the same optional `existingCredentials` key and pass the stored blob; nothing changes here.
    *
    * At runtime the values aren't guaranteed to be strings (the CLI create DTO only checks `@IsObject()`; the PATCH
    * schema is `z.record(z.string(), z.unknown())`), so the settings are parsed as `unknown` and non-text values are

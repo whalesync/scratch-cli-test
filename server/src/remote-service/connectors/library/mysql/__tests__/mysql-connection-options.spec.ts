@@ -582,7 +582,7 @@ describe('parseStoredMySqlCredentials (connect-time re-validation)', () => {
       { ...otherStoredKeys, connectionString: storedConnectionString },
       MySqlCredentialProblem.StoredConnectionStringNotSupported,
     );
-    expect(credentialsInvalidError.message).toContain('Delete this connection and create it again');
+    expect(credentialsInvalidError.message).toContain('Edit the connection and paste its connection string again');
     expect(credentialsInvalidError.message).not.toContain('evil.example.com');
   });
 
@@ -686,14 +686,15 @@ describe('parseStoredMySqlCredentials (connect-time re-validation)', () => {
   });
 
   it.each([
-    ['databaseHost', 'Host'],
-    ['username', 'Username'],
+    ['databaseHost', 'host'],
+    ['username', 'username'],
   ])('rejects a blob without %s', (missingKey, expectedLabel) => {
     const credentialsInvalidError = expectStoredCredentialsProblem(
       { ...canonicalStoredCredentials, [missingKey]: '' },
       MySqlCredentialProblem.StoredCredentialsMissing,
     );
-    expect(credentialsInvalidError.message).toContain(expectedLabel);
+    expect(credentialsInvalidError.message).toContain(`no saved ${expectedLabel}`);
+    expect(credentialsInvalidError.message).toContain('Edit the connection and paste its connection string again');
   });
 
   it('wraps an unexpected failure (e.g. a throwing getter) as a safe error', () => {
