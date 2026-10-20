@@ -4,11 +4,14 @@ import type { WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import {
   buildAllContactsInCreationOrderSearchBody,
   buildStaggeredPageSizeLadder,
+  describeFailedIntercomRequestForLogs,
+  describeHowLongAConversationsWalkAsksAgainAfterNotFound,
   INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE,
   IntercomApiClient,
   IntercomCompanyPage,
   IntercomContactPage,
   IntercomConversationPage,
+  IntercomConversationsWalkOptions,
   IntercomError,
   IntercomPageBatch,
 } from '../intercom-api-client';
@@ -1008,7 +1011,7 @@ describe('IntercomApiClient', () => {
           requestLog.push(`list ${startingAfter ?? 'first page'}`);
           return startingAfter === undefined
             ? Promise.resolve(listingPage(firstPage, 'cursor_2'))
-            : Promise.reject(intercomErrorResponse(404, {}, 'Not Found'));
+            : Promise.reject(intercomErrorResponse(401, { type: 'error.list', errors: [] }, 'Unauthorized'));
         },
         fetchInFull: async (conversationId) => {
           const fetched = await fetchedInFullAfterMs(conversationId, 5);
@@ -1024,7 +1027,7 @@ describe('IntercomApiClient', () => {
         }
       };
 
-      await expect(walkAllPages()).rejects.toThrow('Not Found');
+      await expect(walkAllPages()).rejects.toThrow('Unauthorized');
       expect(requestLog).toEqual(['list first page', 'list cursor_2', 'fetched 1 in full', 'fetched 2 in full']);
       // Page 1 still reaches the caller (and its cursor is checkpointed) before page 2's listing fails the walk.
       expect(pagesYieldedBeforeTheFailure).toEqual([
@@ -1066,6 +1069,336 @@ describe('IntercomApiClient', () => {
       expect(mockGet).toHaveBeenCalledWith('/conversations', {
         params: { per_page: 150, starting_after: 'resume_cursor' },
       });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // listConversations — a page Intercom answers with 404
+  // ---------------------------------------------------------------------------
+
+  describe('listConversations when Intercom answers 404 for a page', () => {
+    const walkOptionsWithoutWaits: IntercomConversationsWalkOptions = { waitBeforeFirstNotFoundRetryMs: 0 };
+
+    const listedConversation = (id: string) => ({ type: 'conversation', id });
+
+    /** A listing: `page` of `totalPages`, with Intercom's cursor for the next page when there is one. */
+    const listingPage = (
+      conversations: ReturnType<typeof listedConversation>[],
+      { page = 1, totalPages = 9, nextCursor }: { page?: number; totalPages?: number; nextCursor?: string } = {},
+    ) => ({
+      data: {
+        type: 'conversation.list',
+        conversations,
+        total_count: totalPages * 2,
+        pages: {
+          type: 'pages',
+          page,
+          per_page: 2,
+          total_pages: totalPages,
+          ...(nextCursor ? { next: { page: page + 1, starting_after: nextCursor } } : {}),
+        },
+      },
+    });
+
+    const answerWith = (listing: unknown) => () => Promise.resolve(listing);
+    // The body of the prod 404 wasn't Intercom's `error.list`.
+    const answerNotFound = () => Promise.reject(intercomErrorResponse(404, '<html>Not Found</html>', 'Not Found'));
+
+    /**
+     * Answers each `GET /conversations` from the script for its `starting_after` (`top` for the first page), one
+     * answer per listing with the last one repeating, and records every listing's cursor. A conversation fetched in
+     * full is answered by `fetchInFull`, by default with the conversation and its parts.
+     */
+    function scriptIntercomListings(
+      answersByCursor: Record<string, (() => Promise<unknown>)[]>,
+      fetchInFull: (conversationId: string) => Promise<unknown> = (conversationId) =>
+        Promise.resolve({ data: withConversationParts(listedConversation(conversationId)) }),
+    ) {
+      const cursorsListed: string[] = [];
+      const conversationIdsFetchedInFull: string[] = [];
+      const answersGivenByCursor: Record<string, number> = {};
+      mockGet.mockImplementation((url: string, config?: { params?: { starting_after?: string } }) => {
+        if (url !== '/conversations') {
+          const conversationId = url.slice('/conversations/'.length);
+          conversationIdsFetchedInFull.push(conversationId);
+          return fetchInFull(conversationId);
+        }
+        const cursor = config?.params?.starting_after ?? 'top';
+        cursorsListed.push(cursor);
+        const answersForCursor = answersByCursor[cursor];
+        if (!answersForCursor) return Promise.reject(new Error(`unexpected listing after ${cursor}`));
+        const answerIndex = Math.min(answersGivenByCursor[cursor] ?? 0, answersForCursor.length - 1);
+        answersGivenByCursor[cursor] = answerIndex + 1;
+        return answersForCursor[answerIndex]();
+      });
+      return { cursorsListed, conversationIdsFetchedInFull };
+    }
+
+    const collectPages = async (walk: AsyncGenerator<IntercomConversationPage, void>) => {
+      const pages: IntercomConversationPage[] = [];
+      for await (const page of walk) {
+        pages.push(page);
+      }
+      return pages;
+    };
+
+    const walkUntilItFails = async (walk: AsyncGenerator<IntercomConversationPage, void>) => {
+      const pagesYieldedBeforeTheFailure: IntercomConversationPage[] = [];
+      try {
+        for await (const page of walk) {
+          pagesYieldedBeforeTheFailure.push(page);
+        }
+      } catch (error) {
+        return { pagesYieldedBeforeTheFailure, walkError: error };
+      }
+      throw new Error('expected the walk to fail');
+    };
+
+    const conversationIdsByPage = (pages: IntercomConversationPage[]) =>
+      pages.map((page) => page.items.map((conversation) => conversation.id));
+
+    let warnSpy: jest.SpyInstance;
+    let infoSpy: jest.SpyInstance;
+    beforeEach(() => {
+      warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+      infoSpy = jest.spyOn(WSLogger, 'info').mockImplementation(() => undefined);
+    });
+    afterEach(() => {
+      warnSpy.mockRestore();
+      infoSpy.mockRestore();
+    });
+
+    it('lists the page again from the same cursor, and goes on once Intercom recovers', async () => {
+      const { cursorsListed } = scriptIntercomListings({
+        top: [answerWith(listingPage([listedConversation('1'), listedConversation('2')], { nextCursor: 'cursor_2' }))],
+        cursor_2: [
+          answerNotFound,
+          answerNotFound,
+          answerWith(listingPage([listedConversation('3')], { page: 2, totalPages: 2 })),
+        ],
+      });
+
+      const pages = await collectPages(client.listConversations(150, true, undefined, walkOptionsWithoutWaits));
+
+      expect(cursorsListed).toEqual(['top', 'cursor_2', 'cursor_2', 'cursor_2']);
+      expect(conversationIdsByPage(pages)).toEqual([['1', '2'], ['3']]);
+    });
+
+    it('waits twice as long before each retry, up to the cap, and logs the request without the access token', async () => {
+      const notFoundWithTheRequestBehindIt = new axios.AxiosError(
+        'Request failed with status code 404',
+        'ERR_BAD_REQUEST',
+        {
+          method: 'get',
+          baseURL: 'https://api.intercom.io',
+          url: '/conversations',
+          params: { per_page: 150, starting_after: 'cursor_2' },
+          headers: new axios.AxiosHeaders({ Authorization: 'Bearer test-access-token' }),
+        },
+        undefined,
+        {
+          status: 404,
+          statusText: 'Not Found',
+          data: '<html>Not Found</html>',
+          headers: { 'x-request-id': 'req_0001', 'x-runtime': '0.021208', 'set-cookie': ['session=abc'] },
+          config: {} as never,
+        },
+      );
+      const answerNotFoundWithTheRequestBehindIt = () => Promise.reject(notFoundWithTheRequestBehindIt);
+      scriptIntercomListings({
+        top: [answerWith(listingPage([listedConversation('1')], { nextCursor: 'cursor_2' }))],
+        cursor_2: [
+          ...Array.from({ length: 5 }, () => answerNotFoundWithTheRequestBehindIt),
+          answerWith(listingPage([listedConversation('2')], { page: 2, totalPages: 2 })),
+        ],
+      });
+
+      await collectPages(
+        client.listConversations(150, true, undefined, {
+          notFoundRetriesPerListing: 5,
+          waitBeforeFirstNotFoundRetryMs: 1,
+          maxWaitBeforeNotFoundRetryMs: 4,
+        }),
+      );
+
+      const retryLogs = warnSpy.mock.calls
+        .map(([logged]: [Record<string, unknown>]) => logged)
+        .filter((logged) => logged.message === 'Intercom answered 404 for a page of conversations — listing it again');
+      expect(retryLogs.map((logged) => logged.waitBeforeThisRetryMs)).toEqual([1, 2, 4, 4, 4]);
+      expect(retryLogs[0]).toMatchObject({
+        startingAfter: 'cursor_2',
+        listingAttempt: 1,
+        listingAttemptsAllowed: 6,
+        method: 'GET',
+        url: 'https://api.intercom.io/conversations?per_page=150&starting_after=cursor_2',
+        status: 404,
+        intercomRequestId: 'req_0001',
+        // Which layer answered: Intercom's app adds headers like x-runtime. Cookies are left out.
+        responseHeaders: { 'x-request-id': 'req_0001', 'x-runtime': '0.021208' },
+        responseBody: '<html>Not Found</html>',
+      });
+      expect(typeof retryLogs[0].failedListingDurationMs).toBe('number');
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('test-access-token');
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('session=abc');
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Intercom listed the page of conversations after answering 404 — the walk goes on',
+          startingAfter: 'cursor_2',
+          notFoundRetriesUsed: 5,
+        }),
+      );
+    });
+
+    it('keeps asking for about 4 minutes by default', () => {
+      // 2 + 4 + 8 + 16 + 32 + 64 + 120 s.
+      expect(describeHowLongAConversationsWalkAsksAgainAfterNotFound()).toBe('about 4 minute(s)');
+      expect(
+        describeHowLongAConversationsWalkAsksAgainAfterNotFound({
+          notFoundRetriesPerListing: 2,
+          waitBeforeFirstNotFoundRetryMs: 1_000,
+        }),
+      ).toBe('3 s');
+    });
+
+    it('drops a conversation whose own fetch answers 404, without asking Intercom again', async () => {
+      const { conversationIdsFetchedInFull } = scriptIntercomListings(
+        { top: [answerWith(listingPage([listedConversation('1'), listedConversation('2')], { totalPages: 1 }))] },
+        (conversationId) =>
+          conversationId === '2'
+            ? answerNotFound()
+            : Promise.resolve({ data: withConversationParts(listedConversation(conversationId)) }),
+      );
+
+      const pages = await collectPages(client.listConversations(150, true, undefined, walkOptionsWithoutWaits));
+
+      expect(conversationIdsByPage(pages)).toEqual([['1']]);
+      expect(conversationIdsFetchedInFull.filter((conversationId) => conversationId === '2')).toHaveLength(1);
+    });
+
+    it('fails with an explanation once the 404 outlasts every retry partway through the list', async () => {
+      const { cursorsListed } = scriptIntercomListings({
+        top: [answerWith(listingPage([listedConversation('1')], { nextCursor: 'cursor_2' }))],
+        cursor_2: [answerNotFound],
+      });
+
+      const { pagesYieldedBeforeTheFailure, walkError } = await walkUntilItFails(
+        client.listConversations(150, true, undefined, { waitBeforeFirstNotFoundRetryMs: 0 }),
+      );
+
+      // Listed once, then again for each of the 7 retries.
+      expect(cursorsListed).toEqual(['top', ...Array.from({ length: 8 }, () => 'cursor_2')]);
+      expect(conversationIdsByPage(pagesYieldedBeforeTheFailure)).toEqual([['1']]);
+      if (!(walkError instanceof IntercomError)) throw new Error(`expected an IntercomError, got ${String(walkError)}`);
+      expect(walkError.statusCode).toBe(404);
+      expect(walkError.message).toBe(
+        'Intercom stopped returning conversations partway through the list: it kept answering "404 Not Found" for the ' +
+          'next page after page 1 of 9 for 0 s. The pull was stopped before any conversations could be wrongly ' +
+          'deleted; the next pull starts again from the beginning.',
+      );
+      // The 404 itself is the cause, so the logs can describe its request.
+      expect(axios.isAxiosError(walkError.cause) && walkError.cause.response?.status).toBe(404);
+      // Every 404 is logged, the last one too.
+      expect(warnSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          message: 'Intercom answered 404 for a page of conversations — no retries left',
+          listingAttempt: 8,
+          listingAttemptsAllowed: 8,
+        }),
+      );
+    });
+
+    it('fails a resumed walk whose first listing keeps answering 404', async () => {
+      scriptIntercomListings({ cursor_9: [answerNotFound] });
+
+      const { pagesYieldedBeforeTheFailure, walkError } = await walkUntilItFails(
+        client.listConversations(150, true, 'cursor_9', walkOptionsWithoutWaits),
+      );
+
+      expect(pagesYieldedBeforeTheFailure).toEqual([]);
+      expect(walkError).toBeInstanceOf(IntercomError);
+      expect(String(walkError)).toContain('it kept answering "404 Not Found" for the next page for 0 s.');
+    });
+
+    it("ends the walk normally when only the listing after Intercom's last page keeps answering 404", async () => {
+      // Intercom hands out a cursor on its last page too; the listing after it normally comes back empty.
+      scriptIntercomListings({
+        top: [answerWith(listingPage([listedConversation('1')], { totalPages: 2, nextCursor: 'cursor_2' }))],
+        cursor_2: [
+          answerWith(listingPage([listedConversation('2')], { page: 2, totalPages: 2, nextCursor: 'cursor_3' })),
+        ],
+        cursor_3: [answerNotFound],
+      });
+
+      const pages = await collectPages(client.listConversations(150, false, undefined, walkOptionsWithoutWaits));
+
+      expect(conversationIdsByPage(pages)).toEqual([['1'], ['2']]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            'Intercom kept answering 404 for the page after its last page of conversations — ending the walk there',
+          latestPage: 2,
+          totalPages: 2,
+        }),
+      );
+    });
+
+    it('still fails on any other error without asking again', async () => {
+      const { cursorsListed } = scriptIntercomListings({
+        top: [answerWith(listingPage([listedConversation('1')], { nextCursor: 'cursor_2' }))],
+        cursor_2: [
+          () => Promise.reject(intercomErrorResponse(401, { type: 'error.list', errors: [] }, 'Unauthorized')),
+        ],
+      });
+
+      const { walkError } = await walkUntilItFails(
+        client.listConversations(150, false, undefined, walkOptionsWithoutWaits),
+      );
+
+      expect(cursorsListed).toEqual(['top', 'cursor_2']);
+      expect(walkError).toMatchObject({ response: { status: 401 } });
+    });
+
+    it('lists a search page again when Intercom answers 404', async () => {
+      const searchQuery = { field: 'updated_at' as const, operator: '>' as const, value: 1_700_000_000 };
+      mockPost
+        .mockResolvedValueOnce(listingPage([listedConversation('1')], { nextCursor: 'cursor_2' }))
+        .mockRejectedValueOnce(intercomErrorResponse(404, '', 'Not Found'))
+        .mockResolvedValueOnce(listingPage([listedConversation('2')], { page: 2, totalPages: 2 }));
+
+      const pages = await collectPages(
+        client.searchConversationsUpdatedSince(searchQuery, 150, false, undefined, walkOptionsWithoutWaits),
+      );
+
+      expect(conversationIdsByPage(pages)).toEqual([['1'], ['2']]);
+      expect(mockPost).toHaveBeenCalledTimes(3);
+      expect(mockPost).toHaveBeenLastCalledWith('/conversations/search', {
+        query: searchQuery,
+        sort: { field: 'updated_at', order: 'ascending' },
+        pagination: { per_page: 150, starting_after: 'cursor_2' },
+      });
+    });
+  });
+
+  describe('describeFailedIntercomRequestForLogs', () => {
+    it("falls back to the request id in Intercom's error body, and logs at most 2,000 characters of it", () => {
+      const longIntercomMessage = 'x'.repeat(5_000);
+      const described = describeFailedIntercomRequestForLogs(
+        intercomErrorResponse(
+          404,
+          { type: 'error.list', request_id: 'req_body', errors: [{ code: 'not_found', message: longIntercomMessage }] },
+          'Not Found',
+        ),
+      );
+
+      expect(described.intercomRequestId).toBe('req_body');
+      expect(described.responseBody).toHaveLength(2_000);
+      expect(described.status).toBe(404);
+      expect(described.responseHeaders).toEqual({});
+    });
+
+    it('describes nothing for an error that is not an HTTP error', () => {
+      expect(describeFailedIntercomRequestForLogs(new Error('boom'))).toEqual({});
+      expect(describeFailedIntercomRequestForLogs(undefined)).toEqual({});
     });
   });
 

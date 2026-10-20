@@ -1,5 +1,5 @@
 import { TSchema } from '@sinclair/typebox';
-import { AxiosError } from 'axios';
+import { AxiosError, AxiosHeaders } from 'axios';
 import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import type { IntercomConversationFullFetchFailure } from '../intercom-api-client';
@@ -40,7 +40,11 @@ const mockListAllCompaniesViaScroll = jest.fn();
 const mockGetCompany = jest.fn();
 
 jest.mock('../intercom-api-client', () => {
+  const actualIntercomApiClientModule =
+    jest.requireActual<typeof import('../intercom-api-client')>('../intercom-api-client');
   return {
+    // The real one: extractConnectorErrorDetails's logging context is part of what these tests check.
+    describeFailedIntercomRequestForLogs: actualIntercomApiClientModule.describeFailedIntercomRequestForLogs,
     INTERCOM_MAX_PAGE_SIZE: 250,
     INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE: 150,
     INTERCOM_MAX_CONTACTS_PAGE_SIZE: 150,
@@ -68,8 +72,8 @@ jest.mock('../intercom-api-client', () => {
     IntercomError: class IntercomError extends Error {
       statusCode?: number;
       responseData?: unknown;
-      constructor(message: string, statusCode?: number, responseData?: unknown) {
-        super(message);
+      constructor(message: string, statusCode?: number, responseData?: unknown, options?: { cause?: unknown }) {
+        super(message, options);
         this.name = 'IntercomError';
         this.statusCode = statusCode;
         this.responseData = responseData;
@@ -1191,6 +1195,95 @@ describe('IntercomConnector', () => {
 
       expect(details.userFriendlyMessage).toBeDefined();
       expect(details.additionalContext?.status).toBe(500);
+    });
+
+    it('logs the URL, Intercom request id and response body of a failed request, never the access token', () => {
+      const error = new AxiosError(
+        'Request failed with status code 404',
+        'ERR_BAD_REQUEST',
+        {
+          method: 'get',
+          baseURL: 'https://api.intercom.io',
+          url: '/conversations',
+          params: { per_page: 150, starting_after: 'WzE3ODg0NjY2OTEwMDAsMjE1NDc1NzgyMTU3NjA3LDIzMjdd' },
+          headers: new AxiosHeaders({ Authorization: 'Bearer secret-intercom-token' }),
+        },
+        undefined,
+        {
+          status: 404,
+          statusText: 'Not Found',
+          data: '<html>Not Found</html>',
+          headers: { 'x-request-id': 'req_0001' },
+          config: {} as never,
+        },
+      );
+
+      const details = connector.extractConnectorErrorDetails(error);
+
+      expect(details.userFriendlyMessage).toBe('Not Found');
+      expect(details.additionalContext).toEqual({
+        method: 'GET',
+        url: 'https://api.intercom.io/conversations?per_page=150&starting_after=WzE3ODg0NjY2OTEwMDAsMjE1NDc1NzgyMTU3NjA3LDIzMjdd',
+        status: 404,
+        intercomRequestId: 'req_0001',
+        responseHeaders: { 'x-request-id': 'req_0001' },
+        responseBody: '<html>Not Found</html>',
+      });
+      expect(JSON.stringify(details)).not.toContain('secret-intercom-token');
+    });
+
+    it('adds the request to the context of a 401, keeping the shared guidance', () => {
+      const error = new AxiosError('Request failed with status code 401', 'ERR_BAD_REQUEST', {
+        method: 'get',
+        baseURL: 'https://api.intercom.io',
+        url: '/me',
+        headers: new AxiosHeaders({ Authorization: 'Bearer secret-intercom-token' }),
+      });
+      error.response = {
+        status: 401,
+        statusText: 'Unauthorized',
+        data: {
+          type: 'error.list',
+          request_id: 'req_0002',
+          errors: [{ code: 'unauthorized', message: 'Access Token Invalid' }],
+        },
+        headers: {},
+        config: {} as never,
+      };
+
+      const details = connector.extractConnectorErrorDetails(error);
+
+      expect(details.additionalContext).toMatchObject({
+        status: 401,
+        url: 'https://api.intercom.io/me',
+        intercomRequestId: 'req_0002',
+      });
+      expect(JSON.stringify(details)).not.toContain('secret-intercom-token');
+    });
+
+    it('describes the request behind an IntercomError that has one as its cause', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
+      const { IntercomError } = require('../intercom-api-client');
+      const notFound = new AxiosError('Request failed with status code 404', 'ERR_BAD_REQUEST', {
+        method: 'get',
+        baseURL: 'https://api.intercom.io',
+        url: '/conversations',
+        params: { per_page: 105, starting_after: 'cur_2' },
+        headers: new AxiosHeaders(),
+      });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+      const error = new IntercomError('Intercom stopped returning conversations partway through the list', 404, '', {
+        cause: notFound,
+      });
+
+      const details = connector.extractConnectorErrorDetails(error);
+
+      expect(details.userFriendlyMessage).toBe('Intercom stopped returning conversations partway through the list');
+      expect(details.additionalContext).toMatchObject({
+        status: 404,
+        method: 'GET',
+        url: 'https://api.intercom.io/conversations?per_page=105&starting_after=cur_2',
+      });
     });
 
     it('handles unknown errors with fallback', () => {

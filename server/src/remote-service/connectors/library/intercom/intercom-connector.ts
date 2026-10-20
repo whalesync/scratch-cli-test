@@ -26,6 +26,7 @@ import {
   TablePreview,
 } from '../../types';
 import {
+  describeFailedIntercomRequestForLogs,
   INTERCOM_MAX_CONTACTS_PAGE_SIZE,
   INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE,
   INTERCOM_MAX_PAGE_SIZE,
@@ -547,12 +548,19 @@ export class IntercomConnector extends Connector {
     return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'name');
   }
 
+  /**
+   * Every Intercom HTTP failure carries what's needed to trace it in `additionalContext` (which the pull job logs):
+   * the method and URL, Intercom's request id and the start of the response body — never the access token, which
+   * is a header (see `describeFailedIntercomRequestForLogs`). An {@link IntercomError} describes the request behind
+   * it (its `cause`), when it has one.
+   */
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
     if (error instanceof IntercomError) {
       return {
         userFriendlyMessage: error.message,
         description: error.message,
         additionalContext: {
+          ...describeFailedIntercomRequestForLogs(error.cause),
           status: error.statusCode,
           responseData: error.responseData,
         },
@@ -560,8 +568,11 @@ export class IntercomConnector extends Connector {
     }
 
     if (isAxiosError(error)) {
+      const failedRequestForLogs = describeFailedIntercomRequestForLogs(error);
       const commonError = extractCommonDetailsFromAxiosError(this, error);
-      if (commonError) return commonError;
+      if (commonError) {
+        return { ...commonError, additionalContext: { ...commonError.additionalContext, ...failedRequestForLogs } };
+      }
 
       return {
         userFriendlyMessage: extractErrorMessageFromAxiosError(this.service, error, [
@@ -570,9 +581,7 @@ export class IntercomConnector extends Connector {
           'error_code',
         ]),
         description: error.message,
-        additionalContext: {
-          status: error.response?.status,
-        },
+        additionalContext: failedRequestForLogs,
       };
     }
 

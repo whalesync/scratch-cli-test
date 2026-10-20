@@ -3,6 +3,7 @@ import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { sleep } from 'src/util';
 import { mapWithBoundedConcurrency } from 'src/utils/map-with-bounded-concurrency';
+import { describeRequestUrlForLogging, redactSensitiveHeadersForLogging } from '../../connector-http-logging';
 import { createApiClient } from '../../create-api-client';
 import { IntercomUpdatedSinceQuery } from './intercom-incremental';
 import {
@@ -232,6 +233,40 @@ export const INTERCOM_MAX_CONVERSATIONS_PAGE_SIZE = 150;
 export const INTERCOM_MAX_CONVERSATIONS_FETCHED_IN_FULL_AT_ONCE = 25;
 
 /**
+ * Timing for how a conversations walk ({@link IntercomApiClient.listConversations} / `searchConversationsUpdatedSince`)
+ * rides out a page Intercom answers with 404. Every field is optional; the defaults are the production values (tests
+ * pass zero waits).
+ */
+export interface IntercomConversationsWalkOptions {
+  /** Times a page that answered 404 is listed again from the same cursor before the 404 fails the walk. */
+  notFoundRetriesPerListing?: number;
+  /** Wait before the first of those retries; each later retry waits twice as long as the one before, up to the cap. */
+  waitBeforeFirstNotFoundRetryMs?: number;
+  /** Longest wait before any one retry. */
+  maxWaitBeforeNotFoundRetryMs?: number;
+}
+
+/**
+ * Production conversations-walk timing: a page that answers 404 is listed again 7 times, 2, 4, 8, 16, 32, 64 and 120 s
+ * apart — about 4 minutes in all, cheap next to a pull of hours.
+ *
+ * Seen in prod (2026-10-20): a ~156k-conversation Live Export pull failed ~6.7 h in on one `404 Not Found` for the
+ * next page's listing, whose body wasn't Intercom's `error.list` (probed live: Intercom's own 404s — a missing
+ * conversation, an unknown path — all carry one). The page before it lost at least 11 of its 20 listed conversations
+ * between being listed and fetched in full, so conversations were being deleted right there. The cursor itself can't
+ * be the problem: it is a pure value bookmark (`[updated_at, id, page]`) that Intercom never looks up — probed live, a
+ * cursor naming a conversation that doesn't exist still lists the right next page. So the likely causes are a passing
+ * error from Intercom's edge, or a page holding conversations just deleted but still in Intercom's list index; both
+ * clear with time, and since the cursor never goes stale, listing again from it later picks up exactly where the walk
+ * stopped.
+ */
+const DEFAULT_CONVERSATIONS_WALK_OPTIONS: Required<IntercomConversationsWalkOptions> = {
+  notFoundRetriesPerListing: 7,
+  waitBeforeFirstNotFoundRetryMs: 2_000,
+  maxWaitBeforeNotFoundRetryMs: 120_000,
+};
+
+/**
  * Ceiling on `per_page` for `GET /contacts` and `POST /contacts/search`. Larger values are not
  * rejected — Intercom silently caps them at 150 (probed live) — so asking for more buys nothing.
  */
@@ -443,6 +478,76 @@ type IntercomConversationsListResponse = IntercomCursorPaginatedResponse<Interco
 /** One request for a page of listed conversations, given the cursor to start after. */
 type FetchConversationsListPage = (startingAfter: string | undefined) => Promise<IntercomConversationsListResponse>;
 
+/** True when Intercom answered `404 Not Found`. */
+function isIntercomNotFound(error: unknown): error is AxiosError {
+  return axios.isAxiosError(error) && error.response?.status === 404;
+}
+
+/** The wait before retry number `retriesAlreadyUsed + 1` of a page that answered 404: doubling, up to the cap. */
+function waitBeforeNotFoundRetryMs(
+  retriesAlreadyUsed: number,
+  walkOptions: Required<IntercomConversationsWalkOptions>,
+): number {
+  return Math.min(
+    walkOptions.waitBeforeFirstNotFoundRetryMs * 2 ** retriesAlreadyUsed,
+    walkOptions.maxWaitBeforeNotFoundRetryMs,
+  );
+}
+
+/**
+ * List one page of conversations, asking again from the same cursor when Intercom answers 404 (see
+ * {@link DEFAULT_CONVERSATIONS_WALK_OPTIONS} for why): `walkOptions.notFoundRetriesPerListing` times, each wait twice
+ * the one before up to the cap. The wait is this function's own, outside the rate limiter's retry, so a 404 doesn't
+ * freeze the bucket every request on the connection shares. Rejects with any other error, or with the 404 once it
+ * outlasts the retries.
+ */
+async function listConversationsPageAskingAgainOnNotFound(
+  fetchPage: FetchConversationsListPage,
+  startingAfter: string | undefined,
+  walkOptions: Required<IntercomConversationsWalkOptions>,
+): Promise<IntercomConversationsListResponse> {
+  let firstNotFoundAtMs: number | undefined;
+  for (let notFoundRetriesUsed = 0; ; notFoundRetriesUsed++) {
+    // Includes the rate limiter's wait for quota, normally a few milliseconds. An instant 404 points at Intercom's
+    // edge; one that takes as long as a normal listing points at Intercom's app.
+    const listingStartedAtMs = Date.now();
+    let listedPage: IntercomConversationsListResponse;
+    try {
+      listedPage = await fetchPage(startingAfter);
+    } catch (error) {
+      if (!isIntercomNotFound(error)) throw error;
+      firstNotFoundAtMs ??= listingStartedAtMs;
+      const hasRetriesLeft = notFoundRetriesUsed < walkOptions.notFoundRetriesPerListing;
+      const waitBeforeThisRetryMs = hasRetriesLeft ? waitBeforeNotFoundRetryMs(notFoundRetriesUsed, walkOptions) : 0;
+      WSLogger.warn({
+        source: 'IntercomApiClient',
+        message: hasRetriesLeft
+          ? 'Intercom answered 404 for a page of conversations — listing it again'
+          : 'Intercom answered 404 for a page of conversations — no retries left',
+        startingAfter,
+        listingAttempt: notFoundRetriesUsed + 1,
+        listingAttemptsAllowed: walkOptions.notFoundRetriesPerListing + 1,
+        waitBeforeThisRetryMs,
+        failedListingDurationMs: Date.now() - listingStartedAtMs,
+        ...describeFailedIntercomRequestForLogs(error),
+      });
+      if (!hasRetriesLeft) throw error;
+      await sleep(waitBeforeThisRetryMs);
+      continue;
+    }
+    if (firstNotFoundAtMs !== undefined) {
+      WSLogger.info({
+        source: 'IntercomApiClient',
+        message: 'Intercom listed the page of conversations after answering 404 — the walk goes on',
+        startingAfter,
+        notFoundRetriesUsed,
+        msSinceTheFirst404: Date.now() - firstNotFoundAtMs,
+      });
+    }
+    return listedPage;
+  }
+}
+
 /**
  * Start listing a page of conversations. The walk awaits the listing only after the page before it is fetched in
  * full and handed to the caller, so the promise is marked handled now: if the walk ends first (a fatal error, or the
@@ -451,10 +556,99 @@ type FetchConversationsListPage = (startingAfter: string | undefined) => Promise
 function startListingConversationsPage(
   fetchPage: FetchConversationsListPage,
   startingAfter: string | undefined,
+  walkOptions: Required<IntercomConversationsWalkOptions>,
 ): Promise<IntercomConversationsListResponse> {
-  const listing = fetchPage(startingAfter);
+  const listing = listConversationsPageAskingAgainOnNotFound(fetchPage, startingAfter, walkOptions);
   listing.catch(() => undefined);
   return listing;
+}
+
+/**
+ * True when Intercom's own count says the page is its last (`pages.page >= pages.total_pages`), so a page after it
+ * holds nothing. Intercom hands out a cursor on its last page too, and the listing after it normally comes back empty.
+ * The count can run slightly ahead of the walk: a conversation deleted after the walk listed it lowers `total_pages`
+ * but not the walk's page number. A walk that trusts it past the real end can therefore miss at most about as many
+ * conversations as were deleted behind it during the walk — and it only does so once the 404 has outlasted every
+ * retry.
+ */
+function wasIntercomsLastPageByItsOwnCount(listedPage: IntercomConversationsListResponse): boolean {
+  const { page, total_pages: totalPages } = listedPage.pages;
+  return typeof page === 'number' && typeof totalPages === 'number' && totalPages > 0 && page >= totalPages;
+}
+
+/**
+ * How long a conversations walk keeps listing a page again after a 404 — every retry's wait added up — for the user:
+ * "about 4 minute(s)" with the production timing.
+ */
+export function describeHowLongAConversationsWalkAsksAgainAfterNotFound(
+  options: IntercomConversationsWalkOptions = {},
+): string {
+  const walkOptions = { ...DEFAULT_CONVERSATIONS_WALK_OPTIONS, ...options };
+  let totalWaitAcrossEveryRetryMs = 0;
+  for (let retriesAlreadyUsed = 0; retriesAlreadyUsed < walkOptions.notFoundRetriesPerListing; retriesAlreadyUsed++) {
+    totalWaitAcrossEveryRetryMs += waitBeforeNotFoundRetryMs(retriesAlreadyUsed, walkOptions);
+  }
+  return totalWaitAcrossEveryRetryMs >= 60_000
+    ? `about ${Math.round(totalWaitAcrossEveryRetryMs / 60_000)} minute(s)`
+    : `${Math.round(totalWaitAcrossEveryRetryMs / 1000)} s`;
+}
+
+/**
+ * The error that ends a conversations walk when Intercom keeps answering 404 for its next page, mid-list. Worded for
+ * the user (it is surfaced verbatim); its cause is the last 404, so the logs describe the request.
+ */
+function buildConversationsWalkCannotGoOnError(
+  lastNotFound: AxiosError,
+  latestPageListed: IntercomConversationsListResponse | undefined,
+  walkOptions: Required<IntercomConversationsWalkOptions>,
+): IntercomError {
+  const whereTheWalkStopped = latestPageListed
+    ? ` after page ${latestPageListed.pages.page} of ${latestPageListed.pages.total_pages}`
+    : '';
+  return new IntercomError(
+    `Intercom stopped returning conversations partway through the list: it kept answering "404 Not Found" for the ` +
+      `next page${whereTheWalkStopped} for ${describeHowLongAConversationsWalkAsksAgainAfterNotFound(walkOptions)}. ` +
+      `The pull was stopped before any conversations could be wrongly deleted; the next pull starts again from the ` +
+      `beginning.`,
+    404,
+    lastNotFound.response?.data,
+    { cause: lastNotFound },
+  );
+}
+
+/** Most of an error response body {@link describeFailedIntercomRequestForLogs} logs, in characters. */
+const MAX_INTERCOM_ERROR_RESPONSE_BODY_LOGGED_CHARACTERS = 2_000;
+
+/**
+ * What to log about a failed Intercom request, so a failure can be traced: the method and URL (with its query, e.g.
+ * the `starting_after` cursor — the access token is a request header and is never included), the status, Intercom's
+ * request id (the `x-request-id` header, else the `request_id` of an `error.list` body), the response headers, and the
+ * start of the response body. The headers tell which layer answered: a response from Intercom's app carries
+ * `x-runtime`, `x-ratelimit-*` and `x-intercom-version`, so one without them never got past Intercom's edge. Cookies
+ * are left out and token-like response headers masked. Empty for anything that isn't an HTTP error.
+ */
+export function describeFailedIntercomRequestForLogs(error: unknown): Record<string, unknown> {
+  if (!axios.isAxiosError(error)) return {};
+  const responseBody: unknown = error.response?.data;
+  const responseBodyText =
+    responseBody === undefined || responseBody === ''
+      ? undefined
+      : typeof responseBody === 'string'
+        ? responseBody
+        : JSON.stringify(responseBody);
+  const intercomRequestIdFromHeader = error.response?.headers?.['x-request-id'] as unknown;
+  const intercomRequestIdFromBody = (responseBody as { request_id?: unknown } | undefined)?.request_id;
+  const intercomRequestId = [intercomRequestIdFromHeader, intercomRequestIdFromBody].find(
+    (candidate): candidate is string => typeof candidate === 'string' && candidate !== '',
+  );
+  return {
+    method: error.config?.method?.toUpperCase(),
+    url: error.config ? describeRequestUrlForLogging(error.config) : undefined,
+    status: error.response?.status,
+    intercomRequestId,
+    responseHeaders: error.response ? redactSensitiveHeadersForLogging(error.response.headers) : undefined,
+    responseBody: responseBodyText?.slice(0, MAX_INTERCOM_ERROR_RESPONSE_BODY_LOGGED_CHARACTERS),
+  };
 }
 
 /**
@@ -481,8 +675,9 @@ export class IntercomError extends Error {
   public readonly statusCode?: number;
   public readonly responseData?: unknown;
 
-  constructor(message: string, statusCode?: number, responseData?: unknown) {
-    super(message);
+  /** `cause` is the error behind this one, e.g. the Intercom HTTP error whose request the logs should describe. */
+  constructor(message: string, statusCode?: number, responseData?: unknown, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'IntercomError';
     this.statusCode = statusCode;
     this.responseData = responseData;
@@ -839,23 +1034,55 @@ export class IntercomApiClient {
    * drops the conversation — it was deleted between the list and the hydration.
    * Any other hydration error fails the walk once the page's other in-flight
    * fetches have settled.
+   *
+   * A page Intercom answers with 404 is listed again from the same cursor for
+   * about 4 minutes (see {@link DEFAULT_CONVERSATIONS_WALK_OPTIONS}); the cursor
+   * never goes stale, so a later listing picks up exactly where the walk
+   * stopped. A 404 that outlasts that ends the walk normally only when the page
+   * before it was Intercom's last by its own count; anywhere else it fails the
+   * walk with an {@link IntercomError}. Ending a walk early would read every
+   * conversation it never reached as deleted, and a full pull would delete them
+   * downstream.
    */
   private async *paginateConversations(
     fetchPage: FetchConversationsListPage,
     hydrate: boolean,
-    resumeAfter?: string,
+    resumeAfter: string | undefined,
+    options: IntercomConversationsWalkOptions,
   ): AsyncGenerator<IntercomConversationPage, void> {
+    const walkOptions = { ...DEFAULT_CONVERSATIONS_WALK_OPTIONS, ...options };
+    let latestPageListed: IntercomConversationsListResponse | undefined;
     let listingOfNextPage: Promise<IntercomConversationsListResponse> | undefined = startListingConversationsPage(
       fetchPage,
       resumeAfter,
+      walkOptions,
     );
 
     while (listingOfNextPage) {
-      const listedPage: IntercomConversationsListResponse = await listingOfNextPage;
+      let listedPage: IntercomConversationsListResponse;
+      try {
+        listedPage = await listingOfNextPage;
+      } catch (error) {
+        if (!isIntercomNotFound(error)) throw error;
+        if (latestPageListed && wasIntercomsLastPageByItsOwnCount(latestPageListed)) {
+          WSLogger.warn({
+            source: 'IntercomApiClient',
+            message:
+              'Intercom kept answering 404 for the page after its last page of conversations — ending the walk there',
+            latestPage: latestPageListed.pages.page,
+            totalPages: latestPageListed.pages.total_pages,
+            ...describeFailedIntercomRequestForLogs(error),
+          });
+          return;
+        }
+        throw buildConversationsWalkCannotGoOnError(error, latestPageListed, walkOptions);
+      }
+
+      latestPageListed = listedPage;
       const items = listedPage.conversations ?? [];
       const nextCursor = listedPage.pages.next?.starting_after;
       // Intercom's cursor is stateless, so listing the next page early returns the same page it would later.
-      listingOfNextPage = nextCursor ? startListingConversationsPage(fetchPage, nextCursor) : undefined;
+      listingOfNextPage = nextCursor ? startListingConversationsPage(fetchPage, nextCursor, walkOptions) : undefined;
 
       if (items.length === 0) continue;
       if (!hydrate) {
@@ -916,11 +1143,15 @@ export class IntercomApiClient {
    *
    * When `hydrate` is false, conversations are returned as-is from the list endpoint
    * (no `conversation_parts`). Much faster for large workspaces.
+   *
+   * `walkOptions` tune how the walk rides out a page Intercom answers with 404
+   * (tests pass zero waits).
    */
   listConversations(
     pageSize = 20,
     hydrate = true,
     resumeAfter?: string,
+    walkOptions: IntercomConversationsWalkOptions = {},
   ): AsyncGenerator<IntercomConversationPage, void> {
     return this.paginateConversations(
       async (startingAfter) => {
@@ -935,6 +1166,7 @@ export class IntercomApiClient {
       },
       hydrate,
       resumeAfter,
+      walkOptions,
     );
   }
 
@@ -950,6 +1182,7 @@ export class IntercomApiClient {
     pageSize = 20,
     hydrate = true,
     resumeAfter?: string,
+    walkOptions: IntercomConversationsWalkOptions = {},
   ): AsyncGenerator<IntercomConversationPage, void> {
     return this.paginateConversations(
       async (startingAfter) => {
@@ -972,6 +1205,7 @@ export class IntercomApiClient {
       },
       hydrate,
       resumeAfter,
+      walkOptions,
     );
   }
 
