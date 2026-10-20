@@ -170,6 +170,11 @@ build client docker image for production:
   stage: build and test
   interruptible: true
   tags: !reference [.runner_tags, high_memory]
+  variables:
+    # Empty so the shared runners keep jest's default of one worker per CPU.
+    # `local build and test server` (gitlab-ci/local-runners.yml) sets this to
+    # cap jest's memory on a small Docker Desktop VM.
+    SERVER_JEST_WORKER_LIMIT_ARGS: ""
   script:
     - !reference [.build_shared_types, script]
     - cd server
@@ -177,7 +182,7 @@ build client docker image for production:
     - yarn prettier:check
     - yarn lint-strict
     - yarn typecheck
-    - yarn test --reporters=default --reporters=jest-junit
+    - yarn test ${SERVER_JEST_WORKER_LIMIT_ARGS} --reporters=default --reporters=jest-junit
     - BUILD_VERSION=`date +%y.%m.%d.%H.%M.$CI_COMMIT_SHORT_SHA`
     - echo "export const BUILD_VERSION = '$BUILD_VERSION';" > src/version.ts
     - echo "Labelling this build as $BUILD_VERSION"
