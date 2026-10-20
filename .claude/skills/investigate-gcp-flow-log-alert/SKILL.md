@@ -29,7 +29,7 @@ allowed-tools:
 Triage one of the three **VPC Flow Logs security alerts** that post to Slack `#feed-gcp-alerts` from Google Cloud Monitoring for the EU-production project `spv1eu-production`:
 
 - **Unexpected geo-location** — traffic to/from a country outside the allowlist (`flow-log-unexpected-country`). *Most common; usually benign.*
-- **Suspicious egress port** — outbound to the internet on a sensitive port (SSH/Telnet/SMB/MySQL/Redis/RDP/MongoDB) (`flow-log-suspicious-egress-ports`).
+- **Suspicious egress port** — outbound to the internet on a sensitive port (SSH/Telnet/SMB/Redis/RDP/MongoDB) (`flow-log-suspicious-egress-ports`).
 - **Egress volume spike** — a single egress flow ≥ 1 GiB (`flow-log-external-egress-bytes`).
 
 All three share the same runbook: **pull the flow records → attribute the peer → identify our actor → correlate with app activity → verdict → remediate.** Only the Step 1 filter and the benign/malicious heuristic differ (see "Adapting to the sibling alerts").
@@ -169,5 +169,5 @@ Summarize: **verdict**, the evidence chain (peer → ASN/geo → service → our
 ## Adapting to the sibling alerts
 
 Same flow; change only Step 1's filter and the heuristic:
-- **Suspicious egress port** — filter `flow-log-suspicious-egress-ports` (or `local.flow_log_external_egress AND jsonPayload.connection.dest_port=(21 OR 22 OR 23 OR 445 OR 3306 OR 3389 OR 6379 OR 27017)`). Benign only if it's a known service (e.g. a Redis/MySQL connector to a managed DB); otherwise treat as likely compromise/exfil.
+- **Suspicious egress port** — filter `flow-log-suspicious-egress-ports` (or `local.flow_log_external_egress AND jsonPayload.connection.dest_port=(21 OR 22 OR 23 OR 445 OR 3389 OR 6379 OR 27017)`). Benign only if it's a known service (e.g. a connector talking to a customer's managed database on that port); otherwise treat as likely compromise/exfil.
 - **Egress volume spike** — filter `flow-log-external-egress-bytes` and inspect `jsonPayload.bytes_sent`. Attribute the destination; a large **outbound** transfer to an unattributable host is the exfil case.

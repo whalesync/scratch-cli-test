@@ -85,13 +85,12 @@ locals {
   flow_log_external_egress = "${local.flow_log_base_filter} AND jsonPayload.reporter=\"SRC\" AND NOT jsonPayload.dest_instance:* AND NOT jsonPayload.dest_google_service:* AND NOT (${local.rfc1918_private_dest_clause})"
   # Admin / DB / cache ports that should never be the target of egress to the internet.
   # This is intended to flag possible data exfiltration.
-  # It should NOT flag any legitimate connection that Scratch makes for syncing data, e.g. HTTPS, Postgres, etc.
+  # It should NOT flag any legitimate connection that Scratch makes for syncing data, e.g. HTTPS, Postgres, MySQL, etc.
   flow_log_suspicious_ports = [
     21,    # FTP
     22,    # SSH / SFTP
     23,    # telnet
     445,   # SMB
-    3306,  # MySQL
     3389,  # RDP
     6379,  # Redis
     27017, # MongoDB

@@ -27,7 +27,7 @@ This runbook is paired with the **`/investigate-gcp-flow-log-alert` Claude skill
 | Alert (metric) | Fires when | Usual verdict |
 | --- | --- | --- |
 | **Unexpected geo-location** (`flow-log-unexpected-country`) | src **or** dest public IP resolves to a country outside the allowlist | Benign (region we haven't allowlisted) |
-| **Suspicious egress port** (`flow-log-suspicious-egress-ports`) | outbound to the internet on 21/22/23/445/3306/3389/6379/27017 | Needs care — could be compromise/exfil |
+| **Suspicious egress port** (`flow-log-suspicious-egress-ports`) | outbound to the internet on 21/22/23/445/3389/6379/27017 | Needs care — could be compromise/exfil |
 | **Egress volume spike** (`flow-log-external-egress-bytes`) | a single egress flow ≥ 1 GiB | Needs care — could be exfil |
 
 All three follow the **same investigation**: pull the flow records → attribute the peer → identify our actor and direction → correlate with app activity → verdict → remediate. Only the initial filter and the benign/malicious judgement differ.
