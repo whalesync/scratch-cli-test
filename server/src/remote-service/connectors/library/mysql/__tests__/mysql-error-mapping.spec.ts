@@ -955,10 +955,25 @@ describe('describeMySqlError', () => {
       ).toContain("ran longer than Scratch's limit per query and");
     });
 
-    it('tells users to allowlist Scratch through the egress-address seam', () => {
-      expect(describeScratchNetworkAddressForAllowlisting()).toBe("Scratch's IP address");
-      expect(buildMySqlHostNotPrivilegedMessage(BASE_HOST_AND_PORT)).toContain("Allow Scratch's IP address");
-      expect(buildMySqlConnectionTimedOutMessage(BASE_HOST_AND_PORT)).toContain("allows Scratch's IP address");
+    it('tells users which IP address to allowlist, without naming the product', () => {
+      expect(describeScratchNetworkAddressForAllowlisting()).toBe('the IP address 35.233.96.253');
+      expect(buildMySqlHostNotPrivilegedMessage(BASE_HOST_AND_PORT)).toBe(
+        "The MySQL server at db.example.com:3306 doesn't let this user connect from the IP address 35.233.96.253. Allow that address for this MySQL user (for example create it as 'user'@'%') and in the server's firewall, then try again.",
+      );
+      expect(MYSQL_HOST_BLOCKED_MESSAGE).toBe(
+        'The MySQL server blocked the IP address 35.233.96.253 after too many failed connection attempts. Run FLUSH HOSTS on the server (or raise max_connect_errors), then try again.',
+      );
+      // Whalesync's Live Export shows these messages too, so none of them may name the product.
+      for (const allowlistingMessage of [
+        buildMySqlHostNotPrivilegedMessage(BASE_HOST_AND_PORT),
+        MYSQL_HOST_BLOCKED_MESSAGE,
+        buildMySqlHostNotReachableFromScratchMessage(BASE_HOST_AND_PORT),
+        buildMySqlConnectionTimedOutMessage(BASE_HOST_AND_PORT),
+        buildMySqlHostUnreachableMessage(BASE_HOST_AND_PORT),
+      ]) {
+        expect(allowlistingMessage).toContain('35.233.96.253');
+        expect(allowlistingMessage).not.toMatch(/scratch/i);
+      }
     });
 
     it('resolves a code-only server error through its code name', () => {
@@ -1043,7 +1058,7 @@ describe('describeMySqlError', () => {
 
       expect(details.userFriendlyMessage).toBe(buildMySqlHostNotReachableFromScratchMessage(BASE_HOST_AND_PORT));
       expect(details.userFriendlyMessage).toBe(
-        "Couldn't connect to db.example.com:3306. Make sure the database is publicly reachable from the internet and that its firewall allows Scratch's IP address.",
+        "Couldn't connect to db.example.com:3306. Make sure the database is publicly reachable from the internet and that its firewall allows the IP address 35.233.96.253.",
       );
       expect(details.additionalContext).toEqual({ category: 'host_guard' });
       expect(JSON.stringify(details)).not.toContain(RESOLVED_DATABASE_IP_SENTINEL);

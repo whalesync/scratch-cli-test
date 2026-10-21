@@ -17,6 +17,7 @@ import mysql2Promise from 'mysql2/promise';
 import { type Connector } from 'src/remote-service/connectors/connector';
 import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
 import 'src/remote-service/connectors/library';
+import { SCRATCH_PRODUCTION_EGRESS_IP_ADDRESS } from 'src/remote-service/connectors/library/mysql/mysql-error-mapping';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { type JsonSafeObject } from 'src/utils/objects';
 
@@ -292,7 +293,9 @@ export function collapsePemToSingleLineLikeABrowserInputPaste(pem: string): stri
 
 /** Assert a user-facing message carries no IP literal, raw network code or SQL. */
 export function expectUserFacingErrorMessageToLeakNoNetworkOrSqlDetails(message: string): void {
-  expect(message).not.toMatch(/\b\d{1,3}(?:\.\d{1,3}){3}\b/);
+  // Scratch's own published egress address is what users must allowlist, not a leak.
+  const messageWithoutPublishedEgressAddress = message.replaceAll(SCRATCH_PRODUCTION_EGRESS_IP_ADDRESS, '');
+  expect(messageWithoutPublishedEgressAddress).not.toMatch(/\b\d{1,3}(?:\.\d{1,3}){3}\b/);
   expect(message).not.toMatch(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b|::/i);
   expect(message).not.toMatch(/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH/);
   // Compiled SQL always carries backtick-quoted identifiers; our own messages quote names with double quotes, so

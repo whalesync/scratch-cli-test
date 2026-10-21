@@ -67,7 +67,7 @@ import {
   type MySqlForeignKeyResolution,
 } from './mysql-create-schema';
 import { buildMySqlDefaultView } from './mysql-default-view';
-import { describeMySqlError } from './mysql-error-mapping';
+import { describeMySqlError, describeScratchNetworkAddressForAllowlisting } from './mysql-error-mapping';
 import { resolveMySqlFieldValueCanonicalizer } from './mysql-field-value-canonicalizer';
 import { validateMySqlWhereFilter } from './mysql-filter-validator';
 import {
@@ -263,8 +263,7 @@ export class MysqlConnector extends Connector {
           label: 'Connection string',
           placeholder: 'mysql://user:password@host:3306/database',
           required: true,
-          description:
-            "The database must be reachable from the public internet and allow connections from Scratch's IP address. Leave off /database to see every database this user can access. Connections are encrypted by default; add ?ssl-mode=VERIFY_IDENTITY to also check the certificate's hostname, or ?ssl-mode=DISABLED to turn encryption off. Scratch never stores the string itself.",
+          description: `The database must be reachable from the public internet and allow connections from ${describeScratchNetworkAddressForAllowlisting()}. Leave off /database to see every database this user can access. Connections are encrypted by default; add ?ssl-mode=VERIFY_IDENTITY to also check the certificate's hostname, or ?ssl-mode=DISABLED to turn encryption off. The string itself is never stored.`,
         },
         {
           key: 'sslCaCertificate',

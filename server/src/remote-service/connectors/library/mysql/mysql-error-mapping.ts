@@ -68,12 +68,20 @@ export type MySqlErrorCategory =
   | 'unknown';
 
 /**
- * How users should describe Scratch's network address when allowlisting it. The seam for the egress-IP MR: once
- * `ScratchConfigService` exposes the static egress IPs, only this body changes, to append them (e.g. "Scratch's IP
- * address (34.1.2.3)"), and every message that tells users to allowlist Scratch picks the IPs up.
+ * The static outbound IP of Scratch's production servers (the europe-west1 Cloud NAT address,
+ * `terraform output nat_egress_ip` in `terraform/envs/eu-production`). Customer databases see every connection,
+ * Live Export runs included, coming from it. Scratch's test environment leaves from a different address, so its
+ * messages name the production one.
+ */
+export const SCRATCH_PRODUCTION_EGRESS_IP_ADDRESS = '35.233.96.253';
+
+/**
+ * How users should describe Scratch's network address when allowlisting it: every message that tells users to
+ * allowlist Scratch goes through here. It names the address and not the product, because Whalesync's Live Export
+ * shows the same messages to its users.
  */
 export function describeScratchNetworkAddressForAllowlisting(): string {
-  return "Scratch's IP address";
+  return `the IP address ${SCRATCH_PRODUCTION_EGRESS_IP_ADDRESS}`;
 }
 
 /** Longest `sqlMessage` excerpt (in characters, after redaction) appended to a data-error message. */
@@ -212,11 +220,10 @@ export function buildMySqlAccessDeniedMessage(sslMode: MySqlSslMode): string {
 }
 
 export function buildMySqlHostNotPrivilegedMessage(hostAndPortForDisplay: string): string {
-  return `The MySQL server at ${hostAndPortForDisplay} doesn't let this user connect from Scratch's network. Allow ${describeScratchNetworkAddressForAllowlisting()} for this MySQL user (for example create it as 'user'@'%') and in the server's firewall, then try again.`;
+  return `The MySQL server at ${hostAndPortForDisplay} doesn't let this user connect from ${describeScratchNetworkAddressForAllowlisting()}. Allow that address for this MySQL user (for example create it as 'user'@'%') and in the server's firewall, then try again.`;
 }
 
-export const MYSQL_HOST_BLOCKED_MESSAGE =
-  "The MySQL server blocked Scratch's network address after too many failed connection attempts. Run FLUSH HOSTS on the server (or raise max_connect_errors), then try again.";
+export const MYSQL_HOST_BLOCKED_MESSAGE = `The MySQL server blocked ${describeScratchNetworkAddressForAllowlisting()} after too many failed connection attempts. Run FLUSH HOSTS on the server (or raise max_connect_errors), then try again.`;
 
 export const MYSQL_UNSUPPORTED_AUTHENTICATION_METHOD_MESSAGE =
   "The MySQL server asked for an authentication method Scratch doesn't support (such as MariaDB's ed25519 or parsec). Connect with a user that uses mysql_native_password or caching_sha2_password.";
