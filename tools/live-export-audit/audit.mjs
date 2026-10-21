@@ -25,8 +25,11 @@
  *   --workbook wkb_x            reuse an existing workbook (resume / OAuth flows)
  *   --source-connection coa_x   reuse an existing connection (REQUIRED for OAuth-only sources)
  *   --dest-connection coa_x     reuse an existing destination connection
- *   --dest-parent id            create-destination parent (e.g. Notion page id); default:
- *                               DEST_PARENT_ID from the dest creds file, else first listed
+ *   --dest-parent id            create-destination parent (e.g. Notion page id, MySQL database);
+ *                               default: DEST_PARENT_ID from the dest creds file, else first listed
+ *   --source-creds file         creds file under local/audit-creds for the source (default
+ *                               <source>.env); e.g. mysql-mariadb.env for a second server
+ *   --dest-creds file           the same for the destination (default <dest>.env)
  *   --skip-fields "A,B"         destination field names to leave unselected
  *   --report path               where to write report.json (default ./live-export-audit-report.json)
  *   --rerun                     skip setup, just trigger the routine again and report
@@ -159,9 +162,9 @@ async function preflight() {
   }
 
   const credsPlan = {};
-  for (const [role, service, connFlag] of [
-    ['source', SOURCE, args['source-connection']],
-    ['dest', DEST, args['dest-connection']],
+  for (const [role, service, connFlag, credsFileFlag] of [
+    ['source', SOURCE, args['source-connection'], args['source-creds']],
+    ['dest', DEST, args['dest-connection'], args['dest-creds']],
   ]) {
     if (connFlag) { credsPlan[role] = { connectionId: connFlag }; continue; }
     // /connectors/metadata returns a map keyed by service enum.
@@ -172,7 +175,7 @@ async function preflight() {
     }
     const supportsUserParams = (meta?.supportedAuthMethods ?? []).includes('user_provided_params');
     const credFields = supportsUserParams ? (meta?.credentialFields?.user_provided_params ?? []) : null;
-    const envFile = path.join(CREDS_DIR, `${service.toLowerCase()}.env`);
+    const envFile = path.join(CREDS_DIR, credsFileFlag || `${service.toLowerCase()}.env`);
     const env = readEnvFile(envFile);
     if (env && Object.keys(env).length > 0) {
       credsPlan[role] = { params: env };
@@ -394,7 +397,12 @@ const selectedRemoteLeafIds = new Set(folders.flatMap((f) => f.remoteId));
 const tableMappings = [];
 
 for (const f of folders) {
-  const planBody = { sources: [{ dataFolderId: f.dataFolderId }], destinationConnectorAccountId: dstConn };
+  // Dusky passes the parent too, so the plan checks new table names against the tables already in it.
+  const planBody = {
+    sources: [{ dataFolderId: f.dataFolderId }],
+    destinationConnectorAccountId: dstConn,
+    ...(destParent ? { remoteParentId: [destParent] } : {}),
+  };
   validate('generateCreatePlan', planBody);
   const plan = (await api('POST', `/workbook/${wb}/schema/plan-from-folder`, planBody)).body;
   const spec = plan.plan.tables.find((t) => t.ref === f.dataFolderId) ?? plan.plan.tables[0];

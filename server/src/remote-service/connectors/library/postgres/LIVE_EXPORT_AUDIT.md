@@ -26,12 +26,12 @@
 | 3 | Torture data seeded + read back via service API | ✅ | `seed.mjs` → `{"fable_qa_pg_invoices":213,"fable_qa_pg_contacts":3,"fable_qa_pg_hidden":2}` |
 | 4 | Plan audit: every downgraded field judged | ✅ | report `audit-postgres-airtable.json` (scratchpad); see Accepted downgrades + F3 |
 | 5 | FKs identified as foreignKey; links resolve on destination | ✅ | `contact_id`, `hidden_id`, `favorite_invoice_id` all `foreignKey`; Airtable `multipleRecordLinks` created and populated; `hidden_id` correctly dropped |
-| 6 | First run: publish failures = 0 or all filed | ✅ AIRTABLE | rrn_h7D9EcxFug: 216 creates, `failedOperations: []` |
-| 7 | Destination-side spot check (≥3 records/table) | ✅ AIRTABLE | Airtable REST: torture, all-empty, long-4001, filler-001 + all 3 contacts (below) |
-| 8 | CRUD pass: edit / create / delete mirrored | ✅ AIRTABLE | rrn_Nv8exXMy4B: 1 create / 2 edits / 1 delete, verified via Airtable REST |
-| 9 | Pagination: 200+ record table fully synced | ✅ AIRTABLE | 213/213 invoices on Airtable (paged count) |
-| 10 | Second run is a no-op | ✅ AIRTABLE | rrn_DIWZLS1Uyy "No changes"; rrn_oCaJrbLyCu (after CRUD) "No changes" — with the DEV-11420 Airtable canonicalizers on |
-| 11 | Destination drift: out-of-band delete restored | ✅ AIRTABLE | deleted "Filler invoice 005" via Airtable REST → rrn_PrkFndWPZn published exactly 1 create, record back with same `postgres_record_id` |
+| 6 | First run: publish failures = 0 or all filed | ✅ AIRTABLE | rrn_h7D9EcxFug: 216 creates, `failedOperations: []` · ✅ MYSQL rrn_MfEyIJwCPd: 216 creates, `failedOperations: []` · ✅ MariaDB rrn_27vT6iO976: 216 creates, none failed |
+| 7 | Destination-side spot check (≥3 records/table) | ✅ AIRTABLE | Airtable REST: torture, all-empty, long-4001, filler-001 + all 3 contacts (below) · ✅ MYSQL `verify-mysql.mjs` + SQL: torture, all-empty, long-4001, all 3 contacts (below) |
+| 8 | CRUD pass: edit / create / delete mirrored | ✅ AIRTABLE | rrn_Nv8exXMy4B: 1 create / 2 edits / 1 delete, verified via Airtable REST · ✅ MYSQL rrn_JxG35NOy9r: 1 create / 2 edits / 1 delete, verified with SQL |
+| 9 | Pagination: 200+ record table fully synced | ✅ AIRTABLE | 213/213 invoices on Airtable (paged count) · ✅ MYSQL 213/213 after every run |
+| 10 | Second run is a no-op | ✅ AIRTABLE | rrn_DIWZLS1Uyy "No changes"; rrn_oCaJrbLyCu (after CRUD) "No changes" — with the DEV-11420 Airtable canonicalizers on · ✅ MYSQL rrn_bllrxdoqyS and rrn_bvk10Ed1J2 (after CRUD and drift) wrote nothing · ✅ MariaDB rrn_h4RypGxVUJ |
+| 11 | Destination drift: out-of-band delete restored | ✅ AIRTABLE | deleted "Filler invoice 005" via Airtable REST → rrn_PrkFndWPZn published exactly 1 create, record back with same `postgres_record_id` · ✅ MYSQL deleted "Filler invoice 005" with SQL → rrn_PkfI0lff8T published exactly 1 create |
 | 12 | Findings filed or queued below | ⚠ queued | Linear token is read-only — F1/F2 queued with full bodies, F3 queued as evidence on DEV-10795 |
 
 Pull-side note: incremental pull needs a user-declared `modifiedAtField` (`pg-incremental.ts`); the harness runs full
@@ -155,6 +155,32 @@ multi-value field. Not re-filed because the generic ask was canceled; leaving th
 | A6 | ratio | 0.30000000000000004 → 0.3 | float64 re-rendering by Airtable; 15-significant-digit canonicalizer makes it a no-op |
 | A7 | inverse link fields | Airtable-created | Airtable always creates the inverse of a `multipleRecordLinks` field |
 
+## Destination: MYSQL (2026-10-21)
+
+> Run for [DEV-12346](https://linear.app/whalesync/issue/DEV-12346) (MySQL as a Live Export destination) against a local
+> spinner with the retry fix (!3412) and the egress IP change (!3413). Source: the same `fable_qa_pg_*` seed, in a local
+> Postgres database `fable_qa_audit` (`postgres.env` → `postgresql://…@127.0.0.1:5432/fable_qa_audit`). Destination: local
+> MySQL 8.4 (`mysql.env`, database `fable_qa_dest_from_supabase`) and MariaDB 11.4 (`--dest-creds mysql-mariadb.env`).
+
+- Workbooks: MySQL `wkb_Uzmi3zQf2M` (sync `syn_lNwncp1KQe`, report `/tmp/audit-postgres-mysql.json`); MariaDB
+  `wkb_1risAQ1vdX` (`/tmp/audit-postgres-mariadb.json`).
+- Runs (MySQL): rrn_MfEyIJwCPd (first, 216 creates) · rrn_bllrxdoqyS (second, nothing) · rrn_JxG35NOy9r (CRUD) ·
+  rrn_PkfI0lff8T (drift, 1 create) · rrn_bvk10Ed1J2 (steady, nothing).
+- **Created schema** (checked with `verify-mysql.mjs`): InnoDB, utf8mb4, comment `live_export:<source folder id>`,
+  `id bigint unsigned auto_increment` key. text → `mediumtext`, integer and real → `double`, bigint and numeric → `mediumtext`
+  (A1), boolean → `tinyint(1)`, timestamp, timestamptz and date → `datetime(3)` (date because of F1 at pull), arrays and
+  jsonb → `mediumtext`, `Contact Id` → `bigint unsigned` with a real `ON DELETE SET NULL` constraint to contacts.
+  `postgres_record_id` holds the source uuid.
+- **Spot checks with SQL:** torture row: emoji, CJK, RTL, quotes, tab and `<b>&amp;</b>` intact; 2,001-character notes
+  intact; `9007199254740993` and `-1234567.123456` exact; `+05:30` timestamp stored as its UTC instant
+  `2026-08-04 23:00:15.987`; microseconds cut to milliseconds (A4). All-empty row: every column NULL. Long row: 4,001
+  characters, `''` kept as `''`, int8 minimum exact, `0100-01-01` and `0001-01-01` stored. Contacts: links point at the
+  destination ids of the torture and long invoices.
+- **MariaDB 11.4:** the same plan with MariaDB spellings (`int(11)`, `bigint(20) unsigned`); 216 creates, second run
+  wrote nothing.
+- No MySQL-specific findings from this source. MySQL-destination findings from the MySQL source round and the probes are
+  in `library/mysql/STATE.md` (Live Export destination round) and filed as DEV-12412–DEV-12415.
+
 ## Human remainder (not automatable — do before launch)
 
 - [ ] Full dusky wizard pass (`localhost:3030/exports`): connection-string placeholder/help text, the array
@@ -171,3 +197,5 @@ multi-value field. Not re-filed because the generic ask was canceled; leaving th
   `fable_qa_pg_*` (`seeds/postgres/seed.mjs`, `crud-pass.mjs`); ran gates 1–12 against AIRTABLE with the field-value
   canonicalizers on; second run and post-CRUD run are no-ops; found F1/F2 at pull (pg date + naive timestamp local-time
   parsing) and F3 (arrays → comma text); queued for filing.
+- 2026-10-21 — Claude Opus 5.5 (DEV-12346 worktree) — added the MYSQL destination round (and MariaDB 11.4): gates 6–11
+  pass, second runs write nothing. The seed ran against a new local database `fable_qa_audit`.

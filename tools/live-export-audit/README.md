@@ -27,7 +27,10 @@ Gitignored env files under `local/audit-creds/`:
 - `<service>.env` — one per service, keys named exactly after the connector's
   `userProvidedParams` (e.g. `apiKey=...`, `connectionString=...`, `shopDomain=...`). The
   preflight prints the required field names when a file is missing. Destination extras:
-  `DEST_PARENT_ID=<id>` (e.g. the Notion parent page for created databases).
+  `DEST_PARENT_ID=<id>` (e.g. the Notion parent page for created databases). Connectors that
+  refuse unknown credential keys (MYSQL) need `--dest-parent <id>` on the command line instead,
+  since the whole file is sent as the connection's params. `--source-creds` / `--dest-creds`
+  pick another file, e.g. `mysql-mariadb.env` for a second MySQL-family server.
 
 Use **burner accounts** — audits create, edit, and delete real records.
 
@@ -45,6 +48,7 @@ Cross-service, reusable outside the connector they were first written for:
 | `clone-oauth-connection.mjs` | Copies a human-connected OAuth connection's encrypted credential blob + `extras` into a fresh disposable workbook, mirroring `OAuthService.createOAuthAccount`. The one workaround that makes OAuth-only sources auditable across several destinations without touching the user's real workbook. |
 | `verify-notion.mjs` | Reads a Notion database back through Notion's own API — property types, row counts, per-record values — for the "trust nothing you didn't confirm against the destination" step. |
 | `verify-supabase.mjs` | The same for a Supabase/Postgres destination: column types, row counts, spot-check values. |
+| `verify-mysql.mjs` | The same for a MySQL / MariaDB destination, through mysql2: exact `COLUMN_TYPE` and nullability, engine, the table comment Scratch writes on created tables, FK constraint names, row counts and spot-check rows. |
 
 Per-source seeders live in `seeds/<service>/` and are the thing to re-run before a re-audit so the
 torture set is identical. Each one is idempotent — re-running updates rather than duplicating:
@@ -56,6 +60,9 @@ torture set is identical. Each one is idempotent — re-running updates rather t
 - `seeds/pipedrive/`
 - `seeds/airtable/` — `seed.mjs` (honours `AIRTABLE_SEED_BASE_ID` from the env or `airtable.env`), `crud-pass.mjs`
 - `seeds/postgres/` — `seed.mjs`, `crud-pass.mjs` (plain SQL through the server's `pg`; table ids are `public/<table>`)
+- `seeds/mysql/` — `seed.mjs` (`--wide` adds a 185-column table, `--reset-dest` empties the destination databases),
+  `crud-pass.mjs` (SQL through the server's `mysql2`; table ids are `fable_qa_my_src/<table>`). Also creates one
+  empty destination database per source (`fable_qa_dest_from_airtable`, `…_supabase`, `…_mysql`) for `--dest-parent`.
 
 A `crud-pass.mjs` must make the create target a title the site does **not** already have — a
 previous pass leaves its created record behind, and silently reusing it turns the create assertion

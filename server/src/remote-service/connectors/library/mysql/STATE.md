@@ -11,7 +11,7 @@
 ## Test account (used to run this coverage)
 
 - **Service:** self-hosted, local docker — `server/localdev/docker-compose.mysql.yml` (compose project `scratch-localdev-mysql`): **MySQL 8.4** (8.4.11 at build time) on `127.0.0.1:3306` and **MariaDB 11.4** (11.4.13) on `127.0.0.1:3307`, both with database `test_db`, app user `test`, admin user `root`. Seeded with `companies` / `deals` from `server/localdev/mysql/init/01-companies-and-deals.sql` (manual testing only — the integration specs create their own tables). CI uses the same images as sidecars (see [Integration tests](#integration-tests)).
-- **TODO — managed database (outstanding; the connector was unhidden without it):** no managed MySQL has been exercised. Provision one reachable from Scratch's egress IP — Amazon RDS / Aurora MySQL, Google Cloud SQL for MySQL, TiDB Cloud or Aiven for MySQL (ideally one AWS-CA one and one private-CA one) — and run `/connector-build-execute` + `/connector-build-review` against it.
+- **Managed database:** Chris tested the connector by hand against an Aiven for MySQL database in October 2026, from a local server and from Scratch test (Live Export included); not recorded in more detail. No other managed MySQL (RDS / Aurora, Cloud SQL, TiDB Cloud) has been exercised, and the CLI coverage cells below are still ⬜.
 - **Trial:** No trial — local docker, free.
 - **API key / credentials:** _not secret_ — the local-only compose passwords (`test` / `test`, `root` / `root`, bound to 127.0.0.1). For a real connection: decrypt `ConnectorAccount.encryptedCredentials` for `<coa_id>` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in server/.env, AAD `connector-account`; see `server/tools/decrypt-credentials.js`). The stored blob holds only `databaseHost`, `databasePort`, `databaseName`, `username`, `password`, `sslMode`, `sslCaCertificate` — never a connection string.
 - **Scratch side:** none yet — no workbook / connection created through the CLI or web app. The integration specs drive the connector in-process through the registry (`createMySqlConnectorThroughRegistryForIntegrationTest`).
@@ -56,9 +56,9 @@ Living checklist of what's left: gaps found while adopting human-built code, unf
 
 **Post-launch checklist (the former unhide gates):**
 
-- [ ] Managed test database (RDS / Aurora, Cloud SQL, TiDB Cloud or Aiven) → `/connector-build-execute` (milestones 2–8 through the CLI) + `/connector-build-review` PASS.
+- [ ] Managed test database (RDS / Aurora, Cloud SQL, TiDB Cloud or Aiven) → `/connector-build-execute` (milestones 2–8 through the CLI) + `/connector-build-review` PASS. Aiven was tried by hand (see Test account); the CLI pass and the review are still to do.
 - [ ] Positive `VERIFY_IDENTITY` coverage — needs a server certificate with a matching SAN (neither local flavor's auto-generated cert has one). The opt-in `mysql-ssl` compose service (profile `ssl`, 127.0.0.1:3308, test CA with SAN `localhost`, `require_secure_transport=ON`; see `server/localdev/README.md`) provides one: `localhost` + `VERIFY_IDENTITY` + its `ca.pem` connected in-process on 2026-10-19. Still missing: a spec against it and a CLI / web round-trip.
-- [ ] Live Export smoke: create a MySQL destination table from a Postgres / Airtable source via the schema builder, run twice, confirm the second run is a no-op (canonicalizer); then `LIVE_EXPORT_AUDIT.md`. An automated twin would adapt `server/test/integration/live-export-engine-equivalence.spec.ts` (recording source connector, real MySQL destination, don't mock the destination's `refreshSchemasForConnection`).
+- [x] Live Export smoke — done 2026-10-21 with `/test-live-export` (POSTGRES → MYSQL, MYSQL → MYSQL / POSTGRES, and MariaDB 11.4 as a destination); see [Live Export destination round](#live-export-destination-round-2026-10-21) and `LIVE_EXPORT_AUDIT.md`. An automated twin would still adapt `server/test/integration/live-export-engine-equivalence.spec.ts` (recording source connector, real MySQL destination, don't mock the destination's `refreshSchemasForConnection`).
 - [ ] Logo: `mysql-logo.ts` is an inline data URI (copper precedent) because `static.scratch.md/connector-icons/mysql.svg` doesn't exist. Upload a proper icon to `gs://spv1eu-production-static/connector-icons/` (manual, prod bucket — needs approval) and switch `metadata.logo` to the URL.
 - [x] CLI help text: `MYSQL` is in the `--service` help in `scratch-git-2/src/cli/commands/connections.rs` (no `service_auth_fields` entry — no field is `required`; the flag is a free string, so `--service MYSQL` worked before too).
 - [ ] `scratch-cli-tests` coverage (needs a public MySQL that allowlists the NAT IP).
@@ -112,7 +112,7 @@ Every entity that is (or could be) fetched as a standalone top-level list. Inclu
 | GIPK table (MySQL's invisible `my_row_id` primary key, default on Azure)                                   | same; `my_row_id` is the (read-only) id                                |  ⬜  |     ⬜      |    ⬜     |   ⬜   | ⬜  | built              |
 | MariaDB `WITH SYSTEM VERSIONING` table (implicit period)                                                   | same                                                                   |  ⬜  |     ⬜      |    ⬜     |   ⬜   | ⬜  | built              |
 | Non-InnoDB base table (MyISAM, MEMORY, ARCHIVE, …)                                                         | same, pull-only                                                        |  ⬜  |     ➖      |    ➖     |   ➖   | ⬜  | built (read-only)  |
-| Table created by Scratch (Live Export destination)                                                         | `CREATE TABLE` with an injected `id bigint unsigned auto_increment` PK |  ⬜  |     ⬜      |    ⬜     |   ⬜   | ⬜  | built              |
+| Table created by Scratch (Live Export destination)                                                         | `CREATE TABLE` with an injected `id bigint unsigned auto_increment` PK and a `live_export:<ref>` comment |  ⬜  |     ⬜      |    ⬜     |   ⬜   | ⬜  | built; Live Export round 2026-10-21 (publish, not CLI) |
 
 ### 3. Scoped / non-top-level entities — not directly fetchable as a top-level entity
 
@@ -305,6 +305,37 @@ Verified against the local MySQL 8.4 / MariaDB 11.4 servers during the build (dr
 - **Binary-charset ENUM / SET are base64 and read-only**, like VARBINARY (native type `enum(...) character set binary`, never recreated).
 - **CHAR / VARCHAR in a non-utf8mb4 charset aren't recreated verbatim** by a MySQL → MySQL Live Export (latin1 `varchar(255)` is 255 bytes but 1,020 in utf8mb4, so a wide legacy table would hit the 65,535-byte row limit); they fall back to MEDIUMTEXT.
 - **Connection-string errors never echo password text.** Once `password=` appears in the query (or when a `?` in a userinfo password started the query), later unsupported / duplicated parameters are rejected without their names, with a hint to percent-encode `& = # % ? / @`; a rejected `ssl={json}` key is named only if it's a known TLS option. The CA bundle is scanned linearly (a 512 KB hostile paste is rejected in ~1 ms).
+
+## Live Export destination round (2026-10-21)
+
+[DEV-12346](https://linear.app/whalesync/issue/DEV-12346): MySQL as a Live Export destination, run with `/test-live-export`
+against a local spinner (master + the retry fix !3412 + the egress IP change !3413) and the local MySQL 8.4 and MariaDB
+11.4 servers. Per-source details are in `library/postgres/LIVE_EXPORT_AUDIT.md` (POSTGRES → MYSQL) and
+`LIVE_EXPORT_AUDIT.md` here (MYSQL → MYSQL / POSTGRES). AIRTABLE → MYSQL wasn't run: the audit token's Airtable
+workspace is over its monthly API quota.
+
+**Data path: passes.** Every first run published every record with no failed operations (Postgres → MySQL 216,
+MySQL → MySQL 217, both again into MariaDB). CRUD passes mirrored, an out-of-band delete in MySQL came back on the next
+run, and 213–214 row tables paged fully. Values survive exactly: emoji / CJK / RTL, 4,001-character text, BIGINT and
+BIGINT UNSIGNED extremes, DECIMAL digits, timestamps with offsets stored as their UTC instant, and DATETIME(6)
+microseconds MySQL → MySQL. A MySQL → MySQL plan recreates each column's exact type (DEV-11903); see
+`LIVE_EXPORT_AUDIT.md`. Second runs write nothing, except DEV-12415 below.
+
+**Retry after an interrupted create (!3412), end to end:** a local-only trigger on `"SyncDraft"` made every checkpoint
+write fail after the three MySQL tables (and their foreign keys, one of them added after the tables because of a
+contacts ↔ invoices cycle) were created. The retried save sent each CREATE again, hit 1050, logged "Reusing the table an
+interrupted create left behind" three times, treated the 1060 on every foreign key ALTER as already done, and finished.
+The next run published 219 records into the reused tables. A trigger that fails only once is not enough: the engine
+writes the draft again later in the same save, and that write lands the checkpoint.
+
+**Findings (sub-issues of DEV-12346):**
+
+| Issue | Priority | Summary |
+|---|---|---|
+| [DEV-12412](https://linear.app/whalesync/issue/DEV-12412) | High | A created field MySQL skipped or rejected (no REFERENCES privilege, PlanetScale without foreign keys, a name MySQL can't hold) leaves the table `partial`; apply then fails with "Could not resolve created field …" on every save, and the real cause is lost |
+| [DEV-12413](https://linear.app/whalesync/issue/DEV-12413) | High | The plan keeps field names MySQL can't use (emoji, trailing space), which leads into DEV-12412 |
+| [DEV-12414](https://linear.app/whalesync/issue/DEV-12414) | Medium | A table over the 180-field cap fails the whole save and blames every table in it; the plan doesn't apply the cap |
+| [DEV-12415](https://linear.app/whalesync/issue/DEV-12415) | Low | MySQL → MySQL: a JSON integer above 2^53 makes every run rewrite the record |
 
 ## Integration tests
 
