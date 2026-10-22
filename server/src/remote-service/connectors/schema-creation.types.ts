@@ -53,6 +53,11 @@ export interface NormalizedCreateTablePlan {
 export interface NormalizedCreateFieldsPlan {
   remoteTableId: string[];
   fields: ResolvedCreateFieldSpec[];
+  /**
+   * Set only when adding the deferred foreign keys of a create-tables request: the `ref` of the table that request
+   * created. Lets a connector recognize a foreign key an interrupted attempt of the same request already added.
+   */
+  createRef?: string;
 }
 
 /** The whole create-tables request, normalized and ready to execute. */

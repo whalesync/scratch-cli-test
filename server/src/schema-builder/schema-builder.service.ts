@@ -806,7 +806,7 @@ export class SchemaBuilderService {
         const resolvedFields = tablePlan.deferredFkFields.map((field) =>
           this.resolveForeignKeyRefs(field, refToRemoteTableId),
         );
-        const fieldResults = await createFields({ remoteTableId, fields: resolvedFields });
+        const fieldResults = await createFields({ remoteTableId, fields: resolvedFields, createRef: tablePlan.ref });
         result.fields = [...result.fields, ...fieldResults];
         if (fieldResults.some((fieldResult) => fieldResult.status === 'failed')) {
           result.status = 'partial';

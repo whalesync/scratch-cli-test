@@ -89,6 +89,8 @@ const BINARY_PRIMARY_KEY_TARGET_TABLE_NAME = `${CREATE_SCHEMA_SPEC_TABLE_PREFIX}
 const COMPOSITE_PRIMARY_KEY_TARGET_TABLE_NAME = `${CREATE_SCHEMA_SPEC_TABLE_PREFIX}composite_pk_target`;
 const VIEW_TARGET_NAME = `${CREATE_SCHEMA_SPEC_TABLE_PREFIX}view_target`;
 const MISSING_TARGET_TABLE_NAME = `${CREATE_SCHEMA_SPEC_TABLE_PREFIX}missing_target`;
+const RETRY_TABLE_NAME = `${CREATE_SCHEMA_SPEC_TABLE_PREFIX}retry`;
+const OTHER_REQUEST_TABLE_NAME = `${CREATE_SCHEMA_SPEC_TABLE_PREFIX}other_request`;
 const ATOMICITY_PARENT_TABLE_NAME = `${CREATE_SCHEMA_SPEC_TABLE_PREFIX}atomic_parent`;
 const ATOMICITY_CHILD_TABLE_NAME = `${CREATE_SCHEMA_SPEC_TABLE_PREFIX}atomic_child`;
 const PARTITIONED_TARGET_TABLE_NAME = `${CREATE_SCHEMA_SPEC_TABLE_PREFIX}partitioned_target`;
@@ -717,6 +719,36 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL create-schema — real DD
     ]);
   });
 
+  it('createFields never adopts an existing column or foreign key on a table no Live Export create made', async () => {
+    const constraintsBefore = await readForeignKeyConstraintsOfTableFromCatalog(
+      admin(),
+      databaseName,
+      PARENT_TABLE_NAME,
+    );
+    const alreadyExistingFields = [
+      { name: 'Nickname', fieldType: { kind: 'text' } },
+      foreignKeyFieldTo('Manager', [databaseName, PARENT_TABLE_NAME]),
+    ] satisfies ResolvedCreateFieldSpec[];
+    const expectedFailures = ['Nickname', 'Manager'].map((fieldName) => ({
+      name: fieldName,
+      status: 'failed',
+      error: `A column named "${fieldName}" already exists on "${databaseName}"."${PARENT_TABLE_NAME}".`,
+    }));
+
+    // Without a create ref (a field added after the first save), and with one the table's comment doesn't name.
+    for (const createRef of [undefined, 'dfd_retrytest1']) {
+      const retriedCreateFieldResults = await connector.createFields({
+        remoteTableId: [databaseName, PARENT_TABLE_NAME],
+        fields: alreadyExistingFields,
+        ...(createRef !== undefined ? { createRef } : {}),
+      });
+      expect(retriedCreateFieldResults).toEqual(expectedFailures);
+    }
+    expect(await readForeignKeyConstraintsOfTableFromCatalog(admin(), databaseName, PARENT_TABLE_NAME)).toEqual(
+      constraintsBefore,
+    );
+  });
+
   it('skips every unresolvable foreign-key target with a reason and still creates the rest of the table', async () => {
     const qualifiedTargetName = (tableName: string) => quoteQualifiedTableNameForAdminSql(databaseName, tableName);
     const unresolvableTargetFixtureStatements = [
@@ -939,6 +971,145 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL create-schema — real DD
     expect([...(await readColumnsOfTableFromCatalog(admin(), databaseName, PARENT_TABLE_NAME)).keys()]).toEqual(
       parentColumnNamesBefore,
     );
+  });
+
+  describe('a save retried after an interrupted create', () => {
+    const RETRY_TABLE_REF = 'dfd_retrytest1';
+    const retryTableParentField = () => foreignKeyFieldTo('Parent', [databaseName, RETRY_TABLE_NAME]);
+
+    function buildRetryTablePlan(overrides: { titleKind?: 'text' | 'longText' } = {}) {
+      return {
+        remoteParentId: [databaseName],
+        ref: RETRY_TABLE_REF,
+        name: RETRY_TABLE_NAME,
+        fields: [
+          { name: 'Title', fieldType: { kind: overrides.titleKind ?? 'text' }, required: true },
+          { name: 'Amount', fieldType: { kind: 'currency', currencyCode: 'USD', precision: 2 } },
+          { name: 'Payload', fieldType: { kind: 'json' } },
+          foreignKeyFieldTo('Owner', [databaseName, PARENT_TABLE_NAME]),
+        ],
+        // A self link: the server adds it with createFields once the table exists.
+        deferredFkFields: [retryTableParentField()],
+      } satisfies Parameters<MysqlConnector['createTable']>[0];
+    }
+
+    const RETRY_TABLE_OWNER_CONSTRAINT_NAME = buildMySqlForeignKeyConstraintName(RETRY_TABLE_NAME, 'Owner');
+
+    it('marks the created table with the request it came from', async () => {
+      const createTableResult = await connector.createTable(buildRetryTablePlan());
+      expect(createTableResult.status).toBe('created');
+
+      const [tableRows] = await admin().query<RowDataPacket[]>(
+        `SELECT TABLE_COMMENT AS table_comment FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
+        [databaseName, RETRY_TABLE_NAME],
+      );
+      expect(tableRows[0].table_comment).toBe(`live_export:${RETRY_TABLE_REF}`);
+    });
+
+    it('reuses the empty table and adds the foreign key the interrupted attempt never reached', async () => {
+      // The interruption: the CREATE committed, the foreign-key ALTER never ran.
+      await admin().query(`ALTER TABLE ??.?? DROP FOREIGN KEY ??, DROP COLUMN ??`, [
+        databaseName,
+        RETRY_TABLE_NAME,
+        RETRY_TABLE_OWNER_CONSTRAINT_NAME,
+        'Owner',
+      ]);
+
+      const retriedCreateTableResult = await connector.createTable(buildRetryTablePlan());
+
+      expect(retriedCreateTableResult).toMatchObject({
+        status: 'created',
+        name: RETRY_TABLE_NAME,
+        remoteTableId: [databaseName, RETRY_TABLE_NAME],
+      });
+      expectEveryFieldToBeCreated(retriedCreateTableResult);
+      expect(await readForeignKeyConstraintsOfTableFromCatalog(admin(), databaseName, RETRY_TABLE_NAME)).toEqual([
+        expect.objectContaining({ constraintName: RETRY_TABLE_OWNER_CONSTRAINT_NAME, columnName: 'Owner' }),
+      ]);
+    });
+
+    it('reuses it again when everything had landed, foreign key included', async () => {
+      const columnsBefore = await readColumnsOfTableFromCatalog(admin(), databaseName, RETRY_TABLE_NAME);
+
+      const retriedCreateTableResult = await connector.createTable(buildRetryTablePlan());
+
+      expect(retriedCreateTableResult.status).toBe('created');
+      expectEveryFieldToBeCreated(retriedCreateTableResult);
+      expect(await readColumnsOfTableFromCatalog(admin(), databaseName, RETRY_TABLE_NAME)).toEqual(columnsBefore);
+    });
+
+    it("adopts a deferred foreign key the same save already added, only when given the save's ref", async () => {
+      const addDeferredForeignKey = (createRef?: string) =>
+        connector.createFields({
+          remoteTableId: [databaseName, RETRY_TABLE_NAME],
+          fields: [retryTableParentField()],
+          ...(createRef !== undefined ? { createRef } : {}),
+        });
+
+      expect(await addDeferredForeignKey(RETRY_TABLE_REF)).toEqual([
+        { name: 'Parent', status: 'created', remoteFieldId: 'Parent' },
+      ]);
+      const constraintsAfterFirstAttempt = await readForeignKeyConstraintsOfTableFromCatalog(
+        admin(),
+        databaseName,
+        RETRY_TABLE_NAME,
+      );
+
+      expect(await addDeferredForeignKey(RETRY_TABLE_REF)).toEqual([
+        { name: 'Parent', status: 'created', remoteFieldId: 'Parent' },
+      ]);
+      for (const otherCreateRef of [undefined, 'dfd_otherexprt']) {
+        expect(await addDeferredForeignKey(otherCreateRef)).toEqual([
+          {
+            name: 'Parent',
+            status: 'failed',
+            error: `A column named "Parent" already exists on "${databaseName}"."${RETRY_TABLE_NAME}".`,
+          },
+        ]);
+      }
+      expect(await readForeignKeyConstraintsOfTableFromCatalog(admin(), databaseName, RETRY_TABLE_NAME)).toEqual(
+        constraintsAfterFirstAttempt,
+      );
+    });
+
+    it('gives a table created for any other request no comment, and never reuses it', async () => {
+      const otherRequestPlan = { ...buildRetryTablePlan(), ref: 'table_1', name: OTHER_REQUEST_TABLE_NAME };
+      expect((await connector.createTable(otherRequestPlan)).status).toBe('created');
+
+      const [tableRows] = await admin().query<RowDataPacket[]>(
+        `SELECT TABLE_COMMENT AS table_comment FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
+        [databaseName, OTHER_REQUEST_TABLE_NAME],
+      );
+      expect(tableRows[0].table_comment).toBe('');
+
+      const retriedCreateTableResult = await connector.createTable(otherRequestPlan);
+      expect(retriedCreateTableResult.status).toBe('failed');
+      expect(retriedCreateTableResult.error).toBe(
+        `A table named "${OTHER_REQUEST_TABLE_NAME}" already exists in the "${databaseName}" database. Rename the new table, or map to the existing table instead.`,
+      );
+    });
+
+    it.each<[string, () => Promise<Parameters<MysqlConnector['createTable']>[0]>]>([
+      ['the plan changed a column type', () => Promise.resolve(buildRetryTablePlan({ titleKind: 'longText' }))],
+      ['another request asks for the name', () => Promise.resolve({ ...buildRetryTablePlan(), ref: 'dfd_otherexprt' })],
+      [
+        'the table already has rows',
+        async () => {
+          await admin().query(`INSERT INTO ??.?? (Title) VALUES ('written by the first run')`, [
+            databaseName,
+            RETRY_TABLE_NAME,
+          ]);
+          return buildRetryTablePlan();
+        },
+      ],
+    ])('refuses the table, as any existing one, when %s', async (_label, buildPlan) => {
+      const refusedCreateTableResult = await connector.createTable(await buildPlan());
+
+      expect(refusedCreateTableResult.status).toBe('failed');
+      expect(refusedCreateTableResult.error).toBe(
+        `A table named "${RETRY_TABLE_NAME}" already exists in the "${databaseName}" database. Rename the new table, or map to the existing table instead.`,
+      );
+    });
   });
 
   it('refuses a database outside the connection scope, and system databases, before any DDL', async () => {

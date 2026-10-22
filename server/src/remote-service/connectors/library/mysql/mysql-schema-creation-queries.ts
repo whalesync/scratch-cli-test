@@ -15,6 +15,7 @@
  *   services (Vitess / PlanetScale) may refuse the variable.
  */
 import { type Knex } from 'knex';
+import { WSLogger } from 'src/logger';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
 import { type KnexMySqlClient } from './knex-mysql-client';
 import { findSingleColumnUniqueIndexColumns, findTableRow } from './mysql-catalog-queries';
@@ -22,11 +23,20 @@ import {
   buildAddMySqlColumnQuery,
   buildAddMySqlForeignKeyColumnStatement,
   buildCreateMySqlTableQuery,
+  buildMySqlCreatedTableComment,
   buildMySqlForeignKeyColumnTypeDefinition,
+  buildMySqlForeignKeyConstraintName,
+  findMySqlLeftoverTableColumnsMismatch,
+  findMySqlLeftoverTableOwnershipMismatch,
+  isMySqlDuplicateTableError,
   resolveMySqlColumnDefinitionForCreateField,
+  type MySqlCreateFieldColumnDefinition,
   type MySqlForeignKeyResolution,
+  type MySqlLeftoverTableColumn,
+  type MySqlLeftoverTableRow,
   type ResolvedMySqlForeignKey,
 } from './mysql-create-schema';
+import { qualifiedMySqlTableReferenceForKnex } from './mysql-identifier-quoting';
 import { isStorageEngineSafeForScratchWrites } from './mysql-table-writability';
 import { type MySqlTableReference } from './mysql-types';
 import { chooseMySqlUniquelyAddressableColumn } from './mysql-uniquely-addressable-column';
@@ -78,21 +88,233 @@ export async function findStoredMySqlTableReference(
 }
 
 /**
- * `CREATE TABLE` with the injected `bigint unsigned auto_increment` primary key and every non-foreign-key field
- * (foreign keys are added afterwards, one atomic ALTER each). Returns the per-field skip reasons and the table's
- * address as MySQL stored it (falls back to the requested names if the catalog doesn't show the table).
+ * `CREATE TABLE` with the injected `bigint unsigned auto_increment` primary key, every non-foreign-key field and, for
+ * a Live Export, the comment naming its source table ({@link buildMySqlCreatedTableComment}). Foreign keys are added
+ * afterwards, one atomic ALTER each. Returns the per-field skip reasons and the table's address as MySQL stored it
+ * (falls back to the requested names if the catalog doesn't show the table).
+ *
+ * DDL commits at once, so a save interrupted after the CREATE (the worker died, or the read-back below failed)
+ * leaves the table behind, and the retry's CREATE hits "table exists" (1050). For a Live Export, the table is then
+ * reused when it carries this request's comment, is as planned and is empty
+ * ({@link findWhyMySqlLeftoverTableIsNotReusable}). Otherwise the 1050 error is rethrown and the caller reports the
+ * name as taken.
  */
 export async function createTableWithAutoIncrementPrimaryKey(
   client: KnexMySqlClient,
   table: MySqlTableReference,
   nonForeignKeyFields: ResolvedCreateFieldSpec[],
+  request: { createRef: string; foreignKeyFieldNames: ReadonlySet<string> },
 ): Promise<{ skipReasonByFieldName: Map<string, string>; storedTable: MySqlTableReference }> {
   const skipReasonByFieldName = new Map<string, string>();
-  const createTableQuery = buildCreateMySqlTableQuery(client.knex, table, nonForeignKeyFields, skipReasonByFieldName);
+  const tableComment = buildMySqlCreatedTableComment(request.createRef);
+  const createTableQuery = buildCreateMySqlTableQuery(
+    client.knex,
+    table,
+    nonForeignKeyFields,
+    skipReasonByFieldName,
+    tableComment,
+  );
   await client.prepareSessionForSchemaChanges();
-  await createTableQuery;
+  try {
+    await createTableQuery;
+  } catch (error) {
+    if (!isMySqlDuplicateTableError(error) || tableComment === undefined) throw error;
+    const leftoverTable = await findReusableMySqlTableLeftByInterruptedCreate(client.knex, table, {
+      tableComment,
+      nonForeignKeyFields,
+      foreignKeyFieldNames: request.foreignKeyFieldNames,
+    });
+    if (leftoverTable === null) throw error;
+    return { skipReasonByFieldName, storedTable: leftoverTable };
+  }
   const storedTable = (await findStoredMySqlTableReference(client.knex, table)) ?? table;
   return { skipReasonByFieldName, storedTable };
+}
+
+/**
+ * The table an earlier attempt of the same create request left behind, as MySQL stored it, or null when the table
+ * that blocked the CREATE isn't one to reuse (or can't be read).
+ */
+async function findReusableMySqlTableLeftByInterruptedCreate(
+  knex: Knex,
+  table: MySqlTableReference,
+  expected: {
+    tableComment: string;
+    nonForeignKeyFields: ResolvedCreateFieldSpec[];
+    foreignKeyFieldNames: ReadonlySet<string>;
+  },
+): Promise<MySqlTableReference | null> {
+  const plannedColumns = new Map<string, Extract<MySqlCreateFieldColumnDefinition, { outcome: 'column' }>>();
+  for (const field of expected.nonForeignKeyFields) {
+    const columnDefinition = resolveMySqlColumnDefinitionForCreateField(field, { isCreatingTable: true });
+    if (columnDefinition.outcome === 'column') plannedColumns.set(field.name, columnDefinition);
+  }
+  try {
+    const leftoverTable = await readMySqlLeftoverTableRow(knex, table);
+    if (leftoverTable === null) return null;
+    const mismatch = await findWhyMySqlLeftoverTableIsNotReusable(knex, leftoverTable, {
+      tableComment: expected.tableComment,
+      plannedColumns,
+      foreignKeyFieldNames: expected.foreignKeyFieldNames,
+    });
+    WSLogger.info({
+      source: 'MySqlSchemaCreation.createTableWithAutoIncrementPrimaryKey',
+      message:
+        mismatch === undefined
+          ? 'Reusing the table an interrupted create left behind'
+          : 'The table blocking the create is not one to reuse',
+      ...(mismatch !== undefined ? { reason: mismatch } : {}),
+      tableComment: expected.tableComment,
+    });
+    return mismatch === undefined ? leftoverTable.storedTable : null;
+  } catch (error) {
+    WSLogger.warn({
+      source: 'MySqlSchemaCreation.createTableWithAutoIncrementPrimaryKey',
+      message: "Couldn't read the table blocking the create, so it isn't reused",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Why the table that blocked the CREATE isn't one to reuse, or `undefined` when it is. Cheapest check first: its
+ * TABLES row must show this request's InnoDB base table before its columns are read, and its columns must be as
+ * planned before it is checked for rows. A row check on a view would compute the view, and on MariaDB the session
+ * prepared for schema changes has no statement timeout.
+ */
+async function findWhyMySqlLeftoverTableIsNotReusable(
+  knex: Knex,
+  leftoverTable: { storedTable: MySqlTableReference; tableRow: MySqlLeftoverTableRow },
+  expected: Parameters<typeof findMySqlLeftoverTableColumnsMismatch>[1] & { tableComment: string },
+): Promise<string | undefined> {
+  const ownershipMismatch = findMySqlLeftoverTableOwnershipMismatch(leftoverTable.tableRow, expected.tableComment);
+  if (ownershipMismatch !== undefined) return ownershipMismatch;
+  const columns = await readMySqlLeftoverTableColumns(knex, leftoverTable.storedTable);
+  const columnsMismatch = findMySqlLeftoverTableColumnsMismatch(columns, expected);
+  if (columnsMismatch !== undefined) return columnsMismatch;
+  const anyRow = await runMySqlSchemaCreationCatalogQuery(knex, 'SELECT 1 AS any_row FROM ?? LIMIT 1', [
+    qualifiedMySqlTableReferenceForKnex(leftoverTable.storedTable),
+  ]);
+  return anyRow.length > 0 ? 'it already has rows' : undefined;
+}
+
+/** The TABLES row of a table that blocked a CREATE TABLE, under the names MySQL stored, or null if it's gone. */
+async function readMySqlLeftoverTableRow(
+  knex: Knex,
+  table: MySqlTableReference,
+): Promise<{ storedTable: MySqlTableReference; tableRow: MySqlLeftoverTableRow } | null> {
+  const tableRows = await runMySqlSchemaCreationCatalogQuery(
+    knex,
+    `SELECT TABLE_SCHEMA AS stored_database_name, TABLE_NAME AS stored_table_name, TABLE_TYPE AS table_type,
+            ENGINE AS storage_engine, TABLE_COMMENT AS table_comment
+     FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
+    [table.databaseName, table.tableName],
+  );
+  if (tableRows.length === 0) return null;
+  const storedDatabaseName = readNullableCatalogText(tableRows[0], 'stored_database_name');
+  const storedTableName = readNullableCatalogText(tableRows[0], 'stored_table_name');
+  if (storedDatabaseName === null || storedTableName === null) return null;
+  return {
+    storedTable: { databaseName: storedDatabaseName, tableName: storedTableName },
+    tableRow: {
+      tableType: readNullableCatalogText(tableRows[0], 'table_type') ?? '',
+      storageEngine: readNullableCatalogText(tableRows[0], 'storage_engine'),
+      tableComment: readNullableCatalogText(tableRows[0], 'table_comment') ?? '',
+    },
+  };
+}
+
+/** The columns of a table that blocked a CREATE TABLE, in table order. */
+async function readMySqlLeftoverTableColumns(
+  knex: Knex,
+  storedTable: MySqlTableReference,
+): Promise<MySqlLeftoverTableColumn[]> {
+  const columnRows = await runMySqlSchemaCreationCatalogQuery(
+    knex,
+    `SELECT COLUMN_NAME AS column_name, COLUMN_TYPE AS column_type, IS_NULLABLE AS is_nullable,
+            COLUMN_KEY AS column_key, EXTRA AS extra
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+     ORDER BY ORDINAL_POSITION`,
+    [storedTable.databaseName, storedTable.tableName],
+  );
+  return columnRows.map((columnRow) => ({
+    columnName: readNullableCatalogText(columnRow, 'column_name') ?? '',
+    columnType: readNullableCatalogText(columnRow, 'column_type') ?? '',
+    isNullable: (readNullableCatalogText(columnRow, 'is_nullable') ?? '').toUpperCase() === 'YES',
+    columnKey: (readNullableCatalogText(columnRow, 'column_key') ?? '').toUpperCase(),
+    extra: readNullableCatalogText(columnRow, 'extra') ?? '',
+  }));
+}
+
+/**
+ * A catalog read made after a 1060 (duplicate column). A failed read means "not as planned", so the caller reports
+ * the original 1060 rather than the read's error.
+ */
+async function runCatalogQueryForDuplicateColumnCheck(
+  knex: Knex,
+  sql: string,
+  bindings: readonly string[],
+): Promise<Record<string, unknown>[]> {
+  try {
+    return await runMySqlSchemaCreationCatalogQuery(knex, sql, bindings);
+  } catch (error) {
+    WSLogger.warn({
+      source: 'MySqlSchemaCreation.duplicateColumnCheck',
+      message: "Couldn't read the existing column after a duplicate-column error, so it isn't reused",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
+/**
+ * Whether `table` carries exactly `tableComment` ({@link buildMySqlCreatedTableComment}), i.e. it was created for the
+ * Live Export source table the comment names. A failed read counts as no.
+ */
+export async function doesMySqlTableCarryCreatedTableComment(
+  client: KnexMySqlClient,
+  table: MySqlTableReference,
+  tableComment: string,
+): Promise<boolean> {
+  const tableRows = await runCatalogQueryForDuplicateColumnCheck(
+    client.knex,
+    `SELECT TABLE_COMMENT AS table_comment
+     FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
+    [table.databaseName, table.tableName],
+  );
+  return tableRows.length === 1 && readNullableCatalogText(tableRows[0], 'table_comment') === tableComment;
+}
+
+/**
+ * After a 1060 (duplicate column) on the foreign-key ALTER: whether the column already carries the constraint Scratch
+ * names for it ({@link buildMySqlForeignKeyConstraintName}) and references the resolved target. Column and constraint
+ * are only ever added together, so on a table this request created ({@link doesMySqlTableCarryCreatedTableComment})
+ * that means an earlier attempt of the same save added this foreign key. Only ask on such a table.
+ */
+export async function isExistingMySqlForeignKeyAsPlanned(
+  client: KnexMySqlClient,
+  table: MySqlTableReference,
+  field: ResolvedCreateFieldSpec,
+  resolution: ResolvedMySqlForeignKey,
+): Promise<boolean> {
+  const constraintRows = await runCatalogQueryForDuplicateColumnCheck(
+    client.knex,
+    `SELECT REFERENCED_TABLE_SCHEMA AS referenced_database_name, REFERENCED_TABLE_NAME AS referenced_table_name,
+            REFERENCED_COLUMN_NAME AS referenced_column_name
+     FROM information_schema.KEY_COLUMN_USAGE
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ? AND CONSTRAINT_NAME = ?`,
+    [table.databaseName, table.tableName, field.name, buildMySqlForeignKeyConstraintName(table.tableName, field.name)],
+  );
+  return constraintRows.some(
+    (constraintRow) =>
+      readNullableCatalogText(constraintRow, 'referenced_database_name') === resolution.targetTable.databaseName &&
+      readNullableCatalogText(constraintRow, 'referenced_table_name') === resolution.targetTable.tableName &&
+      readNullableCatalogText(constraintRow, 'referenced_column_name') === resolution.targetColumnName,
+  );
 }
 
 /**

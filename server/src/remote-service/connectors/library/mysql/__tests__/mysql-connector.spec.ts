@@ -72,6 +72,8 @@ import {
   addForeignKeyColumnWithConstraint,
   addNonForeignKeyColumn,
   createTableWithAutoIncrementPrimaryKey,
+  doesMySqlTableCarryCreatedTableComment,
+  isExistingMySqlForeignKeyAsPlanned,
   resolveForeignKeyReferenceForTargetTable,
 } from '../mysql-schema-creation-queries';
 import { type MySqlServerFlavor } from '../mysql-server-flavor';
@@ -1584,7 +1586,7 @@ function buildResolvedForeignKeyToCustomers(): MySqlForeignKeyResolution {
 describe('MysqlConnector.createTable', () => {
   function buildCreateTablePlan(overrides: Partial<NormalizedCreateTablePlan>): NormalizedCreateTablePlan {
     return {
-      ref: 'orders-ref',
+      ref: 'dfd_orders0001',
       name: 'Orders',
       remoteParentId: [APPLICATION_DATABASE_NAME],
       fields: [buildTextField('title'), buildTextField('notes')],
@@ -1632,7 +1634,7 @@ describe('MysqlConnector.createTable', () => {
       const createTableResult = await new MysqlConnector(connectionOptions).createTable(plan);
 
       expect(createTableResult).toEqual({
-        ref: 'orders-ref',
+        ref: 'dfd_orders0001',
         name: plan.name,
         status: 'failed',
         fields: [
@@ -1659,10 +1661,11 @@ describe('MysqlConnector.createTable', () => {
       onlyFakeKnexMySqlClientCreated(),
       { databaseName: APPLICATION_DATABASE_NAME, tableName: 'Orders' },
       [buildTextField('title'), buildTextField('notes')],
+      { createRef: 'dfd_orders0001', foreignKeyFieldNames: new Set() },
     );
     // lower_case_table_names: the remote id is MySQL's stored spelling, so it equals listTables' remote id.
     expect(createTableResult).toEqual({
-      ref: 'orders-ref',
+      ref: 'dfd_orders0001',
       name: 'orders',
       status: 'created',
       remoteTableId: [APPLICATION_DATABASE_NAME, 'orders'],
@@ -1682,10 +1685,12 @@ describe('MysqlConnector.createTable', () => {
     jest.mocked(addForeignKeyColumnWithConstraint).mockResolvedValue(undefined);
     const customerForeignKeyField = buildForeignKeyField('customer', [APPLICATION_DATABASE_NAME, 'customers']);
     const billedToForeignKeyField = buildForeignKeyField('billed_to', [APPLICATION_DATABASE_NAME, 'customers']);
+    const deferredSelfForeignKeyField = buildForeignKeyField('parent_order', [APPLICATION_DATABASE_NAME, 'orders']);
 
     const createTableResult = await buildConnectorScopedToApplicationDatabase().createTable(
       buildCreateTablePlan({
         fields: [buildTextField('title'), customerForeignKeyField, billedToForeignKeyField],
+        deferredFkFields: [deferredSelfForeignKeyField],
       }),
     );
 
@@ -1698,10 +1703,13 @@ describe('MysqlConnector.createTable', () => {
     expect(lastForeignKeyResolutionOrder).toBeLessThan(
       jest.mocked(createTableWithAutoIncrementPrimaryKey).mock.invocationCallOrder[0],
     );
-    // Foreign keys are never part of the CREATE TABLE.
-    expect(createTableWithAutoIncrementPrimaryKey).toHaveBeenCalledWith(fakeClient, expect.anything(), [
-      buildTextField('title'),
-    ]);
+    // Foreign keys are never part of the CREATE TABLE; every foreign-key name (deferred ones too) may be reused.
+    expect(createTableWithAutoIncrementPrimaryKey).toHaveBeenCalledWith(
+      fakeClient,
+      expect.anything(),
+      [buildTextField('title')],
+      { createRef: 'dfd_orders0001', foreignKeyFieldNames: new Set(['customer', 'billed_to', 'parent_order']) },
+    );
     expect(jest.mocked(addForeignKeyColumnWithConstraint).mock.calls).toEqual([
       [fakeClient, storedOrdersTable, customerForeignKeyField, buildResolvedForeignKeyToCustomers()],
       [fakeClient, storedOrdersTable, billedToForeignKeyField, buildResolvedForeignKeyToCustomers()],
@@ -1761,6 +1769,45 @@ describe('MysqlConnector.createTable', () => {
     // allowMultiple is refused without asking the database about its target.
     expect(resolveForeignKeyReferenceForTargetTable).toHaveBeenCalledTimes(2);
     expect(addForeignKeyColumnWithConstraint).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a foreign key an earlier attempt already added (1060 on its column, our constraint) as created', async () => {
+    const storedOrdersTable: MySqlTableReference = { databaseName: APPLICATION_DATABASE_NAME, tableName: 'orders' };
+    jest
+      .mocked(createTableWithAutoIncrementPrimaryKey)
+      .mockResolvedValue({ skipReasonByFieldName: new Map(), storedTable: storedOrdersTable });
+    jest.mocked(resolveForeignKeyReferenceForTargetTable).mockResolvedValue(buildResolvedForeignKeyToCustomers());
+    jest.mocked(addForeignKeyColumnWithConstraint).mockRejectedValue(
+      buildFakeMySqlServerError({
+        errno: 1060,
+        code: 'ER_DUP_FIELDNAME',
+        sqlState: '42S21',
+        sqlMessage: "Duplicate column name 'customer'",
+      }),
+    );
+    jest.mocked(isExistingMySqlForeignKeyAsPlanned).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const customerForeignKeyField = buildForeignKeyField('customer', [APPLICATION_DATABASE_NAME, 'customers']);
+    const billedToForeignKeyField = buildForeignKeyField('billed_to', [APPLICATION_DATABASE_NAME, 'customers']);
+
+    const createTableResult = await buildConnectorScopedToApplicationDatabase().createTable(
+      buildCreateTablePlan({ fields: [customerForeignKeyField, billedToForeignKeyField] }),
+    );
+
+    expect(isExistingMySqlForeignKeyAsPlanned).toHaveBeenCalledWith(
+      onlyFakeKnexMySqlClientCreated(),
+      storedOrdersTable,
+      customerForeignKeyField,
+      buildResolvedForeignKeyToCustomers(),
+    );
+    expect(createTableResult.status).toBe('partial');
+    expect(createTableResult.fields).toEqual([
+      { name: 'customer', status: 'created', remoteFieldId: 'customer' },
+      {
+        name: 'billed_to',
+        status: 'failed',
+        error: 'A column named "billed_to" already exists on "app_db"."orders".',
+      },
+    ]);
   });
 
   it('skips a foreign key whose target was never resolved to an existing table, without querying', async () => {
@@ -1856,6 +1903,91 @@ describe('MysqlConnector.createFields', () => {
       fieldsPlan.fields[3],
       buildResolvedForeignKeyToCustomers(),
     );
+  });
+});
+
+describe('MysqlConnector.createFields after an interrupted save', () => {
+  const ordersTable: MySqlTableReference = { databaseName: APPLICATION_DATABASE_NAME, tableName: 'orders' };
+
+  function buildDuplicateColumnError(columnName: string): Error {
+    return buildFakeMySqlServerError({
+      errno: 1060,
+      code: 'ER_DUP_FIELDNAME',
+      sqlState: '42S21',
+      sqlMessage: `Duplicate column name '${columnName}'`,
+    });
+  }
+
+  it('fails a column that already exists without asking whose it is, even for a Live Export save', async () => {
+    jest.mocked(addNonForeignKeyColumn).mockRejectedValue(buildDuplicateColumnError('title'));
+
+    const createFieldResults = await buildConnectorScopedToApplicationDatabase().createFields({
+      remoteTableId: [APPLICATION_DATABASE_NAME, 'orders'],
+      fields: [buildTextField('title')],
+      createRef: 'dfd_orders0001',
+    });
+
+    expect(createFieldResults).toEqual([
+      { name: 'title', status: 'failed', error: 'A column named "title" already exists on "app_db"."orders".' },
+    ]);
+    expect(doesMySqlTableCarryCreatedTableComment).not.toHaveBeenCalled();
+  });
+
+  describe('a deferred foreign key whose column already exists (1060)', () => {
+    const customerForeignKeyField = buildForeignKeyField('customer', [APPLICATION_DATABASE_NAME, 'customers']);
+    const billedToForeignKeyField = buildForeignKeyField('billed_to', [APPLICATION_DATABASE_NAME, 'customers']);
+
+    beforeEach(() => {
+      jest.mocked(resolveForeignKeyReferenceForTargetTable).mockResolvedValue(buildResolvedForeignKeyToCustomers());
+      jest.mocked(addForeignKeyColumnWithConstraint).mockRejectedValue(buildDuplicateColumnError('customer'));
+      jest.mocked(isExistingMySqlForeignKeyAsPlanned).mockResolvedValue(true);
+    });
+
+    it("counts as created on the table the save's own create request made, reading its comment once", async () => {
+      jest.mocked(doesMySqlTableCarryCreatedTableComment).mockResolvedValue(true);
+
+      const createFieldResults = await buildConnectorScopedToApplicationDatabase().createFields({
+        remoteTableId: [APPLICATION_DATABASE_NAME, 'orders'],
+        fields: [customerForeignKeyField, billedToForeignKeyField],
+        createRef: 'dfd_orders0001',
+      });
+
+      expect(createFieldResults).toEqual([
+        { name: 'customer', status: 'created', remoteFieldId: 'customer' },
+        { name: 'billed_to', status: 'created', remoteFieldId: 'billed_to' },
+      ]);
+      expect(doesMySqlTableCarryCreatedTableComment).toHaveBeenCalledTimes(1);
+      expect(doesMySqlTableCarryCreatedTableComment).toHaveBeenCalledWith(
+        onlyFakeKnexMySqlClientCreated(),
+        ordersTable,
+        'live_export:dfd_orders0001',
+      );
+      expect(isExistingMySqlForeignKeyAsPlanned).toHaveBeenCalledWith(
+        onlyFakeKnexMySqlClientCreated(),
+        ordersTable,
+        customerForeignKeyField,
+        buildResolvedForeignKeyToCustomers(),
+      );
+    });
+
+    it.each<[string, string | undefined, boolean]>([
+      ['the plan carries no create ref (a field added after the first save)', undefined, true],
+      ['the create ref is not a Live Export source table', 't1', true],
+      ["the table doesn't carry the create request's comment", 'dfd_orders0001', false],
+    ])('fails when %s', async (_label, createRef, doesTableCarryComment) => {
+      jest.mocked(doesMySqlTableCarryCreatedTableComment).mockResolvedValue(doesTableCarryComment);
+
+      const createFieldResults = await buildConnectorScopedToApplicationDatabase().createFields({
+        remoteTableId: [APPLICATION_DATABASE_NAME, 'orders'],
+        fields: [customerForeignKeyField],
+        ...(createRef !== undefined ? { createRef } : {}),
+      });
+
+      expect(createFieldResults).toEqual([
+        { name: 'customer', status: 'failed', error: 'A column named "customer" already exists on "app_db"."orders".' },
+      ]);
+      expect(isExistingMySqlForeignKeyAsPlanned).not.toHaveBeenCalled();
+    });
   });
 });
 

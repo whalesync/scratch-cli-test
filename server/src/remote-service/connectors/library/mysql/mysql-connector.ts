@@ -60,7 +60,9 @@ import {
 import { MySqlClientError, MySqlClientProblem } from './mysql-client-error';
 import { parseStoredMySqlCredentials } from './mysql-connection-options';
 import {
+  buildMySqlCreatedTableComment,
   findMySqlIdentifierProblem,
+  isMySqlDuplicateColumnError,
   isMySqlDuplicateTableError,
   MYSQL_SCHEMA_CREATION_CAPABILITIES,
   mySqlSchemaCreationErrorMessage,
@@ -99,6 +101,8 @@ import {
   addForeignKeyColumnWithConstraint,
   addNonForeignKeyColumn,
   createTableWithAutoIncrementPrimaryKey,
+  doesMySqlTableCarryCreatedTableComment,
+  isExistingMySqlForeignKeyAsPlanned,
   resolveForeignKeyReferenceForTargetTable,
 } from './mysql-schema-creation-queries';
 import { type MySqlServerFlavor } from './mysql-server-flavor';
@@ -555,7 +559,9 @@ export class MysqlConnector extends Connector {
    * Create one table (with an AUTO_INCREMENT `id` primary key) and its fields. Non-foreign-key fields are created
    * with the table; each foreign key is then added by its own atomic `ALTER TABLE … ADD COLUMN …, ADD CONSTRAINT …`,
    * so one unresolvable or rejected reference fails that field only. MySQL DDL commits implicitly, so nothing here
-   * runs in a transaction. Creates are NOT idempotent: re-running fails with "already exists".
+   * runs in a transaction. For a Live Export, re-running the same plan (same `ref`) after an interruption reuses the
+   * table and the foreign keys the earlier attempt left, as long as the table carries the plan's comment, is still
+   * empty and is as planned; any other existing table with the name fails with "already exists".
    */
   override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
     const failAllFields = (errorMessage: string): CreateTableResult => ({
@@ -593,17 +599,25 @@ export class MysqlConnector extends Connector {
         // Resolve every foreign-key target BEFORE any DDL, so an unresolvable reference never leaves a half-made table.
         const foreignKeyResolutionByFieldName = await this.resolveForeignKeyTargets(client, plan.fields);
         const nonForeignKeyFields = plan.fields.filter((field) => field.fieldType.kind !== 'foreignKey');
+        const foreignKeyFieldNames = new Set(
+          [...plan.fields, ...plan.deferredFkFields]
+            .filter((field) => field.fieldType.kind === 'foreignKey')
+            .map((field) => field.name),
+        );
         const { skipReasonByFieldName, storedTable } = await createTableWithAutoIncrementPrimaryKey(
           client,
           requestedTable,
           nonForeignKeyFields,
+          { createRef: plan.ref, foreignKeyFieldNames },
         );
         const failureMessageByFieldName = new Map<string, string>();
         for (const field of plan.fields) {
           if (field.fieldType.kind !== 'foreignKey') continue;
+          // The table is this request's: just created, or reused because it carries the plan's comment.
           await this.addForeignKeyField(client, storedTable, field, foreignKeyResolutionByFieldName, {
             skipReasonByFieldName,
             failureMessageByFieldName,
+            mayAdoptExistingForeignKey: () => Promise.resolve(true),
           });
         }
         const fields = this.buildFieldResults(plan.fields, skipReasonByFieldName, failureMessageByFieldName);
@@ -628,12 +642,23 @@ export class MysqlConnector extends Connector {
 
   /**
    * Add fields to an existing table, one statement per field so a bad field fails in isolation. Also how the
-   * server adds deferred cyclic / self foreign keys once every table of a multi-table create exists.
+   * server adds deferred cyclic / self foreign keys once every table of a multi-table create exists. A field whose
+   * column already exists fails, except a deferred foreign key the same Live Export save already added: the plan
+   * carries the save's `createRef`, the table carries that request's comment, and the column carries Scratch's
+   * constraint to the planned target.
    */
   override async createFields(plan: NormalizedCreateFieldsPlan): Promise<CreateFieldResult[]> {
     const table = this.tableReferenceFromRemoteId(plan.remoteTableId);
+    const createdTableComment =
+      plan.createRef !== undefined ? buildMySqlCreatedTableComment(plan.createRef) : undefined;
     return this.withMySqlClient(async (client) => {
       const foreignKeyResolutionByFieldName = await this.resolveForeignKeyTargets(client, plan.fields);
+      let isTableThisRequests: Promise<boolean> | undefined;
+      const mayAdoptExistingForeignKey = (): Promise<boolean> => {
+        if (createdTableComment === undefined) return Promise.resolve(false);
+        isTableThisRequests ??= doesMySqlTableCarryCreatedTableComment(client, table, createdTableComment);
+        return isTableThisRequests;
+      };
       const results: CreateFieldResult[] = [];
       for (const field of plan.fields) {
         const skipReasonByFieldName = new Map<string, string>();
@@ -642,6 +667,7 @@ export class MysqlConnector extends Connector {
           await this.addForeignKeyField(client, table, field, foreignKeyResolutionByFieldName, {
             skipReasonByFieldName,
             failureMessageByFieldName,
+            mayAdoptExistingForeignKey,
           });
         } else {
           try {
@@ -692,7 +718,12 @@ export class MysqlConnector extends Connector {
     table: MySqlTableReference,
     field: ResolvedCreateFieldSpec,
     foreignKeyResolutionByFieldName: Map<string, MySqlForeignKeyResolution>,
-    outcomes: { skipReasonByFieldName: Map<string, string>; failureMessageByFieldName: Map<string, string> },
+    outcomes: {
+      skipReasonByFieldName: Map<string, string>;
+      failureMessageByFieldName: Map<string, string>;
+      /** Whether `table` is proven to be this create request's, so a foreign key already on it may be adopted. */
+      mayAdoptExistingForeignKey: () => Promise<boolean>;
+    },
   ): Promise<void> {
     const skipForeignKeyField = (reason: string): void => {
       outcomes.skipReasonByFieldName.set(field.name, `couldn't create foreign key "${field.name}": ${reason}`);
@@ -721,7 +752,14 @@ export class MysqlConnector extends Connector {
     try {
       await addForeignKeyColumnWithConstraint(client, table, field, resolution);
     } catch (error) {
-      outcomes.failureMessageByFieldName.set(field.name, this.describeSchemaCreationError(error, table, field.name));
+      // An earlier attempt of the same save may have added this foreign key before it was interrupted.
+      const isForeignKeyAlreadyAsPlanned =
+        isMySqlDuplicateColumnError(error) &&
+        (await outcomes.mayAdoptExistingForeignKey()) &&
+        (await isExistingMySqlForeignKeyAsPlanned(client, table, field, resolution));
+      if (!isForeignKeyAlreadyAsPlanned) {
+        outcomes.failureMessageByFieldName.set(field.name, this.describeSchemaCreationError(error, table, field.name));
+      }
     }
   }
 

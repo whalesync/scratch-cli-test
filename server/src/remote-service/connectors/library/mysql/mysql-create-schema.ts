@@ -9,9 +9,15 @@
  * How this differs from `pg-create-schema.ts`, and why:
  * - Foreign keys are NEVER part of the CREATE TABLE. knex's MySQL dialect emits an inline `foreign()` as a separate
  *   `ALTER TABLE … ADD CONSTRAINT` after the CREATE, and DDL commits implicitly — so a failing constraint would leave
- *   a table without it, and a retry would then hit "table exists" (1050). Instead each foreign key is added later
- *   as ONE hand-assembled `ALTER TABLE … ADD COLUMN …, ADD CONSTRAINT …` statement, which MySQL and MariaDB apply
- *   atomically (spike-verified: when the constraint fails, the column is not left behind).
+ *   a table without it. Instead each foreign key is added later as ONE hand-assembled
+ *   `ALTER TABLE … ADD COLUMN …, ADD CONSTRAINT …` statement, which MySQL and MariaDB apply atomically
+ *   (spike-verified: when the constraint fails, the column is not left behind).
+ * - A table created for a Live Export carries a comment naming the source table it was created for
+ *   ({@link buildMySqlCreatedTableComment}). DDL can't be rolled back, so a save interrupted after the CREATE leaves
+ *   the table behind; the retry's CREATE then hits "table exists" (1050) and reuses the table only if it carries that
+ *   comment, has the planned columns and is empty ({@link findMySqlLeftoverTableOwnershipMismatch}, then
+ *   {@link findMySqlLeftoverTableColumnsMismatch}, then a row check). Tables created for any other request get no
+ *   comment and are never reused.
  * - Text-like fields become MEDIUMTEXT, never VARCHAR or TEXT. MySQL's 65,535-byte row limit counts a utf8mb4
  *   VARCHAR(n) as 4·n bytes (about 64 × VARCHAR(255) already fails with 1118), and TEXT caps a VALUE at 65,535
  *   bytes (strict mode rejects longer ones with 1406). MEDIUMTEXT costs the same ~40 in-row bytes as TEXT.
@@ -21,7 +27,7 @@
  * - Every identifier segment (database, table, column) is sentinel-encoded, so `.`, ` as ` and `?` in a name reach
  *   MySQL verbatim inside backticks (Connector Prime Directive: names are never folded or renamed).
  */
-import { CREATE_FIELD_KINDS, type SchemaCreationCapabilities } from '@spinner/shared-types';
+import { CREATE_FIELD_KINDS, isDataFolderId, type SchemaCreationCapabilities } from '@spinner/shared-types';
 import { createHash } from 'crypto';
 import { type Knex } from 'knex';
 import { assertUnreachable } from 'src/utils/asserts';
@@ -132,6 +138,23 @@ export function findMySqlIdentifierProblem(identifier: string, identifierRole: '
     return `the ${identifierRoleLabel} "${identifier}" is ${identifierCodePoints.length} characters long; MySQL allows at most ${MYSQL_MAX_IDENTIFIER_LENGTH} — shorten it in the plan`;
   }
   return undefined;
+}
+
+/** Everything {@link buildMySqlCreatedTableComment} can produce, re-checked before the comment reaches DDL. */
+const MYSQL_CREATED_TABLE_COMMENT_PATTERN = /^live_export:dfd_[0-9A-Za-z]{10}$/;
+
+/**
+ * The comment written on a table created for a Live Export: `live_export:<ref>`, where `<ref>` is the create
+ * request's ref, the Live Export's source data folder id. It is the same on every attempt of a save, so a retry can
+ * tell its own leftover table from a table someone else made. `undefined` for any other ref: other callers choose
+ * their own refs (the dev tools send `table_1`, `table_2`, ...), which repeat across requests, so their tables get no
+ * comment and are never reused. knex writes a table comment into the DDL without escaping it, so only a ref in the
+ * data folder id alphabet is used.
+ */
+export function buildMySqlCreatedTableComment(createRef: string): string | undefined {
+  if (!isDataFolderId(createRef)) return undefined;
+  const tableComment = `live_export:${createRef}`;
+  return MYSQL_CREATED_TABLE_COMMENT_PATTERN.test(tableComment) ? tableComment : undefined;
 }
 
 /** The lower-cased `[a-z0-9_]` rendering of a name, cut to `maximumLength`, for a readable constraint name. */
@@ -417,18 +440,27 @@ function assertMySqlTableReferenceCanBeUsedInDdl(table: MySqlTableReference): vo
 
 /**
  * `CREATE TABLE \`db\`.\`table\` (id bigint unsigned not null auto_increment primary key, …) DEFAULT CHARACTER SET
- * utf8mb4 ENGINE = InnoDB`. Fields that can't become a column are recorded in `skipReasonByFieldName` (keyed by
- * field name) instead of failing the statement; the map is filled when knex compiles the builder (on `.toSQL()` or
- * when it is awaited). Foreign-key fields must not be passed: they are added afterwards with
- * {@link buildAddMySqlForeignKeyColumnStatement} (one reaching here is skipped, never silently dropped).
+ * utf8mb4 ENGINE = InnoDB [COMMENT = '<tableComment>']`. Fields that can't become a column are recorded in
+ * `skipReasonByFieldName` (keyed by field name) instead of failing the statement; the map is filled when knex
+ * compiles the builder (on `.toSQL()` or when it is awaited). Foreign-key fields must not be passed: they are added
+ * afterwards with {@link buildAddMySqlForeignKeyColumnStatement} (one reaching here is skipped, never silently
+ * dropped). `tableComment` must come from {@link buildMySqlCreatedTableComment} (knex doesn't escape it); without
+ * one the table gets no comment.
  */
 export function buildCreateMySqlTableQuery(
   knex: Knex,
   table: MySqlTableReference,
   nonForeignKeyFields: ResolvedCreateFieldSpec[],
   skipReasonByFieldName: Map<string, string>,
+  tableComment: string | undefined,
 ): Knex.SchemaBuilder {
   assertMySqlTableReferenceCanBeUsedInDdl(table);
+  if (tableComment !== undefined && !MYSQL_CREATED_TABLE_COMMENT_PATTERN.test(tableComment)) {
+    throw new MySqlClientError(
+      MySqlClientProblem.InvalidSchemaCreationRequest,
+      `Can't create "${table.tableName}": its table comment isn't one Scratch builds.`,
+    );
+  }
   return knex.schema
     .withSchema(encodeMySqlIdentifierForKnex(table.databaseName))
     .createTable(encodeMySqlIdentifierForKnex(table.tableName), (tableBuilder) => {
@@ -445,6 +477,7 @@ export function buildCreateMySqlTableQuery(
       }
       tableBuilder.engine('InnoDB');
       tableBuilder.charset('utf8mb4');
+      if (tableComment !== undefined) tableBuilder.comment(tableComment);
     });
 }
 
@@ -603,6 +636,123 @@ function readMySqlServerErrorMessageForPatternTests(error: unknown): string {
 /** True when `error` is MySQL's "table already exists" (1050) — raised only by CREATE TABLE / RENAME. */
 export function isMySqlDuplicateTableError(error: unknown): boolean {
   return readMySqlServerErrorNumber(error) === MYSQL_SCHEMA_CREATION_ERROR_NUMBERS.tableExists;
+}
+
+/** True when `error` is MySQL's "duplicate column name" (1060) — an ALTER adding a column that already exists. */
+export function isMySqlDuplicateColumnError(error: unknown): boolean {
+  return readMySqlServerErrorNumber(error) === MYSQL_SCHEMA_CREATION_ERROR_NUMBERS.duplicateColumnName;
+}
+
+/**
+ * A `COLUMN_TYPE` spelling reduced to what matters when comparing a column with the one Scratch would create:
+ * lower-cased, single-spaced, and without integer display widths. MariaDB (and MySQL before 8.0.19) report
+ * `int(11)` and `bigint(20) unsigned` where MySQL 8 reports `int` and `bigint unsigned`; the width changes nothing
+ * about the column. `tinyint(1)` keeps its width: it is the boolean spelling on every server.
+ */
+export function normalizeMySqlColumnTypeForComparison(columnType: string): string {
+  const normalizedColumnType = columnType.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (/^tinyint\(1\)(?: |$)/.test(normalizedColumnType)) return normalizedColumnType;
+  return normalizedColumnType.replace(/^(tinyint|smallint|mediumint|int|bigint)\(\d+\)/, '$1');
+}
+
+/** A column as the catalog reports it, for comparing with the column Scratch would create. */
+export interface MySqlExistingColumnShape {
+  readonly columnName: string;
+  /** `COLUMN_TYPE` verbatim. */
+  readonly columnType: string;
+  readonly isNullable: boolean;
+}
+
+/**
+ * Whether an existing column is the one {@link resolveMySqlColumnDefinitionForCreateField} would create: the same
+ * type (see {@link normalizeMySqlColumnTypeForComparison}) and nullability. MariaDB stores a JSON column as LONGTEXT
+ * (with a `json_valid` check), so `longtext` matches a planned `json`.
+ */
+export function doesMySqlColumnMatchCreateDefinition(
+  existingColumn: Pick<MySqlExistingColumnShape, 'columnType' | 'isNullable'>,
+  columnDefinition: Extract<MySqlCreateFieldColumnDefinition, { outcome: 'column' }>,
+): boolean {
+  const existingColumnType = normalizeMySqlColumnTypeForComparison(existingColumn.columnType);
+  const plannedColumnType = normalizeMySqlColumnTypeForComparison(columnDefinition.columnTypeSpelling);
+  const typesMatch =
+    existingColumnType === plannedColumnType ||
+    (plannedColumnType === MYSQL_JSON_COLUMN_TYPE && existingColumnType === MYSQL_LONG_TEXT_COLUMN_TYPE);
+  return typesMatch && existingColumn.isNullable === columnDefinition.isNullable;
+}
+
+/** What the catalog's TABLES row says about a table that blocked a CREATE TABLE with 1050. */
+export interface MySqlLeftoverTableRow {
+  /** `TABLE_TYPE`: `BASE TABLE`, `VIEW`, `SYSTEM VERSIONED`, ... */
+  readonly tableType: string;
+  readonly storageEngine: string | null;
+  readonly tableComment: string;
+}
+
+/** A column of that table, as the catalog reports it. */
+export type MySqlLeftoverTableColumn = MySqlExistingColumnShape & {
+  readonly columnKey: string;
+  readonly extra: string;
+};
+
+/**
+ * Why a table that blocked a CREATE TABLE (1050) is NOT one this request created, judged from its TABLES row alone,
+ * or `undefined` when it is: an InnoDB base table carrying exactly `expectedTableComment`
+ * ({@link buildMySqlCreatedTableComment}), so a table the user made, or another export's table, is never taken
+ * over. The first check, so nothing else about a table that isn't ours is ever read.
+ */
+export function findMySqlLeftoverTableOwnershipMismatch(
+  tableRow: MySqlLeftoverTableRow,
+  expectedTableComment: string,
+): string | undefined {
+  if (tableRow.tableType.toUpperCase() !== 'BASE TABLE') return `it is a ${tableRow.tableType}, not a base table`;
+  if ((tableRow.storageEngine ?? '').toLowerCase() !== 'innodb') {
+    return `it uses the ${tableRow.storageEngine ?? 'unknown'} storage engine`;
+  }
+  if (tableRow.tableComment !== expectedTableComment) return "its comment doesn't name this request";
+  return undefined;
+}
+
+/**
+ * Why the columns of a table this request created ({@link findMySqlLeftoverTableOwnershipMismatch}) are NOT the
+ * ones it would create now, or `undefined` when they are: the injected `id` key, every planned column with the
+ * planned type and nullability, and otherwise only columns named after the plan's foreign-key fields (added by an
+ * ALTER that may have run before the interruption; the foreign-key path checks their constraints). The planned
+ * columns can differ from the leftover's when the plan was edited between attempts; such a table is refused like
+ * any other existing table.
+ */
+export function findMySqlLeftoverTableColumnsMismatch(
+  columns: readonly MySqlLeftoverTableColumn[],
+  expected: {
+    plannedColumns: ReadonlyMap<string, Extract<MySqlCreateFieldColumnDefinition, { outcome: 'column' }>>;
+    foreignKeyFieldNames: ReadonlySet<string>;
+  },
+): string | undefined {
+  const primaryKeyColumns = columns.filter((column) => column.columnKey === 'PRI');
+  const idColumn = primaryKeyColumns.length === 1 ? primaryKeyColumns[0] : undefined;
+  if (
+    idColumn?.columnName !== MYSQL_AUTO_PRIMARY_KEY_COLUMN_NAME ||
+    normalizeMySqlColumnTypeForComparison(idColumn.columnType) !== 'bigint unsigned' ||
+    !/\bauto_increment\b/i.test(idColumn.extra)
+  ) {
+    return `its primary key isn't the injected "${MYSQL_AUTO_PRIMARY_KEY_COLUMN_NAME}" column`;
+  }
+
+  const existingColumnByName = new Map(columns.map((column) => [column.columnName, column]));
+  for (const [plannedColumnName, plannedColumn] of expected.plannedColumns) {
+    const existingColumn = existingColumnByName.get(plannedColumnName);
+    if (existingColumn === undefined) return `it has no column "${plannedColumnName}"`;
+    if (!doesMySqlColumnMatchCreateDefinition(existingColumn, plannedColumn)) {
+      return `its column "${plannedColumnName}" is ${existingColumn.columnType}${existingColumn.isNullable ? '' : ' NOT NULL'}, not the planned ${plannedColumn.columnTypeSpelling}${plannedColumn.isNullable ? '' : ' NOT NULL'}`;
+    }
+  }
+  const unplannedColumn = columns.find(
+    (column) =>
+      column.columnName !== MYSQL_AUTO_PRIMARY_KEY_COLUMN_NAME &&
+      !expected.plannedColumns.has(column.columnName) &&
+      !expected.foreignKeyFieldNames.has(column.columnName),
+  );
+  if (unplannedColumn !== undefined) return `it has a column "${unplannedColumn.columnName}" the plan doesn't have`;
+  return undefined;
 }
 
 /**

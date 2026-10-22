@@ -29,8 +29,10 @@ import {
   addForeignKeyColumnWithConstraint,
   addNonForeignKeyColumn,
   createTableWithAutoIncrementPrimaryKey,
+  doesMySqlTableCarryCreatedTableComment,
   findStoredMySqlTableReference,
   hasFullLengthSingleColumnUniqueIndex,
+  isExistingMySqlForeignKeyAsPlanned,
   resolveForeignKeyReferenceForTargetTable,
 } from '../mysql-schema-creation-queries';
 
@@ -90,6 +92,7 @@ function field(name: string, fieldType: CreateFieldType, extra: Partial<CreateFi
 
 const noCatalogRows: CatalogQueryResponder = () => [];
 const widgetsTable: MySqlTableReference = { databaseName: 'Shop', tableName: 'Widgets' };
+const WIDGETS_CREATE_REQUEST = { createRef: 'dfd_widgets001', foreignKeyFieldNames: new Set<string>(['Maker']) };
 const knexInstancesToDestroy: Knex[] = [];
 
 afterEach(async () => {
@@ -118,15 +121,20 @@ describe('createTableWithAutoIncrementPrimaryKey', () => {
         : [],
     );
 
-    const result = await createTableWithAutoIncrementPrimaryKey(client, widgetsTable, [
-      field('Name', { kind: 'text' }, { required: true }),
-      field('id', { kind: 'text' }),
-      field('tags', { kind: 'multiSelect', options: [{ name: 'a' }] }),
-    ]);
+    const result = await createTableWithAutoIncrementPrimaryKey(
+      client,
+      widgetsTable,
+      [
+        field('Name', { kind: 'text' }, { required: true }),
+        field('id', { kind: 'text' }),
+        field('tags', { kind: 'multiSelect', options: [{ name: 'a' }] }),
+      ],
+      WIDGETS_CREATE_REQUEST,
+    );
 
     expect(executedStatements.map((executedStatement) => executedStatement.sql)).toEqual([
       PREPARE_SESSION_MARKER,
-      'create table `Shop`.`Widgets` (`id` bigint unsigned not null auto_increment primary key, `Name` mediumtext not null) default character set utf8mb4 engine = InnoDB',
+      "create table `Shop`.`Widgets` (`id` bigint unsigned not null auto_increment primary key, `Name` mediumtext not null) default character set utf8mb4 engine = InnoDB comment = 'live_export:dfd_widgets001'",
       expect.stringContaining('FROM information_schema.TABLES'),
     ]);
     expect(executedStatements[2].bindings).toEqual(['Shop', 'Widgets']);
@@ -138,29 +146,280 @@ describe('createTableWithAutoIncrementPrimaryKey', () => {
     );
   });
 
+  it('creates the table without a comment when the ref is not a Live Export source table', async () => {
+    const { client, executedStatements } = setUpInterceptedClient(noCatalogRows);
+    await createTableWithAutoIncrementPrimaryKey(client, widgetsTable, [field('Name', { kind: 'text' })], {
+      ...WIDGETS_CREATE_REQUEST,
+      createRef: 't1',
+    });
+    const createTableStatement = executedStatements.find((executedStatement) =>
+      executedStatement.sql.startsWith('create table'),
+    );
+    expect(createTableStatement?.sql).toBe(
+      'create table `Shop`.`Widgets` (`id` bigint unsigned not null auto_increment primary key, `Name` mediumtext null) default character set utf8mb4 engine = InnoDB',
+    );
+  });
+
   it('falls back to the requested names when the catalog does not show the new table', async () => {
     const { client } = setUpInterceptedClient(noCatalogRows);
-    const result = await createTableWithAutoIncrementPrimaryKey(client, widgetsTable, [
-      field('Name', { kind: 'text' }),
-    ]);
+    const result = await createTableWithAutoIncrementPrimaryKey(
+      client,
+      widgetsTable,
+      [field('Name', { kind: 'text' })],
+      WIDGETS_CREATE_REQUEST,
+    );
     expect(result.storedTable).toEqual(widgetsTable);
   });
 
-  it('propagates a MySQL error (e.g. 1050) and skips the read-back', async () => {
+  it('propagates a MySQL error other than 1050 and skips the read-back', async () => {
+    const createDeniedError = Object.assign(new Error('CREATE command denied'), {
+      errno: 1142,
+      code: 'ER_TABLEACCESS_DENIED_ERROR',
+    });
+    const { client, executedStatements } = setUpInterceptedClient(noCatalogRows, {
+      sqlPattern: /^create table/,
+      error: createDeniedError,
+    });
+    await expect(
+      createTableWithAutoIncrementPrimaryKey(
+        client,
+        widgetsTable,
+        [field('Name', { kind: 'text' })],
+        WIDGETS_CREATE_REQUEST,
+      ),
+    ).rejects.toBe(createDeniedError);
+    expect(executedStatements.some((executedStatement) => executedStatement.sql.includes('information_schema'))).toBe(
+      false,
+    );
+  });
+
+  describe('when the table already exists (1050)', () => {
     const duplicateTableError = Object.assign(new Error('Table exists'), {
       errno: 1050,
       code: 'ER_TABLE_EXISTS_ERROR',
     });
-    const { client, executedStatements } = setUpInterceptedClient(noCatalogRows, {
-      sqlPattern: /^create table/,
-      error: duplicateTableError,
+
+    /** The catalog of a table an interrupted create of `dfd_widgets001` left behind (lower_case_table_names=1). */
+    function respondWithLeftoverTable(overrides: {
+      tableType?: string;
+      tableComment?: string;
+      anyRow?: boolean;
+      nameColumnType?: string;
+    }): CatalogQueryResponder {
+      return (executedStatement) => {
+        if (executedStatement.sql.includes('information_schema.TABLES')) {
+          return [
+            {
+              stored_database_name: 'shop',
+              stored_table_name: 'widgets',
+              table_type: overrides.tableType ?? 'BASE TABLE',
+              storage_engine: 'InnoDB',
+              table_comment: overrides.tableComment ?? 'live_export:dfd_widgets001',
+            },
+          ];
+        }
+        if (executedStatement.sql.includes('information_schema.COLUMNS')) {
+          return [
+            {
+              column_name: 'id',
+              column_type: 'bigint unsigned',
+              is_nullable: 'NO',
+              column_key: 'PRI',
+              extra: 'auto_increment',
+            },
+            {
+              column_name: 'Name',
+              column_type: overrides.nameColumnType ?? 'mediumtext',
+              is_nullable: 'NO',
+              column_key: '',
+              extra: '',
+            },
+            { column_name: 'Maker', column_type: 'bigint unsigned', is_nullable: 'YES', column_key: 'MUL', extra: '' },
+          ];
+        }
+        if (executedStatement.sql.startsWith('SELECT 1 AS any_row')) {
+          return overrides.anyRow ? [{ any_row: 1 }] : [];
+        }
+        return [];
+      };
+    }
+
+    it('reuses the empty table an earlier attempt of the same request left, under its stored names', async () => {
+      const { client, executedStatements } = setUpInterceptedClient(respondWithLeftoverTable({}), {
+        sqlPattern: /^create table/,
+        error: duplicateTableError,
+      });
+
+      const result = await createTableWithAutoIncrementPrimaryKey(
+        client,
+        widgetsTable,
+        [field('Name', { kind: 'text' }, { required: true }), field('id', { kind: 'text' })],
+        WIDGETS_CREATE_REQUEST,
+      );
+
+      expect(result.storedTable).toEqual({ databaseName: 'shop', tableName: 'widgets' });
+      expect([...result.skipReasonByFieldName.keys()]).toEqual(['id']);
+      const rowCheck = executedStatements.find((executedStatement) =>
+        executedStatement.sql.startsWith('SELECT 1 AS any_row'),
+      );
+      expect(rowCheck?.sql).toBe('SELECT 1 AS any_row FROM `shop`.`widgets` LIMIT 1');
+    });
+
+    // Cheapest check first: a table that isn't ours never has its columns read, and only a table whose columns are
+    // as planned is checked for rows (a row check on a view would compute it).
+    it.each<[string, Parameters<typeof respondWithLeftoverTable>[0], { readsColumns: boolean; checksRows: boolean }]>([
+      ['is a view', { tableType: 'VIEW' }, { readsColumns: false, checksRows: false }],
+      ['has no comment', { tableComment: '' }, { readsColumns: false, checksRows: false }],
+      [
+        "carries another request's comment",
+        { tableComment: 'live_export:dfd_otherexprt' },
+        { readsColumns: false, checksRows: false },
+      ],
+      [
+        'has a planned column of another type',
+        { nameColumnType: 'varchar(20)' },
+        { readsColumns: true, checksRows: false },
+      ],
+      ['has rows', { anyRow: true }, { readsColumns: true, checksRows: true }],
+    ])(
+      'rethrows the 1050 when the existing table %s, reading no more than needed',
+      async (_label, overrides, reads) => {
+        const { client, executedStatements } = setUpInterceptedClient(respondWithLeftoverTable(overrides), {
+          sqlPattern: /^create table/,
+          error: duplicateTableError,
+        });
+        await expect(
+          createTableWithAutoIncrementPrimaryKey(
+            client,
+            widgetsTable,
+            [field('Name', { kind: 'text' }, { required: true })],
+            WIDGETS_CREATE_REQUEST,
+          ),
+        ).rejects.toBe(duplicateTableError);
+        const executedSql = executedStatements.map((executedStatement) => executedStatement.sql);
+        expect(executedSql.some((sql) => sql.includes('information_schema.COLUMNS'))).toBe(reads.readsColumns);
+        expect(executedSql.some((sql) => sql.startsWith('SELECT 1 AS any_row'))).toBe(reads.checksRows);
+      },
+    );
+
+    it('rethrows the 1050 without reading the catalog when the ref is not a Live Export source table', async () => {
+      const { client, executedStatements } = setUpInterceptedClient(respondWithLeftoverTable({}), {
+        sqlPattern: /^create table/,
+        error: duplicateTableError,
+      });
+      await expect(
+        createTableWithAutoIncrementPrimaryKey(client, widgetsTable, [field('Name', { kind: 'text' })], {
+          ...WIDGETS_CREATE_REQUEST,
+          createRef: 't1',
+        }),
+      ).rejects.toBe(duplicateTableError);
+      expect(executedStatements.some((executedStatement) => executedStatement.sql.includes('information_schema'))).toBe(
+        false,
+      );
+    });
+
+    it('rethrows the 1050 when the catalog no longer shows the table, or reading it fails', async () => {
+      const { client } = setUpInterceptedClient(noCatalogRows, {
+        sqlPattern: /^create table/,
+        error: duplicateTableError,
+      });
+      await expect(
+        createTableWithAutoIncrementPrimaryKey(
+          client,
+          widgetsTable,
+          [field('Name', { kind: 'text' })],
+          WIDGETS_CREATE_REQUEST,
+        ),
+      ).rejects.toBe(duplicateTableError);
+
+      const { client: failingCatalogClient } = setUpInterceptedClient(
+        () => {
+          throw new Error('information_schema unavailable');
+        },
+        { sqlPattern: /^create table/, error: duplicateTableError },
+      );
+      await expect(
+        createTableWithAutoIncrementPrimaryKey(
+          failingCatalogClient,
+          widgetsTable,
+          [field('Name', { kind: 'text' })],
+          WIDGETS_CREATE_REQUEST,
+        ),
+      ).rejects.toBe(duplicateTableError);
+    });
+  });
+});
+
+describe('doesMySqlTableCarryCreatedTableComment', () => {
+  it("is true only when the table's comment is exactly the given one", async () => {
+    const { client, executedStatements } = setUpInterceptedClient(() => [
+      { table_comment: 'live_export:dfd_widgets001' },
+    ]);
+    await expect(
+      doesMySqlTableCarryCreatedTableComment(client, widgetsTable, 'live_export:dfd_widgets001'),
+    ).resolves.toBe(true);
+    expect(executedStatements[0].bindings).toEqual(['Shop', 'Widgets']);
+
+    await expect(
+      doesMySqlTableCarryCreatedTableComment(client, widgetsTable, 'live_export:dfd_otherexprt'),
+    ).resolves.toBe(false);
+  });
+
+  it('is false for a table without a comment, a missing table, or a failed read', async () => {
+    const { client } = setUpInterceptedClient(() => [{ table_comment: '' }]);
+    await expect(
+      doesMySqlTableCarryCreatedTableComment(client, widgetsTable, 'live_export:dfd_widgets001'),
+    ).resolves.toBe(false);
+
+    const { client: emptyCatalogClient } = setUpInterceptedClient(noCatalogRows);
+    await expect(
+      doesMySqlTableCarryCreatedTableComment(emptyCatalogClient, widgetsTable, 'live_export:dfd_widgets001'),
+    ).resolves.toBe(false);
+
+    const { client: failingClient } = setUpInterceptedClient(() => {
+      throw new Error('information_schema unavailable');
     });
     await expect(
-      createTableWithAutoIncrementPrimaryKey(client, widgetsTable, [field('Name', { kind: 'text' })]),
-    ).rejects.toBe(duplicateTableError);
-    expect(executedStatements.some((executedStatement) => executedStatement.sql.includes('information_schema'))).toBe(
-      false,
-    );
+      doesMySqlTableCarryCreatedTableComment(failingClient, widgetsTable, 'live_export:dfd_widgets001'),
+    ).resolves.toBe(false);
+  });
+});
+
+describe('isExistingMySqlForeignKeyAsPlanned', () => {
+  const makerField = field('Maker', { kind: 'foreignKey', target: { existingRemoteTableId: ['shop', 'makers'] } });
+  const resolutionToMakers: ResolvedMySqlForeignKey = {
+    kind: 'resolved',
+    targetTable: { databaseName: 'shop', tableName: 'makers' },
+    targetColumnName: 'id',
+    foreignKeyColumnTypeDefinition: 'bigint unsigned',
+  };
+
+  it("looks up Scratch's named constraint on the column and is true when it references the resolved target", async () => {
+    const { client, executedStatements } = setUpInterceptedClient(() => [
+      { referenced_database_name: 'shop', referenced_table_name: 'makers', referenced_column_name: 'id' },
+    ]);
+    await expect(
+      isExistingMySqlForeignKeyAsPlanned(client, widgetsTable, makerField, resolutionToMakers),
+    ).resolves.toBe(true);
+    expect(executedStatements[0].bindings).toEqual([
+      'Shop',
+      'Widgets',
+      'Maker',
+      buildMySqlForeignKeyConstraintName('Widgets', 'Maker'),
+    ]);
+  });
+
+  it('is false without the constraint, or when it references another table', async () => {
+    const { client } = setUpInterceptedClient(noCatalogRows);
+    await expect(
+      isExistingMySqlForeignKeyAsPlanned(client, widgetsTable, makerField, resolutionToMakers),
+    ).resolves.toBe(false);
+    const { client: otherTargetClient } = setUpInterceptedClient(() => [
+      { referenced_database_name: 'shop', referenced_table_name: 'vendors', referenced_column_name: 'id' },
+    ]);
+    await expect(
+      isExistingMySqlForeignKeyAsPlanned(otherTargetClient, widgetsTable, makerField, resolutionToMakers),
+    ).resolves.toBe(false);
   });
 });
 

@@ -5,16 +5,25 @@ import {
   buildAddMySqlColumnQuery,
   buildAddMySqlForeignKeyColumnStatement,
   buildCreateMySqlTableQuery,
+  buildMySqlCreatedTableComment,
   buildMySqlForeignKeyColumnTypeDefinition,
   buildMySqlForeignKeyConstraintName,
+  doesMySqlColumnMatchCreateDefinition,
   findMySqlIdentifierProblem,
+  findMySqlLeftoverTableColumnsMismatch,
+  findMySqlLeftoverTableOwnershipMismatch,
+  isMySqlDuplicateColumnError,
   isMySqlDuplicateTableError,
   MYSQL_AUTO_PRIMARY_KEY_COLUMN_NAME,
   MYSQL_MAX_FIELDS_PER_CREATED_TABLE,
   MYSQL_MAX_IDENTIFIER_LENGTH,
   MYSQL_SCHEMA_CREATION_CAPABILITIES,
   mySqlSchemaCreationErrorMessage,
+  normalizeMySqlColumnTypeForComparison,
   resolveMySqlColumnDefinitionForCreateField,
+  type MySqlCreateFieldColumnDefinition,
+  type MySqlLeftoverTableColumn,
+  type MySqlLeftoverTableRow,
   type ResolvedMySqlForeignKey,
 } from '../mysql-create-schema';
 import { applyMySqlVerbatimIdentifierQuoting } from '../mysql-identifier-quoting';
@@ -42,13 +51,15 @@ function compileSchemaBuilder(schemaBuilder: Knex.SchemaBuilder): { sql: string;
   }));
 }
 
+const WIDGETS_TABLE_COMMENT = 'live_export:dfd_widgets001';
+
 function createTableSql(
   fields: CreateFieldSpec[],
   skipReasonByFieldName = new Map<string, string>(),
   table: MySqlTableReference = widgetsTable,
 ): string {
   const compiledStatements = compileSchemaBuilder(
-    buildCreateMySqlTableQuery(connectionlessMySqlKnex, table, fields, skipReasonByFieldName),
+    buildCreateMySqlTableQuery(connectionlessMySqlKnex, table, fields, skipReasonByFieldName, WIDGETS_TABLE_COMMENT),
   );
   expect(compiledStatements).toHaveLength(1);
   expect(compiledStatements[0].bindings).toEqual([]);
@@ -86,7 +97,7 @@ describe('MYSQL_SCHEMA_CREATION_CAPABILITIES', () => {
 describe('buildCreateMySqlTableQuery', () => {
   it('injects a bigint unsigned AUTO_INCREMENT primary key and sets InnoDB + utf8mb4 explicitly', () => {
     expect(createTableSql([field('name', { kind: 'text' })])).toBe(
-      'create table `shop`.`widgets` (`id` bigint unsigned not null auto_increment primary key, `name` mediumtext null) default character set utf8mb4 engine = InnoDB',
+      "create table `shop`.`widgets` (`id` bigint unsigned not null auto_increment primary key, `name` mediumtext null) default character set utf8mb4 engine = InnoDB comment = 'live_export:dfd_widgets001'",
     );
   });
 
@@ -218,7 +229,7 @@ describe('buildCreateMySqlTableQuery', () => {
       const skipReasonByFieldName = new Map<string, string>();
       const sql = createTableSql([skippedField, field('kept', { kind: 'text' })], skipReasonByFieldName);
       expect(sql).toBe(
-        'create table `shop`.`widgets` (`id` bigint unsigned not null auto_increment primary key, `kept` mediumtext null) default character set utf8mb4 engine = InnoDB',
+        "create table `shop`.`widgets` (`id` bigint unsigned not null auto_increment primary key, `kept` mediumtext null) default character set utf8mb4 engine = InnoDB comment = 'live_export:dfd_widgets001'",
       );
       expect(skipReasonByFieldName.get(skippedField.name)).toContain(expectedReasonFragment);
     });
@@ -248,8 +259,23 @@ describe('buildCreateMySqlTableQuery', () => {
       'create table `my.shop`.`Company.io Deals as of 2026?` (`id` bigint unsigned not null auto_increment primary key, ' +
         '`Dealroom.co URL` mediumtext null, `Featured?` tinyint(1) null, `Marked as done time` datetime(3) null, ' +
         '`Certified AS Organic` tinyint(1) null, `a``b` mediumtext null, `Größe` double null) ' +
-        'default character set utf8mb4 engine = InnoDB',
+        "default character set utf8mb4 engine = InnoDB comment = 'live_export:dfd_widgets001'",
     );
+  });
+
+  it('writes no comment when given none', () => {
+    const compiledStatements = compileSchemaBuilder(
+      buildCreateMySqlTableQuery(
+        connectionlessMySqlKnex,
+        widgetsTable,
+        [field('name', { kind: 'text' })],
+        new Map(),
+        undefined,
+      ),
+    );
+    expect(compiledStatements.map((compiledStatement) => compiledStatement.sql)).toEqual([
+      'create table `shop`.`widgets` (`id` bigint unsigned not null auto_increment primary key, `name` mediumtext null) default character set utf8mb4 engine = InnoDB',
+    ]);
   });
 
   it('fills the skip map only when compiled, so it is complete once the query has run', () => {
@@ -259,6 +285,7 @@ describe('buildCreateMySqlTableQuery', () => {
       widgetsTable,
       [field('id', { kind: 'text' })],
       skipReasonByFieldName,
+      WIDGETS_TABLE_COMMENT,
     );
     createTableQuery.toSQL();
     expect([...skipReasonByFieldName.keys()]).toEqual(['id']);
@@ -277,13 +304,37 @@ describe('buildCreateMySqlTableQuery', () => {
   ])('refuses %s before any DDL is built', (_label, table, expectedMessageFragment) => {
     let thrownError: unknown;
     try {
-      buildCreateMySqlTableQuery(connectionlessMySqlKnex, table, [field('name', { kind: 'text' })], new Map());
+      buildCreateMySqlTableQuery(
+        connectionlessMySqlKnex,
+        table,
+        [field('name', { kind: 'text' })],
+        new Map(),
+        WIDGETS_TABLE_COMMENT,
+      );
     } catch (error) {
       thrownError = error;
     }
     expect(thrownError).toBeInstanceOf(MySqlClientError);
     expect((thrownError as MySqlClientError).problem).toBe(MySqlClientProblem.InvalidSchemaCreationRequest);
     expect((thrownError as MySqlClientError).userFriendlyMessage).toContain(expectedMessageFragment);
+  });
+
+  it.each([
+    ['a quote that would end the comment', "live_export:x' engine = MyISAM -- "],
+    ['a comment without the live_export prefix', 'dfd_widgets001'],
+    ['an empty ref', 'live_export:'],
+    ['a ref that is not a data folder id', 'live_export:widgets-ref'],
+    ['a data folder id with a quote', "live_export:dfd_ab'cdefgh"],
+  ])('refuses %s before any DDL is built (knex does not escape table comments)', (_label, tableComment) => {
+    expect(() =>
+      buildCreateMySqlTableQuery(
+        connectionlessMySqlKnex,
+        widgetsTable,
+        [field('name', { kind: 'text' })],
+        new Map(),
+        tableComment,
+      ),
+    ).toThrow(MySqlClientError);
   });
 
   it('creates a 180-field table in one statement', () => {
@@ -537,6 +588,194 @@ describe('findMySqlIdentifierProblem', () => {
   it('names the role in the message', () => {
     expect(findMySqlIdentifierProblem('', 'table')).toContain('table name');
     expect(findMySqlIdentifierProblem('', 'column')).toContain('field name');
+  });
+});
+
+describe('buildMySqlCreatedTableComment', () => {
+  it("names a Live Export's source data folder id verbatim", () => {
+    expect(buildMySqlCreatedTableComment('dfd_8KmT2xQp1z')).toBe('live_export:dfd_8KmT2xQp1z');
+  });
+
+  it.each([
+    ['a ref another caller chose', 't1'],
+    ['a dev tools ref', 'table_1'],
+    ['nothing', ''],
+    ['a data folder id with a quote', "dfd_ab'cdefgh"],
+    ['a data folder id with a space', 'dfd_ab cdefgh'],
+    ['a longer id with the data folder prefix', 'dfd_8KmT2xQp1zz'],
+  ])('gives no comment for %s', (_label, createRef) => {
+    expect(buildMySqlCreatedTableComment(createRef)).toBeUndefined();
+  });
+});
+
+describe('normalizeMySqlColumnTypeForComparison', () => {
+  it.each([
+    ['int(11)', 'int'],
+    ['INT', 'int'],
+    ['bigint(20) unsigned', 'bigint unsigned'],
+    ['bigint unsigned', 'bigint unsigned'],
+    ['smallint(6)', 'smallint'],
+    ['tinyint(4)', 'tinyint'],
+    ['tinyint(1)', 'tinyint(1)'],
+    ['tinyint(1) unsigned', 'tinyint(1) unsigned'],
+    ['  decimal(11,3) ', 'decimal(11,3)'],
+    ['DATETIME(3)', 'datetime(3)'],
+    ['varchar(255)', 'varchar(255)'],
+  ])('%s → %s', (columnType, expectedNormalizedColumnType) => {
+    expect(normalizeMySqlColumnTypeForComparison(columnType)).toBe(expectedNormalizedColumnType);
+  });
+});
+
+describe('doesMySqlColumnMatchCreateDefinition', () => {
+  const plannedColumn = (
+    columnTypeSpelling: string,
+    isNullable = true,
+  ): Extract<MySqlCreateFieldColumnDefinition, { outcome: 'column' }> => ({
+    outcome: 'column',
+    columnTypeSpelling,
+    isNullable,
+  });
+
+  it('matches the same type and nullability, ignoring integer display widths', () => {
+    expect(
+      doesMySqlColumnMatchCreateDefinition({ columnType: 'int(11)', isNullable: true }, plannedColumn('int')),
+    ).toBe(true);
+    expect(
+      doesMySqlColumnMatchCreateDefinition(
+        { columnType: 'mediumtext', isNullable: false },
+        plannedColumn('mediumtext', false),
+      ),
+    ).toBe(true);
+  });
+
+  it("matches MariaDB's LONGTEXT for a planned JSON column", () => {
+    expect(
+      doesMySqlColumnMatchCreateDefinition({ columnType: 'longtext', isNullable: true }, plannedColumn('json')),
+    ).toBe(true);
+  });
+
+  it('refuses another type or nullability', () => {
+    expect(
+      doesMySqlColumnMatchCreateDefinition(
+        { columnType: 'varchar(10)', isNullable: true },
+        plannedColumn('mediumtext'),
+      ),
+    ).toBe(false);
+    expect(
+      doesMySqlColumnMatchCreateDefinition(
+        { columnType: 'mediumtext', isNullable: true },
+        plannedColumn('mediumtext', false),
+      ),
+    ).toBe(false);
+    expect(
+      doesMySqlColumnMatchCreateDefinition({ columnType: 'json', isNullable: true }, plannedColumn('longtext')),
+    ).toBe(false);
+  });
+});
+
+describe('findMySqlLeftoverTableOwnershipMismatch', () => {
+  const TABLE_COMMENT = 'live_export:dfd_orders0001';
+  const ownTableRow: MySqlLeftoverTableRow = {
+    tableType: 'BASE TABLE',
+    storageEngine: 'InnoDB',
+    tableComment: TABLE_COMMENT,
+  };
+
+  it("accepts an InnoDB base table with this request's comment", () => {
+    expect(findMySqlLeftoverTableOwnershipMismatch(ownTableRow, TABLE_COMMENT)).toBeUndefined();
+  });
+
+  it.each<[string, Partial<MySqlLeftoverTableRow>, string]>([
+    ['a view', { tableType: 'VIEW' }, 'not a base table'],
+    ['a MyISAM table', { storageEngine: 'MyISAM' }, 'MyISAM storage engine'],
+    ['a table without the comment', { tableComment: '' }, "comment doesn't name this request"],
+    ["another request's table", { tableComment: 'live_export:dfd_otherexprt' }, "comment doesn't name this request"],
+  ])('refuses %s', (_label, tableRowOverrides, expectedReasonFragment) => {
+    expect(findMySqlLeftoverTableOwnershipMismatch({ ...ownTableRow, ...tableRowOverrides }, TABLE_COMMENT)).toContain(
+      expectedReasonFragment,
+    );
+  });
+});
+
+describe('findMySqlLeftoverTableColumnsMismatch', () => {
+  const ID_COLUMN = {
+    columnName: 'id',
+    columnType: 'bigint unsigned',
+    isNullable: false,
+    columnKey: 'PRI',
+    extra: 'auto_increment',
+  };
+  const TITLE_COLUMN = { columnName: 'Title', columnType: 'mediumtext', isNullable: true, columnKey: '', extra: '' };
+  const AMOUNT_COLUMN = {
+    columnName: 'Amount',
+    columnType: 'decimal(10,2)',
+    isNullable: false,
+    columnKey: '',
+    extra: '',
+  };
+  const CUSTOMER_FOREIGN_KEY_COLUMN = {
+    columnName: 'Customer',
+    columnType: 'bigint unsigned',
+    isNullable: true,
+    columnKey: 'MUL',
+    extra: '',
+  };
+
+  const expected = {
+    plannedColumns: new Map<string, Extract<MySqlCreateFieldColumnDefinition, { outcome: 'column' }>>([
+      ['Title', { outcome: 'column', columnTypeSpelling: 'mediumtext', isNullable: true }],
+      ['Amount', { outcome: 'column', columnTypeSpelling: 'decimal(10,2)', isNullable: false }],
+    ]),
+    foreignKeyFieldNames: new Set(['Customer']),
+  };
+
+  it('accepts the injected id and the planned columns', () => {
+    expect(findMySqlLeftoverTableColumnsMismatch([ID_COLUMN, TITLE_COLUMN, AMOUNT_COLUMN], expected)).toBeUndefined();
+  });
+
+  it('accepts foreign-key columns that were already added, and MariaDB spellings', () => {
+    expect(
+      findMySqlLeftoverTableColumnsMismatch(
+        [{ ...ID_COLUMN, columnType: 'bigint(20) unsigned' }, TITLE_COLUMN, AMOUNT_COLUMN, CUSTOMER_FOREIGN_KEY_COLUMN],
+        expected,
+      ),
+    ).toBeUndefined();
+  });
+
+  it.each<[string, MySqlLeftoverTableColumn[], string]>([
+    [
+      'a table keyed on something else',
+      [{ ...ID_COLUMN, columnKey: '' }, { ...TITLE_COLUMN, columnKey: 'PRI' }, AMOUNT_COLUMN],
+      'primary key',
+    ],
+    ['an id that is not AUTO_INCREMENT', [{ ...ID_COLUMN, extra: '' }, TITLE_COLUMN, AMOUNT_COLUMN], 'primary key'],
+    ['a missing planned column', [ID_COLUMN, TITLE_COLUMN], 'no column "Amount"'],
+    [
+      'a planned column of another type',
+      [ID_COLUMN, { ...TITLE_COLUMN, columnType: 'varchar(20)' }, AMOUNT_COLUMN],
+      'column "Title" is varchar(20)',
+    ],
+    [
+      'a planned column with other nullability',
+      [ID_COLUMN, TITLE_COLUMN, { ...AMOUNT_COLUMN, isNullable: true }],
+      'column "Amount"',
+    ],
+    [
+      'a column the plan does not have',
+      [ID_COLUMN, TITLE_COLUMN, AMOUNT_COLUMN, { ...TITLE_COLUMN, columnName: 'Notes' }],
+      'column "Notes" the plan doesn\'t have',
+    ],
+  ])('refuses %s', (_label, columns, expectedReasonFragment) => {
+    expect(findMySqlLeftoverTableColumnsMismatch(columns, expected)).toContain(expectedReasonFragment);
+  });
+});
+
+describe('isMySqlDuplicateColumnError', () => {
+  it('recognizes errno 1060 only', () => {
+    expect(isMySqlDuplicateColumnError({ errno: 1060, code: 'ER_DUP_FIELDNAME' })).toBe(true);
+    expect(isMySqlDuplicateColumnError({ errno: 1050 })).toBe(false);
+    expect(isMySqlDuplicateColumnError(new Error('Duplicate column name'))).toBe(false);
+    expect(isMySqlDuplicateColumnError(undefined)).toBe(false);
   });
 });
 

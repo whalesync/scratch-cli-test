@@ -271,6 +271,45 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
         expect(response.status).toBe('ok');
         expect(response.tables.map((table) => table.status)).toEqual(['created', 'created']);
       });
+
+      it("adds a table's deferred foreign keys with the ref of the request that created it", async () => {
+        const createTable = createTableStubResolvingEachRef();
+        const createFields = jest.fn(
+          (plan: { fields: { name: string }[] }): Promise<CreateFieldResult[]> =>
+            Promise.resolve(
+              plan.fields.map((field) => ({ name: field.name, status: 'created', remoteFieldId: field.name })),
+            ),
+        );
+        connectorsService.getConnector.mockResolvedValue(
+          connectorStub({ supportsSchemaCreation: () => true, createTable, createFields }),
+        );
+        const service = app.get(SchemaBuilderService);
+
+        await service.createTables(
+          WORKBOOK_ID as WorkbookId,
+          {
+            connectorAccountId: CONNECTOR_ACCOUNT_ID,
+            tables: [
+              {
+                ref: 't1',
+                name: 'Posts',
+                fields: [
+                  { name: 'Title', fieldType: { kind: 'text' }, isPrimary: true },
+                  { name: 'Parent', fieldType: { kind: 'foreignKey', target: { ref: 't1' } } },
+                ],
+              },
+            ],
+          } as CreateSchemaTablesDto,
+          actor,
+        );
+
+        expect(createFields).toHaveBeenCalledTimes(1);
+        expect(createFields.mock.calls[0][0]).toMatchObject({
+          remoteTableId: ['tbl_t1'],
+          fields: [{ name: 'Parent' }],
+          createRef: 't1',
+        });
+      });
     });
   });
 
