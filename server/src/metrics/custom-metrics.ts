@@ -72,6 +72,10 @@ export enum CustomMetric {
   // signal that graceful shutdown is working and that deploy-induced job orphaning trends to zero.
   WORKER_SHUTDOWN_DRAINED = 'worker_shutdown_drained',
   WORKER_SHUTDOWN_TIMED_OUT = 'worker_shutdown_timed_out',
+  // DEV-12428: an in-flight job threw after its worker began shutting down, so the error was treated as
+  // the shutdown's (closed clients), not a real failure — the job was left active for stall recovery to
+  // redeliver instead of being recorded failed. Pairs with WORKER_SHUTDOWN_TIMED_OUT.
+  JOB_LEFT_FOR_STALL_RECOVERY_ON_SHUTDOWN = 'job_left_for_stall_recovery_on_shutdown',
 
   // Deploy-rollover DB resilience (DEV-11312). On a cold Cloud Run worker revision the private-IP
   // egress to Cloud SQL is briefly unavailable, so the worker's startup DbJob lookup can throw a
@@ -198,6 +202,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL:
     case CustomMetric.WORKER_SHUTDOWN_DRAINED:
     case CustomMetric.WORKER_SHUTDOWN_TIMED_OUT:
+    case CustomMetric.JOB_LEFT_FOR_STALL_RECOVERY_ON_SHUTDOWN:
     case CustomMetric.JOB_STARTUP_DB_RETRY:
     case CustomMetric.JOB_STARTUP_DB_RETRY_EXHAUSTED:
     case CustomMetric.SCRATCH_GIT_REPO_LOOSE_OBJECTS:
@@ -281,6 +286,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL:
     case CustomMetric.WORKER_SHUTDOWN_DRAINED:
     case CustomMetric.WORKER_SHUTDOWN_TIMED_OUT:
+    case CustomMetric.JOB_LEFT_FOR_STALL_RECOVERY_ON_SHUTDOWN:
     case CustomMetric.JOB_STARTUP_DB_RETRY:
     case CustomMetric.JOB_STARTUP_DB_RETRY_EXHAUSTED:
     case CustomMetric.GC_MAINTENANCE_RUN:

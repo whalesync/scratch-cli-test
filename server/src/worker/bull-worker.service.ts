@@ -20,6 +20,11 @@ import { JobHandlerService } from './job-handler.service';
 import { JobResult, Progress, RunContext } from './jobs/base-types';
 import { JobData, JobProgress } from './jobs/union-types';
 import { LiveExportRecordLimitEnforcer } from './live-export-record-limit-enforcer.service';
+import {
+  clearWorkerProcessShutdownStarted,
+  isWorkerProcessShuttingDown,
+  markWorkerProcessShutdownStarted,
+} from './worker-process-shutdown-state';
 import { WORKER_QUEUE_NAME, WORKER_QUEUE_STREAM_OPTIONS } from './worker-queue.constants';
 
 @Injectable()
@@ -64,6 +69,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicatio
   }
 
   onModuleInit() {
+    // A worker that is starting is not shutting down (DEV-12428; see worker-process-shutdown-state.ts).
+    clearWorkerProcessShutdownStarted();
+
     // Create a queue instance for job lookups (e.g. stalled events)
     this.queue = new Queue(WORKER_QUEUE_NAME, { connection: this.getRedis(), streams: WORKER_QUEUE_STREAM_OPTIONS });
 
@@ -322,6 +330,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicatio
 
       return result;
     } catch (error) {
+      if (isWorkerProcessShuttingDown() && !(error instanceof JobCanceledError)) {
+        // DEV-12428: this worker began shutting down under the job (a Cloud Run deploy or scale-in) and
+        // has closed — or is closing — the clients the handler uses, so the error is almost certainly the
+        // shutdown's, not the job's. Recording it as a failure would end the job for good: BullMQ fails it
+        // outright when its connection is still open (attempts: 1, so no redelivery), and the routine run
+        // waiting on it fails with a "Connection is closed." that has nothing to do with the user's data.
+        // Leave the job exactly as a hard kill would: still active, for stall recovery to redeliver.
+        await this.leaveJobForStallRecoveryAfterShutdownInterruptedIt(jobId, jobData, error);
+      }
+
       // Update job status to FAILED or CANCELLED
       const status = error instanceof JobCanceledError ? 'canceled' : 'failed';
       await this.jobService.updateJobStatus({
@@ -352,6 +370,31 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicatio
     } finally {
       this.activeJobToAbortCtrl.delete(jobId);
     }
+  }
+
+  /**
+   * Called when a job throws after this worker began shutting down (DEV-12428). Logs and counts the
+   * interruption, then never settles: BullMQ is not told the job failed and the DbJob keeps its `active`
+   * status. The worker is force-closed (`onApplicationShutdown`) without waiting for this processor, its
+   * lock stops being extended, and another instance's stall check redelivers the job, which resumes from
+   * its last checkpoint — the same path as a SIGKILL or OOM kill. A real failure that happened to land in
+   * the shutdown window just fails again on the redelivered attempt, where it is recorded normally.
+   */
+  private async leaveJobForStallRecoveryAfterShutdownInterruptedIt(
+    jobId: string,
+    jobData: JobData,
+    errorThrownDuringShutdown: unknown,
+  ): Promise<never> {
+    WSLogger.warn({
+      source: 'QueueService',
+      message:
+        'Job threw after the worker began shutting down; leaving it active for stall recovery to redeliver instead of recording it failed',
+      jobId,
+      jobType: jobData.type,
+      error: errorThrownDuringShutdown instanceof Error ? errorThrownDuringShutdown.message : 'Unknown error',
+    });
+    this.metricsService.logValue(CustomMetric.JOB_LEFT_FOR_STALL_RECOVERY_ON_SHUTDOWN, 1);
+    return new Promise<never>(() => undefined);
   }
 
   /**
@@ -456,6 +499,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, OnApplicatio
     // the enqueuer/HTTP layer can keep working. We disconnect later, in onApplicationShutdown, once
     // the HTTP server has drained. The drain is bounded so a long-running job can't hang the shutdown
     // sequence past Cloud Run's ~10s grace or starve the later onApplicationShutdown hooks.
+    // Marked first, so an in-flight job that throws from here on — as the shutdown closes the clients
+    // under it — is left for stall recovery rather than recorded failed (DEV-12428).
+    markWorkerProcessShutdownStarted();
     await this.drainWorkerWithinShutdownBudget();
   }
 

@@ -36,6 +36,7 @@ import {
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 import { deduplicateFileName, resolveBaseFileName, sanitizeRecordIdForFileName } from '../workbook/util';
+import { isWorkerProcessShuttingDown } from '../worker/worker-process-shutdown-state';
 import { pickByShape } from './diff-utils';
 import { collapseFailedOperationsByPath } from './failed-operations.util';
 import { FileIndexService } from './file-index.service';
@@ -647,6 +648,23 @@ export class PublishPlanRunService {
         });
         // Keep activeJobId so the canceled job can still be inspected
         await planStore.updatePlanStatus(PublishPlanStatus.Canceled);
+        throw err;
+      }
+
+      if (isWorkerProcessShuttingDown()) {
+        // DEV-12428: the worker is shutting down under this run (a Cloud Run deploy or scale-in) and closing
+        // the clients it uses, so the error is almost certainly the shutdown's, not the plan's. Leave the
+        // plan's in-progress status (normally `*-running`) as it is — exactly what a hard kill leaves — so
+        // the redelivered job resumes the interrupted phase from its pending operations. Writing `failed`
+        // here made the redelivery refuse to run ("Cannot run pipeline in status: failed") and failed the
+        // whole Live Export.
+        WSLogger.warn({
+          source: 'PublishRunService.runPipeline',
+          message:
+            'Pipeline interrupted by the worker shutting down; leaving its status for the redelivered job to resume',
+          error: err,
+          data: { pipelineId },
+        });
         throw err;
       }
 

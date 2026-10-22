@@ -270,6 +270,15 @@ All active connectors support cursor-based resume. See [Connector Resume Plan](/
 
 Stalls only occur when the **worker process dies** (Cloud Run shutdown, OOM kill, etc.). Long async I/O — like waiting 30 seconds for a Stripe API response — does **not** cause stalls, because it doesn't block the Node.js event loop, so BullMQ can still renew the lock internally.
 
+### Graceful Shutdown
+
+On SIGTERM (a deploy, or Cloud Run scaling in an autoscaled worker instance), `QueueService` pauses the worker and waits up to `WORKER_SHUTDOWN_TIMEOUT_MS` for in-flight jobs to drain (DEV-11184), then closes its Redis clients. A job that hasn't drained keeps running until SIGKILL with those clients closed under it, so it will usually throw something like `Connection is closed.`
+
+That error is the shutdown, not a real failure, so it must not end the job (DEV-12428). The worker marks itself as shutting down (`worker-process-shutdown-state.ts`) before it drains. From then on:
+
+- `processJob` does not record a thrown job as failed (neither in the DbJob nor in BullMQ). The job is left active, its lock lapses, and another instance's stall check redelivers it, exactly as after a hard kill. User cancellations are still recorded as canceled.
+- Handlers that persist their own terminal state must leave their resumable state alone while shutting down. For example, `PublishPlanRunService.runPipeline` keeps the plan's `*-running` status rather than writing `failed`, so the redelivered publish resumes the interrupted phase.
+
 ## Stuck Job Recovery
 
 ### Stale Job Reaper (every 5 minutes)

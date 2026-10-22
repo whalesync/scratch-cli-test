@@ -11,6 +11,10 @@ import { ConnectorsService } from '../../remote-service/connectors/connectors.se
 import { PartialBatchCreateError } from '../../remote-service/connectors/error';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
 import type { TableSpecStore } from '../../workbook/table-spec-store/table-spec-store';
+import {
+  clearWorkerProcessShutdownStarted,
+  markWorkerProcessShutdownStarted,
+} from '../../worker/worker-process-shutdown-state';
 import { FileIndexService } from '../file-index.service';
 import { FileReferenceService } from '../file-reference.service';
 import { PublishPlanRunService } from '../publish-plan-run.service';
@@ -1257,6 +1261,97 @@ describe('PublishPlanRunService', () => {
       await service.runPipeline(PLAN_ID);
 
       expect(refResolverService.findUnresolvablePseudoRefs).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a pipeline interrupted by the worker shutting down (DEV-12428)', () => {
+    const CONNECTION_CLOSED_BY_SHUTDOWN_ERROR_MESSAGE = 'Connection is closed.';
+
+    function setupOneEditPhaseEntry() {
+      setupEditPhaseEntries([
+        {
+          id: 'op_1',
+          filePath: 'articles/a1.json',
+          content: { id: 'rec_1', title: 'New' },
+          changedFields: { title: 'New' },
+          remoteRecordId: 'rec_1',
+        },
+      ]);
+    }
+
+    function listPlanStatusesWritten(): string[] {
+      return jest
+        .mocked(db.client.publishPlan.update)
+        .mock.calls.map((call) => (call[0] as { data?: { status?: string } }).data?.status)
+        .filter((status): status is string => typeof status === 'string');
+    }
+
+    afterEach(() => {
+      clearWorkerProcessShutdownStarted();
+    });
+
+    it('leaves the plan at its running status instead of marking it failed', async () => {
+      setupOneEditPhaseEntry();
+      // The incident's shape: the job's progress checkpoint hits a Redis client the shutdown just closed.
+      const onProgressAfterTheShutdownClosedRedis = jest.fn(() => {
+        markWorkerProcessShutdownStarted();
+        return Promise.reject(new Error(CONNECTION_CLOSED_BY_SHUTDOWN_ERROR_MESSAGE));
+      });
+
+      await expect(
+        service.runPipeline(PLAN_ID, undefined, undefined, onProgressAfterTheShutdownClosedRedis),
+      ).rejects.toThrow(CONNECTION_CLOSED_BY_SHUTDOWN_ERROR_MESSAGE);
+
+      const planStatusesWritten = listPlanStatusesWritten();
+      expect(planStatusesWritten[planStatusesWritten.length - 1]).toBe('edits-running');
+      expect(planStatusesWritten).not.toContain('failed');
+    });
+
+    it('still marks the plan failed when the same error happens while the worker is not shutting down', async () => {
+      setupOneEditPhaseEntry();
+      const onProgressThatFails = jest.fn(() => Promise.reject(new Error(CONNECTION_CLOSED_BY_SHUTDOWN_ERROR_MESSAGE)));
+
+      await expect(service.runPipeline(PLAN_ID, undefined, undefined, onProgressThatFails)).rejects.toThrow(
+        CONNECTION_CLOSED_BY_SHUTDOWN_ERROR_MESSAGE,
+      );
+
+      expect(listPlanStatusesWritten()).toContain('failed');
+    });
+
+    it('lets the redelivered job resume the interrupted phase and finish the plan', async () => {
+      setupOneEditPhaseEntry();
+      const onProgressAfterTheShutdownClosedRedis = jest.fn(() => {
+        markWorkerProcessShutdownStarted();
+        return Promise.reject(new Error(CONNECTION_CLOSED_BY_SHUTDOWN_ERROR_MESSAGE));
+      });
+      await expect(
+        service.runPipeline(PLAN_ID, undefined, undefined, onProgressAfterTheShutdownClosedRedis),
+      ).rejects.toThrow(CONNECTION_CLOSED_BY_SHUTDOWN_ERROR_MESSAGE);
+
+      // The redelivered job runs on another instance (not shutting down) and reads back whatever status the
+      // interrupted run left on the plan.
+      clearWorkerProcessShutdownStarted();
+      const planStatusesWrittenByTheInterruptedRun = listPlanStatusesWritten();
+      const planStatusLeftByTheInterruptedRun =
+        planStatusesWrittenByTheInterruptedRun[planStatusesWrittenByTheInterruptedRun.length - 1];
+      db.client.publishPlan.findUnique.mockResolvedValue({
+        id: PLAN_ID,
+        workbookId: WORKBOOK_ID,
+        userId: 'user_test',
+        branchName: 'publish/user_test/plan_test',
+        status: planStatusLeftByTheInterruptedRun,
+        connectorAccountId: CONNECTOR_ACCOUNT_ID,
+        createdAt: new Date(),
+      });
+      jest.mocked(db.client.publishPlan.update).mockClear();
+
+      await expect(service.runPipeline(PLAN_ID)).resolves.toBeDefined();
+
+      // Resumed at the edit phase (a fresh plan would start with asset-upload-running) and finished it.
+      const planStatusesWrittenByTheRedeliveredRun = listPlanStatusesWritten();
+      expect(planStatusesWrittenByTheRedeliveredRun[0]).toBe('edits-running');
+      expect(planStatusesWrittenByTheRedeliveredRun).toContain('edits-completed');
+      expect(planStatusesWrittenByTheRedeliveredRun).not.toContain('failed');
     });
   });
 
