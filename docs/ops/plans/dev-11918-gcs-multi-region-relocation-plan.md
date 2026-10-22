@@ -3,7 +3,7 @@
 - **Created:** 2026-10-08
 - **Author:** Chris Hoefgen (with Claude)
 - **Linear:** [DEV-11918](https://linear.app/whalesync/issue/DEV-11918)
-- **Status:** Paused on 2026-10-09. The rehearsal dry run showed that relocation needs Storage Intelligence (see [Prerequisite](#prerequisite-storage-intelligence)), and enabling it is still undecided. No prod infra has changed. Execution needs an admin principal and explicit approval per step.
+- **Status:** The rehearsal in `spv1eu-test` passed on 2026-10-22 (see [Rehearsal results](#rehearsal-results-2026-10-22)). Prod hasn't started and no prod infra has changed. Prod still needs approval to enable Storage Intelligence on `spv1eu-production` and a decision on quiescing writers (see [Open questions](#open-questions)). Execution needs an admin principal and explicit approval per step.
 - **GCP project:** `spv1eu-production` only. `spv1eu-test` is out of scope and keeps its single-region buckets.
 
 > When fully implemented, move this doc to `docs/ops/plans/resolved/` (per `docs/ops/CLAUDE.md`).
@@ -74,7 +74,7 @@ Neither project has it. `gcloud storage intelligence-configs describe --project=
 | [`TRIAL`](https://docs.cloud.google.com/storage/docs/storage-intelligence/30-day-introductory-trial/overview) | No object management fee for 30 days | Includes relocation. Can be activated **once per project**. **Auto-upgrades to `STANDARD` and starts billing** unless disabled before day 30. |
 | `STANDARD` | $0.0025 per 1,000 objects per month, across every bucket in scope | About $0.22/mo for either project (~86k objects in prod, ~88k in test) |
 
-The proposed approach is to enable `TRIAL` per project only for the relocation window, then disable it. The commands are in runbook [step 0](#0-enable-storage-intelligence-per-project) and [step 7](#7-close-out). This is a project-level, out-of-band config change, so it needs explicit approval. Enabling and disabling needs `storage.intelligenceConfigs.update` (Storage Admin).
+The approach is to enable `TRIAL` per project only for the relocation window, then disable it. The commands are in runbook [step 0](#0-enable-storage-intelligence-per-project) and [step 7](#7-close-out). `spv1eu-test` used its trial for the 2026-10-22 rehearsal and disabled it at teardown. A future relocation in test would need `STANDARD`. This is a project-level, out-of-band config change, so it needs explicit approval. Enabling and disabling needs `storage.intelligenceConfigs.update` (Storage Admin).
 
 ```mermaid
 flowchart LR
@@ -112,17 +112,21 @@ Confirm the exact SKUs on the [Cloud Storage pricing page](https://cloud.google.
 
 ## How relocation behaves (what to expect)
 
-Moving a single region to a multi-region is a **write-downtime relocation**:
+Moving a single region to a multi-region is a **write-downtime relocation**. The timings below were measured in the 2026-10-22 rehearsal, on a ~500-object, 12 KB bucket.
 
-1. **Setup** takes 1–2 hours regardless of size.
-2. **Incremental copy.** Data is copied to `EU` in the background.
+1. **Dry run.** `--dry-run` starts its **own long-running operation**, and the bucket can't start a real relocation until it finishes. Starting one early returns `412: … there is an existing GCS long running operation`. The rehearsal's dry run took **~25 min**.
+2. **Setup.** `progressPercent` stays at 0 until setup finishes. In the rehearsal the copy started **~29 min** after the relocation began.
+3. **Incremental copy.** Data is copied to `EU` in the background.
    - **Reads and object writes keep working.**
-   - **Bucket metadata is write-locked from the moment the relocation starts.** That covers IAM, CORS, lifecycle, logging, labels and versioning, so no `terraform apply` may touch these buckets until it finishes.
+   - **Bucket metadata is write-locked from the moment the relocation starts.** That covers IAM, CORS, lifecycle, logging, labels and versioning, so no `terraform apply` may touch these buckets until it finishes. The rehearsal confirmed it: a label update returned `412: This bucket is currently being relocated and bucket-level features cannot be modified`.
    - New XML-API multipart uploads fail. We don't use them; the patch upload is a single PUT.
-3. **Final sync** (`--finalize`). The bucket is write-locked and every object write fails until the sync completes.
-   - The operation reports `estimatedWriteDowntimeDuration` beforehand.
-   - `--ttl` (default 12h) bounds the operation: if it hasn't succeeded by then, the write lock is reverted.
+   - It's ready to finalize when `finalizationState` is `READY` **and** `commonMetadata.progressPercent` is at least 99. `READY` can show up at 0%. With a live writer, progress can sit at 98–99%, because the newest writes are always still pending; that counts as caught up.
+4. **Final sync** (`--finalize`). The bucket is write-locked and every object write fails until the sync completes.
+   - `estimatedWriteDowntimeDuration` is **not a real estimate**. Google documents its minimum value as `7200s`, and the rehearsal reported exactly that.
+   - **The rehearsal measured a ~40 min write lock.** The last write succeeded at 17:43:28 UTC (finalize was issued at ~17:43:29), writes failed from 17:44:01 to 18:23:06, and they worked again at 18:23:40. Writes resumed about 5 min before the operation reported `done` (18:28:56). Whether the lock grows with bucket size is unknown, so treat 40 min as a floor.
+   - `--ttl` must be between **6h and 48h** (default 12h). If the write downtime exceeds it, the relocation reverts to the copy step and writes are re-enabled.
    - In-progress resumable uploads must finish before finalizing.
+5. **Done.** `done: true`, `relocationState: SUCCEEDED` and `finalizationState: FINALIZED`. The rehearsal took ~85 min from start to done, plus the ~25-min dry run.
 
 The whole relocation must finish within **28 days**. A failed relocation can't be retried to the same destination for 7–14 days.
 
@@ -136,20 +140,26 @@ The whole relocation must finish within **28 days**. A failed relocation can't b
 | upload-patches | CLI/desktop publish fails at the patch PUT | The user retries the publish |
 | assets | Asset rehosts fail | Self-heals: a failed rehost leaves `rehostedUrl` null, and the next rehost run selects `rehostedUrl: null` (`server/src/worker/jobs/job-definitions/rehost-assets.job.ts:83`) |
 
-With fewer than 10 external users, a low-traffic window is enough. If the reported write downtime for assets or upload-patches is long (over ~30 min), quiesce writers with `terraform/tools/maintenance_mode.sh`. It works through Cloud Armor and Cloud Run and doesn't write to the static bucket.
+Expect **at least ~40 minutes** of write lock per bucket. The reported `estimatedWriteDowntimeDuration` is always at least 2h, so it can't be used to decide. For assets and upload-patches, 40+ minutes of failed rehosts and publishes is over the ~30-minute line at which the original plan said to quiesce writers. The options are:
+
+- Quiesce writers with `terraform/tools/maintenance_mode.sh` during those two finalizes. It works through Cloud Armor and Cloud Run and doesn't write to the static bucket.
+- With fewer than 10 external users, accept the failures in a low-traffic window.
+
+This is still an [open question](#open-questions).
 
 ## Runbook
 
 Every step that changes GCP state needs explicit approval at execution time. Relocation and Storage Intelligence need `roles/storage.admin` (`storage.buckets.relocate`, `storage.bucketOperations.*`, `storage.intelligenceConfigs.update`). The per-dev read-only SAs don't have it.
 
-**How to run the commands.** The commands are written out in full, with no shell variables, so you can paste them one at a time.
+**How to run the commands.** The commands are written out in full, with no shell variables. Paste them **one at a time**: most are steps in a sequence with waits in between, so pasting a whole block would run steps too early.
 
 - Every command that changes GCP state passes `--configuration=admin`. That's a gcloud configuration logged in as an identity with Storage Admin on the project (for example `role_operations@`), so the shell's active config can stay read-only. If your admin configuration has a different name, change the flag.
 - Read-only checks (Monitoring, `curl`, `terraform plan`) use your normal credentials.
-- The only placeholders are `<OPERATION_ID>` and `<REHOSTED_URL>`. The relocate command prints the operation ID, and `gcloud storage operations list` shows it too.
+- The only placeholders are `<DRY_RUN_OPERATION_ID>`, `<OPERATION_ID>` and `<REHOSTED_URL>`. The real relocate prints its operation name, and `gcloud storage operations list gs://<bucket>` shows every operation, including the dry run's. The ID is the last path segment of `name`.
+- Expected output is written next to each command, never as a trailing `# …` comment. Interactive zsh only treats `#` as a comment when `setopt interactivecomments` is on. Otherwise a trailing comment becomes command arguments, and a `(…)` in it can fail with `zsh: unknown file attribute`.
 - The `date -u -v-2d` syntax is macOS `date`.
 
-The 2026-10-09 rehearsal used a personal Whalesync account this way. In `spv1eu-test` it could create buckets, and the relocate dry run returned the Storage Intelligence 412 rather than a 403. This is unconfirmed for prod.
+Both rehearsals ran as a personal Whalesync account through a separate `admin` configuration. In `spv1eu-test` that account could create the bucket, enable and disable Storage Intelligence, and run the whole relocation. This is unconfirmed for prod.
 
 ### 0. Enable Storage Intelligence (per project)
 
@@ -158,7 +168,7 @@ Enable `TRIAL` on a project before its first dry run, and disable it after its l
 - Set a reminder for day 25 after enabling. If a relocation is still running then, decide whether to let it upgrade to `STANDARD` or cancel.
 - Don't disable while any relocation operation is still in progress. What that would do to the operation is undocumented.
 
-Before the rehearsal (step 1):
+Before the rehearsal (step 1). Done on 2026-10-22, and disabled again at teardown:
 
 ```bash
 gcloud --configuration=admin storage intelligence-configs enable --project=spv1eu-test --trial-edition
@@ -178,7 +188,23 @@ After enabling, `effectiveEdition` should no longer be `NONE`. Note the trial's 
 
 Before touching prod, prove the relocation preserves what we rely on. Do this on a scratch bucket, **not** a Terraform-managed test bucket. Relocating a managed test bucket would drift it from `var.gcp_region`, and the next test apply would plan a replacement.
 
-Needs step 0 on `spv1eu-test` first. The 2026-10-09 attempt got through items 1 and 2 (bucket created, seeded, IAM, CORS and logging confirmed, public URL `200`, bucket listing `403`). It then stopped at the item 4 dry run with the Storage Intelligence 412, and the bucket was deleted.
+**Done on 2026-10-22, and it passed.** The first attempt, on 2026-10-09, stopped at the dry run with the Storage Intelligence 412. Re-running it needs step 0 on `spv1eu-test`, and since that project's one-time trial is now spent, it would have to be `STANDARD`.
+
+#### Rehearsal results (2026-10-22)
+
+| Check | Result |
+|---|---|
+| Location after | `EU` / `multi-region` |
+| Bucket config (CORS, lifecycle, logging, versioning, soft delete, labels, uniform access, public access prevention) | Unchanged. The only addition is `"rpo": "DEFAULT"`, a field only multi- and dual-region buckets have. |
+| IAM, including `allUsers` → `assetsObjectReader` | Unchanged |
+| Live, all-version and soft-deleted object counts under `seed/` | 299 / 319 / 1 before and after: **noncurrent versions and soft-deleted objects carry over** |
+| Public reads | 904 reads from 16:05 to 18:37 UTC, all `200`, including during the write lock |
+| Metadata lock while relocating | Confirmed (`412 … bucket-level features cannot be modified`) |
+| Dry run | ~25 min (16:08–16:33 UTC), `relocationState: SUCCEEDED`, `validateOnly: true` |
+| Setup before the copy started | ~29 min (17:03–17:32 UTC) |
+| `estimatedWriteDowntimeDuration` | `7200s`, Google's documented minimum |
+| Measured write lock | **~40 min**: 70 consecutive failed writes, 17:44:01–18:23:06 UTC |
+| Relocation start to done | ~85 min (17:03–18:29 UTC) |
 
 **1. Create the bucket, shaped like `-assets`.** That means uniform bucket-level access, versioning, 7-day soft delete, `GET` CORS, noncurrent-version lifecycle, usage logging and `allUsers` object read:
 
@@ -206,82 +232,140 @@ gcloud --configuration=admin storage rm --all-versions gs://spv1eu-test-relocati
 
 gcloud --configuration=admin storage buckets describe gs://spv1eu-test-relocation-rehearsal --format=json > /tmp/dev-11918-before-describe.json
 gcloud --configuration=admin storage buckets get-iam-policy gs://spv1eu-test-relocation-rehearsal --format=json > /tmp/dev-11918-before-iam.json
-
-gcloud --configuration=admin storage ls 'gs://spv1eu-test-relocation-rehearsal/seed/**' | wc -l                               # expect 299 live
-gcloud --configuration=admin storage ls -a 'gs://spv1eu-test-relocation-rehearsal/seed/**' | wc -l                            # expect 319 (299 live + 20 noncurrent)
-gcloud --configuration=admin storage ls --soft-deleted --exhaustive 'gs://spv1eu-test-relocation-rehearsal/seed/**' | wc -l   # expect 1
-curl -so /dev/null -w '%{http_code}\n' https://storage.googleapis.com/spv1eu-test-relocation-rehearsal/seed/obj-002.txt        # expect 200
 ```
 
-**3. Start the probes.** Run each in its own terminal and leave them running until item 6. The write probe writes under `probe/`, so the `seed/` counts stay comparable.
+Then check the counts and the public URL. Expect `299` live, `319` with noncurrent versions, `1` soft-deleted, and `200`:
 
 ```bash
-# Terminal A: public read probe, every 10s
-while true; do echo "$(date -u +%H:%M:%S) $(curl -so /dev/null -w '%{http_code}' https://storage.googleapis.com/spv1eu-test-relocation-rehearsal/seed/obj-002.txt)"; sleep 10; done | tee /tmp/dev-11918-read-probe.log
-```
-
-```bash
-# Terminal B: object write probe, every 30s
-while true; do if gcloud --configuration=admin storage cp /tmp/dev-11918-seed/obj-001.txt gs://spv1eu-test-relocation-rehearsal/probe/write-$(date -u +%H%M%S).txt >/dev/null 2>&1; then echo "$(date -u +%H:%M:%S) write ok"; else echo "$(date -u +%H:%M:%S) WRITE FAILED"; fi; sleep 30; done | tee /tmp/dev-11918-write-probe.log
-```
-
-**4. Relocate, monitor and finalize:**
-
-```bash
-# Compatibility check: no data moves
-gcloud --configuration=admin storage buckets relocate gs://spv1eu-test-relocation-rehearsal --location=EU --dry-run
-
-# Start the relocation; note the operation ID it prints
-gcloud --configuration=admin storage buckets relocate gs://spv1eu-test-relocation-rehearsal --location=EU
-gcloud --configuration=admin storage operations list gs://spv1eu-test-relocation-rehearsal
-
-# Metadata should now be locked: this should be REJECTED
-gcloud --configuration=admin storage buckets update gs://spv1eu-test-relocation-rehearsal --update-labels=probe=metadata-lock
-
-# Repeat until the incremental copy is done (setup alone takes 1-2h); note estimatedWriteDowntimeDuration
-gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-test-relocation-rehearsal/operations/<OPERATION_ID>
-
-# Final sync (write lock)
-gcloud --configuration=admin storage buckets relocate --operation=projects/_/buckets/spv1eu-test-relocation-rehearsal/operations/<OPERATION_ID> --finalize --ttl=2h
-
-# Repeat until done
-gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-test-relocation-rehearsal/operations/<OPERATION_ID>
-```
-
-**5. Compare against "before":**
-
-```bash
-gcloud --configuration=admin storage buckets describe gs://spv1eu-test-relocation-rehearsal --format='value(location,location_type)'   # expect EU  multi-region
-
-gcloud --configuration=admin storage buckets describe gs://spv1eu-test-relocation-rehearsal --format=json > /tmp/dev-11918-after-describe.json
-gcloud --configuration=admin storage buckets get-iam-policy gs://spv1eu-test-relocation-rehearsal --format=json > /tmp/dev-11918-after-iam.json
-
-# Expect no output from either diff: IAM, CORS, lifecycle, logging, versioning, soft delete and labels unchanged
-diff <(jq 'del(.location, .location_type, .update_time, .metageneration)' /tmp/dev-11918-before-describe.json) <(jq 'del(.location, .location_type, .update_time, .metageneration)' /tmp/dev-11918-after-describe.json)
-diff <(jq 'del(.etag)' /tmp/dev-11918-before-iam.json) <(jq 'del(.etag)' /tmp/dev-11918-after-iam.json)
-
-# Versions and soft deletes carried over? Expect 299 / 319 / 1 again
 gcloud --configuration=admin storage ls 'gs://spv1eu-test-relocation-rehearsal/seed/**' | wc -l
 gcloud --configuration=admin storage ls -a 'gs://spv1eu-test-relocation-rehearsal/seed/**' | wc -l
 gcloud --configuration=admin storage ls --soft-deleted --exhaustive 'gs://spv1eu-test-relocation-rehearsal/seed/**' | wc -l
-
-# Public URL served 200 throughout: expect no output
-grep -v ' 200$' /tmp/dev-11918-read-probe.log
-
-# Measured write lock: first-to-last FAILED timestamp, vs estimatedWriteDowntimeDuration
-grep 'WRITE FAILED' /tmp/dev-11918-write-probe.log
+curl -so /dev/null -w '%{http_code}\n' https://storage.googleapis.com/spv1eu-test-relocation-rehearsal/seed/obj-002.txt
 ```
 
-**6. Tear down.** Stop both probes with Ctrl-C first.
+**3. Start the probes.** Run each in its own terminal and leave them running until item 5. The write probe writes under `probe/`, so the `seed/` counts stay comparable. Keep the machine awake (`caffeinate -i` in a spare terminal): if it sleeps, the loops pause and the logs show false gaps. If you have to restart a probe, change `tee` to `tee -a` so the log isn't overwritten.
+
+Terminal A, a public read every 10s:
+
+```bash
+while true; do echo "$(date -u +%H:%M:%S) $(curl -so /dev/null -w '%{http_code}' https://storage.googleapis.com/spv1eu-test-relocation-rehearsal/seed/obj-002.txt)"; sleep 10; done | tee /tmp/dev-11918-read-probe.log
+```
+
+Terminal B, an object write every 30s:
+
+```bash
+while true; do if gcloud --configuration=admin storage cp /tmp/dev-11918-seed/obj-001.txt gs://spv1eu-test-relocation-rehearsal/probe/write-$(date -u +%H%M%S).txt >/dev/null 2>&1; then echo "$(date -u +%H:%M:%S) write ok"; else echo "$(date -u +%H:%M:%S) WRITE FAILED"; fi; sleep 30; done | tee /tmp/dev-11918-write-probe.log
+```
+
+**4. Relocate, monitor and finalize.** Run each command once, in order.
+
+Dry run. No data moves, but it runs as its own operation (~25 min):
+
+```bash
+gcloud --configuration=admin storage buckets relocate gs://spv1eu-test-relocation-rehearsal --location=EU --dry-run
+```
+
+Find the dry run's operation ID, then repeat the `describe` until it shows `done: true` with a `response` and no `error`. A real relocation can't start before that:
+
+```bash
+gcloud --configuration=admin storage operations list gs://spv1eu-test-relocation-rehearsal
+```
+
+```bash
+gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-test-relocation-rehearsal/operations/<DRY_RUN_OPERATION_ID>
+```
+
+Start the relocation. Answer `y` to the warning prompt, and note the new operation ID it prints:
+
+```bash
+gcloud --configuration=admin storage buckets relocate gs://spv1eu-test-relocation-rehearsal --location=EU
+```
+
+Probe the metadata lock. This should be **rejected** with `412 … bucket-level features cannot be modified`:
+
+```bash
+gcloud --configuration=admin storage buckets update gs://spv1eu-test-relocation-rehearsal --update-labels=probe=metadata-lock
+```
+
+Repeat this every 15–30 min until it shows `finalizationState: READY` and `commonMetadata.progressPercent` of at least 99. Stop if it shows `BLOCKED_ON_ERRORS` or `FAILED`.
+
+```bash
+gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-test-relocation-rehearsal/operations/<OPERATION_ID>
+```
+
+Finalize, which starts the write lock, and note the time. `--ttl` must be between 6h and 48h:
+
+```bash
+gcloud --configuration=admin storage buckets relocate --operation=projects/_/buckets/spv1eu-test-relocation-rehearsal/operations/<OPERATION_ID> --finalize --ttl=6h
+```
+
+Repeat the same `describe` every 10–15 min. During the lock it shows `relocationState: FINALIZING` and `finalizationState: RUNNING` at 99% with no visible progress, which is normal. Wait for `done: true`, `relocationState: SUCCEEDED` and `finalizationState: FINALIZED`.
+
+**5. Compare against "before."** First confirm Terminal B is printing `write ok` again, then stop both probes with Ctrl-C.
+
+Location. Expect `EU` and `multi-region`:
+
+```bash
+gcloud --configuration=admin storage buckets describe gs://spv1eu-test-relocation-rehearsal --format='value(location,location_type)'
+```
+
+After snapshots:
+
+```bash
+gcloud --configuration=admin storage buckets describe gs://spv1eu-test-relocation-rehearsal --format=json > /tmp/dev-11918-after-describe.json
+gcloud --configuration=admin storage buckets get-iam-policy gs://spv1eu-test-relocation-rehearsal --format=json > /tmp/dev-11918-after-iam.json
+```
+
+Config diff. Expect a single added line, `"rpo": "DEFAULT"`:
+
+```bash
+diff <(jq 'del(.location, .location_type, .update_time, .metageneration)' /tmp/dev-11918-before-describe.json) <(jq 'del(.location, .location_type, .update_time, .metageneration)' /tmp/dev-11918-after-describe.json)
+```
+
+IAM diff. Expect no output:
+
+```bash
+diff <(jq 'del(.etag)' /tmp/dev-11918-before-iam.json) <(jq 'del(.etag)' /tmp/dev-11918-after-iam.json)
+```
+
+Counts. Expect `299`, `319` and `1` again:
+
+```bash
+gcloud --configuration=admin storage ls 'gs://spv1eu-test-relocation-rehearsal/seed/**' | wc -l
+gcloud --configuration=admin storage ls -a 'gs://spv1eu-test-relocation-rehearsal/seed/**' | wc -l
+gcloud --configuration=admin storage ls --soft-deleted --exhaustive 'gs://spv1eu-test-relocation-rehearsal/seed/**' | wc -l
+```
+
+Read probe. Expect no output, meaning every read returned `200`:
+
+```bash
+grep -v ' 200$' /tmp/dev-11918-read-probe.log
+```
+
+Measured write lock: the first failure, the last failure, and the number of failures:
+
+```bash
+grep 'WRITE FAILED' /tmp/dev-11918-write-probe.log | head -1
+grep 'WRITE FAILED' /tmp/dev-11918-write-probe.log | tail -1
+grep -c 'WRITE FAILED' /tmp/dev-11918-write-probe.log
+```
+
+**6. Tear down.** Keep the probe logs as evidence, delete the bucket and disable Storage Intelligence. The `describe` should return a 404, and the final check should print `NONE`.
+
+```bash
+mkdir -p ~/dev-11918-rehearsal-logs
+cp /tmp/dev-11918-read-probe.log /tmp/dev-11918-write-probe.log ~/dev-11918-rehearsal-logs/
+```
 
 ```bash
 gcloud --configuration=admin storage rm -r --all-versions gs://spv1eu-test-relocation-rehearsal
-gcloud --configuration=admin storage buckets describe gs://spv1eu-test-relocation-rehearsal   # expect 404
+gcloud --configuration=admin storage buckets describe gs://spv1eu-test-relocation-rehearsal
 gcloud --configuration=admin storage intelligence-configs disable --project=spv1eu-test
+gcloud --configuration=admin storage intelligence-configs describe --project=spv1eu-test --format='value(effectiveIntelligenceConfig.effectiveEdition)'
 rm -rf /tmp/dev-11918-*
 ```
 
-Record the results (versions, soft deletes, measured write-lock window) in this doc's open questions.
+Record the results in [Rehearsal results](#rehearsal-results-2026-10-22).
 
 ### 2. Prep
 
@@ -316,7 +400,7 @@ curl -s -G "https://monitoring.googleapis.com/v3/projects/spv1eu-production/time
   | jq -r '.timeSeries[] | [.resource.labels.bucket_name, .resource.labels.location, (.points[0].value | .int64Value // .doubleValue)] | @tsv'
 ```
 
-Baseline from 2026-10-09:
+Baseline from 2026-10-09. This is **out of date for assets**: the DEV-12324 rehosted-asset reaper has since deleted most of that bucket's live objects. Versioning keeps deleted objects as noncurrent versions for 30 days, and relocation carries those over too, so re-run both queries before relocating:
 
 | Bucket | Location | Size | Objects |
 |---|---|---:|---:|
@@ -330,27 +414,34 @@ Baseline from 2026-10-09:
 
 Order: **static → tfstate → gcs-access-logs → upload-patches → assets.** Needs step 0 on `spv1eu-production` first; without it, every dry run returns the 412. Finish and verify (step 4) one bucket before starting the next.
 
-Every bucket uses the same six commands:
+Every bucket uses the same seven commands. Run them one at a time, moving on only when each one's condition is met:
 
-1. Dry run (no data moves).
-2. Start (setup + incremental copy; reads and object writes keep working). Note the operation ID.
-3. List operations, if you need the ID again.
-4. Monitor until the copy is done, and note `estimatedWriteDowntimeDuration`.
-5. In a low-traffic window, finalize (write lock). `--ttl` reverts the write lock if it hasn't succeeded by then.
-6. Monitor until it reports success / `progressPercent` 100.
+1. **Dry run.** No data moves, but it runs as its own operation (~25 min in the rehearsal).
+2. **List operations** to get the dry run's operation ID, and later the real one's.
+3. **Wait for the dry run.** Repeat the `describe` until it shows `done: true` with a `response` and no `error`. A real relocation started before then fails with `412: … existing GCS long running operation`.
+4. **Start the relocation.** Answer `y` to the warning prompt and note the new operation ID.
+5. **Monitor the copy.** Repeat the `describe` until `finalizationState` is `READY` and `commonMetadata.progressPercent` is at least 99. Setup took ~29 min in the rehearsal. With live writers, progress can sit at 98–99%, which counts as caught up.
+6. **Finalize** in the low-traffic window. This starts the write lock (~40 min in the rehearsal), so note the time. `--ttl` must be between 6h and 48h; if the lock outlasts it, writes are re-enabled and the relocation returns to the copy step.
+7. **Monitor the finalize.** Repeat the `describe` until `done: true`, `relocationState: SUCCEEDED` and `finalizationState: FINALIZED`. While locked it shows `FINALIZING` / `RUNNING` at 99% with no visible progress, which is normal.
 
-The last line of each block, commented out, aborts the relocation if you run it before finalizing.
+Stop and investigate on `BLOCKED_ON_ERRORS`, `FAILED` or `CANCELLED`. Each bucket also has a separate command that **aborts the relocation before finalizing** and leaves the bucket where it was.
 
 #### 3a. static
 
 ```bash
 gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-static --location=EU --dry-run
-gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-static --location=EU
 gcloud --configuration=admin storage operations list gs://spv1eu-production-static
+gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-static/operations/<DRY_RUN_OPERATION_ID>
+gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-static --location=EU
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-static/operations/<OPERATION_ID>
 gcloud --configuration=admin storage buckets relocate --operation=projects/_/buckets/spv1eu-production-static/operations/<OPERATION_ID> --finalize --ttl=6h
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-static/operations/<OPERATION_ID>
-# abort: gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-static/operations/<OPERATION_ID>
+```
+
+Abort before finalizing:
+
+```bash
+gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-static/operations/<OPERATION_ID>
 ```
 
 #### 3b. tfstate
@@ -359,52 +450,76 @@ Nobody may run `terraform apply` against prod until this finishes.
 
 ```bash
 gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-tfstate --location=EU --dry-run
-gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-tfstate --location=EU
 gcloud --configuration=admin storage operations list gs://spv1eu-production-tfstate
+gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-tfstate/operations/<DRY_RUN_OPERATION_ID>
+gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-tfstate --location=EU
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-tfstate/operations/<OPERATION_ID>
 gcloud --configuration=admin storage buckets relocate --operation=projects/_/buckets/spv1eu-production-tfstate/operations/<OPERATION_ID> --finalize --ttl=6h
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-tfstate/operations/<OPERATION_ID>
-# abort: gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-tfstate/operations/<OPERATION_ID>
+```
+
+Abort before finalizing:
+
+```bash
+gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-tfstate/operations/<OPERATION_ID>
 ```
 
 #### 3c. gcs-access-logs
 
 ```bash
 gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-gcs-access-logs --location=EU --dry-run
-gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-gcs-access-logs --location=EU
 gcloud --configuration=admin storage operations list gs://spv1eu-production-gcs-access-logs
+gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-gcs-access-logs/operations/<DRY_RUN_OPERATION_ID>
+gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-gcs-access-logs --location=EU
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-gcs-access-logs/operations/<OPERATION_ID>
 gcloud --configuration=admin storage buckets relocate --operation=projects/_/buckets/spv1eu-production-gcs-access-logs/operations/<OPERATION_ID> --finalize --ttl=6h
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-gcs-access-logs/operations/<OPERATION_ID>
-# abort: gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-gcs-access-logs/operations/<OPERATION_ID>
+```
+
+Abort before finalizing:
+
+```bash
+gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-gcs-access-logs/operations/<OPERATION_ID>
 ```
 
 #### 3d. upload-patches
 
-Finalize in the low-traffic window: CLI and desktop publishes fail during the write lock.
+Finalize in the low-traffic window: CLI and desktop publishes fail for the whole write lock (~40 min or more).
 
 ```bash
 gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-upload-patches --location=EU --dry-run
-gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-upload-patches --location=EU
 gcloud --configuration=admin storage operations list gs://spv1eu-production-upload-patches
+gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-upload-patches/operations/<DRY_RUN_OPERATION_ID>
+gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-upload-patches --location=EU
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-upload-patches/operations/<OPERATION_ID>
 gcloud --configuration=admin storage buckets relocate --operation=projects/_/buckets/spv1eu-production-upload-patches/operations/<OPERATION_ID> --finalize --ttl=6h
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-upload-patches/operations/<OPERATION_ID>
-# abort: gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-upload-patches/operations/<OPERATION_ID>
+```
+
+Abort before finalizing:
+
+```bash
+gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-upload-patches/operations/<OPERATION_ID>
 ```
 
 #### 3e. assets
 
-Before starting, turn the `REHOSTED_ASSET_REAPER_DELETES_ENABLED` PostHog flag off (step 2). Finalize in the low-traffic window: asset rehosts fail during the write lock, then self-heal.
+Before starting, turn the `REHOSTED_ASSET_REAPER_DELETES_ENABLED` PostHog flag off (step 2). Finalize in the low-traffic window: asset rehosts fail for the whole write lock (~40 min or more), then self-heal.
 
 ```bash
 gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-assets --location=EU --dry-run
-gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-assets --location=EU
 gcloud --configuration=admin storage operations list gs://spv1eu-production-assets
+gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-assets/operations/<DRY_RUN_OPERATION_ID>
+gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-assets --location=EU
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-assets/operations/<OPERATION_ID>
 gcloud --configuration=admin storage buckets relocate --operation=projects/_/buckets/spv1eu-production-assets/operations/<OPERATION_ID> --finalize --ttl=6h
 gcloud --configuration=admin storage operations describe projects/_/buckets/spv1eu-production-assets/operations/<OPERATION_ID>
-# abort: gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-assets/operations/<OPERATION_ID>
+```
+
+Abort before finalizing:
+
+```bash
+gcloud --configuration=admin storage operations cancel projects/_/buckets/spv1eu-production-assets/operations/<OPERATION_ID>
 ```
 
 ### 4. Verify each bucket
@@ -419,7 +534,7 @@ gcloud --configuration=admin storage buckets describe gs://spv1eu-production-upl
 gcloud --configuration=admin storage buckets describe gs://spv1eu-production-assets --format='value(location,location_type)'
 ```
 
-Size and object count: re-run the two step 2 queries. They should match the baseline, with `location` now `eu`.
+Size and object count: re-run the two step 2 queries. They should match the baseline taken on the day of the relocation, with `location` now `eu`. The metric lags by a few hours.
 
 Per-bucket checks:
 
@@ -458,6 +573,7 @@ Until this lands, any prod `terraform plan` shows `-/+ … must be replaced` for
 - Use it for `google_storage_bucket.gcs_access_logs`, `.assets`, `.upload_patches`, and for `module.static_bucket_lb`'s `bucket_location` (`terraform/modules/env/main.tf:767`).
 - Set `gcs_bucket_location = "EU"` in `terraform/envs/eu-production/eu-production.tf`.
 - Change `google_storage_bucket.tfstate` to `location = "EU"` (`eu-production.tf:149`).
+- After relocation, each bucket gains `rpo = "DEFAULT"` (rehearsal finding). Terraform doesn't set `rpo` on these buckets. If the plan shows an `rpo` change, add `rpo = "DEFAULT"` to them rather than letting Terraform change it.
 - **Gate:** both plans must show **no changes** for the buckets. Any `must be replaced` means stop and investigate. Never `-auto-approve`.
 
 ```bash
@@ -467,9 +583,9 @@ terraform -chdir=terraform/envs/eu-test plan
 
 ### 6. Rollback
 
-Before finalizing, the `abort` line in that bucket's step 3 block cancels the relocation and leaves the bucket where it was.
+Before finalizing, that bucket's step 3 abort command cancels the relocation and leaves the bucket where it was.
 
-After a successful relocation, move the bucket back with another write-downtime relocation. It has the same steps and the same 28-day limit. Dry-run and start it with that bucket's line below, then monitor and finalize with that bucket's step 3 `describe` and `--finalize` commands, using the new operation ID. Revert the step 5 MR to match.
+After a successful relocation, move the bucket back with another write-downtime relocation. It has the same steps, timings and 28-day limit. Run that bucket's dry-run line below, and wait for the dry run to show `done: true` before running its start line. Then monitor and finalize with that bucket's step 3 `describe` and `--finalize` commands, using the new operation ID. Revert the step 5 MR to match.
 
 ```bash
 gcloud --configuration=admin storage buckets relocate gs://spv1eu-production-static --location=europe-west1 --dry-run
@@ -505,8 +621,10 @@ Storage Intelligence must still be enabled on the project for a rollback. Don't 
 
 ## Open questions
 
-- **Storage Intelligence:** approve enabling `TRIAL` on `spv1eu-test` (rehearsal) and `spv1eu-production` (relocation), or choose `STANDARD`. The trial is one-time per project, so enable it on prod only once the relocation window is booked.
-- Do **noncurrent versions and soft-deleted objects** carry over? Google's docs only say object metadata is retained. The step 1 rehearsal answers this.
-- Does GCS **retry usage-log delivery** into `gcs-access-logs` while it's write-locked, or is that window lost? Check in step 4.
+- **Storage Intelligence on prod:** approve enabling `TRIAL` on `spv1eu-production` (or choose `STANDARD`). The trial is one-time per project, so enable it only once the relocation window is booked. `spv1eu-test` used and then disabled its trial for the 2026-10-22 rehearsal.
+- **Quiesce writers?** The rehearsal measured a ~40 min write lock even on a tiny bucket. Decide whether the upload-patches and assets finalizes run under `maintenance_mode.sh`, or whether ~40+ min of failed publishes and rehosts is acceptable in a low-traffic window. The lock may be longer on assets; it's unknown whether it grows with size.
+- **Overlap buckets?** Run one at a time, each bucket takes at least ~1h40m (dry run ~25 min, setup ~29 min, finalize ~45 min) plus polling slack, and the assets copy will take longer. All five is a full day. A project can run up to 30 relocations at once, so the copy phases could overlap with only the finalizes staggered. The runbook currently finishes each bucket before starting the next.
+- Does GCS **retry usage-log delivery** into `gcs-access-logs` while it's write-locked, or is that window lost? The rehearsal didn't test this (its log bucket didn't move). Check in step 4.
 - What are the exact **pricing SKUs** for the relocation and EU multi-region? Check on the pricing page before executing.
 - **Who runs it:** which admin principal (`role_operations@`), and when is the low-traffic window for the assets and upload-patches finalize?
+- ~~Do noncurrent versions and soft-deleted objects carry over?~~ **Yes.** The 2026-10-22 rehearsal kept 319 versions and 1 soft-deleted object.
