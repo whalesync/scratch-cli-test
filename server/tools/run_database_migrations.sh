@@ -1,9 +1,11 @@
 #!/bin/bash
 set -e
 
-if [ $# -ne 1 ]
+if [ $# -lt 1 ] || [ $# -gt 2 ]
 then
+  echo "Usage: $0 <eu-test|eu-production> [db-host]"
   echo "You must provide the name of the environment as the first argument: 'eu-test' or 'eu-production'."
+  echo "Optionally pass the database host as the second argument to skip reading the DB_HOST secret."
   exit 1
 fi
 
@@ -63,13 +65,13 @@ DB_NAME=${DB_NAME:-postgres}
 if [ $# -ge 2 ]; then
     DB_HOST=$2
 else
-  DB_HOST=$(gcloud sql instances list \
-      --project="${PROJECT}" \
-      --filter="labels.primary=true" \
-      --format="value(ipAddresses[0].ipAddress)" \
-      --limit=1)
+  # The primary Cloud SQL instance's private IP, written to Secret Manager by terraform (see DB_HOST in
+  # terraform/modules/env/secrets.tf). Don't discover it with `gcloud sql instances list --filter=labels.primary=true
+  # --limit=1`: gcloud applies --limit before --filter for that command, so any other instance in the project (e.g. a
+  # backup restored to a new instance) that the API lists first makes the lookup come back empty.
+  DB_HOST=$(gcloud secrets versions access latest --project="${PROJECT}" --secret=DB_HOST)
   if [ -z "$DB_HOST" ]; then
-    echo "Error: failed to find IP for database instance"
+    echo "Error: failed to read the primary database host (DB_HOST secret) for ${ENVIRONMENT}"
     exit 1
   fi
 fi
