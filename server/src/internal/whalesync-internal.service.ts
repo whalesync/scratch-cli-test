@@ -20,9 +20,9 @@ const LOG_SOURCE = 'WhalesyncInternalService';
  * deprovisioning them.
  *
  * This service (rather than {@link UsersService}) owns deprovisioning because tearing a shadow user down
- * must route through {@link WorkbookService.delete} (the CLAUDE.md cleanup rule), and `WorkbookModule`
- * already imports `UserModule` — injecting `WorkbookService` into `UsersService` would be a circular
- * dependency. The internal module sits above both, so it can compose them cleanly.
+ * must route through {@link WorkbookService.executeHardDeleteWorkbook} (the CLAUDE.md cleanup rule), and
+ * `WorkbookModule` already imports `UserModule` — injecting `WorkbookService` into `UsersService` would be a
+ * circular dependency. The internal module sits above both, so it can compose them cleanly.
  */
 @Injectable()
 export class WhalesyncInternalService {
@@ -150,9 +150,16 @@ export class WhalesyncInternalService {
   }
 
   /**
-   * Deprovision a shadow user: delete every workbook they own through {@link WorkbookService.delete}
-   * (so repos/jobs/tables are cleaned up), then remove the user (cascading its tokens) and the
-   * auto-created organization. Idempotent: a user that doesn't exist is a no-op.
+   * Deprovision a shadow user, following the same rules as `DevToolsService.hardDeleteUser`:
+   *   1. Only when the user is the SOLE member of their organization, delete every workbook OWNED by that
+   *      organization through {@link WorkbookService.executeHardDeleteWorkbook} (so repos/jobs/tables are
+   *      cleaned up), then delete the user (cascading its tokens and workspace permissions) and the
+   *      organization.
+   *   2. Otherwise delete only the user. The organization and its workbooks stay with the remaining members.
+   *
+   * Workbooks are picked by `Workbook.organizationId`, never by membership: a workbook another organization
+   * shared with this user is not theirs to delete, and their permission on it goes away with the user row
+   * (DEV-12427). Idempotent: a user that doesn't exist is a no-op.
    */
   public async deprovisionWhalesyncUser(whalesyncUserId: string): Promise<void> {
     const shadowUser = await this.usersService.findByWhalesyncUserId(whalesyncUserId);
@@ -161,19 +168,32 @@ export class WhalesyncInternalService {
       return;
     }
 
-    const actor = userToActor(shadowUser);
-    const workbooks = await this.workbookService.findAllForUser(actor);
+    const shadowUserOrganizationId = shadowUser.organizationId ?? undefined;
+    const isSoleMemberOfOrganization = await this.usersService.isSoleMemberOfOrganization(shadowUser);
+
+    let workbookIdsOwnedByShadowUserOrganization: WorkbookId[] = [];
+    if (isSoleMemberOfOrganization && shadowUserOrganizationId) {
+      workbookIdsOwnedByShadowUserOrganization =
+        await this.workbookService.findIdsOfAllWorkbooksOwnedByOrganization(shadowUserOrganizationId);
+    }
 
     WSLogger.info({
       source: LOG_SOURCE,
-      message: `Deprovisioning shadow user ${shadowUser.id}: deleting ${workbooks.length} workbook(s)`,
+      message: `Deprovisioning shadow user ${shadowUser.id}: deleting ${workbookIdsOwnedByShadowUserOrganization.length} workbook(s), organizationDeleted=${isSoleMemberOfOrganization}`,
       whalesyncUserId,
+      organizationId: shadowUserOrganizationId,
     });
 
-    for (const workbook of workbooks) {
-      await this.workbookService.delete(workbook.id as WorkbookId, actor);
+    // executeHardDeleteWorkbook is idempotent on an already-deleted workbook, so a retried deprovision (or a
+    // pending-delete job finishing first) can't fail here the way the NotFound check in `delete` would.
+    const actor = userToActor(shadowUser);
+    for (const workbookId of workbookIdsOwnedByShadowUserOrganization) {
+      await this.workbookService.executeHardDeleteWorkbook(workbookId, { actor });
     }
 
-    await this.usersService.deleteShadowUserAndOrganization(shadowUser.id, shadowUser.organizationId ?? undefined);
+    await this.usersService.deleteShadowUserAndOrganization(
+      shadowUser.id,
+      isSoleMemberOfOrganization ? shadowUserOrganizationId : undefined,
+    );
   }
 }

@@ -580,6 +580,20 @@ export class WorkbookService {
     });
   }
 
+  /**
+   * Ids of every workbook owned by an organization, including those pending deletion. Org-scoped (by
+   * `Workbook.organizationId`), NOT membership-scoped like {@link findAllForUser}: it never returns a
+   * workbook that another organization only shared with one of this organization's members. Use this, not
+   * `findAllForUser`, to pick the workbooks to tear down along with an organization.
+   */
+  async findIdsOfAllWorkbooksOwnedByOrganization(organizationId: string): Promise<WorkbookId[]> {
+    const workbooksOwnedByOrganization = await this.db.client.workbook.findMany({
+      where: { organizationId },
+      select: { id: true },
+    });
+    return workbooksOwnedByOrganization.map((workbook) => workbook.id as WorkbookId);
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async findOne(id: WorkbookId, _actor: Actor): Promise<WorkbookCluster.Workbook | null> {
     return this.db.client.workbook.findFirst({

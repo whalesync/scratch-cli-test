@@ -1,5 +1,5 @@
 import { ConflictException } from '@nestjs/common';
-import { WorkbookManager } from '@spinner/shared-types';
+import { WorkbookId, WorkbookManager } from '@spinner/shared-types';
 import { UserCluster, WorkbookCluster } from 'src/db/cluster-types';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { UsersService } from 'src/users/users.service';
@@ -8,19 +8,31 @@ import { WhalesyncInternalService } from '../whalesync-internal.service';
 
 describe('WhalesyncInternalService', () => {
   let service: WhalesyncInternalService;
-  let mockUsersService: jest.Mocked<Pick<UsersService, 'findByWhalesyncUserId'>>;
+  let mockUsersService: jest.Mocked<
+    Pick<UsersService, 'findByWhalesyncUserId' | 'isSoleMemberOfOrganization' | 'deleteShadowUserAndOrganization'>
+  >;
   let mockStripePaymentService: jest.Mocked<
     Pick<StripePaymentService, 'clearWhalesyncPlanSubscription' | 'applyWhalesyncSubscriptionState'>
   >;
-  let mockWorkbookService: jest.Mocked<Pick<WorkbookService, 'findAllForUser'>>;
+  let mockWorkbookService: jest.Mocked<
+    Pick<WorkbookService, 'findAllForUser' | 'findIdsOfAllWorkbooksOwnedByOrganization' | 'executeHardDeleteWorkbook'>
+  >;
 
   beforeEach(() => {
-    mockUsersService = { findByWhalesyncUserId: jest.fn() };
+    mockUsersService = {
+      findByWhalesyncUserId: jest.fn(),
+      isSoleMemberOfOrganization: jest.fn(),
+      deleteShadowUserAndOrganization: jest.fn(),
+    };
     mockStripePaymentService = {
       clearWhalesyncPlanSubscription: jest.fn(),
       applyWhalesyncSubscriptionState: jest.fn(),
     };
-    mockWorkbookService = { findAllForUser: jest.fn() };
+    mockWorkbookService = {
+      findAllForUser: jest.fn(),
+      findIdsOfAllWorkbooksOwnedByOrganization: jest.fn(),
+      executeHardDeleteWorkbook: jest.fn(),
+    };
     service = new WhalesyncInternalService(
       mockUsersService as unknown as UsersService,
       mockWorkbookService as unknown as WorkbookService,
@@ -148,6 +160,73 @@ describe('WhalesyncInternalService', () => {
           },
         ],
       });
+    });
+  });
+
+  describe('deprovisionWhalesyncUser', () => {
+    const shadowUser = { id: 'usr_shadow', organizationId: 'org_shadow' } as unknown as UserCluster.User;
+
+    // Every workbook the shadow user can reach. The last one belongs to another org and was only shared with
+    // the shadow user through a WorkspacePermission (the DEV-12427 "Whalesync Internal" case).
+    const workbooksReachableByShadowUser = [
+      { id: 'wkb_own_first', organizationId: 'org_shadow' },
+      { id: 'wkb_own_second', organizationId: 'org_shadow' },
+      { id: 'wkb_shared_from_other_org', organizationId: 'org_other' },
+    ];
+
+    beforeEach(() => {
+      mockUsersService.findByWhalesyncUserId.mockResolvedValue(shadowUser);
+      // The membership-scoped query returns every reachable workbook, including the shared one.
+      mockWorkbookService.findAllForUser.mockResolvedValue(
+        workbooksReachableByShadowUser as unknown as WorkbookCluster.Workbook[],
+      );
+      // The org-scoped query returns only the workbooks the given org owns.
+      mockWorkbookService.findIdsOfAllWorkbooksOwnedByOrganization.mockImplementation((organizationId) =>
+        Promise.resolve(
+          workbooksReachableByShadowUser
+            .filter((workbook) => workbook.organizationId === organizationId)
+            .map((workbook) => workbook.id as WorkbookId),
+        ),
+      );
+    });
+
+    function idsOfDeletedWorkbooks(): string[] {
+      return mockWorkbookService.executeHardDeleteWorkbook.mock.calls.map(([workbookId]) => workbookId);
+    }
+
+    it('is an idempotent no-op when no shadow user exists', async () => {
+      mockUsersService.findByWhalesyncUserId.mockResolvedValue(null);
+
+      await service.deprovisionWhalesyncUser('ws_missing');
+
+      expect(mockWorkbookService.executeHardDeleteWorkbook).not.toHaveBeenCalled();
+      expect(mockUsersService.deleteShadowUserAndOrganization).not.toHaveBeenCalled();
+    });
+
+    it('does not delete a workbook another org shared with the shadow user', async () => {
+      mockUsersService.isSoleMemberOfOrganization.mockResolvedValue(true);
+
+      await service.deprovisionWhalesyncUser('ws_1');
+
+      expect(mockWorkbookService.findIdsOfAllWorkbooksOwnedByOrganization).toHaveBeenCalledWith('org_shadow');
+      expect(mockWorkbookService.findAllForUser).not.toHaveBeenCalled();
+      expect(idsOfDeletedWorkbooks()).toEqual(['wkb_own_first', 'wkb_own_second']);
+      expect(idsOfDeletedWorkbooks()).not.toContain('wkb_shared_from_other_org');
+      for (const [, hardDeleteOptions] of mockWorkbookService.executeHardDeleteWorkbook.mock.calls) {
+        expect(hardDeleteOptions?.actor?.userId).toBe('usr_shadow');
+      }
+      expect(mockUsersService.deleteShadowUserAndOrganization).toHaveBeenCalledWith('usr_shadow', 'org_shadow');
+    });
+
+    it('deletes only the user, not the org or its workbooks, when the org has another member', async () => {
+      mockUsersService.isSoleMemberOfOrganization.mockResolvedValue(false);
+
+      await service.deprovisionWhalesyncUser('ws_1');
+
+      expect(mockWorkbookService.findIdsOfAllWorkbooksOwnedByOrganization).not.toHaveBeenCalled();
+      expect(mockWorkbookService.findAllForUser).not.toHaveBeenCalled();
+      expect(mockWorkbookService.executeHardDeleteWorkbook).not.toHaveBeenCalled();
+      expect(mockUsersService.deleteShadowUserAndOrganization).toHaveBeenCalledWith('usr_shadow', undefined);
     });
   });
 });

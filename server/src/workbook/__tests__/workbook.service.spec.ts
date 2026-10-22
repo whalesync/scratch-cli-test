@@ -57,6 +57,7 @@ describe('WorkbookService', () => {
         workbook: {
           create: jest.fn(),
           findFirst: jest.fn(),
+          findMany: jest.fn().mockResolvedValue([]),
           update: jest.fn().mockResolvedValue({}),
           delete: jest.fn().mockResolvedValue({}),
         },
@@ -300,6 +301,21 @@ describe('WorkbookService', () => {
 
       expect(result.size).toBe(0);
       expect(dbService.client.schedule.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findIdsOfAllWorkbooksOwnedByOrganization', () => {
+    it('selects workbooks by owning organization, not by membership', async () => {
+      (dbService.client.workbook.findMany as jest.Mock).mockResolvedValue([{ id: 'wkb_first' }, { id: 'wkb_second' }]);
+
+      const result = await service.findIdsOfAllWorkbooksOwnedByOrganization('org_test');
+
+      // Membership (workspacePermissions) would also pick up workbooks other orgs shared with a member.
+      expect(dbService.client.workbook.findMany).toHaveBeenCalledWith({
+        where: { organizationId: 'org_test' },
+        select: { id: true },
+      });
+      expect(result).toEqual(['wkb_first', 'wkb_second']);
     });
   });
 
