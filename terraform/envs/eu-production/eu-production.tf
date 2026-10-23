@@ -7,7 +7,9 @@ module "eu_production" {
   gcp_project_number = 75080978117
   gcp_region         = "europe-west1"
   gcp_zone           = "europe-west1-b"
-  as_gitlab          = var.as_gitlab
+  # Multi-region for Vanta's redundant-backup test (DEV-11918); the buckets were relocated in place.
+  gcs_bucket_location = "EU"
+  as_gitlab           = var.as_gitlab
   default_labels = {
     "terraform" : "true"
     "env" : "production"
@@ -149,7 +151,7 @@ import {
 resource "google_storage_bucket" "tfstate" {
   name          = "spv1eu-production-tfstate"
   project       = "spv1eu-production"
-  location      = "EUROPE-WEST1"
+  location      = "EU"
   force_destroy = false
 
   uniform_bucket_level_access = true

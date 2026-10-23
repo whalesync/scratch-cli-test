@@ -30,6 +30,12 @@ variable "gcp_region" {
   description = "Region where cloud resources are to be created."
 }
 
+variable "gcs_bucket_location" {
+  type        = string
+  default     = null
+  description = "Location of the env's GCS buckets (access logs, assets, upload patches, static), e.g. a multi-region like EU. If not set, defaults to gcp_region."
+}
+
 variable "gcp_zone" {
   description = "GCP zone for resources"
   type        = string

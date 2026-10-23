@@ -26,6 +26,10 @@ locals {
 
   vanta_user_data_labels = var.vanta_contains_user_data ? { "vanta-contains-user-data" = "true" } : {}
 
+  # Bucket `location` is ForceNew: changing it here plans a destroy + recreate. Move an existing bucket with
+  # in-place bucket relocation first, then update this to match (DEV-11918).
+  gcs_bucket_location = coalesce(var.gcs_bucket_location, var.gcp_region)
+
   # APIs
   enabled_apis = [
     "certificatemanager.googleapis.com",
@@ -592,7 +596,7 @@ resource "google_secret_manager_secret_version" "READONLY_DB_PASSWORD" {
 
 resource "google_storage_bucket" "gcs_access_logs" {
   name          = "${var.gcp_project_id}-gcs-access-logs"
-  location      = var.gcp_region
+  location      = local.gcs_bucket_location
   force_destroy = false
 
   uniform_bucket_level_access = true
@@ -632,7 +636,7 @@ resource "google_storage_bucket_iam_member" "gcs_access_logs_writer" {
 
 resource "google_storage_bucket" "assets" {
   name          = "${var.gcp_project_id}-assets"
-  location      = var.gcp_region
+  location      = local.gcs_bucket_location
   force_destroy = false
 
   uniform_bucket_level_access = true
@@ -707,7 +711,7 @@ resource "google_project_iam_custom_role" "assets_object_reader" {
 
 resource "google_storage_bucket" "upload_patches" {
   name          = "${var.gcp_project_id}-upload-patches"
-  location      = var.gcp_region
+  location      = local.gcs_bucket_location
   force_destroy = false
 
   uniform_bucket_level_access = true
@@ -764,7 +768,7 @@ module "static_bucket_lb" {
 
   name            = "${var.env_name}-static"
   gcp_project_id  = var.gcp_project_id
-  bucket_location = var.gcp_region
+  bucket_location = local.gcs_bucket_location
   domain          = var.static_assets_domain
   cors_origins    = ["https://${var.client_domain}"]
   log_bucket      = google_storage_bucket.gcs_access_logs.name
