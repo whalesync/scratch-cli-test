@@ -3,10 +3,9 @@
 - **Created:** 2026-10-08
 - **Author:** Chris Hoefgen (with Claude)
 - **Linear:** [DEV-11918](https://linear.app/whalesync/issue/DEV-11918)
-- **Status:** The rehearsal in `spv1eu-test` passed on 2026-10-22 (see [Rehearsal results](#rehearsal-results-2026-10-22)). Prod hasn't started and no prod infra has changed. Prod still needs approval to enable Storage Intelligence on `spv1eu-production` and a decision on quiescing writers (see [Open questions](#open-questions)). Execution needs an admin principal and explicit approval per step.
+- **Status:** **Done on 2026-10-23.** All five prod buckets are in the `EU` multi-region, Terraform matches (MR !3419, `plan` clean), and the Vanta test passes. See [Production run](#production-run-2026-10-23). **One follow-up remains:** disable Storage Intelligence on `spv1eu-production` by **2026-11-17**. Its trial auto-upgrades to paid `STANDARD` on 2026-11-22 15:18 UTC (commands in [step 7](#7-close-out)).
 - **GCP project:** `spv1eu-production` only. `spv1eu-test` is out of scope and keeps its single-region buckets.
 
-> When fully implemented, move this doc to `docs/ops/plans/resolved/` (per `docs/ops/CLAUDE.md`).
 
 ## Problem statement
 
@@ -39,7 +38,7 @@ A regional outage or loss in `europe-west1` would take these out with no second 
 - **tfstate.** The name is hardcoded in the backend config (`terraform/envs/eu-production/backend.tf:5`). The bucket is also managed from inside the very state it stores (`terraform/envs/eu-production/eu-production.tf:141-175`). Renaming it would mean a state migration on top of a bucket swap.
 - **The other three** are wired through Terraform outputs and env vars, so they could be renamed. But relocation is simpler and identical for all five, so one procedure covers everything.
 
-## Current state
+## Starting state (2026-10-08)
 
 Sizes are from read-only Cloud Monitoring `storage.googleapis.com/storage/v2/total_bytes` and `.../total_count` on 2026-10-08. Writers are from a read of the code and Terraform.
 
@@ -74,7 +73,7 @@ Neither project has it. `gcloud storage intelligence-configs describe --project=
 | [`TRIAL`](https://docs.cloud.google.com/storage/docs/storage-intelligence/30-day-introductory-trial/overview) | No object management fee for 30 days | Includes relocation. Can be activated **once per project**. **Auto-upgrades to `STANDARD` and starts billing** unless disabled before day 30. |
 | `STANDARD` | $0.0025 per 1,000 objects per month, across every bucket in scope | About $0.22/mo for either project (~86k objects in prod, ~88k in test) |
 
-The approach is to enable `TRIAL` per project only for the relocation window, then disable it. The commands are in runbook [step 0](#0-enable-storage-intelligence-per-project) and [step 7](#7-close-out). `spv1eu-test` used its trial for the 2026-10-22 rehearsal and disabled it at teardown. A future relocation in test would need `STANDARD`. This is a project-level, out-of-band config change, so it needs explicit approval. Enabling and disabling needs `storage.intelligenceConfigs.update` (Storage Admin).
+The approach is to enable `TRIAL` per project only for the relocation window, then disable it. The commands are in runbook [step 0](#0-enable-storage-intelligence-per-project) and [step 7](#7-close-out). `spv1eu-test` used its trial for the 2026-10-22 rehearsal and disabled it at teardown, so a future relocation in test would need `STANDARD`. `spv1eu-production` enabled its trial on 2026-10-23 at 15:18 UTC for the prod run; it expires 2026-11-22 at 15:18 UTC. This is a project-level, out-of-band config change, so it needs explicit approval. Enabling and disabling needs `storage.intelligenceConfigs.update` (Storage Admin).
 
 ```mermaid
 flowchart LR
@@ -99,7 +98,7 @@ Nothing depends on `europe-west1` specifically:
 
 ## Cost check vs the cost-reduction plan (DEV-11808)
 
-The [hosting cost review](../dev-11808-scratch-hosting-cost-review.md) has no Cloud Storage line item. GCS is too small to show up next to Compute, Cloud Run and Cloud SQL. **This change doesn't conflict with it.**
+The [hosting cost review](../../dev-11808-scratch-hosting-cost-review.md) has no Cloud Storage line item. GCS is too small to show up next to Compute, Cloud Run and Cloud SQL. **This change doesn't conflict with it.**
 
 | Item | Estimate |
 |---|---|
@@ -112,7 +111,7 @@ Confirm the exact SKUs on the [Cloud Storage pricing page](https://cloud.google.
 
 ## How relocation behaves (what to expect)
 
-Moving a single region to a multi-region is a **write-downtime relocation**. The timings below were measured in the 2026-10-22 rehearsal, on a ~500-object, 12 KB bucket.
+Moving a single region to a multi-region is a **write-downtime relocation**. The timings below were measured in the 2026-10-22 rehearsal, on a ~500-object, 12 KB bucket. The 2026-10-23 prod run matched: dry runs took 21–24 min, static's copy ~20 min, and its finalize ~45 min.
 
 1. **Dry run.** `--dry-run` starts its **own long-running operation**, and the bucket can't start a real relocation until it finishes. Starting one early returns `412: … there is an existing GCS long running operation`. The rehearsal's dry run took **~25 min**.
 2. **Setup.** `progressPercent` stays at 0 until setup finishes. In the rehearsal the copy started **~29 min** after the relocation began.
@@ -145,7 +144,62 @@ Expect **at least ~40 minutes** of write lock per bucket. The reported `estimate
 - Quiesce writers with `terraform/tools/maintenance_mode.sh` during those two finalizes. It works through Cloud Armor and Cloud Run and doesn't write to the static bucket.
 - With fewer than 10 external users, accept the failures in a low-traffic window.
 
-This is still an [open question](#open-questions).
+**Decision for the prod run:** neither. The only active users were internal staff and Live Export workbooks. Live Export reads the assets bucket (rehosted URLs, at publish time) but never writes to assets or upload-patches, so the write locks didn't affect it. Maintenance mode would have stopped Live Export, creating an outage where the relocation caused none. Internal users were asked instead to hold desktop/CLI publishes and "Pull assets" for the ~45-min write window.
+
+## Production run (2026-10-23)
+
+All five buckets moved to `EU` during business hours PT, with **no user-facing outage**. Maintenance mode wasn't used, and Live Export kept running throughout (see [Impact of the write lock](#impact-of-the-write-lock-per-bucket)). Before starting, #on-call was told:
+
+- no prod `terraform apply` and no static icon uploads until the all-clear
+- during the announced ~45-min write window, no desktop/CLI publishes and no "Pull assets"
+
+**Prep:**
+- The Storage Intelligence trial was enabled (`editionConfig: TRIAL`, `effectiveEdition: STANDARD`).
+- The `REHOSTED_ASSET_REAPER_DELETES_ENABLED` flag was turned off. It went back on after verification.
+
+| Step (UTC) | Time | Notes |
+|---|---|---|
+| Storage Intelligence trial enabled | 15:18 | Expires 2026-11-22 15:18 UTC |
+| **Wave 1:** static dry run | 15:24–15:46 | Passed; this was the first proof of prod permissions |
+| static relocation started | 16:03 | |
+| Dry runs for the other four | 16:03–16:28 | All passed |
+| static `READY` at 99% | ~16:23 | Copy took ~20 min |
+| static finalize → done | 16:27 → 17:12 | ~45-min finalize, ~69 min total; then `EU` / `multi-region` and the `static.scratch.md` load balancer returned `200` |
+| **Wave 2:** tfstate, gcs-access-logs, upload-patches, assets started | After static was verified | All four reached `READY` at 99% |
+| Wave 2 finalized back to back | Once all four were `READY` | upload-patches finished first, then tfstate and gcs-access-logs; assets finished last |
+
+The exact wave 2 times are in each operation's `commonMetadata` (`createTime`, `endTime`). Operations, for the record:
+
+- `projects/_/buckets/spv1eu-production-static/operations/CiQ2ZTUzMjRmZC1lY2U5LTQ3Y2QtOWZhYS0yOTFlNTMwYmJlMjQQBQ`
+- `projects/_/buckets/spv1eu-production-tfstate/operations/CiRiMzM2OGZhYi1mNDMxLTRjMjAtYmJkMS0xYjAwZTEyZDQ2YjUQBQ`
+- `projects/_/buckets/spv1eu-production-gcs-access-logs/operations/CiRkMTg4OThmMy1lZjUzLTQ0NDQtODBiYS0wNzI2OTkxNGRiMzMQBQ`
+- `projects/_/buckets/spv1eu-production-upload-patches/operations/CiRkNTY1MWJiNC0zZWI5LTQ0OWEtYTNlMC0xNTdjNzFkNTEwMmQQBQ`
+- `projects/_/buckets/spv1eu-production-assets/operations/CiQ3OTdjMWNjNi04ODdkLTRlMDctYWM1MC1lMmEwOWQ5ZTU5OTgQBQ`
+
+The dry runs count every object version, so these are the amounts actually moved:
+
+| Bucket | Objects | Size | Note |
+|---|---:|---:|---|
+| static | 44 | 0.48 MB | |
+| tfstate | 60 | 34 MB | |
+| gcs-access-logs | 18,729 | 96 MB | `estimatedWriteDowntimeDuration` 7204s |
+| upload-patches | 13 | 69 KB | |
+| assets | 71,809 | 14.99 GB | `estimatedWriteDowntimeDuration` 7216s. The same as the 2026-10-09 baseline, because the DEV-12324 reaper's deletes are still noncurrent versions. |
+
+| Verification | Result |
+|---|---|
+| Location, all five buckets | `EU` / `multi-region` |
+| `static.scratch.md` (load balancer → static bucket) | `HTTP/2 200` |
+| A recent assets `rehostedUrl` | `HTTP/2 200` |
+| gcs-access-logs | That day's usage logs present |
+| upload-patches | An internal desktop/CLI publish succeeded end to end |
+| tfstate | `terraform plan` read and locked state in the relocated bucket |
+| Terraform alignment ([step 5](#5-align-terraform-isolated-mr-after-all-relocations-succeed), MR !3419) | `plan` showed no changes in `eu-production` and `eu-test` |
+| Vanta `gcp-cloud-storage-redundant-backup` | Passes |
+
+**Follow-ups:**
+- Disable Storage Intelligence on `spv1eu-production` by 2026-11-17 ([step 7](#7-close-out)).
+- Whether the write-lock hour's access logs were delivered is unverified (see [Open questions](#open-questions)).
 
 ## Runbook
 
@@ -159,7 +213,7 @@ Every step that changes GCP state needs explicit approval at execution time. Rel
 - Expected output is written next to each command, never as a trailing `# …` comment. Interactive zsh only treats `#` as a comment when `setopt interactivecomments` is on. Otherwise a trailing comment becomes command arguments, and a `(…)` in it can fail with `zsh: unknown file attribute`.
 - The `date -u -v-2d` syntax is macOS `date`.
 
-Both rehearsals ran as a personal Whalesync account through a separate `admin` configuration. In `spv1eu-test` that account could create the bucket, enable and disable Storage Intelligence, and run the whole relocation. This is unconfirmed for prod.
+Both rehearsals and the prod run used a personal Whalesync account through a separate `admin` configuration. In `spv1eu-test` it could create the bucket, enable and disable Storage Intelligence, and run the whole relocation. In `spv1eu-production` it could enable Storage Intelligence and relocate all five buckets.
 
 ### 0. Enable Storage Intelligence (per project)
 
@@ -175,7 +229,7 @@ gcloud --configuration=admin storage intelligence-configs enable --project=spv1e
 gcloud --configuration=admin storage intelligence-configs describe --project=spv1eu-test --format=json
 ```
 
-Before the first prod relocation (step 3), and only once the relocation window is booked, because the trial is one-time per project:
+Before the first prod relocation (step 3), and only once the relocation window is booked, because the trial is one-time per project. Done on 2026-10-23 at 15:18 UTC; it expires 2026-11-22 at 15:18 UTC:
 
 ```bash
 gcloud --configuration=admin storage intelligence-configs enable --project=spv1eu-production --trial-edition
@@ -412,7 +466,9 @@ Baseline from 2026-10-09. This is **out of date for assets**: the DEV-12324 reho
 
 ### 3. Relocate each bucket, lowest risk first
 
-Order: **static → tfstate → gcs-access-logs → upload-patches → assets.** Needs step 0 on `spv1eu-production` first; without it, every dry run returns the 412. Finish and verify (step 4) one bucket before starting the next.
+Order: **static → tfstate → gcs-access-logs → upload-patches → assets.** Needs step 0 on `spv1eu-production` first; without it, every dry run returns the 412.
+
+**As executed on 2026-10-23: two waves.** Wave 1 took static end to end as the prod canary; its dry run was the first proof the admin identity could relocate in prod. The other four dry runs ran while static copied. Once static was verified, wave 2 started tfstate, gcs-access-logs, upload-patches and assets together. They were finalized back to back once all four showed `READY`, so their write locks overlapped into one window. Don't start wave 2 until wave 1 is done: Google doesn't say whether a *cancelled* relocation also blocks retries for 7–14 days, the way a failed one does.
 
 Every bucket uses the same seven commands. Run them one at a time, moving on only when each one's condition is met:
 
@@ -567,6 +623,8 @@ Per-bucket checks:
 
 ### 5. Align Terraform (isolated MR, after all relocations succeed)
 
+**Done in MR !3419**, merged 2026-10-23. Both plans showed no changes, including no `rpo` diff, so nothing was applied.
+
 Until this lands, any prod `terraform plan` shows `-/+ … must be replaced` for every relocated bucket. `force_destroy = false` blocks deleting a non-empty bucket, but **upload-patches is often empty and could really be destroyed and recreated in `europe-west1`**. Keep the freeze until this MR is planned clean.
 
 - In `terraform/modules/env/variables.tf`, add `gcs_bucket_location`, defaulting to `null` and resolved as `coalesce(var.gcs_bucket_location, var.gcp_region)`, so eu-test is unchanged.
@@ -608,8 +666,8 @@ Storage Intelligence must still be enabled on the project for a rollback. Don't 
 
 ### 7. Close out
 
-- Re-run the Vanta test and confirm all five buckets pass.
-- Disable Storage Intelligence on prod and confirm it reports `NONE`. If the step 1 teardown didn't already disable it on test, do the same there.
+- Re-run the Vanta test and confirm all five buckets pass. **Done 2026-10-23.**
+- **Still to do, by 2026-11-17:** disable Storage Intelligence on prod and confirm it reports `NONE`. Test was already disabled at the rehearsal teardown, so its `describe` should already print `NONE`.
 
   ```bash
   gcloud --configuration=admin storage intelligence-configs disable --project=spv1eu-production
@@ -617,14 +675,20 @@ Storage Intelligence must still be enabled on the project for a rollback. Don't 
   gcloud --configuration=admin storage intelligence-configs describe --project=spv1eu-test --format='value(effectiveIntelligenceConfig.effectiveEdition)'
   ```
 
-- Lift the Terraform freeze, close DEV-11918, and move this doc to `docs/ops/plans/resolved/`.
+- Lift the Terraform freeze (done when !3419 merged), close DEV-11918, and move this doc to `docs/ops/plans/resolved/`. **Done 2026-10-23.**
 
 ## Open questions
 
-- **Storage Intelligence on prod:** approve enabling `TRIAL` on `spv1eu-production` (or choose `STANDARD`). The trial is one-time per project, so enable it only once the relocation window is booked. `spv1eu-test` used and then disabled its trial for the 2026-10-22 rehearsal.
-- **Quiesce writers?** The rehearsal measured a ~40 min write lock even on a tiny bucket. Decide whether the upload-patches and assets finalizes run under `maintenance_mode.sh`, or whether ~40+ min of failed publishes and rehosts is acceptable in a low-traffic window. The lock may be longer on assets; it's unknown whether it grows with size.
-- **Overlap buckets?** Run one at a time, each bucket takes at least ~1h40m (dry run ~25 min, setup ~29 min, finalize ~45 min) plus polling slack, and the assets copy will take longer. All five is a full day. A project can run up to 30 relocations at once, so the copy phases could overlap with only the finalizes staggered. The runbook currently finishes each bucket before starting the next.
-- Does GCS **retry usage-log delivery** into `gcs-access-logs` while it's write-locked, or is that window lost? The rehearsal didn't test this (its log bucket didn't move). Check in step 4.
-- What are the exact **pricing SKUs** for the relocation and EU multi-region? Check on the pricing page before executing.
-- **Who runs it:** which admin principal (`role_operations@`), and when is the low-traffic window for the assets and upload-patches finalize?
+All resolved except the access-log one.
+
+- ~~Storage Intelligence on prod?~~ **`TRIAL` enabled** on 2026-10-23 at 15:18 UTC; it expires 2026-11-22 at 15:18 UTC. **Disable by 2026-11-17** ([step 7](#7-close-out)).
+- ~~Quiesce writers?~~ **No.** Live Export doesn't write to the locked buckets, and maintenance mode would have stopped it. See [Impact of the write lock](#impact-of-the-write-lock-per-bucket).
+- ~~Overlap buckets?~~ **Yes, in two waves.** See [step 3](#3-relocate-each-bucket-lowest-risk-first).
 - ~~Do noncurrent versions and soft-deleted objects carry over?~~ **Yes.** The 2026-10-22 rehearsal kept 319 versions and 1 soft-deleted object.
+- ~~Who runs it, and when?~~ Chris Hoefgen, on 2026-10-23 during business hours PT.
+- ~~Exact pricing SKUs?~~ Not checked before executing. About 15 GB moved, so the ongoing difference stays at cents per month.
+- **Still open:** does GCS **retry usage-log delivery** into `gcs-access-logs` while it's write-locked, or is that window lost? Today's logs were present after the move, but nobody checked whether the hour of the wave 2 write window has its own log object. To check, list that day's objects and look for that hour:
+
+  ```bash
+  gcloud --configuration=admin storage ls "gs://spv1eu-production-gcs-access-logs/spv1eu-production-assets_usage_2026_10_23_*"
+  ```
