@@ -39,4 +39,5 @@ export const Service = {
   SANITY: 'SANITY',
   GOOGLE_SHEETS: 'GOOGLE_SHEETS',
   GONG: 'GONG',
+  SQUARE: 'SQUARE',
 } as const;

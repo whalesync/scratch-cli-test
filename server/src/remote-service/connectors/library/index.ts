@@ -25,6 +25,7 @@ import './postgres/postgres-connector';
 import './quickbooks/quickbooks-connector';
 import './sanity/sanity-connector';
 import './shopify/shopify-connector';
+import './square/square-connector';
 import './stripe/stripe-connector';
 import './supabase/supabase-connector';
 import './webflow/webflow-connector';

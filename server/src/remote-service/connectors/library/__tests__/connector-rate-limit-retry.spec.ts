@@ -9,13 +9,14 @@ import {
   isTransientIntercomServerError,
 } from '../intercom/intercom-api-client';
 import { isMemberstackRateLimitError, MEMBERSTACK_RETRY_OPTS } from '../memberstack/memberstack-api-client';
+import { isSquareRateLimitError, SQUARE_RETRY_OPTS } from '../square/square-api-client';
 import { isStripeRateLimitError, STRIPE_RETRY_OPTS } from '../stripe/stripe-api-client';
 
 /**
  * Cross-connector coverage for the four connectors that declared a
  * `rateLimiterSpec` but never wired a limiter or a retry (DEV-11151 follow-up).
  * Each service detects and paces throttling differently, so the shared contract
- * is asserted per connector rather than assumed.
+ * is asserted per connector rather than assumed. Square, built later on the same contract, rides along.
  */
 
 /** Build a raw AxiosError as the retry predicates see it — before any wrapping. */
@@ -30,6 +31,7 @@ describe.each([
   ['Brevo', isBrevoRateLimitError, BREVO_RETRY_OPTS],
   ['Memberstack', isMemberstackRateLimitError, MEMBERSTACK_RETRY_OPTS],
   ['Intercom', isIntercomRateLimitError, INTERCOM_RETRY_OPTS],
+  ['Square', isSquareRateLimitError, SQUARE_RETRY_OPTS],
 ] as const)('%s throttle detection', (_service, isRateLimited, retryOpts) => {
   it('matches a 429', () => {
     expect(isRateLimited(axiosError(429))).toBe(true);

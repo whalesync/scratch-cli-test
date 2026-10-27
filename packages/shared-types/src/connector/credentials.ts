@@ -58,6 +58,11 @@ export interface DecryptedCredentials {
   gongAccessKey?: string;
   gongAccessKeySecret?: string;
   gongBaseUrl?: string;
+
+  // Square specific: which environment the access token (stored in `apiKey`) belongs to —
+  // 'production' or 'sandbox'. Detected from the token at connect time by the Square AuthParser,
+  // since each environment rejects the other's tokens and uses its own API host.
+  squareEnvironment?: string;
 }
 
 /**
