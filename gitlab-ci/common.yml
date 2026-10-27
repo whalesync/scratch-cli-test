@@ -1,4 +1,8 @@
 variables:
+  # Runner tag for the heavy jobs; see .runner_tags below. tools/switch-ci.sh in
+  # whalesync/gitlab-runners overrides it with a group CI/CD variable to move
+  # them to GitLab's instance runners while the Macs are offline.
+  HIGH_MEMORY_RUNNER_TAG: high-memory
   # Node.js version for client and server
   NODE_VERSION: "22"
   # For GCP (EU region).
@@ -130,8 +134,8 @@ include:
 # =============================================================================
 #
 # `high-memory` routes a job to a runner with enough RAM to compile, test, lint
-# or build a Docker image. Today that tag is carried by the GCP runner and the
-# "Mac fleet" macs; both also accept untagged jobs. So everything light — deploy
+# or build a Docker image. Today that tag is carried by the "Mac fleet" macs,
+# which also accept untagged jobs. So everything light — deploy
 # jobs, image push-only jobs, migrations, release bookkeeping, Slack
 # notifications, the dummy job — stays untagged and can land on any runner,
 # including a small 8 GB mac, while the heavy work is kept off it.
@@ -149,9 +153,12 @@ include:
 #     reasons unrelated to memory (electron-builder's bundled fpm is x86_64-only;
 #     mac signing needs a real mac), and no `team-macos-release` runner carries
 #     `high-memory` — adding it there would leave the job pending forever.
+#
+# The tag comes from HIGH_MEMORY_RUNNER_TAG so it can be switched to a GitLab
+# instance runner tag.
 .runner_tags:
   high_memory:
-    - high-memory
+    - $HIGH_MEMORY_RUNNER_TAG
 
 # Shell executor for macOS-native builds (e.g. .dmg packaging).
 # Runs directly on the host — no Docker container. Requires Node 22, Yarn,
