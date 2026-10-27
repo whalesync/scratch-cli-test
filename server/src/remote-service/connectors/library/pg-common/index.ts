@@ -1,4 +1,4 @@
-export { KnexPGClient, KnexPGClientError, sanitizeConnectionString } from './knex-pg-client';
+export { KnexPGClient, KnexPGClientError } from './knex-pg-client';
 export {
   POSTGRES_SYSTEM_SCHEMAS,
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
@@ -14,6 +14,11 @@ export {
   type SingleColumnUniqueIndexColumn,
   type TableName,
 } from './knex-pg-types';
+export {
+  POSTGRES_CONNECTION_STRING_MAX_LENGTH,
+  prepareConnectionStringForNodePostgres,
+  type NodePostgresConnectionStringPreparation,
+} from './node-postgres-connection-string';
 export {
   buildFindAllSchemasQuery,
   buildFindAllTablesExcludingSchemasQuery,
@@ -57,6 +62,7 @@ export {
   pgFieldValueCanonicalizerForColumnType,
   resolvePgFieldValueCanonicalizer,
 } from './pg-field-value-canonicalizer';
+export { POSTGRES_HOST_NOT_REACHABLE_MESSAGE, describeRefusedPostgresHost } from './pg-host-not-reachable';
 export {
   PG_INCREMENTAL_CLOCK_SKEW_MS,
   applyPgClockSkew,

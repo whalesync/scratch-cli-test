@@ -42,11 +42,13 @@ import {
   type PullRecordFilesResult,
   type TablePreview,
 } from '../../types';
+import { describeScratchNetworkAddressForAllowlisting } from '../../utils/scratch-egress-ip-address';
 import {
   applyPgClockSkew,
   assertModifiedAtColumnExists,
   chooseUniquelyAddressableColumn,
   collectPgColumnNamesRejectingEmptyString,
+  describeRefusedPostgresHost,
   duplicateTableCreateErrorMessage,
   isDuplicateTableError,
   isGeneratedColumn,
@@ -57,6 +59,7 @@ import {
   mapPgType,
   pgIncrementalPullSupport,
   pickTitleColumnPath,
+  POSTGRES_HOST_NOT_REACHABLE_MESSAGE,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
   POSTGRES_SYSTEM_SCHEMAS,
@@ -72,6 +75,7 @@ import {
   type SingleColumnUniqueIndexColumn,
 } from '../pg-common';
 import { buildPgDefaultView } from '../pg-common/pg-default-view';
+import { PostgresAuthParser } from './postgres-auth-parser';
 import { PostgresCredentials } from './postgres-types';
 
 const READ_BATCH_SIZE = 500;
@@ -120,6 +124,7 @@ export class PostgresConnector extends Connector {
           type: 'password',
           label: 'Connection String',
           placeholder: 'postgres://user:password@host:5432/database',
+          description: `The database must be reachable from the public internet and allow connections from ${describeScratchNetworkAddressForAllowlisting()}. Add ?sslmode=require to encrypt the connection, or ?sslmode=no-verify to encrypt it without checking the server's certificate.`,
           required: true,
         },
       ],
@@ -720,6 +725,10 @@ export class PostgresConnector extends Connector {
   // -------------------------------------------------------------------------
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
+    // First: a refusal carries a `code` too, which the pg-error branch below would show verbatim.
+    const refusedHostErrorDetails = describeRefusedPostgresHost(error, 'PostgresConnector');
+    if (refusedHostErrorDetails) return refusedHostErrorDetails;
+
     if (error instanceof KnexPGClientError) {
       return {
         userFriendlyMessage: error.message,
@@ -756,11 +765,9 @@ export class PostgresConnector extends Connector {
       }
 
       if (msg.includes('getaddrinfo ENOTFOUND')) {
-        return {
-          userFriendlyMessage:
-            'Could not resolve the database hostname. If your password contains special characters, they must be URL-encoded.',
-          description: msg,
-        };
+        // The same text as a refused host (see describeRefusedPostgresHost), which is how an unresolvable name fails
+        // in deployed environments.
+        return { userFriendlyMessage: POSTGRES_HOST_NOT_REACHABLE_MESSAGE, description: msg };
       }
 
       if (msg.includes('SASL')) {
@@ -780,6 +787,9 @@ export class PostgresConnector extends Connector {
 
   private getPgErrorMessage(code: string, fallbackMessage: string): string {
     switch (code) {
+      // Node's DNS failure (the error carries a `code`, so it arrives here rather than at the ENOTFOUND message check).
+      case 'ENOTFOUND':
+        return POSTGRES_HOST_NOT_REACHABLE_MESSAGE;
       case '28P01':
       case '28000':
         return 'Authentication failed. Please check your username and password.';
@@ -819,6 +829,7 @@ connectorRegistry.register({
   supportedAuthMethods: ['user_provided_params'],
   resolveIncrementalPullSupport: ({ options }) => pgIncrementalPullSupport(options),
   resolveFieldValueCanonicalizer: resolvePgFieldValueCanonicalizer,
+  createAuthParser: () => new PostgresAuthParser(),
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

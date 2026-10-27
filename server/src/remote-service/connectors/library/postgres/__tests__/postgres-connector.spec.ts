@@ -7,9 +7,17 @@ import {
   X_SCRATCH_READONLY,
   type CreateFieldSpec,
 } from '@spinner/shared-types';
+import { WSLogger } from 'src/logger';
 import { type NormalizedCreateFieldsPlan, type NormalizedCreateTablePlan } from '../../../schema-creation.types';
 import { BaseJsonTableSpec, ConnectorFile, EntityId, PullRecordFilesOptions, dotPath } from '../../../types';
-import { PG_INCREMENTAL_CLOCK_SKEW_MS, type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
+import { SsrfError } from '../../../utils/ssrf-address-guard';
+import { DATABASE_HOST_REFUSED_PUBLIC_MESSAGE } from '../../../utils/ssrf-safe-socket';
+import {
+  PG_INCREMENTAL_CLOCK_SKEW_MS,
+  POSTGRES_HOST_NOT_REACHABLE_MESSAGE,
+  type InformationSchemaColumn,
+  type PostgresForeignKey,
+} from '../../pg-common';
 import { PostgresConnector } from '../postgres-connector';
 
 function buildColumn(overrides: Partial<InformationSchemaColumn> & { column_name: string }): InformationSchemaColumn {
@@ -938,6 +946,32 @@ describe('PostgresConnector schema creation', () => {
 
 describe('PostgresConnector.extractConnectorErrorDetails', () => {
   const connector = new PostgresConnector({ connectionString: 'postgres://test' });
+
+  it('shows a refused database host as an unreachable host, logging the address only server-side', () => {
+    const refusal = new SsrfError({
+      code: 'private_address',
+      publicMessage: DATABASE_HOST_REFUSED_PUBLIC_MESSAGE,
+      internalDetails: 'Refusing to connect to "db.internal" (10.20.30.40): private RFC 1918 (10.0.0.0/8).',
+    });
+    const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation(() => undefined);
+    try {
+      const errorDetails = connector.extractConnectorErrorDetails(refusal);
+
+      expect(errorDetails.userFriendlyMessage).toBe(POSTGRES_HOST_NOT_REACHABLE_MESSAGE);
+      expect(JSON.stringify(errorDetails)).not.toContain('10.20.30.40');
+      expect(JSON.stringify(errorDetails)).not.toContain('private_address');
+      expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({ internalDetails: refusal.internalDetails }));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('shows an unresolvable host the same way as a refused one', () => {
+    const lookupFailure = Object.assign(new Error('getaddrinfo ENOTFOUND typo.example.com'), { code: 'ENOTFOUND' });
+    expect(connector.extractConnectorErrorDetails(lookupFailure).userFriendlyMessage).toBe(
+      POSTGRES_HOST_NOT_REACHABLE_MESSAGE,
+    );
+  });
 
   it('reports a knex query-compilation error as an uncompilable SQL query instead of a PostgreSQL error', () => {
     const errorDetails = connector.extractConnectorErrorDetails(new Error('Expected 1 bindings, saw 3'));

@@ -17,8 +17,9 @@
  *   string terminator (SQL injection). `STRICT_TRANS_TABLES` makes bad writes fail instead of being truncated.
  * - `compileSqlOnError: false` keeps bound values out of knex's error messages (the error mapper never reads
  *   `error.message` anyway).
- * - The connection is described by an async provider so the future database host guard re-vets the host on every
- *   physical connection ({@link resolveMySqlNetworkRoute}).
+ * - The connection is described by an async provider, so in deployed environments every physical connection goes
+ *   through the database host guard, which vets the host the socket actually connects to
+ *   ({@link resolveMySqlNetworkRoute}).
  */
 import knex, { type Knex } from 'knex';
 import { type ConnectionOptions as MySql2ConnectionOptions } from 'mysql2';

@@ -67,8 +67,9 @@ jest.mock('knex', () => ({
   default: jest.fn(() => knexInstance),
 }));
 
-import type { Knex } from 'knex';
-import { KnexPGClient } from '../knex-pg-client';
+import knexFactory, { type Knex } from 'knex';
+import { SsrfSafeSocket } from '../../../utils/ssrf-safe-socket';
+import { KnexPGClient, KnexPGClientError } from '../knex-pg-client';
 import { KnexQueryCompilationErrorWithSqlText } from '../pg-knex-query-compilation-error';
 
 describe('KnexPGClient.selectAll modified-since predicate', () => {
@@ -420,5 +421,71 @@ describe('KnexPGClient bulk UPDATE/DELETE compilation failures carry their SQL t
     await expect(client.updateMany('public', 'contacts', 'id', [{ id: 1, data: { name: 'a' } }])).rejects.toBe(
       postgresError,
     );
+  });
+});
+
+describe('KnexPGClient connection setup', () => {
+  const knexFactoryMock = knexFactory as unknown as jest.Mock;
+  const runningInCloudBeforeEachTest = process.env.RUNNING_IN_CLOUD;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    if (runningInCloudBeforeEachTest === undefined) {
+      delete process.env.RUNNING_IN_CLOUD;
+    } else {
+      process.env.RUNNING_IN_CLOUD = runningInCloudBeforeEachTest;
+    }
+  });
+
+  function connectionConfigHandedToKnex(): { connectionString: string; stream?: () => unknown } {
+    const [knexConfig] = knexFactoryMock.mock.calls[0] as [
+      { connection: { connectionString: string; stream?: () => unknown } },
+    ];
+    return knexConfig.connection;
+  }
+
+  it('refuses a connection string the allowlist refuses before knex (and node-postgres, which would read the file) sees it', () => {
+    let constructionError: unknown;
+    try {
+      new KnexPGClient('postgres://u:p@db.example.com:5432/app?sslrootcert=/dev/zero');
+    } catch (error) {
+      constructionError = error;
+    }
+
+    expect(constructionError).toBeInstanceOf(KnexPGClientError);
+    expect((constructionError as KnexPGClientError).code).toBe('CONNECTION_STRING_REJECTED');
+    expect((constructionError as KnexPGClientError).message).toContain('Remove sslrootcert');
+    expect(knexFactoryMock).not.toHaveBeenCalled();
+  });
+
+  it('hands node-postgres the prepared connection string', () => {
+    new KnexPGClient('postgres://u:p@db.example.com:5432/app?pgbouncer=true', { sslNoVerify: true });
+
+    expect(connectionConfigHandedToKnex().connectionString).toBe(
+      'postgres://u:p@db.example.com:5432/app?sslmode=no-verify',
+    );
+  });
+
+  it('connects through the database host guard in deployed environments', () => {
+    process.env.RUNNING_IN_CLOUD = 'true';
+
+    new KnexPGClient('postgres://u:p@db.example.com:5432/app');
+
+    const createSocket = connectionConfigHandedToKnex().stream;
+    expect(createSocket).toBeDefined();
+    const socket = createSocket?.();
+    expect(socket).toBeInstanceOf(SsrfSafeSocket);
+    (socket as SsrfSafeSocket).destroy();
+  });
+
+  it('lets node-postgres dial the host itself locally', () => {
+    delete process.env.RUNNING_IN_CLOUD;
+
+    new KnexPGClient('postgres://u:p@localhost:5432/app');
+
+    expect(connectionConfigHandedToKnex().stream).toBeUndefined();
   });
 });

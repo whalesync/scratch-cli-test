@@ -8,6 +8,7 @@
  */
 import knex, { type Knex } from 'knex';
 import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
+import { isDatabaseHostGuardEnabled, SsrfSafeSocket } from '../../utils/ssrf-safe-socket';
 import {
   applyVerbatimIdentifierQuoting,
   escapeKnexColumnIdentifierSpecialCharacters,
@@ -22,6 +23,7 @@ import {
   type SingleColumnUniqueIndexColumn,
   type TableName,
 } from './knex-pg-types';
+import { prepareConnectionStringForNodePostgres } from './node-postgres-connection-string';
 import {
   buildFindAllSchemasQuery,
   buildFindAllTablesExcludingSchemasQuery,
@@ -122,27 +124,6 @@ function sanitizeRow(row: Record<string, unknown>): Record<string, unknown> {
   return result;
 }
 
-/**
- * Sanitize a PostgreSQL connection string.
- * - Handles SSL parameters (strips invalid ones, adds no-verify if needed).
- * - Falls back to the original string if URL parsing fails.
- */
-export function sanitizeConnectionString(connectionString: string, sslNoVerify?: boolean): string {
-  try {
-    const url = new URL(connectionString);
-    const sslParam = url.searchParams.get('ssl');
-    if (sslParam && sslParam !== 'true') {
-      url.searchParams.delete('ssl');
-    }
-    if (sslNoVerify && !url.searchParams.has('sslmode')) {
-      url.searchParams.set('sslmode', 'no-verify');
-    }
-    return url.toString();
-  } catch {
-    return connectionString;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // KnexPGClient
 // ---------------------------------------------------------------------------
@@ -150,13 +131,25 @@ export function sanitizeConnectionString(connectionString: string, sslNoVerify?:
 export class KnexPGClient {
   private readonly knex: Knex;
 
+  /**
+   * Throws `KnexPGClientError` (code `CONNECTION_STRING_REJECTED`, a message safe to show) when the connection string
+   * fails the allowlist in `node-postgres-connection-string.ts`. Nothing is connected until the first query.
+   */
   constructor(connectionString: string, options?: { sslNoVerify?: boolean }) {
-    const sanitized = sanitizeConnectionString(connectionString, options?.sslNoVerify);
+    const connectionStringPreparation = prepareConnectionStringForNodePostgres(connectionString, {
+      sslNoVerify: options?.sslNoVerify,
+    });
+    if (!connectionStringPreparation.accepted) {
+      throw new KnexPGClientError(connectionStringPreparation.userFacingReason, 'CONNECTION_STRING_REJECTED');
+    }
     this.knex = knex({
       client: 'pg',
       connection: {
-        connectionString: sanitized,
+        connectionString: connectionStringPreparation.connectionStringForNodePostgres,
         ssl: options?.sslNoVerify ? { rejectUnauthorized: false } : undefined,
+        // In deployed environments every socket node-postgres opens (including a query-cancel connection) vets the
+        // address it connects to, so the host can't be an internal one. See SsrfSafeSocket.
+        ...(isDatabaseHostGuardEnabled() ? { stream: () => new SsrfSafeSocket() } : {}),
       },
       pool: { min: 0, max: 1, createTimeoutMillis: 10_000 },
     });

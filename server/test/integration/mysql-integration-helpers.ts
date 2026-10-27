@@ -17,8 +17,8 @@ import mysql2Promise from 'mysql2/promise';
 import { type Connector } from 'src/remote-service/connectors/connector';
 import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
 import 'src/remote-service/connectors/library';
-import { SCRATCH_PRODUCTION_EGRESS_IP_ADDRESS } from 'src/remote-service/connectors/library/mysql/mysql-error-mapping';
 import { Service } from 'src/remote-service/connectors/service-constants';
+import { SCRATCH_PRODUCTION_EGRESS_IP_ADDRESS } from 'src/remote-service/connectors/utils/scratch-egress-ip-address';
 import { type JsonSafeObject } from 'src/utils/objects';
 
 export type MySqlIntegrationFlavorName = 'mysql' | 'mariadb';

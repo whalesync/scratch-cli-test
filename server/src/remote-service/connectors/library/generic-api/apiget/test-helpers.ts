@@ -56,6 +56,7 @@ export function wrapWithSsrfGuard(scripted: FetchFn): FetchFn {
       return response;
     }
     throw new SsrfError({
+      code: 'too_many_redirects',
       publicMessage: 'Endpoint exceeded the redirect limit.',
       internalDetails: `Too many redirects (>${MAX_REDIRECTS}). Last URL: ${currentUrl}`,
     });

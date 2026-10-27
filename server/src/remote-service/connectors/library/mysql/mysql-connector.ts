@@ -38,6 +38,7 @@ import {
   type PullRecordFilesResult,
   type TablePreview,
 } from '../../types';
+import { describeScratchNetworkAddressForAllowlisting } from '../../utils/scratch-egress-ip-address';
 import { applyPgClockSkew, pgIncrementalPullSupport, resolvePgModifiedAtField } from '../pg-common/pg-incremental';
 import { KnexMySqlClient, MYSQL_STATEMENT_TIMEOUT_MS, type KnexMySqlClientDependencies } from './knex-mysql-client';
 import { MySqlAuthParser } from './mysql-auth-parser';
@@ -69,7 +70,7 @@ import {
   type MySqlForeignKeyResolution,
 } from './mysql-create-schema';
 import { buildMySqlDefaultView } from './mysql-default-view';
-import { describeMySqlError, describeScratchNetworkAddressForAllowlisting } from './mysql-error-mapping';
+import { describeMySqlError } from './mysql-error-mapping';
 import { resolveMySqlFieldValueCanonicalizer } from './mysql-field-value-canonicalizer';
 import { validateMySqlWhereFilter } from './mysql-filter-validator';
 import {

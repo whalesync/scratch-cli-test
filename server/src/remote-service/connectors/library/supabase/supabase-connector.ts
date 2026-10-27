@@ -60,6 +60,7 @@ import {
   assertModifiedAtColumnExists,
   chooseUniquelyAddressableColumn,
   collectPgColumnNamesRejectingEmptyString,
+  describeRefusedPostgresHost,
   duplicateTableCreateErrorMessage,
   foldNameToPostgresSchemaIdentifier,
   isDuplicateTableError,
@@ -73,6 +74,7 @@ import {
   pgIncrementalPullSupport,
   pickTitleColumnPath,
   pickUnusedPostgresSchemaName,
+  POSTGRES_HOST_NOT_REACHABLE_MESSAGE,
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   postgresNativeColumnTypeAnnotation,
   prepareRecordsForPgInsert,
@@ -1642,6 +1644,10 @@ export class SupabaseConnector extends Connector {
   // -------------------------------------------------------------------------
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
+    // First: a refusal carries a `code` too, which the pg-error branch below would show verbatim.
+    const refusedHostErrorDetails = describeRefusedPostgresHost(error, 'SupabaseConnector');
+    if (refusedHostErrorDetails) return refusedHostErrorDetails;
+
     if (error instanceof KnexPGClientError) {
       return {
         userFriendlyMessage: error.message,
@@ -1688,13 +1694,10 @@ export class SupabaseConnector extends Connector {
         };
       }
 
-      // DNS resolution failure (often caused by unencoded '@' in password)
+      // DNS resolution failure (often caused by unencoded '@' in password). The same text as a refused host (see
+      // describeRefusedPostgresHost), which is how an unresolvable name fails in deployed environments.
       if (msg.includes('getaddrinfo ENOTFOUND')) {
-        return {
-          userFriendlyMessage:
-            'Could not resolve the database hostname. If your password contains special characters, they must be URL-encoded.',
-          description: msg,
-        };
+        return { userFriendlyMessage: POSTGRES_HOST_NOT_REACHABLE_MESSAGE, description: msg };
       }
 
       // SASL errors (empty or malformed password)
@@ -1715,6 +1718,9 @@ export class SupabaseConnector extends Connector {
 
   private getPgErrorMessage(code: string, fallbackMessage: string): string {
     switch (code) {
+      // Node's DNS failure (the error carries a `code`, so it arrives here rather than at the ENOTFOUND message check).
+      case 'ENOTFOUND':
+        return POSTGRES_HOST_NOT_REACHABLE_MESSAGE;
       case '28P01':
       case '28000':
         return this.isOAuth

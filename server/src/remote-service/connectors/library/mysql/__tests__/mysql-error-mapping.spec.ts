@@ -6,6 +6,7 @@
 import { ConnectorErrorCode } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { ConnectorAuthError, NonWritableFieldEditError } from '../../../error';
+import { describeScratchNetworkAddressForAllowlisting } from '../../../utils/scratch-egress-ip-address';
 import { MySqlClientError, MySqlClientProblem } from '../mysql-client-error';
 import {
   buildMySqlColumnPrivilegeDeniedMessage,
@@ -31,7 +32,6 @@ import {
   buildMySqlUnexpectedServerErrorMessage,
   buildMySqlUnknownDatabaseMessage,
   describeMySqlError,
-  describeScratchNetworkAddressForAllowlisting,
   formatMySqlHostAndPortForDisplay,
   MYSQL_ACCOUNT_LOCKED_MESSAGE,
   MYSQL_CLEAR_TEXT_PASSWORD_AUTHENTICATION_UNSUPPORTED_MESSAGE,

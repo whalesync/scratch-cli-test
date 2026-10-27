@@ -1,6 +1,7 @@
 import { AuthParser } from '../../connector';
 import { ConnectorAuthError } from '../../error';
 import { Service } from '../../service-constants';
+import { prepareConnectionStringForNodePostgres } from '../pg-common';
 
 const PLACEHOLDER_PATTERN = /\[YOUR[_-]PASSWORD\]/i;
 
@@ -76,6 +77,17 @@ export class SupabaseAuthParser extends AuthParser {
       throw new ConnectorAuthError(
         'Direct connection string not supported',
         'Direct connection strings are not supported. Please use the Transaction pooler connection string from your Supabase.',
+        this.service,
+      );
+    }
+
+    // The node-postgres allowlist (no certificate-file, host-override or replication parameters). KnexPGClient checks
+    // again on every connect; this makes a refused string fail on save.
+    const connectionStringPreparation = prepareConnectionStringForNodePostgres(connectionString, { sslNoVerify: true });
+    if (!connectionStringPreparation.accepted) {
+      throw new ConnectorAuthError(
+        connectionStringPreparation.userFacingReason,
+        connectionStringPreparation.userFacingReason,
         this.service,
       );
     }

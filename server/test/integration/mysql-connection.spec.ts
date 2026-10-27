@@ -18,7 +18,8 @@
  *      mapper's fixed sentences, naming at most the host the user typed — never a resolved IP or SQL.
  *   5. The credential boundary: a connection string is decomposed into discrete keys and never stored; a stored blob
  *      holding a connection string is refused at connect time; VERIFY_IDENTITY with an IP host is refused.
- *   6. Deployed environments connect: with RUNNING_IN_CLOUD=true the connector reaches the server as it does locally.
+ *   6. Deployed environments go through the database host guard: with RUNNING_IN_CLOUD=true the same server, on a
+ *      loopback or Docker-network address, is refused with the generic not-reachable message (DEV-12390).
  *
  * This spec creates no tables (only `scratch_mysql_it_conn_*` users, dropped before and after the run). It
  * deliberately does NOT call `dropAllMySqlIntegrationTables`: that would drop other MySQL specs' tables.
@@ -53,6 +54,7 @@ import {
   buildMySqlAccessDeniedMessage,
   buildMySqlConnectionRefusedMessage,
   buildMySqlDatabaseAccessDeniedMessage,
+  buildMySqlHostNotReachableFromScratchMessage,
   buildMySqlTlsCertificateHostnameMismatchMessage,
   buildMySqlTlsCertificateVerificationFailedMessage,
   buildMySqlUnknownDatabaseMessage,
@@ -62,6 +64,7 @@ import {
 import { type MySqlServerFlavor } from 'src/remote-service/connectors/library/mysql/mysql-server-flavor';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { type ConnectorErrorDetails } from 'src/remote-service/connectors/types';
+import { SsrfError } from 'src/remote-service/connectors/utils/ssrf-address-guard';
 import {
   buildMySqlConnectorCredentialsForIntegrationTest,
   collapsePemToSingleLineLikeABrowserInputPaste,
@@ -786,14 +789,28 @@ describeForEachConfiguredMySqlIntegrationFlavor('MySQL connector — connection,
   });
 
   describe('deployed environments', () => {
-    it('with RUNNING_IN_CLOUD=true, testConnection connects exactly as it does locally', async () => {
+    it('with RUNNING_IN_CLOUD=true, the database host guard refuses the private test server with the generic message', async () => {
       const runningInCloudBeforeThisTest = process.env.RUNNING_IN_CLOUD;
       try {
         process.env.RUNNING_IN_CLOUD = 'true';
         const requiredSslModeCredentials = buildMySqlConnectorCredentialsForIntegrationTest(applicationUserAddress, {
           sslMode: 'REQUIRED',
         });
-        await expect(connectThroughConnectorBuiltByRegistry(requiredSslModeCredentials)).resolves.toBeUndefined();
+
+        const { rawErrorThrownByTestConnection, userFacingErrorDetails } =
+          await describeTestConnectionFailureLikeTheConnectionService(requiredSslModeCredentials);
+
+        // The test server is on a loopback (local) or Docker-network (CI) address, both of which the guard refuses.
+        expect(rawErrorThrownByTestConnection).toBeInstanceOf(SsrfError);
+        expect(userFacingErrorDetails.userFriendlyMessage).toBe(
+          buildMySqlHostNotReachableFromScratchMessage(
+            formatMySqlHostAndPortForDisplay(applicationUserAddress.host, applicationUserAddress.port),
+          ),
+        );
+        expectMessageToNameNoAddressExceptTheTypedHost(
+          userFacingErrorDetails.userFriendlyMessage,
+          applicationUserAddress.host,
+        );
       } finally {
         if (runningInCloudBeforeThisTest === undefined) {
           delete process.env.RUNNING_IN_CLOUD;
