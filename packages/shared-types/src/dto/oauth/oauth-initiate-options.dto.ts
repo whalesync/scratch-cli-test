@@ -1,6 +1,16 @@
 import { z } from 'zod';
 
 /**
+ * A yes/no connect-form option (a connector's `boolean` OAuth credential field). Scratch's web client sends a
+ * boolean, but Whalesync's Live Export connect form sends every field value as a string, so `"true"` / `"false"`
+ * are accepted too and parsed to the boolean.
+ */
+const connectFormYesNoOptionSchema = z.union([
+  z.boolean(),
+  z.enum(['true', 'false']).transform((yesNoText) => yesNoText === 'true'),
+]);
+
+/**
  * Keep in sync with spinner/client/src/types/server-entities/oauth.ts:OAuthInitiateOptionsDto.
  */
 export const oauthInitiateOptionsSchema = z.object({
@@ -22,11 +32,11 @@ export const oauthInitiateOptionsSchema = z.object({
   returnPage: z.string().optional(),
   connectorAccountId: z.string().optional(),
   workbookId: z.string().min(1),
-  quickbooksSandbox: z.boolean().optional(),
+  quickbooksSandbox: connectFormYesNoOptionSchema.optional(),
   /** Zoho multi-datacenter selection (US | EU | IN | AU | JP | CA | CN | SA). */
   zohoDataCenter: z.string().optional(),
   /** Salesforce: the org is a sandbox, which signs in at test.salesforce.com instead of login.salesforce.com. */
-  salesforceSandbox: z.boolean().optional(),
+  salesforceSandbox: connectFormYesNoOptionSchema.optional(),
   /**
    * YouTube: raw, user-entered list of extra channel IDs (brand/managed channels
    * that `channels.list?mine=true` does not return). Comma/space/newline
