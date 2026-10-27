@@ -30,7 +30,9 @@ Gitignored env files under `local/audit-creds/`:
   `DEST_PARENT_ID=<id>` (e.g. the Notion parent page for created databases). Connectors that
   refuse unknown credential keys (MYSQL) need `--dest-parent <id>` on the command line instead,
   since the whole file is sent as the connection's params. `--source-creds` / `--dest-creds`
-  pick another file, e.g. `mysql-mariadb.env` for a second MySQL-family server.
+  pick another file, e.g. `mysql-mariadb.env` for a second MySQL-family server. A local
+  Postgres without TLS needs `?sslmode=disable` in its `connectionString`: the Postgres
+  connector encrypts by default.
 
 Use **burner accounts** — audits create, edit, and delete real records.
 

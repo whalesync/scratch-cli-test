@@ -16,6 +16,11 @@ describe('SupabaseAuthParser', () => {
 
   it.each([
     ['a certificate file', '?sslrootcert=/dev/zero', 'Remove sslrootcert'],
+    [
+      'a certificate file, without naming certificate fields its form lacks',
+      '?sslrootcert=/dev/zero',
+      'Use sslmode=require',
+    ],
     ['a host override', '?host=10.0.0.5', 'Remove host'],
     ['replication', '?replication=database', 'replication'],
   ])('refuses %s with a message safe to show', async (_description, query, expectedMessageFragment) => {

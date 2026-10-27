@@ -24,6 +24,7 @@ import {
   type TableName,
 } from './knex-pg-types';
 import { prepareConnectionStringForNodePostgres } from './node-postgres-connection-string';
+import { preparePostgresTlsSettings, type PostgresTlsCertificates } from './node-postgres-tls';
 import {
   buildFindAllSchemasQuery,
   buildFindAllTablesExcludingSchemasQuery,
@@ -132,21 +133,31 @@ export class KnexPGClient {
   private readonly knex: Knex;
 
   /**
-   * Throws `KnexPGClientError` (code `CONNECTION_STRING_REJECTED`, a message safe to show) when the connection string
-   * fails the allowlist in `node-postgres-connection-string.ts`. Nothing is connected until the first query.
+   * Throws `KnexPGClientError`, with a message safe to show, when the connection string fails the allowlist in
+   * `node-postgres-connection-string.ts` (code `CONNECTION_STRING_REJECTED`) or the certificates fail the checks in
+   * `node-postgres-tls.ts` (code `TLS_SETTINGS_REJECTED`). Nothing is connected until the first query.
    */
-  constructor(connectionString: string, options?: { sslNoVerify?: boolean }) {
+  constructor(connectionString: string, options?: { tlsCertificates?: PostgresTlsCertificates }) {
     const connectionStringPreparation = prepareConnectionStringForNodePostgres(connectionString, {
-      sslNoVerify: options?.sslNoVerify,
+      connectionFormHasCertificateFields: options?.tlsCertificates !== undefined,
     });
     if (!connectionStringPreparation.accepted) {
       throw new KnexPGClientError(connectionStringPreparation.userFacingReason, 'CONNECTION_STRING_REJECTED');
+    }
+    const tlsSettingsPreparation = preparePostgresTlsSettings({
+      tlsMode: connectionStringPreparation.tlsMode,
+      serverHost: connectionStringPreparation.host,
+      certificates: options?.tlsCertificates ?? {},
+    });
+    if (!tlsSettingsPreparation.accepted) {
+      throw new KnexPGClientError(tlsSettingsPreparation.userFacingReason, 'TLS_SETTINGS_REJECTED');
     }
     this.knex = knex({
       client: 'pg',
       connection: {
         connectionString: connectionStringPreparation.connectionStringForNodePostgres,
-        ssl: options?.sslNoVerify ? { rejectUnauthorized: false } : undefined,
+        // Always set (false for no TLS), so node-postgres never falls back to the PGSSLMODE environment variable.
+        ssl: tlsSettingsPreparation.nodePostgresSslOption,
         // In deployed environments every socket node-postgres opens (including a query-cancel connection) vets the
         // address it connects to, so the host can't be an internal one. See SsrfSafeSocket.
         ...(isDatabaseHostGuardEnabled() ? { stream: () => new SsrfSafeSocket() } : {}),

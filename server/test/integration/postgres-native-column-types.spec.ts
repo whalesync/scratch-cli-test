@@ -23,6 +23,10 @@ import { PostgresConnector } from 'src/remote-service/connectors/library/postgre
 import type { ConnectorFile } from 'src/remote-service/connectors/types';
 import { selectPlanFieldsFromTableView } from 'src/schema-builder/schema-builder-field-selection';
 import { generateCreatePlanFromSources } from 'src/schema-builder/schema-builder-plan-generator';
+import {
+  buildConnectorConnectionStringForLocalPostgresTestDatabase,
+  readLocalPostgresTestDatabaseUrl,
+} from './postgres-integration-helpers';
 
 const SCHEMA = 'scratch_native_types_it';
 
@@ -49,7 +53,7 @@ describe('Postgres → Postgres create-schema keeps exact column types (DEV-1190
   let connector: PostgresConnector;
 
   beforeAll(async () => {
-    const dbUrl = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/scratchpad?schema=public';
+    const dbUrl = readLocalPostgresTestDatabaseUrl();
     pool = new Pool({ connectionString: dbUrl });
     await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
     await pool.query(`CREATE SCHEMA ${SCHEMA}`);
@@ -80,7 +84,9 @@ describe('Postgres → Postgres create-schema keeps exact column types (DEV-1190
          '{"a": 1, "nested": {"b": [true]}}', '["x", 2]', '2026-01-02T03:04:05Z', '2026-01-02',
          'a177b193-84c7-43ea-8214-a2acfd1b623a', '\\xdeadbeef', 'happy'),
         (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`);
-    connector = new PostgresConnector({ connectionString: dbUrl });
+    connector = new PostgresConnector({
+      connectionString: buildConnectorConnectionStringForLocalPostgresTestDatabase(),
+    });
   });
 
   afterAll(async () => {

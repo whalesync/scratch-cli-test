@@ -25,10 +25,10 @@ import {
 import { PostgresConnector } from 'src/remote-service/connectors/library/postgres/postgres-connector';
 import { SupabaseConnector } from 'src/remote-service/connectors/library/supabase/supabase-connector';
 import { SsrfError } from 'src/remote-service/connectors/utils/ssrf-address-guard';
+import { buildConnectorConnectionStringForLocalPostgresTestDatabase } from './postgres-integration-helpers';
 
-const localDatabaseUrl = new URL(
-  process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/scratchpad?schema=public',
-);
+// With sslmode=disable: the local and CI servers have no TLS, and the guard refuses before TLS starts anyway.
+const localDatabaseUrl = new URL(buildConnectorConnectionStringForLocalPostgresTestDatabase());
 
 function localDatabaseConnectionStringWithHost(host: string): string {
   const connectionStringUrl = new URL(localDatabaseUrl.toString());

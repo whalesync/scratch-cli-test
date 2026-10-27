@@ -4,6 +4,32 @@ To run the Postgres, Redis, MongoDB locally, simply run the following from withi
 docker compose up -d
 ```
 
+## Postgres with TLS (opt-in, for the Postgres connector's certificate settings)
+
+The localdev database has no TLS. The `postgres-tls` service (Postgres 16 on 127.0.0.1:5452) uses a throwaway test
+CA, refuses plaintext logins, and has a user who must also present a client certificate (like a Cloud SQL instance set
+to "Require trusted client certificates"). From this folder:
+
+```bash
+./postgres-tls/generate-tls-certs.sh                                  # once; --force regenerates
+docker compose -f docker-compose.postgres-tls.yml up -d --wait
+docker compose -f docker-compose.postgres-tls.yml stop                # stop, keep data
+```
+
+- `postgres://scratch_tls_password_user:scratch-tls-test@localhost:5452/scratch_tls_test`. Its certificate names only
+  `localhost`, so `sslmode=verify-full` passes for `localhost` and fails for `127.0.0.1`, while `verify-ca` passes for
+  both (the Cloud SQL case).
+- Server CA certificate to paste: `./postgres-tls/certs/ca.pem` (gitignored). `./postgres-tls/certs/wrong-ca.pem` is an
+  unrelated CA.
+- `scratch_tls_cert_user` (same password) also needs `./postgres-tls/certs/client-cert.pem` and `client-key.pem`.
+  `untrusted-client-cert.pem` / `untrusted-client-key.pem` are signed by the unrelated CA, so the server refuses them.
+- `server/test/integration/postgres-tls.spec.ts` runs against it when `POSTGRES_TLS_TEST_URL` is set (see
+  `.env.integration.example`).
+- After `--force`, recreate the container so Postgres loads the new files: add `--force-recreate` to the `up` command.
+
+The Postgres connector encrypts connections unless the connection string says otherwise, so connecting it to the
+localdev database (or any Postgres without TLS) needs `?sslmode=disable`.
+
 ## MySQL / MariaDB (opt-in, for the MySQL connector)
 
 Not started by the default `docker compose up -d`. From this folder:

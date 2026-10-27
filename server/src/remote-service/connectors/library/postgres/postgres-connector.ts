@@ -48,6 +48,7 @@ import {
   assertModifiedAtColumnExists,
   chooseUniquelyAddressableColumn,
   collectPgColumnNamesRejectingEmptyString,
+  describePostgresTlsFailure,
   describeRefusedPostgresHost,
   duplicateTableCreateErrorMessage,
   isDuplicateTableError,
@@ -63,6 +64,7 @@ import {
   POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
   POSTGRES_SYSTEM_SCHEMAS,
+  POSTGRES_TLS_CERTIFICATE_FIELD_LABELS,
   postgresNativeColumnTypeAnnotation,
   prepareRecordsForPgInsert,
   replaceEmptyStringsWithNullForPgTypedColumns,
@@ -72,6 +74,7 @@ import {
   validateWhereFilter,
   type ForeignKeyResolutions,
   type InformationSchemaColumn,
+  type PostgresTlsCertificates,
   type SingleColumnUniqueIndexColumn,
 } from '../pg-common';
 import { buildPgDefaultView } from '../pg-common/pg-default-view';
@@ -124,8 +127,32 @@ export class PostgresConnector extends Connector {
           type: 'password',
           label: 'Connection String',
           placeholder: 'postgres://user:password@host:5432/database',
-          description: `The database must be reachable from the public internet and allow connections from ${describeScratchNetworkAddressForAllowlisting()}. Add ?sslmode=require to encrypt the connection, or ?sslmode=no-verify to encrypt it without checking the server's certificate.`,
+          description: `The database must be reachable from the public internet and allow connections from ${describeScratchNetworkAddressForAllowlisting()}. Connections are encrypted. Add ?sslmode=verify-ca to also check the server's certificate against the Server CA certificate below (for Cloud SQL), ?sslmode=verify-full to check its host name too, or ?sslmode=disable to turn encryption off.`,
           required: true,
+        },
+        {
+          key: 'sslCaCertificate',
+          type: 'password',
+          label: POSTGRES_TLS_CERTIFICATE_FIELD_LABELS.sslCaCertificate,
+          placeholder: '-----BEGIN CERTIFICATE-----',
+          description:
+            "Optional: the CA certificate that signed the server's certificate (for Cloud SQL, server-ca.pem). With it, the server's certificate must be signed by this CA.",
+        },
+        {
+          key: 'sslClientCertificate',
+          type: 'password',
+          label: POSTGRES_TLS_CERTIFICATE_FIELD_LABELS.sslClientCertificate,
+          placeholder: '-----BEGIN CERTIFICATE-----',
+          description:
+            'Optional: a client certificate the server trusts (for Cloud SQL, client-cert.pem), for servers that require one. Paste its private key below too.',
+        },
+        {
+          key: 'sslClientKey',
+          type: 'password',
+          label: POSTGRES_TLS_CERTIFICATE_FIELD_LABELS.sslClientKey,
+          placeholder: '-----BEGIN PRIVATE KEY-----',
+          description:
+            "Optional: the client certificate's private key (for Cloud SQL, client-key.pem), not encrypted with a passphrase.",
         },
       ],
     },
@@ -144,10 +171,16 @@ export class PostgresConnector extends Connector {
   ];
 
   private readonly connectionString: string;
+  private readonly tlsCertificates: PostgresTlsCertificates;
 
   constructor(credentials: PostgresCredentials) {
     super();
     this.connectionString = credentials.connectionString;
+    this.tlsCertificates = {
+      sslCaCertificate: credentials.sslCaCertificate,
+      sslClientCertificate: credentials.sslClientCertificate,
+      sslClientKey: credentials.sslClientKey,
+    };
   }
 
   /**
@@ -155,7 +188,7 @@ export class PostgresConnector extends Connector {
    * disposed when the operation completes (or throws).
    */
   private async withPgClient<T>(fn: (client: KnexPGClient) => Promise<T>): Promise<T> {
-    const client = new KnexPGClient(this.connectionString);
+    const client = new KnexPGClient(this.connectionString, { tlsCertificates: this.tlsCertificates });
     try {
       return await fn(client);
     } finally {
@@ -728,6 +761,8 @@ export class PostgresConnector extends Connector {
     // First: a refusal carries a `code` too, which the pg-error branch below would show verbatim.
     const refusedHostErrorDetails = describeRefusedPostgresHost(error, 'PostgresConnector');
     if (refusedHostErrorDetails) return refusedHostErrorDetails;
+    const tlsFailureErrorDetails = describePostgresTlsFailure(error, { connectionFormHasCertificateFields: true });
+    if (tlsFailureErrorDetails) return tlsFailureErrorDetails;
 
     if (error instanceof KnexPGClientError) {
       return {
@@ -838,6 +873,11 @@ connectorRegistry.register({
     if (!ctx.decryptedCredentials?.connectionString) {
       throw new ConnectorInstantiationError('Connection string is required for PostgreSQL', Service.POSTGRES);
     }
-    return new PostgresConnector({ connectionString: ctx.decryptedCredentials.connectionString });
+    return new PostgresConnector({
+      connectionString: ctx.decryptedCredentials.connectionString,
+      sslCaCertificate: ctx.decryptedCredentials.sslCaCertificate,
+      sslClientCertificate: ctx.decryptedCredentials.sslClientCertificate,
+      sslClientKey: ctx.decryptedCredentials.sslClientKey,
+    });
   },
 });

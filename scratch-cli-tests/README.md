@@ -59,7 +59,7 @@ cp .env.integration.example .env.integration
 | `SCRATCH_API_KEY`        | **yes**  | API token for the primary test user                                                         |
 | `SCRATCH_API_KEY_2`      | no       | API token for a second user (permission tests)                                              |
 | `SCRATCH_API_URL`        | no       | Server base URL (default: `http://localhost:3010`)                                          |
-| `DATABASE_URL`           | no       | Postgres connection URL — required for connection, linked, files, and workspace-sync suites |
+| `DATABASE_URL`           | no       | Postgres connection URL — required for connection, linked, files, and workspace-sync suites. Add `sslmode=disable` for a local Postgres without TLS (the connector encrypts by default) |
 | `TEST_CONNECTOR_SERVICE` | no       | Connector type to use (default: `POSTGRES`). Set to `SUPABASE` if using a Supabase database |
 | `SCRATCH_CLI_BINARY`     | no       | Path to a prebuilt `scratchmd` binary (skips `cargo build`)                                 |
 | `DEBUG`                  | no       | Set to `1` for verbose CLI command logging                                                  |
@@ -68,7 +68,7 @@ cp .env.integration.example .env.integration
 
 ```ini
 SCRATCH_API_KEY=your-api-token-here
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/your_db?schema=public
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/your_db?schema=public&sslmode=disable
 TEST_CONNECTOR_SERVICE=POSTGRES
 SCRATCH_API_URL=http://localhost:3010
 DEBUG=1

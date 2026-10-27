@@ -18,6 +18,14 @@ function expectAccepted(preparation: NodePostgresConnectionStringPreparation): s
   return preparation.connectionStringForNodePostgres;
 }
 
+function expectTlsMode(connectionString: string): string {
+  const preparation = prepareConnectionStringForNodePostgres(connectionString);
+  if (!preparation.accepted) {
+    throw new Error(`Expected the connection string to be accepted, got: ${preparation.userFacingReason}`);
+  }
+  return preparation.tlsMode;
+}
+
 function expectRefused(preparation: NodePostgresConnectionStringPreparation): string {
   if (preparation.accepted) {
     throw new Error(
@@ -51,9 +59,9 @@ describe('prepareConnectionStringForNodePostgres', () => {
 
     it('accepts the postgresql:// scheme and trims surrounding whitespace', () => {
       const prepared = expectAccepted(
-        prepareConnectionStringForNodePostgres('  postgresql://u:p@db.example.com/app?sslmode=require \n'),
+        prepareConnectionStringForNodePostgres('  postgresql://u:p@db.example.com/app?application_name=a \n'),
       );
-      expect(prepared).toBe('postgresql://u:p@db.example.com/app?sslmode=require');
+      expect(prepared).toBe('postgresql://u:p@db.example.com/app?application_name=a');
     });
 
     it("drops Prisma's and Supabase's tool-only parameters", () => {
@@ -65,50 +73,66 @@ describe('prepareConnectionStringForNodePostgres', () => {
       expect(prepared).toBe('postgresql://postgres.abcdefgh:pw@aws-0-us-east-1.pooler.supabase.com:6543/postgres');
     });
 
-    it("keeps Neon's sslmode and endpoint option, dropping channel_binding", () => {
+    it("keeps Neon's endpoint option and reads its sslmode, dropping channel_binding", () => {
       const prepared = expectAccepted(
         prepareConnectionStringForNodePostgres(
           'postgresql://neondb_owner:pw@ep-cool-darkness-123456.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require&options=endpoint%3Dep-cool-darkness-123456',
         ),
       );
 
-      expect(parseAsNodePostgresWould(prepared)).toMatchObject({
-        sslmode: 'require',
-        options: 'endpoint=ep-cool-darkness-123456',
-      });
+      expect(parseAsNodePostgresWould(prepared)).toMatchObject({ options: 'endpoint=ep-cool-darkness-123456' });
       expect(parseAsNodePostgresWould(prepared)).not.toHaveProperty('channel_binding');
+      expect(parseAsNodePostgresWould(prepared)).not.toHaveProperty('sslmode');
     });
 
-    it.each(['disable', 'prefer', 'require', 'verify-ca', 'verify-full', 'no-verify'])(
-      'keeps sslmode=%s',
-      (sslMode) => {
-        const prepared = expectAccepted(
-          prepareConnectionStringForNodePostgres(`postgres://u:p@h/d?sslmode=${sslMode}`),
-        );
-        expect(parseAsNodePostgresWould(prepared).sslmode).toBe(sslMode);
-      },
-    );
+    it.each([
+      ['disable', 'disable'],
+      ['prefer', 'require'],
+      ['require', 'require'],
+      ['no-verify', 'require'],
+      ['verify-ca', 'verify-ca'],
+      ['verify-full', 'verify-full'],
+    ])('reads sslmode=%s as the %s TLS mode, and removes it from the string', (sslMode, expectedTlsMode) => {
+      const connectionString = `postgres://u:p@h/d?sslmode=${sslMode}`;
 
-    it('keeps ssl=true and drops any other ssl value, as before', () => {
+      expect(expectTlsMode(connectionString)).toBe(expectedTlsMode);
+      expect(expectAccepted(prepareConnectionStringForNodePostgres(connectionString))).toBe('postgres://u:p@h/d');
+    });
+
+    it('encrypts a connection string that sets no sslmode', () => {
+      expect(expectTlsMode('postgres://u:p@h/d')).toBe('require');
+    });
+
+    it("reads node-postgres's ssl switch when there is no sslmode, which wins over it", () => {
+      expect(expectTlsMode('postgres://u:p@h/d?ssl=true')).toBe('require');
+      expect(expectTlsMode('postgres://u:p@h/d?ssl=1')).toBe('require');
+      expect(expectTlsMode('postgres://u:p@h/d?ssl=false')).toBe('disable');
+      expect(expectTlsMode('postgres://u:p@h/d?ssl=0')).toBe('disable');
+      expect(expectTlsMode('postgres://u:p@h/d?ssl=nonsense')).toBe('require');
+      expect(expectTlsMode('postgres://u:p@h/d?ssl=false&sslmode=verify-full')).toBe('verify-full');
       expect(expectAccepted(prepareConnectionStringForNodePostgres('postgres://u:p@h/d?ssl=true'))).toBe(
-        'postgres://u:p@h/d?ssl=true',
-      );
-      expect(expectAccepted(prepareConnectionStringForNodePostgres('postgres://u:p@h/d?ssl=false'))).toBe(
         'postgres://u:p@h/d',
       );
     });
 
-    it('keeps application_name and uselibpqcompat', () => {
+    it('takes the last of repeated sslmode values, as node-postgres does', () => {
+      expect(expectTlsMode('postgres://u:p@h/d?sslmode=disable&sslmode=verify-ca')).toBe('verify-ca');
+    });
+
+    it('returns the host node-postgres connects to, for checking the certificate against', () => {
+      const preparation = prepareConnectionStringForNodePostgres('postgres://u:p@Db.Example.com:5432/d');
+      if (!preparation.accepted) throw new Error(preparation.userFacingReason);
+      expect(preparation.host.toLowerCase()).toBe('db.example.com');
+    });
+
+    it('keeps application_name and drops uselibpqcompat, whose libpq meanings we always use', () => {
       const prepared = expectAccepted(
         prepareConnectionStringForNodePostgres(
           'postgres://u:p@h/d?application_name=My%20Reporting%20App&uselibpqcompat=true&sslmode=require',
         ),
       );
-      expect(parseAsNodePostgresWould(prepared)).toMatchObject({
-        application_name: 'My Reporting App',
-        uselibpqcompat: 'true',
-        sslmode: 'require',
-      });
+      expect(parseAsNodePostgresWould(prepared)).toMatchObject({ application_name: 'My Reporting App' });
+      expect(parseAsNodePostgresWould(prepared)).not.toHaveProperty('uselibpqcompat');
     });
 
     it('drops parameters that would change how values are decoded, and every unknown parameter', () => {
@@ -119,17 +143,6 @@ describe('prepareConnectionStringForNodePostgres', () => {
       );
 
       expect(prepared).toBe('postgres://u:p@h/d');
-    });
-
-    it('adds sslmode=no-verify for sslNoVerify unless the string sets its own sslmode', () => {
-      expect(expectAccepted(prepareConnectionStringForNodePostgres('postgres://u:p@h/d', { sslNoVerify: true }))).toBe(
-        'postgres://u:p@h/d?sslmode=no-verify',
-      );
-      expect(
-        expectAccepted(
-          prepareConnectionStringForNodePostgres('postgres://u:p@h/d?sslmode=verify-full', { sslNoVerify: true }),
-        ),
-      ).toBe('postgres://u:p@h/d?sslmode=verify-full');
     });
 
     it('keeps a percent-encoded password, and a password node-postgres would re-encode', () => {
@@ -198,6 +211,30 @@ describe('prepareConnectionStringForNodePostgres', () => {
         expect(refusal).not.toContain('/dev/zero');
       },
     );
+
+    it.each([
+      [
+        'a form with certificate fields',
+        { connectionFormHasCertificateFields: true },
+        "Paste the certificate or key itself into the connection form's certificate fields",
+      ],
+      ['a form without them', { connectionFormHasCertificateFields: false }, 'Use sslmode=require'],
+    ])('a local-file parameter, pointing %s to what to do instead', (_description, wordingOptions, expectedAdvice) => {
+      expect(
+        expectRefused(
+          prepareConnectionStringForNodePostgres(
+            'postgres://u:p@db.example.com/app?sslmode=verify-full&sslrootcert=/a',
+            wordingOptions,
+          ),
+        ),
+      ).toContain(expectedAdvice);
+    });
+
+    it('a local-file parameter, without pointing to certificate fields by default', () => {
+      expect(
+        expectRefused(prepareConnectionStringForNodePostgres('postgres://u:p@db.example.com/app?sslrootcert=/a')),
+      ).not.toContain('certificate fields');
+    });
 
     it('every local-file parameter at once, naming each', () => {
       expect(

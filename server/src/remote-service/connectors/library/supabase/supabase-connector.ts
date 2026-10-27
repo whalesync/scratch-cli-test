@@ -60,6 +60,7 @@ import {
   assertModifiedAtColumnExists,
   chooseUniquelyAddressableColumn,
   collectPgColumnNamesRejectingEmptyString,
+  describePostgresTlsFailure,
   describeRefusedPostgresHost,
   duplicateTableCreateErrorMessage,
   foldNameToPostgresSchemaIdentifier,
@@ -389,7 +390,8 @@ export class SupabaseConnector extends Connector {
     if (!connStr) {
       throw new KnexPGClientError('No connection string configured', 'CONNECTION_ERROR');
     }
-    const client = new KnexPGClient(connStr, { sslNoVerify: true });
+    // A string with no sslmode is encrypted without checking the certificate, which Supabase signs with its own CA.
+    const client = new KnexPGClient(connStr);
     try {
       return await fn(client);
     } finally {
@@ -1647,6 +1649,9 @@ export class SupabaseConnector extends Connector {
     // First: a refusal carries a `code` too, which the pg-error branch below would show verbatim.
     const refusedHostErrorDetails = describeRefusedPostgresHost(error, 'SupabaseConnector');
     if (refusedHostErrorDetails) return refusedHostErrorDetails;
+    // Supabase's connection form has no certificate fields.
+    const tlsFailureErrorDetails = describePostgresTlsFailure(error, { connectionFormHasCertificateFields: false });
+    if (tlsFailureErrorDetails) return tlsFailureErrorDetails;
 
     if (error instanceof KnexPGClientError) {
       return {

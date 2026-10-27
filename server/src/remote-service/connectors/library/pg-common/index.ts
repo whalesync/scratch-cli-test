@@ -20,6 +20,14 @@ export {
   type NodePostgresConnectionStringPreparation,
 } from './node-postgres-connection-string';
 export {
+  POSTGRES_TLS_CERTIFICATE_FIELD_LABELS,
+  preparePostgresTlsSettings,
+  type PostgresTlsCertificates,
+  type PostgresTlsMode,
+  type PostgresTlsSettingsPreparation,
+  type PostgresTlsSettingsRequest,
+} from './node-postgres-tls';
+export {
   buildFindAllSchemasQuery,
   buildFindAllTablesExcludingSchemasQuery,
   buildFindEverySchemaNameQuery,
@@ -78,6 +86,18 @@ export {
   isRecreatablePostgresNativeColumnType,
   postgresNativeColumnTypeAnnotation,
 } from './pg-native-column-type';
+export {
+  POSTGRES_SERVER_CERTIFICATE_EXPIRED_MESSAGE,
+  POSTGRES_SERVER_REFUSES_TLS_MESSAGE,
+  POSTGRES_SERVER_REQUIRES_TLS_MESSAGE,
+  POSTGRES_UNENCRYPTED_CONNECTION_NOT_ALLOWED_MESSAGE,
+  buildPostgresClientCertificateRefusedMessage,
+  buildPostgresClientCertificateRequiredMessage,
+  buildPostgresServerCertificateHostNameMismatchMessage,
+  buildPostgresServerCertificateNotTrustedMessage,
+  describePostgresTlsFailure,
+  type PostgresTlsFailureWordingOptions,
+} from './pg-tls-failures';
 export {
   PG_BOOLEAN_TYPES,
   PG_DATE_TYPES,

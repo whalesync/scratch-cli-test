@@ -21,7 +21,9 @@ export interface DecryptedCredentials {
   databasePort?: string;
   databaseName?: string; // optional; absent = every non-system database the user can see
   sslMode?: string; // 'DISABLED' | 'REQUIRED' | 'VERIFY_CA' | 'VERIFY_IDENTITY' (validated server-side)
-  sslCaCertificate?: string; // PEM bundle, re-wrapped to 64-character lines
+  sslCaCertificate?: string; // PEM bundle, re-wrapped to 64-character lines (MySQL, Postgres)
+  sslClientCertificate?: string; // Postgres: PEM client certificate (and any intermediates), re-wrapped
+  sslClientKey?: string; // Postgres: the client certificate's unencrypted PEM private key, re-wrapped
   // Supabase multi-project (OAuth)
   supabaseProjects?: SupabaseProjectCredentials[];
 

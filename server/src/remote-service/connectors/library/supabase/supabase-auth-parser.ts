@@ -83,7 +83,7 @@ export class SupabaseAuthParser extends AuthParser {
 
     // The node-postgres allowlist (no certificate-file, host-override or replication parameters). KnexPGClient checks
     // again on every connect; this makes a refused string fail on save.
-    const connectionStringPreparation = prepareConnectionStringForNodePostgres(connectionString, { sslNoVerify: true });
+    const connectionStringPreparation = prepareConnectionStringForNodePostgres(connectionString);
     if (!connectionStringPreparation.accepted) {
       throw new ConnectorAuthError(
         connectionStringPreparation.userFacingReason,

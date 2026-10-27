@@ -107,6 +107,10 @@ import { EncryptionService } from 'src/utils/encryption';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { PullLinkedFolderFilesJobHandler } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
 import { createIntegrationTestDbService } from './integration-db-service';
+import {
+  buildConnectorConnectionStringForLocalPostgresTestDatabase,
+  readLocalPostgresTestDatabaseUrl,
+} from './postgres-integration-helpers';
 import { VirtualGitFs } from './virtual-git-fs';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -193,7 +197,7 @@ describe('Fetch → Edit → Publish Integration', () => {
   beforeAll(() => {
     prisma = new PrismaClient();
 
-    const dbUrl = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/scratchpad?schema=public';
+    const dbUrl = readLocalPostgresTestDatabaseUrl();
     pool = new Pool({ connectionString: dbUrl });
 
     const masterKey = process.env.ENCRYPTION_MASTER_KEY ?? 'test-master-key-at-least-32-chars-long!!';
@@ -303,8 +307,9 @@ describe('Fetch → Edit → Publish Integration', () => {
     });
 
     // ── 4. ConnectorAccount with encrypted PostgreSQL credentials ────────────
-    const dbUrl = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/scratchpad?schema=public';
-    const encryptedCreds = await encryptionService.encryptObject({ connectionString: dbUrl });
+    const encryptedCreds = await encryptionService.encryptObject({
+      connectionString: buildConnectorConnectionStringForLocalPostgresTestDatabase(),
+    });
 
     connectorAccountId = createConnectorAccountId();
     await prisma.connectorAccount.create({

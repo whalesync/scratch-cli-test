@@ -14,8 +14,10 @@
  * - `replication` switches the connection to the replication protocol.
  * - `binary` and `client_encoding` change how node-postgres decodes values, which would corrupt what we pull.
  *
- * So only these parameters reach node-postgres, each value checked: `sslmode`, `ssl=true`, `uselibpqcompat`,
- * `application_name`, and `options` carrying a Neon endpoint ID. The dangerous groups above are refused with a
+ * So only `application_name` and `options` carrying a Neon endpoint ID reach node-postgres, each value checked. The
+ * TLS parameters (`sslmode`, `ssl`, `uselibpqcompat`) are read here and removed: they become the returned
+ * {@link PostgresTlsMode}, which `node-postgres-tls.ts` turns into node-postgres's `ssl` option (node-postgres would
+ * otherwise read them its own way, and let them replace that option). The dangerous groups above are refused with a
  * message naming them. Every other parameter (Prisma's `pgbouncer` / `schema` / `connection_limit`, Neon's
  * `channel_binding`, libpq timeouts and keepalives, ...) is dropped: node-postgres ignores most of them anyway, and a
  * parameter a future node-postgres starts honoring can't change what we do until we add it here.
@@ -24,18 +26,27 @@
  * parameters from the fixed lists below (a query-parameter name can be a fragment of an unencoded password).
  */
 
+import { type PostgresTlsMode } from './node-postgres-tls';
+
 /** A connection string longer than this is refused before it is parsed. */
 export const POSTGRES_CONNECTION_STRING_MAX_LENGTH = 8192;
 
-/** `sslmode` values node-postgres understands: libpq's (except `allow`, which it doesn't) plus its own `no-verify`. */
-const SUPPORTED_SSL_MODES: readonly string[] = [
-  'disable',
-  'prefer',
-  'require',
-  'verify-ca',
-  'verify-full',
-  'no-verify',
-];
+/**
+ * The `sslmode` values we accept, and what each means. libpq's meanings, plus node-postgres's own `no-verify`
+ * (encrypt without checking, the same as libpq's `require`). `prefer` becomes `require`: node-postgres can't fall back
+ * to plaintext the way libpq does. libpq's `allow` (plaintext first) isn't accepted.
+ */
+const TLS_MODE_FOR_SSL_MODE: Readonly<Record<string, PostgresTlsMode>> = Object.freeze({
+  disable: 'disable',
+  prefer: 'require',
+  require: 'require',
+  'no-verify': 'require',
+  'verify-ca': 'verify-ca',
+  'verify-full': 'verify-full',
+});
+const SUPPORTED_SSL_MODES: readonly string[] = Object.keys(TLS_MODE_FOR_SSL_MODE);
+/** A connection string that sets no `sslmode` (or `ssl`) is encrypted, without checking the server's certificate. */
+const DEFAULT_TLS_MODE: PostgresTlsMode = 'require';
 
 /** Parameters that make node-postgres read a file on our server. Compared lower-cased. */
 const LOCAL_FILE_PARAMETER_NAMES: readonly string[] = [
@@ -75,8 +86,12 @@ const PERCENT_ENCODE_PASSWORD_HINT =
 export type NodePostgresConnectionStringPreparation =
   | {
       readonly accepted: true;
-      /** The connection string to hand node-postgres: the input with every dropped parameter removed. */
+      /** The connection string to hand node-postgres: the input with the TLS and every dropped parameter removed. */
       readonly connectionStringForNodePostgres: string;
+      /** The TLS mode the string asks for (`sslmode`, else `ssl`), or `require` when it sets none. */
+      readonly tlsMode: PostgresTlsMode;
+      /** The host node-postgres connects to, decoded (an IPv6 literal keeps its brackets), for `verify-full`. */
+      readonly host: string;
     }
   | {
       readonly accepted: false;
@@ -84,14 +99,18 @@ export type NodePostgresConnectionStringPreparation =
       readonly userFacingReason: string;
     };
 
+export interface NodePostgresConnectionStringWordingOptions {
+  /** Whether the connection form has the certificate fields of `POSTGRES_TLS_CERTIFICATE_FIELD_LABELS`. */
+  readonly connectionFormHasCertificateFields: boolean;
+}
+
 /**
- * Check `connectionString` against the allowlist and return the string node-postgres should get, or the reason it is
- * refused. `sslNoVerify` adds `sslmode=no-verify` when the string sets no `sslmode` (the Supabase connector's
- * default).
+ * Check `connectionString` against the allowlist and return the string node-postgres should get and the TLS mode it
+ * asks for, or the reason it is refused.
  */
 export function prepareConnectionStringForNodePostgres(
   connectionString: string,
-  options?: { sslNoVerify?: boolean },
+  wordingOptions: NodePostgresConnectionStringWordingOptions = { connectionFormHasCertificateFields: false },
 ): NodePostgresConnectionStringPreparation {
   const refuse = (userFacingReason: string): NodePostgresConnectionStringPreparation => ({
     accepted: false,
@@ -153,6 +172,9 @@ export function prepareConnectionStringForNodePostgres(
   const refusedConnectionTargetParameterNames = new Set<string>();
   const refusedProtocolParameterNames = new Set<string>();
   const queryParametersForNodePostgres = new URLSearchParams();
+  // Like node-postgres, a repeated TLS parameter's last value wins.
+  let tlsModeFromSslModeParameter: PostgresTlsMode | undefined;
+  let tlsModeFromSslParameter: PostgresTlsMode | undefined;
   for (const [parameterName, parameterValue] of parsedConnectionStringUrl.searchParams) {
     const lowerCasedParameterName = parameterName.toLowerCase();
     if (LOCAL_FILE_PARAMETER_NAMES.includes(lowerCasedParameterName)) {
@@ -173,17 +195,18 @@ export function prepareConnectionStringForNodePostgres(
         if (!SUPPORTED_SSL_MODES.includes(parameterValue)) {
           return refuse(`sslmode must be one of ${SUPPORTED_SSL_MODES.join(', ')}.`);
         }
-        queryParametersForNodePostgres.append(parameterName, parameterValue);
+        tlsModeFromSslModeParameter = TLS_MODE_FOR_SSL_MODE[parameterValue];
         break;
       case 'ssl':
-        // Only ssl=true turns TLS on; any other value was always dropped, leaving TLS to sslmode.
-        if (parameterValue === 'true') queryParametersForNodePostgres.append(parameterName, parameterValue);
+        // node-postgres's on/off switch; sslmode wins over it. Any other value is ignored, as node-postgres does.
+        if (parameterValue === 'true' || parameterValue === '1') tlsModeFromSslParameter = 'require';
+        if (parameterValue === 'false' || parameterValue === '0') tlsModeFromSslParameter = 'disable';
         break;
       case 'uselibpqcompat':
+        // node-postgres's switch to libpq's sslmode meanings, which we always use.
         if (parameterValue !== 'true' && parameterValue !== 'false') {
           return refuse('uselibpqcompat must be true or false.');
         }
-        queryParametersForNodePostgres.append(parameterName, parameterValue);
         break;
       case 'application_name':
         // node-postgres writes it into the startup message as a NUL-terminated string, so a control character could
@@ -209,7 +232,11 @@ export function prepareConnectionStringForNodePostgres(
   const refusalReasons: string[] = [];
   if (refusedLocalFileParameterNames.size > 0) {
     refusalReasons.push(
-      `Remove ${describeParameterNames(refusedLocalFileParameterNames)} from the connection string: certificate and key files can't be read from a path. Use sslmode=verify-full to check the server's certificate against the public certificate authorities, or sslmode=no-verify to encrypt without checking it.`,
+      `Remove ${describeParameterNames(refusedLocalFileParameterNames)} from the connection string: certificate and key files can't be read from a path. ${
+        wordingOptions.connectionFormHasCertificateFields
+          ? "Paste the certificate or key itself into the connection form's certificate fields, or leave it out and use sslmode=require to encrypt without checking the server's certificate."
+          : "Use sslmode=require to encrypt without checking the server's certificate."
+      }`,
     );
   }
   if (refusedConnectionTargetParameterNames.size > 0) {
@@ -226,11 +253,13 @@ export function prepareConnectionStringForNodePostgres(
     return refuse(refusalReasons.join(' '));
   }
 
-  if (options?.sslNoVerify && !queryParametersForNodePostgres.has('sslmode')) {
-    queryParametersForNodePostgres.set('sslmode', 'no-verify');
-  }
   parsedConnectionStringUrl.search = queryParametersForNodePostgres.toString();
-  return { accepted: true, connectionStringForNodePostgres: parsedConnectionStringUrl.toString() };
+  return {
+    accepted: true,
+    connectionStringForNodePostgres: parsedConnectionStringUrl.toString(),
+    tlsMode: tlsModeFromSslModeParameter ?? tlsModeFromSslParameter ?? DEFAULT_TLS_MODE,
+    host: hostAsNodePostgresWillUseIt,
+  };
 }
 
 /**

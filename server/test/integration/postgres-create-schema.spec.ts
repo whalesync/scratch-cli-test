@@ -33,6 +33,10 @@
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS } from '@spinner/shared-types';
 import { Pool } from 'pg';
 import { PostgresConnector } from 'src/remote-service/connectors/library/postgres/postgres-connector';
+import {
+  buildConnectorConnectionStringForLocalPostgresTestDatabase,
+  readLocalPostgresTestDatabaseUrl,
+} from './postgres-integration-helpers';
 
 const SCHEMA = 'scratch_create_schema_it';
 
@@ -41,10 +45,12 @@ describe('Postgres create-schema — real DDL round-trip', () => {
   let connector: PostgresConnector;
 
   beforeAll(async () => {
-    const dbUrl = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/scratchpad?schema=public';
+    const dbUrl = readLocalPostgresTestDatabaseUrl();
     pool = new Pool({ connectionString: dbUrl });
     await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
-    connector = new PostgresConnector({ connectionString: dbUrl });
+    connector = new PostgresConnector({
+      connectionString: buildConnectorConnectionStringForLocalPostgresTestDatabase(),
+    });
   });
 
   afterAll(async () => {

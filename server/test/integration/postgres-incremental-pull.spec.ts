@@ -59,6 +59,10 @@ import {
   PullLinkedFolderFilesPublicProgress,
 } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
 import { createIntegrationTestDbService } from './integration-db-service';
+import {
+  buildConnectorConnectionStringForLocalPostgresTestDatabase,
+  readLocalPostgresTestDatabaseUrl,
+} from './postgres-integration-helpers';
 import { VirtualGitFs } from './virtual-git-fs';
 
 const TABLE = 'test_inc_products';
@@ -101,7 +105,7 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
 
   beforeAll(() => {
     prisma = new PrismaClient();
-    const dbUrl = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/scratchpad?schema=public';
+    const dbUrl = readLocalPostgresTestDatabaseUrl();
     pool = new Pool({ connectionString: dbUrl });
     const masterKey = process.env.ENCRYPTION_MASTER_KEY ?? 'test-master-key-at-least-32-chars-long!!';
     encryptionService = new EncryptionService(masterKey);
@@ -160,8 +164,9 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
     });
 
     // ── ConnectorAccount (encrypted PG creds) ────────────────────────────────
-    const dbUrl = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/scratchpad?schema=public';
-    const encryptedCreds = await encryptionService.encryptObject({ connectionString: dbUrl });
+    const encryptedCreds = await encryptionService.encryptObject({
+      connectionString: buildConnectorConnectionStringForLocalPostgresTestDatabase(),
+    });
     connectorAccountId = createConnectorAccountId();
     await prisma.connectorAccount.create({
       data: {

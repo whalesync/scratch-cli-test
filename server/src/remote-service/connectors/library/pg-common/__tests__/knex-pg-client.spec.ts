@@ -68,6 +68,8 @@ jest.mock('knex', () => ({
 }));
 
 import knexFactory, { type Knex } from 'knex';
+import { type ConnectionOptions } from 'node:tls';
+import { buildTestCertificate } from '../../../utils/__tests__/test-certificates';
 import { SsrfSafeSocket } from '../../../utils/ssrf-safe-socket';
 import { KnexPGClient, KnexPGClientError } from '../knex-pg-client';
 import { KnexQueryCompilationErrorWithSqlText } from '../pg-knex-query-compilation-error';
@@ -440,10 +442,14 @@ describe('KnexPGClient connection setup', () => {
     }
   });
 
-  function connectionConfigHandedToKnex(): { connectionString: string; stream?: () => unknown } {
-    const [knexConfig] = knexFactoryMock.mock.calls[0] as [
-      { connection: { connectionString: string; stream?: () => unknown } },
-    ];
+  interface ConnectionConfigHandedToKnex {
+    connectionString: string;
+    ssl: false | ConnectionOptions;
+    stream?: () => unknown;
+  }
+
+  function connectionConfigHandedToKnex(): ConnectionConfigHandedToKnex {
+    const [knexConfig] = knexFactoryMock.mock.calls[0] as [{ connection: ConnectionConfigHandedToKnex }];
     return knexConfig.connection;
   }
 
@@ -461,12 +467,48 @@ describe('KnexPGClient connection setup', () => {
     expect(knexFactoryMock).not.toHaveBeenCalled();
   });
 
-  it('hands node-postgres the prepared connection string', () => {
-    new KnexPGClient('postgres://u:p@db.example.com:5432/app?pgbouncer=true', { sslNoVerify: true });
+  it('hands node-postgres the prepared connection string, and TLS without checking by default', () => {
+    new KnexPGClient('postgres://u:p@db.example.com:5432/app?pgbouncer=true');
 
-    expect(connectionConfigHandedToKnex().connectionString).toBe(
-      'postgres://u:p@db.example.com:5432/app?sslmode=no-verify',
-    );
+    expect(connectionConfigHandedToKnex().connectionString).toBe('postgres://u:p@db.example.com:5432/app');
+    expect(connectionConfigHandedToKnex().ssl).toEqual({ rejectUnauthorized: false });
+  });
+
+  it("hands node-postgres the TLS options for the string's sslmode and the certificates", () => {
+    const serverCa = buildTestCertificate({ commonName: 'test-server-ca' });
+
+    new KnexPGClient('postgres://u:p@10.1.2.3:5432/app?sslmode=verify-ca', {
+      tlsCertificates: { sslCaCertificate: serverCa.certificatePem.replace(/\n/g, ' ') },
+    });
+
+    const { connectionString, ssl } = connectionConfigHandedToKnex();
+    expect(connectionString).toBe('postgres://u:p@10.1.2.3:5432/app');
+    if (ssl === false) throw new Error('Expected TLS to be on');
+    expect(ssl.rejectUnauthorized).toBe(true);
+    expect(ssl.ca).toBe(serverCa.certificatePem);
+  });
+
+  it('turns TLS off, explicitly, for sslmode=disable', () => {
+    new KnexPGClient('postgres://u:p@localhost:5432/app?sslmode=disable');
+
+    expect(connectionConfigHandedToKnex().ssl).toBe(false);
+  });
+
+  it('refuses certificates that fail the TLS checks before knex sees them', () => {
+    const clientCertificate = buildTestCertificate();
+    let constructionError: unknown;
+    try {
+      new KnexPGClient('postgres://u:p@db.example.com:5432/app', {
+        tlsCertificates: { sslClientCertificate: clientCertificate.certificatePem },
+      });
+    } catch (error) {
+      constructionError = error;
+    }
+
+    expect(constructionError).toBeInstanceOf(KnexPGClientError);
+    expect((constructionError as KnexPGClientError).code).toBe('TLS_SETTINGS_REJECTED');
+    expect((constructionError as KnexPGClientError).message).toContain('go together');
+    expect(knexFactoryMock).not.toHaveBeenCalled();
   });
 
   it('connects through the database host guard in deployed environments', () => {

@@ -67,7 +67,7 @@ export async function provisionServiceRoleForSupabaseProject(
 
   // Verify the new role can actually log in before anything is persisted or a
   // caller starts a job against it.
-  const pgClient = new KnexPGClient(connectionString, { sslNoVerify: true });
+  const pgClient = new KnexPGClient(connectionString);
   try {
     await pgClient.testQuery();
   } finally {

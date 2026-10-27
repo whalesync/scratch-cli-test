@@ -1949,6 +1949,18 @@ describe("SupabaseConnector OAuth Live Export DDL as the project's postgres role
 describe('SupabaseConnector.extractConnectorErrorDetails', () => {
   const connector = new SupabaseConnector({ connectionString: CONNECTION_STRING });
 
+  it('explains a TLS failure (which carries a `code`) instead of showing the OpenSSL text', () => {
+    const untrustedServerCertificate = Object.assign(new Error('self-signed certificate in certificate chain'), {
+      code: 'SELF_SIGNED_CERT_IN_CHAIN',
+    });
+
+    const errorDetails = connector.extractConnectorErrorDetails(untrustedServerCertificate);
+
+    expect(errorDetails.userFriendlyMessage).toContain("isn't signed by");
+    expect(errorDetails.userFriendlyMessage).not.toContain('Server CA certificate');
+    expect(errorDetails.userFriendlyMessage).not.toContain('self-signed');
+  });
+
   it('shows a refused database host as an unreachable host, logging the address only server-side', () => {
     const refusal = new SsrfError({
       code: 'private_address',

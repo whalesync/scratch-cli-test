@@ -1,0 +1,56 @@
+# Opt-in Postgres 16 with TLS for the Postgres connector's certificate settings (DEV-12575). Not started by the default
+# `docker compose up -d`. Generate the test certificates first, then start it (from server/localdev):
+#   ./postgres-tls/generate-tls-certs.sh
+#   docker compose -f docker-compose.postgres-tls.yml up -d --wait
+#   docker compose -f docker-compose.postgres-tls.yml stop                # stop, keep data
+# postgres://scratch_tls_password_user:scratch-tls-test@localhost:5452/scratch_tls_test   (CA: ./postgres-tls/certs/ca.pem)
+# The same, as scratch_tls_cert_user, also needs ./postgres-tls/certs/client-cert.pem and client-key.pem.
+# Plaintext logins are refused (see ./postgres-tls/pg_hba.conf). The port binds 127.0.0.1 only so the weak test
+# passwords aren't reachable from the LAN.
+# Explicit project name: this file shares server/localdev with docker-compose.yml, whose default project name would
+# otherwise collide.
+name: scratch-localdev-postgres-tls
+
+services:
+  postgres-tls:
+    image: postgres:16
+    ports: ['127.0.0.1:5452:5432']
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: scratch_tls_test
+    # Postgres refuses a server key other users can read, and a bind mount keeps the host's owner and mode, so copy
+    # the files into place before starting it.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        install -d -o postgres -g postgres -m 700 /var/lib/postgresql/tls
+        install -o postgres -g postgres -m 600 /tls-source/server-key.pem /var/lib/postgresql/tls/server-key.pem
+        install -o postgres -g postgres -m 644 /tls-source/server-cert.pem /tls-source/ca.pem /var/lib/postgresql/tls/
+        exec docker-entrypoint.sh postgres \
+          -c ssl=on \
+          -c ssl_cert_file=/var/lib/postgresql/tls/server-cert.pem \
+          -c ssl_key_file=/var/lib/postgresql/tls/server-key.pem \
+          -c ssl_ca_file=/var/lib/postgresql/tls/ca.pem \
+          -c hba_file=/etc/postgresql/pg_hba.conf
+    volumes:
+      - postgres_tls_data:/var/lib/postgresql/data
+      # Long syntax so a missing ./postgres-tls/certs fails `up` with a clear error, instead of Docker creating an
+      # empty directory that Postgres then can't start with.
+      - type: bind
+        source: ./postgres-tls/certs
+        target: /tls-source
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./postgres-tls/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgres-tls/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d scratch_tls_test']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres_tls_data:
