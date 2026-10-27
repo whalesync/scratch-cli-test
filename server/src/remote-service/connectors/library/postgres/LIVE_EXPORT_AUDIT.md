@@ -32,7 +32,7 @@
 | 9 | Pagination: 200+ record table fully synced | ✅ AIRTABLE | 213/213 invoices on Airtable (paged count) · ✅ MYSQL 213/213 after every run |
 | 10 | Second run is a no-op | ✅ AIRTABLE | rrn_DIWZLS1Uyy "No changes"; rrn_oCaJrbLyCu (after CRUD) "No changes" — with the DEV-11420 Airtable canonicalizers on · ✅ MYSQL rrn_bllrxdoqyS and rrn_bvk10Ed1J2 (after CRUD and drift) wrote nothing · ✅ MariaDB rrn_h4RypGxVUJ |
 | 11 | Destination drift: out-of-band delete restored | ✅ AIRTABLE | deleted "Filler invoice 005" via Airtable REST → rrn_PrkFndWPZn published exactly 1 create, record back with same `postgres_record_id` · ✅ MYSQL deleted "Filler invoice 005" with SQL → rrn_PkfI0lff8T published exactly 1 create |
-| 12 | Findings filed or queued below | ⚠ queued | Linear token is read-only — F1/F2 queued with full bodies, F3 queued as evidence on DEV-10795 |
+| 12 | Findings filed or queued below | ⚠ partly filed | F1/F2 filed as DEV-12576; F3 queued as evidence on DEV-10795; the umbrella issue is still queued (Human remainder) |
 
 Pull-side note: incremental pull needs a user-declared `modifiedAtField` (`pg-incremental.ts`); the harness runs full
 pulls, so the `updated_at` column was only exercised as a plain timestamptz value.
@@ -89,8 +89,8 @@ CRUD — Filler 002 Qty 1→2002, Status Sent→Draft, Notes set; Torture Notes 
 
 | Issue | Layer | Summary | Status |
 |---|---|---|---|
-| F1 ⚠ not yet filed | transport (`pg-common` pull) | `date` columns pull as server-local midnight → TZ-dependent value; exported to Airtable as a dateTime with a spurious time; also the steady-state churn on Postgres-as-destination (Airtable audit F1) | queued |
-| F2 ⚠ not yet filed | transport (`pg-common` pull) | `timestamp` (without time zone) columns pull as server-local wall time → every value shifted by the server's UTC offset; extreme values overflow the year | queued |
+| F1 → DEV-12576 | transport (`pg-common` pull) | `date` columns pull as server-local midnight → TZ-dependent value; exported to Airtable as a dateTime with a spurious time; also the steady-state churn on Postgres-as-destination (Airtable audit F1) | fixed in DEV-12576 (verbatim `YYYY-MM-DD`, `format: 'date'`, day-granular canonicalizer); not re-audited |
+| F2 → DEV-12576 | transport (`pg-common` pull) | `timestamp` (without time zone) columns pull as server-local wall time → every value shifted by the server's UTC offset; extreme values overflow the year | fixed in DEV-12576 (parsed as UTC; μs → ms truncation A4 remains); not re-audited |
 | F3 ⚠ evidence for DEV-10795 (canceled) | view (`pg-default-view.ts`) | `text[]` / `int[]` / `bool[]` declared `object` → comma-joined text on Airtable although Airtable creates `multipleSelects` | queued as comment |
 
 **F1 — proposed Linear body** (same defect as Airtable `LIVE_EXPORT_AUDIT.md` F1; file once, cite both)
@@ -185,10 +185,10 @@ multi-value field. Not re-filed because the generic ask was canceled; leaving th
 
 - [ ] Full dusky wizard pass (`localhost:3030/exports`): connection-string placeholder/help text, the array
       downgrade warnings and the `hidden_id` needs-target note in the field picker, run from the UI
-- [ ] File F1 and F2 (one issue each, F1 shared with the Airtable audit) plus the umbrella issue with a write-scope
-      Linear token; comment F3 on DEV-10795
+- [ ] File the umbrella issue with a write-scope Linear token (F1 and F2 are filed as DEV-12576); comment F3 on
+      DEV-10795
 - [ ] Judgment: should `numeric`/`bigint` export to a wide destination as a number field with a precision warning
-      instead of silent text (A1)? and should pg `date` map to `format: 'date'` once F1's parser change lands?
+      instead of silent text (A1)? (pg `date` → `format: 'date'`: done in DEV-12576)
 - [ ] Incremental pull with a declared `modifiedAtField` (`updated_at`) was not exercised by the harness
 
 ## Log

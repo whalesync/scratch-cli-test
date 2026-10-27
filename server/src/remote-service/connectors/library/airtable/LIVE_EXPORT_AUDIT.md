@@ -32,7 +32,7 @@
 | 9 | Pagination: 200+ record table fully synced | ✅ POSTGRES | 213/213 invoices on Postgres after every run |
 | 10 | Second run is a no-op | ❌ POSTGRES | rrn_zC3szsaMjk 212 edits; rrn_iydAgAp9in 211 edits — exactly the records with a `Due` date. Finding F1 |
 | 11 | Destination drift: out-of-band delete restored | ✅ POSTGRES | deleted "Filler invoice 005" row via psql → rrn_zVvlecT0Zh re-created it (new uuid, same `airtable_record_id`), count back to 213 |
-| 12 | Findings filed or queued below | ⚠ queued | Linear token is read-only — F1 queued with full body |
+| 12 | Findings filed or queued below | ⚠ partly filed | F1 filed as DEV-12576; the umbrella issue is still queued (Human remainder) |
 
 ## Destination: GOOGLE_SHEETS (2026-08-05)
 
@@ -117,7 +117,7 @@ invoice 202609012234" present with numbers/boolean/select/phone; "Filler invoice
 
 | Issue | Layer | Summary | Status |
 |---|---|---|---|
-| F1 ⚠ not yet filed | transport (Postgres/Supabase pull, `pg-common`) | `date` columns pull as server-local midnight → TZ-dependent value on disk; every dated record re-publishes each run | queued |
+| F1 → DEV-12576 | transport (Postgres/Supabase pull, `pg-common`) | `date` columns pull as server-local midnight → TZ-dependent value on disk; every dated record re-publishes each run | fixed in DEV-12576; not re-audited |
 
 **F1 — proposed Linear body**
 
@@ -169,10 +169,10 @@ time, not a product defect.
 - [ ] OAuth connect flow in real UI — n/a (PAT), but check the API-key placeholder/help text in the wizard
 - [ ] Full dusky wizard pass (`localhost:3030/exports`): field-picker warnings should show the `Tags` downgrade,
       the `Hidden Ref` needs-target note and the multi→single `Contact` warning; run from the UI
-- [ ] File F1 (shared with the Postgres audit's F1) and the umbrella issue in Linear with a write-scope token; decide
-      whether DEV-10961 stays canceled now that Postgres can create `text[]`
-- [ ] Sign-off that the `date` fix belongs in `pg-common` (pass-through OID 1082 parser) rather than a
-      day-granular canonicalizer only
+- [ ] File the umbrella issue in Linear with a write-scope token (F1 is filed as DEV-12576); decide whether
+      DEV-10961 stays canceled now that Postgres can create `text[]`
+- [x] Sign-off that the `date` fix belongs in `pg-common` (pass-through OID 1082 parser) rather than a
+      day-granular canonicalizer only — DEV-12576 did both
 
 ## Log
 

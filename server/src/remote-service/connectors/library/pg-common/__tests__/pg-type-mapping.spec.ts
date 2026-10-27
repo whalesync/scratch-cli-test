@@ -58,29 +58,27 @@ describe('mapScalarPgType', () => {
     }
   });
 
-  // DEV-10453: the node-postgres driver parses a `date` column (OID 1082) into a JS Date, which
-  // serializes to a full RFC 3339 date-time on disk (e.g. "1944-11-19T00:00:00.000Z"), never
-  // YYYY-MM-DD. So a `date` column must be typed `format: 'date-time'` to match the stored value;
-  // `format: 'date'` would reject every verbatim record.
-  it('maps a date column to String(format: date-time), matching how the driver materializes it', () => {
+  // DEV-12576: a `date` column is pulled as the driver's verbatim `YYYY-MM-DD` text, so it's typed
+  // `format: 'date'` — matching what's on disk, and making destinations create a date-only field.
+  it('maps a date column to String(format: date), matching the verbatim YYYY-MM-DD it is pulled as', () => {
     const { schema, pgType } = mapScalarPgType('date');
-    expect(stringFormatOf(schema)).toBe('date-time');
+    expect(stringFormatOf(schema)).toBe('date');
     expect(pgType).toBe(PostgresColumnType.TIMESTAMP);
   });
 });
 
 describe('mapPgType', () => {
-  it('wraps a nullable date column as a date-time string unioned with null', () => {
+  it('wraps a nullable date column as a date string unioned with null', () => {
     const { schema } = mapPgType('date', 'date', true);
     const columnSchema = asColumnSchema(schema);
     expect(columnSchema.anyOf).toHaveLength(2);
-    expect(stringFormatOf(schema)).toBe('date-time');
+    expect(stringFormatOf(schema)).toBe('date');
     expect(columnSchema.anyOf?.some((member) => member.type === 'null')).toBe(true);
   });
 
-  it('keeps a non-nullable date column as a bare date-time string', () => {
+  it('keeps a non-nullable date column as a bare date string', () => {
     const { schema } = mapPgType('date', 'date', false);
     expect(asColumnSchema(schema).anyOf).toBeUndefined();
-    expect(stringFormatOf(schema)).toBe('date-time');
+    expect(stringFormatOf(schema)).toBe('date');
   });
 });

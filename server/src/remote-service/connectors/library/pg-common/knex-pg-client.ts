@@ -35,6 +35,7 @@ import {
 } from './pg-catalog-queries';
 import { buildAddColumnsQuery, buildCreateTableQuery, type ForeignKeyResolutions } from './pg-create-schema';
 import { runKnexRawStatementTaggingCompilationErrorWithSqlText } from './pg-knex-query-compilation-error';
+import { NODE_POSTGRES_TYPE_PARSERS_FOR_CONNECTOR_CONNECTIONS } from './pg-temporal-type-parsers';
 
 // NUMERIC / DECIMAL fidelity (DEV-10777): we intentionally do NOT register a global
 // `pg.types.setTypeParser(1700, parseFloat)`. The `pg` driver returns `numeric`/`decimal` as a
@@ -101,10 +102,12 @@ function quotePostgresIdentifierForKnexRawSql(identifier: string): string {
  * Recursively convert Date objects to ISO strings and handle arrays.
  *
  * DEV-10777 ruling: the `Date → ISO` conversion is Connector-Prime-Directive-DEFENSIBLE, not a
- * forbidden reshape. The `pg` driver parses `timestamp`/`date` OIDs into a JS `Date`, which is not
- * JSON-serializable; RFC 3339 (`toISOString()`) is simply the faithful, lossless serialization of
- * the value the driver produced — it renames no key and changes no container. This is unlike the
- * NUMERIC coercion (removed above), which threw away precision. Left unchanged deliberately.
+ * forbidden reshape. The `pg` driver parses `timestamp`/`timestamptz` OIDs into a JS `Date`, which is
+ * not JSON-serializable; RFC 3339 (`toISOString()`) is simply the faithful, lossless serialization of
+ * the instant the driver produced — it renames no key and changes no container. This is unlike the
+ * NUMERIC coercion (removed above), which threw away precision. A `date` never reaches here as a
+ * `Date`: it has no instant, so it stays the driver's `YYYY-MM-DD` text (DEV-12576, see
+ * `pg-temporal-type-parsers.ts`).
  */
 function sanitizeFieldValue(value: unknown): unknown {
   if (value instanceof Date) {
@@ -158,6 +161,9 @@ export class KnexPGClient {
         connectionString: connectionStringPreparation.connectionStringForNodePostgres,
         // Always set (false for no TLS), so node-postgres never falls back to the PGSSLMODE environment variable.
         ssl: tlsSettingsPreparation.nodePostgresSslOption,
+        // `date` stays `YYYY-MM-DD` and a naive `timestamp` parses as UTC on every host, scoped to this connection
+        // rather than the process-global `pg.types` (DEV-12576).
+        types: NODE_POSTGRES_TYPE_PARSERS_FOR_CONNECTOR_CONNECTIONS,
         // In deployed environments every socket node-postgres opens (including a query-cancel connection) vets the
         // address it connects to, so the host can't be an internal one. See SsrfSafeSocket.
         ...(isDatabaseHostGuardEnabled() ? { stream: () => new SsrfSafeSocket() } : {}),
