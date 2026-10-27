@@ -36,6 +36,10 @@ export default function UserSettingsPage() {
                 {isAdmin && <Badge>Admin</Badge>}
               </Group>
               <Group wrap="nowrap" gap="xs">
+                <Text13Regular miw={150}>Joined</Text13Regular>
+                <Text13Regular>{user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : '—'}</Text13Regular>
+              </Group>
+              <Group wrap="nowrap" gap="xs">
                 <Text13Regular miw={150}>Client build</Text13Regular>
                 <Text13Regular>{BUILD_VERSION}</Text13Regular>
                 <CopyButton value={BUILD_VERSION} timeout={2000}>
