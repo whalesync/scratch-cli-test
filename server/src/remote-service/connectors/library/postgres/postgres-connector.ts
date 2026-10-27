@@ -110,7 +110,7 @@ export class PostgresConnector extends Connector {
     createDestination: 'schema',
     createDestinations: 'schemas',
     logo: 'https://static.scratch.md/connector-icons/postgres.svg',
-    visible: false,
+    visible: true,
     incrementalPull: true,
     incrementalPullInstructions:
       'To enable incremental pulls, this table must contain a date-time column that tracks when a row was last changed (e.g. updated_at).',

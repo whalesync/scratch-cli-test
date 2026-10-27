@@ -36,7 +36,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [MySQL](../server/src/remote-service/connectors/library/mysql/STATE.md) | ❌ | ✅ | ✅ | ✅ | 👁️ | Self-host | ✅‡ | ❌ | |
 | [Notion](../server/src/remote-service/connectors/library/notion/STATE.md) | ✅ | ✅ | ✅ | ✅ | 👁️ | Free tier | ✅ | ✅ | |
 | [Pipedrive](../server/src/remote-service/connectors/library/pipedrive/STATE.md) | ✅ | ✅ | 🟠 | ✅ | 👁️ | Trial → paid | ✅ | ❌ | |
-| [Postgres](../server/src/remote-service/connectors/library/postgres/STATE.md) | ❌ | ✅ | ✅ | ✅ | 🔒 | Self-host | ✅† | ❌ | |
+| [Postgres](../server/src/remote-service/connectors/library/postgres/STATE.md) | ❌ | ✅ | ✅ | ✅ | 👁️ | Self-host | ✅† | ❌ | |
 | [QuickBooks](../server/src/remote-service/connectors/library/quickbooks/STATE.md) | ✅ | ❌ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
 | [Salesforce](../server/src/remote-service/connectors/library/salesforce/STATE.md) | ✅ | ❌ | 🟠 | ✅ | 🔒 | Free dev | ✅ | ❌ | |
 | [Sanity](../server/src/remote-service/connectors/library/sanity/STATE.md) | ❌ | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | 2026-08-01 |
@@ -54,7 +54,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 >
 > **`‡` MySQL — runs in its own CI job.** `mysql-*.spec.ts` (connection/TLS/auth, discovery + pull, CRUD guards, create-schema, incremental pull) run against **real `mysql:8.4` and `mariadb:11.4` sidecars** in the dedicated `integration test server mysql` job, not the post-deploy pipeline (where they self-skip because `MYSQL_TEST_URL` / `MARIADB_TEST_URL` are unset) — hence **IT ✅ = ❌**. No third-party managed database (RDS, Cloud SQL, TiDB, ...) is exercised yet; that's still outstanding (the connector was made visible on 2026-10-20 without it).
 >
-> **`†` Postgres — partial.** Coverage is `postgres-create-schema.spec.ts` + `postgres-incremental-pull.spec.ts` only (schema-creation + incremental pull), and they run against the CI job's **own `postgres:16` sidecar**, not a third-party service. There is no core CRUD connector spec.
+> **`†` Postgres — partial.** Coverage is `postgres-create-schema.spec.ts`, `postgres-incremental-pull.spec.ts`, `postgres-native-column-types.spec.ts` and `postgres-database-host-guard.spec.ts` only (schema creation, incremental pull, native column types, and the connection-security checks), and they run against the CI job's **own `postgres:16` sidecar**, not a third-party service. There is no core CRUD connector spec.
 >
 > **OAuth `🟠` on connectors with no Last Run is provisional.** For connectors the `/connector-build-execute` skill hasn't reviewed, `🟠` means "OAuth not implemented (`supportedAuthMethods` is `user_provided_params` only) and the service is expected to offer it" — the available-vs-not call is confirmed on a skill pass. `❌` is reserved for connectors with no OAuth path at all (connection-string DBs: Postgres, MySQL; basic/app-password: WordPress; the schema-driven Generic API), plus connectors where OAuth exists at the service but Scratch deliberately does not support it (Shopify — its OAuth needs Shopify app-store approval that isn't forthcoming, so only the `user_provided_params` custom-app token is offered).
 >
